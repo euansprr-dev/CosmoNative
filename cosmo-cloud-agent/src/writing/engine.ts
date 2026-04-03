@@ -9,7 +9,7 @@
 import { config } from '../config';
 import { Atom, fetchAtom, updateAtom, fetchAllByType, fuzzyFindClient, loadPromptTemplate } from '../db/queries';
 import { selectSwipes } from './swipeSelector';
-import { assembleBlock1, assembleBlock2, assembleBlock3Stable, assembleBlock3Dynamic, getSwipeApplicationRules, WritingBlock } from './contextAssembler';
+import { assembleBlock1, assembleBlock2, assembleBlock3Stable, assembleBlock3Dynamic, getSwipeApplicationRules, WritingBlock, assembleBlock1Codex, assembleBlock3StableCodex, buildCodexSystemPrompt, buildCodexPhase1Prompt, buildCodexPhase2Prompt, buildCodexPhase3Prompt } from './contextAssembler';
 import {
   WritingPhase, WritingMessage, CompressedSwipe, OutlineItem, HookVariant,
   ContentFormat, detectContentFormat, renderDraftForDisplay, validateDraft,
@@ -135,6 +135,7 @@ export class CloudWritingEngine {
   private hooks: string[] = [];
   private conversationSummary: string | null = null;
   private initialized = false;
+  private useCodexMode = false;
   private targetFormat: ContentFormat = 'unknown';
 
   // Reference material cache — persists across turns, 25K char budget
@@ -249,19 +250,50 @@ export class CloudWritingEngine {
     // Load experience buffer (past edit examples) for few-shot learning
     const experiences = await this.loadExperiences();
 
-    // Build blocks
-    const block1 = await assembleBlock1(this.targetFormat);
-    const block2 = await assembleBlock2(this.clientAtom, lessons);
-    const block3a = await assembleBlock3Stable(
-      this.selectedSwipes,
-      this.clientAtom?.metadata?.niche as string | null || null,
-      experiences,
-    );
+    // Build blocks — Codex mode or legacy mode
+    if (config.useExemplarCodex) {
+      // Codex mode: full Codex as Block 1, walkthrough as Block 3A
+      const block1 = await assembleBlock1Codex();
+      const block2 = await assembleBlock2(this.clientAtom, lessons);
 
-    this.blocks = [block1, block2, block3a];
-    this.initialized = true;
+      // Load blueprint walkthrough from the primary swipe's atom
+      let walkthrough: string | null = null;
+      let blueprintBody: string | null = null;
+      if (this.blueprintAnchor) {
+        const bpAtom = await fetchAtom(this.blueprintAnchor.uuid);
+        walkthrough = (bpAtom?.structured as any)?.blueprintWalkthrough || null;
+        blueprintBody = this.blueprintAnchor.fullBody || bpAtom?.body || null;
+        if (walkthrough) {
+          console.log(`  ✍️ Blueprint walkthrough loaded: ${walkthrough.length} chars`);
+        } else {
+          console.log(`  ⚠️ No walkthrough for blueprint — extraction needed first`);
+        }
+      }
 
-    console.log(`  ✍️ Writing engine initialized: ${this.selectedSwipes.length} swipes, ${lessons.length} lessons, ${experiences.length} experiences, client: ${this.clientAtom?.title || 'none'}, format: ${this.targetFormat}`);
+      const block3a = assembleBlock3StableCodex(walkthrough, blueprintBody);
+
+      this.blocks = [block1, block2, block3a];
+      this.initialized = true;
+      this.useCodexMode = true;
+
+      const clientName = this.clientAtom?.title || 'the client';
+      console.log(`  ✍️ Writing engine initialized (CODEX MODE): walkthrough=${!!walkthrough}, client: ${clientName}, format: ${this.targetFormat}`);
+    } else {
+      // Legacy mode: old methodology + swipes
+      const block1 = await assembleBlock1(this.targetFormat);
+      const block2 = await assembleBlock2(this.clientAtom, lessons);
+      const block3a = await assembleBlock3Stable(
+        this.selectedSwipes,
+        this.clientAtom?.metadata?.niche as string | null || null,
+        experiences,
+      );
+
+      this.blocks = [block1, block2, block3a];
+      this.initialized = true;
+      this.useCodexMode = false;
+
+      console.log(`  ✍️ Writing engine initialized (legacy): ${this.selectedSwipes.length} swipes, ${lessons.length} lessons, client: ${this.clientAtom?.title || 'none'}, format: ${this.targetFormat}`);
+    }
   }
 
   // ============================================================
@@ -336,13 +368,27 @@ USER FEEDBACK:
   }
 
   private buildDynamicBlock(): WritingBlock {
-    return assembleBlock3Dynamic(
+    const base = assembleBlock3Dynamic(
       this.contentAtom!,
       this.outline.length > 0 ? this.outline : null,
       this.hooks.length > 0 ? this.hooks : null,
       this.conversationSummary,
       this.writingContext,
     );
+
+    // In Codex mode, prepend the system prompt (role + voice rules + antimatter)
+    // to the dynamic block so it's the LAST thing before the conversation —
+    // recency bias means these instructions influence generation most strongly.
+    if (this.useCodexMode) {
+      const clientName = this.clientAtom?.title || 'the client';
+      const systemPrompt = buildCodexSystemPrompt(this.targetFormat, clientName);
+      return {
+        ...base,
+        content: systemPrompt + '\n\n' + base.content,
+      };
+    }
+
+    return base;
   }
 
   // ============================================================
@@ -523,6 +569,25 @@ USER FEEDBACK:
   private async runPlanPhase(instruction: string): Promise<string> {
     const label = this.getBlueprintLabel();
     const clientName = this.clientAtom?.title || 'the client';
+
+    // Codex mode: use the compact reconstruction plan prompt
+    if (this.useCodexMode) {
+      const codexInstruction = buildCodexPhase1Prompt(
+        instruction,
+        this.targetFormat,
+        this.contentAtom?.metadata?.platform as string || 'instagram',
+        clientName,
+      );
+      console.log(`  📋 Phase 1 (Codex mode): reconstruction plan for ${clientName}`);
+      this.messages.push({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: codexInstruction,
+        timestamp: new Date().toISOString(),
+      });
+      const block3b = this.buildDynamicBlock();
+      return this.runConversationLoop('brainstorm', block3b, 'plan');
+    }
 
     const hasProfile = this.hasBlueprintProfile;
     const planInstruction = `${instruction}
@@ -740,13 +805,24 @@ This plan is your construction blueprint. The user will review the outline and h
   }
 
   private async runWritePhase(): Promise<string> {
-    // CACHE OPTIMIZATION: Keep blocks as [block1, block2, block3a] — same as Phase 1.
-    // This preserves the prefix cache from Phase 1 (~85%+ hit rate on all Phase 2 calls).
-    // Previously we swapped blocks here, which busted the cache and cost ~$0.35/call extra.
-    // The plan and swipe data are either in conversation history or Block 3A already.
     console.log(`  ✍️ Write phase: keeping stable blocks for cache (${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')})`);
 
-    // Extract critical context for recency (end-of-context = maximum attention)
+    // Codex mode: compact write prompt
+    if (this.useCodexMode) {
+      const clientName = this.clientAtom?.title || 'the client';
+      const writeInstruction = buildCodexPhase2Prompt(clientName);
+      console.log(`  ✍️ Write phase (Codex mode): ${clientName}`);
+      this.messages.push({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: writeInstruction,
+        timestamp: new Date().toISOString(),
+      });
+      const block3b = this.buildDynamicBlock();
+      return this.runConversationLoop('draft', block3b, 'write');
+    }
+
+    // Legacy mode below
     const bp = this.blueprintAnchor;
     const clientName = this.clientAtom?.title || 'the client';
     const voiceContext = this.buildCriticalVoiceContext();
@@ -864,14 +940,24 @@ WHAT MAKES A DRAFT FAIL (INSTANT REWRITES)
   }
 
   private async runSelfEditPhase(): Promise<string> {
-    // CACHE OPTIMIZATION: Keep blocks as [block1, block2, block3a] — same as Phase 1 & 2.
-    // This preserves the prefix cache across ALL phases.
-    // Previously we swapped blocks here with a qualityBlock, which busted the cache.
-    // Methodology is already in Block 1. Blueprint profile is already in Block 3A.
-    // Swipe examples stay available in Block 3A (bonus: model can compare draft against them).
-    // Quality rules, plan reference, and blueprint summary go in the user message.
     console.log(`  ✍️ Self-edit: keeping stable blocks for cache (${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')})`);
 
+    // Codex mode: compact self-edit prompt
+    if (this.useCodexMode) {
+      const clientName = this.clientAtom?.title || 'the client';
+      const editInstruction = buildCodexPhase3Prompt(clientName);
+      console.log(`  ✍️ Self-edit phase (Codex mode): ${clientName}`);
+      this.messages.push({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: editInstruction,
+        timestamp: new Date().toISOString(),
+      });
+      const block3b = this.buildDynamicBlock();
+      return this.runConversationLoop('draft', block3b, 'edit');
+    }
+
+    // Legacy mode below
     const blueprintSummary = this.getBlueprintStructuralSummary();
     const qualityRules = this.buildCriticalRulesReminder();
 

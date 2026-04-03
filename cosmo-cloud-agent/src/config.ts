@@ -42,6 +42,10 @@ export const config = {
   // Writing API (for Mac app to call cloud engine directly)
   writingApiKey: process.env.WRITING_API_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
 
+  // Exemplar Codex integration — when true, writing engine uses full Codex + walkthrough
+  // instead of old methodology + QuarkProfile. Set to false to revert to legacy behavior.
+  useExemplarCodex: process.env.USE_EXEMPLAR_CODEX !== 'false', // default true
+
   // Server
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',

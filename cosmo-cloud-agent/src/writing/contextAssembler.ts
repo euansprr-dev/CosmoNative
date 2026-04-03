@@ -1356,12 +1356,20 @@ Content format: ${format} | Platform: ${platform}
 
 ═══ PHASE 1: RECONSTRUCTION PLAN ═══
 
-First, call the think tool. In your think, work through every slide in the walkthrough:
+First, call the think tool. In your think, do THREE things before touching any slides:
+
+A. STUDY THE BLUEPRINT'S TONE — Read the blueprint body. How does it present information? Does it use market statistics ("$10B market at 14.8% CAGR") or describe human behavior ("Gen Z are abandoning one-bedroom apartments")? Does it explain concepts analytically or conversationally? Your draft must match this tone, not default to research-report language.
+
+B. STUDY THE CLIENT'S REAL NUMBERS — Read ${clientName}'s profile carefully. Find their EXACT numbers (costs, returns, timelines). Use THESE numbers in your plan, not rounder or more impressive versions. If the profile says $800-1,000/room, don't plan for $1,300/room. Believability beats impressiveness.
+
+C. FIND OPERATOR INSIGHTS — Read the client profile for practical tips, real-world details, and lived experience that the blueprint doesn't have. For step-by-step processes or anything teaching a concept, find the specific operator knowledge that makes content feel lived rather than theoretical (e.g., "bonus if the house has a living room you can convert" or "move out after a year and rent your room too"). These details are what separate real operator content from generic advice.
+
+Then work through every slide in the walkthrough:
 
 1. Read ALL the walkthrough's physics for this slide: speech act, reader deltas, frame, experiential distance, techniques, proof type, motivation, compression, and the transition to the next slide. Every field matters.
 2. Look up the key concepts in the Codex (especially the speech act and transition) — read 2-3 real examples to understand what each concept actually sounds and looks like in viral text, not just what the label means
-3. Read ${clientName}'s top posts and profile — find the specific detail, moment, or fact from their story that fills this structural slot while producing the same physics
-4. Note how ${clientName} would actually phrase it — study their sentence length, their connector words, their rhythm from their real posts
+3. Read ${clientName}'s top posts and profile — find the specific detail, moment, or fact from their story that fills this structural slot while producing the same physics. Use their EXACT numbers.
+4. Note how ${clientName} would actually phrase it — study their sentence length, their connector words, their rhythm from their real posts. If they present data as human behavior, you present data as human behavior.
 
 Then think about macro physics:
 - ARC: How does ${clientName}'s story map to the walkthrough's arc shape?
@@ -1375,9 +1383,11 @@ After your think, call create_writing_plan with this structure per slide:
 SLIDE {N}:
   Blueprint physics: speech act={X}, deltas={X,Y}, frame={X}, distance={zero/near/far}, techniques={X,Y,Z}, transition→next={X}
   Plus if present: proof={X}, motivation={X}, compression={X}
-  Client content: {specific detail from profile that produces these physics}
+  Client content: {specific detail from profile — use their EXACT numbers}
+  Operator tip: {any practical insight from the profile that adds lived detail to this slide}
   Voice: {how they'd say it — reference a specific top post for tone}
   Density: ~{X} words (match walkthrough's density at this position)
+  Bridge to next: {how this slide connects to the next — what word or phrase pulls the reader forward}
 
 Include 3 HOOK VARIANTS. Each must:
 - Reproduce the walkthrough's hook physics (same speech act, same reader deltas, same techniques)

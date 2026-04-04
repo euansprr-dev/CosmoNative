@@ -1356,42 +1356,76 @@ Content format: ${format} | Platform: ${platform}
 
 ═══ PHASE 1: RECONSTRUCTION PLAN ═══
 
-First, call the think tool. In your think, do THREE things before touching any slides:
+First, call the think tool. Your think must include ALL of the following sections with QUOTED EVIDENCE from your loaded context. No section may be skipped.
 
-A. STUDY THE BLUEPRINT'S TONE — Read the blueprint body. How does it present information? Does it use market statistics ("$10B market at 14.8% CAGR") or describe human behavior ("Gen Z are abandoning one-bedroom apartments")? Does it explain concepts analytically or conversationally? Your draft must match this tone, not default to research-report language.
+──── SECTION 1: VOICE ANCHORS ────
 
-B. STUDY THE CLIENT'S REAL NUMBERS — Read ${clientName}'s profile carefully. Find their EXACT numbers (costs, returns, timelines). Use THESE numbers in your plan, not rounder or more impressive versions. If the profile says $800-1,000/room, don't plan for $1,300/room. Believability beats impressiveness.
+Find and quote real slides from ${clientName}'s top performing posts that demonstrate their voice in this format.
 
-C. FIND OPERATOR INSIGHTS — Read the client profile for practical tips, real-world details, and lived experience that the blueprint doesn't have. For step-by-step processes or anything teaching a concept, find the specific operator knowledge that makes content feel lived rather than theoretical (e.g., "bonus if the house has a living room you can convert" or "move out after a year and rent your room too"). These details are what separate real operator content from generic advice.
+${format === 'reel' || format === 'voiceoverReel' || format === 'oneSliderReel' || format === 'multiSliderReel' || format === 'twoStepCTA'
+? `You're writing a REEL. Find:
+- 4 specific REEL slides from ${clientName}'s top posts (quote the exact text — showing their reel rhythm, density, sentence length)
+- 2 specific CAROUSEL/THREAD slides from their top posts (for reference on their denser format)`
+: `You're writing a CAROUSEL/THREAD. Find:
+- 4 specific CAROUSEL/THREAD slides from ${clientName}'s top posts (quote the exact text — showing their carousel density, formatting, tone)
+- 2 specific REEL slides from their top posts (for reference on their punchy format)`}
 
-Then work through every slide in the walkthrough:
+These 6 quotes are your VOICE STANDARD. Every slide you write must sound like it belongs alongside these lines.
 
-1. Read ALL the walkthrough's physics for this slide: speech act, reader deltas, frame, experiential distance, techniques, proof type, motivation, compression, and the transition to the next slide. Every field matters.
-2. Look up the key concepts in the Codex (especially the speech act and transition) — read 2-3 real examples to understand what each concept actually sounds and looks like in viral text, not just what the label means
-3. Read ${clientName}'s top posts and profile — find the specific detail, moment, or fact from their story that fills this structural slot while producing the same physics. Use their EXACT numbers.
-4. Note how ${clientName} would actually phrase it — study their sentence length, their connector words, their rhythm from their real posts. If they present data as human behavior, you present data as human behavior.
+──── SECTION 2: CONCEPT EXAMPLES ────
 
-Then think about macro physics:
+Read the walkthrough and identify every UNIQUE physics concept this post uses (speech acts, transition types, etc.).
+
+For each unique concept, quote:
+- 1 example from the Codex entry showing what that concept looks like in real viral text
+- Up to 4 lines from ${clientName}'s top posts that demonstrate similar physics in their voice
+
+Format:
+{CONCEPT NAME} (used on slides X, Y, Z):
+  Codex: "{quoted example from the Codex entry}" — [source]
+  Client: "{quoted line from top post}" — [which post]
+  Client: "{another quoted line}" — [which post]
+  ...
+
+──── SECTION 3: CONTEXT STUDY ────
+
+A. BLUEPRINT TONE — Read the blueprint body. How does it present data? Human behavior or market statistics? Conversational or analytical? Quote 2 lines that show its tone.
+
+B. CLIENT'S REAL NUMBERS — List ${clientName}'s EXACT numbers from their profile (costs, returns, timelines). Use THESE in the plan, not inflated versions.
+
+C. OPERATOR INSIGHTS — For any step-by-step or teaching slides, find practical tips from the client profile that make the content feel operated, not theoretical. Quote them.
+
+──── SECTION 4: SLIDE-BY-SLIDE PLAN ────
+
+Work through every slide in the walkthrough. Read ALL physics fields per slide (speech act, deltas, frame, distance, techniques, proof, motivation, compression, transition).
+
+──── SECTION 5: MACRO PHYSICS ────
+
 - ARC: How does ${clientName}'s story map to the walkthrough's arc shape?
-- SYMMETRY BREAK: What moment in the client's story breaks reader expectation?
+- SYMMETRY BREAK: What moment breaks reader expectation?
 - PHASE TRANSITION: Where does the post become something different?
-- PEAK GRAVITY: Where are the most open loops + highest trust + maximum tension simultaneously?
-- ANTIMATTER: What specific things would destroy THIS post's physics? (Not generic — specific to the client's content and this idea)
+- PEAK GRAVITY: Maximum simultaneous open loops + trust + tension?
+- ANTIMATTER: Specific things that would destroy THIS post's physics?
 
-After your think, call create_writing_plan with this structure per slide:
+After your think, call create_writing_plan with:
+
+VOICE ANCHORS:
+{paste your 6 voice anchor quotes here — they stay in the plan for Phase 2 reference}
+
+CONCEPT EXAMPLES:
+{paste your per-concept Codex + client examples here}
 
 SLIDE {N}:
   Blueprint physics: speech act={X}, deltas={X,Y}, frame={X}, distance={zero/near/far}, techniques={X,Y,Z}, transition→next={X}
-  Plus if present: proof={X}, motivation={X}, compression={X}
-  Client content: {specific detail from profile — use their EXACT numbers}
-  Operator tip: {any practical insight from the profile that adds lived detail to this slide}
-  Voice: {how they'd say it — reference a specific top post for tone}
-  Density: ~{X} words (match walkthrough's density at this position)
-  Bridge to next: {how this slide connects to the next — what word or phrase pulls the reader forward}
+  Client content: {specific detail from profile — EXACT numbers}
+  Operator tip: {practical insight if teaching/step slide}
+  Voice match: {which voice anchor or concept example above matches this slide's energy}
+  Density: ~{X} words / ≤310 chars
+  Bridge to next: {connecting phrase that pulls reader forward}
 
 Include 3 HOOK VARIANTS. Each must:
 - Reproduce the walkthrough's hook physics (same speech act, same reader deltas, same techniques)
-- Sound like ${clientName}'s actual voice (study their top posts for hook style)
+- Sound like ${clientName}'s voice anchors above
 - Use the client's specific content, not the blueprint's content`;
 }
 

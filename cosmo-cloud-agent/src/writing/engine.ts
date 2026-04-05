@@ -2113,10 +2113,8 @@ If ALL checks pass, present the draft.
     pipelineStep?: 'plan' | 'write' | 'edit' | 'session',
   ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
     const useDirectAnthropic = !!config.anthropicApiKey;
-    // Model routing: Opus for single session (one continuous mind), Sonnet for existing phases
-    const model = pipelineStep === 'session'
-      ? config.models.writer       // Opus 4.6 — single session, adaptive thinking
-      : config.models.strategist;  // Sonnet 4.6 — existing pipeline phases
+    // Model routing: Sonnet 4.6 for all modes — full codex in context makes it cost-effective
+    const model = config.models.strategist;  // Sonnet 4.6 — $3/$15 per MTok
 
     // Strip provider prefix for direct Anthropic (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
     const modelId = useDirectAnthropic ? model.replace(/^anthropic\//, '') : model;

@@ -1783,7 +1783,9 @@ Only after this analysis can you call add_hooks.`;
 
       case 'write_draft': {
         // Pre-write analysis gate — require deep thinking before draft
-        if (this.analysisDepth < 1) {
+        // Session mode: adaptive thinking replaces the think tool, so bypass depth gate.
+        // The create_writing_plan tool must still be called first (builds structuredSlidePlan).
+        if (this.pipelineStep !== 'session' && this.analysisDepth < 1) {
           return `[BLOCKED] You haven't analyzed your context deeply enough yet. Before writing:
 
 1. Call think to study ALL loaded swipes — read their full bodies in your context. For EACH dimension below, note what patterns you observe across the swipes:

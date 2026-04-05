@@ -27,6 +27,7 @@ struct IdeaFocusModeView: View {
     @State private var showBlueprintPicker: Bool = false
     @State private var isLoadingArcRecs: Bool = false
     @State private var chatExpanded: Bool = false
+    @State private var outlineAdvancedMode: Bool = false
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
 
@@ -531,10 +532,22 @@ extension IdeaFocusModeView {
         VStack(alignment: .leading, spacing: DS.space12) {
             outlineSectionHeader
 
-            if let outline = viewModel.codexOutline, !outline.slides.isEmpty {
-                inlineOutlineSlides(outline)
-            } else {
-                outlineEmptyState
+            if let outline = viewModel.codexOutline {
+                if outlineAdvancedMode {
+                    inlineOutlineSlides(outline)
+                } else {
+                    normalOutlineSlides(outline)
+                }
+            }
+        }
+        .onAppear {
+            // Always show outline — auto-create with 1 empty slide if none exists
+            if viewModel.codexOutline == nil {
+                viewModel.codexOutline = CodexOutlineModel(arcShape: nil, slides: [
+                    CodexOutlineSlide(id: UUID(), position: 1, speechAct: nil,
+                        readerDeltas: [], frame: nil, distance: nil,
+                        techniques: [], transition: nil, note: nil)
+                ])
             }
         }
     }
@@ -546,89 +559,109 @@ extension IdeaFocusModeView {
                 .tracking(0.8)
                 .foregroundStyle(DS.textMuted)
 
-            if let outline = viewModel.codexOutline, !outline.slides.isEmpty {
-                outlineSlideCountBadge(outline.slides.count)
+            if let outline = viewModel.codexOutline {
+                Text("\(outline.slides.count)")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(DS.accent.opacity(0.12), in: Capsule())
             }
 
             Spacer()
 
-            if viewModel.codexOutline != nil {
-                Button {
-                    addNewSlide()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "plus")
-                            .accessibilityHidden(true)
-                        Text("Slide")
-                    }
-                    .font(DS.caption)
-                    .foregroundStyle(ideaGold)
+            // Mode toggle
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    outlineAdvancedMode.toggle()
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add slide")
+            } label: {
+                Text(outlineAdvancedMode ? "Advanced" : "Simple")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(outlineAdvancedMode ? DS.accent : DS.textMuted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        outlineAdvancedMode ? DS.accent.opacity(0.1) : DS.surface,
+                        in: Capsule()
+                    )
+                    .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.5))
             }
-        }
-    }
+            .buttonStyle(.plain)
 
-    private func outlineSlideCountBadge(_ count: Int) -> some View {
-        Text("\(count) slides")
-            .font(DS.caption2)
-            .foregroundStyle(DS.accent)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(DS.accent.opacity(0.12), in: Capsule())
-    }
-
-    // MARK: Empty State
-
-    private var outlineEmptyState: some View {
-        VStack(spacing: DS.space8) {
-            Text("Plan your post's physics before writing")
+            // Add slide
+            Button { addNewSlide() } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "plus")
+                        .accessibilityHidden(true)
+                    Text("Slide")
+                }
                 .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-
-            if !viewModel.arcRecommendations.isEmpty {
-                outlineArcPicker
-            } else {
-                outlineStartButton
+                .foregroundStyle(ideaGold)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add slide")
         }
-        .padding(DS.space12)
-        .background(DS.surfaceElevated.opacity(0.3), in: .rect(cornerRadius: DS.radiusMedium))
     }
 
-    private var outlineArcPicker: some View {
-        VStack(spacing: 4) {
-            ForEach(viewModel.arcRecommendations.prefix(3)) { rec in
-                outlineArcPickerRow(rec)
+    // MARK: Normal Mode (simple text notes per slide)
+
+    private func normalOutlineSlides(_ outline: CodexOutlineModel) -> some View {
+        VStack(spacing: DS.space4) {
+            ForEach(outline.slides) { slide in
+                normalSlideCard(slide)
             }
         }
     }
 
-    private func outlineArcPickerRow(_ rec: ArcRecommendation) -> some View {
-        Button {
-            startOutlineWithArc(rec.arcName)
-        } label: {
-            HStack {
-                CodexConceptTag(name: rec.arcName, color: CodexElementCategory.arcShape.color)
-                Text(rec.explanation)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
-                Spacer()
-                Image(systemName: "arrow.right")
-                    .font(DS.caption2)
+    private func normalSlideCard(_ slide: CodexOutlineSlide) -> some View {
+        HStack(spacing: DS.space8) {
+            Text("\(slide.position)")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundStyle(ideaGold)
+                .frame(width: 20)
+
+            TextField("What should this slide do?",
+                      text: slideNoteBinding(for: slide.id),
+                      axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .lineLimit(1...3)
+
+            Button { removeSlide(slide.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9))
                     .foregroundStyle(DS.textMuted)
-                    .accessibilityHidden(true)
             }
-            .padding(8)
-            .background(DS.surface, in: .rect(cornerRadius: DS.radiusSmall))
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove slide \(slide.position)")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Start outline with \(rec.arcName) arc")
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.borderSubtle, lineWidth: 0.5)
+        )
     }
 
-    private var outlineStartButton: some View {
+    private func slideNoteBinding(for slideId: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                viewModel.codexOutline?.slides.first(where: { $0.id == slideId })?.note ?? ""
+            },
+            set: { newValue in
+                if let idx = viewModel.codexOutline?.slides.firstIndex(where: { $0.id == slideId }) {
+                    viewModel.codexOutline?.slides[idx].note = newValue
+                }
+            }
+        )
+    }
+
+    // MARK: Legacy — kept for reference but no longer used
+    @available(*, deprecated, message: "Replaced by outlineSection dual mode")
+    private var _outlineStartButton: some View {
         Button {
             startOutlineWithArc(nil)
         } label: {

@@ -90,6 +90,13 @@
 		29DF8B14189D10C64F2675F6 /* CosmoBlockWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F590BD4B19B9E6EF3417DA9E /* CosmoBlockWrapper.swift */; };
 		2B2CB6F10D0B1711F746F46B /* FloatingPanelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11094C2137C18E9547445E5 /* FloatingPanelManager.swift */; };
 		2B3C4D5E6F0718293041526E /* CodexElementDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6071829304A5B6D /* CodexElementDetailView.swift */; };
+		CD01A1B2C3D4E5F607182930 /* CodexFlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD11A1B2C3D4E5F607182930 /* CodexFlowLayout.swift */; };
+		CD02A1B2C3D4E5F607182930 /* CodexCardHoverModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD12A1B2C3D4E5F607182930 /* CodexCardHoverModifier.swift */; };
+		CD03A1B2C3D4E5F607182930 /* CodexFrequencyIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD13A1B2C3D4E5F607182930 /* CodexFrequencyIndicator.swift */; };
+		CD04A1B2C3D4E5F607182930 /* CodexHeroHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD14A1B2C3D4E5F607182930 /* CodexHeroHeader.swift */; };
+		CD05A1B2C3D4E5F607182930 /* CodexCategorySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD15A1B2C3D4E5F607182930 /* CodexCategorySection.swift */; };
+		CD06A1B2C3D4E5F607182930 /* CodexElementHeroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD16A1B2C3D4E5F607182930 /* CodexElementHeroSection.swift */; };
+		CD07A1B2C3D4E5F607182930 /* CodexExampleCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD17A1B2C3D4E5F607182930 /* CodexExampleCardView.swift */; };
 		2B3C4D5E6F70819203142536 /* ClusterBoardContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4D5E6F7081920314253647 /* ClusterBoardContent.swift */; };
 		2CA61A66B8D98F5F6A1709EB /* DimensionXPRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94C6CDD22AA0C20F7F01F15B /* DimensionXPRouter.swift */; };
 		2D456BCAB2A2B5F3355B31BF /* GreenhousePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67C6241EB3BABCEDD5F66C92 /* GreenhousePalette.swift */; };
@@ -995,6 +1002,13 @@
 		B1EE8041AF5A4795F4DA9BCE /* ConnectionFocusModeState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionFocusModeState.swift; sourceTree = "<group>"; };
 		B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterCreationPopover.swift; sourceTree = "<group>"; };
 		B2C3D4E5F6071829304A5B6D /* CodexElementDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexElementDetailView.swift; path = UI/Codex/CodexElementDetailView.swift; sourceTree = SOURCE_ROOT; };
+		CD11A1B2C3D4E5F607182930 /* CodexFlowLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexFlowLayout.swift; path = UI/Codex/CodexFlowLayout.swift; sourceTree = SOURCE_ROOT; };
+		CD12A1B2C3D4E5F607182930 /* CodexCardHoverModifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexCardHoverModifier.swift; path = UI/Codex/CodexCardHoverModifier.swift; sourceTree = SOURCE_ROOT; };
+		CD13A1B2C3D4E5F607182930 /* CodexFrequencyIndicator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexFrequencyIndicator.swift; path = UI/Codex/CodexFrequencyIndicator.swift; sourceTree = SOURCE_ROOT; };
+		CD14A1B2C3D4E5F607182930 /* CodexHeroHeader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexHeroHeader.swift; path = UI/Codex/CodexHeroHeader.swift; sourceTree = SOURCE_ROOT; };
+		CD15A1B2C3D4E5F607182930 /* CodexCategorySection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexCategorySection.swift; path = UI/Codex/CodexCategorySection.swift; sourceTree = SOURCE_ROOT; };
+		CD16A1B2C3D4E5F607182930 /* CodexElementHeroSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexElementHeroSection.swift; path = UI/Codex/CodexElementHeroSection.swift; sourceTree = SOURCE_ROOT; };
+		CD17A1B2C3D4E5F607182930 /* CodexExampleCardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexExampleCardView.swift; path = UI/Codex/CodexExampleCardView.swift; sourceTree = SOURCE_ROOT; };
 		B32C55DE13B666DEB0B398B7 /* GlassMaterial.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassMaterial.swift; sourceTree = "<group>"; };
 		B34D6F15772B410608EF6018 /* PromptTemplateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTemplateStore.swift; sourceTree = "<group>"; };
 		B402B49E3F2075E2F3A20137 /* HealthKitSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitSyncService.swift; sourceTree = "<group>"; };
@@ -2376,6 +2390,13 @@
 				A1B2C3D4E5F60718293A4B5C /* CodexNavigationView.swift */,
 				B2C3D4E5F6071829304A5B6D /* CodexElementDetailView.swift */,
 				C3D4E5F60718293A4B5C6D7E /* CodexWalkthroughDetailView.swift */,
+				CD11A1B2C3D4E5F607182930 /* CodexFlowLayout.swift */,
+				CD12A1B2C3D4E5F607182930 /* CodexCardHoverModifier.swift */,
+				CD13A1B2C3D4E5F607182930 /* CodexFrequencyIndicator.swift */,
+				CD14A1B2C3D4E5F607182930 /* CodexHeroHeader.swift */,
+				CD15A1B2C3D4E5F607182930 /* CodexCategorySection.swift */,
+				CD16A1B2C3D4E5F607182930 /* CodexElementHeroSection.swift */,
+				CD17A1B2C3D4E5F607182930 /* CodexExampleCardView.swift */,
 			);
 			name = Codex;
 			sourceTree = "<group>";
@@ -3281,6 +3302,13 @@
 				CX01BF7A3D8E4C5609213A4B /* CodexNavigationView.swift in Sources */,
 				2B3C4D5E6F0718293041526E /* CodexElementDetailView.swift in Sources */,
 				3C4D5E6F071829304152637F /* CodexWalkthroughDetailView.swift in Sources */,
+				CD01A1B2C3D4E5F607182930 /* CodexFlowLayout.swift in Sources */,
+				CD02A1B2C3D4E5F607182930 /* CodexCardHoverModifier.swift in Sources */,
+				CD03A1B2C3D4E5F607182930 /* CodexFrequencyIndicator.swift in Sources */,
+				CD04A1B2C3D4E5F607182930 /* CodexHeroHeader.swift in Sources */,
+				CD05A1B2C3D4E5F607182930 /* CodexCategorySection.swift in Sources */,
+				CD06A1B2C3D4E5F607182930 /* CodexElementHeroSection.swift in Sources */,
+				CD07A1B2C3D4E5F607182930 /* CodexExampleCardView.swift in Sources */,
 				1A1BD7F3C83DBDB2757EFD19 /* InboxViewModel.swift in Sources */,
 				1F65C847B6EF3E0B0D11B57F /* InboxItemCard.swift in Sources */,
 				93CC91EDE819D8934D305CBA /* InboxOverrideSheet.swift in Sources */,

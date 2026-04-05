@@ -118,6 +118,29 @@ enum CodexElementCategory: String, Codable, Sendable, Equatable, CaseIterable, I
         }
     }
 
+    var description: String {
+        switch self {
+        case .speechAct: "The fundamental communicative function of each slide"
+        case .transition: "How energy and attention flow between slides"
+        case .readerDelta: "Emotional and cognitive shifts installed in the reader"
+        case .proofType: "Evidence structures that build belief"
+        case .motivation: "The driving force behind why someone keeps reading"
+        case .compression: "Packing maximum meaning into minimum words"
+        case .frame: "The lens through which information is presented"
+        case .distance: "How close or far the speaker stands from the reader"
+        case .technique: "Specific craft moves that create effects"
+        case .dominantFrame: "The overarching narrative lens of an entire post"
+        case .arcShape: "The emotional trajectory across all slides"
+        case .physicsEvent: "Moments where the reader's state changes dramatically"
+        case .longRangeInteraction: "Elements that echo or callback across distant slides"
+        case .rsvDimension: "Resonance, stakes, and velocity measurements"
+        case .compoundPattern: "Multi-element combinations that create emergent effects"
+        case .antimatter: "What the creator deliberately chose NOT to do"
+        case .force: "Invisible pressures that shape reader behavior"
+        case .law: "Universal principles that govern content physics"
+        }
+    }
+
     var sortOrder: Int {
         switch self {
         case .speechAct: 0

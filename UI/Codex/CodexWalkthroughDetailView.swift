@@ -1,47 +1,72 @@
 // CosmoOS/UI/Codex/CodexWalkthroughDetailView.swift
 // Full walkthrough detail — slide breakdown, transitions, composition lesson, antimatter.
-// April 2026 — WP3 Codex Navigation
+// April 2026 — WP3 Codex Navigation + Premium Redesign
 
 import SwiftUI
 
 struct CodexWalkthroughDetailView: View {
     let atom: Atom
     let walkthrough: CodexWalkthrough
+    @State private var appeared = false
+
+    private var frameColor: Color {
+        CodexElementCategory.dominantFrame.color
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DS.space24) {
-                headerSection
-                whySelectedSection
-                slidesSection
-                transitionsSection
-                compositionLessonSection
-                antimatterSection
-                fabricSection
+            VStack(alignment: .leading, spacing: 0) {
+                walkthroughHero
+                CodexCategorySectionDivider(color: frameColor)
+                detailSections
             }
-            .padding(DS.space32)
-            .frame(maxWidth: 780)
-            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
         .background(DS.bg)
+        .onAppear {
+            withAnimation(ProMotionSprings.cardEntrance.delay(0.15)) {
+                appeared = true
+            }
+        }
     }
 
-    // MARK: - Header
+    // MARK: - Hero
 
-    private var headerSection: some View {
+    private var walkthroughHero: some View {
+        ZStack(alignment: .bottomLeading) {
+            heroBackground
+            heroContent
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var heroBackground: some View {
+        LinearGradient(
+            colors: [frameColor.opacity(0.05), frameColor.opacity(0.02), .clear],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .filmGrain(opacity: 0.015)
+    }
+
+    private var heroContent: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             Text(walkthrough.postTitle)
-                .font(DS.pageTitle)
+                .font(DS.display)
                 .foregroundStyle(DS.text)
-
-            if let creator = walkthrough.creatorName {
-                Text(creator)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textSecondary)
-            }
-
+            creatorRow
             headerTags
+        }
+        .padding(.horizontal, DS.space32)
+        .padding(.vertical, DS.space24)
+    }
+
+    @ViewBuilder
+    private var creatorRow: some View {
+        if let creator = walkthrough.creatorName {
+            Text(creator)
+                .font(DS.title3)
+                .foregroundStyle(DS.textSecondary)
         }
     }
 
@@ -53,7 +78,31 @@ struct CodexWalkthroughDetailView: View {
             if let arc = walkthrough.arcShape {
                 CodexConceptTag(name: arc, color: CodexElementCategory.arcShape.color)
             }
+            Text("\(walkthrough.slides.count) slides")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(DS.surface, in: Capsule())
         }
+    }
+
+    // MARK: - Detail Sections
+
+    private var detailSections: some View {
+        VStack(alignment: .leading, spacing: DS.space24) {
+            whySelectedSection
+            slidesSection
+            transitionsSection
+            compositionLessonSection
+            antimatterSection
+            fabricSection
+        }
+        .padding(DS.space32)
+        .frame(maxWidth: 780)
+        .frame(maxWidth: .infinity)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 12)
     }
 
     // MARK: - Why Selected
@@ -64,18 +113,18 @@ struct CodexWalkthroughDetailView: View {
             VStack(alignment: .leading, spacing: DS.space8) {
                 Text("WHY SELECTED")
                     .dsSectionLabel()
-
-                Text(why)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.text)
-                    .lineSpacing(3)
-                    .padding(DS.space16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.radiusMedium)
-                            .stroke(DS.accent.opacity(0.15), lineWidth: 1)
-                    )
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(frameColor)
+                        .frame(width: 3)
+                    Text(why)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                        .lineSpacing(3)
+                        .padding(DS.space16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .background(frameColor.opacity(0.04), in: .rect(cornerRadius: DS.radiusMedium))
             }
         }
     }
@@ -85,14 +134,36 @@ struct CodexWalkthroughDetailView: View {
     @ViewBuilder
     private var slidesSection: some View {
         if !walkthrough.slides.isEmpty {
-            VStack(alignment: .leading, spacing: DS.space16) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text("SLIDE BREAKDOWN")
                     .dsSectionLabel()
+                    .padding(.bottom, DS.space12)
 
-                ForEach(walkthrough.slides) { slide in
-                    WalkthroughSlideCard(slide: slide)
+                ForEach(Array(walkthrough.slides.enumerated()), id: \.element.id) { idx, slide in
+                    WalkthroughSlideCard(slide: slide, index: idx)
+                    if idx < walkthrough.slides.count - 1 {
+                        slideConnector(fromIndex: idx)
+                    }
                 }
             }
+        }
+    }
+
+    private func slideConnector(fromIndex: Int) -> some View {
+        HStack(spacing: 6) {
+            Spacer().frame(width: 14)
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(CodexElementCategory.transition.color.opacity(0.2))
+                    .frame(width: 2, height: 16)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(CodexElementCategory.transition.color.opacity(0.3))
+                Rectangle()
+                    .fill(CodexElementCategory.transition.color.opacity(0.2))
+                    .frame(width: 2, height: 8)
+            }
+            Spacer()
         }
     }
 
@@ -104,7 +175,6 @@ struct CodexWalkthroughDetailView: View {
             VStack(alignment: .leading, spacing: DS.space12) {
                 Text("TRANSITIONS")
                     .dsSectionLabel()
-
                 ForEach(walkthrough.transitions) { transition in
                     transitionRow(transition)
                 }
@@ -115,35 +185,47 @@ struct CodexWalkthroughDetailView: View {
     private func transitionRow(_ transition: WalkthroughTransition) -> some View {
         HStack(alignment: .top, spacing: DS.space8) {
             transitionBadge(from: transition.fromSlide, to: transition.toSlide)
-
             VStack(alignment: .leading, spacing: 2) {
                 CodexConceptTag(name: transition.transitionType, color: CodexElementCategory.transition.color)
-
-                if let explanation = transition.explanation, !explanation.isEmpty {
-                    Text(explanation)
-                        .font(DS.caption)
-                        .foregroundStyle(DS.textSecondary)
-                        .lineSpacing(2)
-                }
+                transitionExplanation(transition)
             }
         }
         .padding(DS.space12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsCard()
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(CodexElementCategory.transition.color.opacity(0.3))
+                .frame(width: 3)
+                .padding(.vertical, 6)
+                .padding(.leading, 1)
+        }
     }
 
     private func transitionBadge(from: Int, to: Int) -> some View {
         HStack(spacing: 4) {
-            Text("Slide \(from)")
+            Text("S\(from)")
                 .font(DS.caption)
+                .fontWeight(.medium)
                 .foregroundStyle(DS.textMuted)
             Image(systemName: "arrow.right")
                 .font(.system(size: 9))
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(CodexElementCategory.transition.color.opacity(0.5))
                 .accessibilityHidden(true)
-            Text("Slide \(to)")
+            Text("S\(to)")
                 .font(DS.caption)
+                .fontWeight(.medium)
                 .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private func transitionExplanation(_ transition: WalkthroughTransition) -> some View {
+        if let explanation = transition.explanation, !explanation.isEmpty {
+            Text(explanation)
+                .font(DS.caption)
+                .foregroundStyle(DS.textSecondary)
+                .lineSpacing(2)
         }
     }
 
@@ -155,12 +237,10 @@ struct CodexWalkthroughDetailView: View {
             VStack(alignment: .leading, spacing: DS.space8) {
                 Text("COMPOSITION LESSON")
                     .dsSectionLabel()
-
                 HStack(alignment: .top, spacing: DS.space12) {
                     Rectangle()
                         .fill(DS.green)
                         .frame(width: 3)
-
                     Text(lesson)
                         .font(DS.callout)
                         .foregroundStyle(DS.text)
@@ -168,11 +248,7 @@ struct CodexWalkthroughDetailView: View {
                 }
                 .padding(DS.space16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DS.green.opacity(0.06), in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusMedium)
-                        .stroke(DS.green.opacity(0.15), lineWidth: 1)
-                )
+                .background(DS.green.opacity(0.04), in: .rect(cornerRadius: DS.radiusMedium))
             }
         }
     }
@@ -185,28 +261,36 @@ struct CodexWalkthroughDetailView: View {
             VStack(alignment: .leading, spacing: DS.space8) {
                 Text("ANTIMATTER")
                     .dsSectionLabel()
-
-                ForEach(antimatter, id: \.self) { item in
-                    HStack(alignment: .top, spacing: DS.space8) {
-                        Image(systemName: "xmark.octagon.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(DS.red)
-                            .padding(.top, 2)
-                            .accessibilityHidden(true)
-                        Text(item)
-                            .font(DS.callout)
-                            .foregroundStyle(DS.text)
-                            .lineSpacing(3)
-                    }
-                }
-                .padding(DS.space16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DS.red.opacity(0.06), in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusMedium)
-                        .stroke(DS.red.opacity(0.15), lineWidth: 1)
-                )
+                antimatterContent(antimatter)
             }
+        }
+    }
+
+    private func antimatterContent(_ items: [String]) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            ForEach(items, id: \.self) { item in
+                HStack(alignment: .top, spacing: DS.space8) {
+                    Image(systemName: "xmark.octagon.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DS.red)
+                        .padding(.top, 2)
+                        .accessibilityHidden(true)
+                    Text(item)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                        .lineSpacing(3)
+                }
+            }
+        }
+        .padding(DS.space16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.red.opacity(0.04), in: .rect(cornerRadius: DS.radiusMedium))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(DS.red.opacity(0.3))
+                .frame(width: 3)
+                .padding(.vertical, 6)
+                .padding(.leading, 1)
         }
     }
 
@@ -218,7 +302,6 @@ struct CodexWalkthroughDetailView: View {
             VStack(alignment: .leading, spacing: DS.space8) {
                 Text("THE FABRIC")
                     .dsSectionLabel()
-
                 Text(fabric)
                     .font(DS.body)
                     .foregroundStyle(DS.text)
@@ -226,11 +309,14 @@ struct CodexWalkthroughDetailView: View {
                     .italic()
                     .padding(DS.space16)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.radiusMedium)
-                            .stroke(DS.border, lineWidth: 1)
-                    )
+                    .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(frameColor.opacity(0.3))
+                            .frame(width: 3)
+                            .padding(.vertical, 6)
+                            .padding(.leading, 1)
+                    }
             }
         }
     }
@@ -240,6 +326,8 @@ struct CodexWalkthroughDetailView: View {
 
 struct WalkthroughSlideCard: View {
     let slide: WalkthroughSlide
+    let index: Int
+    @State private var appeared = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
@@ -251,17 +339,28 @@ struct WalkthroughSlideCard: View {
         }
         .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsCard()
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(DS.border.opacity(0.5), lineWidth: 1)
+        )
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 8)
+        .onAppear {
+            withAnimation(ProMotionSprings.staggered(index: index)) {
+                appeared = true
+            }
+        }
     }
 
     private var slideBadge: some View {
         Text("Slide \(slide.slideNumber)")
             .font(DS.caption)
-            .fontWeight(.semibold)
-            .foregroundStyle(DS.accent)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(DS.accent.opacity(0.1), in: Capsule())
+            .fontWeight(.bold)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(DS.accent, in: Capsule())
     }
 
     @ViewBuilder
@@ -277,7 +376,7 @@ struct WalkthroughSlideCard: View {
     }
 
     private var conceptTags: some View {
-        FlowLayout(spacing: 6) {
+        CodexFlowLayout(spacing: 6) {
             if let act = slide.speechAct {
                 CodexConceptTag(name: act, color: CodexElementCategory.speechAct.color)
             }
@@ -303,7 +402,7 @@ struct WalkthroughSlideCard: View {
             || !slide.compressions.isEmpty
 
         if hasSecondary {
-            FlowLayout(spacing: 4) {
+            CodexFlowLayout(spacing: 4) {
                 ForEach(slide.proofTypes, id: \.self) { proof in
                     smallTag(proof, color: CodexElementCategory.proofType.color)
                 }
@@ -335,48 +434,5 @@ struct WalkthroughSlideCard: View {
                 .lineSpacing(2)
                 .padding(.top, 4)
         }
-    }
-}
-
-// MARK: - Flow Layout (file-private)
-
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        arrangeSubviews(proposal: proposal, subviews: subviews).size
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
-        for (index, position) in result.positions.enumerated() {
-            subviews[index].place(
-                at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y),
-                proposal: .unspecified
-            )
-        }
-    }
-
-    private func arrangeSubviews(proposal: ProposedViewSize, subviews: Subviews)
-        -> (positions: [CGPoint], size: CGSize) {
-        let maxWidth = proposal.width ?? .infinity
-        var positions: [CGPoint] = []
-        var currentX: CGFloat = 0
-        var currentY: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        var maxX: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if currentX + size.width > maxWidth, currentX > 0 {
-                currentX = 0
-                currentY += lineHeight + spacing
-                lineHeight = 0
-            }
-            positions.append(CGPoint(x: currentX, y: currentY))
-            lineHeight = max(lineHeight, size.height)
-            currentX += size.width + spacing
-            maxX = max(maxX, currentX - spacing)
-        }
-        return (positions, CGSize(width: maxX, height: currentY + lineHeight))
     }
 }

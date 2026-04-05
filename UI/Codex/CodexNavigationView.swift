@@ -1,6 +1,6 @@
 // CosmoOS/UI/Codex/CodexNavigationView.swift
 // Top-level Codex browser — searchable grid of all Content Physics elements and walkthroughs.
-// April 2026 — WP3 Codex Navigation
+// April 2026 — WP3 Codex Navigation + Premium Redesign
 
 import SwiftUI
 
@@ -45,10 +45,16 @@ struct CodexNavigationView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
             VStack(spacing: 0) {
-                headerBar
-                Divider()
+                CodexHeroHeader(
+                    searchQuery: $searchQuery,
+                    elementCount: filteredElements.count,
+                    categoryCount: CodexElementCategory.allCases.count,
+                    isImporting: isImporting,
+                    onImport: importCodex,
+                    showGrid: $showGrid
+                )
+                CodexCategoryDivider()
                 categoryTabBar
-                Divider()
                 contentArea
             }
             .background(DS.bg)
@@ -72,135 +78,41 @@ struct CodexNavigationView: View {
         }
     }
 
-    // MARK: - Header
-
-    private var headerBar: some View {
-        HStack(spacing: DS.space16) {
-            Text("Content Physics Codex")
-                .font(DS.pageTitle)
-                .foregroundStyle(DS.text)
-
-            Spacer()
-
-            searchField
-
-            // Re-import button
-            Button {
-                importCodex()
-            } label: {
-                HStack(spacing: 4) {
-                    if isImporting {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else {
-                        Image(systemName: "arrow.down.circle")
-                    }
-                    Text(isImporting ? "Importing..." : "Import")
-                }
-                .font(DS.caption)
-                .foregroundStyle(DS.accent)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(DS.accent.opacity(0.1), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(isImporting)
-
-            countBadge
-
-            gridListToggle
-        }
-        .padding(.horizontal, DS.space24)
-        .padding(.vertical, DS.space12)
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
-                .foregroundStyle(DS.textMuted)
-            TextField("Search elements...", text: $searchQuery)
-                .textFieldStyle(.plain)
-                .font(DS.callout)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .frame(width: 260)
-    }
-
-    private var countBadge: some View {
-        Text("\(filteredElements.count) elements")
-            .font(DS.caption)
-            .foregroundStyle(DS.textMuted)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.surface, in: Capsule())
-    }
-
-    private var gridListToggle: some View {
-        Button {
-            withAnimation(ProMotionSprings.snappy) { showGrid.toggle() }
-        } label: {
-            Image(systemName: showGrid ? "square.grid.2x2" : "list.bullet")
-                .font(.system(size: 14))
-                .foregroundStyle(DS.textSecondary)
-                .frame(width: 32, height: 32)
-                .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(showGrid ? "Switch to list view" : "Switch to grid view")
-    }
-
     // MARK: - Category Tabs
 
     private var categoryTabBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                categoryTab(label: "All", category: nil)
-
+            HStack(spacing: 6) {
+                categoryTab(label: "All", icon: "square.grid.3x3", category: nil, count: elements.count)
                 ForEach(sortedCategories) { cat in
-                    categoryTab(label: cat.displayName, category: cat)
+                    categoryTab(label: cat.displayName, icon: cat.icon, category: cat, count: countForCategory(cat))
                 }
             }
             .padding(.horizontal, DS.space24)
             .padding(.vertical, DS.space8)
         }
+        .background(DS.bg)
     }
 
     private var sortedCategories: [CodexElementCategory] {
         CodexElementCategory.allCases.sorted { $0.sortOrder < $1.sortOrder }
     }
 
-    private func categoryTab(label: String, category: CodexElementCategory?) -> some View {
+    private func countForCategory(_ cat: CodexElementCategory) -> Int {
+        elements.filter { $0.element.category == cat }.count
+    }
+
+    private func categoryTab(label: String, icon: String, category: CodexElementCategory?, count: Int) -> some View {
         let isSelected = selectedCategory == category
+        let color = category?.color ?? DS.accent
         return Button {
             withAnimation(ProMotionSprings.snappy) { selectedCategory = category }
         } label: {
-            categoryTabLabel(label: label, isSelected: isSelected, color: category?.color ?? DS.accent)
+            CodexCategoryTabLabel(label: label, icon: icon, count: count, isSelected: isSelected, color: color)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel("\(label), \(count) elements")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
-    private func categoryTabLabel(label: String, isSelected: Bool, color: Color) -> some View {
-        Text(label)
-            .font(DS.caption)
-            .foregroundStyle(isSelected ? .white : DS.textSecondary)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(
-                isSelected ? AnyShapeStyle(color) : AnyShapeStyle(DS.surface),
-                in: Capsule()
-            )
-            .overlay(
-                isSelected ? nil : Capsule().stroke(DS.border, lineWidth: 1)
-            )
     }
 
     // MARK: - Content
@@ -219,7 +131,11 @@ struct CodexNavigationView: View {
     private var scrollContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space24) {
-                if !filteredElements.isEmpty { elementGridSection }
+                if selectedCategory == nil && searchQuery.isEmpty {
+                    groupedElementSections
+                } else {
+                    flatElementGrid
+                }
                 if !filteredWalkthroughs.isEmpty { walkthroughSection }
             }
             .padding(DS.space24)
@@ -227,105 +143,45 @@ struct CodexNavigationView: View {
         .scrollIndicators(.hidden)
     }
 
-    private var loadingPlaceholder: some View {
-        VStack(spacing: DS.space12) {
-            ProgressView()
-            Text("Loading Codex...")
-                .font(DS.callout)
-                .foregroundStyle(DS.textMuted)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+    // MARK: - Grouped Layout
 
-    private var emptyState: some View {
-        VStack(spacing: DS.space16) {
-            Image(systemName: "atom")
-                .font(.system(size: 40))
-                .foregroundStyle(DS.textMuted)
-                .accessibilityHidden(true)
-
-            if !searchQuery.isEmpty {
-                Text("No elements found")
-                    .font(DS.title3)
-                    .foregroundStyle(DS.textSecondary)
-                Text("Try a different search term")
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textMuted)
-            } else {
-                Text("Codex not imported yet")
-                    .font(DS.title3)
-                    .foregroundStyle(DS.textSecondary)
-                Text("Import the Exemplar Codex to populate the periodic table with 200+ content physics elements.")
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textMuted)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 400)
-
-                if isImporting {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Importing codex elements...")
-                            .font(DS.callout)
-                            .foregroundStyle(DS.accent)
-                    }
-                } else {
-                    Button {
-                        importCodex()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "square.and.arrow.down")
-                            Text("Import Codex")
-                        }
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(DS.textOnAccent)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(DS.accent, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                if let result = importResult {
-                    Text(result)
-                        .font(DS.caption)
-                        .foregroundStyle(result.contains("Error") ? DS.red : DS.green)
-                        .padding(.top, 4)
+    private var groupedElementSections: some View {
+        ForEach(sortedCategories) { category in
+            let categoryElements = filteredElements.filter { $0.element.category == category }
+            if !categoryElements.isEmpty {
+                VStack(alignment: .leading, spacing: DS.space12) {
+                    CodexCategorySectionHeader(category: category, count: categoryElements.count)
+                    CodexCategorySectionDivider(color: category.color)
+                    categoryElementGrid(categoryElements)
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func importCodex() {
-        isImporting = true
-        importResult = nil
-        Task {
-            do {
-                let importer = CodexImporter()
-                let result = try await importer.importCodex()
-                var parts: [String] = []
-                if result.cleaned > 0 { parts.append("\(result.cleaned) cleaned") }
-                if result.elementsCreated > 0 { parts.append("\(result.elementsCreated) elements") }
-                if result.walkthroughsCreated > 0 { parts.append("\(result.walkthroughsCreated) walkthroughs") }
-                if result.skipped > 0 { parts.append("\(result.skipped) skipped") }
-                importResult = parts.joined(separator: ", ")
-                // Reload data
-                await loadData()
-            } catch {
-                importResult = "Error: \(error.localizedDescription)"
+    private func categoryElementGrid(_ entries: [CodexElementEntry]) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 260), spacing: DS.space16)],
+            spacing: DS.space16
+        ) {
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                CodexElementCardView(entry: entry, index: index) {
+                    navigationPath.append(CodexRoute.element(entry))
+                }
             }
-            isImporting = false
         }
     }
 
-    // MARK: - Element Grid
+    // MARK: - Flat Grid (filtered)
 
-    private var elementGridSection: some View {
+    private var flatElementGrid: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Text("ELEMENTS")
-                .dsSectionLabel()
-
+            if let cat = selectedCategory {
+                CodexCategorySectionHeader(category: cat, count: filteredElements.count)
+                CodexCategorySectionDivider(color: cat.color)
+            } else {
+                Text("SEARCH RESULTS")
+                    .dsSectionLabel()
+            }
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 260), spacing: DS.space16)],
                 spacing: DS.space16
@@ -356,6 +212,50 @@ struct CodexNavigationView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Loading & Empty
+
+    private var loadingPlaceholder: some View {
+        VStack(spacing: DS.space12) {
+            ProgressView()
+            Text("Loading Codex...")
+                .font(DS.callout)
+                .foregroundStyle(DS.textMuted)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyState: some View {
+        CodexEmptyState(
+            searchQuery: searchQuery,
+            isImporting: isImporting,
+            importResult: importResult,
+            onImport: importCodex
+        )
+    }
+
+    // MARK: - Import
+
+    private func importCodex() {
+        isImporting = true
+        importResult = nil
+        Task {
+            do {
+                let importer = CodexImporter()
+                let result = try await importer.importCodex()
+                var parts: [String] = []
+                if result.cleaned > 0 { parts.append("\(result.cleaned) cleaned") }
+                if result.elementsCreated > 0 { parts.append("\(result.elementsCreated) elements") }
+                if result.walkthroughsCreated > 0 { parts.append("\(result.walkthroughsCreated) walkthroughs") }
+                if result.skipped > 0 { parts.append("\(result.skipped) skipped") }
+                importResult = parts.joined(separator: ", ")
+                await loadData()
+            } catch {
+                importResult = "Error: \(error.localizedDescription)"
+            }
+            isImporting = false
         }
     }
 
@@ -403,8 +303,6 @@ struct CodexNavigationView: View {
         isLoading = false
     }
 
-    // MARK: - Element Navigation Handler
-
     private func handleElementNavigation(_ notification: Notification) {
         guard let name = notification.userInfo?["canonicalName"] as? String else { return }
         if let entry = elements.first(where: {
@@ -415,33 +313,84 @@ struct CodexNavigationView: View {
     }
 }
 
+// MARK: - Category Tab Label
+
+private struct CodexCategoryTabLabel: View {
+    let label: String
+    let icon: String
+    let count: Int
+    let isSelected: Bool
+    let color: Color
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .accessibilityHidden(true)
+            Text(label)
+                .font(DS.caption)
+            Text("\(count)")
+                .font(DS.caption2)
+                .foregroundStyle(isSelected ? .white.opacity(0.7) : DS.textMuted)
+        }
+        .foregroundStyle(isSelected ? .white : (isHovered ? color : DS.textSecondary))
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(tabBackgroundColor, in: Capsule())
+        .overlay {
+            if !isSelected {
+                Capsule().stroke(isHovered ? color.opacity(0.2) : DS.border, lineWidth: 1)
+            }
+        }
+        .scaleEffect(isHovered && !isSelected ? 1.03 : 1.0)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+
+    private var tabBackgroundColor: Color {
+        if isSelected { return color }
+        if isHovered { return color.opacity(0.08) }
+        return DS.surface
+    }
+}
+
 // MARK: - Element Card
 
 struct CodexElementCardView: View {
     let entry: CodexElementEntry
     let index: Int
     let onTap: () -> Void
+    @State private var appeared = false
+
+    private var categoryColor: Color { entry.element.category.color }
 
     var body: some View {
         Button(action: onTap) {
             cardContent
         }
-        .buttonStyle(.plain)
-        .animation(
-            ProMotionSprings.staggered(index: index),
-            value: entry.element.canonicalName
-        )
+        .buttonStyle(CodexCardButtonStyle())
+        .codexHover(accent: categoryColor)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 12)
+        .onAppear {
+            withAnimation(ProMotionSprings.staggered(index: index)) {
+                appeared = true
+            }
+        }
     }
 
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             cardHeader
-            frequencyLabel
+            CodexFrequencyIndicator(frequency: entry.element.frequency, color: categoryColor, mode: .compact)
             definitionText
         }
         .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsCard()
+        .background(cardBackground)
+        .clipShape(.rect(cornerRadius: DS.radiusMedium))
+        .overlay(alignment: .leading) { categoryAccentBar }
     }
 
     private var cardHeader: some View {
@@ -451,25 +400,23 @@ struct CodexElementCardView: View {
                 .fontWeight(.bold)
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
-
             Spacer()
-
-            Text(entry.element.category.displayName)
-                .font(DS.caption2)
-                .foregroundStyle(entry.element.category.color)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(entry.element.category.color.opacity(0.12), in: Capsule())
+            categoryBadge
         }
     }
 
-    @ViewBuilder
-    private var frequencyLabel: some View {
-        if let freq = entry.element.frequency {
-            Text(freq)
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
+    private var categoryBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: entry.element.category.icon)
+                .font(.system(size: 9))
+                .accessibilityHidden(true)
+            Text(entry.element.category.displayName)
+                .font(DS.caption2)
         }
+        .foregroundStyle(categoryColor)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(categoryColor.opacity(0.12), in: Capsule())
     }
 
     private var definitionText: some View {
@@ -477,6 +424,35 @@ struct CodexElementCardView: View {
             .font(DS.callout)
             .foregroundStyle(DS.textSecondary)
             .lineLimit(2)
+    }
+
+    private var cardBackground: some View {
+        ZStack {
+            DS.surfaceElevated
+            LinearGradient(
+                colors: [categoryColor.opacity(0.04), .clear],
+                startPoint: .top,
+                endPoint: .center
+            )
+        }
+    }
+
+    private var categoryAccentBar: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(categoryColor)
+            .frame(width: 3)
+            .padding(.vertical, 8)
+            .padding(.leading, 1)
+    }
+}
+
+// MARK: - Card Button Style
+
+private struct CodexCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(ProMotionSprings.press, value: configuration.isPressed)
     }
 }
 
@@ -486,16 +462,21 @@ struct CodexWalkthroughCardView: View {
     let entry: CodexWalkthroughEntry
     let index: Int
     let onTap: () -> Void
+    @State private var appeared = false
 
     var body: some View {
         Button(action: onTap) {
             walkthroughContent
         }
-        .buttonStyle(.plain)
-        .animation(
-            ProMotionSprings.staggered(index: index),
-            value: entry.walkthrough.postReference
-        )
+        .buttonStyle(CodexCardButtonStyle())
+        .codexHover(accent: CodexElementCategory.dominantFrame.color)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 12)
+        .onAppear {
+            withAnimation(ProMotionSprings.staggered(index: index)) {
+                appeared = true
+            }
+        }
     }
 
     private var walkthroughContent: some View {
@@ -507,7 +488,15 @@ struct CodexWalkthroughCardView: View {
         }
         .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsCard()
+        .background(DS.surfaceElevated)
+        .clipShape(.rect(cornerRadius: DS.radiusMedium))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(CodexElementCategory.dominantFrame.color)
+                .frame(width: 3)
+                .padding(.vertical, 8)
+                .padding(.leading, 1)
+        }
     }
 
     private var titleRow: some View {
@@ -542,5 +531,91 @@ struct CodexWalkthroughCardView: View {
         Text("\(entry.walkthrough.slides.count) slides")
             .font(DS.caption)
             .foregroundStyle(DS.textMuted)
+    }
+}
+
+// MARK: - Empty State
+
+private struct CodexEmptyState: View {
+    let searchQuery: String
+    let isImporting: Bool
+    let importResult: String?
+    let onImport: () -> Void
+
+    var body: some View {
+        VStack(spacing: DS.space16) {
+            emptyIcon
+            if !searchQuery.isEmpty {
+                searchEmptyContent
+            } else {
+                importEmptyContent
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyIcon: some View {
+        Image(systemName: "atom")
+            .font(.system(size: 40))
+            .foregroundStyle(DS.textMuted)
+            .accessibilityHidden(true)
+    }
+
+    private var searchEmptyContent: some View {
+        VStack(spacing: DS.space4) {
+            Text("No elements found")
+                .font(DS.title3)
+                .foregroundStyle(DS.textSecondary)
+            Text("Try a different search term")
+                .font(DS.callout)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private var importEmptyContent: some View {
+        VStack(spacing: DS.space12) {
+            Text("Codex not imported yet")
+                .font(DS.title3)
+                .foregroundStyle(DS.textSecondary)
+            Text("Import the Exemplar Codex to populate the periodic table with 200+ content physics elements.")
+                .font(DS.callout)
+                .foregroundStyle(DS.textMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 400)
+            importActionArea
+        }
+    }
+
+    @ViewBuilder
+    private var importActionArea: some View {
+        if isImporting {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Importing codex elements...")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.accent)
+            }
+        } else {
+            Button(action: onImport) {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.down")
+                        .accessibilityHidden(true)
+                    Text("Import Codex")
+                }
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(DS.textOnAccent)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(DS.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+
+        if let result = importResult {
+            Text(result)
+                .font(DS.caption)
+                .foregroundStyle(result.contains("Error") ? DS.red : DS.green)
+                .padding(.top, 4)
+        }
     }
 }

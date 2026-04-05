@@ -2177,14 +2177,18 @@ If ALL checks pass, present the draft.
       system.push({ type: 'text', text: dynamicBlock.content });
     }
 
+    // Session mode needs much higher output budget: adaptive thinking + plan + draft + self-edit all in one call.
+    // Multi-phase mode uses 16K per phase (plenty for a single think + write).
+    const maxTokens = pipelineStep === 'session' ? 64000 : 16384;
+
     const body: any = {
       model,
       system,
-      messages, // already in Anthropic format from buildAPIMessages() → buildAnthropicMessages()
-      max_tokens: 16384,
+      messages,
+      max_tokens: maxTokens,
     };
 
-    // Adaptive thinking for session mode (Opus 4.6 — interleaved thinking automatic, no beta header)
+    // Adaptive thinking for session mode — interleaved thinking between tool calls
     if (pipelineStep === 'session') {
       body.thinking = { type: 'adaptive' };
       body.temperature = 1; // Required for adaptive thinking

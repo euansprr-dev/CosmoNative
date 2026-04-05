@@ -23,10 +23,12 @@ struct IdeaFocusModeView: View {
 
     @StateObject private var viewModel: IdeaFocusModeViewModel
     @State private var newHookText: String = ""
+    @State private var isPromoting: Bool = false
     @State private var showProfileEditor: Bool = false
     @State private var showBlueprintPicker: Bool = false
     @State private var isLoadingArcRecs: Bool = false
     @State private var chatExpanded: Bool = false
+    @State private var blueprintExpanded: Bool = true
     @State private var outlineAdvancedMode: Bool = false
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
@@ -168,7 +170,7 @@ extension IdeaFocusModeView {
         .padding(.vertical, 10)
         .background(DS.bg)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(DS.border).frame(height: 1)
+            Rectangle().fill(ideaGold.opacity(0.1)).frame(height: 1)
         }
     }
 
@@ -292,22 +294,33 @@ extension IdeaFocusModeView {
 
     private var writeButton: some View {
         Button {
-            Task { await viewModel.promoteToContent() }
+            guard !isPromoting else { return }
+            isPromoting = true
+            Task {
+                await viewModel.promoteToContent()
+                isPromoting = false
+            }
         } label: {
             writeButtonLabel
         }
         .buttonStyle(.plain)
-        .disabled(isBodyEmpty)
-        .opacity(isBodyEmpty ? 0.5 : 1)
+        .disabled(isPromoting || isBodyEmpty)
+        .opacity((isPromoting || isBodyEmpty) ? 0.5 : 1)
         .accessibilityLabel("Write content from this idea")
     }
 
     @ViewBuilder
     private var writeButtonLabel: some View {
         HStack(spacing: 6) {
-            Image(systemName: "pencil.line")
-                .accessibilityHidden(true)
-            Text("Write")
+            if isPromoting {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Writing...")
+            } else {
+                Image(systemName: "pencil.line")
+                    .accessibilityHidden(true)
+                Text("Write")
+            }
         }
         .font(.system(size: 13, weight: .semibold))
         .foregroundStyle(DS.textOnAccent)
@@ -534,7 +547,7 @@ extension IdeaFocusModeView {
 
             if let outline = viewModel.codexOutline {
                 if outlineAdvancedMode {
-                    inlineOutlineSlides(outline)
+                    advancedOutlineWorkspace(outline)
                 } else {
                     normalOutlineSlides(outline)
                 }
@@ -566,6 +579,23 @@ extension IdeaFocusModeView {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(DS.accent.opacity(0.12), in: Capsule())
+
+                if outlineAdvancedMode {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(DS.textMuted)
+                        .help("""
+                        Advanced Outline Fields:
+                        • Speech Act — The primary action this slide performs (HOOK, CONFESSION, PROOF, REVEAL...)
+                        • Reader Deltas — What the reader feels (CURIOSITY+, TRUST+, TENSION+...)
+                        • Frame — How this slide is positioned (SETUP, LOSS, TRANSFORMATION...)
+                        • Distance — Reader proximity: ZERO (live scene), NEAR (remembered), FAR (observed)
+                        • Techniques — Craft moves (ELLIPSIS MOMENTUM, DIRECT DIALOGUE, NUMBER FORMATTING...)
+                        • → Next — Transition to next slide (ESCALATION, ANSWER, PIVOT...)
+
+                        Drag elements from the browser on the right onto each slot.
+                        """)
+                }
             }
 
             Spacer()
@@ -848,6 +878,279 @@ extension IdeaFocusModeView {
         }
         viewModel.codexOutline = outline
     }
+
+    private func removeElementFromSlide(slideId: UUID, field: String, name: String) {
+        guard var outline = viewModel.codexOutline,
+              let idx = outline.slides.firstIndex(where: { $0.id == slideId }) else { return }
+        switch field {
+        case "speechAct": outline.slides[idx].speechAct = nil
+        case "frame": outline.slides[idx].frame = nil
+        case "distance": outline.slides[idx].distance = nil
+        case "transition": outline.slides[idx].transition = nil
+        case "readerDelta": outline.slides[idx].readerDeltas.removeAll { $0 == name }
+        case "technique": outline.slides[idx].techniques.removeAll { $0 == name }
+        default: break
+        }
+        viewModel.codexOutline = outline
+    }
+}
+
+// MARK: - Advanced Outline Workspace
+
+extension IdeaFocusModeView {
+
+    /// Two-column advanced outline: slide editors (left) + element browser (right).
+    private func advancedOutlineWorkspace(_ outline: CodexOutlineModel) -> some View {
+        HStack(alignment: .top, spacing: DS.space12) {
+            advancedSlideList(outline)
+            AdvancedElementBrowser()
+        }
+    }
+
+    private func advancedSlideList(_ outline: CodexOutlineModel) -> some View {
+        ScrollView {
+            VStack(spacing: DS.space8) {
+                if let arc = outline.arcShape {
+                    inlineArcBadge(arc)
+                }
+                ForEach(outline.slides) { slide in
+                    advancedSlideCard(slide)
+                }
+            }
+            .padding(.vertical, DS.space4)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    // MARK: Advanced Slide Card
+
+    private func advancedSlideCard(_ slide: CodexOutlineSlide) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            advancedSlideHeader(slide)
+            advancedSlidePhysicsGrid(slide)
+        }
+        .padding(DS.space10)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.borderSubtle, lineWidth: 0.5)
+        )
+    }
+
+    private func advancedSlideHeader(_ slide: CodexOutlineSlide) -> some View {
+        HStack(spacing: DS.space6) {
+            slideBadge(slide.position)
+            TextField("Note...", text: slideNoteBinding(for: slide.id), axis: .vertical)
+                .font(DS.caption2)
+                .foregroundStyle(DS.text)
+                .textFieldStyle(.plain)
+                .lineLimit(1...2)
+            Spacer()
+            slideDeleteButton(slide)
+        }
+    }
+
+    private func slideBadge(_ position: Int) -> some View {
+        Text("\(position)")
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundStyle(DS.textOnAccent)
+            .frame(width: 22, height: 22)
+            .background(DS.entityIdea, in: Capsule())
+    }
+
+    private func slideDeleteButton(_ slide: CodexOutlineSlide) -> some View {
+        Button { removeSlide(slide.id) } label: {
+            Image(systemName: "trash")
+                .font(.system(size: 10))
+                .foregroundStyle(DS.textMuted)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Delete slide \(slide.position)")
+    }
+
+    // MARK: Physics Grid
+
+    private func advancedSlidePhysicsGrid(_ slide: CodexOutlineSlide) -> some View {
+        let columns = [
+            GridItem(.flexible(), spacing: DS.space6),
+            GridItem(.flexible(), spacing: DS.space6)
+        ]
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: DS.space6) {
+            physicsSlot(
+                "Speech Act", value: slide.speechAct,
+                category: .speechAct, slideId: slide.id, field: "speechAct",
+                hint: "The primary action this slide performs \u{2014} e.g., HOOK, CONFESSION, PROOF, REVEAL"
+            )
+            physicsSlot(
+                "Frame", value: slide.frame,
+                category: .frame, slideId: slide.id, field: "frame",
+                hint: "How this slide is positioned \u{2014} e.g., SETUP, LOSS, TRANSFORMATION, TUTORIAL"
+            )
+            physicsMultiSlot(
+                "Reader Deltas", values: slide.readerDeltas,
+                category: .readerDelta, slideId: slide.id, field: "readerDelta",
+                hint: "What the reader should feel after this slide \u{2014} e.g., CURIOSITY+, TRUST+, TENSION+"
+            )
+            physicsSlot(
+                "Distance", value: slide.distance,
+                category: .distance, slideId: slide.id, field: "distance",
+                hint: "Reader\u{2019}s proximity \u{2014} ZERO (live scene), NEAR (remembered), FAR (observed)"
+            )
+            physicsMultiSlot(
+                "Techniques", values: slide.techniques,
+                category: .technique, slideId: slide.id, field: "technique",
+                hint: "Craft moves active on this slide \u{2014} e.g., ELLIPSIS MOMENTUM, DIRECT DIALOGUE"
+            )
+            physicsSlot(
+                "\u{2192} Next", value: slide.transition,
+                category: .transition, slideId: slide.id, field: "transition",
+                hint: "How this slide connects to the next \u{2014} e.g., ESCALATION, ANSWER, PIVOT"
+            )
+        }
+    }
+
+    // MARK: Single-Value Physics Slot
+
+    private func physicsSlot(
+        _ label: String,
+        value: String?,
+        category: CodexElementCategory,
+        slideId: UUID,
+        field: String,
+        hint: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            slotLabel(label)
+            if let val = value {
+                filledSingleSlot(val, category: category, slideId: slideId, field: field)
+            } else {
+                emptySingleSlot(label, category: category, slideId: slideId, field: field)
+            }
+        }
+        .help(hint)
+    }
+
+    private func filledSingleSlot(
+        _ val: String,
+        category: CodexElementCategory,
+        slideId: UUID,
+        field: String
+    ) -> some View {
+        HStack(spacing: 2) {
+            CodexConceptTag(name: val, color: category.color)
+            slotRemoveButton {
+                removeElementFromSlide(slideId: slideId, field: field, name: val)
+            }
+        }
+    }
+
+    private func emptySingleSlot(
+        _ label: String,
+        category: CodexElementCategory,
+        slideId: UUID,
+        field: String
+    ) -> some View {
+        Text(label)
+            .font(.system(size: 8))
+            .foregroundStyle(DS.textMuted.opacity(0.5))
+            .frame(maxWidth: .infinity, minHeight: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .foregroundStyle(DS.borderSubtle)
+            )
+            .contentShape(Rectangle())
+            .dropDestination(for: CodexDragItem.self) { items, _ in
+                guard let item = items.first, item.category == category else { return false }
+                addElementToSlide(slideId: slideId, field: field, name: item.canonicalName)
+                return true
+            } isTargeted: { targeted in
+                // Visual feedback when dragging over
+            }
+    }
+
+    // MARK: Multi-Value Physics Slot
+
+    private func physicsMultiSlot(
+        _ label: String,
+        values: [String],
+        category: CodexElementCategory,
+        slideId: UUID,
+        field: String,
+        hint: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            slotLabel(label)
+            multiSlotContent(values, category: category, slideId: slideId, field: field)
+        }
+        .help(hint)
+    }
+
+    private func multiSlotContent(
+        _ values: [String],
+        category: CodexElementCategory,
+        slideId: UUID,
+        field: String
+    ) -> some View {
+        FlowLayout(spacing: 2) {
+            ForEach(values, id: \.self) { val in
+                HStack(spacing: 1) {
+                    CodexConceptTag(name: val, color: category.color)
+                    slotRemoveButton {
+                        removeElementFromSlide(slideId: slideId, field: field, name: val)
+                    }
+                }
+            }
+            multiSlotDropTarget(category: category, slideId: slideId, field: field)
+        }
+    }
+
+    private func multiSlotDropTarget(
+        category: CodexElementCategory,
+        slideId: UUID,
+        field: String
+    ) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            .foregroundStyle(DS.borderSubtle)
+            .frame(width: 20, height: 18)
+            .overlay(
+                Image(systemName: "plus")
+                    .font(.system(size: 7))
+                    .foregroundStyle(DS.textMuted.opacity(0.5))
+                    .accessibilityHidden(true)
+            )
+            .dropDestination(for: CodexDragItem.self) { items, _ in
+                guard let item = items.first, item.category == category else { return false }
+                addElementToSlide(slideId: slideId, field: field, name: item.canonicalName)
+                return true
+            }
+    }
+
+    // MARK: Slot Shared Helpers
+
+    private func slotLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(DS.textMuted)
+            .tracking(0.5)
+    }
+
+    private func slotRemoveButton(action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(ProMotionSprings.snappy) { action() }
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(DS.textMuted)
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Remove element")
+    }
 }
 
 // MARK: - Supporting Swipes Section
@@ -862,10 +1165,26 @@ extension IdeaFocusModeView {
 
     private var supportingSwipesHeader: some View {
         HStack {
-            Text("SUPPORTING SWIPES")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+            HStack(spacing: 6) {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ideaGold)
+                    .frame(width: 22, height: 22)
+                    .background(ideaGold.opacity(0.1), in: Circle())
+                    .accessibilityHidden(true)
+                Text("Supporting Swipes")
+                    .font(DS.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DS.text)
+                if !viewModel.linkedSwipes.isEmpty {
+                    Text("\(viewModel.linkedSwipes.count)")
+                        .font(DS.caption2)
+                        .foregroundStyle(ideaGold)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(ideaGold.opacity(0.1), in: Capsule())
+                }
+            }
             Spacer()
             Button {
                 viewModel.showLinkSwipesOverlay = true
@@ -877,6 +1196,9 @@ extension IdeaFocusModeView {
                 }
                 .font(DS.caption)
                 .foregroundStyle(ideaGold)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(ideaGold.opacity(0.08), in: Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Link a swipe file")
@@ -886,11 +1208,19 @@ extension IdeaFocusModeView {
     @ViewBuilder
     private var supportingSwipesContent: some View {
         if viewModel.linkedSwipes.isEmpty {
-            Text("Link swipes to give the AI structural inspiration")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .italic()
-                .padding(.vertical, 8)
+            VStack(spacing: 6) {
+                Image(systemName: "link.badge.plus")
+                    .font(.system(size: 16))
+                    .foregroundStyle(ideaGold.opacity(0.3))
+                    .accessibilityHidden(true)
+                Text("Link swipes to give the AI structural inspiration")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(ideaGold.opacity(0.02), in: .rect(cornerRadius: DS.radiusSmall))
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -918,10 +1248,17 @@ extension IdeaFocusModeView {
         }
         .frame(width: 160)
         .padding(10)
-        .background(DS.surface, in: .rect(cornerRadius: DS.radiusSmall))
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(ideaGold.opacity(0.3))
+                .frame(width: 2)
+                .padding(.vertical, 6)
+                .padding(.leading, 1)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.border, lineWidth: 0.5)
+                .stroke(DS.borderSubtle, lineWidth: 0.5)
         )
     }
 }
@@ -933,9 +1270,13 @@ extension IdeaFocusModeView {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space20) {
                 blueprintSection
+                sidebarSectionDivider
                 supportingSwipesSection
+                sidebarSectionDivider
                 researchSection
+                sidebarSectionDivider
                 arcRecommendationsSection
+                sidebarSectionDivider
                 chatSection
             }
             .padding(DS.space16)
@@ -944,35 +1285,83 @@ extension IdeaFocusModeView {
         .frame(width: 320)
         .background(DS.surface)
         .overlay(alignment: .leading) {
-            Rectangle().fill(DS.border).frame(width: 1)
+            Rectangle().fill(ideaGold.opacity(0.1)).frame(width: 1)
         }
+    }
+
+    private var sidebarSectionDivider: some View {
+        Rectangle()
+            .fill(ideaGold.opacity(0.06))
+            .frame(height: 1)
     }
 
     // MARK: Blueprint
 
     private var blueprintSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("BLUEPRINT")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+            blueprintToggleHeader
+            blueprintContent
+        }
+    }
 
+    private var blueprintToggleHeader: some View {
+        Button {
+            withAnimation(ProMotionSprings.bouncy) {
+                blueprintExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ideaGold)
+                    .frame(width: 22, height: 22)
+                    .background(ideaGold.opacity(0.1), in: Circle())
+                    .accessibilityHidden(true)
+                Text("Blueprint")
+                    .font(DS.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DS.text)
+                Spacer()
+                if viewModel.selectedBlueprint != nil {
+                    Button { showBlueprintPicker = true } label: {
+                        Text("Change")
+                            .font(DS.caption2)
+                            .foregroundStyle(ideaGold)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .rotationEffect(.degrees(blueprintExpanded ? 90 : 0))
+                    .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(blueprintExpanded ? "Collapse blueprint" : "Expand blueprint")
+    }
+
+    @ViewBuilder
+    private var blueprintContent: some View {
+        if blueprintExpanded {
             if let blueprint = viewModel.selectedBlueprint {
                 BlueprintDisplayView(
                     blueprintAtom: blueprint,
                     displayMode: $viewModel.blueprintDisplayMode
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
                 blueprintEmptyState
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
 
     private var blueprintEmptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 24))
-                .foregroundStyle(DS.textMuted.opacity(0.5))
+                .foregroundStyle(ideaGold.opacity(0.3))
                 .accessibilityHidden(true)
             Text("Choose a proven post as your structural skeleton")
                 .font(DS.caption)
@@ -981,28 +1370,23 @@ extension IdeaFocusModeView {
             Button {
                 showBlueprintPicker = true
             } label: {
-                blueprintSelectLabel
+                HStack(spacing: 4) {
+                    Image(systemName: "plus.circle.fill")
+                        .accessibilityHidden(true)
+                    Text("Select Blueprint")
+                }
+                .font(DS.caption)
+                .foregroundStyle(ideaGold)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(ideaGold.opacity(0.08), in: Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Select blueprint")
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DS.space16)
-        .background(DS.surfaceElevated.opacity(0.5), in: .rect(cornerRadius: DS.radiusMedium))
-    }
-
-    @ViewBuilder
-    private var blueprintSelectLabel: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "plus.circle.fill")
-                .accessibilityHidden(true)
-            Text("Select Blueprint")
-        }
-        .font(DS.caption)
-        .foregroundStyle(ideaGold)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(ideaGold.opacity(0.1), in: Capsule())
+        .background(ideaGold.opacity(0.02), in: .rect(cornerRadius: DS.radiusMedium))
     }
 
     // MARK: Research
@@ -1019,46 +1403,70 @@ extension IdeaFocusModeView {
 
     private var arcRecommendationsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("ARC RECOMMENDATIONS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(DS.textMuted)
-                Spacer()
-                Button {
-                    refreshArcRecommendations()
-                } label: {
-                    if isLoadingArcRecs {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(DS.accent)
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(isLoadingArcRecs || viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel("Refresh arc recommendations")
-            }
+            arcRecsHeader
+            arcRecsContent
+        }
+    }
 
-            if isLoadingArcRecs {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Analyzing idea...")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                }
-                .padding(.vertical, 8)
-            } else if viewModel.arcRecommendations.isEmpty {
-                Text("Add context to get arc suggestions")
+    private var arcRecsHeader: some View {
+        HStack {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CodexElementCategory.arcShape.color)
+                    .frame(width: 22, height: 22)
+                    .background(CodexElementCategory.arcShape.color.opacity(0.1), in: Circle())
+                    .accessibilityHidden(true)
+                Text("Arc Recommendations")
                     .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-                    .italic()
-            } else {
-                ForEach(viewModel.arcRecommendations) { rec in
-                    arcRecommendationCard(rec)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DS.text)
+            }
+            Spacer()
+            Button {
+                refreshArcRecommendations()
+            } label: {
+                if isLoadingArcRecs {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.accent)
                 }
+            }
+            .buttonStyle(.plain)
+            .disabled(isLoadingArcRecs || viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel("Refresh arc recommendations")
+        }
+    }
+
+    @ViewBuilder
+    private var arcRecsContent: some View {
+        if isLoadingArcRecs {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Analyzing idea...")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(.vertical, 8)
+        } else if viewModel.arcRecommendations.isEmpty {
+            VStack(spacing: 6) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 16))
+                    .foregroundStyle(CodexElementCategory.arcShape.color.opacity(0.3))
+                    .accessibilityHidden(true)
+                Text("Add context to get arc suggestions")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(CodexElementCategory.arcShape.color.opacity(0.02), in: .rect(cornerRadius: DS.radiusSmall))
+        } else {
+            ForEach(viewModel.arcRecommendations) { rec in
+                arcRecommendationCard(rec)
             }
         }
     }
@@ -1084,10 +1492,16 @@ extension IdeaFocusModeView {
     @ViewBuilder
     private func arcRecommendationCardContent(_ rec: ArcRecommendation) -> some View {
         let isSelected = viewModel.selectedArcType == rec.arcName
+        let arcColor = CodexElementCategory.arcShape.color
 
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                CodexConceptTag(name: rec.arcName, color: CodexElementCategory.arcShape.color)
+                CodexConceptTag(name: rec.arcName, color: arcColor)
+                if rec.confidence > 0.7 {
+                    Text("\(Int(rec.confidence * 100))%")
+                        .font(DS.caption2)
+                        .foregroundStyle(arcColor.opacity(0.6))
+                }
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
@@ -1103,9 +1517,16 @@ extension IdeaFocusModeView {
         }
         .padding(10)
         .background(
-            isSelected ? DS.green.opacity(0.06) : DS.surfaceElevated,
+            isSelected ? DS.green.opacity(0.04) : DS.surfaceElevated,
             in: .rect(cornerRadius: DS.radiusSmall)
         )
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(isSelected ? DS.green.opacity(0.4) : arcColor.opacity(0.3))
+                .frame(width: 2)
+                .padding(.vertical, 6)
+                .padding(.leading, 1)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .stroke(
@@ -1131,10 +1552,26 @@ extension IdeaFocusModeView {
             }
         } label: {
             HStack {
-                Text("BRAINSTORM CHAT")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(DS.textMuted)
+                HStack(spacing: 6) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(ideaGold)
+                        .frame(width: 22, height: 22)
+                        .background(ideaGold.opacity(0.1), in: Circle())
+                        .accessibilityHidden(true)
+                    Text("Brainstorm Chat")
+                        .font(DS.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(DS.text)
+                    if !viewModel.chatHistory.isEmpty {
+                        Text("\(viewModel.chatHistory.count)")
+                            .font(DS.caption2)
+                            .foregroundStyle(ideaGold)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(ideaGold.opacity(0.1), in: Capsule())
+                    }
+                }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
@@ -1173,7 +1610,7 @@ extension IdeaFocusModeView {
         .padding(.vertical, 10)
         .background(DS.surface)
         .overlay(alignment: .top) {
-            Rectangle().fill(DS.border).frame(height: 1)
+            Rectangle().fill(ideaGold.opacity(0.1)).frame(height: 1)
         }
     }
 
@@ -1192,23 +1629,39 @@ extension IdeaFocusModeView {
 
     private var actionBarWriteButton: some View {
         Button {
-            Task { await viewModel.promoteToContent() }
+            guard !isPromoting else { return }
+            isPromoting = true
+            Task {
+                await viewModel.promoteToContent()
+                isPromoting = false
+            }
         } label: {
-            HStack(spacing: 6) {
+            actionBarWriteButtonLabel
+        }
+        .buttonStyle(.plain)
+        .disabled(isPromoting || isBodyEmpty)
+        .opacity((isPromoting || isBodyEmpty) ? 0.5 : 1)
+        .accessibilityLabel("Write content from this idea")
+    }
+
+    @ViewBuilder
+    private var actionBarWriteButtonLabel: some View {
+        HStack(spacing: 6) {
+            if isPromoting {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Writing...")
+            } else {
                 Image(systemName: "pencil.line")
                     .accessibilityHidden(true)
                 Text("Write")
             }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(DS.textOnAccent)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
-            .background(DS.green, in: Capsule())
         }
-        .buttonStyle(.plain)
-        .disabled(isBodyEmpty)
-        .opacity(isBodyEmpty ? 0.5 : 1)
-        .accessibilityLabel("Write content from this idea")
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(DS.textOnAccent)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(DS.green, in: Capsule())
     }
 }
 

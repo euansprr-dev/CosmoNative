@@ -1,5 +1,6 @@
 // CosmoOS/UI/FocusMode/Ideas/IdeaResearchPanel.swift
 // Displays research findings in the idea intelligence sidebar.
+// Premium redesign — April 2026
 
 import SwiftUI
 
@@ -10,11 +11,17 @@ struct IdeaResearchPanel: View {
 
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var appeared = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             headerRow
             content
+        }
+        .onAppear {
+            withAnimation(ProMotionSprings.cardEntrance.delay(0.1)) {
+                appeared = true
+            }
         }
     }
 
@@ -22,34 +29,56 @@ struct IdeaResearchPanel: View {
 
     private var headerRow: some View {
         HStack {
-            Label("Research", systemImage: "magnifyingglass")
-                .font(DS.caption)
-                .foregroundStyle(DS.text)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 22, height: 22)
+                    .background(DS.accent.opacity(0.1), in: Circle())
+                    .accessibilityHidden(true)
+                Text("Research")
+                    .font(DS.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DS.text)
+                if !results.isEmpty {
+                    Text("\(results.count)")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.accent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(DS.accent.opacity(0.1), in: Capsule())
+                }
+            }
 
             Spacer()
 
             Button {
                 Task { await runResearch() }
             } label: {
-                HStack(spacing: 4) {
-                    if isLoading {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    Text(results.isEmpty ? "Run Research" : "Refresh")
-                        .font(DS.caption2)
-                }
-                .foregroundStyle(DS.accent)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(DS.accent.opacity(0.1), in: Capsule())
+                researchButtonLabel
             }
             .buttonStyle(.plain)
             .disabled(isLoading || ideaText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+    }
+
+    private var researchButtonLabel: some View {
+        HStack(spacing: 4) {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10, weight: .medium))
+                    .accessibilityHidden(true)
+            }
+            Text(results.isEmpty ? "Run Research" : "Refresh")
+                .font(DS.caption2)
+        }
+        .foregroundStyle(DS.accent)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(DS.accent.opacity(0.1), in: Capsule())
     }
 
     // MARK: - Content
@@ -78,55 +107,66 @@ struct IdeaResearchPanel: View {
     }
 
     private func researchCard(_ result: IdeaResearchResult, index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let proofColor = proofTypeColor(result.proofType ?? "")
+
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(result.title)
                         .font(DS.caption)
                         .foregroundStyle(DS.text)
                         .lineLimit(2)
-
                     Text(result.snippet)
                         .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                         .lineLimit(3)
                 }
-
                 Spacer()
-
                 includeToggle(index: index, isIncluded: result.isIncluded)
             }
-
-            HStack(spacing: 6) {
-                if let proofType = result.proofType, !proofType.isEmpty {
-                    CodexConceptTag(name: proofType, color: proofTypeColor(proofType))
-                }
-
-                Text(result.source)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
-
-                Spacer()
-
-                if let url = result.url, !url.isEmpty {
-                    linkButton(url)
-                }
-            }
+            researchCardFooter(result, proofColor: proofColor)
         }
         .padding(10)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(proofColor.opacity(0.4))
+                .frame(width: 2)
+                .padding(.vertical, 6)
+                .padding(.leading, 1)
+        }
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(DS.borderSubtle, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(result.isIncluded ? DS.green.opacity(0.3) : DS.borderSubtle, lineWidth: 0.5)
         )
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 6)
+        .animation(ProMotionSprings.staggered(index: index), value: appeared)
+    }
+
+    private func researchCardFooter(_ result: IdeaResearchResult, proofColor: Color) -> some View {
+        HStack(spacing: 6) {
+            if let proofType = result.proofType, !proofType.isEmpty {
+                CodexConceptTag(name: proofType, color: proofColor)
+            }
+            Text(result.source)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+            Spacer()
+            if let url = result.url, !url.isEmpty {
+                linkButton(url)
+            }
+        }
     }
 
     // MARK: - Subviews
 
     private func includeToggle(index: Int, isIncluded: Bool) -> some View {
         Button {
-            results[index].isIncluded.toggle()
+            withAnimation(ProMotionSprings.snappy) {
+                results[index].isIncluded.toggle()
+            }
         } label: {
             Image(systemName: isIncluded ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 14))
@@ -153,7 +193,8 @@ struct IdeaResearchPanel: View {
         VStack(spacing: 8) {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 20))
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.accent.opacity(0.3))
+                .accessibilityHidden(true)
             Text("Tap Research to find supporting evidence")
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
@@ -161,6 +202,7 @@ struct IdeaResearchPanel: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
+        .background(DS.accent.opacity(0.02), in: .rect(cornerRadius: DS.radiusSmall))
     }
 
     private var loadingState: some View {
@@ -180,13 +222,14 @@ struct IdeaResearchPanel: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 11))
                 .foregroundStyle(DS.orange)
+                .accessibilityHidden(true)
             Text(message)
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
                 .lineLimit(2)
         }
         .padding(8)
-        .background(DS.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        .background(DS.orange.opacity(0.08), in: .rect(cornerRadius: 6))
     }
 
     // MARK: - Research Action

@@ -372,6 +372,9 @@ class IdeaFocusModeViewModel: ObservableObject {
                 return insight?.frameworkRecommendations?.first?.framework.rawValue
             }()
             let inheritedHooks: [String] = {
+                if !editableHooks.isEmpty {
+                    return editableHooks  // User's manual hooks take priority
+                }
                 if !generatedHooks.isEmpty {
                     return generatedHooks.map(\.hookText)
                 }
@@ -382,35 +385,27 @@ class IdeaFocusModeViewModel: ObservableObject {
             // Build ContentFocusModeState with description = the original idea text
             var focusState = ContentFocusModeState(atomUUID: contentAtom.uuid)
             focusState.contentDescription = editableBody
+            focusState.coreIdea = editableBody
+            focusState.hooks = inheritedHooks
 
-            // Generate AI-suggested outline using ResearchService
-            let aiOutline = await generateOutline(
-                ideaTitle: editableTitle,
-                ideaBody: editableBody,
-                framework: inheritedFramework,
-                format: selectedFormat,
-                swipes: insight?.matchingSwipes
-            )
-
-            if !aiOutline.isEmpty {
-                focusState.outline = aiOutline
-                focusState.isAISuggestedOutline = true
-            } else if let bp = blueprint {
-                // Fallback: seed outline from blueprint sections if AI call fails
-                var sortOrder = 0
-                if let hook = bp.suggestedHook, !hook.isEmpty {
-                    focusState.outline.append(OutlineItem(title: "Hook & Setup", reasoning: hook, sortOrder: sortOrder))
-                    sortOrder += 1
+            // Convert user's codex outline notes to focusState.outline for display
+            // Cloud engine handles full physics plan during writing — no local AI generation
+            if let codexOutline = codexOutline, !codexOutline.slides.isEmpty {
+                focusState.outline = codexOutline.slides.compactMap { slide in
+                    guard let note = slide.note, !note.isEmpty else { return nil }
+                    return OutlineItem(
+                        title: note,
+                        reasoning: "",
+                        sortOrder: slide.position - 1
+                    )
                 }
-                for section in bp.sections.sorted(by: { $0.sortOrder < $1.sortOrder }) {
-                    let detail = section.suggestedContent ?? section.purpose
-                    focusState.outline.append(OutlineItem(title: section.label, reasoning: detail, sortOrder: sortOrder))
-                    sortOrder += 1
+                if focusState.outline.isEmpty {
+                    // All slides had empty notes — create generic placeholders
+                    focusState.outline = codexOutline.slides.map { slide in
+                        OutlineItem(title: "Slide \(slide.position)", reasoning: "", sortOrder: slide.position - 1)
+                    }
                 }
-                if let cta = bp.suggestedCTA, !cta.isEmpty {
-                    focusState.outline.append(OutlineItem(title: "CTA", reasoning: cta, sortOrder: sortOrder))
-                }
-                focusState.isAISuggestedOutline = true
+                focusState.isAISuggestedOutline = false
             }
 
             // Set ContentAtomMetadata on the content atom
@@ -435,6 +430,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             if !includedResearch.isEmpty, let data = try? JSONEncoder().encode(includedResearch) {
                 contentMeta.inheritedResearchResults = String(data: data, encoding: .utf8)
             }
+            focusState.inheritedResearchResults = includedResearch.isEmpty ? nil : includedResearch
             if let history = chatHistory.isEmpty ? nil : chatHistory,
                let data = try? JSONEncoder().encode(history) {
                 contentMeta.inheritedChatHistory = String(data: data, encoding: .utf8)
@@ -488,11 +484,11 @@ class IdeaFocusModeViewModel: ObservableObject {
                 userInfo: ["uuid": idea.uuid]
             )
 
-            // Post notification to open the new content in focus mode
+            // Post notification to open the new content in focus mode with auto-draft trigger
             NotificationCenter.default.post(
                 name: CosmoNotification.Navigation.openBlockInFocusMode,
                 object: nil,
-                userInfo: ["atomUUID": contentAtom.uuid]
+                userInfo: ["atomUUID": contentAtom.uuid, "autoGenerate": true]
             )
 
         } catch {

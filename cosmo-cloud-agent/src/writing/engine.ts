@@ -454,6 +454,7 @@ USER FEEDBACK:
       this.codexOutline,
       this.inheritedResearchResults,
       this.inheritedCreativeDirection,
+      this.hooks.length > 0 ? this.hooks : null,
     );
 
     this.messages.push({

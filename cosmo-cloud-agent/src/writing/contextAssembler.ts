@@ -1425,8 +1425,16 @@ export function buildCodexSessionPrompt(
   codexOutline: CodexOutlineModel,
   researchFindings?: IdeaResearchFinding[] | null,
   creativeDirection?: string | null,
+  hooks?: string[] | null,
 ): string {
   const codexSection = renderCodexContext(codexOutline, researchFindings, creativeDirection);
+
+  let hooksSection = '';
+  if (hooks && hooks.length > 0) {
+    hooksSection = `\n═══ USER'S HOOKS ═══\nThe user has pre-written these hooks. Evaluate them — use as-is if they match the walkthrough's hook physics, or refine them:\n`;
+    hooks.forEach((h, i) => { hooksSection += `${i + 1}. ${h}\n`; });
+    hooksSection += `\nIf these hooks are strong, use one directly. If they need work, include improved versions in your plan alongside the originals.\n`;
+  }
 
   const isReel = format === 'reel' || format === 'voiceoverReel' || format === 'oneSliderReel'
     || format === 'multiSliderReel' || format === 'twoStepCTA';
@@ -1434,6 +1442,7 @@ export function buildCodexSessionPrompt(
   return `The idea/direction is: ${userDirection}
 Content format: ${format} | Platform: ${platform}
 ${codexSection}
+${hooksSection}
 
 ═══ SINGLE SESSION: PLAN → WRITE → SELF-EDIT → DELIVER ═══
 

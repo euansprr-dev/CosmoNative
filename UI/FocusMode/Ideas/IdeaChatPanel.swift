@@ -1,5 +1,6 @@
 // CosmoOS/UI/FocusMode/Ideas/IdeaChatPanel.swift
 // Chat interface for brainstorm conversations.
+// Premium redesign — April 2026
 
 import SwiftUI
 
@@ -11,12 +12,19 @@ struct IdeaChatPanel: View {
     @State private var isLoading = false
     @FocusState private var isInputFocused: Bool
 
+    private let ideaGold = DS.entityIdea
+
     var body: some View {
         VStack(spacing: 0) {
             messageList
-            Divider()
+            chatDivider
             inputBar
         }
+        .background(DS.bg.opacity(0.5), in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.borderSubtle, lineWidth: 0.5)
+        )
     }
 
     // MARK: - Message List
@@ -28,8 +36,8 @@ struct IdeaChatPanel: View {
                     if messages.isEmpty {
                         emptyState
                     }
-                    ForEach(messages) { message in
-                        messageBubble(message)
+                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                        messageBubble(message, index: index)
                             .id(message.id)
                     }
                     if isLoading {
@@ -52,15 +60,15 @@ struct IdeaChatPanel: View {
     // MARK: - Message Bubble
 
     @ViewBuilder
-    private func messageBubble(_ message: IdeaChatMessage) -> some View {
+    private func messageBubble(_ message: IdeaChatMessage, index: Int) -> some View {
         if message.role == "user" {
-            userBubble(message.content)
+            userBubble(message.content, index: index)
         } else {
-            assistantBubble(message)
+            assistantBubble(message, index: index)
         }
     }
 
-    private func userBubble(_ content: String) -> some View {
+    private func userBubble(_ content: String, index: Int) -> some View {
         HStack {
             Spacer(minLength: 40)
             Text(content)
@@ -68,11 +76,11 @@ struct IdeaChatPanel: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(DS.accent, in: RoundedRectangle(cornerRadius: 14))
+                .background(ideaGold, in: RoundedRectangle(cornerRadius: 14))
         }
     }
 
-    private func assistantBubble(_ message: IdeaChatMessage) -> some View {
+    private func assistantBubble(_ message: IdeaChatMessage, index: Int) -> some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(message.content)
@@ -81,6 +89,13 @@ struct IdeaChatPanel: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14))
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(ideaGold.opacity(0.3))
+                            .frame(width: 2)
+                            .padding(.vertical, 6)
+                            .padding(.leading, 2)
+                    }
 
                 if let cards = message.actionCards, !cards.isEmpty {
                     actionCardsRow(cards)
@@ -91,7 +106,7 @@ struct IdeaChatPanel: View {
     }
 
     private func actionCardsRow(_ cards: [ChatActionCard]) -> some View {
-        FlowLayout(spacing: 6) {
+        CodexFlowLayout(spacing: 6) {
             ForEach(cards) { card in
                 actionCardButton(card)
             }
@@ -106,16 +121,25 @@ struct IdeaChatPanel: View {
             HStack(spacing: 4) {
                 Image(systemName: iconForCardType(card.type))
                     .font(.system(size: 9))
+                    .accessibilityHidden(true)
                 Text(card.title)
                     .font(DS.caption2)
             }
-            .foregroundStyle(DS.accent)
+            .foregroundStyle(ideaGold)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(DS.accent.opacity(0.1), in: Capsule())
-            .overlay(Capsule().stroke(DS.accent.opacity(0.2), lineWidth: 0.5))
+            .background(ideaGold.opacity(0.08), in: Capsule())
+            .overlay(Capsule().stroke(ideaGold.opacity(0.2), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Divider
+
+    private var chatDivider: some View {
+        Rectangle()
+            .fill(ideaGold.opacity(0.1))
+            .frame(height: 1)
     }
 
     // MARK: - Input Bar
@@ -133,7 +157,7 @@ struct IdeaChatPanel: View {
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 20))
-                    .foregroundStyle(canSend ? DS.accent : DS.textMuted)
+                    .foregroundStyle(canSend ? ideaGold : DS.textMuted)
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
@@ -148,10 +172,12 @@ struct IdeaChatPanel: View {
         VStack(spacing: 8) {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 20))
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(ideaGold.opacity(0.3))
+                .accessibilityHidden(true)
             Text("Chat about your idea")
                 .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.textSecondary)
             Text("Ask for hook ideas, angles, proof strategies, or audience insights")
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
@@ -166,9 +192,8 @@ struct IdeaChatPanel: View {
             HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { i in
                     Circle()
-                        .fill(DS.textMuted)
+                        .fill(ideaGold.opacity(0.4))
                         .frame(width: 5, height: 5)
-                        .opacity(0.6)
                 }
             }
             .padding(.horizontal, 12)
@@ -231,59 +256,5 @@ struct IdeaChatPanel: View {
         case "idea": return "lightbulb"
         default: return "sparkles"
         }
-    }
-}
-
-// MARK: - Flow Layout
-
-/// Simple horizontal flow layout for action card chips.
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = computeLayout(proposal: proposal, subviews: subviews)
-        return result.size
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = computeLayout(proposal: proposal, subviews: subviews)
-        for (index, position) in result.positions.enumerated() {
-            subviews[index].place(
-                at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y),
-                proposal: .unspecified
-            )
-        }
-    }
-
-    private struct LayoutResult {
-        var size: CGSize
-        var positions: [CGPoint]
-    }
-
-    private func computeLayout(proposal: ProposedViewSize, subviews: Subviews) -> LayoutResult {
-        let maxWidth = proposal.width ?? .infinity
-        var positions: [CGPoint] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var totalHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth, x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            positions.append(CGPoint(x: x, y: y))
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + spacing
-            totalHeight = y + rowHeight
-        }
-
-        return LayoutResult(
-            size: CGSize(width: maxWidth, height: totalHeight),
-            positions: positions
-        )
     }
 }

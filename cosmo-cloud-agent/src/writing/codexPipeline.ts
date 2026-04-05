@@ -1437,7 +1437,7 @@ Write ALL ${conceptsForThisCall.length} entries. Do not stop early.
       body: JSON.stringify({
         model: 'google/gemini-3-flash-preview',
         messages,
-        max_tokens: 500000,  // Flash supports massive output
+        max_tokens: 250000,  // 1M context - ~750K input = ~250K for output
         temperature: 0.5,
         stream: true,
       }),

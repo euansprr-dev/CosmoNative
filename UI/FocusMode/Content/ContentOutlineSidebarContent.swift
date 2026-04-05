@@ -841,36 +841,14 @@ struct ContentOutlineSidebarContent: View {
                 isExpanded: $state.researchPanelExpanded
             ) {
                 ForEach(results) { result in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(result.title)
-                            .font(DS.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(DS.text)
-
-                        Text(result.snippet)
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.textSecondary)
-                            .lineLimit(3)
-
-                        HStack(spacing: 6) {
-                            if !result.source.isEmpty {
-                                Text(result.source)
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(DS.textMuted)
-                            }
-                            if let proof = result.proofType {
-                                CodexConceptTag(
-                                    name: proof,
-                                    color: CodexElementCategory.proofType.color
-                                )
-                            }
-                        }
-                    }
-                    .padding(8)
-                    .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusXSmall))
+                    sidebarResearchCard(result)
                 }
             }
         }
+    }
+
+    private func sidebarResearchCard(_ result: IdeaResearchResult) -> some View {
+        ExpandableResearchCard(result: result)
     }
 
     @ViewBuilder
@@ -1766,5 +1744,56 @@ private struct FlowLayout: Layout {
             maxX = max(maxX, currentX - spacing)
         }
         return (positions, CGSize(width: maxX, height: currentY + lineHeight))
+    }
+}
+
+// MARK: - Expandable Research Card
+
+private struct ExpandableResearchCard: View {
+    let result: IdeaResearchResult
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(result.title)
+                .font(DS.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.text)
+                .lineLimit(isExpanded ? nil : 2)
+
+            Text(result.snippet)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(isExpanded ? nil : 3)
+
+            if isExpanded, let url = result.url, !url.isEmpty {
+                Text(url)
+                    .font(.system(size: 9))
+                    .foregroundStyle(DS.info)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 6) {
+                if !result.source.isEmpty {
+                    Text(result.source)
+                        .font(.system(size: 9))
+                        .foregroundStyle(DS.textMuted)
+                }
+                if let proof = result.proofType {
+                    CodexConceptTag(
+                        name: proof,
+                        color: CodexElementCategory.proofType.color
+                    )
+                }
+            }
+        }
+        .padding(8)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusXSmall))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(ProMotionSprings.snappy) {
+                isExpanded.toggle()
+            }
+        }
     }
 }

@@ -163,7 +163,6 @@ extension IdeaFocusModeView {
             ideaBadge
             clientPickerPill
             Spacer()
-            writeButton
             headerTrailingGroup
         }
         .padding(.horizontal, 16)
@@ -476,11 +475,10 @@ extension IdeaFocusModeView {
     }
 
     private func hookRow(_ hook: String, at index: Int) -> some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Text(hook)
                 .font(DS.callout)
                 .foregroundStyle(DS.text)
-                .lineLimit(2)
             Spacer()
             Button {
                 withAnimation(ProMotionSprings.snappy) {

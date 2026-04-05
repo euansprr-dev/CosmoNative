@@ -106,23 +106,43 @@ struct IdeaResearchPanel: View {
         }
     }
 
+    @State private var expandedResultIds: Set<UUID> = []
+
     private func researchCard(_ result: IdeaResearchResult, index: Int) -> some View {
         let proofColor = proofTypeColor(result.proofType ?? "")
+        let isExpanded = expandedResultIds.contains(result.id)
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(result.title)
                         .font(DS.caption)
+                        .fontWeight(.medium)
                         .foregroundStyle(DS.text)
-                        .lineLimit(2)
+                        .lineLimit(isExpanded ? nil : 2)
                     Text(result.snippet)
                         .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .lineLimit(3)
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(isExpanded ? nil : 3)
+                    if isExpanded, let url = result.url, !url.isEmpty {
+                        Text(url)
+                            .font(.system(size: 9))
+                            .foregroundStyle(DS.info)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer()
                 includeToggle(index: index, isIncluded: result.isIncluded)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(ProMotionSprings.snappy) {
+                    if isExpanded {
+                        expandedResultIds.remove(result.id)
+                    } else {
+                        expandedResultIds.insert(result.id)
+                    }
+                }
             }
             researchCardFooter(result, proofColor: proofColor)
         }

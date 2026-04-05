@@ -881,6 +881,7 @@ struct ContentAtomMetadata: Codable, Sendable {
     var predictedReach: Int?
     var predictedEngagement: Double?
     var sourceIdeaUUID: String?
+    var blueprintSwipeUUID: String?
     var inheritedSwipeUUIDs: [String]?
     var inheritedConnectionIds: [String]?
     var inheritedFramework: String?

@@ -261,18 +261,40 @@ export class CloudWritingEngine {
       await updateAtom(this.contentUUID, { metadata: { selectedSwipeUUIDs: selectedUUIDs } });
     }
 
-    // Resolve blueprint anchor — true primary or highest-scoring fallback
-    const primary = this.selectedSwipes.find(s => s.isPrimary);
-    if (primary && primary.fullBody) {
-      this.blueprintAnchor = primary;
-      this.hasTruePrimaryBlueprint = true;
-      this.hasBlueprintProfile = !!primary.fullQuarkProfile;
-    } else {
-      const fallback = this.selectedSwipes
-        .filter(s => s.fullBody)
-        .reduce<CompressedSwipe | null>((best, s) => (!best || s.hookScore > best.hookScore) ? s : best, null);
-      this.blueprintAnchor = fallback;
-      this.hasTruePrimaryBlueprint = false;
+    // Resolve blueprint anchor — use explicit blueprintSwipeUUID, then inheritedSwipeUUIDs[0], then first isPrimary
+    const explicitBlueprintUUID = (meta.blueprintSwipeUUID || (meta.inheritedSwipeUUIDs as string[] | undefined)?.[0]) as string | undefined;
+    if (explicitBlueprintUUID) {
+      let bp = this.selectedSwipes.find(s => s.uuid === explicitBlueprintUUID);
+      if (!bp) {
+        // Blueprint wasn't in the selected set — force-load it
+        console.log(`  ✍️ Blueprint ${explicitBlueprintUUID.substring(0, 8)}... not in selected set — force-loading`);
+        const forceLoaded = await this.loadSpecificSwipes([explicitBlueprintUUID], [explicitBlueprintUUID]);
+        if (forceLoaded.length > 0) {
+          this.selectedSwipes.unshift(forceLoaded[0]);
+          bp = forceLoaded[0];
+        }
+      }
+      if (bp && bp.fullBody) {
+        this.blueprintAnchor = bp;
+        this.hasTruePrimaryBlueprint = true;
+        this.hasBlueprintProfile = !!bp.fullQuarkProfile;
+        console.log(`  ✍️ Blueprint anchor resolved by explicit UUID: "${bp.title.substring(0, 60)}"`);
+      }
+    }
+    // Fallback: first isPrimary or highest-scoring
+    if (!this.blueprintAnchor) {
+      const primary = this.selectedSwipes.find(s => s.isPrimary);
+      if (primary && primary.fullBody) {
+        this.blueprintAnchor = primary;
+        this.hasTruePrimaryBlueprint = true;
+        this.hasBlueprintProfile = !!primary.fullQuarkProfile;
+      } else {
+        const fallback = this.selectedSwipes
+          .filter(s => s.fullBody)
+          .reduce<CompressedSwipe | null>((best, s) => (!best || s.hookScore > best.hookScore) ? s : best, null);
+        this.blueprintAnchor = fallback;
+        this.hasTruePrimaryBlueprint = false;
+      }
     }
 
     // Load lessons for this client (also cached for deterministic validation in write_draft)
@@ -2699,6 +2721,7 @@ If ALL checks pass, present the draft.
         hookMechanism: (analysis.hookMechanism as string) || '',
         structuralRecipe: '', // deprecated
         voiceMarkers: (analysis.voiceMarkers as string[]) || [],
+        fullQuarkProfile: isPrimary ? (atom.structured?.contentPhysics as any) : undefined,
       });
     }
     return swipes;

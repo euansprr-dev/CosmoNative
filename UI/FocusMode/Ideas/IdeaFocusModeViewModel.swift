@@ -417,6 +417,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             contentMeta.inheritedFramework = inheritedFramework
             contentMeta.inheritedHooks = inheritedHooks.isEmpty ? nil : inheritedHooks
             contentMeta.clientProfileUUID = linkedClient?.uuid
+            contentMeta.blueprintSwipeUUID = selectedBlueprintUUID
             contentMeta.activatedAt = nowISO
             contentMeta.phaseEnteredAt = nowISO
 

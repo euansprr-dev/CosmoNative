@@ -1575,12 +1575,25 @@ FOR EACH SLIDE:
 3. Write YOUR version that produces the same physics with the client's content, matching the
    blueprint's visual format and density
 
+DENSITY — THE BLUEPRINT BODY IS TRUTH:
+One slide = one breath. If you need a breath mid-slide, split it. If two slides feel like
+one exhale, combine them. READ the blueprint body's actual slides — count the actual words.
+Your slides must match that density, not some generic number.
+
+Density zones (check your plan's depthType per slide):
+- SPARSE (emotional/consequence): 8-25 words, one vivid image, one complete thought
+- BRIDGE (transition/pivot): 15-30 words, one logical setup
+- DENSE (proof/data/mechanism): 35-50 words, compact sentences, one argument per slide
+- HARD CAP: No slide may EVER exceed 310 characters.
+
+For EVERY slide: read the BLUEPRINT BODY's corresponding slide. Count its words. Your slide
+must be within ±10% of that count. If over, cut. If way over, you've crammed two slides
+into one — split it.
+
 CRITICAL RULES:
-- HARD CAP: No slide may EVER exceed 310 characters. This is a platform limit. If a slide is
-  over 310 characters, cut it immediately.
 - The BLUEPRINT BODY is your formatting and density bible. Before writing each slide, READ the
   blueprint's corresponding slide. Match its word count, line count, formatting (arrows, bullets,
-  etc.), and visual structure.
+  etc.), and visual structure. READ THE BODY. Not the waveform. Not the plan's numbers. THE BODY.
 - Every sentence must sound like ${clientName} talking at dinner. Read their TOP POSTS in the
   client profile — match their sentence length, their word choices, their energy. If your
   sentence doesn't match their real posts, rewrite it.
@@ -1594,10 +1607,12 @@ CRITICAL RULES:
 - Check the ANTIMATTER section in the Codex. If you catch yourself writing any banned pattern —
   rewrite using the Codex's examples of how viral creators phrase things instead.
 
-DENSITY CHECK (do this for EVERY slide before moving to the next):
-After writing each slide, count your characters. If it exceeds 310, cut immediately. Then
-compare your word count to the blueprint body's corresponding slide. If yours is more than 10%
-over, cut until it matches. Do NOT move to the next slide until both checks pass.
+BREATH TEST (do this for EVERY slide before moving to the next):
+1. Count your characters. Over 310? Cut immediately.
+2. Count your words. Compare to the blueprint body's corresponding slide. Over 10%? Cut.
+3. Read it aloud in one breath. Need a pause? Split into two slides.
+4. Does this slide contain more than ONE idea? Split it.
+Do NOT move to the next slide until all four checks pass.
 
 Call write_draft with the complete content.
 
@@ -1605,24 +1620,27 @@ Call write_draft with the complete content.
 STEP 3: SELF-EDIT (read_draft, then write_draft)
 ────────────────────────────────────────
 
-Call read_draft to see your written draft. Then reason internally — compare each slide against
-the BLUEPRINT BODY, ${clientName}'s top posts, and the walkthrough. Then call write_draft
-with corrections.
+Call read_draft to see your written draft. Then run these checks systematically — for EACH
+slide, compare against the BLUEPRINT BODY, ${clientName}'s top posts, and the walkthrough.
+Then call write_draft with corrections.
 
 CHECK EACH SLIDE:
 
-1. DENSITY + FORMATTING (compare to blueprint body):
+1. DENSITY + FORMATTING — READ THE BLUEPRINT BODY (this is the #1 priority check):
    For each slide, actually COUNT:
    - Your slide character count: ___ (HARD CAP: 310 characters. No slide may EVER exceed this.)
-   - Blueprint slide word count: ___
+   - Blueprint body's slide word count: ___ (READ the body, count the actual words)
    - Your slide word count: ___
    - Over/under by: ___%
    If any slide exceeds 310 characters, cut it immediately. Then if more than 10% over the
-   blueprint's word count, cut further.
+   blueprint body's word count, cut further.
+   BREATH TEST: Read your slide aloud in one breath. Need a pause? It's two slides — split it.
+   Does this slide contain more than one idea? Split it.
    Also check:
    - Does your slide LOOK like the blueprint's slide? Same formatting moves? (arrows, bullets,
      steps, line breaks)
    - If your slide is a paragraph but the blueprint's is a formatted list — rewrite as a list
+   - Sparse slides (emotional/consequence) must be 8-25 words. Dense slides (proof) 35-50 words.
 
 2. VOICE (compare to ${clientName}'s top posts AND Codex Conversational DNA):
    - Does this sound like ${clientName} at dinner? Compare each slide to their actual top posts.

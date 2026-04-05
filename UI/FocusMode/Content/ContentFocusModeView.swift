@@ -695,42 +695,48 @@ struct ContentFocusModeView: View {
     private func generateAIDraft() {
         isGeneratingDraft = true
         draftGenerationError = nil
+
+        let contentUUID = atom.uuid
+
         Task {
-            do {
-                let contentUUID = atom.uuid
-                let meta = atom.metadataValue(as: ContentAtomMetadata.self)
+            // Route through the agent — same path as Telegram
+            // The agent calls generate_draft tool which runs the full cloud engine:
+            // Block 1 (codex) + Block 2 (client) + Block 3A (blueprint) + session prompt
+            // → plan → write_draft → self-edit → saves to atom.body
+            let instruction = """
+            Generate a draft for this content piece. \
+            ContentUUID: \(contentUUID). \
+            Call generate_draft with contentUUID="\(contentUUID)". \
+            All context (codex outline, hooks, research, blueprint, client profile) \
+            is already on the content atom metadata. Use it all.
+            """
 
-                // Get linked client profile name
-                var clientName: String?
-                if let clientUUID = meta?.clientProfileUUID {
-                    clientName = (try? await AtomRepository.shared.fetch(uuid: clientUUID))?.title
-                }
+            let (response, _) = await CosmoAgentService.shared.processMessage(
+                instruction,
+                source: .inApp
+            )
 
-                let result = try await CloudWritingClient.shared.generateDraft(
-                    contentUUID: contentUUID,
-                    userDirection: viewModel.state.contentDescription.isEmpty ? nil : viewModel.state.contentDescription,
-                    clientName: clientName,
-                    contentFormat: meta?.contentFormat
-                )
-
-                await MainActor.run {
-                    isGeneratingDraft = false
-                    if result.success {
-                        // Refresh: the cloud engine's write_draft tool saved to atom.body
-                        Task {
-                            if let updated = try? await AtomRepository.shared.fetch(uuid: contentUUID) {
-                                viewModel.state.draftContent = updated.body ?? ""
-                                viewModel.state.save()
-                            }
-                        }
-                    } else {
-                        draftGenerationError = result.error ?? result.message ?? "Draft generation failed"
+            // The engine's write_draft tool saves directly to atom.body via Supabase
+            // Poll for the draft to appear (Supabase sync may take a moment)
+            var attempts = 0
+            while attempts < 10 {
+                if let updated = try? await AtomRepository.shared.fetch(uuid: contentUUID),
+                   let body = updated.body, !body.isEmpty, body != viewModel.state.draftContent {
+                    await MainActor.run {
+                        viewModel.state.draftContent = body
+                        viewModel.state.save()
+                        isGeneratingDraft = false
                     }
+                    return
                 }
-            } catch {
-                await MainActor.run {
-                    isGeneratingDraft = false
-                    draftGenerationError = "Cloud writing failed: \(error.localizedDescription)"
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s
+                attempts += 1
+            }
+
+            await MainActor.run {
+                isGeneratingDraft = false
+                if response.lowercased().contains("error") || response.lowercased().contains("failed") {
+                    draftGenerationError = response
                 }
             }
         }

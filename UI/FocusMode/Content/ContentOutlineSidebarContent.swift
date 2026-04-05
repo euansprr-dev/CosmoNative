@@ -60,7 +60,7 @@ struct ContentOutlineSidebarContent: View {
                 inheritedHooksSection
 
                 // Codex-era panels (collapsible)
-                codexOutlinePanel
+                // codexOutlinePanel removed — outlineSection handles both simple + advanced
                 codexResearchPanel
                 codexArcPanel
                 codexContextDirectionPanel
@@ -495,20 +495,30 @@ struct ContentOutlineSidebarContent: View {
     @ViewBuilder
     private var matchedSwipesSection: some View {
         if !matchedSwipeAtoms.isEmpty {
-            contextSectionHeader(title: "MATCHED SWIPES", icon: "doc.on.doc.fill")
-            matchedSwipesContent
+            // Blueprint (first swipe — set as primary in promoteToContent)
+            if let blueprint = matchedSwipeAtoms.first {
+                contextSectionHeader(title: "BLUEPRINT", icon: "doc.text.magnifyingglass")
+                swipeCard(blueprint)
+            }
+
+            // Supporting swipes (remaining)
+            let supporting = Array(matchedSwipeAtoms.dropFirst())
+            if !supporting.isEmpty {
+                contextSectionHeader(title: "SUPPORTING SWIPES", icon: "doc.on.doc.fill")
+                supportingSwipesContent(supporting)
+            }
         }
     }
 
     @ViewBuilder
-    private var matchedSwipesContent: some View {
+    private func supportingSwipesContent(_ swipes: [Atom]) -> some View {
         VStack(spacing: 4) {
-            let displaySwipes = showAllSwipes ? matchedSwipeAtoms : Array(matchedSwipeAtoms.prefix(3))
+            let displaySwipes = showAllSwipes ? swipes : Array(swipes.prefix(3))
             ForEach(displaySwipes, id: \.uuid) { swipe in
                 swipeCard(swipe)
             }
 
-            if matchedSwipeAtoms.count > 3 {
+            if swipes.count > 3 {
                 Button {
                     withAnimation(ProMotionSprings.snappy) {
                         showAllSwipes.toggle()

@@ -1783,9 +1783,7 @@ Only after this analysis can you call add_hooks.`;
 
       case 'write_draft': {
         // Pre-write analysis gate — require deep thinking before draft
-        // Session mode: adaptive thinking replaces the think tool, so bypass depth gate.
-        // The create_writing_plan tool must still be called first (builds structuredSlidePlan).
-        if (this.pipelineStep !== 'session' && this.analysisDepth < 1) {
+        if (this.analysisDepth < 1) {
           return `[BLOCKED] You haven't analyzed your context deeply enough yet. Before writing:
 
 1. Call think to study ALL loaded swipes — read their full bodies in your context. For EACH dimension below, note what patterns you observe across the swipes:
@@ -1953,6 +1951,14 @@ If ALL checks pass, present the draft.
         }
         this.writingPlan = plan;
         this.writingContext.writingPlan = plan;
+
+        // The plan IS the deep analysis — set analysisDepth so write_draft gate opens.
+        // In multi-phase, two think calls set this to 2. In session mode, the plan
+        // contains the same analysis (voice anchors, concept examples, per-slide physics,
+        // density targets) produced by adaptive thinking instead of explicit think calls.
+        this.analysisDepth = Math.max(this.analysisDepth, 2);
+        this.writingContext.analysisDepth = this.analysisDepth;
+
         const structuredPlan = buildStructuredSlidePlan(plan, this.blueprintAnchor?.fullBody || '', args.structuredPlan);
 
         // Map blueprint Content Physics to per-slide targets (deterministic, no LLM call)

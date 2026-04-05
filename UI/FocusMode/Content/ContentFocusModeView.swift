@@ -664,7 +664,7 @@ struct ContentFocusModeView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles")
                             .font(DS.caption)
-                        Text("Generate Draft with Opus")
+                        Text("Generate Draft")
                             .font(DS.buttonText)
                     }
                     .foregroundStyle(DS.accent)
@@ -696,18 +696,41 @@ struct ContentFocusModeView: View {
         isGeneratingDraft = true
         draftGenerationError = nil
         Task {
-            if let engine = cosmoWindowEnabled ? nil : writingEngine {
-                await engine.generateDraft()
+            do {
+                let contentUUID = atom.uuid
+                let meta = atom.metadataValue(as: ContentAtomMetadata.self)
+
+                // Get linked client profile name
+                var clientName: String?
+                if let clientUUID = meta?.clientProfileUUID {
+                    clientName = (try? await AtomRepository.shared.fetch(uuid: clientUUID))?.title
+                }
+
+                let result = try await CloudWritingClient.shared.generateDraft(
+                    contentUUID: contentUUID,
+                    userDirection: viewModel.state.contentDescription.isEmpty ? nil : viewModel.state.contentDescription,
+                    clientName: clientName,
+                    contentFormat: meta?.contentFormat
+                )
+
                 await MainActor.run {
                     isGeneratingDraft = false
-                    if let error = engine.error {
-                        draftGenerationError = "Draft generation failed: \(error)"
+                    if result.success {
+                        // Refresh: the cloud engine's write_draft tool saved to atom.body
+                        Task {
+                            if let updated = try? await AtomRepository.shared.fetch(uuid: contentUUID) {
+                                viewModel.state.draftContent = updated.body ?? ""
+                                viewModel.state.save()
+                            }
+                        }
+                    } else {
+                        draftGenerationError = result.error ?? result.message ?? "Draft generation failed"
                     }
                 }
-            } else {
+            } catch {
                 await MainActor.run {
-                    draftGenerationError = "Use Cosmo window to generate drafts"
                     isGeneratingDraft = false
+                    draftGenerationError = "Cloud writing failed: \(error.localizedDescription)"
                 }
             }
         }

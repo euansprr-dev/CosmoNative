@@ -696,55 +696,37 @@ extension ContentFocusModeState {
         }
 
         // Decode codex-era fields from metadata
-        if let researchData = dict["inheritedResearchResults"] {
-            if let json = try? JSONSerialization.data(withJSONObject: researchData),
-               let results = try? JSONDecoder().decode([IdeaResearchResult].self, from: json) {
-                state.inheritedResearchResults = results
-            }
-        } else if let researchStr = dict["inheritedResearchResults"] as? String,
-                  let json = researchStr.data(using: .utf8),
-                  let results = try? JSONDecoder().decode([IdeaResearchResult].self, from: json) {
-            state.inheritedResearchResults = results
-        }
-
-        if let arcData = dict["inheritedArcRecommendations"] {
-            if let json = try? JSONSerialization.data(withJSONObject: arcData),
-               let recs = try? JSONDecoder().decode([ArcRecommendation].self, from: json) {
-                state.inheritedArcRecommendations = recs
-            }
-        } else if let arcStr = dict["inheritedArcRecommendations"] as? String,
-                  let json = arcStr.data(using: .utf8),
-                  let recs = try? JSONDecoder().decode([ArcRecommendation].self, from: json) {
-            state.inheritedArcRecommendations = recs
-        }
-
-        if let chatData = dict["inheritedChatHistory"] {
-            if let json = try? JSONSerialization.data(withJSONObject: chatData),
-               let msgs = try? JSONDecoder().decode([IdeaChatMessage].self, from: json) {
-                state.inheritedChatHistory = msgs
-            }
-        } else if let chatStr = dict["inheritedChatHistory"] as? String,
-                  let json = chatStr.data(using: .utf8),
-                  let msgs = try? JSONDecoder().decode([IdeaChatMessage].self, from: json) {
-            state.inheritedChatHistory = msgs
-        }
-
+        // These may be stored as JSON objects (arrays/dicts) or as JSON-encoded strings
+        state.inheritedResearchResults = decodeJSONField(dict, key: "inheritedResearchResults")
+        state.inheritedArcRecommendations = decodeJSONField(dict, key: "inheritedArcRecommendations")
+        state.inheritedChatHistory = decodeJSONField(dict, key: "inheritedChatHistory")
         state.inheritedCreativeDirection = dict["inheritedCreativeDirection"] as? String ?? ""
         state.inheritedIdeaContext = dict["inheritedIdeaContext"] as? String ?? ""
         state.codexElementNames = dict["codexElementNames"] as? [String] ?? []
-
-        if let outlineData = dict["codexOutline"] ?? dict["inheritedCodexOutline"] {
-            if let json = try? JSONSerialization.data(withJSONObject: outlineData),
-               let outline = try? JSONDecoder().decode(CodexOutlineModel.self, from: json) {
-                state.codexOutline = outline
-            }
-        } else if let outlineStr = (dict["codexOutline"] ?? dict["inheritedCodexOutline"]) as? String,
-                  let json = outlineStr.data(using: .utf8),
-                  let outline = try? JSONDecoder().decode(CodexOutlineModel.self, from: json) {
-            state.codexOutline = outline
-        }
+        state.codexOutline = decodeJSONField(dict, key: "codexOutline")
+            ?? decodeJSONField(dict, key: "inheritedCodexOutline")
 
         return state
+    }
+
+    /// Safely decode a JSON field that may be stored as a JSON object or a JSON-encoded string.
+    /// Returns nil on any failure — never crashes.
+    private static func decodeJSONField<T: Decodable>(_ dict: [String: Any], key: String) -> T? {
+        guard let value = dict[key] else { return nil }
+
+        // Case 1: already a JSON object (array or dictionary) from JSONSerialization
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value) {
+            return try? JSONDecoder().decode(T.self, from: data)
+        }
+
+        // Case 2: JSON-encoded string
+        if let str = value as? String,
+           let data = str.data(using: .utf8) {
+            return try? JSONDecoder().decode(T.self, from: data)
+        }
+
+        return nil
     }
 
     /// Encode state into atom fields for a DB write.

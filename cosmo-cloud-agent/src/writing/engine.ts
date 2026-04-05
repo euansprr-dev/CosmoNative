@@ -2242,7 +2242,7 @@ If ALL checks pass, present the draft.
             // Prompt caching is GA — no beta header needed
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(300_000), // 5 min timeout
+          signal: AbortSignal.timeout(600_000), // 10 min — single session with 280K+ context needs time
         });
 
         // Rate limit: parse retry-after header or wait 30s default
@@ -2392,7 +2392,7 @@ If ALL checks pass, present the draft.
             'X-Title': 'CosmoOS Writing Engine',
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(300_000),
+          signal: AbortSignal.timeout(600_000), // 10 min
         });
 
         if (response.status === 429 || (response.status >= 500 && response.status < 600)) {

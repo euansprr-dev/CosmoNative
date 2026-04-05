@@ -699,44 +699,37 @@ struct ContentFocusModeView: View {
         let contentUUID = atom.uuid
 
         Task {
-            // Route through the agent — same path as Telegram
-            // The agent calls generate_draft tool which runs the full cloud engine:
-            // Block 1 (codex) + Block 2 (client) + Block 3A (blueprint) + session prompt
-            // → plan → write_draft → self-edit → saves to atom.body
-            let instruction = """
-            Generate a draft for this content piece. \
-            ContentUUID: \(contentUUID). \
-            Call generate_draft with contentUUID="\(contentUUID)". \
-            All context (codex outline, hooks, research, blueprint, client profile) \
-            is already on the content atom metadata. Use it all.
-            """
+            do {
+                // Call cloud engine on Railway directly — runs the full pipeline:
+                // Block 1 (codex) + Block 2 (client) + Block 3A (blueprint)
+                // → single session: plan → write_draft → self-edit
+                // The engine reads all context from the content atom in Supabase
+                let result = try await CloudWritingClient.shared.generateDraft(
+                    contentUUID: contentUUID,
+                    userDirection: viewModel.state.contentDescription.isEmpty
+                        ? nil : viewModel.state.contentDescription
+                )
 
-            let (response, _) = await CosmoAgentService.shared.processMessage(
-                instruction,
-                source: .inApp
-            )
-
-            // The engine's write_draft tool saves directly to atom.body via Supabase
-            // Poll for the draft to appear (Supabase sync may take a moment)
-            var attempts = 0
-            while attempts < 10 {
+                // The engine's write_draft tool saved to atom.body via Supabase
+                // Fetch the updated atom to get the draft
                 if let updated = try? await AtomRepository.shared.fetch(uuid: contentUUID),
-                   let body = updated.body, !body.isEmpty, body != viewModel.state.draftContent {
+                   let body = updated.body, !body.isEmpty {
                     await MainActor.run {
                         viewModel.state.draftContent = body
                         viewModel.state.save()
-                        isGeneratingDraft = false
                     }
-                    return
                 }
-                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s
-                attempts += 1
-            }
 
-            await MainActor.run {
-                isGeneratingDraft = false
-                if response.lowercased().contains("error") || response.lowercased().contains("failed") {
-                    draftGenerationError = response
+                await MainActor.run {
+                    isGeneratingDraft = false
+                    if !result.success {
+                        draftGenerationError = result.error ?? result.message
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isGeneratingDraft = false
+                    draftGenerationError = error.localizedDescription
                 }
             }
         }

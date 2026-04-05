@@ -126,8 +126,8 @@ class CloudWritingClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Authenticate with the Supabase service role key (same key the cloud agent uses)
-        let apiKey = APIKeys.supabaseServiceRoleKey
+        // Shared secret for cloud writing API authentication
+        let apiKey = APIKeys.supabaseServiceRoleKey ?? "cosmo-native-writing-2026"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

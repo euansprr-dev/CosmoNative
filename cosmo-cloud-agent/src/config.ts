@@ -40,7 +40,7 @@ export const config = {
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
 
   // Writing API (for Mac app to call cloud engine directly)
-  writingApiKey: process.env.WRITING_API_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  writingApiKey: process.env.WRITING_API_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || 'cosmo-native-writing-2026',
 
   // Exemplar Codex integration — when true, writing engine uses full Codex + walkthrough
   // instead of old methodology + QuarkProfile. Set to false to revert to legacy behavior.

@@ -1380,8 +1380,8 @@ For TECHNIQUE entries: show the actual text demonstrating the technique, and exp
 Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. Output will be appended to the existing Codex — do not repeat entries already deeply covered.
 </task>`;
 
-  // Continuation loop — if model stops early, we continue from where it left off
-  const MAX_CONTINUATIONS = 5;
+  // Independent calls with only remaining concepts — no conversation accumulation
+  const MAX_CONTINUATIONS = 15;
   let allPass2Text = '';
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -1396,33 +1396,37 @@ Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. 
         console.log(`  ✅ All ${PASS2_CONCEPTS.length} concepts covered after ${attempt} calls`);
         break;
       }
-      // Check if we got meaningful new output in the last round
       console.log(`  🔄 Continuation ${attempt}/${MAX_CONTINUATIONS}: ${covered.size}/${PASS2_CONCEPTS.length} concepts covered, ${remaining} remaining`);
     }
 
-    // Build messages — first call vs continuation
-    const messages: Array<{ role: string; content: string }> = [];
+    // Each call sends system + user with ONLY the remaining concepts
+    // No assistant history — no wasted input tokens
+    const conceptsForThisCall = isFirstCall
+      ? PASS2_CONCEPTS
+      : PASS2_CONCEPTS.filter((_, i) => !covered.has(i));
 
-    if (isFirstCall) {
-      messages.push({ role: 'system', content: systemPrompt });
-      messages.push({ role: 'user', content: userPrompt });
-    } else {
-      // Continuation: include previous output as assistant, then ask to continue
-      messages.push({ role: 'system', content: systemPrompt });
-      messages.push({ role: 'user', content: userPrompt });
-      messages.push({ role: 'assistant', content: allPass2Text });
+    const thisNumberedList = conceptsForThisCall.map((c, i) => `${i + 1}. ${c}`).join('\n');
 
-      // Build list of remaining concepts
-      const remainingConcepts = PASS2_CONCEPTS
-        .filter((_, i) => !covered.has(i))
-        .map((c, i) => `${i + 1}. ${c}`)
-        .join('\n');
+    const thisUserPrompt = isFirstCall ? userPrompt : `<raw_data>
+${preparedData}
+</raw_data>
 
-      messages.push({
-        role: 'user',
-        content: `You wrote ${covered.size} entries. Continue with the remaining ${remaining}:\n\n${remainingConcepts}\n\nPick up exactly where you stopped. Same format. Next entry now.`,
-      });
-    }
+<existing_codex>
+${pass1Codex}
+</existing_codex>
+
+<task>
+Write deep entries for these ${conceptsForThisCall.length} concepts. Same format as before — each needs DEFINITION, FREQUENCY, 10-15 REAL EXAMPLES with full slide text, PATTERNS, and ANTI-PATTERNS.
+
+${thisNumberedList}
+
+Write ALL ${conceptsForThisCall.length} entries. Do not stop early.
+</task>`;
+
+    const messages: Array<{ role: string; content: string }> = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: thisUserPrompt },
+    ];
 
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -1431,10 +1435,10 @@ Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. 
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'openai/gpt-5.4',
+        model: 'google/gemini-3-flash-preview',
         messages,
-        max_tokens: 128000,
-        temperature: 0.5, // slightly higher to reduce premature convergence
+        max_tokens: 500000,  // Flash supports massive output
+        temperature: 0.5,
         stream: true,
       }),
       signal: AbortSignal.timeout(7200_000),
@@ -1457,7 +1461,7 @@ Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. 
       break;
     }
 
-    // Append this round's output
+    // Append this round's output to the combined text
     if (isFirstCall) {
       allPass2Text = text;
     } else {
@@ -1470,7 +1474,7 @@ Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. 
     console.log(`  📊 After ${label}: ${newCovered.size}/${PASS2_CONCEPTS.length} concepts covered (${newRemaining} remaining)`);
 
     // If all covered or model produced a huge output, we're done
-    if (newRemaining === 0 || allPass2Text.length > 400000) {
+    if (newRemaining === 0 || allPass2Text.length > 1000000) {
       console.log(`  ✅ Pass 2 complete: all concepts covered or output limit reached`);
       break;
     }

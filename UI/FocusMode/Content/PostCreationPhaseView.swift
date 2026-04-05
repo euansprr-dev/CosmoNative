@@ -529,6 +529,47 @@ struct PostCreationPhaseView: View {
             .background(accentColor, in: RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+
+        // Unarchive button
+        Button {
+            unarchiveContent()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 14))
+                Text("Unarchive — Back to Draft")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundStyle(DS.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(DS.surface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    func unarchiveContent() {
+        Task {
+            var updatedAtom = atom
+            if let metaStr = updatedAtom.metadata,
+               let data = metaStr.data(using: .utf8),
+               var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                dict["currentStep"] = "brainstorm"
+                dict["phase"] = "ideation"
+                if let newData = try? JSONSerialization.data(withJSONObject: dict),
+                   let newStr = String(data: newData, encoding: .utf8) {
+                    updatedAtom.metadata = newStr
+                }
+            }
+            _ = try? await AtomRepository.shared.update(updatedAtom)
+
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": atom.uuid]
+            )
+        }
     }
 
     @ViewBuilder

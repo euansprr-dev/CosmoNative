@@ -1459,8 +1459,19 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
       // Available tools for this phase (pipeline step overrides if present)
       const tools = this.getToolDefinitions(phase, pipelineStep);
 
-      // Call LLM (pass dynamic block separately — it changes each iteration)
-      const response = await this.callWritingLLM(block3b, apiMessages, tools, pipelineStep);
+      // Call LLM — emit heartbeat every 30s while waiting (keeps streaming connection alive)
+      const heartbeat = this.onSessionProgress
+        ? setInterval(() => {
+            this.onSessionProgress?.({ type: 'heartbeat', iteration: iteration + 1, elapsed: Date.now() });
+          }, 30_000)
+        : null;
+
+      let response: Awaited<ReturnType<typeof this.callWritingLLM>>;
+      try {
+        response = await this.callWritingLLM(block3b, apiMessages, tools, pipelineStep);
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+      }
 
       // Log response shape
       const toolNames = response.toolCalls?.map(tc => tc.name).join(', ') || 'none';

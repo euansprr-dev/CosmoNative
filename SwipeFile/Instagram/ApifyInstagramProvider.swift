@@ -96,6 +96,47 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
         return results.compactMap { parsePost($0, ownerUsername: cleanHandle) }
     }
 
+    /// Fetch a single public Instagram post or reel by direct URL.
+    /// Uses the same Apify post actor as creator import, but passes the post URL
+    /// in the actor's `username` input, which the actor accepts for direct post scraping.
+    func fetchPost(url: URL) async throws -> ImportedPost {
+        guard let token = apiToken else { throw ImportError.apiKeyMissing }
+
+        let input: [String: Any] = [
+            "username": [url.absoluteString],
+            "resultsLimit": 1,
+            "dataDetailLevel": "basicData"
+        ]
+
+        let results: [[String: Any]] = try await runActor(
+            postActorId,
+            input: input,
+            token: token,
+            pollInterval: 2.0
+        )
+
+        guard !results.isEmpty else {
+            throw ImportError.apiError("Apify returned no items for post URL")
+        }
+
+        let shortcode = await InstagramExtractor.shared.extractShortcode(from: url)
+
+        if let shortcode,
+           let matching = results.first(where: {
+               ($0["shortCode"] as? String ?? $0["shortcode"] as? String)?.caseInsensitiveCompare(shortcode) == .orderedSame
+           }),
+           let post = parsePost(matching, ownerUsername: shortcode) {
+            return post
+        }
+
+        if let first = results.first,
+           let post = parsePost(first, ownerUsername: shortcode ?? "") {
+            return post
+        }
+
+        throw ImportError.decodingError("Could not parse Apify post result")
+    }
+
     // MARK: - Cost Estimate
 
     func estimateCost(postCount: Int) -> ImportCostEstimate {
@@ -310,6 +351,20 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
                     mediaURL: mediaURL,
                     thumbnailURL: thumbURL
                 ))
+            }
+            if !items.isEmpty {
+                carouselItems = items
+            }
+        } else if let images = json["images"] as? [String], images.count > 1 {
+            carouselCount = images.count
+            let items = images.enumerated().compactMap { index, urlString -> CarouselItem? in
+                guard let mediaURL = URL(string: urlString) else { return nil }
+                return CarouselItem(
+                    index: index,
+                    mediaType: .image,
+                    mediaURL: mediaURL,
+                    thumbnailURL: mediaURL
+                )
             }
             if !items.isEmpty {
                 carouselItems = items

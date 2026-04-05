@@ -4,6 +4,10 @@
 
 import SwiftUI
 
+extension Notification.Name {
+    static let navigateToCodexElement = Notification.Name("navigateToCodexElement")
+}
+
 // MARK: - Environment Key
 
 private struct CodexLookupKey: EnvironmentKey {
@@ -44,7 +48,7 @@ struct CodexConceptTag: View {
             .buttonStyle(.plain)
             .popover(isPresented: $showPopover, arrowEdge: .bottom) {
                 if let entry {
-                    CodexConceptPopover(entry: entry, accentColor: color)
+                    CodexConceptPopover(entry: entry, accentColor: color, showPopover: $showPopover)
                 }
             }
         } else {
@@ -100,7 +104,7 @@ struct CodexConceptPill: View {
                 .buttonStyle(.plain)
                 .popover(isPresented: $showPopover, arrowEdge: .bottom) {
                     if let entry {
-                        CodexConceptPopover(entry: entry, accentColor: color)
+                        CodexConceptPopover(entry: entry, accentColor: color, showPopover: $showPopover)
                     }
                 }
             } else {
@@ -132,20 +136,28 @@ struct CodexConceptPill: View {
 struct CodexConceptPopover: View {
     let entry: CodexConceptEntry
     let accentColor: Color
+    @Binding var showPopover: Bool
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 if !entry.definition.isEmpty { definitionSection }
+                if !entry.applicationRules.isEmpty { applicationRulesSection }
                 if !entry.examples.isEmpty { examplesSection }
                 if let where_ = entry.whereActive, !where_.isEmpty { whereActiveSection(where_) }
                 if !entry.antiPatterns.isEmpty { antiPatternsSection }
+                seeFullEntryButton
             }
             .padding(20)
         }
         .frame(width: 420)
         .frame(maxHeight: 480)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(accentColor)
+                .frame(width: 3)
+        }
         .background(DS.surface)
     }
 
@@ -244,6 +256,30 @@ struct CodexConceptPopover: View {
         }
     }
 
+    // MARK: - Application Rules
+
+    private var applicationRulesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("HOW TO USE")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(DS.green.opacity(0.8))
+
+            ForEach(Array(entry.applicationRules.enumerated()), id: \.offset) { idx, rule in
+                HStack(alignment: .top, spacing: 6) {
+                    Text("\(idx + 1).")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.green.opacity(0.6))
+                        .frame(width: 14, alignment: .trailing)
+                    Text(rule)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.text)
+                        .lineSpacing(2)
+                }
+            }
+        }
+    }
+
     // MARK: - Anti-Patterns
 
     private var antiPatternsSection: some View {
@@ -268,11 +304,37 @@ struct CodexConceptPopover: View {
             }
         }
     }
+
+    // MARK: - See Full Entry
+
+    private var seeFullEntryButton: some View {
+        Button {
+            showPopover = false
+            NotificationCenter.default.post(
+                name: .navigateToCodexElement,
+                object: nil,
+                userInfo: ["canonicalName": entry.name]
+            )
+        } label: {
+            HStack(spacing: 4) {
+                Text("See Full Entry")
+                    .font(.system(size: 11, weight: .medium))
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(accentColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(accentColor.opacity(0.1), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 // MARK: - Preview
 
 #Preview {
+    @Previewable @State var showPopover = true
     CodexConceptPopover(
         entry: CodexConceptEntry(
             id: "curiosity+",
@@ -288,9 +350,16 @@ struct CodexConceptPopover: View {
             antiPatterns: [
                 "- Generic curiosity bait without a credible anchor",
                 "- \"You won't believe what happened next...\" — templated, not lived",
-            ]
+            ],
+            applicationRules: [
+                "Create an information gap by withholding the object of a verb",
+                "Anchor curiosity with a credible, specific detail",
+                "Resolve the gap within the same post to build trust",
+            ],
+            readerEffect: "Reader feels compelled to continue reading to close the gap"
         ),
-        accentColor: .orange
+        accentColor: .orange,
+        showPopover: $showPopover
     )
     .padding()
 }

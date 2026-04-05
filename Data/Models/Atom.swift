@@ -111,6 +111,10 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     // MARK: - Automation
     case automation                                     // Automation rules (reactive canvas behaviors)
 
+    // MARK: - Content Physics Codex
+    case codexElement = "codex_element"
+    case codexWalkthrough = "codex_walkthrough"
+
     // MARK: - Category Classification
 
     /// Category for grouping atom types
@@ -130,7 +134,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
             return .cognitive
         case .contentDraft, .contentPhase, .contentPerformance, .contentPublish, .clientProfile:
             return .contentPipeline
-        case .semanticCluster, .connectionLink, .autoLinkSuggestion, .insightExtraction:
+        case .semanticCluster, .connectionLink, .autoLinkSuggestion, .insightExtraction,
+             .codexElement, .codexWalkthrough:
             return .knowledge
         case .journalInsight, .analysisChunk, .emotionalState, .clarityScore:
             return .reflection
@@ -145,6 +150,12 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
 
     /// Whether this atom type contributes to XP
     var contributesToXP: Bool {
+        switch self {
+        case .codexElement, .codexWalkthrough:
+            return false
+        default:
+            break
+        }
         switch category {
         case .core, .physiology, .cognitive, .contentPipeline, .knowledge, .reflection, .sanctuary:
             return true
@@ -262,6 +273,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .area: return "Area"
         // Automation
         case .automation: return "Automation"
+        // Codex
+        case .codexElement: return "Codex Element"
+        case .codexWalkthrough: return "Walkthrough"
         }
     }
 
@@ -352,6 +366,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .area: return "Areas"
         // Automation
         case .automation: return "Automations"
+        // Codex
+        case .codexElement: return "Codex Elements"
+        case .codexWalkthrough: return "Walkthroughs"
         }
     }
 
@@ -442,6 +459,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .area: return "square.stack.fill"
         // Automation
         case .automation: return "bolt.fill"
+        // Codex
+        case .codexElement: return "atom"
+        case .codexWalkthrough: return "text.book.closed"
         }
     }
 }
@@ -598,6 +618,12 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     // MARK: - Automation Links
     case automationScope = "automation_scope"              // Automation rule → scoped thinkspace/cluster
 
+    // MARK: - Codex Links
+    case codexElementToWalkthrough = "codex_element_to_walkthrough"
+    case walkthroughToCodexElement = "walkthrough_to_codex_element"
+    case ideaToBlueprint = "idea_to_blueprint"
+    case blueprintToIdea = "blueprint_to_idea"
+
     // MARK: - Bidirectional Links (for knowledge graph traversal)
     case linksTo = "links_to"                              // Generic forward link
     case linkedFrom = "linked_from"                        // Generic back link
@@ -642,6 +668,10 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .creatorToSwipe: return .swipeToCreator
         case .swipeToClient: return .clientToSwipe
         case .clientToSwipe: return .swipeToClient
+        case .codexElementToWalkthrough: return .walkthroughToCodexElement
+        case .walkthroughToCodexElement: return .codexElementToWalkthrough
+        case .ideaToBlueprint: return .blueprintToIdea
+        case .blueprintToIdea: return .ideaToBlueprint
         default: return nil
         }
     }
@@ -714,6 +744,11 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .clientToSwipe: return "Client to Swipe"
         // Automation
         case .automationScope: return "Automation Scope"
+        // Codex
+        case .codexElementToWalkthrough: return "Element to Walkthrough"
+        case .walkthroughToCodexElement: return "Walkthrough to Element"
+        case .ideaToBlueprint: return "Idea to Blueprint"
+        case .blueprintToIdea: return "Blueprint to Idea"
         }
     }
 }
@@ -1887,6 +1922,18 @@ struct IdeaMetadata: Codable, Sendable {
     // Hook + Description fields (Content Pipeline integration)
     var hooks: [String]?
     var ideaDescription: String?
+    // Codex-era fields
+    var context: String?
+    var contentProfileUUID: String?
+    var blueprintUUID: String?
+    var supportingSwipeUUIDs: [String]?
+    var ideaContentType: String?
+    var codexOutline: String?
+    var arcType: String?
+    var creativeDirection: String?
+    var researchResults: String?
+    var chatHistory: String?
+    var arcRecommendations: String?
 }
 
 // MARK: - Image Metadata

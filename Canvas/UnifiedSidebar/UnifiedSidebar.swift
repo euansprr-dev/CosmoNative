@@ -9,6 +9,7 @@ import SwiftUI
 enum SidebarDestination: Equatable, Hashable {
     case commandCenter
     case inbox
+    case codex
     case thinkspace(id: String)
 }
 

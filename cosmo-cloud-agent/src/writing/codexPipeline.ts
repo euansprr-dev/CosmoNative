@@ -1046,49 +1046,170 @@ This is the foundational text of Content Physics. It should read like a textbook
 // ============================================================
 
 // Concept list for Pass 2 — each becomes a numbered entry the model must produce
+// ALL concepts that need deep entries with 10-15 real examples
 const PASS2_CONCEPTS = [
-  // Speech Acts (highest frequency first)
-  'HOOK (Speech Act)',           // 105/105
-  'REVEAL (Speech Act)',         // 83/105
-  'CLAIM (Speech Act)',          // 82/105
-  'PROOF (Speech Act)',          // 79/105
-  'REFRAME (Speech Act)',        // 73/105
-  'OBSERVATION (Speech Act)',    // 71/105
-  'INSTRUCTION (Speech Act)',    // 54/105
-  'DECISION (Speech Act)',       // 48/105
-  'THESIS (Speech Act)',         // 47/105
-  'PERMISSION (Speech Act)',     // 34/105
-  'WARNING (Speech Act)',        // 31/105
-  'INVITATION (Speech Act)',     // 58/105
-  'GRATITUDE (Speech Act)',      // 12/105
-  // Reader Deltas
-  'IDENTIFICATION+ (Reader Delta)',  // 97/105
-  'TENSION+ (Reader Delta)',         // 98/105
-  'TRUST+ (Reader Delta)',           // 91/105
-  'ASPIRATION+ (Reader Delta)',      // 95/105
-  'SURPRISE (Reader Delta)',         // 88/105
-  'EMPATHY+ (Reader Delta)',         // 54/105
-  'RELIEF / TENSION- (Reader Delta)', // 52/105
-  'FEAR+ (Reader Delta)',            // 41/105
-  'AWE (Reader Delta)',              // 49/105
-  'GUILT (Reader Delta)',            // 32/105
-  'WARMTH (Reader Delta)',           // 29/105
-  'CATHARSIS (Reader Delta)',        // 18/105
-  // Transitions
-  'ESCALATION (Transition)',         // 86/105
-  'ANSWER (Transition)',             // 62/105
-  'ACCUMULATION (Transition)',       // 58/105
-  'OBJECTION-TO-RESOLUTION (Transition)', // 52/105
-  'CAUSE-TO-CONSEQUENCE (Transition)', // 57/105
-  'PIVOT (Transition)',              // 73/105
-  'PARTIAL RESOLUTION (Transition)', // 49/105
-  // Techniques
-  'ELLIPSIS MOMENTUM (Technique)',   // 79/105
-  'SUBJECT DROP (Technique)',        // 84/105
-  'DIRECT ADDRESS (Technique)',      // 56/105
-  'COLON-AS-PROMISE (Technique)',    // 51/105
-  'DIRECT DIALOGUE (Technique)',     // 32/105
-  'REPETITION DEVICE (Technique)',   // 36/105
+  // Forces
+  'OPEN LOOP GRAVITY (Force)',
+  'TRUST ACCRETION (Force)',
+  'STATE-CHANGE PRESSURE (Force)',
+  // Proof Types
+  'NUMERICAL SPECIFICITY (Proof Type)',
+  'TIMELINE PROOF (Proof Type)',
+  'SACRIFICE PROOF (Proof Type)',
+  'SENSORY / SCENE PROOF (Proof Type)',
+  'NAMED ENTITY / TOOL PROOF (Proof Type)',
+  'INSTITUTIONAL AUTHORITY (Proof Type)',
+  'CONTRADICTION / COUNTERINTUITIVE PROOF (Proof Type)',
+  'EMOTIONAL TRUTH (Proof Type)',
+  'SOCIAL PROOF (Proof Type)',
+  'LIVE EXAMPLE / CASE STUDY (Proof Type)',
+  'PROCESS DETAIL (Proof Type)',
+  'NEGATIVE PROOF / HONEST LIMITATION (Proof Type)',
+  'TYPOGRAPHIC / DOCUMENT MIMICRY PROOF (Proof Type)',
+  'GEOGRAPHIC SPECIFICITY (Proof Type)',
+  'LIFESTYLE ARTIFACT PROOF (Proof Type)',
+  // Motivations
+  'ESCAPE (Motivation)',
+  'MONEY / FREEDOM (Motivation)',
+  'FAMILY / LOVE / LEGACY (Motivation)',
+  'IDENTITY (Motivation)',
+  'DEFIANCE (Motivation)',
+  'PROTECTION / SAFETY (Motivation)',
+  'RECIPROCITY / GIVE-BACK (Motivation)',
+  'BELONGING (Motivation)',
+  'SHAME-AVOIDANCE (Motivation)',
+  'STATUS ESCAPE / ANTI-STATUS (Motivation)',
+  'MISSION / MORAL PURPOSE (Motivation)',
+  'GRIEF-FUEL (Motivation)',
+  // Compressions
+  'TIME SKIP (Compression)',
+  'FULL-ARC COMPRESSION (Compression)',
+  'PROCESS COMPRESSION (Compression)',
+  'RESULTS COMPRESSION (Compression)',
+  'COMPRESSION PUNCH (Compression)',
+  'DURATION COMPRESSION (Compression)',
+  'SUMMARY COMPRESSION (Compression)',
+  'IMPLIED SKIP (Compression)',
+  'RETROSPECTIVE COMPRESSION (Compression)',
+  'LIST COMPRESSION (Compression)',
+  'CLIFFHANGER PUNCTUATION (Compression)',
+  // Frames
+  'SETUP (Frame)',
+  'LOSS (Frame)',
+  'DECISION (Frame)',
+  'CONSEQUENCE (Frame)',
+  'SUCCESS (Frame)',
+  'OBSERVATION (Frame)',
+  'ABSURD (Frame)',
+  'TRANSFORMATION (Frame)',
+  'TUTORIAL (Frame)',
+  'THREAT BRIEFING (Frame)',
+  'IDENTITY REFRAME (Frame)',
+  'GIFT / INVITATION (Frame)',
+  'COMPRESSION PUNCH (Frame)',
+  // Distances
+  'ZERO DISTANCE (Distance)',
+  'NEAR DISTANCE (Distance)',
+  'FAR DISTANCE (Distance)',
+  // Remaining Techniques (not already covered by existing deep entries)
+  'ALL CAPS EMPHASIS (Technique)',
+  'CASUAL / IMPERFECT LANGUAGE (Technique)',
+  'PRESENT-TENSE SHIFT (Technique)',
+  'NUMBER FORMATTING (Technique)',
+  'MAXIMUM COMPRESSION (Technique)',
+  'PARENTHETICAL ASIDE (Technique)',
+  'CONTRAST STRUCTURE (Technique)',
+  'SCARE QUOTES / QUOTATION SIGNALS (Technique)',
+  'BULLET / CHECKLIST FORMAT (Technique)',
+  'ARROW FORMATTING (Technique)',
+  'DATE / AGE STAMP (Technique)',
+  'NUMBERED STEPS / LIST TITLES (Technique)',
+  'JARGON / ACRONYM SIGNAL (Technique)',
+  'EMOJI SIGNALING (Technique)',
+  'ONE-LINE / ONE-WORD SLIDE (Technique)',
+  'PLATFORM / BRAND NAME DROP (Technique)',
+  'ANTI-GLAMOUR WORDING (Technique)',
+  'LOWERCASE ANTI-FORMALITY (Technique)',
+  'PROFANITY / CENSORED PROFANITY (Technique)',
+  // Dominant Frames
+  'CHRONOLOGICAL JOURNEY (Dominant Frame)',
+  'TESTIMONY (Dominant Frame)',
+  'DIALOGUE / EAVESDROPPING (Dominant Frame)',
+  'TUTORIAL / BLUEPRINT (Dominant Frame)',
+  'LISTICLE (Dominant Frame)',
+  'CRISIS BRIEFING (Dominant Frame)',
+  'MANIFESTO (Dominant Frame)',
+  'OPEN-LOOP STUB (Dominant Frame)',
+  'ABSURDIST LOOP (Dominant Frame)',
+  'SYSTEM CASE STUDY (Dominant Frame)',
+  // Arc Shapes
+  'ASCENDING STAIRCASE (Arc Shape)',
+  'VALLEY TO PEAK (Arc Shape)',
+  'FALSE FLOOR ARC (Arc Shape)',
+  'DOUBLE-VALLEY / W-SHAPE (Arc Shape)',
+  'LIST ACCUMULATION ARC (Arc Shape)',
+  'SINGLE-SPIKE / NO-ARC (Arc Shape)',
+  'DESCENT WITH LATE REVERSAL (Arc Shape)',
+  'THREAT → REFRAME → OPPORTUNITY (Arc Shape)',
+  'TUTORIAL-FIRST TESTIMONY-SECOND (Arc Shape)',
+  'TESTIMONY-FIRST TUTORIAL-SECOND (Arc Shape)',
+  'CIRCULAR / LOOP ARC (Arc Shape)',
+  // Physics Events
+  'SYMMETRY BREAK (Physics Event)',
+  'PHASE TRANSITION (Physics Event)',
+  'FALSE FLOOR (Physics Event)',
+  'PEAK GRAVITY (Physics Event)',
+  'ENERGY RESOLUTION (Physics Event)',
+  // Long-Range Interactions
+  'SETUP-PAYOFF BOND (Long-Range Interaction)',
+  'ECHO (Long-Range Interaction)',
+  'ABSENCE (Long-Range Interaction)',
+  'ENTANGLEMENT (Long-Range Interaction)',
+  'CALLBACK (Long-Range Interaction)',
+  'INTERFERENCE EFFECT (Long-Range Interaction)',
+  // RSV Dimensions
+  'OPEN LOOPS (RSV Dimension)',
+  'TRUST (RSV Dimension)',
+  'TENSION (RSV Dimension)',
+  'PATTERN EXPECTATION (RSV Dimension)',
+  'FRAME (RSV Dimension)',
+  'ENERGY BALANCE (RSV Dimension)',
+  'SUPERPOSITION (RSV Dimension)',
+  // Compound Patterns (not already covered)
+  'FEAR → OPPORTUNITY CONVERSION (Compound Pattern)',
+  'RECOGNITION → INSTRUCTION (Compound Pattern)',
+  'TUTORIAL-AS-TESTIMONY (Compound Pattern)',
+  'TROJAN HORSE (Compound Pattern)',
+  'ANTI-GLAMOUR + HUGE OUTCOME (Compound Pattern)',
+  'FAMILY FRAME + MONEY FRAME (Compound Pattern)',
+  'SCROLL-TRAP REPETITION (Compound Pattern)',
+  'RETROACTIVE RECONTEXTUALIZATION (Compound Pattern)',
+  'ABSURDIST LOOP (Compound Pattern)',
+  'META-PROOF (Compound Pattern)',
+  // Antimatter
+  'PREMATURE CTA (Antimatter)',
+  'ROUNDING AWAY THE REAL NUMBER (Antimatter)',
+  'LEGAL / ADVISORY DISCLAIMER INSIDE THE NARRATIVE (Antimatter)',
+  'OVEREXPLAINED MORAL (Antimatter)',
+  'GENERIC REPLACEMENT OF SPECIFICS (Antimatter)',
+  'PREMATURE PRICE REVEAL (Antimatter)',
+  'HYPE LANGUAGE WITHOUT COLLATERAL (Antimatter)',
+  'FIXING AUTHENTICITY TYPOS (Antimatter)',
+  'ADDING FLEX TOO EARLY (Antimatter)',
+  'CORPORATE / AI-SAFE PHRASING (Antimatter)',
+  'PLATFORM-REVEAL BEFORE LOAD-BEARING MYSTERY PAYS OFF (Antimatter)',
+  'CONDESCENDING META-COMMENTARY (Antimatter)',
+  // Transitions (remaining)
+  'PHASE TRANSITION (Transition)',
+  'RESET / SYMMETRY BREAK (Transition)',
+  'REVEAL-TO-PROOF (Transition)',
+  'PROOF-TO-ACTION (Transition)',
+  'PERSONAL-TO-UNIVERSAL (Transition)',
+  // Reader Deltas (remaining)
+  'CURIOSITY+ (Reader Delta)',
+  'BELONGING (Reader Delta)',
+  'VALIDATION (Reader Delta)',
+  'MOTIVATION / ACTION PRESSURE (Reader Delta)',
 ];
 
 /** Stream an OpenRouter SSE response and collect text content */

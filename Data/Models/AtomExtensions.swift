@@ -1014,3 +1014,64 @@ extension Atom {
         self
     }
 }
+
+// MARK: - Codex Accessors
+
+extension Atom {
+    /// Decode CodexElement from structured JSON (for .codexElement atoms)
+    var codexElement: CodexElement? {
+        guard type == .codexElement,
+              let structured = structured,
+              let data = structured.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(CodexElement.self, from: data)
+    }
+
+    /// Decode CodexWalkthrough from structured JSON (for .codexWalkthrough atoms)
+    var codexWalkthroughData: CodexWalkthrough? {
+        guard type == .codexWalkthrough,
+              let structured = structured,
+              let data = structured.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(CodexWalkthrough.self, from: data)
+    }
+
+    /// Decode CodexOutlineModel from ideaMetadata.codexOutline JSON string
+    var ideaCodexOutline: CodexOutlineModel? {
+        guard let jsonString = ideaMetadata?.codexOutline,
+              let data = jsonString.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(CodexOutlineModel.self, from: data)
+    }
+
+    /// Decode research results from ideaMetadata.researchResults JSON string
+    var ideaResearchResults: [IdeaResearchResult] {
+        guard let jsonString = ideaMetadata?.researchResults,
+              let data = jsonString.data(using: .utf8),
+              let results = try? JSONDecoder().decode([IdeaResearchResult].self, from: data) else { return [] }
+        return results
+    }
+
+    /// Decode chat history from ideaMetadata.chatHistory JSON string
+    var ideaChatHistory: [IdeaChatMessage] {
+        guard let jsonString = ideaMetadata?.chatHistory,
+              let data = jsonString.data(using: .utf8),
+              let messages = try? JSONDecoder().decode([IdeaChatMessage].self, from: data) else { return [] }
+        return messages
+    }
+
+    /// Decode arc recommendations from ideaMetadata.arcRecommendations JSON string
+    var ideaArcRecommendations: [ArcRecommendation] {
+        guard let jsonString = ideaMetadata?.arcRecommendations,
+              let data = jsonString.data(using: .utf8),
+              let recs = try? JSONDecoder().decode([ArcRecommendation].self, from: data) else { return [] }
+        return recs
+    }
+
+    /// Canonical name for codex elements (convenience for lookups)
+    var codexCanonicalName: String? {
+        codexElement?.canonicalName
+    }
+
+    /// Category for codex elements
+    var codexCategory: CodexElementCategory? {
+        codexElement?.category
+    }
+}

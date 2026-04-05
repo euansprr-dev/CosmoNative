@@ -7,6 +7,7 @@ import SwiftUI
 struct LinkSwipesOverlay: View {
     @ObservedObject var viewModel: IdeaFocusModeViewModel
     @Binding var isPresented: Bool
+    var blueprintMode: Bool = false
 
     @State private var searchText: String = ""
     @State private var allSwipes: [Atom] = []
@@ -346,14 +347,19 @@ struct LinkSwipesOverlay: View {
 
             Button {
                 Task {
-                    for uuid in selectedUUIDs {
-                        await viewModel.linkSwipe(uuid)
+                    if blueprintMode, let firstUUID = selectedUUIDs.first,
+                       let swipe = allSwipes.first(where: { $0.uuid == firstUUID }) {
+                        viewModel.selectBlueprint(swipe)
+                    } else {
+                        for uuid in selectedUUIDs {
+                            await viewModel.linkSwipe(uuid)
+                        }
                     }
                     selectedUUIDs.removeAll()
                     isPresented = false
                 }
             } label: {
-                Text("Link Selected (\(selectedUUIDs.count))")
+                Text(blueprintMode ? "Set as Blueprint" : "Link Selected (\(selectedUUIDs.count))")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(DS.textOnAccent)
                     .padding(.horizontal, 16)

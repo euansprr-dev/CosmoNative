@@ -9,7 +9,7 @@
 import { config } from '../config';
 import { Atom, fetchAtom, updateAtom, fetchAllByType, fuzzyFindClient, loadPromptTemplate } from '../db/queries';
 import { selectSwipes } from './swipeSelector';
-import { assembleBlock1, assembleBlock2, assembleBlock3Stable, assembleBlock3Dynamic, getSwipeApplicationRules, WritingBlock, assembleBlock1Codex, assembleBlock3StableCodex, buildCodexSystemPrompt, buildCodexPhase1Prompt, buildCodexPhase2Prompt, buildCodexPhase3Prompt } from './contextAssembler';
+import { assembleBlock1, assembleBlock2, assembleBlock3Stable, assembleBlock3Dynamic, getSwipeApplicationRules, WritingBlock, assembleBlock1Codex, assembleBlock3StableCodex, buildCodexSystemPrompt, buildCodexPhase1Prompt, buildCodexPhase2Prompt, buildCodexPhase3Prompt, buildCodexSessionPrompt } from './contextAssembler';
 import {
   WritingPhase, WritingMessage, CompressedSwipe, OutlineItem, HookVariant,
   ContentFormat, detectContentFormat, renderDraftForDisplay, validateDraft,
@@ -19,6 +19,7 @@ import { mapBlueprintPhysicsToTargets, extractDraftPhysics, validatePhysics } fr
 
 const MAX_INNER_ITERATIONS = 5;  // Revisions: think + write + follow-up + safety
 const MAX_PHASE_ITERATIONS = 3;  // Pipeline phases: think + tool + text response (or tool + text + safety)
+const MAX_SESSION_ITERATIONS = 8; // Single session: plan + write + score + revise + score = 5 typical, 3 buffer
 
 type SlideDepthType = 'sparse_emotional' | 'bridge' | 'proof' | 'detail_dense' | 'payoff' | 'unknown';
 
@@ -138,6 +139,13 @@ export class CloudWritingEngine {
   private useCodexMode = false;
   private targetFormat: ContentFormat = 'unknown';
 
+  // Codex-era fields (set by Swift app via Supabase sync)
+  private codexOutline: import('./types').CodexOutlineModel | null = null;
+  private inheritedArcType: string | null = null;
+  private inheritedResearchResults: import('./types').IdeaResearchFinding[] | null = null;
+  private inheritedCreativeDirection: string | null = null;
+  private inheritedContext: string | null = null;
+
   // Reference material cache — persists across turns, 25K char budget
   private referenceMaterial: Map<string, string> = new Map();
   private referenceMaterialChars = 0;
@@ -164,6 +172,9 @@ export class CloudWritingEngine {
   private analysisDepth = 0;
   private hasCompletedSelfReview = false;
   private writingContext: import('./contextAssembler').WritingContext = {};
+
+  // Current pipeline step — set during conversation loop for tool handlers to reference
+  private pipelineStep: 'plan' | 'write' | 'edit' | 'session' | undefined;
 
   constructor(contentUUID: string) {
     this.contentUUID = contentUUID;
@@ -199,6 +210,25 @@ export class CloudWritingEngine {
     } else if (meta.inheritedHooks && Array.isArray(meta.inheritedHooks)) {
       this.hooks = meta.inheritedHooks as string[];
     }
+
+    // Codex outline + research (from Swift app idea flow)
+    if (meta.codexOutline) {
+      try {
+        this.codexOutline = typeof meta.codexOutline === 'string'
+          ? JSON.parse(meta.codexOutline)
+          : meta.codexOutline;
+      } catch { /* ignore parse errors */ }
+    }
+    this.inheritedArcType = (meta.inheritedArcType as string) || null;
+    if (meta.inheritedResearchResults) {
+      try {
+        this.inheritedResearchResults = typeof meta.inheritedResearchResults === 'string'
+          ? JSON.parse(meta.inheritedResearchResults)
+          : meta.inheritedResearchResults;
+      } catch { /* ignore parse errors */ }
+    }
+    this.inheritedCreativeDirection = (meta.inheritedCreativeDirection as string) || null;
+    this.inheritedContext = (meta.inheritedContext as string) || null;
 
     // Restore persisted conversation + writing context
     const structured = this.contentAtom.structured || {};
@@ -378,6 +408,110 @@ USER FEEDBACK:
     const result = await this.runConversationLoop(phase, block3b);
     await this.persistConversation();
     return result;
+  }
+
+  // ============================================================
+  // Single Agentic Session (outline-required, all phases in one call)
+  // ============================================================
+
+  /**
+   * Single agentic session — outline-required mode.
+   * One API call: plan execution → write → self-critique → revise.
+   * Used when codexOutline is present (user provided structural skeleton).
+   * Opus 4.6 with adaptive thinking — interleaved thinking between tool calls.
+   */
+  async runSingleSession(userDirection: string): Promise<{ text: string; contentUUID: string }> {
+    await this.initialize();
+    if (!this.contentAtom) throw new Error('Engine not initialized');
+    if (!this.codexOutline?.slides?.length) {
+      throw new Error('Single session requires a codex outline');
+    }
+
+    this.logPipelineHeader();
+    console.log(`  ⚛️ SINGLE SESSION MODE: outline-required, all phases in one call`);
+    console.log(`  ⚛️ Outline: ${this.codexOutline.slides.length} slides, arc: ${this.codexOutline.arcShape || 'auto'}`);
+    console.log(`  ⚛️ Research: ${this.inheritedResearchResults?.length || 0} findings`);
+    console.log(`  ⚛️ Creative direction: ${this.inheritedCreativeDirection ? 'yes' : 'none'}`);
+
+    const block3b = this.buildDynamicBlock();
+
+    // Dump full system prompt for debugging
+    console.log(JSON.stringify({
+      type: '📋 SESSION_SYSTEM_PROMPT_DUMP',
+      blocks: this.blocks.map(b => ({
+        label: b.label,
+        chars: b.content.length,
+        cached: b.cacheControl,
+      })),
+      dynamicBlock: { label: 'Block 3B: Dynamic', chars: block3b.content.length },
+    }));
+
+    const sessionPrompt = buildCodexSessionPrompt(
+      userDirection,
+      this.targetFormat,
+      (this.contentAtom.metadata?.platform as string) || 'instagram',
+      this.clientAtom?.title || 'the client',
+      this.codexOutline,
+      this.inheritedResearchResults,
+      this.inheritedCreativeDirection,
+    );
+
+    this.messages.push({
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: sessionPrompt,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Single conversation loop — 'session' pipeline step gives access to ALL tools
+    const result = await this.runConversationLoop('draft', block3b, 'session');
+
+    this.hasWrittenDraft = true;
+    this.writingPlan = 'session'; // Mark plan as existing for revision mode compatibility
+    await this.persistConversation();
+
+    // Log full recap
+    const finalBody = this.contentAtom?.body || '';
+    const finalWords = finalBody.split(/\s+/).filter(Boolean).length;
+    const totalThinks = this.messages.filter(m => m.toolCalls?.some(tc => tc.name === 'think')).length;
+    const totalWrites = this.messages.filter(m => m.toolCalls?.some(tc => tc.name === 'write_draft')).length;
+    const totalPlans = this.messages.filter(m => m.toolCalls?.some(tc => tc.name === 'create_writing_plan')).length;
+    const totalCalls = this.messages.filter(m => m.role === 'assistant' && (m.toolCalls?.length || m.content)).length;
+
+    console.log(`\n  ═══ SINGLE SESSION COMPLETE ═══`);
+    console.log(`  📋 Final: ${finalWords} words`);
+    console.log(`  📋 API calls: ${totalCalls} total (${totalThinks} thinks, ${totalPlans} plans, ${totalWrites} writes)`);
+    console.log(`  📋 Messages: ${this.messages.length}`);
+
+    // Full session recap — one copyable JSON log
+    const recap: any = {
+      type: '📋 SESSION_RECAP',
+      client: this.clientAtom?.title || 'unknown',
+      blueprint: this.blueprintAnchor?.title?.substring(0, 80) || 'none',
+      outlineSlides: this.codexOutline.slides.length,
+      arcShape: this.codexOutline.arcShape || 'auto',
+      apiCalls: totalCalls,
+      thinks: [] as any[],
+      plans: [] as any[],
+      drafts: [] as any[],
+      finalDraft: finalBody,
+    };
+    for (const msg of this.messages) {
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          if (tc.name === 'think') {
+            recap.thinks.push({ words: ((tc.arguments as any)?.thought || '').split(/\s+/).length });
+          } else if (tc.name === 'create_writing_plan') {
+            recap.plans.push({ words: ((tc.arguments as any)?.plan || '').split(/\s+/).length, hooks: (tc.arguments as any)?.hookVariants || [] });
+          } else if (tc.name === 'write_draft') {
+            recap.drafts.push({ words: ((tc.arguments as any)?.content || '').split(/\s+/).length });
+          }
+        }
+      }
+    }
+    console.log(JSON.stringify(recap));
+
+    return { text: result, contentUUID: this.contentUUID };
   }
 
   private buildDynamicBlock(): WritingBlock {
@@ -590,6 +724,9 @@ USER FEEDBACK:
         this.targetFormat,
         this.contentAtom?.metadata?.platform as string || 'instagram',
         clientName,
+        this.codexOutline,
+        this.inheritedResearchResults,
+        this.inheritedCreativeDirection,
       );
       console.log(`  📋 Phase 1 (Codex mode): reconstruction plan for ${clientName}`);
       this.messages.push({
@@ -1262,9 +1399,14 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
   // Conversation Loop
   // ============================================================
 
-  private async runConversationLoop(phase: WritingPhase, block3b: WritingBlock, pipelineStep?: 'plan' | 'write' | 'edit'): Promise<string> {
-    // Pipeline phases use tighter iteration cap; open-ended conversation (revisions, brainstorm) uses full budget
-    const maxIterations = pipelineStep ? MAX_PHASE_ITERATIONS : MAX_INNER_ITERATIONS;
+  private async runConversationLoop(phase: WritingPhase, block3b: WritingBlock, pipelineStep?: 'plan' | 'write' | 'edit' | 'session'): Promise<string> {
+    // Track pipeline step for tool handlers (e.g., session-specific rules injection)
+    this.pipelineStep = pipelineStep;
+
+    // Session mode: extended budget for full plan+write+edit cycle
+    // Pipeline phases: tighter cap. Open-ended (revisions, brainstorm): full budget.
+    const maxIterations = pipelineStep === 'session' ? MAX_SESSION_ITERATIONS
+      : pipelineStep ? MAX_PHASE_ITERATIONS : MAX_INNER_ITERATIONS;
     let lastAssistantText = '';
     let emptyResponseCount = 0;
     let consecutiveThinks = 0;
@@ -1391,7 +1533,10 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
       // Plan/edit phases: think ONCE then act. Write phase: think ONCE to compose (don't nudge on first think).
       // Revisions: allow 1-2 thinks for complex feedback.
       // Write + edit phases need one think to compose/review. Plan phase: think once then create_writing_plan.
-      const thinkNudgeThreshold = (pipelineStep === 'write' || pipelineStep === 'edit') ? 2 : (pipelineStep ? 1 : 2);
+      // Session mode: allow 2 consecutive thinks (plan + self-edit both use think)
+      const thinkNudgeThreshold = pipelineStep === 'session' ? 2
+        : (pipelineStep === 'write' || pipelineStep === 'edit') ? 2
+        : (pipelineStep ? 1 : 2);
       const allThinks = response.toolCalls.every(tc => tc.name === 'think');
       if (allThinks) {
         consecutiveThinks++;
@@ -1843,7 +1988,16 @@ If ALL checks pass, present the draft.
           console.log(`    📋 Outline derived: ${this.outline.length} slides from structured plan`);
         }
 
-        return `Writing plan created (${planWords} words, ${structuredPlan.slides.length} slides, ${this.hooks.length} hook variants). The plan includes per-slide physics targets, density targets, WRITE instructions, and hook variants. Ready for user confirmation before writing.`;
+        // Session mode: inject critical rules reminder right before writing (recency bias)
+        // In multi-phase mode, the user confirms first, so rules are injected later.
+        const ruleReminder = this.buildCriticalRulesReminder();
+        const confirmMessage = `Writing plan created (${planWords} words, ${structuredPlan.slides.length} slides, ${this.hooks.length} hook variants). The plan includes per-slide physics targets, density targets, WRITE instructions, and hook variants.`;
+
+        if (this.pipelineStep === 'session') {
+          return `${confirmMessage}\n\nBEFORE YOU WRITE — review these rules (violations trigger automatic rewrite):\n${ruleReminder}\n\nNow call write_draft with the complete content.`;
+        }
+
+        return `${confirmMessage} Ready for user confirmation before writing.`;
       }
 
       case 'read_draft': {
@@ -1956,13 +2110,13 @@ If ALL checks pass, present the draft.
     dynamicBlock: WritingBlock | null,
     messages: any[],
     tools: any[],
-    pipelineStep?: 'plan' | 'write' | 'edit',
+    pipelineStep?: 'plan' | 'write' | 'edit' | 'session',
   ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
     const useDirectAnthropic = !!config.anthropicApiKey;
-    // Model routing: Sonnet for all writing engine calls (pipeline + revisions + brainstorm).
-    // To switch to hybrid (Sonnet analysis + Opus writing), change to:
-    //   pipelineStep === 'write' ? config.models.writer : config.models.strategist
-    const model = config.models.strategist;
+    // Model routing: Opus for single session (one continuous mind), Sonnet for existing phases
+    const model = pipelineStep === 'session'
+      ? config.models.writer       // Opus 4.6 — single session, adaptive thinking
+      : config.models.strategist;  // Sonnet 4.6 — existing pipeline phases
 
     // Strip provider prefix for direct Anthropic (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
     const modelId = useDirectAnthropic ? model.replace(/^anthropic\//, '') : model;
@@ -1972,7 +2126,7 @@ If ALL checks pass, present the draft.
     console.log(`  ✍️ Writing engine → ${modelId} (${messages.length} messages, ${tools.length} tools, ~${estimatedTokens} est tokens)${useDirectAnthropic ? ' [direct]' : ' [openrouter]'}`);
 
     if (useDirectAnthropic) {
-      return this.callAnthropicDirect(modelId, messages, tools, dynamicBlock);
+      return this.callAnthropicDirect(modelId, messages, tools, dynamicBlock, pipelineStep);
     } else {
       return this.callOpenRouter(model, messages, tools, dynamicBlock);
     }
@@ -1986,6 +2140,7 @@ If ALL checks pass, present the draft.
     messages: any[],
     tools: any[],
     dynamicBlock: WritingBlock | null,
+    pipelineStep?: 'plan' | 'write' | 'edit' | 'session',
   ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
     const apiKey = config.anthropicApiKey!;
 
@@ -2004,8 +2159,15 @@ If ALL checks pass, present the draft.
       system,
       messages, // already in Anthropic format from buildAPIMessages() → buildAnthropicMessages()
       max_tokens: 16384,
-      temperature: 0.3,
     };
+
+    // Adaptive thinking for session mode (Opus 4.6 — interleaved thinking automatic, no beta header)
+    if (pipelineStep === 'session') {
+      body.thinking = { type: 'adaptive' };
+      body.temperature = 1; // Required for adaptive thinking
+    } else {
+      body.temperature = 0.3;
+    }
 
     // Tools: Anthropic uses input_schema instead of parameters
     if (tools.length > 0) {
@@ -2028,7 +2190,7 @@ If ALL checks pass, present the draft.
             'Content-Type': 'application/json',
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
-            'anthropic-beta': 'prompt-caching-2024-07-31',
+            // Prompt caching is GA — no beta header needed
           },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(300_000), // 5 min timeout
@@ -2077,7 +2239,7 @@ If ALL checks pass, present the draft.
         const completionTokens = data.usage?.output_tokens || 0;
         console.log(`  ✍️ Finish: ${finishReason || '--'}, completion=${completionTokens}`);
 
-        // Parse response content blocks
+        // Parse response content blocks (including thinking blocks from adaptive thinking)
         let textContent = '';
         const toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> = [];
 
@@ -2090,6 +2252,11 @@ If ALL checks pass, present the draft.
               name: block.name,
               arguments: block.input || {},
             });
+          } else if (block.type === 'thinking') {
+            // Adaptive thinking block — log summary for debugging
+            const thinkText = block.thinking || '';
+            const thinkWords = thinkText.split(/\s+/).filter(Boolean).length;
+            console.log(`  🧠 Adaptive thinking: ${thinkWords} words`);
           }
         }
 
@@ -2425,7 +2592,19 @@ If ALL checks pass, present the draft.
   // Tool Definitions
   // ============================================================
 
-  private getToolDefinitions(phase: WritingPhase, pipelineStep?: 'plan' | 'write' | 'edit'): any[] {
+  private getToolDefinitions(phase: WritingPhase, pipelineStep?: 'plan' | 'write' | 'edit' | 'session'): any[] {
+    // Single session: NO think tool — adaptive thinking handles all reasoning.
+    // Checkpoint logic (quality gates, rules injection) moves to create_writing_plan and write_draft handlers.
+    if (pipelineStep === 'session') {
+      return [
+        { name: 'create_writing_plan', description: 'Create a comprehensive writing plan with hook variants. Must cover: physics mapping, voice & style, slide-by-slide blueprint with per-slide quarks/distance/techniques, rules checklist, density targets, hook variants. The plan drives the entire draft.', parameters: { type: 'object', properties: { plan: { type: 'string', description: 'The complete writing plan text' }, hookVariants: { type: 'array', items: { type: 'string' }, description: '3-4 hook variants matching the blueprint hook format and physics' }, structuredPlan: { type: 'object', description: 'Structured slide contract for deterministic validation', properties: { voicePattern: { type: 'string' }, tensePattern: { type: 'string' }, directAddressPrefix: { type: 'string' }, slides: { type: 'array', items: { type: 'object', properties: { slideNumber: { type: 'number' }, beatFunction: { type: 'string' }, prerequisites: { type: 'string' }, targetWords: { type: 'number' }, targetSentences: { type: 'number' }, format: { type: 'string' }, content: { type: 'string' }, transitionExpectation: { type: 'string' }, depthType: { type: 'string', enum: ['sparse_emotional', 'bridge', 'proof', 'detail_dense', 'payoff', 'unknown'] }, allowedAdaptation: { type: 'string' } }, required: ['slideNumber', 'beatFunction'] } } } } }, required: ['plan'] } },
+        { name: 'write_draft', description: 'Write or revise the full draft. On first call: write following your plan. On subsequent calls: apply self-edit corrections.', parameters: { type: 'object', properties: { content: { type: 'string', description: 'Full draft text or JSON' }, format: { type: 'string', enum: ['plaintext', 'carousel_json', 'thread_json', 'script'] }, selfEvaluation: { type: 'object', properties: { confidenceScore: { type: 'number' }, voiceMatchScore: { type: 'number' }, weakAreas: { type: 'array', items: { type: 'string' } } } } }, required: ['content'] } },
+        { name: 'read_draft', description: 'Read the current draft for self-edit review', parameters: { type: 'object', properties: {} } },
+        { name: 'search_swipes', description: 'Search loaded swipe library', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+        { name: 'read_swipe_body', description: 'Load full swipe text', parameters: { type: 'object', properties: { swipe_id: { type: 'string' } }, required: ['swipe_id'] } },
+      ];
+    }
+
     // Pipeline-specific tool sets
     if (pipelineStep === 'plan') {
       return [

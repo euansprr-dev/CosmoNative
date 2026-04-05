@@ -46,6 +46,11 @@ export const config = {
   // instead of old methodology + QuarkProfile. Set to false to revert to legacy behavior.
   useExemplarCodex: process.env.USE_EXEMPLAR_CODEX !== 'false', // default true
 
+  // Single agentic session — when true and codex outline exists, writing engine runs
+  // all phases (plan + write + self-edit) in one Opus API call with adaptive thinking.
+  // Set to false to revert to multi-phase Sonnet pipeline.
+  useSingleSession: process.env.USE_SINGLE_SESSION !== 'false', // default true
+
   // Server
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',

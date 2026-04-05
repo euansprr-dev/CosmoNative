@@ -395,6 +395,26 @@ struct ContentFocusModeState: Codable {
     var conversationHistory: [WritingMessage] = []
     var conversationSummary: String = ""
 
+    // MARK: - Codex-era Inherited Fields (from idea promotion)
+    var codexOutline: CodexOutlineModel?
+    var inheritedResearchResults: [IdeaResearchResult]?
+    var inheritedArcRecommendations: [ArcRecommendation]?
+    var inheritedCreativeDirection: String = ""
+    var inheritedIdeaContext: String = ""
+    var inheritedChatHistory: [IdeaChatMessage]?
+    var codexElementNames: [String] = []
+    var blueprintDisplayMode: BlueprintDisplayMode = .text
+
+    // Sidebar panel expand/collapse state
+    var outlinePanelExpanded: Bool = true
+    var blueprintPanelExpanded: Bool = true
+    var researchPanelExpanded: Bool = true
+    var profilePanelExpanded: Bool = false
+    var arcPanelExpanded: Bool = false
+    var contextPanelExpanded: Bool = false
+    var chatPanelExpanded: Bool = false
+    var codexRefPanelExpanded: Bool = false
+
     // MARK: AI Editing State (non-persisted, excluded from Codable)
     var aiUndoStack: [AIEdit] = []          // last 20 AI edits
     var pinnedDecisions: [PinnedDecision] = []

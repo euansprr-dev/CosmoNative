@@ -890,6 +890,15 @@ struct ContentAtomMetadata: Codable, Sendable {
     var draftingNote: String?
     var draftReady: Bool?
 
+    // Codex-era inherited fields
+    var inheritedArcType: String?
+    var inheritedCodexOutline: String?
+    var inheritedCreativeDirection: String?
+    var inheritedResearchResults: String?
+    var inheritedChatHistory: String?
+    var inheritedContext: String?
+    var codexElementNames: [String]?
+
     func toJSON() -> String? {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
         return String(data: data, encoding: .utf8)

@@ -1,0 +1,31 @@
+// CosmoOS/Data/Models/Codex/CodexElement.swift
+// Individual element from the Content Physics periodic table.
+// Stored in the `structured` JSON field of a `.codexElement` Atom.
+
+import Foundation
+
+struct CodexElement: Codable, Sendable, Equatable, Identifiable {
+    var id: String { canonicalName }
+
+    let canonicalName: String
+    let category: CodexElementCategory
+    let definition: String
+    let frequency: String?
+    let examples: [CodexExample]
+    let applicationRules: [String]
+    let antiPatterns: [String]
+    let readerEffect: String?
+    let whereActive: [String]
+    let whyItWorks: String?
+    let patterns: [String]
+    let variants: [String]
+}
+
+struct CodexExample: Codable, Sendable, Equatable, Identifiable {
+    var id: String { "\(postReference)-\(slideNumber ?? 0)" }
+
+    let slideText: String
+    let postReference: String
+    let slideNumber: Int?
+    let mechanism: String?
+}

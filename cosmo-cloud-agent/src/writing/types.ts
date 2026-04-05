@@ -552,6 +552,33 @@ export function validateDraft(content: string, format: ContentFormat): DraftVali
 }
 
 // ============================================================
+// Codex-Tagged Outline (from Swift app idea flow)
+// ============================================================
+
+export interface CodexOutlineSlide {
+  position: number;
+  speechAct?: string;
+  readerDeltas: string[];
+  frame?: string;
+  distance?: string;
+  techniques: string[];
+  transition?: string;
+  note?: string;
+}
+
+export interface CodexOutlineModel {
+  arcShape?: string;
+  slides: CodexOutlineSlide[];
+}
+
+export interface IdeaResearchFinding {
+  title: string;
+  snippet: string;
+  source?: string;
+  proofType?: string;
+}
+
+// ============================================================
 // Draft Rendering
 // ============================================================
 

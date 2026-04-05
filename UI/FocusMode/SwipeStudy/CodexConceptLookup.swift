@@ -13,6 +13,8 @@ struct CodexConceptEntry: Identifiable {
     let examples: [String]       // First 3 real quoted examples
     let whereActive: String?     // First "Where active" line
     let antiPatterns: [String]   // First 2 anti-patterns
+    var applicationRules: [String] = []
+    var readerEffect: String? = nil
 }
 
 @Observable
@@ -172,6 +174,40 @@ final class CodexConceptLookup {
         self.concepts = result
         self.isLoaded = true
         print("📚 CodexConceptLookup: parsed \(result.count) concepts")
+    }
+
+    /// Load entries from CodexRepository atoms (richer than text parsing)
+    func loadFromAtoms() async {
+        let repo = CodexRepository.shared
+        do {
+            try await repo.loadIfNeeded()
+            let elements = try await repo.fetchAllElements()
+            var result: [String: CodexConceptEntry] = [:]
+            for (_, element) in elements {
+                let key = normalizeKey(element.canonicalName)
+                result[key] = CodexConceptEntry(
+                    id: key,
+                    name: element.canonicalName,
+                    category: element.category.displayName,
+                    definition: element.definition,
+                    frequency: element.frequency ?? "",
+                    examples: element.examples.prefix(3).map { ex in
+                        "\"\(ex.slideText)\" — [\(ex.postReference)] Slide \(ex.slideNumber ?? 0)"
+                    },
+                    whereActive: element.whereActive.first,
+                    antiPatterns: Array(element.antiPatterns.prefix(2)),
+                    applicationRules: Array(element.applicationRules.prefix(3)),
+                    readerEffect: element.readerEffect
+                )
+            }
+            // Merge with existing (atom data takes precedence)
+            for (key, entry) in result {
+                concepts[key] = entry
+            }
+            isLoaded = true
+        } catch {
+            print("⚠️ CodexConceptLookup.loadFromAtoms failed: \(error)")
+        }
     }
 
     /// Look up a concept by name (case-insensitive, handles variants)

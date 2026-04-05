@@ -174,6 +174,9 @@ class AutomationActionExecutor {
 
         case .pulseBlock:
             handlePulseBlock(action, context: context)
+
+        @unknown default:
+            break
         }
     }
 

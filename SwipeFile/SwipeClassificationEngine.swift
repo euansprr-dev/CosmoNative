@@ -9,6 +9,7 @@ import GRDB
 @MainActor
 final class SwipeClassificationEngine: ObservableObject {
     static let shared = SwipeClassificationEngine()
+    static let autoIngestModel = "google/gemini-3-flash-preview"
 
     /// UUIDs currently being classified — supports concurrent batch processing
     private var classifyingUUIDs: Set<String> = []
@@ -23,9 +24,9 @@ final class SwipeClassificationEngine: ObservableObject {
 
     // MARK: - Main Pipeline
 
-    /// Classify and deep-analyze a swipe atom in a single Claude call.
+    /// Classify and deep-analyze a swipe atom in a single cloud call.
     /// Returns an enriched SwipeAnalysis with taxonomy fields + deep analysis.
-    func classifyAndAnalyze(atom: Atom) async -> SwipeAnalysis {
+    func classifyAndAnalyze(atom: Atom, model: String? = nil) async -> SwipeAnalysis {
         classifyingUUIDs.insert(atom.uuid)
         isClassifying = true
         defer {
@@ -42,7 +43,17 @@ final class SwipeClassificationEngine: ObservableObject {
         let prompt = buildUnifiedPrompt(atom: atom, text: text)
 
         do {
-            let response = try await ResearchService.shared.analyzeContent(prompt: prompt)
+            let response: String
+            if let model {
+                response = try await ResearchService.shared.analyze(
+                    prompt: prompt,
+                    model: model,
+                    maxTokens: 4000,
+                    temperature: 0.2
+                )
+            } else {
+                response = try await ResearchService.shared.analyzeContent(prompt: prompt)
+            }
             let parsed = parseResponse(response)
 
             if let parsed = parsed {

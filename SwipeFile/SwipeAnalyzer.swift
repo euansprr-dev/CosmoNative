@@ -97,7 +97,10 @@ final class SwipeAnalyzer: ObservableObject {
         onLocalComplete?(localResult)
 
         // Phase 2: AI classification + deep analysis (single Claude call)
-        let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(atom: atom)
+        let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(
+            atom: atom,
+            model: SwipeClassificationEngine.autoIngestModel
+        )
 
         // Merge: classification results override/enrich local NLP
         let merged = SwipeClassificationEngine.shared.mergeClassification(classifiedResult, into: localResult)

@@ -75,6 +75,9 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     public var transcriptionQuality: TranscriptionQuality?
     public var transcriptionWarnings: [String]?
 
+    // Extraction retry tracking (auto-retry on app launch, capped at 3)
+    public var extractionRetryCount: Int?
+
     // Engagement Metrics (from platform APIs or manual entry)
     public var likesCount: Int?
     public var viewsCount: Int?
@@ -777,6 +780,8 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     public let likesCount: Int?
     public let viewsCount: Int?
     public let commentsCount: Int?
+    // Processing state (nil, "pending", "extracting", "extraction_failed", "complete")
+    public let processingStatus: String?
 
     /// Pre-lowercased concatenation of searchable fields for fast filtering
     public let searchableText: String
@@ -805,7 +810,8 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         instagramId: String? = nil,
         likesCount: Int? = nil,
         viewsCount: Int? = nil,
-        commentsCount: Int? = nil
+        commentsCount: Int? = nil,
+        processingStatus: String? = nil
     ) {
         self.id = atomUUID
         self.atomUUID = atomUUID
@@ -832,6 +838,7 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.likesCount = likesCount
         self.viewsCount = viewsCount
         self.commentsCount = commentsCount
+        self.processingStatus = processingStatus
         self.searchableText = CommandKSearchMatcher.searchableText(
             from: [title, hookText, author, niche, creatorName]
         )
@@ -1027,7 +1034,8 @@ extension Atom {
             instagramId: instagramId,
             likesCount: analysis?.likesCount,
             viewsCount: analysis?.viewsCount,
-            commentsCount: analysis?.commentsCount
+            commentsCount: analysis?.commentsCount,
+            processingStatus: meta?.processingStatus
         )
     }
 

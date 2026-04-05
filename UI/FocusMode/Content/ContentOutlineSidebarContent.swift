@@ -58,11 +58,21 @@ struct ContentOutlineSidebarContent: View {
                 inheritedConnectionsSection
                 frameworkSection
                 inheritedHooksSection
+
+                // Codex-era panels (collapsible)
+                codexOutlinePanel
+                codexResearchPanel
+                codexArcPanel
+                codexContextDirectionPanel
+                codexChatHistoryPanel
+                codexQuickRefPanel
+
                 intelligenceSection
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
+        .scrollIndicators(.hidden)
         .onAppear {
             Task { await loadInheritedContext() }
             let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
@@ -728,6 +738,260 @@ struct ContentOutlineSidebarContent: View {
                     .background(DS.surface, in: Circle())
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Codex Panels
+
+    @ViewBuilder
+    private var codexOutlinePanel: some View {
+        if let outline = state.codexOutline, !outline.slides.isEmpty {
+            ContentSidebarPanel(
+                title: "Codex Outline",
+                icon: "list.bullet.rectangle",
+                accentColor: DS.accent,
+                badge: outline.slides.count,
+                isExpanded: $state.outlinePanelExpanded
+            ) {
+                if let arc = outline.arcShape {
+                    HStack(spacing: 6) {
+                        Text("Arc:")
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textMuted)
+                        CodexConceptTag(
+                            name: arc,
+                            color: CodexElementCategory.arcShape.color
+                        )
+                    }
+                    .padding(.bottom, 4)
+                }
+
+                ForEach(outline.slides) { slide in
+                    codexOutlineSlideRow(slide)
+                }
+            }
+        }
+    }
+
+    private func codexOutlineSlideRow(_ slide: CodexOutlineSlide) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Slide \(slide.position)")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(DS.textOnAccent)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(DS.accent, in: Capsule())
+
+            FlowLayout(spacing: 3) {
+                if let sa = slide.speechAct {
+                    CodexConceptTag(
+                        name: sa,
+                        color: CodexElementCategory.speechAct.color
+                    )
+                }
+                ForEach(slide.readerDeltas, id: \.self) { delta in
+                    CodexConceptTag(
+                        name: delta,
+                        color: CodexElementCategory.readerDelta.color
+                    )
+                }
+                if let frame = slide.frame {
+                    CodexConceptTag(
+                        name: frame,
+                        color: CodexElementCategory.frame.color
+                    )
+                }
+                ForEach(slide.techniques, id: \.self) { tech in
+                    CodexConceptTag(
+                        name: tech,
+                        color: CodexElementCategory.technique.color
+                    )
+                }
+                if let transition = slide.transition {
+                    CodexConceptTag(
+                        name: "→ \(transition)",
+                        color: CodexElementCategory.transition.color
+                    )
+                }
+            }
+
+            if let note = slide.note, !note.isEmpty {
+                Text(note)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .italic()
+            }
+        }
+        .padding(8)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusXSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusXSmall)
+                .stroke(DS.borderSubtle, lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private var codexResearchPanel: some View {
+        if let results = state.inheritedResearchResults, !results.isEmpty {
+            ContentSidebarPanel(
+                title: "Research",
+                icon: "magnifyingglass",
+                accentColor: DS.green,
+                badge: results.count,
+                isExpanded: $state.researchPanelExpanded
+            ) {
+                ForEach(results) { result in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(result.title)
+                            .font(DS.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(DS.text)
+
+                        Text(result.snippet)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textSecondary)
+                            .lineLimit(3)
+
+                        HStack(spacing: 6) {
+                            if !result.source.isEmpty {
+                                Text(result.source)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(DS.textMuted)
+                            }
+                            if let proof = result.proofType {
+                                CodexConceptTag(
+                                    name: proof,
+                                    color: CodexElementCategory.proofType.color
+                                )
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusXSmall))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codexArcPanel: some View {
+        if let arcRecs = state.inheritedArcRecommendations, !arcRecs.isEmpty {
+            ContentSidebarPanel(
+                title: "Arc & Recommendations",
+                icon: "waveform.path.ecg",
+                accentColor: CodexElementCategory.arcShape.color,
+                isExpanded: $state.arcPanelExpanded
+            ) {
+                ForEach(arcRecs) { rec in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            CodexConceptTag(
+                                name: rec.arcName,
+                                color: CodexElementCategory.arcShape.color
+                            )
+                            Text(String(format: "%.0f%%", rec.confidence * 100))
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(DS.textMuted)
+                        }
+                        Text(rec.explanation)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textSecondary)
+                            .lineLimit(2)
+                    }
+                    .padding(8)
+                    .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusXSmall))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codexContextDirectionPanel: some View {
+        let hasContext = !state.inheritedIdeaContext.isEmpty
+        let hasDirection = !state.inheritedCreativeDirection.isEmpty
+        if hasContext || hasDirection {
+            ContentSidebarPanel(
+                title: "Context & Direction",
+                icon: "text.alignleft",
+                accentColor: DS.info,
+                isExpanded: $state.contextPanelExpanded
+            ) {
+                if hasContext {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("IDEA CONTEXT")
+                            .font(.system(size: 9, weight: .semibold))
+                            .tracking(0.6)
+                            .foregroundStyle(DS.textMuted)
+                        Text(state.inheritedIdeaContext)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textSecondary)
+                            .lineSpacing(2)
+                    }
+                }
+                if hasDirection {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("CREATIVE DIRECTION")
+                            .font(.system(size: 9, weight: .semibold))
+                            .tracking(0.6)
+                            .foregroundStyle(DS.textMuted)
+                        Text(state.inheritedCreativeDirection)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textSecondary)
+                            .lineSpacing(2)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codexChatHistoryPanel: some View {
+        if let messages = state.inheritedChatHistory, !messages.isEmpty {
+            ContentSidebarPanel(
+                title: "Brainstorm Chat",
+                icon: "bubble.left.and.bubble.right",
+                accentColor: DS.entityIdea,
+                badge: messages.count,
+                isExpanded: $state.chatPanelExpanded
+            ) {
+                ForEach(messages) { msg in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: msg.role == "user" ? "person.fill" : "sparkles")
+                            .font(.system(size: 8))
+                            .foregroundStyle(
+                                msg.role == "user" ? DS.textMuted : DS.accent
+                            )
+                            .frame(width: 14)
+                            .padding(.top, 2)
+
+                        Text(msg.content)
+                            .font(DS.caption2)
+                            .foregroundStyle(
+                                msg.role == "user" ? DS.textSecondary : DS.text
+                            )
+                            .lineLimit(4)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codexQuickRefPanel: some View {
+        if !state.codexElementNames.isEmpty {
+            ContentSidebarPanel(
+                title: "Codex Elements",
+                icon: "atom",
+                accentColor: DS.accent,
+                badge: state.codexElementNames.count,
+                isExpanded: $state.codexRefPanelExpanded
+            ) {
+                FlowLayout(spacing: 4) {
+                    ForEach(state.codexElementNames, id: \.self) { name in
+                        CodexConceptTag(name: name, color: DS.accent)
+                    }
+                }
+            }
         }
     }
 
@@ -1459,5 +1723,48 @@ private struct SidebarOutlineRow: View {
         let trimmed = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { onUpdateTitle(trimmed) }
         isEditing = false
+    }
+}
+
+// MARK: - FlowLayout (wrapping horizontal layout)
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangeSubviews(proposal: proposal, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
+        for (index, position) in result.positions.enumerated() {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y),
+                proposal: .unspecified
+            )
+        }
+    }
+
+    private func arrangeSubviews(proposal: ProposedViewSize, subviews: Subviews)
+        -> (positions: [CGPoint], size: CGSize) {
+        let maxWidth = proposal.width ?? .infinity
+        var positions: [CGPoint] = []
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var maxX: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX + size.width > maxWidth, currentX > 0 {
+                currentX = 0
+                currentY += lineHeight + spacing
+                lineHeight = 0
+            }
+            positions.append(CGPoint(x: currentX, y: currentY))
+            lineHeight = max(lineHeight, size.height)
+            currentX += size.width + spacing
+            maxX = max(maxX, currentX - spacing)
+        }
+        return (positions, CGSize(width: maxX, height: currentY + lineHeight))
     }
 }

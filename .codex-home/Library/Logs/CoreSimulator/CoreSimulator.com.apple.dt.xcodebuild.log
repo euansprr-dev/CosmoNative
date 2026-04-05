@@ -1,0 +1,17 @@
+Apr  4 15:01:21 Euans-MacBook-Pro com.apple.dt.xcodebuild[38746] <Error>: Unable to deliver request ({
+	    "developer_dir" = "/Applications/Xcode.app/Contents/Developer";
+	    request = "set_developer_dir";
+	}) because we are not connected to CoreSimulatorService.
+Apr  4 15:01:22 Euans-MacBook-Pro com.apple.dt.xcodebuild[38746] <Warning>: Unable to discover any Simulator runtimes. Developer Directory is /Applications/Xcode.app/Contents/Developer.
+Apr  4 15:01:22 Euans-MacBook-Pro com.apple.dt.xcodebuild[38746] <Error>: simdiskimaged returned error (invalid), marking disconnected.
+Apr  4 15:01:22 Euans-MacBook-Pro com.apple.dt.xcodebuild[38746] <Error>: Could not kickstart simdiskimaged; SimDiskImageManager services will not be available: Error Domain=NSPOSIXErrorDomain Code=53 "Software caused connection abort" UserInfo={NSLocalizedDescription=Error returned in reply from CoreSimulatorService: Connection invalid}
+Apr  4 15:01:22 Euans-MacBook-Pro com.apple.dt.xcodebuild[38746] <Error>: Could not get list of trusted mount directories: Error Domain=com.apple.CoreSimulator.SimError Code=410 "The service used to manage runtime disk images (simdiskimaged) crashed or is not responding" UserInfo={NSLocalizedDescription=The service used to manage runtime disk images (simdiskimaged) crashed or is not responding}
+Apr  4 15:01:22 Euans-MacBook-Pro com.apple.dt.xcodebuild[38746] <Error>: Unable to deliver request ({
+	    request = "notification_subscription";
+	    "set_path" = "/Users/euanspencer/Library/Developer/CoreSimulator/Devices";
+	}) because we are not connected to CoreSimulatorService.
+Apr  4 15:01:22 Euans-MacBook-Pro com.apple.dt.xcodebuild[38746] <Error>: simdiskimaged returned error (invalid), marking disconnected.
+Apr  4 15:01:22 Euans-MacBook-Pro com.apple.dt.xcodebuild[38746] <Error>: Unable to deliver request ({
+	    request = "notification_subscription";
+	    "set_path" = "/Users/euanspencer/Library/Developer/CoreSimulator/Devices";
+	}) because we are not connected to CoreSimulatorService.

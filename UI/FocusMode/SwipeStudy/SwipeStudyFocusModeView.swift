@@ -989,6 +989,31 @@ struct SwipeStudyFocusModeView: View {
             Text(contentTypeLabel(atom: atom))
                 .font(DS.caption)
                 .foregroundStyle(isCarouselContent ? gold : DS.red)
+
+            if let urlString = atom.url, let igURL = URL(string: urlString) {
+                Text("·")
+                    .foregroundStyle(DS.textMuted)
+
+                Button {
+                    NSWorkspace.shared.open(igURL)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(DS.caption)
+                        Text("View on IG")
+                            .font(DS.caption)
+                    }
+                    .foregroundStyle(DS.accent)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+            }
         }
         .frame(maxWidth: isCarouselContent ? 400 : 320)
         .padding(.horizontal, 8)
@@ -2630,7 +2655,8 @@ struct SwipeStudyFocusModeView: View {
             // Phase 2: AI classification + deep analysis (single Claude call)
             isDeepAnalyzing = true
             let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(
-                atom: currentAtom ?? atom
+                atom: currentAtom ?? atom,
+                model: SwipeClassificationEngine.autoIngestModel
             )
 
             if classifiedResult.isFullyAnalyzed {
@@ -3777,7 +3803,8 @@ struct SwipeStudyFocusModeView: View {
                 isDeepAnalyzing = true
 
                 let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(
-                    atom: currentAtom ?? atom
+                    atom: currentAtom ?? atom,
+                    model: SwipeClassificationEngine.autoIngestModel
                 )
 
                 if classifiedResult.isFullyAnalyzed {
@@ -3935,7 +3962,8 @@ struct SwipeStudyFocusModeView: View {
             if !transcriptText.isEmpty {
                 isDeepAnalyzing = true
                 let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(
-                    atom: currentAtom ?? atom
+                    atom: currentAtom ?? atom,
+                    model: SwipeClassificationEngine.autoIngestModel
                 )
 
                 if classifiedResult.isFullyAnalyzed {

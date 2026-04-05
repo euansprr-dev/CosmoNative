@@ -102,6 +102,19 @@ class CloudWritingClient {
         return try await post(path: "/api/writing/read", body: ["contentUUID": contentUUID])
     }
 
+    /// Single agentic session — outline-required mode.
+    /// Runs all phases (plan + write + self-edit) in one Opus API call with adaptive thinking.
+    /// Used when content atom has a codex-tagged outline.
+    func runSession(
+        contentUUID: String,
+        userDirection: String? = nil
+    ) async throws -> DraftResult {
+        var body: [String: Any] = ["contentUUID": contentUUID]
+        if let userDirection { body["userDirection"] = userDirection }
+
+        return try await post(path: "/api/writing/session", body: body)
+    }
+
     // MARK: - HTTP
 
     private func post<T: Decodable>(path: String, body: [String: Any]) async throws -> T {

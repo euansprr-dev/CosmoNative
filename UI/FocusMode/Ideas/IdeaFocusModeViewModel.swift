@@ -41,6 +41,21 @@ class IdeaFocusModeViewModel: ObservableObject {
     @Published var generatedHooks: [HookSuggestion] = []
     @Published var isGeneratingHooks: Bool = false
 
+    // MARK: - Published State (Codex Integration)
+
+    @Published var editableContext: String = ""
+    @Published var selectedBlueprintUUID: String? = nil
+    @Published var selectedBlueprint: Atom? = nil
+    @Published var supportingSwipes: [Atom] = []
+    @Published var selectedContentType: String? = nil
+    @Published var codexOutline: CodexOutlineModel? = nil
+    @Published var selectedArcType: String? = nil
+    @Published var editableCreativeDirection: String = ""
+    @Published var researchResults: [IdeaResearchResult] = []
+    @Published var chatHistory: [IdeaChatMessage] = []
+    @Published var arcRecommendations: [ArcRecommendation] = []
+    @Published var blueprintDisplayMode: BlueprintDisplayMode = .text
+
     // MARK: - Overlay State
 
     @Published var showLinkSwipesOverlay: Bool = false
@@ -100,6 +115,41 @@ class IdeaFocusModeViewModel: ObservableObject {
         // If a client is assigned, load it
         if let clientUUID = meta?.clientUUID {
             Task { await loadLinkedClient(uuid: clientUUID) }
+        }
+
+        // Restore codex-era fields from metadata
+        self.editableContext = meta?.context ?? ""
+        self.selectedBlueprintUUID = meta?.blueprintUUID
+        self.selectedContentType = meta?.ideaContentType
+        self.selectedArcType = meta?.arcType
+        self.editableCreativeDirection = meta?.creativeDirection ?? ""
+
+        // Decode JSON-backed fields
+        if let outlineJSON = meta?.codexOutline,
+           let data = outlineJSON.data(using: .utf8) {
+            self.codexOutline = try? JSONDecoder().decode(CodexOutlineModel.self, from: data)
+        }
+        if let researchJSON = meta?.researchResults,
+           let data = researchJSON.data(using: .utf8) {
+            self.researchResults = (try? JSONDecoder().decode([IdeaResearchResult].self, from: data)) ?? []
+        }
+        if let chatJSON = meta?.chatHistory,
+           let data = chatJSON.data(using: .utf8) {
+            self.chatHistory = (try? JSONDecoder().decode([IdeaChatMessage].self, from: data)) ?? []
+        }
+        if let arcJSON = meta?.arcRecommendations,
+           let data = arcJSON.data(using: .utf8) {
+            self.arcRecommendations = (try? JSONDecoder().decode([ArcRecommendation].self, from: data)) ?? []
+        }
+
+        // Load blueprint atom if UUID exists
+        if let bpUUID = meta?.blueprintUUID {
+            Task { selectedBlueprint = try? await AtomRepository.shared.fetch(uuid: bpUUID) }
+        }
+
+        // Load supporting swipes
+        if let swipeUUIDs = meta?.supportingSwipeUUIDs, !swipeUUIDs.isEmpty {
+            Task { supportingSwipes = (try? await AtomRepository.shared.fetchBatch(uuids: swipeUUIDs)) ?? [] }
         }
 
         // Load linked swipes and connections
@@ -182,7 +232,55 @@ class IdeaFocusModeViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             let ideaText = "\(editableTitle)\n\(editableBody)"
             let _ = IdeaInsightEngine.shared.quickInsight(ideaText: ideaText)
+
+            // Auto-trigger arc recommendations when context has 20+ words and none exist
+            let wordCount = editableBody.split(separator: " ").count
+            if wordCount >= 20 && arcRecommendations.isEmpty {
+                await generateArcRecommendations()
+            }
         }
+    }
+
+    /// Generate arc type recommendations from the idea context using Gemini Flash.
+    func generateArcRecommendations() async {
+        do {
+            try await CodexRepository.shared.loadIfNeeded()
+            let arcShapes = try await CodexRepository.shared.arcShapes()
+            let arcData = arcShapes.map { ($0.1.canonicalName, $0.1.definition, $0.1.frequency ?? "") }
+
+            let swipes = try await AtomRepository.shared.fetchAll(type: .research)
+            let bpTitles = swipes
+                .filter { $0.isSwipeFileAtom }
+                .prefix(30)
+                .map { ($0.title ?? "", $0.bestPhysicsProfile?.arcQuarks?.shape ?? "") }
+
+            let result = try await ArcRecommendationAgent.shared.recommend(
+                ideaText: editableBody,
+                clientNiche: linkedClient?.title,
+                arcShapes: arcData,
+                blueprintTitles: bpTitles
+            )
+            self.arcRecommendations = result.arcRecommendations
+        } catch {
+            print("Arc recommendation failed: \(error)")
+        }
+    }
+
+    // MARK: - Blueprint Selection
+
+    /// Set a swipe as the primary blueprint (structural skeleton for writing).
+    /// This is separate from supporting swipes — the blueprint is the core emulation target.
+    func selectBlueprint(_ atom: Atom) {
+        selectedBlueprintUUID = atom.uuid
+        selectedBlueprint = atom
+        scheduleAutoSave()
+    }
+
+    /// Remove the current blueprint selection.
+    func clearBlueprint() {
+        selectedBlueprintUUID = nil
+        selectedBlueprint = nil
+        scheduleAutoSave()
     }
 
     // MARK: - Framework Selection
@@ -252,10 +350,18 @@ class IdeaFocusModeViewModel: ObservableObject {
                 contentType: selectedFormat?.rawValue ?? "post"
             )
 
-            // Determine inherited metadata — prioritize explicitly linked, then insight
+            // Determine inherited metadata — blueprint FIRST (becomes isPrimary in cloud engine),
+            // then supporting swipes, then insight matches
+            var allSwipeUUIDs: [String] = []
+            if let bpUUID = selectedBlueprintUUID {
+                allSwipeUUIDs.append(bpUUID)  // Blueprint must be FIRST for cloud engine isPrimary
+            }
             let linkedSwipeUUIDs = idea.ideaMetadata?.linkedSwipeIds ?? []
             let insightSwipeUUIDs = insight?.matchingSwipes?.map(\.swipeAtomUUID) ?? []
-            let inheritedSwipeUUIDs = Array(Set(linkedSwipeUUIDs + insightSwipeUUIDs))
+            for uuid in linkedSwipeUUIDs + insightSwipeUUIDs {
+                if !allSwipeUUIDs.contains(uuid) { allSwipeUUIDs.append(uuid) }
+            }
+            let inheritedSwipeUUIDs = allSwipeUUIDs
 
             let linkedConnectionUUIDs = idea.ideaMetadata?.linkedConnectionIds ?? []
 
@@ -317,6 +423,35 @@ class IdeaFocusModeViewModel: ObservableObject {
             contentMeta.inheritedHooks = inheritedHooks.isEmpty ? nil : inheritedHooks
             contentMeta.activatedAt = nowISO
             contentMeta.phaseEnteredAt = nowISO
+
+            // Codex-era field transfers
+            contentMeta.inheritedArcType = selectedArcType
+            if let outline = codexOutline, let data = try? JSONEncoder().encode(outline) {
+                contentMeta.inheritedCodexOutline = String(data: data, encoding: .utf8)
+            }
+            contentMeta.inheritedCreativeDirection = editableCreativeDirection.isEmpty ? nil : editableCreativeDirection
+            contentMeta.inheritedContext = editableContext.isEmpty ? nil : editableContext
+            let includedResearch = researchResults.filter { $0.isIncluded }
+            if !includedResearch.isEmpty, let data = try? JSONEncoder().encode(includedResearch) {
+                contentMeta.inheritedResearchResults = String(data: data, encoding: .utf8)
+            }
+            if let history = chatHistory.isEmpty ? nil : chatHistory,
+               let data = try? JSONEncoder().encode(history) {
+                contentMeta.inheritedChatHistory = String(data: data, encoding: .utf8)
+            }
+            // Collect all canonical names for the writing engine
+            var allNames: Set<String> = []
+            if let outline = codexOutline {
+                for slide in outline.slides {
+                    if let sa = slide.speechAct { allNames.insert(sa) }
+                    allNames.formUnion(slide.readerDeltas)
+                    if let f = slide.frame { allNames.insert(f) }
+                    if let d = slide.distance { allNames.insert(d) }
+                    allNames.formUnion(slide.techniques)
+                    if let t = slide.transition { allNames.insert(t) }
+                }
+            }
+            contentMeta.codexElementNames = allNames.isEmpty ? nil : Array(allNames)
 
             // Merge focus state fields into the content atom's metadata
             let focusFields = focusState.toAtomFields(existingMetadata: contentMeta.toJSON())
@@ -764,6 +899,25 @@ class IdeaFocusModeViewModel: ObservableObject {
             meta.ideaStatus = selectedStatus
             meta.hooks = editableHooks.isEmpty ? nil : editableHooks
             meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
+
+            // Codex-era fields
+            meta.context = editableContext.isEmpty ? nil : editableContext
+            meta.arcType = selectedArcType
+            meta.creativeDirection = editableCreativeDirection.isEmpty ? nil : editableCreativeDirection
+            meta.blueprintUUID = selectedBlueprintUUID
+            meta.ideaContentType = selectedContentType
+            if !researchResults.isEmpty, let data = try? JSONEncoder().encode(researchResults) {
+                meta.researchResults = String(data: data, encoding: .utf8)
+            }
+            if !chatHistory.isEmpty, let data = try? JSONEncoder().encode(chatHistory) {
+                meta.chatHistory = String(data: data, encoding: .utf8)
+            }
+            if !arcRecommendations.isEmpty, let data = try? JSONEncoder().encode(arcRecommendations) {
+                meta.arcRecommendations = String(data: data, encoding: .utf8)
+            }
+            if let outline = codexOutline, let data = try? JSONEncoder().encode(outline) {
+                meta.codexOutline = String(data: data, encoding: .utf8)
+            }
         }
         // Note: AtomRepository.update() handles updatedAt and localVersion internally
 
@@ -802,6 +956,25 @@ class IdeaFocusModeViewModel: ObservableObject {
             meta.ideaStatus = selectedStatus
             meta.hooks = editableHooks.isEmpty ? nil : editableHooks
             meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
+
+            // Codex-era fields
+            meta.context = editableContext.isEmpty ? nil : editableContext
+            meta.arcType = selectedArcType
+            meta.creativeDirection = editableCreativeDirection.isEmpty ? nil : editableCreativeDirection
+            meta.blueprintUUID = selectedBlueprintUUID
+            meta.ideaContentType = selectedContentType
+            if !researchResults.isEmpty, let data = try? JSONEncoder().encode(researchResults) {
+                meta.researchResults = String(data: data, encoding: .utf8)
+            }
+            if !chatHistory.isEmpty, let data = try? JSONEncoder().encode(chatHistory) {
+                meta.chatHistory = String(data: data, encoding: .utf8)
+            }
+            if !arcRecommendations.isEmpty, let data = try? JSONEncoder().encode(arcRecommendations) {
+                meta.arcRecommendations = String(data: data, encoding: .utf8)
+            }
+            if let outline = codexOutline, let data = try? JSONEncoder().encode(outline) {
+                meta.codexOutline = String(data: data, encoding: .utf8)
+            }
         }
 
         do {

@@ -190,18 +190,22 @@ struct AutomationRuleEvaluator: Sendable {
 
         case .createdToday:
             let isToday = Calendar.current.isDateInToday(parseDate(atom.createdAt) ?? Date.distantPast)
-            if let expected = condition.value.boolValue {
+            switch condition.value {
+            case .bool(let expected):
                 return isToday == expected
+            default:
+                return isToday
             }
-            return isToday
 
         case .createdThisWeek:
             let date = parseDate(atom.createdAt) ?? Date.distantPast
             let isThisWeek = Calendar.current.isDate(date, equalTo: Date(), toGranularity: .weekOfYear)
-            if let expected = condition.value.boolValue {
+            switch condition.value {
+            case .bool(let expected):
                 return isThisWeek == expected
+            default:
+                return isThisWeek
             }
-            return isThisWeek
 
         // MARK: Graph Metrics
         case .pageRank, .inDegree, .outDegree:

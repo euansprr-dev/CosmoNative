@@ -152,7 +152,16 @@ final class SwipeProcessingService {
             return nil
         }
 
-        // Step 2: Skip if already transcribed (need BOTH transcript status + actual slides, not just body text)
+        // Step 2a: Bail if extraction has been retried too many times
+        let retryCount = atom.swipeAnalysis?.extractionRetryCount ?? 0
+        if retryCount >= 3 {
+            print("SwipeProcessingService: Max extraction retries (\(retryCount)) reached for \(uuid)")
+            atom.processingStatus = "extraction_failed"
+            _ = try? await AtomRepository.shared.update(atom)
+            return nil
+        }
+
+        // Step 2b: Skip if already transcribed (need BOTH transcript status + actual slides, not just body text)
         let hasTranscript = atom.richContent?.transcriptStatus == "available"
         let hasSlides = (atom.swipeAnalysis?.transcriptSlides?.count ?? 0) > 0
         if hasTranscript && hasSlides {
@@ -279,7 +288,10 @@ final class SwipeProcessingService {
             }
         } else {
             print("SwipeProcessingService: No transcribable content for \(uuid)")
-            atom.processingStatus = "complete"
+            var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+            sa.extractionRetryCount = (sa.extractionRetryCount ?? 0) + 1
+            atom = atom.withSwipeAnalysis(sa)
+            atom.processingStatus = "extraction_failed"
             _ = try? await AtomRepository.shared.update(atom)
             return nil
         }
@@ -288,7 +300,10 @@ final class SwipeProcessingService {
         guard transcriptionResult.contentType != .empty,
               !transcriptionResult.slides.isEmpty else {
             print("SwipeProcessingService: Transcription returned empty for \(uuid)")
-            atom.processingStatus = "complete"
+            var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+            sa.extractionRetryCount = (sa.extractionRetryCount ?? 0) + 1
+            atom = atom.withSwipeAnalysis(sa)
+            atom.processingStatus = "extraction_failed"
             _ = try? await AtomRepository.shared.update(atom)
             return nil
         }
@@ -430,7 +445,10 @@ final class SwipeProcessingService {
         atom = atom.withSwipeAnalysis(nlpResult)
 
         // Deep analysis via Claude (in-memory only — no DB write yet)
-        let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(atom: atom)
+        let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(
+            atom: atom,
+            model: SwipeClassificationEngine.autoIngestModel
+        )
         if classifiedResult.isFullyAnalyzed {
             var enriched = SwipeClassificationEngine.shared.mergeClassification(classifiedResult, into: nlpResult)
             enriched.transcriptSlides = finalSlides

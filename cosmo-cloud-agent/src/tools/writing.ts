@@ -7,6 +7,7 @@ import { Atom, fetchAtom, updateAtom, createAtom, fuzzyFindClient, searchAtoms, 
 import { jsonEncode, jsonError } from '../agent/toolExecutor';
 import { getOrCreateEngine, evictEngine } from '../writing/engine';
 import { renderDraftForDisplay, detectContentFormat } from '../writing/types';
+import { config } from '../config';
 
 // ============================================================
 // 1. generate_outline
@@ -164,6 +165,41 @@ export async function generateDraft(args: Record<string, any>): Promise<string> 
   const engine = await getOrCreateEngine(contentUUID);
 
   const direction = args.userDirection || 'Write the full first draft following the outline. Mirror the PRIMARY blueprint structure. Call write_draft with the complete draft.';
+
+  // Single session: if feature flag on AND codex outline exists, run all phases in one Opus call
+  const atom = await fetchAtom(contentUUID);
+  const hasCodexOutline = atom?.metadata?.codexOutline || atom?.metadata?.inheritedCodexOutline;
+  if (config.useSingleSession && hasCodexOutline) {
+    console.log(`  ⚛️ [generateDraft] Single session mode — codex outline detected`);
+    try {
+      const sessionResult = await engine.runSingleSession(direction);
+      const updated = await fetchAtom(contentUUID);
+      const draftBody = updated?.body || '';
+      const formattedDraft = renderDraftForDisplay(draftBody);
+      const wordCount = draftBody.split(/\s+/).filter(Boolean).length;
+      let format = 'plaintext';
+      try {
+        const parsed = JSON.parse(draftBody);
+        if (parsed.slides) format = 'carousel';
+        else if (parsed.tweets) format = 'thread';
+      } catch {}
+      return jsonEncode({
+        success: true,
+        contentUUID,
+        message: 'STOP HERE. Show this draft to the user exactly as-is. Ask for feedback. Do NOT call any more tools.',
+        formattedDraft,
+        format,
+        wordCount,
+        engineNotes: sessionResult.text,
+        swipesLoaded: engine.getSwipesSummary(),
+        swipeCount: engine.getSwipeCount(),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`  ❌ [generateDraft] Single session failed, falling back to multi-phase: ${msg}`);
+      // Fall through to existing multi-phase pipeline
+    }
+  }
 
   try {
     const response = await engine.sendMessage(direction, 'draft');

@@ -44,6 +44,14 @@ struct SidebarNavSection: View {
                 destination: .inbox,
                 badge: inboxUnreadCount
             )
+
+            navRow(
+                id: "codex",
+                icon: "atom",
+                label: "Codex",
+                destination: .codex,
+                badge: nil
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -100,7 +108,7 @@ struct SidebarNavSection: View {
         badge: Int?,
         isHovered: Bool
     ) -> some View {
-        let activeIcon = icon == "hexagon" ? icon : "\(icon).fill"
+        let activeIcon = (icon == "hexagon" || icon == "atom") ? icon : "\(icon).fill"
 
         HStack(spacing: 10) {
             Image(systemName: isActive ? activeIcon : icon)
@@ -140,7 +148,7 @@ struct SidebarNavSection: View {
         badge: Int?,
         isHovered: Bool
     ) -> some View {
-        let activeIcon = icon == "hexagon" ? icon : "\(icon).fill"
+        let activeIcon = (icon == "hexagon" || icon == "atom") ? icon : "\(icon).fill"
 
         ZStack(alignment: .topTrailing) {
             Image(systemName: isActive ? activeIcon : icon)

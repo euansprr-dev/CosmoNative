@@ -1035,6 +1035,23 @@ private struct SwipeGalleryCard: View {
                 Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
             }
 
+            if item.processingStatus == "extraction_failed" {
+                Button {
+                    Task {
+                        if var atom = try? await AtomRepository.shared.fetch(uuid: item.atomUUID) {
+                            atom.processingStatus = "pending"
+                            var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+                            sa.extractionRetryCount = 0
+                            atom = atom.withSwipeAnalysis(sa)
+                            _ = try? await AtomRepository.shared.update(atom)
+                            await SwipeProcessingService.shared.processSwipeInBackground(uuid: item.atomUUID)
+                        }
+                    }
+                } label: {
+                    Label("Retry Processing", systemImage: "arrow.clockwise")
+                }
+            }
+
             Divider()
 
             Button(role: .destructive) {

@@ -1,16 +1,18 @@
 // CosmoOS/UI/FocusMode/Ideas/IdeaFocusModeView.swift
-// 2-column brainstorm workspace for ideas -- left: editing, right: intelligence panel
-// February 2026
+// 2-column brainstorm workspace: left editing, right intelligence panel, bottom action bar
+// April 2026 — Full rewrite
 
 import SwiftUI
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 
 // MARK: - Idea Focus Mode View
 
-/// Full-screen brainstorm workspace that opens when a user taps an idea.
-/// Left column: editable title, body, status pipeline, format/platform selectors, tags.
-/// Right column: AI analysis panel with matching swipes, frameworks, hooks, and blueprint.
+/// Full-screen brainstorm workspace for ideas.
+/// Left column: editable title, context/direction, hooks, supporting swipes.
+/// Right column: fixed 320pt intelligence panel (blueprint, research, arcs, chat).
+/// Bottom: action bar with content type toggle and write CTA.
 struct IdeaFocusModeView: View {
     // MARK: - Properties
 
@@ -20,29 +22,16 @@ struct IdeaFocusModeView: View {
     // MARK: - State
 
     @StateObject private var viewModel: IdeaFocusModeViewModel
-    @State private var newTagText: String = ""
-    @State private var newIdeaHookText: String = ""
-    @State private var showClientPicker: Bool = false
+    @State private var newHookText: String = ""
     @State private var showProfileEditor: Bool = false
+    @State private var showBlueprintPicker: Bool = false
+    @State private var isLoadingArcRecs: Bool = false
+    @State private var chatExpanded: Bool = false
     @FocusState private var isTitleFocused: Bool
-    @FocusState private var isTagFieldFocused: Bool
-    @FocusState private var isDescriptionFocused: Bool
-
-    // MARK: - Sidebar State
-
-    @State private var sidebarVisible = false
-    @State private var sidebarLocked = false
-
-    // MARK: - Hover States
-
-    @State private var hoveredPlatform: IdeaPlatform?
-    @State private var hoveredStatus: IdeaStatus?
+    @FocusState private var isContextFocused: Bool
 
     // MARK: - Constants
 
-    private let accentIndigo = DS.accent
-    private let panelBackground = Color.clear
-    private let cardBackground = DS.glassCardFill
     private let ideaGold = DS.entityIdea
 
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
@@ -61,54 +50,23 @@ struct IdeaFocusModeView: View {
 
     var body: some View {
         ZStack {
-            DS.bg
-                .ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 headerBar
 
-                leftColumn
+                HStack(spacing: 0) {
+                    leftColumn
+                    intelligencePanel
+                }
+
+                actionBar
             }
 
-            // Overlay presentations
-            if viewModel.showLinkSwipesOverlay {
-                LinkSwipesOverlay(
-                    viewModel: viewModel,
-                    isPresented: $viewModel.showLinkSwipesOverlay
-                )
-                .transition(.opacity)
-                .zIndex(100)
-            }
-
-            if viewModel.showLinkConnectionsOverlay {
-                LinkConnectionsOverlay(
-                    viewModel: viewModel,
-                    isPresented: $viewModel.showLinkConnectionsOverlay
-                )
-                .transition(.opacity)
-                .zIndex(100)
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            FocusSidebarTrigger(isVisible: $sidebarVisible)
-                .frame(maxHeight: .infinity)
-        }
-        .overlay(alignment: .topLeading) {
-            UniversalFocusSidebar(
-                title: "Intelligence",
-                icon: "brain",
-                accentColor: DS.entityIdea,
-                isVisible: $sidebarVisible,
-                isLocked: $sidebarLocked
-            ) {
-                rightColumn
-            }
-            .padding(.leading, 8)
-            .padding(.top, 56)
+            overlayPresentations
         }
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
-            // Register context provider for global Cosmo window
             let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
             if !isPaneContext || isPaneActive {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
@@ -125,6 +83,10 @@ struct IdeaFocusModeView: View {
             viewModel.saveOnClose()
         }
         .onKeyPress(.escape) {
+            if showBlueprintPicker {
+                showBlueprintPicker = false
+                return .handled
+            }
             if viewModel.showLinkSwipesOverlay {
                 viewModel.showLinkSwipesOverlay = false
                 return .handled
@@ -136,219 +98,286 @@ struct IdeaFocusModeView: View {
             onClose()
             return .handled
         }
-        .overlay {
-            if showProfileEditor {
-                ZStack {
-                    FloatingOverlayBackdrop { showProfileEditor = false }
-                    ContentProfileEditor(existingAtom: nil, onClose: { showProfileEditor = false }) { newProfile in
-                        Task { await viewModel.assignClient(newProfile) }
-                        Task { await viewModel.loadClientProfiles() }
-                    }
-                    .frame(maxWidth: 600, maxHeight: 720)
-                    .floatingOverlayPanel()
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-            }
+        .overlay { profileEditorOverlay }
+    }
+
+    // MARK: - Overlay Presentations
+
+    @ViewBuilder
+    private var overlayPresentations: some View {
+        if viewModel.showLinkSwipesOverlay {
+            LinkSwipesOverlay(
+                viewModel: viewModel,
+                isPresented: $viewModel.showLinkSwipesOverlay
+            )
+            .transition(.opacity)
+            .zIndex(100)
+        }
+
+        if viewModel.showLinkConnectionsOverlay {
+            LinkConnectionsOverlay(
+                viewModel: viewModel,
+                isPresented: $viewModel.showLinkConnectionsOverlay
+            )
+            .transition(.opacity)
+            .zIndex(100)
+        }
+
+        if showBlueprintPicker {
+            LinkSwipesOverlay(
+                viewModel: viewModel,
+                isPresented: $showBlueprintPicker,
+                blueprintMode: true
+            )
+            .transition(.opacity)
+            .zIndex(100)
         }
     }
 
-    // MARK: - Header Bar
+    @ViewBuilder
+    private var profileEditorOverlay: some View {
+        if showProfileEditor {
+            ZStack {
+                FloatingOverlayBackdrop { showProfileEditor = false }
+                ContentProfileEditor(existingAtom: nil, onClose: { showProfileEditor = false }) { newProfile in
+                    Task { await viewModel.assignClient(newProfile) }
+                    Task { await viewModel.loadClientProfiles() }
+                }
+                .frame(maxWidth: 600, maxHeight: 720)
+                .floatingOverlayPanel()
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        }
+    }
+}
 
+// MARK: - Header Bar
+
+extension IdeaFocusModeView {
     private var headerBar: some View {
-        HStack(spacing: 12) {
-            // Main sidebar toggle (standalone only)
-            if !isPaneContext {
-                Button {
-                    withAnimation(ProMotionSprings.sidebar) {
-                        isSidebarHidden.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
-            }
-
-            // Back button (hidden in pane mode — X button handles close)
-            if !isPaneContext {
-                Button(action: onClose) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(DS.buttonText)
-                        Text("Back")
-                            .font(DS.callout)
-                    }
-                    .foregroundStyle(DS.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(DS.glassCardFill, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Type badge
-            HStack(spacing: 4) {
-                Image(systemName: "lightbulb.fill")
-                    .font(DS.caption2)
-                Text("Idea")
-                    .font(DS.caption2)
-                    .tracking(0.88)
-            }
-            .foregroundStyle(ideaGold)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(ideaGold.opacity(0.12), in: Capsule())
-
-            // Status badge
-            if viewModel.selectedStatus != .spark {
-                HStack(spacing: 4) {
-                    Image(systemName: viewModel.selectedStatus.iconName)
-                        .font(DS.caption2)
-                    Text(viewModel.selectedStatus.displayName.uppercased())
-                        .font(DS.caption2)
-                        .tracking(0.6)
-                }
-                .foregroundStyle(viewModel.selectedStatus.color)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(viewModel.selectedStatus.color.opacity(0.15), in: Capsule())
-            }
-
+        HStack(spacing: DS.space12) {
+            headerLeadingGroup
+            ideaBadge
+            clientPickerPill
             Spacer()
-
-            // Analyze button (header shortcut)
-            Button {
-                Task { await viewModel.analyzeIdea() }
-            } label: {
-                HStack(spacing: 6) {
-                    if viewModel.isAnalyzing {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "sparkle.magnifyingglass")
-                            .font(DS.subheadline)
-                    }
-                    Text("Analyze")
-                        .font(DS.buttonText)
-                }
-                .foregroundStyle(DS.textOnAccent)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(accentIndigo, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(viewModel.isAnalyzing)
-            .opacity(viewModel.isAnalyzing ? 0.7 : 1)
-
-            // Pane close button
-            if isPaneContext {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(DS.buttonText)
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 28, height: 28)
-                        .background(DS.glassCardFill, in: Circle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Focus mode sidebar toggle
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    sidebarVisible.toggle()
-                }
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(DS.callout)
-                    .foregroundStyle(sidebarVisible ? DS.entityIdea : DS.textSecondary)
-                    .padding(8)
-                    .background(
-                        sidebarVisible ? DS.entityIdea.opacity(0.15) : DS.border,
-                        in: Circle()
-                    )
-            }
-            .buttonStyle(.plain)
+            writeButton
+            headerTrailingGroup
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
-        .background(DS.bg.opacity(0.95))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(DS.bg)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(DS.border).frame(height: 1)
+        }
     }
 
-    // MARK: - Left Column
+    @ViewBuilder
+    private var headerLeadingGroup: some View {
+        if !isPaneContext {
+            Button {
+                withAnimation(ProMotionSprings.sidebar) {
+                    isSidebarHidden.toggle()
+                }
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(DS.border, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help(isSidebarHidden ? "Show sidebar" : "Hide sidebar")
+            .accessibilityLabel("Toggle sidebar")
 
+            Button(action: onClose) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(DS.buttonText)
+                    Text("Back")
+                        .font(DS.callout)
+                }
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(DS.surface, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Go back")
+        }
+    }
+
+    private var ideaBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "lightbulb.fill")
+                .foregroundStyle(ideaGold)
+                .accessibilityHidden(true)
+            Text("Idea")
+                .foregroundStyle(ideaGold)
+        }
+        .font(DS.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(ideaGold.opacity(0.12), in: Capsule())
+    }
+
+    private var clientPickerPill: some View {
+        Menu {
+            ForEach(viewModel.clientProfiles, id: \.uuid) { client in
+                Button(client.title ?? "Client") {
+                    Task { await viewModel.assignClient(client) }
+                }
+            }
+            if viewModel.clientProfiles.isEmpty {
+                Text("No client profiles")
+            }
+            Divider()
+            Button {
+                showProfileEditor = true
+            } label: {
+                Label("Create New Profile", systemImage: "plus.circle")
+            }
+            if viewModel.linkedClient != nil {
+                Divider()
+                Button(role: .destructive) {
+                    Task { await viewModel.assignClient(nil) }
+                } label: {
+                    Label("Remove Client", systemImage: "xmark.circle")
+                }
+            }
+        } label: {
+            clientPickerLabel
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    @ViewBuilder
+    private var clientPickerLabel: some View {
+        if let client = viewModel.linkedClient {
+            HStack(spacing: 4) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(DS.caption)
+                    .accessibilityHidden(true)
+                Text(client.title ?? "Client")
+                    .font(DS.caption)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(DS.surface, in: Capsule())
+            .overlay(Capsule().stroke(DS.border, lineWidth: 0.5))
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: "plus")
+                    .font(.system(size: 9, weight: .semibold))
+                    .accessibilityHidden(true)
+                Text("No client")
+                    .font(DS.caption)
+            }
+            .foregroundStyle(DS.textMuted)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(DS.surface, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        DS.textMuted.opacity(0.3),
+                        style: StrokeStyle(lineWidth: 1, dash: [5, 3])
+                    )
+            )
+        }
+    }
+
+    private var writeButton: some View {
+        Button {
+            Task { await viewModel.promoteToContent() }
+        } label: {
+            writeButtonLabel
+        }
+        .buttonStyle(.plain)
+        .disabled(isBodyEmpty)
+        .opacity(isBodyEmpty ? 0.5 : 1)
+        .accessibilityLabel("Write content from this idea")
+    }
+
+    @ViewBuilder
+    private var writeButtonLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "pencil.line")
+                .accessibilityHidden(true)
+            Text("Write")
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(DS.textOnAccent)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(DS.green, in: Capsule())
+    }
+
+    @ViewBuilder
+    private var headerTrailingGroup: some View {
+        if isPaneContext {
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 28, height: 28)
+                    .background(DS.surface, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close pane")
+        }
+    }
+
+    private var isBodyEmpty: Bool {
+        viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+// MARK: - Left Column
+
+extension IdeaFocusModeView {
     private var leftColumn: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                // Editable title
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.space24) {
+                if isBodyEmpty && !isContextFocused {
+                    emptyStateView
+                }
+
                 titleEditor
-                    .padding(.bottom, 24)
-
-                // Hooks
-                ideaHooksSection
-                    .padding(.bottom, 24)
-
-                // Section divider
-                sectionDivider
-
-                // Description (replaces Core Idea + old Description)
-                ideaDescriptionSection
-                    .padding(.bottom, 24)
-
-                // Section divider
-                sectionDivider
-
-                // Status pipeline
-                statusPipeline
-                    .padding(.bottom, 24)
-
-                // Section divider
-                sectionDivider
-
-                // Format selector
-                formatSelector
-                    .padding(.bottom, 24)
-
-                // Section divider
-                sectionDivider
-
-                // Platform selector
-                platformSelector
-                    .padding(.bottom, 24)
-
-                // Section divider
-                sectionDivider
-
-                // Client assignment
-                clientAssignment
-                    .padding(.bottom, 24)
-
-                // Section divider
-                sectionDivider
-
-                // Tags editor
-                tagsEditor
-
-                Spacer(minLength: 60)
+                contextEditor
+                hooksSection
+                outlineSection
             }
             .padding(.horizontal, 48)
             .padding(.top, 28)
+            .padding(.bottom, 80)
         }
+        .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity)
     }
 
-    /// Thin divider between sections
-    private var sectionDivider: some View {
-        Rectangle()
-            .fill(DS.border)
-            .frame(height: 1)
-            .padding(.bottom, 24)
-    }
+    private var emptyStateView: some View {
+        VStack(spacing: DS.space12) {
+            Image(systemName: "lightbulb.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(ideaGold.opacity(0.4))
+                .accessibilityHidden(true)
 
-    // MARK: - Title Editor
+            Text("What's this idea about?")
+                .font(DS.title2)
+                .foregroundStyle(DS.textSecondary)
+
+            Text("Describe the angle, key points, and why it matters.\nThe more context you give, the better the AI can help.")
+                .font(DS.callout)
+                .foregroundStyle(DS.textMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 400)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
 
     private var titleEditor: some View {
         TextField("Idea title...", text: $viewModel.editableTitle)
@@ -359,1568 +388,799 @@ struct IdeaFocusModeView: View {
             .onChange(of: viewModel.editableTitle) { _ in
                 viewModel.scheduleAutoSave()
             }
+            .accessibilityLabel("Idea title")
     }
 
-    // MARK: - Hooks Section
-
-    private var ideaHooksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Text("HOOKS")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(1.2)
-
-                Spacer()
-
-                if !viewModel.editableHooks.isEmpty {
-                    Text("\(viewModel.editableHooks.count) hooks")
-                        .font(CosmoTypography.caption)
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-
-            Text("Opening lines that grab attention")
-                .font(DS.callout)
-                .foregroundStyle(DS.textSecondary)
-
-            // Existing hooks
-            ForEach(Array(viewModel.editableHooks.enumerated()), id: \.offset) { index, hook in
-                IdeaHookRow(
-                    hook: hook,
-                    index: index,
-                    onUpdate: { newText in
-                        viewModel.editableHooks[index] = newText
-                        viewModel.scheduleAutoSave()
-                    },
-                    onDelete: {
-                        withAnimation(ProMotionSprings.snappy) {
-                            viewModel.editableHooks.remove(at: index)
-                            viewModel.scheduleAutoSave()
-                        }
-                    }
-                )
-            }
-
-            // Add new hook
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle.fill")
-                    .font(DS.title3)
-                    .foregroundStyle(DS.accent.opacity(0.6))
-
-                TextField("Add a hook...", text: $newIdeaHookText)
-                    .textFieldStyle(.plain)
-                    .font(CosmoTypography.body)
-                    .foregroundStyle(DS.text)
-                    .onSubmit {
-                        let trimmed = newIdeaHookText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        withAnimation(ProMotionSprings.snappy) {
-                            viewModel.editableHooks.append(trimmed)
-                            newIdeaHookText = ""
-                            viewModel.scheduleAutoSave()
-                        }
-                    }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .dsGlassCard(cornerRadius: 8)
-        }
-    }
-
-    // MARK: - Description Section
-
-    private var ideaDescriptionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("DESCRIPTION")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .tracking(1.2)
-
-            ZStack(alignment: .leading) {
-                // Left accent bar
-                HStack(spacing: 0) {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(viewModel.selectedStatus.color)
-                        .frame(width: 2)
-                        .padding(.vertical, 12)
-                    Spacer()
-                }
-
-                VStack(alignment: .trailing, spacing: 0) {
-                    TextEditor(text: $viewModel.editableBody)
-                        .scrollContentBackground(.hidden)
-                        .font(DS.body)
-                        .lineSpacing(15 * 0.6)
-                        .foregroundStyle(DS.text)
-                        .frame(minHeight: 200, maxHeight: 400)
-                        .padding(.leading, 18)
-                        .padding(.trailing, 16)
-                        .padding(.vertical, 16)
-                        .focused($isDescriptionFocused)
-                        .onChange(of: viewModel.editableBody) { _ in
-                            viewModel.scheduleAutoSave()
-                            viewModel.autoEnrich()
-                        }
-
-                    // Word count bottom-right
-                    Text("\(viewModel.editableBody.split(separator: " ").count) words")
-                        .font(DS.caption)
-                        .foregroundStyle(DS.textMuted)
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 12)
-                }
-            }
-            .dsGlassInput(isFocused: isDescriptionFocused, cornerRadius: 12)
-            .overlay(alignment: .topLeading) {
-                if viewModel.editableBody.isEmpty {
-                    Text("What's the core idea? Include the hook angle, key points, and why this matters...")
-                        .font(DS.body)
-                        .foregroundStyle(DS.textMuted)
-                        .lineSpacing(15 * 0.6)
-                        .padding(.leading, 18)
-                        .padding(.top, 16)
-                        .allowsHitTesting(false)
-                }
-            }
-        }
-    }
-
-    // MARK: - Status Pipeline
-
-    private var statusPipeline: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("STATUS")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .tracking(1.2)
-
-            statusPillsRow
-        }
-    }
-
-    private var statusPillsRow: some View {
-        HStack(spacing: 8) {
-            ForEach(IdeaStatus.allCases, id: \.self) { status in
-                Button {
-                    Task { await viewModel.updateStatus(status) }
-                } label: {
-                    statusButtonLabel(for: status)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func statusButtonLabel(for status: IdeaStatus) -> some View {
-        let isSelected = status == viewModel.selectedStatus
-        let isHovered = hoveredStatus == status
-        let bgColor: Color = isSelected
-            ? status.color.opacity(0.15)
-            : (isHovered ? DS.surfaceHover : DS.surfaceElevated)
-        let strokeColor: Color = isSelected ? status.color.opacity(0.5) : DS.borderSubtle
-
-        HStack(spacing: 5) {
-            Image(systemName: status.iconName)
-                .font(DS.caption2)
-            Text(status.displayName)
-                .font(DS.caption)
-        }
-        .foregroundStyle(isSelected ? status.color : DS.text)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(bgColor, in: Capsule())
-        .overlay(Capsule().stroke(strokeColor, lineWidth: 1))
-        .shadow(
-            color: isSelected ? status.color.opacity(0.3) : .clear,
-            radius: 8, x: 0, y: 0
-        )
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) {
-                hoveredStatus = hovering ? status : nil
-            }
-        }
-    }
-
-    // MARK: - Format Selector
-
-    private var formatSelector: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("FORMAT")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .tracking(1.2)
-
-            formatGroupRow(label: "Short-Form Video", formats: ContentFormat.shortFormVideo)
-            formatGroupRow(label: "Static", formats: ContentFormat.staticFormats)
-            formatGroupRow(label: "Text", formats: ContentFormat.textFormats)
-            formatGroupRow(label: "Long-Form", formats: ContentFormat.longFormFormats)
-
-            formatInsightHint
-        }
-    }
-
-    @ViewBuilder
-    private func formatGroupRow(label: String, formats: [ContentFormat]) -> some View {
+    private var contextEditor: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(DS.caption2)
+            contextEditorHeader
+            contextEditorBody
+        }
+    }
+
+    private var contextEditorHeader: some View {
+        HStack(spacing: 6) {
+            Text("CONTEXT & DIRECTION")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
                 .foregroundStyle(DS.textMuted)
-
-            FlowLayout(spacing: 6) {
-                ForEach(formats, id: \.self) { format in
-                    Button {
-                        withAnimation(ProMotionSprings.snappy) {
-                            viewModel.selectedFormat = viewModel.selectedFormat == format ? nil : format
-                            viewModel.scheduleAutoSave()
-                        }
-                    } label: {
-                        formatButtonLabel(for: format)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+            Spacer()
+            wordCount
         }
     }
 
-    @ViewBuilder
-    private func formatButtonLabel(for format: ContentFormat) -> some View {
-        let isSelected = viewModel.selectedFormat == format
+    private var contextEditorBody: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(ideaGold)
+                .frame(width: 3)
 
-        HStack(spacing: 4) {
-            Image(systemName: format.icon)
-                .font(DS.caption2)
-            Text(format.displayName)
-                .font(DS.caption)
+            TextEditor(text: $viewModel.editableBody)
+                .font(DS.body)
+                .foregroundStyle(DS.text)
+                .lineSpacing(5)
+                .scrollContentBackground(.hidden)
+                .focused($isContextFocused)
+                .frame(minHeight: 240, maxHeight: 500)
+                .padding(14)
+                .onChange(of: viewModel.editableBody) { _ in
+                    viewModel.scheduleAutoSave()
+                    viewModel.autoEnrich()
+                }
+                .accessibilityLabel("Idea context and direction")
         }
-        .foregroundStyle(isSelected ? format.color : DS.textSecondary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            isSelected ? format.color.opacity(0.2) : DS.border,
-            in: Capsule()
-        )
-    }
-
-    @ViewBuilder
-    private var formatInsightHint: some View {
-        if let _ = viewModel.insight?.formatScores,
-           let recommended = viewModel.insight?.recommendedFormat,
-           let rationale = viewModel.insight?.formatRationale {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkle")
-                    .font(DS.caption2)
-                    .foregroundStyle(accentIndigo)
-                Text("Recommended: \(ContentFormat(rawValue: recommended)?.displayName ?? recommended)")
-                    .font(DS.caption)
-                    .foregroundStyle(accentIndigo)
-                Text("-- \(rationale)")
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
-            }
-            .padding(.top, 6)
-        }
-    }
-
-    // MARK: - Platform Selector
-
-    private var platformSelector: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("PLATFORM")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .tracking(1.2)
-
-            HStack(spacing: 12) {
-                ForEach(IdeaPlatform.allCases, id: \.self) { platform in
-                    Button {
-                        withAnimation(ProMotionSprings.snappy) {
-                            viewModel.selectedPlatform = viewModel.selectedPlatform == platform ? nil : platform
-                            viewModel.scheduleAutoSave()
-                        }
-                    } label: {
-                        platformButtonLabel(for: platform)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func platformButtonLabel(for platform: IdeaPlatform) -> some View {
-        let isSelected = viewModel.selectedPlatform == platform
-        let isHovered = hoveredPlatform == platform
-
-        VStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .fill(
-                        isSelected
-                            ? platform.color.opacity(0.15)
-                            : (isHovered ? DS.border : Color.clear)
-                    )
-                    .frame(width: 40, height: 40)
-
-                Image(systemName: platform.iconName)
-                    .font(DS.title3)
-                    .foregroundStyle(isSelected ? platform.color : (isHovered ? DS.textSecondary : DS.textMuted))
-            }
-
-            Text(platform.displayName)
-                .font(DS.caption2)
-                .foregroundStyle(isSelected ? platform.color : DS.textMuted)
-        }
-        .frame(width: 48)
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) {
-                hoveredPlatform = hovering ? platform : nil
-            }
-        }
-    }
-
-    // MARK: - Client Assignment
-
-    private var clientAssignment: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("CLIENT")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .tracking(1.2)
-
-            HStack(spacing: 8) {
-                if let client = viewModel.linkedClient {
-                    HStack(spacing: 8) {
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(DS.title3)
-                            .foregroundStyle(accentIndigo)
-                        Text(client.title ?? "Client")
-                            .font(DS.callout)
-                            .foregroundStyle(DS.text)
-
-                        Spacer()
-
-                        Button {
-                            Task { await viewModel.assignClient(nil) }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(DS.callout)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .dsGlassCard(cornerRadius: 10)
-                } else {
-                    Menu {
-                        ForEach(viewModel.clientProfiles, id: \.uuid) { client in
-                            Button(client.title ?? "Client") {
-                                Task { await viewModel.assignClient(client) }
-                            }
-                        }
-
-                        if viewModel.clientProfiles.isEmpty {
-                            Text("No client profiles")
-                        }
-
-                        Divider()
-
-                        Button {
-                            showProfileEditor = true
-                        } label: {
-                            Label("Create New Profile", systemImage: "plus.circle")
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus")
-                                .font(DS.caption)
-                            Text("Assign Client")
-                                .font(DS.buttonText)
-                        }
-                        .foregroundStyle(DS.textMuted)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .strokeBorder(
-                                    DS.textMuted.opacity(0.4),
-                                    style: StrokeStyle(lineWidth: 1, dash: [5, 3])
-                                )
-                        )
-                    }
-                    .menuStyle(.borderlessButton)
-                }
-            }
-        }
-    }
-
-    // MARK: - Tags Editor
-
-    private var tagsEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("TAGS")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .tracking(1.2)
-
-            FlowLayout(spacing: 6) {
-                ForEach(viewModel.tags, id: \.self) { tag in
-                    HStack(spacing: 5) {
-                        Text(tag)
-                            .font(DS.caption)
-                            .foregroundStyle(DS.textSecondary)
-
-                        Button {
-                            viewModel.removeTag(tag)
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(DS.glassCardFill, in: Capsule())
-                }
-
-                // Add tag field
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-
-                    TextField("Add tag", text: $newTagText)
-                        .textFieldStyle(.plain)
-                        .font(DS.footnote)
-                        .foregroundStyle(DS.text)
-                        .frame(width: 80)
-                        .focused($isTagFieldFocused)
-                        .onSubmit {
-                            viewModel.addTag(newTagText)
-                            newTagText = ""
-                        }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(DS.glassCardFill, in: Capsule())
-            }
-        }
-    }
-
-    // MARK: - Right Column (Intelligence Panel)
-
-    private var rightColumn: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 20) {
-                // Panel header
-                intelligencePanelHeader
-
-                // Loading state
-                if viewModel.isAnalyzing {
-                    analysisLoadingView
-                }
-
-                // --- LINKED CONTEXT SECTIONS ---
-
-                // 1. Related Swipes
-                relatedSwipesSection
-
-                // 2. Related Connections
-                relatedConnectionsSection
-
-                // 3. AI-Suggested Hooks (only when swipes linked)
-                if !viewModel.linkedSwipes.isEmpty {
-                    aiSuggestedHooksSection
-                }
-
-                // --- ANALYSIS SECTIONS ---
-
-                // Recommended frameworks section
-                if let frameworks = viewModel.insight?.frameworkRecommendations, !frameworks.isEmpty {
-                    frameworksSection(frameworks)
-                }
-
-                // Format suitability
-                if let formatScores = viewModel.insight?.formatScores, !formatScores.isEmpty {
-                    formatSuitabilitySection(formatScores)
-                }
-
-                // Blueprint preview
-                if let bp = viewModel.blueprint {
-                    blueprintSection(bp)
-                }
-
-                // Empty state
-                if viewModel.insight == nil && !viewModel.isAnalyzing
-                    && viewModel.linkedSwipes.isEmpty && viewModel.linkedConnections.isEmpty {
-                    emptyIntelligenceState
-                }
-
-                // "Activate This Idea" CTA
-                if viewModel.insight != nil && !viewModel.isAnalyzing {
-                    activateIdeaCTA
-                }
-
-                Spacer(minLength: 60)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-        }
-        .background(panelBackground)
-    }
-
-    // MARK: - Related Swipes Section
-
-    private var relatedSwipesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Header with link button
-            HStack(spacing: 6) {
-                Image(systemName: "doc.on.doc.fill")
-                    .font(DS.caption2)
-                    .foregroundStyle(accentIndigo)
-
-                Text("RELATED SWIPES")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textSecondary)
-                    .tracking(0.8)
-
-                Spacer()
-
-                if !viewModel.linkedSwipes.isEmpty {
-                    Text("\(viewModel.linkedSwipes.count)")
-                        .font(DS.caption2)
-                        .foregroundStyle(accentIndigo)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(accentIndigo.opacity(0.12), in: Capsule())
-                }
-
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        viewModel.showLinkSwipesOverlay = true
-                    }
-                } label: {
-                    linkedSwipesLinkButtonLabel
-                }
-                .buttonStyle(.plain)
-            }
-
-            if viewModel.linkedSwipes.isEmpty {
-                // Empty state
-                Text("No swipes linked yet. Link swipes to give the AI structural inspiration when you draft this idea.")
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
-            } else {
-                ForEach(viewModel.linkedSwipes, id: \.uuid) { swipe in
-                    linkedSwipeCard(swipe)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var linkedSwipesLinkButtonLabel: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "plus")
-                .font(DS.caption2)
-            Text("Link")
-                .font(DS.caption2)
-        }
-        .foregroundStyle(accentIndigo)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(accentIndigo.opacity(0.1), in: Capsule())
-    }
-
-    @ViewBuilder
-    private func linkedSwipeCard(_ swipe: Atom) -> some View {
-        let analysis = swipe.swipeAnalysis
-        let hookText = swipe.researchMetadata?.hook ?? analysis?.hookText ?? ""
-        let hookScore = analysis?.hookScore
-        let hookType = analysis?.hookType
-
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                // Thumbnail
-                linkedSwipeThumbnail(swipe)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(swipe.title ?? "Untitled Swipe")
-                        .font(DS.buttonText)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-
-                    // Hook text preview (60 chars)
-                    if !hookText.isEmpty {
-                        Text(String(hookText.prefix(60)))
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.textSecondary)
-                            .lineLimit(2)
-                    }
-                }
-
-                Spacer()
-
-                // Hook score badge
-                if let score = hookScore {
-                    linkedSwipeScoreBadge(score)
-                }
-
-                // Unlink button
-                Button {
-                    Task { await viewModel.unlinkSwipe(swipe.uuid) }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .padding(5)
-                        .background(DS.glassCardFill, in: Circle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Badge row: hook type + beat patterns
-            HStack(spacing: 4) {
-                if let type = hookType {
-                    swipeHookTypePill(type)
-                }
-                if let platform = swipe.researchMetadata?.contentSource {
-                    Text(platform)
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(DS.glassCardFill, in: Capsule())
-                }
-            }
-        }
-        .padding(10)
-        .dsGlassCard(cornerRadius: 10)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // Open linked swipe in split pane
-            if let swipeId = swipe.id {
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Navigation.openAsPane,
-                    object: nil,
-                    userInfo: ["type": EntityType.research, "id": swipeId]
-                )
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func linkedSwipeThumbnail(_ swipe: Atom) -> some View {
-        let thumbUrl = swipe.researchMetadata?.thumbnailUrl
-
-        if let urlStr = thumbUrl, let url = URL(string: urlStr) {
-            AsyncImage(url: url) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                linkedSwipePlaceholderThumb
-            }
-            .frame(width: 40, height: 40)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-        } else {
-            linkedSwipePlaceholderThumb
-        }
-    }
-
-    @ViewBuilder
-    private var linkedSwipePlaceholderThumb: some View {
-        RoundedRectangle(cornerRadius: 6)
-            .fill(DS.border)
-            .frame(width: 40, height: 40)
-            .overlay(
-                Image(systemName: "doc.text")
-                    .font(DS.subheadline)
-                    .foregroundStyle(DS.textMuted)
-            )
-    }
-
-    @ViewBuilder
-    private func linkedSwipeScoreBadge(_ score: Double) -> some View {
-        let color: Color = score >= 7 ? DS.green :
-            score >= 5 ? DS.orange : DS.textSecondary
-
-        Text(String(format: "%.1f", score))
-            .font(DS.caption2)
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.12), in: Capsule())
-    }
-
-    // MARK: - Related Connections Section
-
-    private var relatedConnectionsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Header with link button
-            HStack(spacing: 6) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.accent)
-
-                Text("RELATED CONNECTIONS")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textSecondary)
-                    .tracking(0.8)
-
-                Spacer()
-
-                if !viewModel.linkedConnections.isEmpty {
-                    Text("\(viewModel.linkedConnections.count)")
-                        .font(DS.caption2)
-                        .foregroundStyle(accentIndigo)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(accentIndigo.opacity(0.12), in: Capsule())
-                }
-
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        viewModel.showLinkConnectionsOverlay = true
-                    }
-                } label: {
-                    relatedConnectionsLinkButtonLabel
-                }
-                .buttonStyle(.plain)
-            }
-
-            if viewModel.linkedConnections.isEmpty && viewModel.suggestedConnections.isEmpty {
-                Text("No connections linked. Link your unique frameworks to make the content intellectually distinctive.")
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
-            } else {
-                // Linked connections
-                ForEach(viewModel.linkedConnections, id: \.uuid) { conn in
-                    linkedConnectionCard(conn)
-                }
-
-                // Suggested connections (dashed border)
-                ForEach(viewModel.suggestedConnections, id: \.uuid) { conn in
-                    suggestedConnectionCard(conn)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var relatedConnectionsLinkButtonLabel: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "plus")
-                .font(DS.caption2)
-            Text("Link")
-                .font(DS.caption2)
-        }
-        .foregroundStyle(accentIndigo)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(accentIndigo.opacity(0.1), in: Capsule())
-    }
-
-    @ViewBuilder
-    private func linkedConnectionCard(_ conn: Atom) -> some View {
-        let maturity = resolveConnectionMaturity(conn)
-        let filledCount = connectionFilledCount(conn)
-        let filledNames = connectionFilledSectionNames(conn)
-
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(conn.title ?? "Untitled Connection")
-                        .font(DS.buttonText)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-
-                    HStack(spacing: 6) {
-                        connectionMaturityBadge(maturity)
-
-                        Text("\(filledCount)/8 sections")
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.textMuted)
-                    }
-                }
-
-                Spacer()
-
-                Button {
-                    Task { await viewModel.unlinkConnection(conn.uuid) }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .padding(5)
-                        .background(DS.glassCardFill, in: Circle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Goal text preview
-            if let goalText = connectionGoalPreview(conn), !goalText.isEmpty {
-                Text(goalText)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(2)
-            }
-
-            // Filled section names
-            if !filledNames.isEmpty {
-                Text(filledNames.joined(separator: " \u{2022} "))
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
-            }
-        }
-        .padding(10)
-        .dsGlassCard(cornerRadius: 10)
-    }
-
-    @ViewBuilder
-    private func suggestedConnectionCard(_ conn: Atom) -> some View {
-        let maturity = resolveConnectionMaturity(conn)
-        let filledCount = connectionFilledCount(conn)
-
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: "sparkle")
-                    .font(DS.caption2)
-                    .foregroundStyle(accentIndigo.opacity(0.6))
-
-                Text(conn.title ?? "Untitled")
-                    .font(DS.buttonText)
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                connectionMaturityBadge(maturity)
-            }
-
-            Text("\(filledCount)/8 sections")
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-
-            HStack(spacing: 8) {
-                Button {
-                    Task { await viewModel.linkConnection(conn.uuid) }
-                } label: {
-                    suggestedConnectionLinkLabel
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        viewModel.suggestedConnections.removeAll { $0.uuid == conn.uuid }
-                    }
-                } label: {
-                    suggestedConnectionDismissLabel
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(10)
-        .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(
-                    DS.borderActive,
-                    style: StrokeStyle(lineWidth: 1, dash: [5, 3])
-                )
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(isContextFocused ? ideaGold.opacity(0.5) : DS.border, lineWidth: 1)
         )
     }
 
-    @ViewBuilder
-    private var suggestedConnectionLinkLabel: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "link.badge.plus")
-                .font(DS.caption2)
-            Text("Link")
-                .font(DS.caption2)
-        }
-        .foregroundStyle(accentIndigo)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(accentIndigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
-    }
-
-    @ViewBuilder
-    private var suggestedConnectionDismissLabel: some View {
-        Text("Dismiss")
+    private var wordCount: some View {
+        Text("\(viewModel.editableBody.split(separator: " ").count) words")
             .font(DS.caption2)
             .foregroundStyle(DS.textMuted)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 5))
     }
+}
 
-    @ViewBuilder
-    private func connectionMaturityBadge(_ level: ConnectionMaturityLevel) -> some View {
-        let color = connectionMaturityColor(level)
-        HStack(spacing: 3) {
-            Circle()
-                .fill(color)
-                .frame(width: 5, height: 5)
-            Text(level.displayName)
-                .font(DS.caption2)
-                .tracking(0.3)
-                .foregroundStyle(color)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(color.opacity(0.12), in: Capsule())
-    }
+// MARK: - Hooks Section
 
-    private func connectionMaturityColor(_ level: ConnectionMaturityLevel) -> Color {
-        switch level {
-        case .seed: return DS.textMuted
-        case .developing: return DS.orange
-        case .mature: return DS.green
-        case .proven: return DS.entityIdea
-        }
-    }
-
-    private func resolveConnectionMaturity(_ conn: Atom) -> ConnectionMaturityLevel {
-        if let cached = conn.connectionMaturityLevel,
-           let level = ConnectionMaturityLevel(rawValue: cached) {
-            return level
-        }
-        let count = connectionFilledCount(conn)
-        if count >= 6 { return .proven }
-        if count >= 4 { return .mature }
-        if count >= 2 { return .developing }
-        return .seed
-    }
-
-    private func connectionFilledCount(_ conn: Atom) -> Int {
-        guard let structured = conn.structured,
-              let data = ConnectionStructuredData.fromJSON(structured) else {
-            return 0
-        }
-        return data.sections.filter { !$0.items.isEmpty }.count
-    }
-
-    private func connectionFilledSectionNames(_ conn: Atom) -> [String] {
-        guard let structured = conn.structured,
-              let data = ConnectionStructuredData.fromJSON(structured) else {
-            return []
-        }
-        return data.sections
-            .filter { !$0.items.isEmpty }
-            .map { $0.type.displayName }
-    }
-
-    private func connectionGoalPreview(_ conn: Atom) -> String? {
-        guard let structured = conn.structured,
-              let data = ConnectionStructuredData.fromJSON(structured) else {
-            return conn.mentalModel?.goal
-        }
-        let goalSection = data.sections.first { $0.type == .goal }
-        return goalSection?.items.first?.content
-    }
-
-    // MARK: - AI-Suggested Hooks Section
-
-    private var aiSuggestedHooksSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Header
-            HStack(spacing: 6) {
-                Image(systemName: "text.quote")
-                    .font(DS.caption2)
-                    .foregroundStyle(accentIndigo)
-
-                Text("AI-SUGGESTED HOOKS")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textSecondary)
-                    .tracking(0.8)
-
-                Spacer()
-
-                if !viewModel.generatedHooks.isEmpty {
-                    Text("\(viewModel.generatedHooks.count)")
-                        .font(DS.caption2)
-                        .foregroundStyle(accentIndigo)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(accentIndigo.opacity(0.12), in: Capsule())
-                }
-
-                // Refresh button
-                Button {
-                    Task { await viewModel.generateHooksFromLinkedSwipes() }
-                } label: {
-                    aiHooksRefreshButtonLabel
-                }
-                .buttonStyle(.plain)
-                .disabled(viewModel.isGeneratingHooks)
-            }
-
-            if viewModel.isGeneratingHooks {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small).tint(accentIndigo)
-                    Text("Generating hooks from linked swipes...")
-                        .font(DS.footnote)
-                        .foregroundStyle(DS.textSecondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-            } else if viewModel.generatedHooks.isEmpty {
-                Text("Link swipes above, then hooks will be generated from their structural patterns.")
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
-            } else {
-                ForEach(viewModel.generatedHooks) { hook in
-                    generatedHookCard(hook)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var aiHooksRefreshButtonLabel: some View {
-        Image(systemName: viewModel.isGeneratingHooks ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
-            .font(DS.caption2)
-            .foregroundStyle(accentIndigo.opacity(viewModel.isGeneratingHooks ? 0.4 : 1))
-            .padding(5)
-            .background(accentIndigo.opacity(0.08), in: Circle())
-    }
-
-    @ViewBuilder
-    private func generatedHookCard(_ hook: HookSuggestion) -> some View {
+extension IdeaFocusModeView {
+    private var hooksSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Hook text
-            Text(hook.hookText)
-                .font(DS.subheadline)
-                .foregroundStyle(DS.text)
-                .lineLimit(3)
-
-            // Hook type + score row
-            HStack(spacing: 6) {
-                if let hookType = hook.hookType {
-                    swipeHookTypePill(hookType)
-                }
-
-                if let score = hook.estimatedScore {
-                    generatedHookScoreBadge(score)
-                }
-            }
-
-            // Source swipe attribution
-            if let source = hook.sourceSwipeTitle, !source.isEmpty {
-                Text("Based on pattern from \(source)")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .italic()
-            }
-
-            // Use This button
-            Button {
-                viewModel.editableBody = hook.hookText + "\n\n" + viewModel.editableBody
-                viewModel.scheduleAutoSave()
-            } label: {
-                generatedHookUseLabel
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(10)
-        .dsGlassCard(cornerRadius: 10)
-    }
-
-    @ViewBuilder
-    private func generatedHookScoreBadge(_ score: Double) -> some View {
-        let color: Color = score >= 7 ? DS.green :
-            score >= 5 ? DS.info : DS.textSecondary
-
-        HStack(spacing: 3) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-            Text(String(format: "%.1f", score))
-                .font(DS.caption2)
-                .foregroundStyle(color)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(color.opacity(0.12), in: Capsule())
-    }
-
-    @ViewBuilder
-    private var generatedHookUseLabel: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "text.insert")
-                .font(DS.caption2)
-            Text("Use This")
-                .font(DS.caption2)
-        }
-        .foregroundStyle(accentIndigo)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(accentIndigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
-    }
-
-    // MARK: - Intelligence Panel Header
-
-    private var intelligencePanelHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "brain.head.profile")
-                    .font(DS.navTitle)
-                    .foregroundStyle(accentIndigo)
-
-                Text("Intelligence")
-                    .font(DS.headline)
-                    .foregroundStyle(DS.text)
-
-                Spacer()
-
-                if let lastAnalyzed = viewModel.sessionState.lastAnalyzedAt {
-                    Text("Last analyzed: \(formatRelativeDate(lastAnalyzed))")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-
-            // Analyze button (main)
-            Button {
-                Task { await viewModel.analyzeIdea() }
-            } label: {
-                HStack(spacing: 8) {
-                    if viewModel.isAnalyzing {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "sparkle.magnifyingglass")
-                            .font(DS.callout)
-                    }
-                    Text(viewModel.insight == nil ? "Analyze Idea" : "Re-analyze")
-                        .font(DS.callout)
-                }
-                .foregroundStyle(DS.textOnAccent)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    DS.accent,
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
-            }
-            .buttonStyle(.plain)
-            .disabled(viewModel.isAnalyzing)
-            .opacity(viewModel.isAnalyzing ? 0.7 : 1)
-        }
-    }
-
-    // MARK: - Analysis Loading
-
-    private var analysisLoadingView: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .tint(accentIndigo)
-                .scaleEffect(1.2)
-
-            if !viewModel.analysisStage.isEmpty {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(viewModel.analysisStage)
-                        .font(DS.subheadline)
-                        .foregroundStyle(DS.textSecondary)
-                }
-            } else {
-                Text("Analyzing idea against swipe library...")
-                    .font(DS.subheadline)
-                    .foregroundStyle(DS.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-
-            Text("Finding matching frameworks, hooks, and patterns")
-                .font(DS.footnote)
+            Text("HOOKS")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
                 .foregroundStyle(DS.textMuted)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 30)
-    }
 
-    // (Old matchingSwipesSection removed — replaced by relatedSwipesSection)
-
-    @ViewBuilder
-    private func swipeHookTypePill(_ hookType: SwipeHookType) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: hookType.iconName)
-                .font(DS.caption2)
-            Text(hookType.displayName)
-                .font(DS.caption2)
-        }
-        .foregroundStyle(hookType.color)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(hookType.color.opacity(0.15), in: Capsule())
-    }
-
-    // MARK: - Frameworks Section
-
-    private func frameworksSection(_ frameworks: [FrameworkRecommendation]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "RECOMMENDED FRAMEWORKS", count: frameworks.count, icon: "rectangle.3.group.fill")
-
-            ForEach(frameworks.prefix(3)) { rec in
-                frameworkCard(rec)
+            ForEach(Array(viewModel.editableHooks.enumerated()), id: \.offset) { index, hook in
+                hookRow(hook, at: index)
             }
+
+            addHookField
         }
     }
 
-    private func frameworkCard(_ rec: FrameworkRecommendation) -> some View {
-        let isSelected = viewModel.sessionState.selectedFramework == rec.framework.rawValue
-
-        return VStack(alignment: .leading, spacing: 8) {
-            // Name + confidence
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(rec.framework.displayName)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-
-                    Text(rec.framework.description)
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-            }
-
-            // Confidence bar
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Confidence")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                    Spacer()
-                    Text("\(Int(rec.confidence * 100))%")
-                        .font(DS.caption2)
-                        .foregroundStyle(accentIndigo)
-                }
-
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(DS.borderActive)
-                            .frame(height: 2.0)
-
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(accentIndigo)
-                            .frame(width: geo.size.width * rec.confidence, height: 2.0)
-                    }
-                }
-                .frame(height: 2.0)
-            }
-
-            // Rationale
-            Text(rec.rationale)
-                .font(DS.footnote)
-                .foregroundStyle(DS.textSecondary)
-                .lineLimit(3)
-
-            // Evidence-based reasoning
-            if let reasoning = rec.reasoning {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "lightbulb.min")
-                        .font(DS.caption2)
-                        .foregroundStyle(accentIndigo.opacity(0.6))
-                        .padding(.top, 1)
-
-                    Text(reasoning)
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .lineLimit(4)
-                        .italic()
-                }
-                .padding(8)
-                .background(accentIndigo.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-            }
-
-            // Select button
+    private func hookRow(_ hook: String, at index: Int) -> some View {
+        HStack(spacing: 8) {
+            Text(hook)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .lineLimit(2)
+            Spacer()
             Button {
-                Task { await viewModel.selectFramework(rec.framework) }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "plus.circle")
-                        .font(DS.footnote)
-                    Text(isSelected ? "Selected" : "Select Framework")
-                        .font(DS.caption)
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.editableHooks.remove(at: index)
+                    viewModel.scheduleAutoSave()
                 }
-                .foregroundStyle(isSelected ? DS.green : accentIndigo)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(
-                    (isSelected ? DS.green : accentIndigo).opacity(0.12),
-                    in: RoundedRectangle(cornerRadius: 6)
-                )
+            } label: {
+                Image(systemName: "xmark")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Remove hook")
         }
-        .padding(12)
-        .background(cardBackground, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(ideaGold.opacity(0.06), in: .rect(cornerRadius: DS.radiusSmall))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(
-                    isSelected ? accentIndigo.opacity(0.4) : Color.clear,
-                    lineWidth: 1
-                )
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(ideaGold.opacity(0.15), lineWidth: 0.5)
         )
     }
 
-    // (Old hooksSection removed — replaced by aiSuggestedHooksSection)
-
-    // MARK: - Blueprint Section
-
-    private func blueprintSection(_ bp: ContentBlueprint) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(
-                title: "CONTENT BLUEPRINT",
-                count: bp.sections.count,
-                icon: "doc.text.magnifyingglass"
-            )
-
-            // Suggested hook
-            if let hook = bp.suggestedHook {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("HOOK")
-                        .font(DS.caption2)
-                        .foregroundStyle(accentIndigo.opacity(0.7))
-                        .tracking(0.6)
-
-                    Text(hook)
-                        .font(DS.buttonText)
-                        .foregroundStyle(DS.text)
-                        .italic()
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(accentIndigo.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            }
-
-            // Blueprint sections
-            ForEach(bp.sections.sorted(by: { $0.sortOrder < $1.sortOrder })) { section in
-                blueprintSectionCard(section)
-            }
-
-            // Suggested CTA
-            if let cta = bp.suggestedCTA {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("CALL TO ACTION")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.green.opacity(0.7))
-                        .tracking(0.6)
-
-                    Text(cta)
-                        .font(DS.buttonText)
-                        .foregroundStyle(DS.text)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DS.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            }
-
-            // Word count estimate
-            if let wordCount = bp.estimatedWordCount {
-                HStack(spacing: 4) {
-                    Image(systemName: "character.cursor.ibeam")
-                        .font(DS.caption2)
-                    Text("~\(wordCount) words estimated")
-                        .font(DS.caption2)
-                }
-                .foregroundStyle(DS.textMuted)
-            }
-
-        }
-    }
-
-    private func blueprintSectionCard(_ section: BlueprintSection) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(section.label)
-                    .font(DS.buttonText)
-                    .foregroundStyle(DS.text)
-
-                Spacer()
-
-                if let wordCount = section.targetWordCount {
-                    Text("~\(wordCount)w")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-
-            Text(section.purpose)
-                .font(DS.footnote)
-                .foregroundStyle(DS.textSecondary)
-
-            if let content = section.suggestedContent, !content.isEmpty {
-                Text(content)
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textSecondary)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 6))
-            }
-        }
-        .padding(10)
-        .background(cardBackground, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    // MARK: - Format Suitability Section
-
-    private func formatSuitabilitySection(_ formatScores: [String: Double]) -> some View {
-        let dataSources = viewModel.insight?.formatDataSources
-
-        return VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "FORMAT SUITABILITY", count: formatScores.count, icon: "slider.horizontal.3")
-
-            ForEach(formatScores.sorted(by: { $0.value > $1.value }), id: \.key) { key, score in
-                VStack(alignment: .leading, spacing: 2) {
-                    formatScoreBar(formatKey: key, score: score)
-
-                    if let source = dataSources?[key] {
-                        Text(source)
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.textMuted)
-                            .padding(.leading, 88)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func formatScoreBar(formatKey: String, score: Double) -> some View {
-        let formatName = ContentFormat(rawValue: formatKey)?.displayName ?? formatKey
-        let formatColor = ContentFormat(rawValue: formatKey)?.color ?? accentIndigo
-
-        HStack(spacing: 8) {
-            Text(formatName)
-                .font(DS.caption)
-                .foregroundStyle(DS.textSecondary)
-                .frame(width: 80, alignment: .leading)
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(DS.borderActive)
-                        .frame(height: 2.0)
-
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(formatColor.opacity(0.8))
-                        .frame(width: geo.size.width * score, height: 2.0)
-                }
-            }
-            .frame(height: 2.0)
-
-            Text("\(Int(score * 100))%")
-                .font(DS.caption2)
-                .foregroundStyle(formatColor)
-                .frame(width: 32, alignment: .trailing)
-        }
-    }
-
-    // MARK: - Activate Idea CTA
-
-    private var activateIdeaCTA: some View {
-        Button {
-            Task { await viewModel.promoteToContent() }
-        } label: {
-            activateIdeaCTALabel()
-        }
-        .buttonStyle(.plain)
-        .padding(.top, 8)
-    }
-
-    @ViewBuilder
-    private func activateIdeaCTALabel() -> some View {
-        HStack {
-            Image(systemName: "arrow.up.forward")
-            Text("Activate This Idea")
-        }
-        .font(DS.navTitle)
-        .foregroundStyle(DS.textOnAccent)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(DS.accent, in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    // MARK: - Empty Intelligence State
-
-    private var emptyIntelligenceState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "sparkle.magnifyingglass")
-                .font(DS.display)
-                .foregroundStyle(accentIndigo.opacity(0.4))
-
-            Text("No analysis yet")
-                .font(DS.navTitle)
-                .foregroundStyle(DS.textSecondary)
-
-            Text("Click \"Analyze Idea\" to find matching swipes, recommended frameworks, and hook suggestions from your library.")
-                .font(DS.subheadline)
-                .foregroundStyle(DS.textMuted)
-                .multilineTextAlignment(.center)
-                .lineLimit(4)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-        .padding(.horizontal, 20)
-    }
-
-    // MARK: - Helpers
-
-    private func sectionHeader(title: String, count: Int, icon: String) -> some View {
+    private var addHookField: some View {
         HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(DS.caption2)
-                .foregroundStyle(accentIndigo)
+            Image(systemName: "plus.circle.fill")
+                .font(DS.callout)
+                .foregroundStyle(ideaGold.opacity(0.5))
+                .accessibilityHidden(true)
+            TextField("Add a hook...", text: $newHookText)
+                .textFieldStyle(.plain)
+                .font(DS.callout)
+                .onSubmit { addHook() }
+                .accessibilityLabel("New hook text")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(DS.surface, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+    }
 
-            Text(title)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textSecondary)
+    private func addHook() {
+        let trimmed = newHookText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        withAnimation(ProMotionSprings.snappy) {
+            viewModel.editableHooks.append(trimmed)
+            newHookText = ""
+            viewModel.scheduleAutoSave()
+        }
+    }
+}
+
+// MARK: - Inline Outline Section
+
+extension IdeaFocusModeView {
+    @ViewBuilder
+    private var outlineSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            outlineSectionHeader
+
+            if let outline = viewModel.codexOutline, !outline.slides.isEmpty {
+                inlineOutlineSlides(outline)
+            } else {
+                outlineEmptyState
+            }
+        }
+    }
+
+    private var outlineSectionHeader: some View {
+        HStack {
+            Text("OUTLINE")
+                .font(.system(size: 10, weight: .semibold))
                 .tracking(0.8)
+                .foregroundStyle(DS.textMuted)
+
+            if let outline = viewModel.codexOutline, !outline.slides.isEmpty {
+                outlineSlideCountBadge(outline.slides.count)
+            }
 
             Spacer()
 
-            Text("\(count)")
-                .font(DS.caption2)
-                .foregroundStyle(accentIndigo)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(accentIndigo.opacity(0.12), in: Capsule())
+            if viewModel.codexOutline != nil {
+                Button {
+                    addNewSlide()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "plus")
+                            .accessibilityHidden(true)
+                        Text("Slide")
+                    }
+                    .font(DS.caption)
+                    .foregroundStyle(ideaGold)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add slide")
+            }
         }
     }
 
-    private func formatRelativeDate(_ iso8601: String) -> String {
-        guard let date = ISO8601DateFormatter().date(from: iso8601) else { return iso8601 }
-        let interval = Date().timeIntervalSince(date)
-        if interval < 60 { return "just now" }
-        if interval < 3600 { return "\(Int(interval / 60))m ago" }
-        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
-        return "\(Int(interval / 86400))d ago"
+    private func outlineSlideCountBadge(_ count: Int) -> some View {
+        Text("\(count) slides")
+            .font(DS.caption2)
+            .foregroundStyle(DS.accent)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(DS.accent.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: Empty State
+
+    private var outlineEmptyState: some View {
+        VStack(spacing: DS.space8) {
+            Text("Plan your post's physics before writing")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+
+            if !viewModel.arcRecommendations.isEmpty {
+                outlineArcPicker
+            } else {
+                outlineStartButton
+            }
+        }
+        .padding(DS.space12)
+        .background(DS.surfaceElevated.opacity(0.3), in: .rect(cornerRadius: DS.radiusMedium))
+    }
+
+    private var outlineArcPicker: some View {
+        VStack(spacing: 4) {
+            ForEach(viewModel.arcRecommendations.prefix(3)) { rec in
+                outlineArcPickerRow(rec)
+            }
+        }
+    }
+
+    private func outlineArcPickerRow(_ rec: ArcRecommendation) -> some View {
+        Button {
+            startOutlineWithArc(rec.arcName)
+        } label: {
+            HStack {
+                CodexConceptTag(name: rec.arcName, color: CodexElementCategory.arcShape.color)
+                Text(rec.explanation)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "arrow.right")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .accessibilityHidden(true)
+            }
+            .padding(8)
+            .background(DS.surface, in: .rect(cornerRadius: DS.radiusSmall))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start outline with \(rec.arcName) arc")
+    }
+
+    private var outlineStartButton: some View {
+        Button {
+            startOutlineWithArc(nil)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "list.bullet.rectangle")
+                    .accessibilityHidden(true)
+                Text("Start Outline")
+            }
+            .font(DS.caption)
+            .foregroundStyle(ideaGold)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(ideaGold.opacity(0.1), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start outline")
+    }
+
+    // MARK: Inline Slides
+
+    private func inlineOutlineSlides(_ outline: CodexOutlineModel) -> some View {
+        VStack(spacing: DS.space8) {
+            if let arc = outline.arcShape {
+                inlineArcBadge(arc)
+            }
+
+            ForEach(outline.slides) { slide in
+                inlineSlideCard(slide)
+            }
+        }
+    }
+
+    private func inlineArcBadge(_ arc: String) -> some View {
+        HStack(spacing: 6) {
+            Text("Arc:")
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+            CodexConceptTag(name: arc, color: CodexElementCategory.arcShape.color)
+        }
+    }
+
+    private func inlineSlideCard(_ slide: CodexOutlineSlide) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            inlineSlideCardHeader(slide)
+            inlineSlideCardTags(slide)
+            inlineSlideCardNote(slide)
+        }
+        .padding(8)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.borderSubtle, lineWidth: 0.5)
+        )
+    }
+
+    private func inlineSlideCardHeader(_ slide: CodexOutlineSlide) -> some View {
+        HStack {
+            Text("Slide \(slide.position)")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(DS.textOnAccent)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(DS.accent, in: Capsule())
+            Spacer()
+            Button {
+                removeSlide(slide.id)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 10))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove slide \(slide.position)")
+        }
+    }
+
+    @ViewBuilder
+    private func inlineSlideCardTags(_ slide: CodexOutlineSlide) -> some View {
+        FlowLayout(spacing: 3) {
+            if let sa = slide.speechAct {
+                tagPill(sa, category: .speechAct)
+            } else {
+                emptySlot("Speech Act", hint: "The primary action this slide performs", category: .speechAct, slideId: slide.id, field: "speechAct")
+            }
+
+            ForEach(slide.readerDeltas, id: \.self) { delta in
+                tagPill(delta, category: .readerDelta)
+            }
+            emptySlot("+", hint: "What the reader feels after this slide", category: .readerDelta, slideId: slide.id, field: "readerDelta")
+
+            if let frame = slide.frame {
+                tagPill(frame, category: .frame)
+            }
+
+            ForEach(slide.techniques, id: \.self) { tech in
+                tagPill(tech, category: .technique)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func inlineSlideCardNote(_ slide: CodexOutlineSlide) -> some View {
+        if let note = slide.note, !note.isEmpty {
+            Text(note)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+                .italic()
+        }
+    }
+
+    // MARK: Tag Helpers
+
+    private func tagPill(_ name: String, category: CodexElementCategory) -> some View {
+        CodexConceptTag(name: name, color: category.color)
+            .help("\(category.displayName): \(name)")
+    }
+
+    private func emptySlot(_ label: String, hint: String, category: CodexElementCategory, slideId: UUID, field: String) -> some View {
+        Text(label)
+            .font(.system(size: 9))
+            .foregroundStyle(DS.textMuted)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .foregroundStyle(DS.borderSubtle)
+            )
+            .help(hint)
+            .dropDestination(for: CodexDragItem.self) { items, _ in
+                guard let item = items.first, item.category == category else { return false }
+                addElementToSlide(slideId: slideId, field: field, name: item.canonicalName)
+                return true
+            }
+    }
+
+    // MARK: Outline Mutations
+
+    private func startOutlineWithArc(_ arcName: String?) {
+        let slideCount = viewModel.selectedContentType == "reel" ? 5 : 10
+        let slides = (1...slideCount).map { i in
+            CodexOutlineSlide(
+                id: UUID(), position: i,
+                speechAct: nil, readerDeltas: [], frame: nil,
+                distance: nil, techniques: [], transition: nil, note: nil
+            )
+        }
+        viewModel.codexOutline = CodexOutlineModel(arcShape: arcName, slides: slides)
+        if let arcName { viewModel.selectedArcType = arcName }
+    }
+
+    private func addNewSlide() {
+        guard var outline = viewModel.codexOutline else { return }
+        let nextPos = (outline.slides.map(\.position).max() ?? 0) + 1
+        outline.slides.append(CodexOutlineSlide(
+            id: UUID(), position: nextPos,
+            speechAct: nil, readerDeltas: [], frame: nil,
+            distance: nil, techniques: [], transition: nil, note: nil
+        ))
+        viewModel.codexOutline = outline
+    }
+
+    private func removeSlide(_ id: UUID) {
+        guard var outline = viewModel.codexOutline else { return }
+        outline.slides.removeAll { $0.id == id }
+        for i in outline.slides.indices {
+            outline.slides[i].position = i + 1
+        }
+        viewModel.codexOutline = outline
+    }
+
+    private func addElementToSlide(slideId: UUID, field: String, name: String) {
+        guard var outline = viewModel.codexOutline,
+              let idx = outline.slides.firstIndex(where: { $0.id == slideId }) else { return }
+        switch field {
+        case "speechAct": outline.slides[idx].speechAct = name
+        case "readerDelta": outline.slides[idx].readerDeltas.append(name)
+        case "frame": outline.slides[idx].frame = name
+        case "distance": outline.slides[idx].distance = name
+        case "technique": outline.slides[idx].techniques.append(name)
+        case "transition": outline.slides[idx].transition = name
+        default: break
+        }
+        viewModel.codexOutline = outline
+    }
+}
+
+// MARK: - Supporting Swipes Section
+
+extension IdeaFocusModeView {
+    private var supportingSwipesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            supportingSwipesHeader
+            supportingSwipesContent
+        }
+    }
+
+    private var supportingSwipesHeader: some View {
+        HStack {
+            Text("SUPPORTING SWIPES")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(DS.textMuted)
+            Spacer()
+            Button {
+                viewModel.showLinkSwipesOverlay = true
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "plus")
+                        .accessibilityHidden(true)
+                    Text("Link")
+                }
+                .font(DS.caption)
+                .foregroundStyle(ideaGold)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Link a swipe file")
+        }
+    }
+
+    @ViewBuilder
+    private var supportingSwipesContent: some View {
+        if viewModel.linkedSwipes.isEmpty {
+            Text("Link swipes to give the AI structural inspiration")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .italic()
+                .padding(.vertical, 8)
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(viewModel.linkedSwipes, id: \.uuid) { swipe in
+                        compactSwipeCard(swipe)
+                    }
+                }
+            }
+        }
+    }
+
+    private func compactSwipeCard(_ swipe: Atom) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(swipe.title ?? "Untitled")
+                .font(DS.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.text)
+                .lineLimit(2)
+            if let hook = swipe.researchMetadata?.hook {
+                Text(hook)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: 160)
+        .padding(10)
+        .background(DS.surface, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.border, lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: - Intelligence Panel (Right Column)
+
+extension IdeaFocusModeView {
+    private var intelligencePanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.space20) {
+                blueprintSection
+                supportingSwipesSection
+                researchSection
+                arcRecommendationsSection
+                chatSection
+            }
+            .padding(DS.space16)
+        }
+        .scrollIndicators(.hidden)
+        .frame(width: 320)
+        .background(DS.surface)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(DS.border).frame(width: 1)
+        }
+    }
+
+    // MARK: Blueprint
+
+    private var blueprintSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("BLUEPRINT")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(DS.textMuted)
+
+            if let blueprint = viewModel.selectedBlueprint {
+                BlueprintDisplayView(
+                    blueprintAtom: blueprint,
+                    displayMode: $viewModel.blueprintDisplayMode
+                )
+            } else {
+                blueprintEmptyState
+            }
+        }
+    }
+
+    private var blueprintEmptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 24))
+                .foregroundStyle(DS.textMuted.opacity(0.5))
+                .accessibilityHidden(true)
+            Text("Choose a proven post as your structural skeleton")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .multilineTextAlignment(.center)
+            Button {
+                showBlueprintPicker = true
+            } label: {
+                blueprintSelectLabel
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Select blueprint")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.space16)
+        .background(DS.surfaceElevated.opacity(0.5), in: .rect(cornerRadius: DS.radiusMedium))
+    }
+
+    @ViewBuilder
+    private var blueprintSelectLabel: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "plus.circle.fill")
+                .accessibilityHidden(true)
+            Text("Select Blueprint")
+        }
+        .font(DS.caption)
+        .foregroundStyle(ideaGold)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(ideaGold.opacity(0.1), in: Capsule())
+    }
+
+    // MARK: Research
+
+    private var researchSection: some View {
+        IdeaResearchPanel(
+            results: $viewModel.researchResults,
+            ideaText: viewModel.editableBody,
+            clientNiche: viewModel.linkedClient?.title
+        )
+    }
+
+    // MARK: Arc Recommendations
+
+    private var arcRecommendationsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("ARC RECOMMENDATIONS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(DS.textMuted)
+                Spacer()
+                Button {
+                    refreshArcRecommendations()
+                } label: {
+                    if isLoadingArcRecs {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.accent)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isLoadingArcRecs || viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Refresh arc recommendations")
+            }
+
+            if isLoadingArcRecs {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Analyzing idea...")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                }
+                .padding(.vertical, 8)
+            } else if viewModel.arcRecommendations.isEmpty {
+                Text("Add context to get arc suggestions")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .italic()
+            } else {
+                ForEach(viewModel.arcRecommendations) { rec in
+                    arcRecommendationCard(rec)
+                }
+            }
+        }
+    }
+
+    private func refreshArcRecommendations() {
+        isLoadingArcRecs = true
+        viewModel.arcRecommendations = []
+        Task {
+            await viewModel.generateArcRecommendations()
+            isLoadingArcRecs = false
+        }
+    }
+
+    private func arcRecommendationCard(_ rec: ArcRecommendation) -> some View {
+        Button {
+            viewModel.selectedArcType = rec.arcName
+        } label: {
+            arcRecommendationCardContent(rec)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func arcRecommendationCardContent(_ rec: ArcRecommendation) -> some View {
+        let isSelected = viewModel.selectedArcType == rec.arcName
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                CodexConceptTag(name: rec.arcName, color: CodexElementCategory.arcShape.color)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(DS.green)
+                        .font(DS.caption)
+                        .accessibilityLabel("Selected")
+                }
+            }
+            Text(rec.explanation)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(2)
+        }
+        .padding(10)
+        .background(
+            isSelected ? DS.green.opacity(0.06) : DS.surfaceElevated,
+            in: .rect(cornerRadius: DS.radiusSmall)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(
+                    isSelected ? DS.green.opacity(0.3) : DS.borderSubtle,
+                    lineWidth: 0.5
+                )
+        )
+    }
+
+    // MARK: Chat
+
+    private var chatSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            chatToggleHeader
+            chatContent
+        }
+    }
+
+    private var chatToggleHeader: some View {
+        Button {
+            withAnimation(ProMotionSprings.snappy) {
+                chatExpanded.toggle()
+            }
+        } label: {
+            HStack {
+                Text("BRAINSTORM CHAT")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(DS.textMuted)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .rotationEffect(.degrees(chatExpanded ? 90 : 0))
+                    .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(chatExpanded ? "Collapse brainstorm chat" : "Expand brainstorm chat")
+    }
+
+    @ViewBuilder
+    private var chatContent: some View {
+        if chatExpanded {
+            IdeaChatPanel(
+                messages: $viewModel.chatHistory,
+                ideaContext: viewModel.editableBody
+            )
+            .frame(height: 300)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+}
+
+// MARK: - Action Bar
+
+extension IdeaFocusModeView {
+    private var actionBar: some View {
+        HStack(spacing: 16) {
+            contentTypePicker
+            Spacer()
+            actionBarWriteButton
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(DS.surface)
+        .overlay(alignment: .top) {
+            Rectangle().fill(DS.border).frame(height: 1)
+        }
+    }
+
+    private var contentTypePicker: some View {
+        Picker("Type", selection: Binding(
+            get: { viewModel.selectedContentType ?? "carousel" },
+            set: { viewModel.selectedContentType = $0 }
+        )) {
+            Text("Reel").tag("reel")
+            Text("Carousel").tag("carousel")
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 180)
+        .accessibilityLabel("Content type")
+    }
+
+    private var actionBarWriteButton: some View {
+        Button {
+            Task { await viewModel.promoteToContent() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "pencil.line")
+                    .accessibilityHidden(true)
+                Text("Write")
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(DS.textOnAccent)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .background(DS.green, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isBodyEmpty)
+        .opacity(isBodyEmpty ? 0.5 : 1)
+        .accessibilityLabel("Write content from this idea")
     }
 }
 
 // MARK: - Flow Layout
 
-/// Simple horizontal wrapping layout for tags and chips.
 private struct FlowLayout: Layout {
     var spacing: CGFloat = 6
 
@@ -1964,85 +1224,6 @@ private struct FlowLayout: Layout {
         }
 
         return (CGSize(width: maxWidth, height: totalHeight), positions)
-    }
-}
-
-// MARK: - Idea Hook Row
-
-private struct IdeaHookRow: View {
-    let hook: String
-    let index: Int
-    let onUpdate: (String) -> Void
-    let onDelete: () -> Void
-
-    @State private var isEditing = false
-    @State private var editText = ""
-    @State private var isHovered = false
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("\(index + 1).")
-                .font(DS.callout)
-                .foregroundStyle(DS.textMuted)
-                .frame(width: 20, alignment: .trailing)
-                .padding(.top, isEditing ? 4 : 0)
-
-            if isEditing {
-                MultilineHookEditor(
-                    text: $editText,
-                    isFocused: $isFocused,
-                    fontSize: 14,
-                    onCommit: { commitEdit() }
-                )
-            } else {
-                Text(hook)
-                    .font(DS.navTitle)
-                    .foregroundStyle(DS.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onTapGesture(count: 2) {
-                        editText = hook
-                        isEditing = true
-                        isFocused = true
-                    }
-            }
-
-            Spacer(minLength: 4)
-
-            if isHovered {
-                Button(action: {
-                    editText = hook
-                    isEditing = true
-                    isFocused = true
-                }) {
-                    Image(systemName: "pencil")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-
-                Button(action: onDelete) {
-                    Image(systemName: "xmark")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .dsGlassCard(cornerRadius: 8)
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-        }
-    }
-
-    private func commitEdit() {
-        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { onUpdate(trimmed) }
-        isEditing = false
     }
 }
 

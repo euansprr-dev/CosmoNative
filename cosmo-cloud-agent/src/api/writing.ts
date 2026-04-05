@@ -13,6 +13,8 @@
 
 import { Request, Response, Router } from 'express';
 import { generateOutline, generateDraft, reviseDraft, readDraft } from '../tools/writing';
+import { getOrCreateEngine } from '../writing/engine';
+import { detectContentFormat } from '../writing/types';
 import { batchExtractAll, extractQuarkProfile, buildQuarkSummary } from '../writing/quarkExtractor';
 import { extractWithCodex, summarizeCodexExtraction } from '../writing/codexExtractor';
 import { loadExemplarCodex } from '../writing/codexLoader';
@@ -176,6 +178,44 @@ writingRouter.post('/read', async (req: Request, res: Response) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     res.status(500).json({ error: msg });
+  }
+});
+
+// ============================================================
+// POST /api/writing/session — Single agentic session (outline-required)
+// ============================================================
+
+writingRouter.post('/session', async (req: Request, res: Response) => {
+  if (!authenticate(req, res)) return;
+
+  const { contentUUID, userDirection } = req.body;
+
+  if (!contentUUID) {
+    res.status(400).json({ error: 'contentUUID is required' });
+    return;
+  }
+
+  try {
+    const engine = await getOrCreateEngine(contentUUID);
+    const result = await engine.runSingleSession(userDirection || '');
+
+    // Read final state from DB
+    const atom = await fetchAtom(contentUUID);
+    const draft = atom?.body || '';
+    const wordCount = draft.split(/\s+/).filter(Boolean).length;
+
+    res.json({
+      success: true,
+      contentUUID,
+      formattedDraft: draft,
+      format: detectContentFormat(atom?.metadata || null),
+      wordCount,
+      engineNotes: result.text,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`❌ [Session] Error: ${msg}`);
+    res.status(500).json({ success: false, error: msg });
   }
 });
 

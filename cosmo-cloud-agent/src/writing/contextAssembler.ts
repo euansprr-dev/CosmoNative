@@ -8,7 +8,7 @@
 // Block 3B (Dynamic): Current content state, outline, hooks, draft preview
 
 import { Atom, fetchAtom, fetchAllByType, loadPromptTemplate } from '../db/queries';
-import { CompressedSwipe, ContentFormat, formatCompressedSwipe, OutlineItem, QuarkProfile } from './types';
+import { CompressedSwipe, ContentFormat, formatCompressedSwipe, OutlineItem, QuarkProfile, CodexOutlineModel, IdeaResearchFinding } from './types';
 import { getCodexText } from './codex';
 import { loadExemplarCodex } from './codexLoader';
 import { computeSwipeIntelligenceBrief } from './swipeSelector';
@@ -1342,6 +1342,315 @@ What "spoken" means:
 ${getFormatDensityOverride(format)}`;
 }
 
+// ============================================================
+// Reusable Codex Context Renderers
+// ============================================================
+
+function renderCodexOutline(codexOutline?: CodexOutlineModel | null): string {
+  if (!codexOutline?.slides?.length) return '';
+
+  // Detect if this is a rough outline (notes only) or physics-tagged
+  const hasAnyPhysics = codexOutline.slides.some(s =>
+    s.speechAct || s.readerDeltas?.length || s.frame || s.distance || s.techniques?.length
+  );
+
+  let section = `\n\n═══ USER'S OUTLINE ═══\n`;
+  section += `Arc Shape: ${codexOutline.arcShape || 'auto-determine'}\n`;
+  section += `Physics tagged: ${hasAnyPhysics ? 'YES — honor tagged elements' : 'NO — infer all physics from the walkthrough + Codex'}\n\n`;
+
+  if (hasAnyPhysics) {
+    section += `The user has pre-planned the following slide structure using Content Physics language.\n`;
+    section += `Each slide specifies the codex elements that MUST appear. Use your full Codex knowledge to understand what each element means and how to execute it.\n\n`;
+  } else {
+    section += `The user provided a rough structural outline. The slide notes describe WHAT each slide should do.\n`;
+    section += `YOUR JOB: Read the walkthrough to see what physics the blueprint used at each position, then assign\n`;
+    section += `the right speech acts, reader deltas, frame, distance, and techniques to each slide in your plan.\n`;
+    section += `The outline tells you the STRUCTURE. The walkthrough tells you the PHYSICS. The Codex tells you WHY.\n\n`;
+  }
+
+  for (const slide of codexOutline.slides) {
+    section += `Slide ${slide.position}:\n`;
+    if (slide.speechAct) section += `  Speech Act: ${slide.speechAct}\n`;
+    if (slide.readerDeltas?.length) section += `  Reader Deltas: ${slide.readerDeltas.join(', ')}\n`;
+    if (slide.frame) section += `  Frame: ${slide.frame}\n`;
+    if (slide.distance) section += `  Distance: ${slide.distance}\n`;
+    if (slide.techniques?.length) section += `  Techniques: ${slide.techniques.join(', ')}\n`;
+    if (slide.transition) section += `  Transition to next: ${slide.transition}\n`;
+    if (slide.note) section += `  ${hasAnyPhysics ? 'User note' : 'Intent'}: ${slide.note}\n`;
+    section += '\n';
+  }
+  section += `Honor this outline as the structural skeleton. Fill in any unspecified fields using your Codex knowledge and the walkthrough reference.\n`;
+  return section;
+}
+
+
+function renderResearchFindings(researchFindings?: IdeaResearchFinding[] | null): string {
+  if (!researchFindings?.length) return '';
+  let section = `\n═══ RESEARCH FINDINGS (available proof material) ═══\n`;
+  for (const finding of researchFindings) {
+    section += `• ${finding.title}: ${finding.snippet}`;
+    if (finding.source) section += ` [Source: ${finding.source}]`;
+    if (finding.proofType) section += ` → Codex proof type: ${finding.proofType}`;
+    section += '\n';
+  }
+  section += `\nUse these real data points where the outline calls for NUMERICAL SPECIFICITY, NAMED ENTITY PROOF, or other proof types.\n`;
+  return section;
+}
+
+function renderCodexContext(
+  codexOutline?: CodexOutlineModel | null,
+  researchFindings?: IdeaResearchFinding[] | null,
+  creativeDirection?: string | null,
+): string {
+  let section = renderCodexOutline(codexOutline);
+  section += renderResearchFindings(researchFindings);
+  if (creativeDirection) section += `\n═══ CREATIVE DIRECTION ═══\n${creativeDirection}\n`;
+  return section;
+}
+
+// ============================================================
+// Single Session Prompt (outline-required, all phases in one call)
+// ============================================================
+
+/**
+ * Build the unified session prompt that preserves ALL instructions from Phase 1 + Phase 2 + Phase 3.
+ * Used when codexOutline is present — the user's outline IS the structural confirmation.
+ * One continuous Opus mind: plan → write → self-edit → deliver.
+ */
+export function buildCodexSessionPrompt(
+  userDirection: string,
+  format: ContentFormat,
+  platform: string,
+  clientName: string,
+  codexOutline: CodexOutlineModel,
+  researchFindings?: IdeaResearchFinding[] | null,
+  creativeDirection?: string | null,
+): string {
+  const codexSection = renderCodexContext(codexOutline, researchFindings, creativeDirection);
+
+  const isReel = format === 'reel' || format === 'voiceoverReel' || format === 'oneSliderReel'
+    || format === 'multiSliderReel' || format === 'twoStepCTA';
+
+  return `The idea/direction is: ${userDirection}
+Content format: ${format} | Platform: ${platform}
+${codexSection}
+
+═══ SINGLE SESSION: PLAN → WRITE → SELF-EDIT → DELIVER ═══
+
+You have the user's codex-tagged outline (structural skeleton), the blueprint walkthrough
+(proven reference), the full Codex, and ${clientName}'s profile. Complete all three steps
+in this single session — your planning reasoning stays alive through writing and editing.
+
+You have adaptive thinking enabled — reason internally as deeply as you need. Do NOT call
+a think tool. Go straight to the action tools: create_writing_plan, then write_draft.
+
+────────────────────────────────────────
+STEP 1: RECONSTRUCTION PLAN (call create_writing_plan)
+────────────────────────────────────────
+
+Reason internally about ALL of the following sections with QUOTED EVIDENCE from your loaded
+context. No section may be skipped. Then call create_writing_plan with the complete plan.
+
+──── SECTION 1: VOICE ANCHORS ────
+
+Find and quote real slides from ${clientName}'s top performing posts that demonstrate their voice in this format.
+
+${isReel
+? `You're writing a REEL. Find:
+- 4 specific REEL slides from ${clientName}'s top posts (quote the exact text — showing their reel rhythm, density, sentence length)
+- 2 specific CAROUSEL/THREAD slides from their top posts (for reference on their denser format)`
+: `You're writing a CAROUSEL/THREAD. Find:
+- 4 specific CAROUSEL/THREAD slides from ${clientName}'s top posts (quote the exact text — showing their carousel density, formatting, tone)
+- 2 specific REEL slides from their top posts (for reference on their punchy format)`}
+
+These 6 quotes are your VOICE STANDARD. Every slide you write must sound like it belongs alongside these lines.
+
+──── SECTION 2: CONCEPT EXAMPLES ────
+
+Read the walkthrough and the codex-tagged outline. Identify every UNIQUE physics concept
+this post uses (speech acts, transition types, techniques, reader deltas, etc.).
+
+For each unique concept, quote:
+- 1 example from the Codex entry showing what that concept looks like in real viral text
+- Up to 4 lines from ${clientName}'s top posts that demonstrate similar physics in their voice
+
+Format:
+{CONCEPT NAME} (used on slides X, Y, Z):
+  Codex: "{quoted example from the Codex entry}" — [source]
+  Client: "{quoted line from top post}" — [which post]
+  Client: "{another quoted line}" — [which post]
+  ...
+
+──── SECTION 3: CONTEXT STUDY ────
+
+A. BLUEPRINT TONE — Read the blueprint body. How does it present data? Human behavior or market
+   statistics? Conversational or analytical? Quote 2 lines that show its tone.
+
+B. CLIENT'S REAL NUMBERS — List ${clientName}'s EXACT numbers from their profile (costs, returns,
+   timelines). Use THESE in the plan, not inflated versions.
+
+C. OPERATOR INSIGHTS — For any step-by-step or teaching slides, find practical tips from the
+   client profile that make the content feel operated, not theoretical. Quote them.
+
+──── SECTION 4: SLIDE-BY-SLIDE PLAN ────
+
+The user's outline provides the structural skeleton. For EACH slide in the outline:
+
+IF the outline has physics tags (speech act, reader deltas, etc.):
+1. Read the outline's tagged physics — these are constraints you MUST honor
+2. Find walkthrough slides with similar physics — read ALL their fields to understand execution
+3. Map ${clientName}'s specific content to this slide (exact numbers, real details from profile)
+4. Note target density by reading the BLUEPRINT BODY's corresponding slide (count actual words)
+5. Note any small creative adjustments (explain WHY if you deviate from a tag)
+
+IF the outline has only rough notes (e.g., "context slides", "step by step"):
+1. Read the user's intent for this slide position
+2. Read the walkthrough's slide at this position — what physics does the blueprint use HERE?
+3. ASSIGN the right physics: speech act, reader deltas, frame, distance, techniques
+   The walkthrough is your physics source. The user's note tells you the CONTENT intent.
+   Example: user says "context to the problem" → walkthrough slide 2 uses CLAIM + +understanding
+   + CLOSE frame → assign those physics to this slide
+4. Map ${clientName}'s specific content to this slide
+5. Note target density from the BLUEPRINT BODY's corresponding slide
+6. If the user's outline has fewer slides than the walkthrough, decide which walkthrough slides
+   to combine or skip — explain your reasoning
+
+For each slide, write:
+  Slide N: [beat function from outline]
+  Blueprint physics: speech act={X}, deltas={X,Y}, frame={X}, distance={zero/near/far},
+    techniques={X,Y,Z}, transition→next={X}
+  Client content: {specific detail from profile — EXACT numbers}
+  Operator tip: {practical insight if teaching/step slide}
+  Voice match: {which voice anchor or concept example above matches this slide's energy}
+  Density: ~{X} words / ≤310 chars
+  Bridge to next: {connecting phrase that pulls reader forward}
+
+──── SECTION 5: SLIDE COUNT & MACRO PHYSICS ────
+
+- SLIDE COUNT: If the outline has fewer slides than the walkthrough, decide the FINAL slide count.
+  Use the walkthrough's count as your target — the user's outline is a rough structure, the
+  walkthrough tells you how many slides this type of post actually needs. Map the user's
+  intent blocks to the walkthrough's slide positions.
+- ARC: How does ${clientName}'s story map to the outline's arc shape (or walkthrough's if outline
+  doesn't specify)?
+- SYMMETRY BREAK: What moment breaks reader expectation?
+- PHASE TRANSITION: Where does the post become something different?
+- PEAK GRAVITY: Maximum simultaneous open loops + trust + tension?
+- ANTIMATTER: Specific things that would destroy THIS post's physics?
+
+──── SECTION 6: HOOK SPECIFICATION ────
+
+Include 3 HOOK VARIANTS. Each must:
+- Reproduce the walkthrough's hook physics (same speech act, same reader deltas, same techniques)
+- Sound like ${clientName}'s voice anchors above
+- Use the client's specific content, not the blueprint's content
+
+Call create_writing_plan with:
+- VOICE ANCHORS (your 6 voice anchor quotes — they stay for reference during writing)
+- CONCEPT EXAMPLES (your per-concept Codex + client examples)
+- SLIDE-BY-SLIDE PLAN (all slides with physics, content, density, bridges)
+- 3 HOOK VARIANTS
+- HARD RULES THAT APPLY (list every hard lesson, note how each applies to THIS draft)
+
+────────────────────────────────────────
+STEP 2: WRITE (call write_draft)
+────────────────────────────────────────
+
+Write directly via write_draft. No additional think calls needed — your plan IS your thinking,
+and it's still alive in your context.
+
+FOR EACH SLIDE:
+1. Read your plan for this slide — what content goes here
+2. Read the BLUEPRINT BODY's corresponding slide — study its word count, format, line structure,
+   sentence length
+3. Write YOUR version that produces the same physics with the client's content, matching the
+   blueprint's visual format and density
+
+CRITICAL RULES:
+- HARD CAP: No slide may EVER exceed 310 characters. This is a platform limit. If a slide is
+  over 310 characters, cut it immediately.
+- The BLUEPRINT BODY is your formatting and density bible. Before writing each slide, READ the
+  blueprint's corresponding slide. Match its word count, line count, formatting (arrows, bullets,
+  etc.), and visual structure.
+- Every sentence must sound like ${clientName} talking at dinner. Read their TOP POSTS in the
+  client profile — match their sentence length, their word choices, their energy. If your
+  sentence doesn't match their real posts, rewrite it.
+- When presenting data or statistics, read how the blueprint and the client's top posts present
+  data. They don't use research-report language — they use plain numbers conversationally.
+  Match THEIR style.
+- Each slide must causally connect to the next. Read the TRANSITION types in the walkthrough and
+  study those transition entries in the Codex to see what causal bridges look like in real
+  viral text.
+- Never introduce data about something before the reader knows WHAT it is.
+- Check the ANTIMATTER section in the Codex. If you catch yourself writing any banned pattern —
+  rewrite using the Codex's examples of how viral creators phrase things instead.
+
+DENSITY CHECK (do this for EVERY slide before moving to the next):
+After writing each slide, count your characters. If it exceeds 310, cut immediately. Then
+compare your word count to the blueprint body's corresponding slide. If yours is more than 10%
+over, cut until it matches. Do NOT move to the next slide until both checks pass.
+
+Call write_draft with the complete content.
+
+────────────────────────────────────────
+STEP 3: SELF-EDIT (read_draft, then write_draft)
+────────────────────────────────────────
+
+Call read_draft to see your written draft. Then reason internally — compare each slide against
+the BLUEPRINT BODY, ${clientName}'s top posts, and the walkthrough. Then call write_draft
+with corrections.
+
+CHECK EACH SLIDE:
+
+1. DENSITY + FORMATTING (compare to blueprint body):
+   For each slide, actually COUNT:
+   - Your slide character count: ___ (HARD CAP: 310 characters. No slide may EVER exceed this.)
+   - Blueprint slide word count: ___
+   - Your slide word count: ___
+   - Over/under by: ___%
+   If any slide exceeds 310 characters, cut it immediately. Then if more than 10% over the
+   blueprint's word count, cut further.
+   Also check:
+   - Does your slide LOOK like the blueprint's slide? Same formatting moves? (arrows, bullets,
+     steps, line breaks)
+   - If your slide is a paragraph but the blueprint's is a formatted list — rewrite as a list
+
+2. VOICE (compare to ${clientName}'s top posts AND Codex Conversational DNA):
+   - Does this sound like ${clientName} at dinner? Compare each slide to their actual top posts.
+   - Read the Codex's Conversational DNA section — does your text match the patterns found in
+     real viral posts?
+   - Read the Codex's ANTIMATTER section — is any banned pattern present? If yes, find how the
+     Codex's real examples phrase similar ideas and use that instead.
+   - Sentences should be 10-15 words, complete thoughts, connected with "but", "so", "and"
+
+3. TRANSITIONS (check every slide pair):
+   - Can you say "so" or "but" or "because" between slides N and N+1?
+   - Does slide N+1 reference or build on something established in slide N?
+   - If a concept appears with data, was it introduced to the reader first?
+   - If two slides feel disconnected — add a bridge phrase or reorder
+
+4. PHYSICS (compare to outline + walkthrough):
+   - Does each slide produce ALL the physics the outline specifies? (speech act, deltas, frame,
+     distance, techniques)
+   - Does each slide produce the physics the walkthrough specifies? (proof, motivation,
+     compression, transition)
+   - Are the right techniques ACTIVE? If walkthrough says ARROW_FORMATTING, are there arrows?
+     If it says MAXIMUM_COMPRESSION, is the slide compressed?
+   - Find each concept's entry in the Codex if unsure what it should look like in actual text.
+
+5. ANTIMATTER (final sweep using the Codex's Antimatter section):
+   - Read the Codex's Antimatter entries. Does your draft contain ANY of these patterns?
+   - Check specifically: "it's not X, it's Y" formula, corporate jargon, round numbers, generic
+     references, overexplained morals, multiple fragments in a row
+   - For each violation found, rewrite using how the Codex's real viral examples phrase similar
+     ideas
+
+Fix everything. Priority: Formatting + voice > transitions > physics.
+
+Call write_draft with the corrected version. After write_draft confirms, output a brief summary
+of what you changed and why.`;
+}
+
 /**
  * Build the Phase 1 (Reconstruction Plan) user message.
  */
@@ -1350,7 +1659,13 @@ export function buildCodexPhase1Prompt(
   format: ContentFormat,
   platform: string,
   clientName: string,
+  codexOutline?: CodexOutlineModel | null,
+  researchFindings?: IdeaResearchFinding[] | null,
+  creativeDirection?: string | null,
 ): string {
+  // Build optional codex-tagged outline + research + direction sections
+  const codexSection = renderCodexContext(codexOutline, researchFindings, creativeDirection);
+
   return `The idea/direction is: ${ideaDirection}
 Content format: ${format} | Platform: ${platform}
 
@@ -1426,7 +1741,7 @@ SLIDE {N}:
 Include 3 HOOK VARIANTS. Each must:
 - Reproduce the walkthrough's hook physics (same speech act, same reader deltas, same techniques)
 - Sound like ${clientName}'s voice anchors above
-- Use the client's specific content, not the blueprint's content`;
+- Use the client's specific content, not the blueprint's content${codexSection}`;
 }
 
 /**

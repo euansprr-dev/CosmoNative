@@ -489,6 +489,8 @@ struct MainView: View {
                 }
             case .inbox:
                 break
+            case .codex:
+                break
             }
             // Update Cosmo Window context (panel is now system-wide, always update)
             let vm = CosmoWindowViewModel.shared
@@ -499,6 +501,8 @@ struct MainView: View {
                 vm.updateContextManually(type: .sanctuary)
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
+            case .codex:
+                vm.updateContextManually(type: .commandCenter)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
@@ -892,6 +896,7 @@ struct MainView: View {
         case .commandCenter: return ThinkspaceManager.commandCenterUUID
         case .thinkspace(let id): return id
         case .inbox: return nil
+        case .codex: return nil
         }
     }
 
@@ -927,6 +932,11 @@ struct MainView: View {
                     .transition(.opacity)
             } else if case .commandCenter = currentDestination {
                 CommandCenterDashboard()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DS.bg)
+                    .transition(.opacity)
+            } else if case .codex = currentDestination {
+                CodexNavigationView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .transition(.opacity)

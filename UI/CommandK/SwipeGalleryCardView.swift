@@ -323,18 +323,10 @@ struct SwipeGalleryCardView: View {
         HStack {
             if let hookType = item.hookType {
                 hookTypeBadgeLabel(hookType)
+            } else if item.processingStatus == "extraction_failed" {
+                extractionFailedBadge
             } else {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                    Text("Pending")
-                        .font(.system(size: 10, weight: .medium))
-                }
-                .foregroundStyle(Color(hex: "#64748B"))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color(hex: "#64748B").opacity(0.12))
-                .clipShape(Capsule())
+                processingBadge
             }
 
             Spacer()
@@ -357,6 +349,34 @@ struct SwipeGalleryCardView: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(hookType.color.opacity(0.12))
+        .clipShape(Capsule())
+    }
+
+    private var extractionFailedBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 10))
+            Text("Retry")
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundStyle(Color(hex: "#EAB308"))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color(hex: "#EAB308").opacity(0.12))
+        .clipShape(Capsule())
+    }
+
+    private var processingBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock")
+                .font(.system(size: 10))
+            Text("Pending")
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundStyle(Color(hex: "#64748B"))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color(hex: "#64748B").opacity(0.12))
         .clipShape(Capsule())
     }
 

@@ -2023,13 +2023,41 @@ class AgentToolExecutor {
             return jsonError("Missing or invalid contentUUID")
         }
 
-        print("☁️ [AgentToolExecutor] generate_draft → cloud engine for \(contentUUID)")
-
         // Advance pipeline phase for XP
         _ = try? await ContentPipelineService().advancePhase(
             contentUUID: contentUUID,
             notes: "Draft generated via cloud writing engine"
         )
+
+        // Check if content atom has a codex outline → single agentic session (Opus, adaptive thinking)
+        let atom = try? await AtomRepository.shared.fetch(uuid: contentUUID)
+        let hasCodexOutline: Bool = {
+            guard let metadata = atom?.metadata,
+                  let data = metadata.data(using: .utf8),
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return false
+            }
+            // Check both direct and inherited outline fields
+            return dict["codexOutline"] != nil || dict["inheritedCodexOutline"] != nil
+        }()
+
+        if hasCodexOutline {
+            print("☁️ [AgentToolExecutor] generate_draft → SINGLE SESSION (Opus) for \(contentUUID)")
+            do {
+                let result = try await CloudWritingClient.shared.runSession(
+                    contentUUID: contentUUID,
+                    userDirection: args["userDirection"] as? String
+                )
+                let encoder = JSONEncoder()
+                let data = try encoder.encode(result)
+                return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode session result")
+            } catch {
+                print("⚠️ [AgentToolExecutor] Single session failed, falling back to multi-phase: \(error.localizedDescription)")
+                // Fall through to existing multi-phase pipeline
+            }
+        }
+
+        print("☁️ [AgentToolExecutor] generate_draft → multi-phase pipeline for \(contentUUID)")
 
         do {
             let result = try await CloudWritingClient.shared.generateDraft(

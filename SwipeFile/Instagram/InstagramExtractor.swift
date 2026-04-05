@@ -92,6 +92,22 @@ final class InstagramExtractor: Sendable {
             print("InstagramExtractor: yt-dlp fallback failed: \(error.localizedDescription)")
         }
 
+        // Strategy 6: Apify post scraper (paid API, same provider used by creator import)
+        if ApifyInstagramProvider.shared.isConfigured {
+            do {
+                let importedPost = try await ApifyInstagramProvider.shared.fetchPost(url: normalizedURL)
+                let mediaData = mediaData(from: importedPost, originalURL: normalizedURL, requestedType: contentType)
+                if shouldReturnImmediately(mediaData, requestedType: contentType) {
+                    print("InstagramExtractor: Apify fallback succeeded")
+                    return mediaData
+                }
+                bestPartialResult = betterPartialResult(current: bestPartialResult, candidate: mediaData)
+                print("InstagramExtractor: Apify fallback returned partial media, continuing")
+            } catch {
+                print("InstagramExtractor: Apify fallback failed: \(error.localizedDescription)")
+            }
+        }
+
         if let bestPartialResult {
             print("InstagramExtractor: Returning best partial media result for \(normalizedURL)")
             return bestPartialResult
@@ -204,6 +220,32 @@ final class InstagramExtractor: Sendable {
         }
 
         return score
+    }
+
+    private func mediaData(
+        from importedPost: ImportedPost,
+        originalURL: URL,
+        requestedType: InstagramContentType
+    ) -> InstagramMediaData {
+        let resolvedType: InstagramContentType
+        if !(importedPost.carouselItems?.isEmpty ?? true) || importedPost.contentType == .carousel {
+            resolvedType = .carousel
+        } else if importedPost.videoUrl != nil {
+            resolvedType = requestedType == .reel ? .reel : .videoPost
+        } else {
+            resolvedType = importedPost.contentType
+        }
+
+        return InstagramMediaData(
+            originalURL: originalURL,
+            contentType: resolvedType,
+            videoURL: importedPost.videoUrl,
+            thumbnailURL: importedPost.thumbnailUrl,
+            authorUsername: importedPost.ownerUsername,
+            caption: importedPost.caption,
+            carouselItems: importedPost.carouselItems,
+            extractedAt: Date()
+        )
     }
 
     // MARK: - Content Type Detection

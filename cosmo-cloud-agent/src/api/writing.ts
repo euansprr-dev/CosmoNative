@@ -42,8 +42,9 @@ function authenticate(req: Request, res: Response): boolean {
   if (token.startsWith('Optional("') && token.endsWith('")')) {
     token = token.slice(10, -2);
   }
-  // Accept either the Supabase service role key or a simple shared secret
-  if (token !== config.writingApiKey && token !== process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // Accept the Supabase service role key, the configured writing API key, or the shared app secret
+  const validKeys = [config.writingApiKey, process.env.SUPABASE_SERVICE_ROLE_KEY, 'cosmo-native-writing-2026'].filter(Boolean);
+  if (!validKeys.includes(token)) {
     res.status(403).json({ error: 'Invalid API key' });
     return false;
   }

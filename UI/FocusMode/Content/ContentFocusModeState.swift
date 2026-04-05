@@ -695,6 +695,55 @@ extension ContentFocusModeState {
             state.lastModified = date
         }
 
+        // Decode codex-era fields from metadata
+        if let researchData = dict["inheritedResearchResults"] {
+            if let json = try? JSONSerialization.data(withJSONObject: researchData),
+               let results = try? JSONDecoder().decode([IdeaResearchResult].self, from: json) {
+                state.inheritedResearchResults = results
+            }
+        } else if let researchStr = dict["inheritedResearchResults"] as? String,
+                  let json = researchStr.data(using: .utf8),
+                  let results = try? JSONDecoder().decode([IdeaResearchResult].self, from: json) {
+            state.inheritedResearchResults = results
+        }
+
+        if let arcData = dict["inheritedArcRecommendations"] {
+            if let json = try? JSONSerialization.data(withJSONObject: arcData),
+               let recs = try? JSONDecoder().decode([ArcRecommendation].self, from: json) {
+                state.inheritedArcRecommendations = recs
+            }
+        } else if let arcStr = dict["inheritedArcRecommendations"] as? String,
+                  let json = arcStr.data(using: .utf8),
+                  let recs = try? JSONDecoder().decode([ArcRecommendation].self, from: json) {
+            state.inheritedArcRecommendations = recs
+        }
+
+        if let chatData = dict["inheritedChatHistory"] {
+            if let json = try? JSONSerialization.data(withJSONObject: chatData),
+               let msgs = try? JSONDecoder().decode([IdeaChatMessage].self, from: json) {
+                state.inheritedChatHistory = msgs
+            }
+        } else if let chatStr = dict["inheritedChatHistory"] as? String,
+                  let json = chatStr.data(using: .utf8),
+                  let msgs = try? JSONDecoder().decode([IdeaChatMessage].self, from: json) {
+            state.inheritedChatHistory = msgs
+        }
+
+        state.inheritedCreativeDirection = dict["inheritedCreativeDirection"] as? String ?? ""
+        state.inheritedIdeaContext = dict["inheritedIdeaContext"] as? String ?? ""
+        state.codexElementNames = dict["codexElementNames"] as? [String] ?? []
+
+        if let outlineData = dict["codexOutline"] ?? dict["inheritedCodexOutline"] {
+            if let json = try? JSONSerialization.data(withJSONObject: outlineData),
+               let outline = try? JSONDecoder().decode(CodexOutlineModel.self, from: json) {
+                state.codexOutline = outline
+            }
+        } else if let outlineStr = (dict["codexOutline"] ?? dict["inheritedCodexOutline"]) as? String,
+                  let json = outlineStr.data(using: .utf8),
+                  let outline = try? JSONDecoder().decode(CodexOutlineModel.self, from: json) {
+            state.codexOutline = outline
+        }
+
         return state
     }
 

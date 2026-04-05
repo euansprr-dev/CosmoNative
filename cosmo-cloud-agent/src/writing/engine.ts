@@ -2238,8 +2238,10 @@ If ALL checks pass, present the draft.
       }));
     }
 
+    // Use streaming API — emit progress events as tokens arrive (no 6-min wait for batch response)
+    body.stream = true;
+
     // Retry loop
-    // Rate-limit-aware retry: up to 5 attempts for 429s (transient, always resolve)
     const MAX_RETRIES = 5;
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -2250,13 +2252,12 @@ If ALL checks pass, present the draft.
             'Content-Type': 'application/json',
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
-            // Prompt caching is GA — no beta header needed
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(600_000), // 10 min — single session with 280K+ context needs time
+          signal: AbortSignal.timeout(600_000),
         });
 
-        // Rate limit: parse retry-after header or wait 30s default
+        // Rate limit
         if (response.status === 429) {
           const retryAfter = response.headers.get('retry-after');
           const waitMs = retryAfter ? Math.ceil(parseFloat(retryAfter) * 1000) : 30_000;
@@ -2267,7 +2268,7 @@ If ALL checks pass, present the draft.
           continue;
         }
 
-        // Server errors: shorter backoff
+        // Server errors
         if (response.status === 529 || (response.status >= 500 && response.status < 600)) {
           const backoff = (attempt + 1) * 2000;
           const errorText = await response.text();
@@ -2282,51 +2283,9 @@ If ALL checks pass, present the draft.
           throw new Error(`Anthropic error ${response.status}: ${errorText.substring(0, 200)}`);
         }
 
-        const data = await response.json() as any;
+        // Parse SSE stream from Anthropic
+        return await this.parseAnthropicStream(response);
 
-        // Log usage + cache stats
-        if (data.usage) {
-          const prompt = data.usage.input_tokens || 0;
-          const completion = data.usage.output_tokens || 0;
-          const cacheCreation = data.usage.cache_creation_input_tokens || 0;
-          const cacheRead = data.usage.cache_read_input_tokens || 0;
-          const totalInput = prompt + cacheRead + cacheCreation;
-          const cacheRate = totalInput > 0 ? ((cacheRead / totalInput) * 100).toFixed(1) : '0.0';
-          console.log(`  ✍️ Usage: input=${totalInput} (uncached=${prompt}, cache_read=${cacheRead}, cache_write=${cacheCreation}), completion=${completion}, cache_hit=${cacheRate}%`);
-        }
-
-        const finishReason = data.stop_reason || null;
-        const completionTokens = data.usage?.output_tokens || 0;
-        console.log(`  ✍️ Finish: ${finishReason || '--'}, completion=${completionTokens}`);
-
-        // Parse response content blocks (including thinking blocks from adaptive thinking)
-        let textContent = '';
-        const toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> = [];
-
-        for (const block of (data.content || [])) {
-          if (block.type === 'text') {
-            textContent += block.text;
-          } else if (block.type === 'tool_use') {
-            toolCalls.push({
-              id: block.id,
-              name: block.name,
-              arguments: block.input || {},
-            });
-          } else if (block.type === 'thinking') {
-            // Adaptive thinking block — log summary for debugging
-            const thinkText = block.thinking || '';
-            const thinkWords = thinkText.split(/\s+/).filter(Boolean).length;
-            console.log(`  🧠 Adaptive thinking: ${thinkWords} words`);
-            this.onSessionProgress?.({ type: 'thinking', words: thinkWords });
-          }
-        }
-
-        return {
-          content: textContent || null,
-          toolCalls,
-          finishReason,
-          completionTokens,
-        };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (error instanceof DOMException && error.name === 'TimeoutError') {
@@ -2338,6 +2297,139 @@ If ALL checks pass, present the draft.
     }
 
     throw lastError || new Error(`Anthropic API failed after ${MAX_RETRIES} attempts`);
+  }
+
+  /**
+   * Parse Anthropic SSE stream — accumulates content blocks, emits progress events in real-time.
+   * Handles: message_start, content_block_start, content_block_delta, message_delta, message_stop.
+   */
+  private async parseAnthropicStream(
+    response: globalThis.Response,
+  ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
+    let textContent = '';
+    const toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> = [];
+    let finishReason: string | null = null;
+    let completionTokens = 0;
+
+    // Track current content blocks being built
+    const blockAccumulators: Map<number, { type: string; text: string; id?: string; name?: string; inputJson: string; thinking: string }> = new Map();
+    let thinkingWordCount = 0;
+    let lastProgressEmit = Date.now();
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const dataStr = line.slice(6).trim();
+        if (dataStr === '[DONE]') continue;
+
+        let event: any;
+        try { event = JSON.parse(dataStr); } catch { continue; }
+
+        switch (event.type) {
+          case 'message_start': {
+            // Log usage from initial message
+            const usage = event.message?.usage;
+            if (usage) {
+              const prompt = usage.input_tokens || 0;
+              const cacheCreation = usage.cache_creation_input_tokens || 0;
+              const cacheRead = usage.cache_read_input_tokens || 0;
+              const totalInput = prompt + cacheRead + cacheCreation;
+              const cacheRate = totalInput > 0 ? ((cacheRead / totalInput) * 100).toFixed(1) : '0.0';
+              console.log(`  ✍️ Usage: input=${totalInput} (uncached=${prompt}, cache_read=${cacheRead}, cache_write=${cacheCreation}), cache_hit=${cacheRate}%`);
+            }
+            this.onSessionProgress?.({ type: 'api_connected' });
+            break;
+          }
+
+          case 'content_block_start': {
+            const idx = event.index;
+            const block = event.content_block;
+            blockAccumulators.set(idx, {
+              type: block.type,
+              text: block.text || '',
+              id: block.id,
+              name: block.name,
+              inputJson: '',
+              thinking: block.thinking || '',
+            });
+            if (block.type === 'thinking') {
+              this.onSessionProgress?.({ type: 'thinking_started' });
+            } else if (block.type === 'tool_use') {
+              this.onSessionProgress?.({ type: 'tool_building', tool: block.name });
+            }
+            break;
+          }
+
+          case 'content_block_delta': {
+            const idx = event.index;
+            const acc = blockAccumulators.get(idx);
+            if (!acc) break;
+            const delta = event.delta;
+
+            if (delta.type === 'text_delta') {
+              acc.text += delta.text;
+            } else if (delta.type === 'input_json_delta') {
+              acc.inputJson += delta.partial_json;
+            } else if (delta.type === 'thinking_delta') {
+              acc.thinking += delta.thinking;
+              // Emit thinking progress every 5s
+              const now = Date.now();
+              if (now - lastProgressEmit > 5000) {
+                thinkingWordCount = acc.thinking.split(/\s+/).filter(Boolean).length;
+                this.onSessionProgress?.({ type: 'thinking_progress', words: thinkingWordCount });
+                lastProgressEmit = now;
+              }
+            }
+            break;
+          }
+
+          case 'content_block_stop': {
+            const idx = event.index;
+            const acc = blockAccumulators.get(idx);
+            if (!acc) break;
+
+            if (acc.type === 'text') {
+              textContent += acc.text;
+            } else if (acc.type === 'tool_use') {
+              let parsedInput = {};
+              try { parsedInput = JSON.parse(acc.inputJson); } catch {}
+              toolCalls.push({ id: acc.id!, name: acc.name!, arguments: parsedInput });
+            } else if (acc.type === 'thinking') {
+              thinkingWordCount = acc.thinking.split(/\s+/).filter(Boolean).length;
+              console.log(`  🧠 Adaptive thinking: ${thinkingWordCount} words`);
+              this.onSessionProgress?.({ type: 'thinking', words: thinkingWordCount });
+            }
+            break;
+          }
+
+          case 'message_delta': {
+            finishReason = event.delta?.stop_reason || finishReason;
+            completionTokens = event.usage?.output_tokens || completionTokens;
+            break;
+          }
+
+          case 'message_stop': {
+            console.log(`  ✍️ Finish: ${finishReason || '--'}, completion=${completionTokens}`);
+            break;
+          }
+        }
+      }
+    }
+
+    return { content: textContent || null, toolCalls, finishReason, completionTokens };
   }
 
   /**

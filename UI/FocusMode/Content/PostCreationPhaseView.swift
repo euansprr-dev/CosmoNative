@@ -555,8 +555,8 @@ struct PostCreationPhaseView: View {
             if let metaStr = updatedAtom.metadata,
                let data = metaStr.data(using: .utf8),
                var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                dict["currentStep"] = "brainstorm"
-                dict["phase"] = "ideation"
+                dict["currentStep"] = "draft"
+                dict["phase"] = "draft"
                 if let newData = try? JSONSerialization.data(withJSONObject: dict),
                    let newStr = String(data: newData, encoding: .utf8) {
                     updatedAtom.metadata = newStr

@@ -437,6 +437,13 @@ struct ContentFocusModeState: Codable {
         case draftContent, richDraftDocument, polishAnalysis, aiSuggestions, polishSystemPrompt
         case isContextPanelVisible, isAISuggestedOutline, generationHistory, lastModified
         case conversationHistory, conversationSummary
+        // Codex-era fields
+        case codexOutline, inheritedResearchResults, inheritedArcRecommendations
+        case inheritedCreativeDirection, inheritedIdeaContext, inheritedChatHistory
+        case codexElementNames, blueprintDisplayMode
+        case outlinePanelExpanded, blueprintPanelExpanded, researchPanelExpanded
+        case profilePanelExpanded, arcPanelExpanded, contextPanelExpanded
+        case chatPanelExpanded, codexRefPanelExpanded
     }
 
     init(atomUUID: String) {

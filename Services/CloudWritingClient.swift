@@ -105,12 +105,15 @@ class CloudWritingClient {
     /// Single agentic session — outline-required mode.
     /// Runs all phases (plan + write + self-edit) in one Opus API call with adaptive thinking.
     /// Used when content atom has a codex-tagged outline.
+    /// Passes local metadata to avoid Supabase sync race conditions.
     func runSession(
         contentUUID: String,
-        userDirection: String? = nil
+        userDirection: String? = nil,
+        localMetadata: [String: Any]? = nil
     ) async throws -> DraftResult {
         var body: [String: Any] = ["contentUUID": contentUUID]
         if let userDirection { body["userDirection"] = userDirection }
+        if let localMetadata { body["localMetadata"] = localMetadata }
 
         return try await post(path: "/api/writing/session", body: body)
     }

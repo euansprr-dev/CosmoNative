@@ -212,11 +212,13 @@ export class CloudWritingEngine {
     }
 
     // Codex outline + research (from Swift app idea flow)
-    if (meta.codexOutline) {
+    // Check both codexOutline (direct) and inheritedCodexOutline (from idea→content promotion)
+    const rawOutline = meta.codexOutline || meta.inheritedCodexOutline;
+    if (rawOutline) {
       try {
-        this.codexOutline = typeof meta.codexOutline === 'string'
-          ? JSON.parse(meta.codexOutline)
-          : meta.codexOutline;
+        this.codexOutline = typeof rawOutline === 'string'
+          ? JSON.parse(rawOutline)
+          : rawOutline;
       } catch { /* ignore parse errors */ }
     }
     this.inheritedArcType = (meta.inheritedArcType as string) || null;

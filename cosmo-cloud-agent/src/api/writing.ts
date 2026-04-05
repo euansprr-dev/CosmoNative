@@ -189,7 +189,7 @@ writingRouter.post('/read', async (req: Request, res: Response) => {
 writingRouter.post('/session', async (req: Request, res: Response) => {
   if (!authenticate(req, res)) return;
 
-  const { contentUUID, userDirection } = req.body;
+  const { contentUUID, userDirection, localMetadata } = req.body;
 
   if (!contentUUID) {
     res.status(400).json({ error: 'contentUUID is required' });
@@ -197,6 +197,13 @@ writingRouter.post('/session', async (req: Request, res: Response) => {
   }
 
   try {
+    // If localMetadata provided, merge into the atom in Supabase BEFORE engine init.
+    // This bridges the gap when GRDB → Supabase sync hasn't completed yet.
+    if (localMetadata && typeof localMetadata === 'object') {
+      console.log(`  ⚛️ [Session] Merging ${Object.keys(localMetadata).length} local metadata fields into atom`);
+      await updateAtom(contentUUID, { metadata: localMetadata });
+    }
+
     const engine = await getOrCreateEngine(contentUUID);
     const result = await engine.runSingleSession(userDirection || '');
 

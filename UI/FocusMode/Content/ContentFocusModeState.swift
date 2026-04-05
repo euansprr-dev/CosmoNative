@@ -395,6 +395,9 @@ struct ContentFocusModeState: Codable {
     var conversationHistory: [WritingMessage] = []
     var conversationSummary: String = ""
 
+    // MARK: - Client Profile
+    var clientProfileUUID: String?
+
     // MARK: - Codex-era Inherited Fields (from idea promotion)
     var codexOutline: CodexOutlineModel?
     var inheritedResearchResults: [IdeaResearchResult]?
@@ -695,6 +698,9 @@ extension ContentFocusModeState {
             state.lastModified = date
         }
 
+        // Client profile
+        state.clientProfileUUID = dict["clientProfileUUID"] as? String
+
         // Decode codex-era fields from metadata
         // These may be stored as JSON objects (arrays/dicts) or as JSON-encoded strings
         state.inheritedResearchResults = decodeJSONField(dict, key: "inheritedResearchResults")
@@ -741,6 +747,7 @@ extension ContentFocusModeState {
         }
 
         // Write focus state fields
+        metadataDict["clientProfileUUID"] = clientProfileUUID
         metadataDict["currentStep"] = currentStep.rawValue
         metadataDict["coreIdea"] = coreIdea.isEmpty ? nil : coreIdea
         metadataDict["hooks"] = hooks.isEmpty ? nil : hooks

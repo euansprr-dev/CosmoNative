@@ -37,6 +37,10 @@ struct ContentOutlineSidebarContent: View {
     @State private var showIntelligence = false
     @State private var isLoadingContext = true
 
+    // Client profile picker
+    @State private var clientProfiles: [Atom] = []
+    @State private var linkedClient: Atom?
+
     private let accentColor = CosmoMentionColors.content
 
     var body: some View {
@@ -46,6 +50,7 @@ struct ContentOutlineSidebarContent: View {
                 coreIdeaSection
                 hooksSection
                 outlineSection
+                clientPickerSection
 
                 // Context divider
                 if hasAnyContext {
@@ -75,9 +80,93 @@ struct ContentOutlineSidebarContent: View {
         .scrollIndicators(.hidden)
         .onAppear {
             Task { await loadInheritedContext() }
+            Task { await loadClientProfiles() }
             let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
             ambientEngine.updateContext(focusAtomUUID: atom.uuid, currentText: queryText)
         }
+    }
+
+    // MARK: - Client Picker
+
+    private var clientPickerSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(DS.caption2)
+                    .foregroundStyle(accentColor)
+                Text("CLIENT")
+                    .font(DS.caption2)
+                    .tracking(0.8)
+                    .foregroundStyle(DS.textMuted)
+                Spacer()
+            }
+
+            Menu {
+                ForEach(clientProfiles, id: \.uuid) { client in
+                    Button {
+                        assignClient(client)
+                    } label: {
+                        HStack {
+                            Text(client.title ?? "Client")
+                            if client.uuid == linkedClient?.uuid {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+
+                if clientProfiles.isEmpty {
+                    Text("No client profiles")
+                }
+
+                if linkedClient != nil {
+                    Divider()
+                    Button(role: .destructive) {
+                        assignClient(nil)
+                    } label: {
+                        Label("Remove Client", systemImage: "xmark.circle")
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: linkedClient != nil ? "person.crop.circle.fill" : "person.crop.circle.badge.plus")
+                        .foregroundStyle(linkedClient != nil ? accentColor : DS.textMuted)
+                    Text(linkedClient?.title ?? "Assign Client")
+                        .font(DS.callout)
+                        .foregroundStyle(linkedClient != nil ? DS.text : DS.textMuted)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9))
+                        .foregroundStyle(DS.textMuted)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(DS.surface)
+                .clipShape(.rect(cornerRadius: 8))
+            }
+            .menuStyle(.borderlessButton)
+        }
+    }
+
+    private func loadClientProfiles() async {
+        do {
+            let profiles = try await AtomRepository.shared.fetchAll(type: .clientProfile)
+            clientProfiles = profiles.filter { $0.clientMetadata?.isActive != false }
+
+            // Load currently linked client
+            if let clientUUID = state.clientProfileUUID {
+                linkedClient = try? await AtomRepository.shared.fetch(uuid: clientUUID)
+            }
+        } catch {
+            print("ContentSidebar: failed to load client profiles: \(error)")
+        }
+    }
+
+    private func assignClient(_ client: Atom?) {
+        linkedClient = client
+        state.clientProfileUUID = client?.uuid
+        state.lastModified = Date()
+        state.save()
     }
 
     // MARK: - Context Divider

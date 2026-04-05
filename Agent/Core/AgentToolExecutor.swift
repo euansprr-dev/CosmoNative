@@ -2043,10 +2043,21 @@ class AgentToolExecutor {
 
         if hasCodexOutline {
             print("☁️ [AgentToolExecutor] generate_draft → SINGLE SESSION (Opus) for \(contentUUID)")
+
+            // Pass local metadata to cloud to avoid Supabase sync race conditions.
+            // The cloud engine merges these into the atom metadata it reads from Supabase.
+            var localMetadata: [String: Any]?
+            if let metadata = atom?.metadata,
+               let data = metadata.data(using: .utf8),
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                localMetadata = dict
+            }
+
             do {
                 let result = try await CloudWritingClient.shared.runSession(
                     contentUUID: contentUUID,
-                    userDirection: args["userDirection"] as? String
+                    userDirection: args["userDirection"] as? String,
+                    localMetadata: localMetadata
                 )
                 let encoder = JSONEncoder()
                 let data = try encoder.encode(result)

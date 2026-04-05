@@ -196,35 +196,52 @@ writingRouter.post('/session', async (req: Request, res: Response) => {
     return;
   }
 
+  // Stream NDJSON progress events — keeps connection alive during long sessions
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Transfer-Encoding', 'chunked');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.flushHeaders();
+
   try {
     // If localMetadata provided, merge into the atom in Supabase BEFORE engine init.
-    // This bridges the gap when GRDB → Supabase sync hasn't completed yet.
     if (localMetadata && typeof localMetadata === 'object') {
       console.log(`  ⚛️ [Session] Merging ${Object.keys(localMetadata).length} local metadata fields into atom`);
       await updateAtom(contentUUID, { metadata: localMetadata });
     }
 
     const engine = await getOrCreateEngine(contentUUID);
+
+    // Stream progress events to Swift client
+    engine.onSessionProgress = (event) => {
+      try { res.write(JSON.stringify(event) + '\n'); } catch {}
+    };
+
     const result = await engine.runSingleSession(userDirection || '');
+
+    // Clean up callback
+    engine.onSessionProgress = undefined;
 
     // Read final state from DB
     const atom = await fetchAtom(contentUUID);
     const draft = atom?.body || '';
     const wordCount = draft.split(/\s+/).filter(Boolean).length;
 
-    res.json({
+    // Final event with the complete result
+    res.write(JSON.stringify({
+      type: 'complete',
       success: true,
       contentUUID,
       formattedDraft: draft,
       format: detectContentFormat(atom?.metadata || null),
       wordCount,
       engineNotes: result.text,
-    });
+    }) + '\n');
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`❌ [Session] Error: ${msg}`);
-    res.status(500).json({ success: false, error: msg });
+    try { res.write(JSON.stringify({ type: 'error', success: false, error: msg }) + '\n'); } catch {}
   }
+  res.end();
 });
 
 // ============================================================

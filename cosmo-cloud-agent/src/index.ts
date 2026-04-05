@@ -61,14 +61,16 @@ async function start(): Promise<void> {
   // Start standing instruction scheduler
   startScheduler();
 
-  // Start Express server
-  app.listen(config.port, () => {
+  // Start Express server — extended timeouts for long-running writing sessions
+  const server = app.listen(config.port, () => {
     console.log(`\n✅ Cloud Agent running on port ${config.port}`);
     console.log(`   Webhook: ${config.telegramWebhookUrl || 'not set (use polling fallback)'}/telegram/webhook`);
     console.log(`   Health: http://localhost:${config.port}/health`);
     console.log(`   Standing instructions: checking every 60s`);
     console.log('');
   });
+  server.timeout = 900_000;          // 15 min — single session can take 8-12 min
+  server.keepAliveTimeout = 900_000;  // Keep connections alive for streaming
 }
 
 start().catch(error => {

@@ -176,6 +176,9 @@ export class CloudWritingEngine {
   // Current pipeline step — set during conversation loop for tool handlers to reference
   private pipelineStep: 'plan' | 'write' | 'edit' | 'session' | undefined;
 
+  // Session progress callback — emit events for streaming to Swift client
+  onSessionProgress?: (event: Record<string, any>) => void;
+
   constructor(contentUUID: string) {
     this.contentUUID = contentUUID;
   }
@@ -456,6 +459,12 @@ USER FEEDBACK:
 
     this.logPipelineHeader();
     console.log(`  ⚛️ SINGLE SESSION MODE: outline-required, all phases in one call`);
+    this.onSessionProgress?.({
+      type: 'started',
+      client: this.clientAtom?.title || 'unknown',
+      blueprint: this.blueprintAnchor?.title?.substring(0, 80) || 'none',
+      outlineSlides: this.codexOutline!.slides.length,
+    });
     console.log(`  ⚛️ Outline: ${this.codexOutline.slides.length} slides, arc: ${this.codexOutline.arcShape || 'auto'}`);
     console.log(`  ⚛️ Research: ${this.inheritedResearchResults?.length || 0} findings`);
     console.log(`  ⚛️ Creative direction: ${this.inheritedCreativeDirection ? 'yes' : 'none'}`);
@@ -1442,6 +1451,7 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       console.log(`    🔄 Iteration ${iteration + 1}/${maxIterations} [${pipelineStep || phase}] (${this.messages.length} messages)`);
+      this.onSessionProgress?.({ type: 'iteration', iteration: iteration + 1, maxIterations, messages: this.messages.length });
 
       // Build API messages
       const apiMessages = this.buildAPIMessages();
@@ -1547,6 +1557,7 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
 
       for (const toolCall of response.toolCalls) {
         console.log(`    ✍️ Engine tool: ${toolCall.name}`);
+        this.onSessionProgress?.({ type: 'tool_start', tool: toolCall.name, iteration: iteration + 1 });
         const result = await this.executeInnerTool(toolCall.name, toolCall.arguments);
         this.messages.push({
           id: crypto.randomUUID(),
@@ -2295,6 +2306,7 @@ If ALL checks pass, present the draft.
             const thinkText = block.thinking || '';
             const thinkWords = thinkText.split(/\s+/).filter(Boolean).length;
             console.log(`  🧠 Adaptive thinking: ${thinkWords} words`);
+            this.onSessionProgress?.({ type: 'thinking', words: thinkWords });
           }
         }
 

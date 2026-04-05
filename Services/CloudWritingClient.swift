@@ -15,8 +15,8 @@ class CloudWritingClient {
     private init() {
         self.baseURL = "https://cosmonative-production.up.railway.app"
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 300 // 5 min for Opus on large contexts
-        config.timeoutIntervalForResource = 600
+        config.timeoutIntervalForRequest = 600 // 10 min — single session with streaming
+        config.timeoutIntervalForResource = 900 // 15 min total resource timeout
         self.session = URLSession(configuration: config)
     }
 
@@ -103,19 +103,69 @@ class CloudWritingClient {
     }
 
     /// Single agentic session — outline-required mode.
-    /// Runs all phases (plan + write + self-edit) in one Opus API call with adaptive thinking.
-    /// Used when content atom has a codex-tagged outline.
-    /// Passes local metadata to avoid Supabase sync race conditions.
+    /// Streams NDJSON progress events (keeps connection alive during long sessions).
+    /// Final event with type "complete" contains the DraftResult.
     func runSession(
         contentUUID: String,
         userDirection: String? = nil,
         localMetadata: [String: Any]? = nil
     ) async throws -> DraftResult {
+        guard let url = URL(string: "\(baseURL)/api/writing/session") else {
+            throw CloudWritingError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let apiKey = APIKeys.supabaseServiceRoleKey ?? "cosmo-native-writing-2026"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
         var body: [String: Any] = ["contentUUID": contentUUID]
         if let userDirection { body["userDirection"] = userDirection }
         if let localMetadata { body["localMetadata"] = localMetadata }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        return try await post(path: "/api/writing/session", body: body)
+        print("☁️ [CloudWriting] /session (streaming) → \(contentUUID)")
+
+        // Stream NDJSON — read line by line, last "complete" line is the result
+        let (bytes, response) = try await session.bytes(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CloudWritingError.invalidResponse
+        }
+        if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+            throw CloudWritingError.unauthorized
+        }
+        if httpResponse.statusCode != 200 {
+            throw CloudWritingError.serverError(statusCode: httpResponse.statusCode, message: "Session failed")
+        }
+
+        var lastCompleteEvent: Data?
+
+        for try await line in bytes.lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+
+            // Parse each NDJSON line
+            guard let lineData = trimmed.data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
+                continue
+            }
+
+            let eventType = event["type"] as? String ?? ""
+            print("☁️ [Session] \(eventType): \(trimmed.prefix(120))")
+
+            if eventType == "complete" || eventType == "error" {
+                lastCompleteEvent = lineData
+            }
+        }
+
+        // Decode the final event as DraftResult
+        guard let resultData = lastCompleteEvent else {
+            throw CloudWritingError.serverError(statusCode: 200, message: "No complete event received from session")
+        }
+
+        return try JSONDecoder().decode(DraftResult.self, from: resultData)
     }
 
     // MARK: - HTTP

@@ -229,7 +229,10 @@ export class CloudWritingEngine {
           : meta.inheritedResearchResults;
       } catch { /* ignore parse errors */ }
     }
-    this.inheritedCreativeDirection = (meta.inheritedCreativeDirection as string) || null;
+    this.inheritedCreativeDirection = (meta.inheritedCreativeDirection as string)
+      || (meta.coreIdea as string)
+      || (meta.contentDescription as string)
+      || null;
     this.inheritedContext = (meta.inheritedContext as string) || null;
 
     // Restore persisted conversation + writing context

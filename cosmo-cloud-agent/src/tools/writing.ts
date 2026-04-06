@@ -196,8 +196,8 @@ export async function generateDraft(args: Record<string, any>): Promise<string> 
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      console.error(`  ❌ [generateDraft] Single session failed, falling back to multi-phase: ${msg}`);
-      // Fall through to existing multi-phase pipeline
+      console.error(`  ❌ [generateDraft] Single session failed: ${msg}`);
+      return jsonError(`Single session failed: ${msg}`);
     }
   }
 

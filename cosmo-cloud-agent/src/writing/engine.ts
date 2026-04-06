@@ -351,10 +351,6 @@ export class CloudWritingEngine {
 
       const clientName = this.clientAtom?.title || 'the client';
       console.log(`  ✍️ Writing engine initialized (CODEX MODE): walkthrough=${!!walkthrough}, client: ${clientName}, format: ${this.targetFormat}`);
-
-      // Pre-warm the 1-hour cache — fire a minimal API call so the 260K codex is cached
-      // before the real session starts. This makes the first real call fast (cache hit).
-      this.warmCache().catch(err => console.log(`  ⚠️ Cache warm failed (non-blocking): ${err}`));
     } else {
       // Legacy mode: old methodology + swipes
       const block1 = await assembleBlock1(this.targetFormat);
@@ -370,59 +366,6 @@ export class CloudWritingEngine {
       this.useCodexMode = false;
 
       console.log(`  ✍️ Writing engine initialized (legacy): ${this.selectedSwipes.length} swipes, ${lessons.length} lessons, client: ${this.clientAtom?.title || 'none'}, format: ${this.targetFormat}`);
-    }
-  }
-
-  // ============================================================
-  // Cache Pre-Warming
-  // ============================================================
-
-  /**
-   * Pre-warm Anthropic's prompt cache with the system blocks (260K codex + client + walkthrough).
-   * Makes a minimal API call with max_tokens=1 so the blocks are cached server-side.
-   * The real session then hits cache on the first call instead of processing 260K tokens cold.
-   * Non-blocking — called from initialize() and allowed to fail silently.
-   */
-  private async warmCache(): Promise<void> {
-    if (!config.anthropicApiKey) return;
-
-    const system = this.blocks.map(block => ({
-      type: 'text' as const,
-      text: block.content,
-      ...(block.cacheControl ? { cache_control: { type: 'ephemeral' as const, ttl: 3600 } } : {}),
-    }));
-
-    const model = config.models.strategist.replace(/^anthropic\//, '');
-    console.log(`  🔥 Warming cache: ${this.blocks.reduce((s, b) => s + b.content.length, 0)} chars → ${model}`);
-
-    try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': config.anthropicApiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model,
-          system,
-          messages: [{ role: 'user', content: 'ping' }],
-          max_tokens: 1,
-          temperature: 0,
-        }),
-        signal: AbortSignal.timeout(120_000), // 2 min — just needs to process the system blocks
-      });
-
-      if (response.ok) {
-        const data = await response.json() as any;
-        const cacheWrite = data.usage?.cache_creation_input_tokens || 0;
-        const cacheRead = data.usage?.cache_read_input_tokens || 0;
-        console.log(`  🔥 Cache warm complete: write=${cacheWrite}, read=${cacheRead} (${cacheWrite > 0 ? 'COLD → NOW WARM' : 'ALREADY WARM'})`);
-      } else {
-        console.log(`  ⚠️ Cache warm HTTP ${response.status}`);
-      }
-    } catch (err) {
-      console.log(`  ⚠️ Cache warm error: ${err}`);
     }
   }
 

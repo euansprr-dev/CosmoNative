@@ -1877,12 +1877,18 @@ Only after thorough analysis can you call write_draft.`;
           console.log(`    ✅ Voice compliance passed`);
         }
 
-        // Slide-level narrative quality checks
+        // Slide-level narrative quality checks — ADVISORY ONLY in session mode.
+        // The AI's self-edit step (Step 3) checks these with full codex context.
+        // Pattern-matching validators have high false-positive rates for conversationality.
         const narrativeViolations = this.getBlockingNarrativeViolations(content);
         if (narrativeViolations.length > 0) {
-          console.log(`    ⚠️ Narrative quality violations (${narrativeViolations.length}): ${narrativeViolations.map(v => `[${v.kind}] ${v.message.substring(0, 80)}`).join('; ')}`);
-          result += `\n\n⚠️ HARD NARRATIVE QUALITY FAILURES:`;
-          result += `\n${formatNarrativeViolations(narrativeViolations)}`;
+          console.log(`    ⚠️ Narrative quality (${narrativeViolations.length} advisory): ${narrativeViolations.map(v => `[${v.kind}] ${v.message.substring(0, 60)}`).join('; ')}`);
+          if (this.pipelineStep !== 'session') {
+            // Multi-phase: treat as hard failures (model needs external feedback)
+            result += `\n\n⚠️ HARD NARRATIVE QUALITY FAILURES:`;
+            result += `\n${formatNarrativeViolations(narrativeViolations)}`;
+          }
+          // Session mode: logged for diagnostics but NOT sent to model — the AI checks these itself
         } else {
           console.log('    ✅ Blueprint fidelity + conversational slide checks passed');
         }
@@ -1901,16 +1907,22 @@ Only after thorough analysis can you call write_draft.`;
           }
         }
 
-        // Auto-refine prompt if violations found
-        if (deterministicViolations.length > 0 || voiceViolations.length > 0 || narrativeViolations.length > 0 || physicsBlockingCount > 0) {
+        // Auto-refine prompt if OBJECTIVE violations found.
+        // Session mode: narrative violations are advisory (AI self-edits with context).
+        // Multi-phase: all violations trigger refinement (model needs external feedback).
+        const hasObjectiveViolations = deterministicViolations.length > 0 || voiceViolations.length > 0 || physicsBlockingCount > 0;
+        const hasNarrativeViolations = this.pipelineStep !== 'session' && narrativeViolations.length > 0;
+        if (hasObjectiveViolations || hasNarrativeViolations) {
           this.refinementCount = (this.refinementCount || 0) + 1;
           if (this.refinementCount <= 2) {
             result += `\n\nAUTO-REFINEMENT PASS ${this.refinementCount}/2: Fix the violations above, then call write_draft again with the corrected content.`;
           }
         }
 
-        // Self-review injection — fires once per draft, after all deterministic validation
-        if (!this.hasCompletedSelfReview && deterministicViolations.length === 0 && voiceViolations.length === 0 && narrativeViolations.length === 0) {
+        // Self-review injection — fires once per draft, after objective validation passes
+        const objectivesClear = deterministicViolations.length === 0 && voiceViolations.length === 0;
+        const narrativesClear = this.pipelineStep === 'session' || narrativeViolations.length === 0;
+        if (!this.hasCompletedSelfReview && objectivesClear && narrativesClear) {
           this.hasCompletedSelfReview = true;
 
           result += `\n\n═══ SELF-REVIEW REQUIRED ═══

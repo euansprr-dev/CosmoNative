@@ -2063,8 +2063,8 @@ class AgentToolExecutor {
                 let data = try encoder.encode(result)
                 return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode session result")
             } catch {
-                print("⚠️ [AgentToolExecutor] Single session failed, falling back to multi-phase: \(error.localizedDescription)")
-                // Fall through to existing multi-phase pipeline
+                print("❌ [AgentToolExecutor] Single session failed: \(error.localizedDescription)")
+                return jsonError("Single session failed: \(error.localizedDescription)")
             }
         }
 

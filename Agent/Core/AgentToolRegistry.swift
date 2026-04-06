@@ -1,5 +1,5 @@
 // CosmoOS/Agent/Core/AgentToolRegistry.swift
-// Tool definitions for the Cosmo Agent — 25 tools across 7 groups
+// Tool definitions for the Cosmo Intelligence Layer — knowledge queries, research, workspace, automation
 
 import Foundation
 
@@ -198,18 +198,6 @@ class AgentToolRegistry {
                         "phase": ["type": "string", "description": "Optional: filter to a specific phase"] as [String: Any]
                     ] as [String: Any],
                     "required": [] as [String]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "advance_pipeline_phase",
-                description: "Advance a content piece to the next pipeline phase.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "uuid": ["type": "string", "description": "The content atom UUID"] as [String: Any],
-                        "notes": ["type": "string", "description": "Optional transition notes"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["uuid"]
                 ]
             ),
             LLMToolDefinition(
@@ -534,114 +522,13 @@ class AgentToolRegistry {
         ]
     }
 
-    // MARK: - Writing Tools (Opus Engine)
+    // MARK: - Content Data Tools (non-writing)
 
-    private var scoringTools: [LLMToolDefinition] {
+    private var contentDataTools: [LLMToolDefinition] {
         [
-            LLMToolDefinition(
-                name: "get_beat_patterns",
-                description: "Query the beat pattern library to find the most common structural patterns across swipe files. Returns fingerprint, beat sequence, frequency, and average hook score for each pattern. Use this to understand what content structures perform best.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "format": ["type": "string", "description": "Optional: filter by content format (e.g. 'reel', 'thread', 'carousel')"] as [String: Any],
-                        "niche": ["type": "string", "description": "Optional: filter by niche"] as [String: Any],
-                        "limit": ["type": "integer", "description": "Max results (default 5, max 20)"] as [String: Any]
-                    ] as [String: Any],
-                    "required": [] as [String]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "score_draft",
-                description: "Run the content scorecard engine on a draft to get 6-dimension scores (Hook, Copy, CTA, Voice Match, Structural Alignment, Slide Analysis) plus guided feedback and improvement suggestions. Requires a content atom UUID with a draft body.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "contentUUID": ["type": "string", "description": "UUID of the content atom to score"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["contentUUID"]
-                ]
-            ),
-        ]
-    }
-
-    private var writingTools: [LLMToolDefinition] {
-        [
-            LLMToolDefinition(
-                name: "generate_outline",
-                description: """
-                Generate a structured content outline using the unified writing engine. Assembles full client profile, swipe library intelligence, and beat pattern analysis to create a beat-mapped outline with hook variants. Requires a content atom UUID (create one first with create_content). ALWAYS pass clientName so the engine loads the correct client profile. \
-                CRITICAL: When the user specifies a particular swipe to use as a blueprint, you MUST pass that swipe's UUID as blueprintSwipeUUID. This forces the engine to treat that swipe as the PRIMARY structural blueprint — emulating its hook type, beat pattern, and section structure rather than loosely drawing inspiration. \
-                Always pass the user's creative direction in notes (e.g. 'emulate the hook structure exactly', 'use the comparison format'). \
-                AFTER calling this tool, ALWAYS present the generated hook variants and outline section titles to the user so they can review before drafting.
-                """,
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "contentUUID": ["type": "string", "description": "UUID of the content atom to generate an outline for"] as [String: Any],
-                        "notes": ["type": "string", "description": "Creator direction for the outline. Include specific instructions like 'emulate the hook structure of the blueprint swipe', 'use the same comparison format', etc."] as [String: Any],
-                        "clientName": ["type": "string", "description": "Client name for this content piece (e.g. 'Ben A'). Ensures the engine loads the correct client profile."] as [String: Any],
-                        "blueprintSwipeUUID": ["type": "string", "description": "UUID of a specific swipe to use as the PRIMARY structural blueprint. When provided, the engine will emulate this swipe's hook type, beat pattern, and section structure rather than searching for matches."] as [String: Any],
-                        "contentFormat": ["type": "string", "enum": ["reel", "carousel", "thread", "post"], "description": "Content format — reel (video script), carousel (slides), thread (tweets), post (single). MUST match what the user requested."] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["contentUUID"]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "generate_draft",
-                description: "Generate a full draft for a content atom using the unified writing engine. Loads client profile, swipe intelligence, and beat patterns, then writes a draft following the outline beat-by-beat. Requires a content atom UUID with an outline (call generate_outline first). ALWAYS pass clientName. Pass userDirection to relay any specific creative instructions from the user. ALWAYS pass contentFormat to specify the format (reel, carousel, thread, post).",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "contentUUID": ["type": "string", "description": "UUID of the content atom to draft"] as [String: Any],
-                        "clientName": ["type": "string", "description": "Client name for this content piece. Ensures the engine loads the correct client profile."] as [String: Any],
-                        "userDirection": ["type": "string", "description": "The user's specific creative direction or instructions for this draft. Pass the user's exact words — e.g. 'make it punchy', 'focus on the transformation story', 'keep slides under 30 words'. This is prepended as a mandatory directive to the writing engine."] as [String: Any],
-                        "contentFormat": ["type": "string", "enum": ["reel", "carousel", "thread", "post"], "description": "Content format — reel (video script), carousel (slides), thread (tweets), post (single). MUST match what the user requested."] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["contentUUID"]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "read_draft",
-                description: "Read the full current draft for a content atom. Returns the complete formatted text (carousel slides, thread tweets, or plaintext) with title and word count. Use this to see the FULL draft before revising — never rely on truncated previews from other tools.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "contentUUID": ["type": "string", "description": "UUID of the content atom to read the draft from"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["contentUUID"]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "generate_hooks",
-                description: "Generate hook variants using the unified writing engine. Analyzes the swipe library for best-performing hook types and generates scored variants specific to this content piece. ALWAYS pass clientName.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "contentUUID": ["type": "string", "description": "UUID of the content atom to generate hooks for"] as [String: Any],
-                        "count": ["type": "integer", "description": "Number of hook variants to generate (default 5, max 8)"] as [String: Any],
-                        "clientName": ["type": "string", "description": "Client name for this content piece. Ensures the engine loads the correct client profile."] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["contentUUID"]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "revise_draft",
-                description: "Revise an existing draft using the unified writing engine. The engine makes SURGICAL edits — it preserves everything that works and only changes what the feedback targets. Use this whenever the user gives feedback on a draft. IMPORTANT: Pass the user's COMPLETE feedback in the feedback parameter — include every detail, every slide reference, every comparison. ALWAYS use this instead of writing revisions inline. ALWAYS pass clientName.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "contentUUID": ["type": "string", "description": "UUID of the content atom to revise"] as [String: Any],
-                        "feedback": ["type": "string", "description": "The user's COMPLETE revision feedback — include everything: what to change, what to keep, specific slide numbers, comparisons, style notes. Pass the full message, not a summary."] as [String: Any],
-                        "currentDraft": ["type": "string", "description": "Optional: the FULL current draft text if it hasn't been saved to the atom yet. Include every slide/section."] as [String: Any],
-                        "clientName": ["type": "string", "description": "Client name for this content piece. Ensures the engine loads the correct client profile."] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["contentUUID", "feedback"]
-                ]
-            ),
             LLMToolDefinition(
                 name: "update_content",
-                description: "Update an existing content atom's fields (title, body, description, hooks, outline, platform, client, framework). Pure data update, no AI generation. Use this to set outline points, hooks, and description for a content piece.",
+                description: "Update an existing content atom's fields (title, body, description, hooks, outline, platform, client, framework). Pure data update, no AI generation.",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
@@ -650,12 +537,269 @@ class AgentToolRegistry {
                         "body": ["type": "string", "description": "New draft body text"] as [String: Any],
                         "platform": ["type": "string", "description": "Target platform (twitter, instagram, youtube, linkedin, tiktok, threads, substack, medium)"] as [String: Any],
                         "clientName": ["type": "string", "description": "Client name to associate (fuzzy-matched to profile)"] as [String: Any],
-                        "description": ["type": "string", "description": "Content description / core idea (stored in metadata, NOT the draft body)"] as [String: Any],
+                        "description": ["type": "string", "description": "Content description / core idea"] as [String: Any],
                         "framework": ["type": "string", "description": "Framework to use (e.g. AIDA, PAS, storyLoop)"] as [String: Any],
                         "hooks": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Hook texts to store"] as [String: Any],
-                        "outline": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Outline point titles (each string becomes an outline item)"] as [String: Any]
+                        "outline": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Outline point titles"] as [String: Any]
                     ] as [String: Any],
                     "required": ["uuid"]
+                ]
+            ),
+        ]
+    }
+
+    // MARK: - Knowledge Query Tools
+
+    private var knowledgeQueryTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "query_atoms",
+                description: "Search across ALL atom types using keyword search. Use this for natural language queries like 'ideas about marketing', 'tasks due this week', 'recent research'. Combines FTS5 BM25 ranking with metadata filtering.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "Search query text"] as [String: Any],
+                        "types": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Optional: filter by atom types (idea, task, research, content, connection, note, project, thinkspace, etc.)"] as [String: Any],
+                        "limit": ["type": "integer", "description": "Max results (default 10, max 50)"] as [String: Any],
+                        "dateRange": ["type": "string", "description": "Optional: 'today', 'yesterday', 'this_week', 'last_7d', 'last_30d', 'this_month'"] as [String: Any],
+                        "projectUuid": ["type": "string", "description": "Optional: filter to atoms in a specific project"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["query"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "graph_traverse",
+                description: "Follow relationships from an atom to find connected atoms. Use this for 'show everything connected to X', 'what's related to this research', etc. Performs BFS traversal of AtomLinks.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "uuid": ["type": "string", "description": "UUID of the source atom to traverse from"] as [String: Any],
+                        "linkTypes": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Optional: filter by link types (e.g. ideaToSwipe, ideaToContent, project, related)"] as [String: Any],
+                        "depth": ["type": "integer", "description": "Max traversal depth (default 1, max 3)"] as [String: Any],
+                        "direction": ["type": "string", "description": "Traversal direction: 'outgoing' (default), 'incoming', or 'both'"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["uuid"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "get_atom_detail",
+                description: "Get full details of any atom by UUID. Returns parsed metadata, structured data, link count, and thinkspace membership. Use this when you need the complete picture of a single atom.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "uuid": ["type": "string", "description": "The atom UUID to retrieve"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["uuid"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "count_atoms",
+                description: "Count atoms with optional grouping. Use for analytics questions like 'how many ideas per week', 'tasks by status', etc.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "type": ["type": "string", "description": "Atom type to count (idea, task, research, content, etc.)"] as [String: Any],
+                        "dateRange": ["type": "string", "description": "Optional: 'today', 'this_week', 'last_7d', 'last_30d', 'this_month', 'this_quarter'"] as [String: Any],
+                        "groupBy": ["type": "string", "description": "Optional: 'week', 'month', 'status', 'type'"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["type"]
+                ]
+            ),
+        ]
+    }
+
+    // MARK: - Research & Synthesis Tools
+
+    private var researchTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "synthesize_knowledge",
+                description: "Gather and synthesize knowledge from multiple atoms on a topic. Use when the user asks 'what do I know about X', 'summarize my research on Y', or wants a research-grounded answer. Searches your knowledge base and returns concatenated source content for synthesis.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "The topic or question to synthesize knowledge about"] as [String: Any],
+                        "atomUuids": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Optional: specific atom UUIDs to use as sources (skips search)"] as [String: Any],
+                        "maxSources": ["type": "integer", "description": "Max source atoms to include (default 10, max 20)"] as [String: Any],
+                        "scope": ["type": "string", "description": "Optional: limit to specific types — 'swipes', 'research', 'ideas', 'notes', or 'all' (default)"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["query"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "synthesize_learning",
+                description: "Identify patterns and themes across multiple atoms. Use for 'what patterns have I found about X', 'create a summary of everything about Y'. Returns structured analysis with themes, patterns, and actionable insights. Can save results as a new atom.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "topic": ["type": "string", "description": "The topic to synthesize learning about"] as [String: Any],
+                        "scope": ["type": "string", "description": "Source scope: 'swipes', 'research', 'ideas', 'notes', or 'all' (default)"] as [String: Any],
+                        "maxSources": ["type": "integer", "description": "Max source atoms (default 15, max 30)"] as [String: Any],
+                        "outputFormat": ["type": "string", "description": "Output: 'summary' (narrative), 'patterns' (recurring themes), 'actionable' (concrete takeaways), 'flashcards' (Q&A pairs)"] as [String: Any],
+                        "saveAsAtom": ["type": "boolean", "description": "If true, saves the synthesis as a new research atom linked to all sources"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["topic"]
+                ]
+            ),
+        ]
+    }
+
+    // MARK: - Workspace Organization Tools
+
+    private var workspaceTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "manage_thinkspace",
+                description: "Create, rename, archive, or duplicate a thinkspace. Supports templates for common layouts.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "action": ["type": "string", "description": "Action: 'create', 'rename', 'archive', 'duplicate'"] as [String: Any],
+                        "name": ["type": "string", "description": "Thinkspace name (for create/rename)"] as [String: Any],
+                        "uuid": ["type": "string", "description": "Thinkspace UUID (for rename/archive/duplicate)"] as [String: Any],
+                        "template": ["type": "string", "description": "Template for create: 'blank', 'brainstorm', 'kanban', 'research', 'daily'"] as [String: Any],
+                        "projectUuid": ["type": "string", "description": "Optional: project UUID to assign the thinkspace to"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["action"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "move_blocks",
+                description: "Move atoms between thinkspaces. Relocates canvas blocks and updates their positions.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "atomUuids": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "UUIDs of atoms to move"] as [String: Any],
+                        "targetThinkspaceUuid": ["type": "string", "description": "UUID of the destination thinkspace"] as [String: Any],
+                        "position": ["type": "string", "description": "Positioning strategy: 'auto' (default), 'grid', 'stack'"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["atomUuids", "targetThinkspaceUuid"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "bulk_update",
+                description: "Update multiple atoms at once. Use for batch operations like 'archive all completed tasks', 'tag these ideas for project X'. Always shows preview before executing.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "uuids": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "UUIDs of atoms to update"] as [String: Any],
+                        "updates": ["type": "object", "description": "Fields to update: status, tags, projectUuid, isArchived"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["uuids", "updates"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "organize_space",
+                description: "AI-powered thinkspace layout optimization. Reads all blocks and rearranges them by strategy. Shows preview before applying.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "thinkspaceUuid": ["type": "string", "description": "UUID of the thinkspace to organize"] as [String: Any],
+                        "strategy": ["type": "string", "description": "Layout strategy: 'cluster_by_type', 'timeline', 'priority', 'grid'"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["thinkspaceUuid", "strategy"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "explore_graph",
+                description: "Explore the knowledge graph visually from a center atom. Returns nodes and edges for inline graph rendering. Use for 'show connections to X', 'map out project Y'.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "centerUuid": ["type": "string", "description": "UUID of the center atom to explore from"] as [String: Any],
+                        "depth": ["type": "integer", "description": "Exploration depth (default 1, max 3)"] as [String: Any],
+                        "filterTypes": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Optional: filter to specific atom types"] as [String: Any],
+                        "filterLinkTypes": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Optional: filter to specific link types"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["centerUuid"]
+                ]
+            ),
+        ]
+    }
+
+    // MARK: - Semantic SQL Tool
+
+    private var sqlTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "execute_sql",
+                description: "Execute a read-only SQL query against the Atom database. Use for complex analytical questions that can't be answered by other tools (e.g. 'ideas per week grouped by client', 'most connected atoms'). ONLY SELECT queries are allowed. The atoms table has columns: uuid, type, title, body, structured, metadata, links, created_at, updated_at, is_deleted. The atoms_fts table supports full-text search. The canvas_blocks table has: id, entityUuid, entityType, positionX, positionY, width, height, thinkspaceId.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "SQL SELECT query to execute"] as [String: Any],
+                        "explain": ["type": "boolean", "description": "If true, returns query explanation instead of results"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["query"]
+                ]
+            ),
+        ]
+    }
+
+    // MARK: - Automation Tools
+
+    private var automationTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "create_automation_rule",
+                description: "Create an automation rule that triggers actions when events occur. Use for 'when I complete a deep work session, create a journal entry', 'when a task is completed, notify me', etc.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "name": ["type": "string", "description": "Rule name"] as [String: Any],
+                        "trigger": ["type": "object", "description": "Trigger config: { event: 'atom_created'|'atom_updated'|'task_completed'|'deep_work_ended'|'time_schedule'|'phase_advanced', conditions: [{field, op, value}] }"] as [String: Any],
+                        "actions": ["type": "array", "items": ["type": "object"] as [String: Any], "description": "Actions: [{ type: 'create_atom'|'update_atom'|'move_to_thinkspace'|'send_notification'|'create_journal_entry'|'tag_atom', params: {...} }]"] as [String: Any],
+                        "isEnabled": ["type": "boolean", "description": "Whether the rule is active (default true)"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["name", "trigger", "actions"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "list_automations",
+                description: "List all automation rules with their trigger, actions, and enabled status.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [:] as [String: Any],
+                    "required": [] as [String]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "toggle_automation",
+                description: "Enable or disable an automation rule.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "uuid": ["type": "string", "description": "UUID of the automation rule"] as [String: Any],
+                        "enabled": ["type": "boolean", "description": "New enabled state"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["uuid", "enabled"]
+                ]
+            ),
+        ]
+    }
+
+    // MARK: - Workflow Tools
+
+    private var workflowTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "run_workflow",
+                description: "Execute a multi-step workflow. Use for complex requests like 'prepare my morning briefing', 'set up a new project with tasks and thinkspace'. Shows a plan card for user confirmation before executing.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "description": ["type": "string", "description": "What this workflow accomplishes"] as [String: Any],
+                        "steps": ["type": "array", "items": [
+                            "type": "object",
+                            "properties": [
+                                "tool": ["type": "string", "description": "Tool to call"] as [String: Any],
+                                "args": ["type": "object", "description": "Arguments for the tool"] as [String: Any],
+                                "dependsOn": ["type": "integer", "description": "Index of step this depends on (for sequential execution)"] as [String: Any]
+                            ] as [String: Any],
+                            "required": ["tool", "args"]
+                        ] as [String: Any], "description": "Ordered steps to execute"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["description", "steps"]
                 ]
             ),
         ]
@@ -693,19 +837,6 @@ class AgentToolRegistry {
                 ]
             ),
             LLMToolDefinition(
-                name: "predict_performance",
-                description: "Score a draft against your historical content performance patterns.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "text": ["type": "string", "description": "The draft text to analyze"] as [String: Any],
-                        "hookType": ["type": "string", "description": "Optional: the hook type used"] as [String: Any],
-                        "framework": ["type": "string", "description": "Optional: the framework used"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["text"]
-                ]
-            ),
-            LLMToolDefinition(
                 name: "get_swipe_study_plan",
                 description: "Get a personalized plan for which swipe files to study this week to fill gaps in your framework/hook knowledge.",
                 parametersSchema: [
@@ -735,41 +866,6 @@ class AgentToolRegistry {
                     "type": "object",
                     "properties": [:] as [String: Any],
                     "required": [] as [String]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "review_draft_persuasion",
-                description: "Analyze a draft for persuasion techniques and suggest improvements based on your best-performing content.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "text": ["type": "string", "description": "The draft text to review"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["text"]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "suggest_persuasion_stack",
-                description: "Recommend the best persuasion techniques for a given topic and platform based on your swipe library data.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "topic": ["type": "string", "description": "The content topic"] as [String: Any],
-                        "platform": ["type": "string", "description": "Target platform (twitter, instagram, youtube, etc.)"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["topic", "platform"]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "compare_to_swipe",
-                description: "Compare your draft to a reference swipe file, analyzing structural differences and improvement opportunities.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "text": ["type": "string", "description": "Your draft text"] as [String: Any],
-                        "swipeUUID": ["type": "string", "description": "The UUID of the swipe file to compare against"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["text", "swipeUUID"]
                 ]
             ),
         ]
@@ -1022,41 +1118,46 @@ class AgentToolRegistry {
         ]
     }
 
-    // MARK: - Intent-Based Tool Selection (Updated)
+    // MARK: - Intent-Based Tool Selection
 
-    /// Return relevant tools for a given intent (v2 with strategy + intelligence tools).
+    /// Return relevant tools for a given intent.
     /// Source-gated: Telegram gets `send_telegram_buttons`, in-app gets `send_action_buttons`.
     func toolsForIntent(_ intent: AgentIntent, source: MessageSource = .inApp) -> [LLMToolDefinition] {
         let uxTools = interactiveUXTools(for: source)
+        let coreTools = knowledgeQueryTools + researchTools
         switch intent {
         case .capture:
             return ideaTools + swipeTools + captureTools + scheduleTools + clientTools + clientProfileTools + clientMemoryTools + lessonTools + moduleManagementTools
         case .brainstorm:
-            return ideaTools + swipeTools + captureTools + clientTools + clientProfileTools + intelligenceTools + writingTools + clientMemoryTools + preferenceTools + scoringTools + lessonTools + moduleManagementTools + webSearchTools
+            return coreTools + ideaTools + swipeTools + captureTools + clientTools + clientProfileTools + intelligenceTools + clientMemoryTools + preferenceTools + lessonTools + moduleManagementTools + webSearchTools
         case .plan:
-            return scheduleTools + contentTools + strategyTools + clientProfileTools + lessonTools + moduleManagementTools
+            return scheduleTools + contentTools + strategyTools + clientProfileTools + lessonTools + moduleManagementTools + workspaceTools
         case .query:
             return allTools
         case .correct:
-            return ideaTools + contentTools + scheduleTools + clientTools + clientProfileTools + moduleManagementTools
+            return ideaTools + contentTools + contentDataTools + scheduleTools + clientTools + clientProfileTools + moduleManagementTools + workspaceTools
         case .execute:
-            return contentTools + scheduleTools + writingTools + clientProfileTools + uxTools + lessonTools + moduleManagementTools
+            return contentTools + contentDataTools + scheduleTools + clientProfileTools + uxTools + lessonTools + moduleManagementTools + workspaceTools + workflowTools
         case .debrief, .reflect:
-            return analyticsTools + lessonTools + moduleManagementTools
+            return coreTools + analyticsTools + lessonTools + moduleManagementTools
         case .meta:
             return preferenceTools + standingInstructionTools + clientMemoryTools + lessonTools + uxTools + moduleManagementTools
         case .strategy:
-            return strategyTools + swipeTools + contentTools + analyticsTools + intelligenceTools + writingTools + clientProfileTools + clientMemoryTools + insightMemoryTools + uxTools + lessonTools + moduleManagementTools + webSearchTools
-        case .draft:
-            return contentTools + swipeTools + ideaTools + intelligenceTools + writingTools + clientProfileTools + clientMemoryTools + preferenceTools + captureTools + scoringTools + insightMemoryTools + lessonTools + uxTools + moduleManagementTools + webSearchTools
+            return coreTools + strategyTools + swipeTools + contentTools + analyticsTools + intelligenceTools + clientProfileTools + clientMemoryTools + insightMemoryTools + uxTools + lessonTools + moduleManagementTools + webSearchTools
+        case .research:
+            return coreTools + swipeTools + ideaTools + captureTools + clientProfileTools + insightMemoryTools + webSearchTools + lessonTools
+        case .synthesize:
+            return coreTools + swipeTools + ideaTools + intelligenceTools + insightMemoryTools + clientProfileTools + lessonTools + webSearchTools
         case .analyze:
-            return intelligenceTools + swipeTools + analyticsTools + contentTools + clientProfileTools + insightMemoryTools + lessonTools + moduleManagementTools + webSearchTools
+            return coreTools + intelligenceTools + swipeTools + analyticsTools + contentTools + clientProfileTools + insightMemoryTools + lessonTools + moduleManagementTools + webSearchTools + sqlTools
+        case .organize:
+            return workspaceTools + contentTools + ideaTools + scheduleTools + uxTools + workflowTools + automationTools
         }
     }
 
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools
+        allTools = knowledgeQueryTools + researchTools + ideaTools + swipeTools + captureTools + contentTools + contentDataTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + clientMemoryTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + workspaceTools + sqlTools + automationTools + workflowTools
     }
 }

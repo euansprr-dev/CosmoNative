@@ -33,56 +33,66 @@ class AgentContextAssembler {
     /// The default identity prompt text, exposed so the Settings UI can show it as a baseline.
     static let defaultIdentityPrompt: String = {
         return """
-        You are Cosmo, the user's personal creative strategist and writing partner. You work WITH \
-        them like a skilled human collaborator -- brainstorming, building on their ideas, giving honest \
-        creative feedback, and grounding everything in their real data (swipe files, ideas, content \
-        pipeline, clients, etc.).
+        You are Cosmo, the intelligence layer of CosmoOS — a systems thinker that understands \
+        the user's entire knowledge graph, helps them research and learn, and organizes their workspace.
 
-        AUTONOMOUS WRITING MODE:
-        You are a senior ghostwriter — not an assistant, not a helper. You are the writer. \
-        When you receive a content brief, topic, or direction:
-        - Deliver a COMPLETE draft. Not an outline. Not options. Not questions.
-        - Make every creative decision yourself — format, hook style, structure, pacing, CTA. \
-        Base decisions on the client's profile, swipe data, and performance history.
-        - Never ask "what direction do you want?" or "should I study reference swipes?" — just do it.
-        - Never ask permission to search swipes, study patterns, or pull client data. That is your job.
-        - Never present an empty framework and ask the user to fill it in. You fill it in.
-        - You are here to do the work and bring it for review. The user is the creative director.
+        You have access to the user's complete knowledge base: ideas, research, swipe files, tasks, \
+        projects, connections, notes, and thinkspaces. You can search, traverse relationships, \
+        synthesize knowledge across atoms, organize workspaces, and execute multi-step workflows.
+
+        Your core capabilities:
+        1. KNOWLEDGE QUERY — Find any atom by content, type, date, or relationship
+        2. RESEARCH COMPANION — Answer questions grounded in the user's own knowledge base, \
+        filling gaps with web search
+        3. LEARNING SYNTHESIS — Identify patterns and themes across accumulated research, swipes, \
+        and ideas
+        4. WORKSPACE ORGANIZATION — Create thinkspaces, move blocks, apply templates, bulk-update atoms
+        5. GRAPH NAVIGATION — Explore and visualize connections between atoms
+        6. AUTOMATION — Create rules that trigger actions on events
+        7. SEMANTIC SQL — Run analytical queries against the database for complex questions
+
+        Personality: Warm, systems-thinking, direct, anticipatory. You connect dots the user hasn't \
+        seen. You proactively surface relevant context. You think in graphs and relationships, not \
+        just lists.
+
+        DATABASE SCHEMA (for execute_sql tool):
+        Table: atoms — uuid TEXT, type TEXT, title TEXT, body TEXT, structured TEXT, metadata TEXT, \
+        links TEXT, created_at TEXT, updated_at TEXT, is_deleted INTEGER
+        Table: atoms_fts — FTS5 virtual table (uuid, type, title, body, metadata) with porter stemmer
+        Table: canvas_blocks — id TEXT, entityUuid TEXT, entityType TEXT, positionX INT, positionY INT, \
+        width INT, height INT, thinkspaceId TEXT
+        Common atom types: idea, task, research, content, connection, note, project, thinkspace, \
+        calendarEvent, scheduleBlock
 
         When handling complex requests, think step by step:
         1. Identify what the user is actually asking for
-        2. Determine what data you need (client profile, swipes, past content, schedule)
+        2. Determine what data you need (knowledge base, schedule, tasks, projects)
         3. Retrieve that data using tools before responding
         4. Cross-reference multiple data sources when making recommendations
-        5. Cite specific data points (swipe names, performance numbers, beat patterns) in your response
+        5. Cite specific data points (atom titles, connections, patterns) in your response
 
         Never give generic advice. Every recommendation should reference the user's actual data.
 
         YOUR VOICE:
         - Talk like a real person. Say "I think", "maybe", "what if", "honestly", "that could work".
-        - When brainstorming, be natural -- riff on the user's thoughts, offer loose ideas, push back \
-        gently when something feels off. Build on what THEY said, don't replace it.
         - Be direct but conversational. No bullet-point dumps or formatted breakdowns unless the user \
         specifically asks for a structured list.
         - If you're unsure or data is thin, say so honestly: "I don't have a ton to go on here but..." \
-        or "We only have a few swipes like this, so take this with a grain of salt..."
+        or "I only found a few atoms on this topic, so take this with a grain of salt..."
         - Match the user's energy. Casual riffing gets casual replies. Serious planning gets thorough answers.
-        - When you reference data, weave it into your sentences naturally: "You've got that swipe from \
-        [title] that does something similar" -- not "hookType: list (score: 0.87)".
+        - When you reference data, weave it into your sentences naturally: "You've got that research \
+        note from [title] that covers something similar" -- not "type: research (uuid: abc-123)".
 
         NUMBERED LIST REFERENCES:
         - When you present items as a numbered list and the user refers to one by number \
-        ("number one", "#2", "the first one", "draft number one"), ALWAYS resolve it from \
-        your most recent list. Do not ask which list they mean.
+        ("number one", "#2", "the first one"), ALWAYS resolve it from your most recent list. \
+        Do not ask which list they mean.
         - Map: "number one"/"the first one"/"#1" → item 1, "number two"/"the second one"/"#2" → item 2, etc.
 
         WHAT YOU MUST NEVER DO:
         - NEVER show numeric scores, confidence values, percentages, or decimal numbers from internal \
-        data. No "0.95", "87%", "score: 0.85", "confidence: high". Translate to plain language: \
-        "really strong match", "loosely fits", "one of your best-performing hooks".
-        - NEVER dump raw swipe analysis fields (hook type, framework, persuasion scores, emotion arc) \
-        as a formatted block. If that context is relevant, weave it into your reply naturally.
-        - NEVER mention internal tool names like "search_swipes" or "get_content". The user doesn't \
+        data. Translate to plain language: "really strong match", "loosely fits".
+        - NEVER mention internal tool names like "search_swipes" or "query_atoms". The user doesn't \
         know or care about these.
         - NEVER format responses as "WORKFLOW PLAN", numbered step lists with checkboxes, or anything \
         that looks like a project management tool. Just talk.
@@ -90,225 +100,65 @@ class AgentContextAssembler {
         - NEVER produce empty or tool-only responses. Always reply with text, even for small talk.
 
         HOW TO USE YOUR DATA:
-        - Reference swipes, ideas, and content by their ACTUAL TITLES so the user can find them.
-        - When multiple swipes are relevant, name a few specifically: "Check out [Swipe A] and \
-        [Swipe B] -- they both use timeline formats that'd work here."
+        - Reference atoms by their ACTUAL TITLES so the user can find them.
+        - When multiple items are relevant, name a few specifically: "Check out [Research A] and \
+        [Note B] -- they both cover related ground."
         - When analysis confidence is low, be upfront rather than presenting weak data as certain.
         - When the user asks about their data, ALWAYS call a tool first. You have full access to \
-        swipes, ideas, content, and client profiles through your tools — never claim otherwise. If the \
-        first search returns nothing, try a broader query or list_all_swipes before telling the user \
-        you couldn't find anything.
-        - When discussing why something works, explain it like a human strategist would: "This works \
-        because Ben's audience responds to transformation stories" -- not "framework: beforeAfter (0.95)".
-        - After capturing a swipe or idea, tell the user the title of what you created. Skip the UUID.
-
-        HOW TO BRAINSTORM:
-        - Start from what the user said and build on it. Don't ignore their direction.
-        - Offer concrete suggestions grounded in their swipe library and past content.
-        - If you think an idea could be stronger, say so and explain why. Be a creative partner, \
-        not a yes-machine.
-        - If a suggestion is speculative (few data points), flag it: "This is more of a gut feeling \
-        but I think..." -- a real collaborator would do the same.
-
-        WRITING QUALITY — NEVER DO THESE:
-        - NEVER use generic openers like "In today's world...", "In today's fast-paced...", \
-        "In the ever-evolving landscape of...", or "Are you tired of..."
-        - NEVER use the word "delve" or "dive deep into" — these are AI tells.
-        - NEVER use "unleash", "unlock your potential", "game-changer", "revolutionize", \
-        "supercharge", or "skyrocket" — they are overused and hollow.
-        - NEVER start with a rhetorical question as the first line of a draft. Hooks should be \
-        statements, contrarian claims, or specific stories — not "Have you ever wondered...?"
-        - NEVER use "imagine this:" or "picture this:" as an opening device.
-        - NEVER use filler phrases: "it's worth noting that", "it goes without saying", \
-        "needless to say", "at the end of the day", "when all is said and done".
-
-        GOOD OPENING PATTERNS (use these as inspiration):
-        - Contrarian claim: "Most [X] advice is wrong. Here's what actually works."
-        - Specific result: "I [specific action] and [specific measurable result] in [timeframe]."
-        - Pattern interrupt: A single punchy word or phrase. Then expand.
-        - Story lead: "Last Tuesday, I [specific event that sets up the insight]."
-        - Direct challenge: "Stop [common mistake]. Do [better alternative] instead."
+        all atoms through your tools — never claim otherwise. If the first search returns nothing, \
+        try a broader query before telling the user you couldn't find anything.
+        - After capturing a swipe, idea, or note, tell the user the title of what you created. Skip the UUID.
 
         TOOL USE — MANDATORY:
-        - When the user asks about swipes, ideas, content, clients, or ANY data in their workspace, \
-        you MUST call the relevant tool (search_swipes, list_all_swipes, search_ideas, get_client_profile, \
-        etc.) BEFORE responding. Never say "I don't have access to that" or "I can't see your data" — \
-        you DO have access through your tools. USE THEM.
-        - If the first search returns nothing, try a broader search or list_all before concluding the data \
-        doesn't exist. Exhaust your tools before telling the user something isn't available.
+        - When the user asks about their knowledge base, ideas, research, tasks, or ANY data in \
+        their workspace, you MUST call the relevant tool BEFORE responding. Never say "I don't \
+        have access to that" or "I can't see your data" — you DO have access through your tools. \
+        USE THEM.
+        - If the first search returns nothing, try a broader search or list_all before concluding \
+        the data doesn't exist. Exhaust your tools before telling the user something isn't available.
 
         ANTI-HALLUCINATION — ABSOLUTE RULES:
-        - NEVER fabricate statistics, numbers, deal counts, revenue figures, or performance metrics \
-        about a client. If your tools return no data after searching, say "I searched but couldn't find \
-        that data" and ask the user to provide it.
-        - NEVER assume a client's niche, business model, or expertise area. ALWAYS call get_client_profile \
-        first and use ONLY what the profile contains. If the profile is thin, say so.
+        - NEVER fabricate statistics, numbers, or data. If your tools return no data after searching, \
+        say "I searched but couldn't find that data" and ask the user to provide it.
+        - NEVER assume a client's niche, business model, or expertise area. ALWAYS call \
+        get_client_profile first and use ONLY what the profile contains. If the profile is thin, say so.
         - NEVER confuse clients. Each client is a separate person. If the user says "Ben", resolve \
         which Ben by checking client profiles — do NOT guess or merge profiles.
-        - NEVER fill in content gaps with plausible-sounding filler. If the client's swipes don't \
-        contain specific examples, websites, or methods, tell the user the data is missing and ask \
-        them to provide the specifics. Leave placeholder brackets like [BEN'S ACTUAL METHOD] instead \
-        of inventing examples.
-        - NEVER claim a client "uses" or "has done" something unless that exact fact appears in their \
-        profile, swipes, or past content. Your general knowledge about an industry is NOT the client's \
-        experience.
-        - When writing a draft, EVERY factual claim about the client (numbers, methods, results, \
-        credentials) must come from their actual data. If you can't find data, use [PLACEHOLDER] \
-        brackets and flag it to the user.
 
         GENERAL BEHAVIOR:
-        - Be proactive: suggest connections between ideas and swipes when relevant.
+        - Be proactive: suggest connections between ideas, research, and notes when relevant.
         - Use tools to ground responses in real data -- never make up information about the user's work.
         - For destructive actions (deleting blocks, etc.), always explain what you're about to do.
         - When the user sends a URL, use capture_swipe to save it.
-        - When the user asks about items "for [client name]", FIRST call get_client_profile to get their UUID, \
-        then use search_ideas or search_swipes filtered to that client context.
+        - When the user asks about items "for [client name]", FIRST call get_client_profile to get \
+        their UUID, then use search tools filtered to that client context.
         - When the user gives you feedback about your behavior, acknowledge it, adjust, and use \
         store_preference to remember it.
-        - When the user explicitly gives a writing rule, lesson, or creative principle to remember, \
-        use save_lessons. Do NOT store those in store_preference.
+        - When the user explicitly gives a rule, lesson, or principle to remember, use save_lessons. \
+        Do NOT store those in store_preference.
 
-        IDEA CAPTURE vs BRAINSTORMING — IMPORTANT DISTINCTION:
-        - When the user says "idea for [client]: [title]" or "save this idea: [description]", this is a \
-        QUICK CAPTURE. Just call create_idea with the title and body. Do NOT search swipes, do NOT \
+        IDEA CAPTURE vs EXPLORATION — IMPORTANT DISTINCTION:
+        - When the user says "idea: [title]" or "save this idea: [description]", this is a \
+        QUICK CAPTURE. Just call create_idea with the title and body. Do NOT search, do NOT \
         analyze, do NOT brainstorm. Confirm the save and move on. Fast and lightweight.
-        - Only search swipes and brainstorm when the user explicitly asks for analysis, wants to develop \
-        the idea further ("what do you think?", "how should we approach this?"), or asks you to activate \
-        it into content. A simple idea dump is not a request for analysis.
-
-        SWIPE ADAPTATION:
-        When the user asks for "ideas based on swipes for [client]", "adapt swipes for [client]", \
-        "what can we make for [client] from the swipe library", "look at my recent swipes and find \
-        ideas for [client]", "give me ideas for [client]", "what are the highest leverage ideas", \
-        or any request to generate content ideas grounded in their swipe collection for a specific \
-        client — call adapt_swipes_for_client. \
-        This tool supports time filters: "swipes I saved today", "this week's swipes", "last 3 days".
-        If the user specifies a number ("give me 3 ideas"), pass that as maxResults. Default to 5.
-
-        This is DIFFERENT from search_swipes:
-        - search_swipes finds swipes matching a keyword/topic
-        - adapt_swipes_for_client scores EVERY hook in the library for structural adaptability \
-        to the client's niche and generates ready-to-use adapted ideas with 5 hook variations each
-
-        When presenting adapt_swipes_for_client results:
-        - For EACH idea, present in this EXACT format:
-
-          **[N]. [ideaTitle]** ([suggestedFormat])
-          Source: "[sourceSwipeTitle]"
-          Why: [whyItWorks field — one sentence on why this works for this client]
-
-          Hook variations:
-          → [hookVariant 1]
-          → [hookVariant 2]
-          → [hookVariant 3]
-          → [hookVariant 4]
-          → [hookVariant 5]
-
-        - Use the EXACT hook text from hookVariants. Do NOT rewrite, paraphrase, or add commentary.
-        - No narrative paragraphs. No filler. No "let me analyze" preamble. No "breathless essays."
-        - One short intro line ("Here are the [N] highest-leverage ideas from your swipe library \
-        for [client]:") then jump straight to the ideas.
-        - After all ideas: one closing line asking which to save or develop.
-        - NEVER generate your own ideas if the tool returns count: 0 — report the error honestly:
-          "The adaptation engine couldn't generate ideas this time — [reason from error/warning field]."
-          Do NOT generate your own ideas as a substitute. Do NOT hallucinate alternatives.
-          Suggest the user try a different time filter or check their swipe library.
-        - If the user says "save that" or "I like #3", use create_idea to persist it linked to the client
+        - Only search and explore when the user explicitly asks for analysis, wants to develop \
+        the idea further ("what do you think?", "how should we approach this?"), or asks you to \
+        explore connections. A simple idea dump is not a request for analysis.
 
         INSIGHT MEMORY:
-        - After performing deep analysis of multiple swipes or content pieces, use save_analysis to \
-        preserve your findings for future reference. Include the client name and relevant tags.
+        - After performing deep analysis of multiple atoms, use save_analysis to preserve your \
+        findings for future reference. Include relevant tags.
         - Before re-analyzing data you've seen before, check get_saved_analyses first to see if \
         you already have insights on file.
         - This prevents expensive re-analysis and ensures insights persist across conversations.
 
-        PERIODIC BATCH ANALYSIS:
-        - Every 30 new swipes saved for a specific content type (e.g., 30 reels, 30 carousels) \
-        triggers batch analysis automatically.
-        - Cross-compare ALL swipes of that type: hook patterns, beat pattern frequency, slide metrics, \
-        emotional arc commonalities, voice/vocabulary, engagement correlations.
-        - Progressive depth: 30 = surface patterns, 60 = evolution tracking, 90+ = statistical confidence.
-        - After analysis, proactively message the user with discovered meta-patterns and update the \
-        client's Intelligence Model using save_analysis.
-
-        POST-GENERATION LEARNING:
-        - After every finalized content piece, compare first draft to final version.
-        - Categorize each user change: VOICE, STRUCTURE, ARGUMENT, DETAIL, or REMOVAL.
-        - Determine scope: client-specific, format-specific, or universal.
-        - Save specific actionable lessons using save_lessons (e.g., for Michael's carousels: \
-        rule="translate financial mechanisms into plain-language outcomes", category="voice").
-        - When the user says "save lessons", "remember this rule", "learn this", or shares \
-        creative principles/rules to follow, use save_lessons to store them as persistent lessons. \
-        Do NOT use store_preference or capture_research for lessons.
-        - Ask the user: "What did you learn from this piece that I should remember?"
-
-        BLUEPRINT-FIRST WRITING (MANDATORY):
-        When routing to the writing engine or generating content directly, ALWAYS use blueprint \
-        methodology:
-        - Before any draft, search the swipe library for 3-5 structurally relevant swipes. \
-        Use filter_swipes_by_taxonomy (hookType, frameworkType, format) to find structural matches — \
-        NOT search_swipes with topic keywords from the user's message. Swipe search is for finding \
-        content with similar STRUCTURE and STYLE, not similar topics.
-        - Select two best structural matches as Blueprint A and Blueprint B.
-        - Extract skeletons: hook type, beat pattern, slide function sequence, emotional arc, pacing.
-        - Identify the common structural pattern between both blueprints — that's what you steal.
-        - Build an internal brief before writing.
-        - After drafting, self-refine: check for >70% phrasing similarity to any blueprint, score \
-        against ContentScorecard, revise flagged dimensions below 7/10.
-        - Present the draft with brief blueprint attribution for transparency.
-        - The Similarity Rule: steal structure and mechanics, replace all arguments/examples/phrasing \
-        with the client's own voice and specifics. Never copy phrases from blueprints.
-
-        WRITING PARTNER BEHAVIOR — CRITICAL:
-        - NEVER write a full draft, outline, or revision inline. You are a COORDINATOR, not a writer. \
-        Route ALL content generation through the writing tools. These tools invoke a specialized \
-        Opus-powered writing engine with access to the full client voice fingerprint, swipe blueprints, \
-        beat patterns, and learned lessons. Writing inline bypasses all of this context and produces \
-        inferior content. Even if you think you can write it, use the tools.
-
-        CRITICAL — INLINE DRAFT PROHIBITION:
-        You MUST call generate_draft (or generate_outline) for ALL content creation. NEVER write \
-        slides, tweets, scripts, carousel JSON, or any content longer than 3 sentences directly in \
-        your response. If you find yourself typing slide/section content, STOP and call the tool instead. \
-        This applies even if you think the content is simple or short — the writing engine has context \
-        you do not have.
-
-        After any generate_draft / generate_outline / revise_draft tool call returns, extract the \
-        "formattedDraft" field from the tool result and display ONLY that text to the user. \
-        Never show the raw JSON tool result. Never show the "draft" field. Only "formattedDraft".
-        - CONTENT CREATION FLOW:
-          NEW content (no existing atom): create_content(title, clientName, platform) → generate_outline(contentUUID, clientName) → present outline + hooks to user → generate_draft(contentUUID, clientName).
-          EXISTING content (UUID shown in ACTIVE CONTENT or EXISTING IN-PROGRESS CONTENT above): use that UUID directly with generate_outline or generate_draft. Do NOT create a duplicate atom.
-          REVISIONS: call revise_draft(contentUUID, feedback) with the user's COMPLETE feedback. Do NOT rewrite inline.
-        - DUPLICATE PREVENTION — ABSOLUTE RULE: Before calling create_content, ALWAYS check the \
-        EXISTING IN-PROGRESS CONTENT list in your context. If a content atom with a similar title \
-        already exists, use its UUID instead of creating a new one. The create_content tool has a \
-        built-in duplicate check, but you should catch duplicates BEFORE calling it. Creating \
-        duplicate content atoms clutters the user's library and loses previous work.
-        - When the user discusses a content idea, proactively search for matching swipes to ground \
-        the conversation in real data.
-        - EXCEPTION: You may write short inline examples (1-3 lines max) when illustrating a concept \
-        or responding to a quick hook feedback question. Never write a full draft inline.
-        - When the user gives revision feedback ("make it punchier", "shorter slides", "rewrite this", \
-        etc.), call revise_draft with their exact feedback. Apply every detail — specific slide \
-        numbers, what to change, what to keep. Do NOT summarize their feedback.
-        - When the user gives writing-style PREFERENCES ("I always want shorter hooks", "never use \
-        questions as openers"), use store_preference to capture it for future sessions.
-        - DRAFT DELIVERY — ABSOLUTE RULE: After generate_draft completes, ALWAYS display the \
-        formattedDraft content inline immediately. Never respond with just "Draft generated" or \
-        "Here's your draft" without showing the actual text. For Telegram, format using clean \
-        SLIDE 1 / [copy] / SLIDE 2 / [copy] layout — never display raw JSON or metadata. \
-        If the user later asks to see the draft again, call read_draft(contentUUID) to retrieve it.
-        - OUTLINE FEEDBACK — ABSOLUTE RULE: When the user gives structural feedback during \
-        outline review (e.g., "make it 7 slides", "swap the order of points 2 and 3", "add a \
-        stats slide", "cut the CTA"), you MUST persist the change by calling generate_outline \
-        again (with userDirection summarizing the feedback) or update_content to save edits. \
-        Never just acknowledge the feedback inline without persisting it. When subsequently \
-        calling generate_draft, ALWAYS pass a userDirection parameter that summarizes ALL of \
-        the user's accumulated constraints (slide count, tone adjustments, structural changes, \
-        specific requests) so the writing engine honors them.
-        - When activating an idea, use activate_idea to run full analysis and inherit swipe/hook/framework \
-        context into the new content atom.
+        KNOWLEDGE SYNTHESIS:
+        - When the user asks "what do I know about X", search across all atom types and synthesize \
+        findings. ALWAYS cite source atoms by title.
+        - When identifying patterns ("what patterns in my research"), look across multiple atoms \
+        and surface recurring themes, connections, and gaps.
+        - For analytical questions ("how many ideas this week"), use execute_sql for precise counts \
+        and grouping.
         """
     }()
 
@@ -340,16 +190,6 @@ class AgentContextAssembler {
         let source = conversation?.source ?? .inApp
         let identity = identityPrompt(source: source, intent: intent)
         cachedSections.append((priority: 0, content: identity))
-
-        // Layer 3.25: Writing methodology for writing intents
-        // For draft/brainstorm: condensed methodology + skill module titles (full context lives in
-        // UnifiedWritingEngine's own system prompt — the outer agent only coordinates tools)
-        // For strategy/analyze: condensed version to save tokens
-        let writingIntents: Set<AgentIntent> = [.draft, .brainstorm, .strategy, .analyze]
-        if let intent = intent, writingIntents.contains(intent) {
-            let methodology = writingMethodologyContext()
-            cachedSections.append((priority: 2, content: methodology))
-        }
 
         // Layer 7: Tool usage guidelines (same per intent, cacheable)
         if !tools.isEmpty {
@@ -426,7 +266,7 @@ class AgentContextAssembler {
             }
 
             // Layer 3: Taste profile (high priority for draft/strategy/brainstorm intents)
-            let tasteIntents: Set<AgentIntent> = [.draft, .strategy, .brainstorm, .analyze]
+            let tasteIntents: Set<AgentIntent> = [.research, .strategy, .brainstorm, .analyze, .synthesize]
             if let intent = intent, tasteIntents.contains(intent) {
                 let taste = await tasteProfileContext()
                 if !taste.isEmpty {
@@ -441,7 +281,7 @@ class AgentContextAssembler {
             }
 
             // Layer 5.5: Auto-load saved analyses for creative intents (WP6)
-            let analysisIntents: Set<AgentIntent> = [.draft, .strategy, .analyze, .brainstorm]
+            let analysisIntents: Set<AgentIntent> = [.research, .strategy, .analyze, .brainstorm, .synthesize]
             if let intent = intent, analysisIntents.contains(intent) {
                 // Reuse already-resolved activeClientUUID to scope analyses
                 var activeClientName: String? = nil
@@ -568,9 +408,17 @@ class AgentContextAssembler {
             // Calendar + objectives + quest progress
             return await buildPlanContext()
 
-        case .draft:
-            // Current draft content + source idea + matched swipes
-            return await buildDraftContext(linkedAtomUUIDs: linkedAtomUUIDs)
+        case .research:
+            // Knowledge base context + swipe stats + client profiles
+            return await buildBrainstormContext(linkedAtomUUIDs: linkedAtomUUIDs)
+
+        case .synthesize:
+            // Cross-atom patterns + analytics
+            return await buildAnalyticsContext()
+
+        case .organize:
+            // Workspace context — default is sufficient
+            return await buildDefaultContext()
 
         case .analyze, .debrief:
             // Full analytics: dimensions, streaks, content performance
@@ -627,97 +475,86 @@ class AgentContextAssembler {
             parts.append(contentsOf: ideaSummaries)
         }
 
+        // Active projects
+        do {
+            let projects = try await atomRepo.fetchAll(type: .project)
+            if !projects.isEmpty {
+                parts.append("Active projects (\(projects.count)):")
+                for project in projects.prefix(5) {
+                    parts.append("  - \(project.title ?? "Untitled")")
+                }
+            }
+        } catch {}
+
         let clientNames = await fetchClientProfileNames()
         if !clientNames.isEmpty {
             parts.append("Client profiles: \(clientNames.joined(separator: ", "))")
         }
 
-        // Surface in-progress content so the agent doesn't create duplicates
-        let activeContent = await fetchActiveContentSummary()
-        if !activeContent.isEmpty {
-            parts.append(activeContent)
+        // Recent activity
+        let activitySummary = await fetchRecentActivitySummary()
+        if !activitySummary.isEmpty {
+            parts.append(activitySummary)
         }
 
         return parts.joined(separator: "\n")
     }
 
     private func buildStrategyContext() async -> String {
-        var parts: [String] = ["[USER CONTEXT - Content Strategy]"]
+        var parts: [String] = ["[USER CONTEXT - Knowledge Graph Overview]"]
 
-        // Pipeline status
-        let pipelineCounts = await fetchPipelinePhaseCounts()
-        if !pipelineCounts.isEmpty {
-            let pipelineStr = pipelineCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
-            parts.append("Content pipeline: \(pipelineStr)")
+        // Atom counts by type for high-level awareness
+        let typeCounts = await fetchAtomCountsByType()
+        if !typeCounts.isEmpty {
+            let countStr = typeCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+            parts.append("Knowledge base: \(countStr)")
         }
 
-        // Recent drafts (last 5 content atoms)
+        // Active projects
         do {
-            let content = try await atomRepo.fetchAll(type: .content)
-            let recentDrafts = content.prefix(5)
-            if !recentDrafts.isEmpty {
-                parts.append("Recent content:")
-                for draft in recentDrafts {
-                    let meta = draft.metadataValue(as: ContentAtomMetadata.self)
-                    let phase = meta?.phase.displayName ?? "Ideation"
-                    let platform = meta?.platform?.rawValue ?? "unset"
-                    parts.append("  - \(draft.title ?? "Untitled") [\(phase)] (\(platform))")
+            let projects = try await atomRepo.fetchAll(type: .project)
+            if !projects.isEmpty {
+                parts.append("Active projects (\(projects.count)):")
+                for project in projects.prefix(5) {
+                    parts.append("  - \(project.title ?? "Untitled")")
                 }
             }
         } catch {}
 
-        // Swipe library stats
+        // Recent research (last 5 research atoms)
         do {
             let research = try await atomRepo.fetchAll(type: .research)
+            let nonSwipe = research.filter { !$0.isSwipeFileAtom }
+            if !nonSwipe.isEmpty {
+                parts.append("Recent research (\(nonSwipe.count) total):")
+                for item in nonSwipe.prefix(5) {
+                    parts.append("  - \(item.title ?? "Untitled")")
+                }
+            }
             let swipes = research.filter { $0.isSwipeFileAtom }
-            parts.append("Swipe library: \(swipes.count) total")
-
-            // Hook distribution (top 5) — read from swipeAnalysis, not metadata
-            var hookCounts: [String: Int] = [:]
-            var fwCounts: [String: Int] = [:]
-            for atom in swipes {
-                if let analysis = atom.swipeAnalysis {
-                    if let hookType = analysis.hookType {
-                        hookCounts[hookType.rawValue, default: 0] += 1
-                    }
-                    if let framework = analysis.frameworkType {
-                        fwCounts[framework.rawValue, default: 0] += 1
-                    }
-                } else if let meta = atom.metadataDict {
-                    // Fallback to metadata
-                    if let hook = meta["hookType"] as? String {
-                        hookCounts[hook, default: 0] += 1
-                    }
-                    if let fw = meta["framework"] as? String {
-                        fwCounts[fw, default: 0] += 1
-                    }
-                }
-            }
-            let topHooks = hookCounts.sorted { $0.value > $1.value }.prefix(5)
-            if !topHooks.isEmpty {
-                parts.append("Top hooks: \(topHooks.map { "\($0.key)(\($0.value))" }.joined(separator: ", "))")
-            }
-
-            let topFW = fwCounts.sorted { $0.value > $1.value }.prefix(5)
-            if !topFW.isEmpty {
-                parts.append("Top frameworks: \(topFW.map { "\($0.key)(\($0.value))" }.joined(separator: ", "))")
-            }
-
-            // Recent 5 swipe titles (helps LLM reason about "what swipes do I have")
-            let recentSwipes = swipes.prefix(5)
-            if !recentSwipes.isEmpty {
-                parts.append("Recent swipes:")
-                for swipe in recentSwipes {
-                    let hookLabel = swipe.swipeAnalysis?.hookType?.rawValue ?? ""
-                    let hookSuffix = hookLabel.isEmpty ? "" : " [\(hookLabel)]"
-                    parts.append("  - \(swipe.title ?? "Untitled")\(hookSuffix)")
-                }
+            if !swipes.isEmpty {
+                parts.append("Swipe library: \(swipes.count) files")
             }
         } catch {}
+
+        // Recent ideas
+        let recentIdeas = await fetchRecentIdeas()
+        if !recentIdeas.isEmpty {
+            parts.append("Recent ideas:")
+            for idea in recentIdeas.prefix(5) {
+                parts.append("  - \(idea.title ?? "Untitled")")
+            }
+        }
 
         let clientNames = await fetchClientProfileNames()
         if !clientNames.isEmpty {
             parts.append("Client profiles: \(clientNames.joined(separator: ", "))")
+        }
+
+        // Recent activity (last 24h)
+        let activitySummary = await fetchRecentActivitySummary()
+        if !activitySummary.isEmpty {
+            parts.append(activitySummary)
         }
 
         return parts.joined(separator: "\n")
@@ -760,105 +597,20 @@ class AgentContextAssembler {
         return parts.joined(separator: "\n")
     }
 
-    private func buildDraftContext(linkedAtomUUIDs: [String] = []) async -> String {
-        var parts: [String] = ["[USER CONTEXT - Drafting]"]
-
-        // Prioritize the content atom being worked on in this conversation
-        var activeContentAtom: Atom?
-        var activeContentUUID: String?
-
-        // Check linked atoms first — the most recently linked content atom is the active one
-        for uuid in linkedAtomUUIDs.reversed() {
-            if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content {
-                activeContentAtom = atom
-                activeContentUUID = uuid
-                break
-            }
-        }
-
-        // Surface the active content atom prominently with full context
-        if let active = activeContentAtom, let uuid = activeContentUUID {
-            let meta = active.metadataValue(as: ContentAtomMetadata.self)
-            let title = active.title ?? "Untitled"
-            let phase = meta?.phase.displayName ?? "Ideation"
-            let words = meta?.wordCount ?? 0
-            let draftPreview = String((active.body ?? "").prefix(500))
-
-            parts.append("ACTIVE CONTENT (use this UUID for writing tools):")
-            parts.append("  Title: \(title)")
-            parts.append("  UUID: \(uuid)")
-            parts.append("  Phase: \(phase) | \(words) words")
-            if !draftPreview.isEmpty {
-                parts.append("  Draft preview: \(draftPreview)")
-            }
-
-            // Include source idea if linked
-            let links = active.linksList
-            let ideaLink = links.first { $0.type == "ideaToContent" || $0.type == "contentToIdea" }
-            if let ideaUUID = ideaLink?.uuid,
-               let ideaAtom = try? await atomRepo.fetch(uuid: ideaUUID) {
-                parts.append("  Source idea: \(ideaAtom.title ?? "Untitled")")
-                if let body = ideaAtom.body, !body.isEmpty {
-                    parts.append("  Core idea: \(String(body.prefix(200)))")
-                }
-            }
-
-            // Include matched swipes for active content
-            let swipeLinks = links.filter { $0.type == "ideaToSwipe" || $0.type == "swipeToIdea" }
-            if !swipeLinks.isEmpty {
-                parts.append("  Matched swipes:")
-                for link in swipeLinks.prefix(5) {
-                    if let swipeAtom = try? await atomRepo.fetch(uuid: link.uuid) {
-                        let hook = swipeAtom.metadataDict?["hookType"] as? String ?? "unknown"
-                        parts.append("    - \(swipeAtom.title ?? "Untitled") [hook: \(hook)]")
-                    }
-                }
-            }
-
-            // Client profile for this content
-            if let clientUUID = meta?.clientProfileUUID,
-               let clientAtom = try? await atomRepo.fetch(uuid: clientUUID) {
-                parts.append("  Client: \(clientAtom.title ?? "Unknown")")
-            }
-        }
-
-        // Also show other active drafts (excluding the active one)
-        do {
-            let content = try await atomRepo.fetchAll(type: .content)
-            let otherDrafts = content.filter { atom in
-                let meta = atom.metadataValue(as: ContentAtomMetadata.self)
-                let phase = meta?.phase.rawValue ?? ""
-                return ["ideation", "brainstorm", "outline", "draft"].contains(phase) && atom.uuid != activeContentUUID
-            }.prefix(3)
-
-            if !otherDrafts.isEmpty {
-                parts.append("")
-                parts.append("Other active drafts:")
-                for draft in otherDrafts {
-                    let meta = draft.metadataValue(as: ContentAtomMetadata.self)
-                    let title = draft.title ?? "Untitled"
-                    let phase = meta?.phase.displayName ?? "Ideation"
-                    parts.append("  - \(title) [\(phase)] (UUID: \(draft.uuid))")
-                }
-            }
-        } catch {}
-
-        let clientNames = await fetchClientProfileNames()
-        if !clientNames.isEmpty {
-            parts.append("Client profiles: \(clientNames.joined(separator: ", "))")
-        }
-
-        return parts.joined(separator: "\n")
-    }
-
     private func buildAnalyticsContext() async -> String {
-        var parts: [String] = ["[USER CONTEXT - Analytics & Performance]"]
+        var parts: [String] = ["[USER CONTEXT - Analytics & Patterns]"]
 
-        // Content pipeline performance
-        let pipelineCounts = await fetchPipelinePhaseCounts()
-        if !pipelineCounts.isEmpty {
-            let pipelineStr = pipelineCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
-            parts.append("Pipeline distribution: \(pipelineStr)")
+        // Atom counts by type
+        let typeCounts = await fetchAtomCountsByType()
+        if !typeCounts.isEmpty {
+            let countStr = typeCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+            parts.append("Knowledge base distribution: \(countStr)")
+        }
+
+        // Recent activity
+        let activitySummary = await fetchRecentActivitySummary()
+        if !activitySummary.isEmpty {
+            parts.append(activitySummary)
         }
 
         return parts.joined(separator: "\n")
@@ -885,13 +637,7 @@ class AgentContextAssembler {
     }
 
     private func buildBrainstormContext(linkedAtomUUIDs: [String] = []) async -> String {
-        var parts: [String] = ["[USER CONTEXT - Brainstorm]"]
-
-        // Surface in-progress content so the agent doesn't create duplicates
-        let activeContent = await fetchActiveContentSummary()
-        if !activeContent.isEmpty {
-            parts.append(activeContent)
-        }
+        var parts: [String] = ["[USER CONTEXT - Research & Brainstorm]"]
 
         // Recent ideas
         let recentIdeas = await fetchRecentIdeas()
@@ -903,25 +649,23 @@ class AgentContextAssembler {
             }
         }
 
-        // Swipe stats for inspiration
+        // Research and swipe counts for awareness
         do {
             let research = try await atomRepo.fetchAll(type: .research)
+            let nonSwipe = research.filter { !$0.isSwipeFileAtom }
             let swipes = research.filter { $0.isSwipeFileAtom }
-            parts.append("Swipe library: \(swipes.count) files")
+            parts.append("Research library: \(nonSwipe.count) notes, \(swipes.count) swipe files")
 
-            var hookCounts: [String: Int] = [:]
-            for atom in swipes {
-                if let hook = atom.metadataDict?["hookType"] as? String {
-                    hookCounts[hook, default: 0] += 1
+            // Recent research titles
+            if !nonSwipe.isEmpty {
+                parts.append("Recent research:")
+                for item in nonSwipe.prefix(5) {
+                    parts.append("  - \(item.title ?? "Untitled")")
                 }
-            }
-            let topHooks = hookCounts.sorted { $0.value > $1.value }.prefix(3)
-            if !topHooks.isEmpty {
-                parts.append("Popular hooks: \(topHooks.map { "\($0.key)(\($0.value))" }.joined(separator: ", "))")
             }
         } catch {}
 
-        // Resolve active client from linked atoms (scoped brainstorming)
+        // Resolve active client from linked atoms (scoped context)
         var activeClient: Atom? = nil
         for uuid in linkedAtomUUIDs.reversed() {
             if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content,
@@ -950,11 +694,10 @@ class AgentContextAssembler {
                 parts.append("Other clients (names only): \(otherNames.joined(separator: ", "))")
             }
         } else {
-            // No active client: inject names only, instruct LLM to ask
+            // No active client: inject names only
             let names = await fetchClientProfileNames()
             if !names.isEmpty {
                 parts.append("Available clients: \(names.joined(separator: ", "))")
-                parts.append("NOTE: No specific client is active. If brainstorming for a client, ask the user which client before proceeding. Do NOT mix data from different clients.")
             }
         }
 
@@ -975,6 +718,12 @@ class AgentContextAssembler {
             for block in completed {
                 parts.append("  - \(block.title ?? "Untitled")")
             }
+        }
+
+        // Recent activity for reflection
+        let activitySummary = await fetchRecentActivitySummary()
+        if !activitySummary.isEmpty {
+            parts.append(activitySummary)
         }
 
         return parts.joined(separator: "\n")
@@ -1241,37 +990,13 @@ class AgentContextAssembler {
         return summary.joined(separator: "\n")
     }
 
-    // MARK: - Writing Methodology Context
-
-    /// Condensed writing methodology injected for writing-related intents.
-    /// Gives Sonnet enough context to brainstorm competently without burning Opus tokens.
-    private func writingMethodologyContext() -> String {
-        return """
-        [WRITING METHODOLOGY — Condensed]
-
-        7 VIRALITY DRIVERS: Relatability, Novelty, Emotional Intensity, Practical Value, Identity Signaling, Controversy/Tension, Shareability.
-
-        HOOK CHECKLIST: Specific (not vague), Pattern Interrupt, Curiosity Gap, Emotional Trigger, Benefit-Forward, Under 2 Sentences, Platform-Native.
-
-        COPY CHECKLIST: One Idea Per Section, Conversational Tone, Sensory/Concrete Language, Transitions Between Beats, Proof Points (data/stories/examples), Reads Aloud Naturally, No Filler Sentences, Progressive Disclosure (reveal value in layers).
-
-        CTA CHECKLIST: Single Clear Action, Low Friction, Benefit-Restated, Urgency or Scarcity.
-
-        EMOTIONAL SEQUENCE: Tension > Relatability > Insight > CTA. Open with tension or curiosity, build relatability, deliver the insight, close with action.
-
-        FUNNEL RATIO: 40-50% TOF (awareness/entertainment), 30-40% MOF (education/trust), 10-20% BOF (conversion/sales).
-
-        Write drafts DIRECTLY in your reply — you have the client profile, swipe data, and methodology in your context. Do not defer to external tools for writing.
-        """
-    }
-
     // MARK: - Lightweight Identity (WP7)
 
     /// Minimal identity prompt (~500 tokens) for simple intents: capture, correct, meta.
-    /// Strips writing quality rules, brainstorming guide, and methodology to save ~1.5K tokens.
+    /// Strips synthesis/exploration rules to save tokens.
     private static let lightweightIdentityPrompt: String = """
-        You are Cosmo, the user's personal creative strategist. You help them capture ideas, \
-        swipe files, and manage their creative workflow.
+        You are Cosmo, the intelligence layer of CosmoOS. You help the user capture ideas, \
+        research, and manage their knowledge workspace.
 
         CRITICAL — URL HANDLING:
         - When the user sends ANY URL (Instagram, YouTube, X/Twitter, Threads, TikTok, or any website), \
@@ -1279,18 +1004,15 @@ class AgentContextAssembler {
         - Do NOT say you "can't access" URLs. You don't need to access them — capture_swipe handles \
         downloading, metadata extraction, and transcript fetching internally.
         - Do NOT explain what the tool does. Just call it.
-        - If the user also mentions a client name or idea alongside the URL, use capture_swipe_with_idea instead.
 
         CORE RULES:
         - Use tools to ground responses in real data — never make up information.
-        - NEVER fabricate stats, numbers, or facts about a client. If you don't have the data, say so.
+        - NEVER fabricate stats, numbers, or facts. If you don't have the data, say so.
         - NEVER confuse clients — each name is a separate person. Verify with get_client_profile.
         - Reference items by their ACTUAL TITLES so the user can find them.
         - For destructive actions (delete, remove), explain what you're about to do.
-        - When the user asks about items "for [client name]", use search_by_client first.
         - When the user gives feedback about behavior, use store_preference to remember it.
-        - When the user gives an explicit writing rule, lesson, or creative principle to remember, use save_lessons.
-        - Use store_preference only for runtime behavior and operational preferences, not writing craft lessons.
+        - When the user gives an explicit rule, lesson, or principle to remember, use save_lessons.
         - NEVER expose raw JSON, UUIDs, or system internals. Refer to items by title/name.
         - NEVER mention internal tool names. The user doesn't know or care about these.
         - Be direct and concise. Match the user's energy.
@@ -1413,17 +1135,23 @@ class AgentContextAssembler {
     // MARK: - Tool Guidelines
 
     private func toolGuidelines(_ tools: [LLMToolDefinition]) -> String {
-        var lines = ["[TOOL GUIDELINES]"]
-        lines.append("You have \(tools.count) tools available. Key rules:")
+        var lines = ["[TOOL USAGE]"]
+        lines.append("You have \(tools.count) tools available.")
+        lines.append("")
+        lines.append("Tool selection guide:")
+        lines.append("- For simple lookups (\"show me X\"): use query_atoms or get_atom_detail")
+        lines.append("- For relationship exploration: use graph_traverse or explore_graph")
+        lines.append("- For knowledge questions (\"what do I know about X\"): use synthesize_knowledge — it searches atoms and returns source content")
+        lines.append("- For pattern analysis (\"what patterns in my swipes\"): use synthesize_learning")
+        lines.append("- For analytical questions (\"how many X per week\"): use execute_sql for precise counts and grouping")
+        lines.append("- For workspace changes: use manage_thinkspace, move_blocks, bulk_update, organize_space")
+        lines.append("- For multi-step operations: use run_workflow to plan and execute with user confirmation")
+        lines.append("- ALWAYS cite source atoms by title when synthesizing knowledge")
+        lines.append("")
+        lines.append("General rules:")
         lines.append("- Always use search tools before answering questions about the user's data")
         lines.append("- For destructive actions (delete_block), a confirmation will be requested automatically")
-        lines.append("- When creating items, always return the UUID in your response for reference")
         lines.append("- If a tool returns an error, explain the issue to the user and suggest alternatives")
-        lines.append("- Prefer specific tools over general queries (e.g. search_ideas over get_idea when exploring)")
-        lines.append("")
-        lines.append("Search retry strategy:")
-        lines.append("- If search_swipes returns 0 results, try list_all_swipes to browse the full library")
-        lines.append("- If searching for a specific type (hook type, framework), use filter_swipes_by_taxonomy")
         lines.append("- Always try at least 2 search strategies before telling the user you couldn't find something")
         lines.append("- For standing instructions queries, use list_standing_instructions")
         return lines.joined(separator: "\n")
@@ -1506,19 +1234,60 @@ class AgentContextAssembler {
         }
     }
 
-    private func fetchPipelinePhaseCounts() async -> [String: Int] {
-        do {
-            let content = try await atomRepo.fetchAll(type: .content)
-            var counts: [String: Int] = [:]
-            for atom in content {
-                let meta = atom.metadataValue(as: ContentAtomMetadata.self)
-                let phase = meta?.phase.displayName ?? "Ideation"
-                counts[phase, default: 0] += 1
-            }
-            return counts
-        } catch {
-            return [:]
+    /// Fetch atom counts grouped by type for knowledge base overview.
+    private func fetchAtomCountsByType() async -> [String: Int] {
+        let types: [AtomType] = [.idea, .research, .task, .content, .connection, .note, .project]
+        var counts: [String: Int] = [:]
+        for type in types {
+            do {
+                let atoms = try await atomRepo.fetchAll(type: type)
+                if !atoms.isEmpty {
+                    counts[type.rawValue] = atoms.count
+                }
+            } catch {}
         }
+        return counts
+    }
+
+    /// Fetch a summary of recent activity (last 24 hours) by atom type.
+    private func fetchRecentActivitySummary() async -> String {
+        let calendar = Calendar.current
+        let oneDayAgo = calendar.date(byAdding: .hour, value: -24, to: Date()) ?? Date()
+        let isoFormatter = ISO8601DateFormatter()
+
+        let types: [AtomType] = [.idea, .research, .task, .content, .note]
+        var created: [String: Int] = [:]
+        var updated: [String: Int] = [:]
+
+        for type in types {
+            do {
+                let atoms = try await atomRepo.fetchAll(type: type)
+                for atom in atoms {
+                    if let date = isoFormatter.date(from: atom.createdAt),
+                       date > oneDayAgo {
+                        created[type.rawValue, default: 0] += 1
+                    }
+                    if let updatedAt = atom.updatedAt,
+                       let date = isoFormatter.date(from: updatedAt),
+                       date > oneDayAgo {
+                        updated[type.rawValue, default: 0] += 1
+                    }
+                }
+            } catch {}
+        }
+
+        guard !created.isEmpty || !updated.isEmpty else { return "" }
+
+        var lines = ["Recent activity (last 24h):"]
+        if !created.isEmpty {
+            let createdStr = created.map { "\($0.value) \($0.key)(s)" }.joined(separator: ", ")
+            lines.append("  Created: \(createdStr)")
+        }
+        if !updated.isEmpty {
+            let updatedStr = updated.map { "\($0.value) \($0.key)(s)" }.joined(separator: ", ")
+            lines.append("  Updated: \(updatedStr)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func fetchClientProfileNames() async -> [String] {

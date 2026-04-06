@@ -12,6 +12,86 @@ struct CosmoActionButton: Codable, Sendable, Equatable {
     let action: String
 }
 
+/// Data for an inline atom card rendered in chat
+struct AtomCardData: Codable, Sendable {
+    let uuid: String
+    let type: String
+    let title: String
+    let snippet: String
+    let score: Double?
+}
+
+/// Data for an inline atom list rendered in chat
+struct AtomListData: Codable, Sendable {
+    let query: String
+    let atoms: [AtomCardData]
+    let totalCount: Int
+}
+
+/// A node in the inline graph view
+struct GraphNodeData: Codable, Sendable {
+    let uuid: String
+    let type: String
+    let title: String
+}
+
+/// An edge in the inline graph view
+struct GraphEdgeData: Codable, Sendable {
+    let sourceUuid: String
+    let targetUuid: String
+    let linkType: String?
+}
+
+/// Data for the inline graph view
+struct GraphViewData: Codable, Sendable {
+    let centerUuid: String
+    let nodes: [GraphNodeData]
+    let edges: [GraphEdgeData]
+}
+
+/// Data for an automation preview card
+struct AutomationPreviewData: Codable, Sendable {
+    let name: String
+    let triggerDescription: String
+    let actionDescriptions: [String]
+    let isEnabled: Bool
+    let uuid: String?
+}
+
+/// Data for a multi-step workflow plan
+struct WorkflowPlanData: Codable, Sendable {
+    let description: String
+    let steps: [WorkflowStepData]
+}
+
+/// A single step in a workflow plan
+struct WorkflowStepData: Codable, Sendable {
+    let index: Int
+    let tool: String
+    let description: String
+    let status: String  // pending, running, done, failed
+}
+
+/// Data for a timeline view
+struct TimelineViewData: Codable, Sendable {
+    let entries: [TimelineEntryData]
+}
+
+/// A single entry in the timeline
+struct TimelineEntryData: Codable, Sendable {
+    let uuid: String
+    let type: String
+    let title: String
+    let timestamp: String
+}
+
+/// Data for a knowledge synthesis card
+struct SynthesisCardData: Codable, Sendable {
+    let query: String
+    let synthesis: String
+    let sources: [AtomCardData]
+}
+
 /// Discriminates the kind of message displayed in the Cosmo window chat.
 enum CosmoWindowMessageType: Codable, Sendable {
     case user
@@ -21,11 +101,21 @@ enum CosmoWindowMessageType: Codable, Sendable {
     case contextTrace(lookups: Int, sections: [ContextTraceSection])
     case contextChange(from: String, to: String)
     case actionButtons(buttons: [CosmoActionButton])
+    // Rich inline cards
+    case atomCard(AtomCardData)
+    case atomList(AtomListData)
+    case graphView(GraphViewData)
+    case automationPreview(AutomationPreviewData)
+    case workflowPlan(WorkflowPlanData)
+    case timelineView(TimelineViewData)
+    case synthesisCard(SynthesisCardData)
 
     // MARK: Codable
 
     enum CodingKeys: String, CodingKey {
         case kind, name, summary, isError, fromContext, toContext, lookups, sections, buttons
+        case atomCardData, atomListData, graphViewData, automationPreviewData
+        case workflowPlanData, timelineViewData, synthesisCardData
     }
 
     func encode(to encoder: Encoder) throws {
@@ -53,6 +143,27 @@ enum CosmoWindowMessageType: Codable, Sendable {
         case .actionButtons(let buttons):
             try container.encode("actionButtons", forKey: .kind)
             try container.encode(buttons, forKey: .buttons)
+        case .atomCard(let data):
+            try container.encode("atomCard", forKey: .kind)
+            try container.encode(data, forKey: .atomCardData)
+        case .atomList(let data):
+            try container.encode("atomList", forKey: .kind)
+            try container.encode(data, forKey: .atomListData)
+        case .graphView(let data):
+            try container.encode("graphView", forKey: .kind)
+            try container.encode(data, forKey: .graphViewData)
+        case .automationPreview(let data):
+            try container.encode("automationPreview", forKey: .kind)
+            try container.encode(data, forKey: .automationPreviewData)
+        case .workflowPlan(let data):
+            try container.encode("workflowPlan", forKey: .kind)
+            try container.encode(data, forKey: .workflowPlanData)
+        case .timelineView(let data):
+            try container.encode("timelineView", forKey: .kind)
+            try container.encode(data, forKey: .timelineViewData)
+        case .synthesisCard(let data):
+            try container.encode("synthesisCard", forKey: .kind)
+            try container.encode(data, forKey: .synthesisCardData)
         }
     }
 
@@ -79,6 +190,27 @@ enum CosmoWindowMessageType: Codable, Sendable {
         case "actionButtons":
             let buttons = try container.decode([CosmoActionButton].self, forKey: .buttons)
             self = .actionButtons(buttons: buttons)
+        case "atomCard":
+            let data = try container.decode(AtomCardData.self, forKey: .atomCardData)
+            self = .atomCard(data)
+        case "atomList":
+            let data = try container.decode(AtomListData.self, forKey: .atomListData)
+            self = .atomList(data)
+        case "graphView":
+            let data = try container.decode(GraphViewData.self, forKey: .graphViewData)
+            self = .graphView(data)
+        case "automationPreview":
+            let data = try container.decode(AutomationPreviewData.self, forKey: .automationPreviewData)
+            self = .automationPreview(data)
+        case "workflowPlan":
+            let data = try container.decode(WorkflowPlanData.self, forKey: .workflowPlanData)
+            self = .workflowPlan(data)
+        case "timelineView":
+            let data = try container.decode(TimelineViewData.self, forKey: .timelineViewData)
+            self = .timelineView(data)
+        case "synthesisCard":
+            let data = try container.decode(SynthesisCardData.self, forKey: .synthesisCardData)
+            self = .synthesisCard(data)
         default:
             self = .system
         }
@@ -432,47 +564,38 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
             sections.append(ContextTraceSection(icon: "person.fill", label: "Client", detail: client))
         }
 
-        let directSwipes = trace.swipesReferenced
-        let engineSwipes = trace.writingEngineSwipes
-        let allSwipes = Array(Set(directSwipes + engineSwipes)).filter { !$0.isEmpty && !$0.hasPrefix("0 ") }
-        if !allSwipes.isEmpty {
+        let swipes = trace.swipesReferenced.filter { !$0.isEmpty && !$0.hasPrefix("0 ") }
+        if !swipes.isEmpty {
             sections.append(
                 ContextTraceSection(
                     icon: "doc.text",
                     label: "Swipes",
-                    detail: allSwipes.prefix(4).joined(separator: ", ")
+                    detail: swipes.prefix(4).joined(separator: ", ")
                 )
             )
         }
 
-        let beats = trace.beatPatternsUsed.filter { !$0.isEmpty }
-        if !beats.isEmpty {
+        let knowledge = trace.knowledgeToolsUsed
+        if !knowledge.isEmpty {
+            let names = knowledge.map { $0.replacingOccurrences(of: "_", with: " ").capitalized }
             sections.append(
                 ContextTraceSection(
-                    icon: "waveform",
-                    label: "Beat Patterns",
-                    detail: beats.prefix(3).joined(separator: ", ")
-                )
-            )
-        }
-
-        let writing = trace.writingToolsUsed
-        if !writing.isEmpty {
-            let names = writing.map { $0.replacingOccurrences(of: "_", with: " ").capitalized }
-            sections.append(
-                ContextTraceSection(
-                    icon: "pencil.line",
-                    label: "Writing Engine",
+                    icon: "brain",
+                    label: "Knowledge",
                     detail: names.joined(separator: ", ")
                 )
             )
         }
 
-        let scorecards = trace.toolCalls.filter { $0.name.contains("score") }
-        for call in scorecards {
-            if let summary = call.resultSummary {
-                sections.append(ContextTraceSection(icon: "chart.bar", label: "Scorecard", detail: summary))
-            }
+        let atoms = trace.atomsReferenced.filter { !$0.isEmpty }
+        if !atoms.isEmpty {
+            sections.append(
+                ContextTraceSection(
+                    icon: "atom",
+                    label: "Atoms Referenced",
+                    detail: "\(atoms.count) sources"
+                )
+            )
         }
 
         return sections

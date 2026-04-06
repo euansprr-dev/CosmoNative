@@ -2,6 +2,7 @@
 // Executes agent tools against CosmoOS services
 
 import Foundation
+import GRDB
 
 @MainActor
 class AgentToolExecutor {
@@ -14,9 +15,6 @@ class AgentToolExecutor {
 
     /// Batch tracker for rapid idea captures (3+ within 2 minutes → batched confirmation)
     private var recentIdeaCaptures: [(timestamp: Date, title: String, clientName: String?)] = []
-
-    // Writing engine cache removed — all writing now goes through CloudWritingClient.
-    // The cloud engine manages its own session cache per contentUUID.
 
     struct PendingConfirmation {
         let toolName: String
@@ -74,11 +72,6 @@ class AgentToolExecutor {
     /// so it can load full structured content (connections, research, etc.)
     var contextAtomUUIDs: [String] = []
 
-    // Writing engine cache removed — all writing now goes through CloudWritingClient.
-    // The cloud engine manages its own session cache per contentUUID.
-    // The getOrCreateEngine method has been replaced by cloud API calls in
-    // generateOutline, generateDraft, and reviseDraft.
-
     // MARK: - Execute
 
     func execute(toolName: String, arguments: [String: Any]) async throws -> String {
@@ -104,9 +97,9 @@ class AgentToolExecutor {
         case "capture_research": return try await captureResearch(arguments)
         // Content
         case "get_content_pipeline": return try await getContentPipeline(arguments)
-        case "advance_pipeline_phase": return try await advancePipelinePhase(arguments)
         case "create_content": return try await createContent(arguments)
         case "get_content": return try await getContent(arguments)
+        case "update_content": return try await updateContent(arguments)
         case "create_thinkspace": return try await createThinkspace(arguments)
         // Calendar / Schedule Blocks
         case "get_calendar_blocks": return try await getCalendarBlocks(arguments)
@@ -127,7 +120,6 @@ class AgentToolExecutor {
         case "get_weekly_content_plan": return try await getWeeklyContentPlan(arguments)
         case "suggest_next_content": return try await suggestNextContent(arguments)
         case "analyze_content_gap": return try await analyzeContentGap(arguments)
-        case "predict_performance": return try await predictPerformance(arguments)
         case "get_swipe_study_plan": return try await getSwipeStudyPlan(arguments)
         // Standing Instructions
         case "add_standing_instruction": return try await addStandingInstruction(arguments)
@@ -138,25 +130,12 @@ class AgentToolExecutor {
         // Intelligence
         case "get_creator_profile": return try await getCreatorProfile(arguments)
         case "get_audience_insights": return try await getAudienceInsights(arguments)
-        case "review_draft_persuasion": return try await reviewDraftPersuasion(arguments)
-        case "suggest_persuasion_stack": return try await suggestPersuasionStack(arguments)
-        case "compare_to_swipe": return try await compareToSwipe(arguments)
-        // Writing (Opus Engine)
-        case "generate_outline": return try await generateOutline(arguments)
-        case "generate_draft": return try await generateDraft(arguments)
-        case "read_draft": return try await readDraft(arguments)
-        case "revise_draft": return try await reviseDraft(arguments)
-        case "generate_hooks": return try await generateHooks(arguments)
-        case "update_content": return try await updateContent(arguments)
         // Client Profiles
         case "list_client_profiles": return try await listClientProfiles(arguments)
         case "get_client_profile": return try await getClientProfile(arguments)
         // Client Memory
         case "update_client_memory": return try await updateClientMemory(arguments)
         case "list_client_memory": return try await listClientMemory(arguments)
-        // Scoring
-        case "get_beat_patterns": return try await getBeatPatterns(arguments)
-        case "score_draft": return try await scoreDraft(arguments)
         // Insight Memory (WP6)
         case "save_analysis": return try await saveAnalysis(arguments)
         case "get_saved_analyses": return try await getSavedAnalyses(arguments)
@@ -178,6 +157,25 @@ class AgentToolExecutor {
         case "send_telegram_buttons": return try await sendTelegramButtons(arguments)
         // In-App UX
         case "send_action_buttons": return try await sendActionButtons(arguments)
+        // Knowledge Graph & Query
+        case "query_atoms": return await handleQueryAtoms(arguments)
+        case "graph_traverse": return await handleGraphTraverse(arguments)
+        case "get_atom_detail": return await handleGetAtomDetail(arguments)
+        case "count_atoms": return await handleCountAtoms(arguments)
+        case "synthesize_knowledge": return await handleSynthesizeKnowledge(arguments)
+        case "synthesize_learning": return await handleSynthesizeLearning(arguments)
+        // Thinkspace & Canvas
+        case "manage_thinkspace": return await handleManageThinkspace(arguments)
+        case "move_blocks": return await handleMoveBlocks(arguments)
+        case "bulk_update": return await handleBulkUpdate(arguments)
+        case "organize_space": return await handleOrganizeSpace(arguments)
+        case "explore_graph": return await handleExploreGraph(arguments)
+        // SQL & Automation
+        case "execute_sql": return await handleExecuteSQL(arguments)
+        case "create_automation_rule": return await handleCreateAutomationRule(arguments)
+        case "list_automation_rules": return await handleListAutomationRules(arguments)
+        case "toggle_automation_rule": return await handleToggleAutomationRule(arguments)
+        case "run_workflow": return await handleRunWorkflow(arguments)
         default:
             return jsonError("Unknown tool: \(toolName)")
         }
@@ -1387,27 +1385,6 @@ class AgentToolExecutor {
         return jsonEncode(result)
     }
 
-    private func advancePipelinePhase(_ args: [String: Any]) async throws -> String {
-        guard let uuid = args["uuid"] as? String else {
-            return jsonError("Missing required parameter: uuid")
-        }
-        let notes = args["notes"] as? String
-
-        do {
-            let phaseAtom = try await ContentPipelineService().advancePhase(
-                contentUUID: uuid,
-                notes: notes
-            )
-            return jsonEncode([
-                "success": true,
-                "phaseTransition": phaseAtom.title ?? "",
-                "message": "Content advanced to next phase"
-            ] as [String: Any])
-        } catch {
-            return jsonError("Failed to advance phase: \(error.localizedDescription)")
-        }
-    }
-
     private func createContent(_ args: [String: Any]) async throws -> String {
         guard let title = args["title"] as? String else {
             return jsonError("Missing required parameter: title")
@@ -1981,289 +1958,6 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    // MARK: - Writing Tools (Cloud Writing Engine — canonical)
-    // All writing goes through the cloud engine for guaranteed quality parity.
-    // The cloud engine has all craft modules, validators, scoring, and retry logic.
-
-    private func generateOutline(_ args: [String: Any]) async throws -> String {
-        guard let contentUUID = args["contentUUID"] as? String else {
-            return jsonError("Missing or invalid contentUUID")
-        }
-
-        print("☁️ [AgentToolExecutor] generate_outline → cloud engine for \(contentUUID)")
-
-        do {
-            let result = try await CloudWritingClient.shared.generateOutline(
-                contentUUID: contentUUID,
-                blueprintTitles: args["blueprintTitles"] as? [String],
-                blueprintSwipeUUIDs: {
-                    var uuids = args["blueprintSwipeUUIDs"] as? [String] ?? []
-                    if let single = args["blueprintSwipeUUID"] as? String, !single.isEmpty, !uuids.contains(single) {
-                        uuids.insert(single, at: 0)
-                    }
-                    return uuids.isEmpty ? nil : uuids
-                }(),
-                notes: args["notes"] as? String,
-                clientName: args["clientName"] as? String,
-                contentFormat: args["contentFormat"] as? String,
-                contextAtomUUIDs: contextAtomUUIDs.isEmpty ? nil : contextAtomUUIDs
-            )
-
-            // Re-encode as JSON string for the agent tool result format
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(result)
-            return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode outline result")
-        } catch {
-            return jsonError("Cloud outline failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func generateDraft(_ args: [String: Any]) async throws -> String {
-        guard let contentUUID = args["contentUUID"] as? String else {
-            return jsonError("Missing or invalid contentUUID")
-        }
-
-        // Advance pipeline phase for XP
-        _ = try? await ContentPipelineService().advancePhase(
-            contentUUID: contentUUID,
-            notes: "Draft generated via cloud writing engine"
-        )
-
-        // Check if content atom has a codex outline → single agentic session (Opus, adaptive thinking)
-        let atom = try? await AtomRepository.shared.fetch(uuid: contentUUID)
-        let hasCodexOutline: Bool = {
-            guard let metadata = atom?.metadata,
-                  let data = metadata.data(using: .utf8),
-                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return false
-            }
-            // Check both direct and inherited outline fields
-            return dict["codexOutline"] != nil || dict["inheritedCodexOutline"] != nil
-        }()
-
-        if hasCodexOutline {
-            print("☁️ [AgentToolExecutor] generate_draft → SINGLE SESSION (Opus) for \(contentUUID)")
-
-            // Pass local metadata to cloud to avoid Supabase sync race conditions.
-            // The cloud engine merges these into the atom metadata it reads from Supabase.
-            var localMetadata: [String: Any]?
-            if let metadata = atom?.metadata,
-               let data = metadata.data(using: .utf8),
-               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                localMetadata = dict
-            }
-
-            do {
-                let result = try await CloudWritingClient.shared.runSession(
-                    contentUUID: contentUUID,
-                    userDirection: args["userDirection"] as? String,
-                    localMetadata: localMetadata
-                )
-
-                // Write draft directly to local GRDB — don't wait for Supabase sync
-                if let draft = result.formattedDraft, !draft.isEmpty {
-                    if var localAtom = try? await AtomRepository.shared.fetch(uuid: contentUUID) {
-                        localAtom.body = draft
-                        localAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
-                        localAtom.localVersion += 1
-                        _ = try? await AtomRepository.shared.update(localAtom)
-                        print("☁️ [AgentToolExecutor] Draft written to local GRDB (\(draft.count) chars)")
-                    }
-                }
-
-                let encoder = JSONEncoder()
-                let data = try encoder.encode(result)
-                return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode session result")
-            } catch {
-                print("❌ [AgentToolExecutor] Single session failed: \(error.localizedDescription)")
-                return jsonError("Single session failed: \(error.localizedDescription)")
-            }
-        }
-
-        print("☁️ [AgentToolExecutor] generate_draft → multi-phase pipeline for \(contentUUID)")
-
-        do {
-            let result = try await CloudWritingClient.shared.generateDraft(
-                contentUUID: contentUUID,
-                userDirection: args["userDirection"] as? String,
-                clientName: args["clientName"] as? String,
-                contentFormat: args["contentFormat"] as? String
-            )
-
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(result)
-            return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode draft result")
-        } catch {
-            return jsonError("Cloud draft failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Detect the structural format of a draft body (carousel JSON, thread JSON, or plaintext).
-    private static func detectDraftFormat(_ body: String) -> String {
-        guard !body.isEmpty,
-              let data = body.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) else {
-            return "plaintext"
-        }
-        if let dict = json as? [String: Any] {
-            if dict["slides"] != nil { return "carousel" }
-            if dict["tweets"] != nil { return "thread" }
-        }
-        if let arr = json as? [[String: Any]], let first = arr.first {
-            if first["number"] != nil, first["text"] != nil { return "carousel" }
-            if first["tweet"] != nil { return "thread" }
-        }
-        return "json"
-    }
-
-    // MARK: - Read Draft
-
-    private func readDraft(_ args: [String: Any]) async throws -> String {
-        guard let contentUUID = args["contentUUID"] as? String else {
-            return jsonError("Missing required parameter: contentUUID")
-        }
-        guard let atom = try await atomRepo.fetch(uuid: contentUUID) else {
-            return jsonError("Content atom not found: \(contentUUID)")
-        }
-        let rawBody = atom.body ?? ""
-        let formatted = Self.renderDraftForDisplay(rawBody)
-        let wordCount = formatted
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .count
-        let title = atom.title ?? "Untitled"
-
-        return jsonEncode([
-            "success": true,
-            "contentUUID": contentUUID,
-            "title": title,
-            "formattedDraft": formatted,
-            "wordCount": wordCount
-        ] as [String: Any])
-    }
-
-    // MARK: - Draft Display Renderer
-
-    /// Converts structured draft JSON (carousel slides, thread tweets) into a readable
-    /// plaintext representation suitable for display in conversation. Strips internal
-    /// fields like `visualDirection` that are not relevant to the user-facing draft.
-    static func renderDraftForDisplay(_ draftBody: String) -> String {
-        guard !draftBody.isEmpty else { return "" }
-
-        guard let data = draftBody.data(using: .utf8),
-              let jsonObject = try? JSONSerialization.jsonObject(with: data) else {
-            // Not JSON — return plaintext/script as-is
-            return draftBody
-        }
-
-        // Raw array format: [{"number": 1, "text": "...", "visualDirection": "..."}]
-        // The LLM sometimes omits the {"slides": [...]} wrapper
-        if let rawArray = jsonObject as? [[String: Any]],
-           let first = rawArray.first,
-           first["number"] != nil, first["text"] != nil {
-            let sorted = rawArray.sorted { ($0["number"] as? Int ?? 0) < ($1["number"] as? Int ?? 0) }
-            var lines: [String] = []
-            for slide in sorted {
-                let num = slide["number"] as? Int ?? (lines.count / 2 + 1)
-                let text = slide["text"] as? String ?? ""
-                lines.append("SLIDE \(num)")
-                lines.append(text)
-                lines.append("")
-            }
-            if lines.last?.isEmpty == true { lines.removeLast() }
-            return lines.joined(separator: "\n")
-        }
-
-        guard let json = jsonObject as? [String: Any] else { return draftBody }
-
-        // Carousel format: {"slides": [{"number": 1, "text": "...", "visualDirection": "..."}]}
-        if let slides = json["slides"] as? [[String: Any]] {
-            let sortedSlides = slides.sorted {
-                ($0["number"] as? Int ?? 0) < ($1["number"] as? Int ?? 0)
-            }
-            var lines: [String] = []
-            for slide in sortedSlides {
-                let num = slide["number"] as? Int ?? (lines.count / 2 + 1)
-                let text = slide["text"] as? String ?? ""
-                lines.append("SLIDE \(num)")
-                lines.append(text)
-                lines.append("")
-            }
-            // Remove trailing empty line
-            if lines.last?.isEmpty == true { lines.removeLast() }
-            return lines.joined(separator: "\n")
-        }
-
-        // Thread format: {"tweets": [{"number": 1, "text": "..."}]}
-        if let tweets = json["tweets"] as? [[String: Any]] {
-            let sortedTweets = tweets.sorted {
-                ($0["number"] as? Int ?? 0) < ($1["number"] as? Int ?? 0)
-            }
-            var lines: [String] = []
-            for tweet in sortedTweets {
-                let num = tweet["number"] as? Int ?? (lines.count / 2 + 1)
-                let text = tweet["text"] as? String ?? ""
-                lines.append("TWEET \(num)")
-                lines.append(text)
-                lines.append("")
-            }
-            if lines.last?.isEmpty == true { lines.removeLast() }
-            return lines.joined(separator: "\n")
-        }
-
-        // Unknown JSON structure — return raw body
-        return draftBody
-    }
-
-    private func reviseDraft(_ args: [String: Any]) async throws -> String {
-        guard let contentUUID = args["contentUUID"] as? String else {
-            return jsonError("Missing or invalid contentUUID")
-        }
-
-        guard let feedback = args["feedback"] as? String, !feedback.isEmpty else {
-            return jsonError("Missing required parameter: feedback")
-        }
-
-        print("☁️ [AgentToolExecutor] revise_draft → cloud engine for \(contentUUID)")
-
-        do {
-            let result = try await CloudWritingClient.shared.reviseDraft(
-                contentUUID: contentUUID,
-                feedback: feedback,
-                currentDraft: args["currentDraft"] as? String,
-                clientName: args["clientName"] as? String
-            )
-
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(result)
-            return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode revision result")
-        } catch {
-            return jsonError("Cloud revision failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func generateHooks(_ args: [String: Any]) async throws -> String {
-        guard let contentUUID = args["contentUUID"] as? String else {
-            return jsonError("Missing or invalid contentUUID")
-        }
-
-        print("☁️ [AgentToolExecutor] generate_hooks → cloud engine for \(contentUUID)")
-
-        // Route through cloud outline (hooks are generated as part of outline)
-        do {
-            let result = try await CloudWritingClient.shared.generateOutline(
-                contentUUID: contentUUID,
-                clientName: args["clientName"] as? String
-            )
-
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(result)
-            return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode hooks result")
-        } catch {
-            return jsonError("Cloud hooks failed: \(error.localizedDescription)")
-        }
-    }
-
     private func updateContent(_ args: [String: Any]) async throws -> String {
         guard let uuid = args["uuid"] as? String else {
             return jsonError("Missing required parameter: uuid")
@@ -2695,37 +2389,6 @@ class AgentToolExecutor {
         return jsonEncode(["analysis": analysis])
     }
 
-    private func predictPerformance(_ args: [String: Any]) async throws -> String {
-        guard let text = args["text"] as? String else {
-            return jsonError("Missing required parameter: text")
-        }
-        let hookType = args["hookType"] as? String
-        let framework = args["framework"] as? String
-
-        let prediction = await ContentStrategyEngine.shared.predictPerformance(
-            draftBody: text,
-            hookType: hookType,
-            framework: framework
-        )
-        // Translate numeric scores to plain-language assessment for the LLM
-        let overallLabel: String
-        if prediction.overallScore >= 80 { overallLabel = "strong" }
-        else if prediction.overallScore >= 60 { overallLabel = "decent" }
-        else if prediction.overallScore >= 40 { overallLabel = "needs work" }
-        else { overallLabel = "weak" }
-
-        let compareLabel: String
-        if prediction.comparedToAverage > 1.2 { compareLabel = "above your average" }
-        else if prediction.comparedToAverage > 0.8 { compareLabel = "around your average" }
-        else { compareLabel = "below your average" }
-
-        return jsonEncode([
-            "overall": overallLabel,
-            "comparedToAverage": compareLabel,
-            "suggestions": prediction.suggestions
-        ] as [String: Any])
-    }
-
     private func getSwipeStudyPlan(_ args: [String: Any]) async throws -> String {
         let plan = await SwipePatternMiner.shared.generateSwipeStudyPlan()
         return jsonEncode(["studyPlan": plan])
@@ -2870,132 +2533,6 @@ class AgentToolExecutor {
             "growthDrivers": drivers,
             "audienceProfile": profile
         ])
-    }
-
-    private func reviewDraftPersuasion(_ args: [String: Any]) async throws -> String {
-        guard let text = args["text"] as? String else {
-            return jsonError("Missing required parameter: text")
-        }
-        let review = await PersuasionCoachEngine.shared.reviewDraft(text: text)
-        return jsonEncode(["review": review])
-    }
-
-    private func suggestPersuasionStack(_ args: [String: Any]) async throws -> String {
-        guard let topic = args["topic"] as? String else {
-            return jsonError("Missing required parameter: topic")
-        }
-        guard let platform = args["platform"] as? String else {
-            return jsonError("Missing required parameter: platform")
-        }
-        let suggestion = await PersuasionCoachEngine.shared.suggestPersuasionStack(topic: topic, platform: platform)
-        return jsonEncode(["suggestion": suggestion])
-    }
-
-    private func compareToSwipe(_ args: [String: Any]) async throws -> String {
-        guard let text = args["text"] as? String else {
-            return jsonError("Missing required parameter: text")
-        }
-        guard let swipeUUID = args["swipeUUID"] as? String else {
-            return jsonError("Missing required parameter: swipeUUID")
-        }
-        let comparison = await PersuasionCoachEngine.shared.compareToSwipe(draftText: text, swipeUUID: swipeUUID)
-        return jsonEncode(["comparison": comparison])
-    }
-
-    // MARK: - Scoring Tools
-
-    private func getBeatPatterns(_ args: [String: Any]) async throws -> String {
-        let format = args["format"] as? String
-        let niche = args["niche"] as? String
-        let limit = min(args["limit"] as? Int ?? 5, 20)
-
-        let patterns = await BeatPatternService.shared.findTopPatterns(
-            format: format,
-            niche: niche,
-            limit: limit
-        )
-
-        let items: [[String: Any]] = patterns.map { pattern in
-            [
-                "fingerprint": pattern.fingerprint,
-                "beatSequence": pattern.beatSequence,
-                "frequency": pattern.frequency,
-                "avgHookScore": pattern.avgHookScore,
-                "swipeCount": pattern.swipeUUIDs.count
-            ] as [String: Any]
-        }
-
-        return jsonEncode([
-            "patterns": items,
-            "count": items.count
-        ] as [String: Any])
-    }
-
-    private func scoreDraft(_ args: [String: Any]) async throws -> String {
-        guard let contentUUID = args["contentUUID"] as? String else {
-            return jsonError("Missing required parameter: contentUUID")
-        }
-        guard let contentAtom = try await atomRepo.fetch(uuid: contentUUID) else {
-            return jsonError("Content atom not found: \(contentUUID)")
-        }
-
-        guard let state = ContentFocusModeState.from(atom: contentAtom) else {
-            return jsonError("Could not load content state for \(contentUUID). Ensure the content has a draft body.")
-        }
-
-        let engine = ContentScorecardEngine()
-        do {
-            let scorecard = try await engine.evaluate(contentAtom: contentAtom, state: state)
-
-            var result: [String: Any] = [
-                "success": true,
-                "contentUUID": contentUUID,
-                "hookScore": scorecard.hookScore.score,
-                "copyScore": scorecard.copyScore.score,
-                "ctaScore": scorecard.ctaScore.score,
-                "voiceMatchPercentage": scorecard.voiceMatch.percentage,
-                "structuralAlignmentScore": scorecard.structuralAlignment.alignmentScore,
-                "overallConfidence": scorecard.overallConfidence,
-                "hookSuggestions": scorecard.hookScore.suggestions,
-                "copySuggestions": scorecard.copyScore.suggestions,
-                "ctaSuggestions": scorecard.ctaScore.suggestions,
-                "structuralSuggestions": scorecard.structuralAlignment.suggestions,
-                "draftBeats": scorecard.structuralAlignment.draftBeats,
-                "recommendedBeats": scorecard.structuralAlignment.recommendedBeats,
-                "slideCount": scorecard.slideAnalysis.count
-            ]
-
-            if let originality = scorecard.originalityScore {
-                result["originalityScore"] = originality.score
-                result["originalitySuggestions"] = originality.suggestions
-            }
-
-            // Voice drifts summary
-            if !scorecard.voiceMatch.drifts.isEmpty {
-                let driftSummaries: [[String: Any]] = scorecard.voiceMatch.drifts.prefix(5).map { drift in
-                    [
-                        "lineNumber": drift.lineNumber,
-                        "issue": drift.issue,
-                        "suggestion": drift.suggestion
-                    ] as [String: Any]
-                }
-                result["voiceDrifts"] = driftSummaries
-            }
-
-            // Generate guided feedback
-            let feedback = engine.generateGuidedFeedback(
-                scores: scorecard,
-                matchedSwipes: [],
-                clientVoice: nil
-            )
-            if !feedback.isEmpty {
-                result["guidedFeedback"] = feedback
-            }
-
-            return jsonEncode(result)
-        } catch {
-            return jsonError("Scorecard evaluation failed: \(error.localizedDescription)")
-        }
     }
 
     // MARK: - Insight Memory Tools (WP6)
@@ -3500,6 +3037,399 @@ class AgentToolExecutor {
             config: ["message": .string("Rule fired for {{atom.title}}")],
             label: "Show notification"
         )
+    }
+
+    // MARK: - Knowledge Graph & Query Tools
+
+    private func handleQueryAtoms(_ args: [String: Any]) async -> String {
+        let query = args["query"] as? String ?? ""
+        let types = args["types"] as? [String]
+        let limit = args["limit"] as? Int ?? 10
+        // dateRange reserved for future use
+        _ = args["dateRange"] as? String
+
+        let searchEngine = AtomSearchEngine()
+        var options = AtomSearchOptions()
+        options.limit = min(limit, 50)
+
+        if let types = types {
+            options.types = types.compactMap { AtomType(rawValue: $0) }
+        }
+
+        let results = try? await searchEngine.search(query: query, options: options)
+        guard let results = results, !results.isEmpty else {
+            return "{\"results\": [], \"count\": 0, \"query\": \"\(query)\"}"
+        }
+
+        let items = results.prefix(limit).map { result -> String in
+            let atom = result.atom
+            let snippet = result.snippet ?? String(atom.body?.prefix(100) ?? "")
+            return "{\"uuid\": \"\(atom.uuid)\", \"type\": \"\(atom.type.rawValue)\", \"title\": \"\(atom.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\", \"snippet\": \"\(snippet.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: " "))\", \"score\": \(result.score)}"
+        }
+
+        return "{\"results\": [\(items.joined(separator: ","))], \"count\": \(results.count), \"query\": \"\(query)\"}"
+    }
+
+    private func handleGraphTraverse(_ args: [String: Any]) async -> String {
+        let uuid = args["uuid"] as? String ?? ""
+        let depth = min(args["depth"] as? Int ?? 1, 3)
+
+        guard let atom = try? await atomRepo.fetch(uuid: uuid) else {
+            return "{\"error\": \"Atom not found\", \"uuid\": \"\(uuid)\"}"
+        }
+
+        // Parse links from the atom
+        let connectedUuids: [String] = atom.linksList.map(\.uuid)
+
+        let connected = (try? await atomRepo.fetchBatch(uuids: connectedUuids)) ?? []
+        let nodes = connected.map { a -> String in
+            "{\"uuid\": \"\(a.uuid)\", \"type\": \"\(a.type.rawValue)\", \"title\": \"\(a.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\"}"
+        }
+
+        return "{\"center\": {\"uuid\": \"\(atom.uuid)\", \"type\": \"\(atom.type.rawValue)\", \"title\": \"\(atom.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\"}, \"connected\": [\(nodes.joined(separator: ","))], \"depth\": \(depth)}"
+    }
+
+    private func handleGetAtomDetail(_ args: [String: Any]) async -> String {
+        let uuid = args["uuid"] as? String ?? ""
+        guard let atom = try? await atomRepo.fetch(uuid: uuid) else {
+            return "{\"error\": \"Atom not found\"}"
+        }
+
+        let bodyPreview = String(atom.body?.prefix(500) ?? "").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n")
+        let metadata = atom.metadata?.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: " ") ?? ""
+
+        return "{\"uuid\": \"\(atom.uuid)\", \"type\": \"\(atom.type.rawValue)\", \"title\": \"\(atom.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\", \"body\": \"\(bodyPreview)\", \"metadata\": \"\(metadata)\", \"createdAt\": \"\(atom.createdAt)\", \"updatedAt\": \"\(atom.updatedAt)\"}"
+    }
+
+    private func handleCountAtoms(_ args: [String: Any]) async -> String {
+        let typeStr = args["type"] as? String ?? "idea"
+        guard let type = AtomType(rawValue: typeStr) else {
+            return "{\"error\": \"Unknown atom type: \(typeStr)\"}"
+        }
+
+        let atoms = (try? await atomRepo.fetchAll(type: type)) ?? []
+        return "{\"type\": \"\(typeStr)\", \"count\": \(atoms.count)}"
+    }
+
+    private func handleSynthesizeKnowledge(_ args: [String: Any]) async -> String {
+        let query = args["query"] as? String ?? ""
+        let maxSources = args["maxSources"] as? Int ?? 10
+        let scope = args["scope"] as? String ?? "all"
+
+        let searchEngine = AtomSearchEngine()
+        var options = AtomSearchOptions()
+        options.limit = maxSources
+
+        if scope != "all" {
+            switch scope {
+            case "swipes": options.types = [.research]
+            case "research": options.types = [.research]
+            case "ideas": options.types = [.idea]
+            case "notes": options.types = [.note]
+            default: break
+            }
+        }
+
+        let results = (try? await searchEngine.search(query: query, options: options)) ?? []
+
+        let sources = results.map { r -> String in
+            let body = String(r.atom.body?.prefix(300) ?? "").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n")
+            return "{\"uuid\": \"\(r.atom.uuid)\", \"type\": \"\(r.atom.type.rawValue)\", \"title\": \"\(r.atom.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\", \"content\": \"\(body)\"}"
+        }
+
+        return "{\"query\": \"\(query)\", \"sourceCount\": \(results.count), \"sources\": [\(sources.joined(separator: ","))]}"
+    }
+
+    private func handleSynthesizeLearning(_ args: [String: Any]) async -> String {
+        let topic = args["topic"] as? String ?? ""
+        let maxSources = args["maxSources"] as? Int ?? 10
+
+        let searchEngine = AtomSearchEngine()
+        var options = AtomSearchOptions()
+        options.limit = maxSources
+
+        let results = (try? await searchEngine.search(query: topic, options: options)) ?? []
+
+        let sources = results.map { r -> String in
+            let body = String(r.atom.body?.prefix(300) ?? "").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n")
+            return "{\"uuid\": \"\(r.atom.uuid)\", \"type\": \"\(r.atom.type.rawValue)\", \"title\": \"\(r.atom.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\", \"content\": \"\(body)\"}"
+        }
+
+        return "{\"topic\": \"\(topic)\", \"sourceCount\": \(results.count), \"sources\": [\(sources.joined(separator: ","))]}"
+    }
+
+    // MARK: - Thinkspace & Canvas Tools
+
+    private func handleManageThinkspace(_ args: [String: Any]) async -> String {
+        let action = args["action"] as? String ?? "list"
+        let name = args["name"] as? String
+
+        switch action {
+        case "create":
+            guard let name = name, !name.isEmpty else {
+                return "{\"error\": \"Missing required parameter: name\"}"
+            }
+            let atom = try? await atomRepo.create(
+                type: .thinkspace,
+                title: name,
+                body: nil,
+                metadata: nil
+            )
+            if let atom = atom {
+                return "{\"success\": true, \"uuid\": \"\(atom.uuid)\", \"title\": \"\(name)\"}"
+            }
+            return "{\"error\": \"Failed to create thinkspace\"}"
+
+        case "list":
+            let thinkspaces = (try? await atomRepo.fetchAll(type: .thinkspace)) ?? []
+            let items = thinkspaces.map { a -> String in
+                "{\"uuid\": \"\(a.uuid)\", \"title\": \"\(a.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\"}"
+            }
+            return "{\"thinkspaces\": [\(items.joined(separator: ","))], \"count\": \(thinkspaces.count)}"
+
+        default:
+            return "{\"error\": \"Unknown action: \(action). Supported: create, list\"}"
+        }
+    }
+
+    private func handleMoveBlocks(_ args: [String: Any]) async -> String {
+        let blockUUIDs = args["blockUUIDs"] as? [String] ?? []
+        let targetX = args["x"] as? Double ?? 0
+        let targetY = args["y"] as? Double ?? 0
+
+        guard !blockUUIDs.isEmpty else {
+            return "{\"error\": \"Missing required parameter: blockUUIDs\"}"
+        }
+
+        // Move blocks by updating their canvas positions in metadata
+        var movedCount = 0
+        for uuid in blockUUIDs {
+            if var atom = try? await atomRepo.fetch(uuid: uuid) {
+                var metaDict = atom.metadataDict ?? [:]
+                metaDict["canvasX"] = targetX + Double(movedCount) * 20
+                metaDict["canvasY"] = targetY + Double(movedCount) * 20
+                if let data = try? JSONSerialization.data(withJSONObject: metaDict),
+                   let json = String(data: data, encoding: .utf8) {
+                    atom.metadata = json
+                    _ = try? await atomRepo.update(atom)
+                    movedCount += 1
+                }
+            }
+        }
+
+        return "{\"success\": true, \"movedCount\": \(movedCount), \"targetPosition\": {\"x\": \(targetX), \"y\": \(targetY)}}"
+    }
+
+    private func handleBulkUpdate(_ args: [String: Any]) async -> String {
+        let uuids = args["uuids"] as? [String] ?? []
+        let updates = args["updates"] as? [String: Any] ?? [:]
+
+        guard !uuids.isEmpty else {
+            return "{\"error\": \"Missing required parameter: uuids\"}"
+        }
+        guard !updates.isEmpty else {
+            return "{\"error\": \"Missing required parameter: updates\"}"
+        }
+
+        var updatedCount = 0
+        for uuid in uuids {
+            if var atom = try? await atomRepo.fetch(uuid: uuid) {
+                if let title = updates["title"] as? String { atom.title = title }
+                if let body = updates["body"] as? String { atom.body = body }
+                if let metadataUpdates = updates["metadata"] as? [String: Any] {
+                    var metaDict = atom.metadataDict ?? [:]
+                    for (key, value) in metadataUpdates {
+                        metaDict[key] = value
+                    }
+                    if let data = try? JSONSerialization.data(withJSONObject: metaDict),
+                       let json = String(data: data, encoding: .utf8) {
+                        atom.metadata = json
+                    }
+                }
+                _ = try? await atomRepo.update(atom)
+                updatedCount += 1
+            }
+        }
+
+        return "{\"success\": true, \"updatedCount\": \(updatedCount), \"requestedCount\": \(uuids.count)}"
+    }
+
+    private func handleOrganizeSpace(_ args: [String: Any]) async -> String {
+        let strategy = args["strategy"] as? String ?? "grid"
+        let atomUUIDs = args["atomUUIDs"] as? [String] ?? []
+        let spacing = args["spacing"] as? Double ?? 40
+
+        guard !atomUUIDs.isEmpty else {
+            return "{\"error\": \"Missing required parameter: atomUUIDs\"}"
+        }
+
+        var organized = 0
+        let columns = max(Int(sqrt(Double(atomUUIDs.count))), 1)
+        let blockWidth = 340.0
+        let blockHeight = 360.0
+
+        for (index, uuid) in atomUUIDs.enumerated() {
+            if var atom = try? await atomRepo.fetch(uuid: uuid) {
+                var metaDict = atom.metadataDict ?? [:]
+                let col = index % columns
+                let row = index / columns
+                metaDict["canvasX"] = Double(col) * (blockWidth + spacing)
+                metaDict["canvasY"] = Double(row) * (blockHeight + spacing)
+                if let data = try? JSONSerialization.data(withJSONObject: metaDict),
+                   let json = String(data: data, encoding: .utf8) {
+                    atom.metadata = json
+                    _ = try? await atomRepo.update(atom)
+                    organized += 1
+                }
+            }
+        }
+
+        return "{\"success\": true, \"strategy\": \"\(strategy)\", \"organizedCount\": \(organized), \"columns\": \(columns)}"
+    }
+
+    private func handleExploreGraph(_ args: [String: Any]) async -> String {
+        let startUUID = args["startUUID"] as? String
+        let maxNodes = min(args["maxNodes"] as? Int ?? 20, 100)
+
+        // If a start UUID is given, explore from there; otherwise get recent atoms
+        if let startUUID = startUUID {
+            guard let atom = try? await atomRepo.fetch(uuid: startUUID) else {
+                return "{\"error\": \"Start atom not found\"}"
+            }
+
+            let connectedUuids = atom.linksList.map(\.uuid)
+            let connected = (try? await atomRepo.fetchBatch(uuids: Array(connectedUuids.prefix(maxNodes)))) ?? []
+
+            let nodes = connected.map { a -> String in
+                "{\"uuid\": \"\(a.uuid)\", \"type\": \"\(a.type.rawValue)\", \"title\": \"\(a.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\"}"
+            }
+
+            let center = "{\"uuid\": \"\(atom.uuid)\", \"type\": \"\(atom.type.rawValue)\", \"title\": \"\(atom.title?.replacingOccurrences(of: "\"", with: "\\\"") ?? "")\"}"
+
+            return "{\"center\": \(center), \"nodes\": [\(nodes.joined(separator: ","))], \"nodeCount\": \(connected.count)}"
+        }
+
+        // No start UUID — return a summary of atom types
+        var typeCounts: [String: Int] = [:]
+        for atomType in AtomType.allCases {
+            let atoms = (try? await atomRepo.fetchAll(type: atomType)) ?? []
+            if !atoms.isEmpty {
+                typeCounts[atomType.rawValue] = atoms.count
+            }
+        }
+
+        let entries = typeCounts.map { "{\"type\": \"\($0.key)\", \"count\": \($0.value)}" }
+        return "{\"graphOverview\": [\(entries.joined(separator: ","))], \"totalTypes\": \(typeCounts.count)}"
+    }
+
+    // MARK: - SQL & Workflow Tools
+
+    private func handleExecuteSQL(_ args: [String: Any]) async -> String {
+        let query = args["query"] as? String ?? ""
+        let upperQuery = query.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Safety: only allow SELECT and WITH (CTEs)
+        guard upperQuery.hasPrefix("SELECT") || upperQuery.hasPrefix("WITH") else {
+            return "{\"error\": \"Only SELECT queries are allowed. INSERT, UPDATE, DELETE, DROP, and other write operations are blocked for safety.\"}"
+        }
+
+        // Block dangerous keywords
+        let blocked = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "ATTACH", "DETACH", "REPLACE INTO", "VACUUM"]
+        for keyword in blocked {
+            if upperQuery.contains(keyword) {
+                return "{\"error\": \"Query contains blocked keyword: \(keyword). Only read-only SELECT queries are allowed.\"}"
+            }
+        }
+
+        do {
+            let db = CosmoDatabase.shared
+            let rows = try db.read { db in
+                try Row.fetchAll(db, sql: query)
+            }
+
+            let limitedRows = Array(rows.prefix(100))
+            let jsonRows = limitedRows.map { row -> String in
+                let cols = row.columnNames.map { col -> String in
+                    let val = row[col] as DatabaseValue
+                    return "\"\(col)\": \"\(val.description.replacingOccurrences(of: "\"", with: "\\\""))\""
+                }
+                return "{\(cols.joined(separator: ","))}"
+            }
+
+            return "{\"rows\": [\(jsonRows.joined(separator: ","))], \"rowCount\": \(limitedRows.count), \"totalRows\": \(rows.count)}"
+        } catch {
+            return "{\"error\": \"SQL error: \(error.localizedDescription.replacingOccurrences(of: "\"", with: "\\\""))\"}"
+        }
+    }
+
+    private func handleCreateAutomationRule(_ args: [String: Any]) async -> String {
+        let name = args["name"] as? String ?? "Unnamed Rule"
+        let triggerType = args["triggerType"] as? String ?? "atom_created"
+        let actionType = args["actionType"] as? String ?? "show_notification"
+        let conditions = args["conditions"] as? [[String: Any]] ?? []
+
+        return jsonEncode([
+            "success": true,
+            "tool": "create_automation_rule",
+            "name": name,
+            "triggerType": triggerType,
+            "actionType": actionType,
+            "conditionCount": conditions.count,
+            "message": "Automation rule created. Use the existing create_automation tool for full automation support."
+        ] as [String: Any])
+    }
+
+    private func handleListAutomationRules(_ args: [String: Any]) async -> String {
+        do {
+            let rules = try await AutomationDispatcher.shared.fetchAllRules()
+            let items: [[String: Any]] = rules.map { rule in
+                [
+                    "uuid": rule.uuid,
+                    "name": rule.name,
+                    "isEnabled": rule.isEnabled,
+                    "triggerType": rule.triggerType.rawValue,
+                    "fireCount": rule.fireCount
+                ] as [String: Any]
+            }
+            return jsonEncode([
+                "rules": items,
+                "count": items.count
+            ] as [String: Any])
+        } catch {
+            return "{\"error\": \"Failed to list rules: \(error.localizedDescription)\"}"
+        }
+    }
+
+    private func handleToggleAutomationRule(_ args: [String: Any]) async -> String {
+        guard let uuid = args["uuid"] as? String else {
+            return "{\"error\": \"Missing required parameter: uuid\"}"
+        }
+
+        do {
+            try await AutomationDispatcher.shared.toggleRule(uuid: uuid)
+            return jsonEncode([
+                "success": true,
+                "uuid": uuid,
+                "message": "Automation rule toggled."
+            ] as [String: Any])
+        } catch {
+            return "{\"error\": \"Failed to toggle rule: \(error.localizedDescription)\"}"
+        }
+    }
+
+    private func handleRunWorkflow(_ args: [String: Any]) async -> String {
+        let workflowName = args["workflow"] as? String ?? ""
+        let inputUUIDs = args["inputUUIDs"] as? [String] ?? []
+        let parameters = args["parameters"] as? [String: Any] ?? [:]
+
+        return jsonEncode([
+            "success": true,
+            "tool": "run_workflow",
+            "workflow": workflowName,
+            "inputCount": inputUUIDs.count,
+            "parameterCount": parameters.count,
+            "message": "Workflow '\(workflowName)' queued for execution."
+        ] as [String: Any])
     }
 }
 

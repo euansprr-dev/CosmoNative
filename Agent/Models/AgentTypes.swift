@@ -52,18 +52,16 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
 
     /// Popular models available on OpenRouter
     static let openRouterModels: [(id: String, label: String)] = [
+        ("google/gemini-3-flash-preview", "Gemini 3 Flash"),
+        ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite"),
         ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
-        ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
         ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
+        ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
         ("openai/gpt-4o", "GPT-4o"),
         ("openai/gpt-4o-mini", "GPT-4o Mini"),
-        ("google/gemini-2.0-flash-001", "Gemini 2.0 Flash"),
         ("google/gemini-2.5-pro-preview", "Gemini 2.5 Pro"),
         ("deepseek/deepseek-chat", "DeepSeek V3"),
         ("deepseek/deepseek-r1", "DeepSeek R1"),
-        ("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B"),
-        ("mistralai/mistral-large-latest", "Mistral Large"),
-        ("qwen/qwen-2.5-72b-instruct", "Qwen 2.5 72B"),
     ]
 }
 
@@ -75,14 +73,16 @@ enum AgentIntent: String, Codable, Sendable {
     case brainstorm   // Creative ideation session
     case plan         // Schedule tasks, time blocks
     case query        // Ask about existing data
-    case execute      // Take action (advance pipeline, complete task)
+    case execute      // Take action (organize workspace, complete task)
     case debrief      // End-of-day or session review
     case reflect      // Journal-style reflection
     case correct      // Fix something (rename, update, delete)
     case meta         // Settings, preferences, help
     case strategy     // Content strategy and planning
-    case draft        // Draft creation or refinement
-    case analyze      // Deep analysis (persuasion, performance, audience)
+    case research     // Research companion — synthesize from knowledge base
+    case synthesize   // Learning synthesis — patterns across atoms
+    case analyze      // Deep analysis (patterns, connections, audience)
+    case organize     // Workspace organization — thinkspaces, blocks, templates
 }
 
 // MARK: - Request Complexity
@@ -278,34 +278,54 @@ enum AgentConfirmationTier: String, Codable, Sendable {
 // MARK: - Agent Model Tier
 
 /// Three-tier model routing strategy for cost/quality optimization.
-/// Each tier maps to a specific Claude model via OpenRouter.
+/// Router (Flash Lite) → Agent (Gemini 3 Flash) → Reasoner (Sonnet) via OpenRouter.
 /// NOTE: Named `AgentModelTier` to avoid collision with `ModelTier` in VoiceAtom.swift
 enum AgentModelTier: String, Codable, Sendable {
-    case sensor      // Haiku 4.5 — cheap bulk analysis, classification, scoring
-    case strategist  // Sonnet 4.5 — conversations, outlines, re-ranking, strategy
-    case writer      // Opus 4.6 — full drafts, hook generation, polish passes
+    case router      // Gemini 3.1 Flash Lite — intent classification, simple routing ($0.25/$1.50)
+    case agent       // Gemini 3 Flash — main tool-calling loop, 90% of traffic ($0.50/$3.00)
+    case reasoner    // Claude Sonnet 4.5 — complex multi-step reasoning, escalation ($3/$15)
 
     var modelId: String {
         switch self {
-        case .sensor: return "anthropic/claude-haiku-4.5"
-        case .strategist: return "anthropic/claude-sonnet-4.5"
-        case .writer: return "anthropic/claude-opus-4.6"
+        case .router: return "google/gemini-3.1-flash-lite-preview"
+        case .agent: return "google/gemini-3-flash-preview"
+        case .reasoner: return "anthropic/claude-sonnet-4.5"
         }
     }
 
     var maxTokens: Int {
         switch self {
-        case .sensor: return 4096
-        case .strategist: return 8192
-        case .writer: return 16384
+        case .router: return 512
+        case .agent: return 8192
+        case .reasoner: return 16384
         }
     }
 
     var contextWindow: Int {
         switch self {
-        case .sensor: return 200_000
-        case .strategist: return 200_000
-        case .writer: return 1_000_000
+        case .router: return 1_000_000
+        case .agent: return 1_000_000
+        case .reasoner: return 200_000
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .router: return "Flash Lite"
+        case .agent: return "Flash"
+        case .reasoner: return "Sonnet"
+        }
+    }
+
+    /// Gemini 3 Flash thinking level per intent — nil means no thinking config needed
+    static func thinkingLevel(for intent: AgentIntent) -> String? {
+        switch intent {
+        case .capture, .correct, .meta:
+            return "minimal"
+        case .query, .plan, .brainstorm, .debrief, .reflect:
+            return "medium"
+        case .analyze, .execute, .strategy, .research, .synthesize, .organize:
+            return "high"
         }
     }
 }
@@ -501,7 +521,7 @@ struct AgentConfiguration: Codable, Sendable {
     }
 
     static let `default` = AgentConfiguration(
-        provider: .anthropic,
+        provider: .openRouter,
         model: nil,
         baseURL: nil,
         personality: .default,
@@ -566,45 +586,18 @@ struct AgentContextTrace: Sendable {
             .filter { !$0.isEmpty && $0 != "0 results" }
     }
 
-    /// Swipe titles surfaced from writing engine tools (generate_outline, generate_draft, etc.)
-    var writingEngineSwipes: [String] {
+    /// Tools used for knowledge queries and synthesis
+    var knowledgeToolsUsed: [String] {
         toolCalls
-            .filter { $0.name.hasPrefix("generate_") || $0.name == "revise_draft" }
-            .compactMap(\.resultSummary)
-            .flatMap { summary -> [String] in
-                // Extract swipe titles from "... | Swipes(N): title1, title2" or "... | Swipes: title1, title2"
-                guard let pipeRange = summary.range(of: "| Swipes") else { return [] }
-                let afterPipe = summary[pipeRange.upperBound...]
-                guard let colonRange = afterPipe.range(of: ": ") else { return [] }
-                return String(afterPipe[colonRange.upperBound...]).components(separatedBy: ", ")
-            }
-    }
-
-    /// Total swipe count loaded by the inner writing engine (parsed from "Swipes(N):" in summary)
-    var writingEngineSwipeCount: Int {
-        for call in toolCalls where call.name.hasPrefix("generate_") || call.name == "revise_draft" {
-            guard let summary = call.resultSummary,
-                  let openParen = summary.range(of: "Swipes("),
-                  let closeParen = summary[openParen.upperBound...].range(of: ")") else { continue }
-            if let count = Int(summary[openParen.upperBound..<closeParen.lowerBound]) {
-                return count
-            }
-        }
-        return 0
-    }
-
-    /// Beat pattern names used
-    var beatPatternsUsed: [String] {
-        toolCalls
-            .filter { $0.name.contains("beat_pattern") || $0.name.contains("beat") }
-            .compactMap(\.resultSummary)
-    }
-
-    /// Writing engine tools used (generate_*, score_draft, etc.)
-    var writingToolsUsed: [String] {
-        toolCalls
-            .filter { $0.name.hasPrefix("generate_") || $0.name.contains("draft") || $0.name.contains("score") || $0.name.contains("write") }
+            .filter { $0.name.contains("query") || $0.name.contains("search") || $0.name.contains("synthesize") || $0.name.contains("graph") }
             .map(\.name)
+    }
+
+    /// Atoms referenced in tool results
+    var atomsReferenced: [String] {
+        toolCalls
+            .compactMap(\.resultSummary)
+            .filter { !$0.isEmpty && $0 != "0 results" }
     }
 
     /// Number of learned skills injected into the system prompt
@@ -641,33 +634,31 @@ struct FailoverModel: Sendable {
 struct ModelFailoverChain: Sendable {
     let models: [FailoverModel]
 
-    /// Writer chain: Opus (3 retries) → GPT 5.4
-    /// GPT 5.4 follows tool-use instructions reliably and produces better writing quality
-    /// than Sonnet/Haiku as a fallback orchestrator for the UnifiedWritingEngine pipeline.
-    static let writerChain = ModelFailoverChain(models: [
-        FailoverModel(modelId: "anthropic/claude-opus-4.6", maxRetries: 3, label: "Opus"),
-        FailoverModel(modelId: "openai/gpt-5.4", maxRetries: 1, label: "GPT 5.4"),
-    ])
-
-    /// Default chain: Sonnet → Haiku → Gemini Flash
-    static let defaultChain = ModelFailoverChain(models: [
+    /// Agent chain: Gemini 3 Flash → Sonnet → Haiku
+    static let agentChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "google/gemini-3-flash-preview", maxRetries: 2, label: "Flash"),
         FailoverModel(modelId: "anthropic/claude-sonnet-4.5", maxRetries: 1, label: "Sonnet"),
         FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
-        FailoverModel(modelId: "google/gemini-2.0-flash-001", maxRetries: 1, label: "Gemini Flash"),
     ])
 
-    /// Sensor chain: Haiku → Gemini Flash
-    static let sensorChain = ModelFailoverChain(models: [
+    /// Reasoner chain: Sonnet → Haiku
+    static let reasonerChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "anthropic/claude-sonnet-4.5", maxRetries: 2, label: "Sonnet"),
         FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
-        FailoverModel(modelId: "google/gemini-2.0-flash-001", maxRetries: 1, label: "Gemini Flash"),
+    ])
+
+    /// Router chain: Flash Lite → Haiku (lightweight fallback)
+    static let routerChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "google/gemini-3.1-flash-lite-preview", maxRetries: 1, label: "Flash Lite"),
+        FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
     ])
 
     /// Get the appropriate failover chain for a model tier
     static func chain(for tier: AgentModelTier) -> ModelFailoverChain {
         switch tier {
-        case .writer: return .writerChain
-        case .strategist: return .defaultChain
-        case .sensor: return .sensorChain
+        case .agent: return .agentChain
+        case .reasoner: return .reasonerChain
+        case .router: return .routerChain
         }
     }
 }

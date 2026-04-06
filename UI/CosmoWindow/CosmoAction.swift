@@ -43,10 +43,10 @@ enum ActionModelTier: String, Codable, Sendable {
     /// Maps to the existing AgentModelTier for routing through the agent system.
     var agentModelTier: AgentModelTier {
         switch self {
-        case .local: return .sensor
-        case .fast: return .sensor
-        case .balanced: return .strategist
-        case .creative: return .writer
+        case .local: return .router
+        case .fast: return .router
+        case .balanced: return .agent
+        case .creative: return .reasoner
         }
     }
 }

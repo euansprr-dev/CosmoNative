@@ -170,18 +170,11 @@ class CosmoAgentService: ObservableObject {
     /// Maximum tool call iterations for simple intents (queries, captures, corrections)
     private let baseMaxToolIterations = 12
 
-    /// Returns the max tool iterations for a given intent. Creative/analytical
-    /// intents that chain many tools (profile → swipes → beats → draft → score)
-    /// get a higher ceiling to avoid "ran out of processing steps" on complex requests.
+    /// Returns the max tool iterations for a given intent.
+    /// All intents get the same ceiling; the reasoner escalation (at iteration 6)
+    /// handles complexity rather than giving extra iterations.
     private func maxToolIterations(for intent: AgentIntent) -> Int {
-        switch intent {
-        case .draft, .strategy, .brainstorm:
-            return 16
-        case .analyze, .execute, .debrief:
-            return 12
-        case .capture, .query, .plan, .correct, .reflect, .meta:
-            return baseMaxToolIterations
-        }
+        return baseMaxToolIterations  // 12 for all intents
     }
 
     /// Per-conversation token tracking for cost guard
@@ -285,7 +278,7 @@ class CosmoAgentService: ObservableObject {
 
     /// Simple LLM completion without tools, used by ConversationMemoryService.
     /// Defaults to Haiku tier for cost efficiency — summarization is a simple extraction task.
-    func summarize(messages: [AgentMessage], tier: AgentModelTier = .sensor) async throws -> String? {
+    func summarize(messages: [AgentMessage], tier: AgentModelTier = .router) async throws -> String? {
         guard let provider = llmProvider else { return nil }
         let response = try await provider.complete(
             messages: messages,
@@ -367,9 +360,9 @@ class CosmoAgentService: ObservableObject {
         // 5. Add user message
         conversation.append(.user(text))
 
-        // 6. Escalate intent if conversation has creative history
-        // Prevents mid-conversation regression from Opus to Haiku when giving
-        // creative direction without explicit draft keywords
+        // 6. Escalate intent if conversation has analytical/research history
+        // Prevents mid-conversation regression from reasoner to router tier
+        // when continuing a complex thread without explicit keywords
         let effectiveIntent = escalateIntentFromConversation(classification.intent, conversation: conversation)
 
         // 7. Route to direct tool execution for all sources
@@ -453,38 +446,13 @@ class CosmoAgentService: ObservableObject {
         llmMessages.append(contentsOf: historyWindow)
 
         // --- Intent-based model tier routing ---
+        // All intents start on .agent (Gemini 3 Flash). Escalation to .reasoner
+        // happens inside the tool loop when iterations exceed the threshold.
         let modelTier: AgentModelTier
         if let override = tierOverride {
             modelTier = override
         } else {
-            switch intent {
-            case .capture, .plan, .query, .correct:
-                modelTier = .sensor      // Haiku — data operations, lookups, captures
-            case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
-                modelTier = .strategist  // Sonnet — analytical reasoning, strategy
-            case .brainstorm, .draft:
-                modelTier = .writer      // Opus — creative writing coordination needs full reasoning to follow tool-use instructions precisely
-            }
-        }
-
-        // For draft intent, guide the agent to use writing tools (not inline text)
-        // but let it decide whether to continue existing content or create new
-        if intent == .draft || intent == .brainstorm {
-            let linkedUUIDs = conversation.linkedAtomUUIDs
-            var toolGuidance = "IMPORTANT: Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +
-                "Use generate_draft() or generate_outline() — the writing engine has full client context, swipe blueprints, and voice fingerprints that you lack."
-
-            if conversation.source == .telegram || conversation.source == .whatsapp {
-                // Remote sources: ALWAYS create fresh content to avoid overwriting in-app work
-                toolGuidance += "\n\nALWAYS call create_content() first to create a fresh content atom, then use the new UUID for generate_outline / generate_draft. " +
-                    "NEVER reuse an existing contentUUID — the user may have that content open in the app."
-            } else if let lastUUID = linkedUUIDs.last {
-                toolGuidance += "\n\nThe most recent content atom is \(lastUUID). " +
-                    "If the user is continuing work on that same piece, use it. " +
-                    "If the user is requesting NEW or DIFFERENT content, call create_content() first to create a fresh atom, then use the new UUID."
-            }
-
-            llmMessages.append(AgentMessage.system(toolGuidance))
+            modelTier = .agent
         }
 
         // Context trace — accumulates tool call summaries for transparency
@@ -558,6 +526,8 @@ class CosmoAgentService: ObservableObject {
         let iterationLimit = maxToolIterations(for: intent)
         var iterations = 0
         var finalResponse = ""
+        // Mutable tier — escalates to .reasoner after 6 iterations without resolution
+        var effectiveTier = modelTier
 
         // Pass the activity callback to the tool executor so context-loading
         // sub-tools (load_client_profile, load_swipe, etc.) can stream progress.
@@ -569,12 +539,19 @@ class CosmoAgentService: ObservableObject {
         while iterations < iterationLimit {
             iterations += 1
 
+            // Escalate to reasoner tier when the agent loop exceeds 6 iterations
+            // without producing a final response — indicates a complex task
+            if iterations > 6 && effectiveTier == .agent {
+                effectiveTier = .reasoner
+                print("[CosmoAgent] Escalating to reasoner tier at iteration \(iterations)")
+            }
+
             do {
                 let response = try await provider.complete(
                     messages: llmMessages,
                     tools: tools.isEmpty ? nil : tools,
                     model: selectedModel,
-                    tier: modelTier,
+                    tier: effectiveTier,
                     systemPrompt: systemPrompt
                 )
 
@@ -775,35 +752,9 @@ class CosmoAgentService: ObservableObject {
         let historyWindow = sanitizeToolPairs(rawWindow)
         llmMessages.append(contentsOf: historyWindow)
 
-        let modelTier: AgentModelTier
-        switch effectiveIntent {
-        case .capture, .plan, .query, .correct:
-            modelTier = .sensor
-        case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
-            modelTier = .strategist
-        case .brainstorm, .draft:
-            modelTier = .writer      // Opus — creative writing coordination needs full reasoning to follow tool-use instructions precisely
-        }
-
-        // For draft intent with active content, inject a system message forcing tool use
-        if effectiveIntent == .draft || effectiveIntent == .brainstorm {
-            let linkedUUIDs = conversation.linkedAtomUUIDs
-            if conversation.source == .telegram || conversation.source == .whatsapp {
-                // Remote sources: ALWAYS create fresh content to avoid overwriting in-app work
-                let forceToolMsg = AgentMessage.system(
-                    "REMINDER: ALWAYS call create_content() first, then use the NEW UUID for generate_draft() or generate_outline(). " +
-                    "NEVER reuse an existing contentUUID — the user may have that content open in the app."
-                )
-                llmMessages.append(forceToolMsg)
-            } else if let activeUUID = linkedUUIDs.last {
-                let forceToolMsg = AgentMessage.system(
-                    "REMINDER: You MUST use generate_draft(contentUUID: \"\(activeUUID)\") or generate_outline(contentUUID: \"\(activeUUID)\") for ALL content creation. " +
-                    "Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +
-                    "The writing engine has full client context, swipe blueprints, and voice fingerprints that you lack."
-                )
-                llmMessages.append(forceToolMsg)
-            }
-        }
+        // All intents start on .agent (Gemini 3 Flash). Escalation to .reasoner
+        // happens inside the tool loop when iterations exceed the threshold.
+        let modelTier: AgentModelTier = .agent
 
         var contextTrace = AgentContextTrace()
 
@@ -811,6 +762,8 @@ class CosmoAgentService: ObservableObject {
         let iterationLimit = maxToolIterations(for: effectiveIntent)
         var iterations = 0
         var finalResponse = ""
+        // Mutable tier — escalates to .reasoner after 6 iterations without resolution
+        var effectiveTier = modelTier
 
         // Resolve provider with tier-appropriate failover chain
         let activeProvider: LLMProvider
@@ -824,6 +777,13 @@ class CosmoAgentService: ObservableObject {
         while iterations < iterationLimit {
             iterations += 1
 
+            // Escalate to reasoner tier when the agent loop exceeds 6 iterations
+            // without producing a final response — indicates a complex task
+            if iterations > 6 && effectiveTier == .agent {
+                effectiveTier = .reasoner
+                print("[CosmoAgent] Streaming: Escalating to reasoner tier at iteration \(iterations)")
+            }
+
             do {
                 let response: LLMResponse
 
@@ -834,7 +794,7 @@ class CosmoAgentService: ObservableObject {
                         messages: llmMessages,
                         tools: tools.isEmpty ? nil : tools,
                         model: selectedModel,
-                        tier: modelTier,
+                        tier: effectiveTier,
                         systemPrompt: systemPrompt,
                         onChunk: { chunk in
                             onChunk(chunk)
@@ -845,7 +805,7 @@ class CosmoAgentService: ObservableObject {
                         messages: llmMessages,
                         tools: tools.isEmpty ? nil : tools,
                         model: selectedModel,
-                        tier: modelTier,
+                        tier: effectiveTier,
                         systemPrompt: systemPrompt
                     )
                 }
@@ -1304,38 +1264,29 @@ class CosmoAgentService: ObservableObject {
             return .meta
         }
 
-        // Draft — checked BEFORE capture because long writing messages may contain
-        // incidental capture keywords (e.g. "save $40K" in deal context).
-        // Writing intent takes precedence when explicit writing verbs are present.
-        let draftKeywords = ["draft", "write a thread", "write a reel", "write about",
-                             "write this", "write for ", "writing this", "writing a ",
-                             "writing for ", "start writing", "want to write",
-                             "reel for ", "thread for ", "carousel for ",
-                             "create this reel", "create a reel",
-                             "create this thread", "create a thread",
-                             "create this carousel", "create a carousel",
-                             "make it punchier", "more punchy", "shorter", "longer",
-                             "condense", "expand", "rephrase", "rewrite",
-                             "generate an outline", "give me an outline", "write the draft",
-                             "generate hooks", "hook variants", "let's write",
-                             "make this a content piece", "let's draft this", "write this up",
-                             "let's make this", "i want to write",
-                             "feedback on slide", "feedback on hook", "feedback on this",
-                             "feedback on section", "feedback on the", "what do you think of this",
-                             "what do you think about this", "thoughts on this hook",
-                             "thoughts on this slide", "does this hook work",
-                             "make it more ", "make this more ", "make this sound",
-                             "make it sound", "too formal", "too casual", "too salesy",
-                             "what structure", "what framework", "what's a good structure",
-                             "what's a good hook", "what's a good opening", "what angle",
-                             "hook ideas", "hook options", "opening ideas",
-                             "punch up", "tighten this", "clean this up",
-                             "check the flow", "does this flow", "how does this read",
-                             "make the hook", "using this as the swipe", "using the swipe", "using that as",
-                             "let's use the blueprint", "use the blueprint", "using the blueprint",
-                             "use a hook like", "using a hook like"]
-        if containsAny(lower, draftKeywords) {
-            return .draft
+        // Research — checked BEFORE capture because research queries may contain
+        // incidental capture keywords (e.g. "research this topic").
+        let researchKeywords = ["research", "investigate", "what do i know", "explain",
+                                "teach me", "look into", "deep dive", "tell me about",
+                                "what does my research say", "find out about"]
+        if containsAny(lower, researchKeywords) {
+            return .research
+        }
+
+        // Synthesize — learning synthesis and cross-atom patterns
+        let synthesizeKeywords = ["summarize", "patterns", "synthesize", "what have i learned",
+                                  "themes across", "knowledge about", "connect the dots",
+                                  "what are the common", "recurring themes", "pull together"]
+        if containsAny(lower, synthesizeKeywords) {
+            return .synthesize
+        }
+
+        // Organize — workspace management, thinkspaces, block arrangement
+        let organizeKeywords = ["organize", "create thinkspace", "move blocks", "clean up",
+                                "layout", "template", "arrange", "tidy up", "group these",
+                                "sort my", "restructure", "workspace"]
+        if containsAny(lower, organizeKeywords) {
+            return .organize
         }
 
         // Check for capture patterns (after draft, so writing intent wins)
@@ -1431,12 +1382,10 @@ class CosmoAgentService: ObservableObject {
     private func detectComplexity(_ lower: String, intent: AgentIntent) -> RequestComplexity {
         // Multi-step patterns
         let compoundPatterns = [
-            "draft a thread", "write a thread about", "create content about",
-            "build a post", "full pipeline", "voice to content",
             "activate my idea about", "activate idea",
             "plan my week", "weekly content plan",
-            "draft.*using.*swipes", "research.*then.*draft",
-            "find.*swipes.*and.*write"
+            "research.*then.*organize", "research.*and.*synthesize",
+            "find.*and.*organize", "create thinkspace.*with"
         ]
 
         for pattern in compoundPatterns {
@@ -1476,50 +1425,49 @@ class CosmoAgentService: ObservableObject {
     // MARK: - Conversation-Aware Intent Escalation
 
     /// Escalate intent based on conversation history. When a conversation has been
-    /// about creative work (draft/brainstorm) and the current message is generic (query),
-    /// maintain the creative intent to keep the right model tier and context active.
-    /// This prevents mid-conversation regression from Opus to Haiku when the user gives
-    /// creative direction without explicit draft keywords.
+    /// about research/brainstorm work and the current message is generic (query),
+    /// maintain the analytical intent to keep the right context active.
+    /// This prevents mid-conversation regression from reasoner to router tier
+    /// when the user continues a complex thread without explicit keywords.
     private func escalateIntentFromConversation(_ intent: AgentIntent, conversation: AgentConversation) -> AgentIntent {
         // Only escalate from generic .query intent
         guard intent == .query else { return intent }
         guard !conversation.messages.isEmpty else { return intent }
 
-        // Check recent user messages for creative/drafting signals
+        // Check recent user messages for research/brainstorm signals
         let recentUserMessages = conversation.messages
             .filter { $0.role == .user }
             .suffix(5)
 
-        let creativeSignals = ["write", "writing", "draft", "reel", "thread", "carousel",
-                               "hook", "outline", "slide", "content piece", "angle",
-                               "brainstorm", "let's make", "punchier", "rewrite",
-                               "make it", "too formal", "too long", "too short"]
+        let analyticalSignals = ["research", "investigate", "synthesize", "patterns",
+                                 "brainstorm", "let's think", "explore", "deep dive",
+                                 "what do i know", "themes across", "knowledge about",
+                                 "organize", "thinkspace", "template"]
 
-        let hasCreativeHistory = recentUserMessages.contains { msg in
+        let hasAnalyticalHistory = recentUserMessages.contains { msg in
             let lower = msg.content.lowercased()
-            return creativeSignals.contains { lower.contains($0) }
+            return analyticalSignals.contains { lower.contains($0) }
         }
 
-        if hasCreativeHistory {
-            return .draft
+        if hasAnalyticalHistory {
+            return .research
         }
 
-        // Check recent tool usage for creative tools
+        // Check recent tool usage for research/knowledge tools
         let recentAssistantMessages = conversation.messages
             .filter { $0.role == .assistant }
             .suffix(5)
 
-        let creativeTools: Set<String> = ["get_client_profile", "generate_outline",
-                                           "generate_draft", "generate_hooks", "create_content",
-                                           "get_beat_patterns", "revise_draft", "search_swipes",
-                                           "find_similar_swipes", "filter_swipes_by_taxonomy"]
+        let knowledgeTools: Set<String> = ["search_swipes", "find_similar_swipes",
+                                            "filter_swipes_by_taxonomy", "search_ideas",
+                                            "get_swipe_analysis", "web_search"]
 
-        let hasCreativeToolHistory = recentAssistantMessages.contains { msg in
-            msg.toolCalls?.contains { creativeTools.contains($0.name) } == true
+        let hasKnowledgeToolHistory = recentAssistantMessages.contains { msg in
+            msg.toolCalls?.contains { knowledgeTools.contains($0.name) } == true
         }
 
-        if hasCreativeToolHistory {
-            return .draft
+        if hasKnowledgeToolHistory {
+            return .research
         }
 
         return intent
@@ -1569,9 +1517,9 @@ class CosmoAgentService: ObservableObject {
     // MARK: - Session Boundary Detection (WP8)
 
     /// Detect when a Telegram conversation should start a fresh session.
-    /// Triggers when the user starts a new content piece in an existing long conversation.
+    /// Triggers when the user starts a new topic in an existing long conversation.
     private func detectSessionBoundary(text: String, intent: AgentIntent, conversation: AgentConversation) -> Bool {
-        // Only rotate for draft intent with "new" signals and long conversations
+        // Only rotate for long conversations with "new topic" signals
         guard conversation.messages.count > 10 else { return false }
 
         let lower = text.lowercased()
@@ -1579,15 +1527,10 @@ class CosmoAgentService: ObservableObject {
         // Explicit reset command
         if lower.hasPrefix("/new") { return true }
 
-        // New content signals with draft intent
-        if intent == .draft {
-            let newContentSignals = ["new post", "new thread", "new draft", "new reel",
-                                     "let's start", "next piece", "fresh draft",
-                                     "new carousel", "new content"]
-            return newContentSignals.contains { lower.contains($0) }
-        }
-
-        return false
+        // New topic signals
+        let newTopicSignals = ["let's start", "new topic", "fresh start",
+                               "change of subject", "something else", "new question"]
+        return newTopicSignals.contains { lower.contains($0) }
     }
 
     /// Compress the current conversation into a summary and start fresh.
@@ -1600,13 +1543,13 @@ class CosmoAgentService: ObservableObject {
         var summary = conversation.summary ?? ""
 
         if !messageText.isEmpty {
-            // Preserve creative decisions, client context, and content atoms — not just topics.
+            // Preserve key context — research findings, decisions, client context.
             let prompt = """
-                Summarize this creative writing conversation for a ghostwriter AI. Be concise but preserve:
-                - Client name and platform (if mentioned)
-                - What content atoms/drafts were created (titles, UUIDs if present)
-                - Key creative decisions made (formats chosen, hooks agreed on, frameworks used)
-                - Feedback given and acted on (e.g., "hook was too salesy, shortened to 1 line")
+                Summarize this conversation for an AI assistant. Be concise but preserve:
+                - Client name and topic (if mentioned)
+                - What atoms were created or referenced (titles, UUIDs if present)
+                - Key decisions made or conclusions reached
+                - Research findings or patterns discovered
                 - What was NOT working (so it's not repeated next session)
 
                 Conversation:
@@ -1616,10 +1559,10 @@ class CosmoAgentService: ObservableObject {
                 """
             do {
                 let messages = [
-                    AgentMessage(role: .system, content: "You are a creative writing assistant summarizer. Preserve writing decisions, rejected approaches, and client voice details. Respond with only the summary."),
+                    AgentMessage(role: .system, content: "You are a conversation summarizer. Preserve key decisions, research findings, and context. Respond with only the summary."),
                     AgentMessage.user(prompt)
                 ]
-                if let newSummary = try await summarize(messages: messages, tier: .sensor) {
+                if let newSummary = try await summarize(messages: messages, tier: .router) {
                     summary = (summary.isEmpty ? "" : summary + " | ") + newSummary
                 }
             } catch {

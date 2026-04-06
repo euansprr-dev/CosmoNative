@@ -304,9 +304,9 @@ struct CosmoWindowView: View {
         Menu {
             Button("Auto") { viewModel.modelOverride = nil }
             Divider()
-            Button("Haiku (Fast)") { viewModel.modelOverride = .sensor }
-            Button("Sonnet (Balanced)") { viewModel.modelOverride = .strategist }
-            Button("Opus (Best)") { viewModel.modelOverride = .writer }
+            Button("Flash Lite (Fast)") { viewModel.modelOverride = .router }
+            Button("Flash (Balanced)") { viewModel.modelOverride = .agent }
+            Button("Sonnet (Best)") { viewModel.modelOverride = .reasoner }
         } label: {
             HStack(spacing: 4) {
                 Text(viewModel.currentModelLabel)

@@ -307,7 +307,7 @@ class BeatPatternService: ObservableObject {
             Return ONLY a JSON array like: ["BoldClaim>StepByStepProof>SocialProofNumbers>UrgencyCTA", ...]
             """
 
-            let response = try await ResearchService.shared.analyze(prompt: prompt, tier: .sensor)
+            let response = try await ResearchService.shared.analyze(prompt: prompt, tier: .router)
 
             // Parse response
             var jsonStr = response.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -438,7 +438,7 @@ class BeatPatternService: ObservableObject {
                 """
 
                 do {
-                    let response = try await ResearchService.shared.analyze(prompt: prompt, tier: .sensor)
+                    let response = try await ResearchService.shared.analyze(prompt: prompt, tier: .router)
 
                     var jsonStr = response.trimmingCharacters(in: .whitespacesAndNewlines)
                     if jsonStr.hasPrefix("```") {

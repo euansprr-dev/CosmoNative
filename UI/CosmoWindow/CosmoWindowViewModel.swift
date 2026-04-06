@@ -487,9 +487,9 @@ final class CosmoWindowViewModel: ObservableObject {
     var currentModelLabel: String {
         switch modelOverride {
         case nil: return "Auto"
-        case .sensor: return "Haiku"
-        case .strategist: return "Sonnet"
-        case .writer: return "Opus"
+        case .router: return "Flash Lite"
+        case .agent: return "Flash"
+        case .reasoner: return "Sonnet"
         }
     }
 

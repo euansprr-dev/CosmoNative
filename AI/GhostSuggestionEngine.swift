@@ -93,7 +93,7 @@ actor GhostSuggestionEngine {
             let response = try await ResearchService.shared.analyze(
                 prompt: prompt,
                 systemPrompt: systemPrompt,
-                tier: .sensor,
+                tier: .router,
                 maxTokens: 1500
             )
 

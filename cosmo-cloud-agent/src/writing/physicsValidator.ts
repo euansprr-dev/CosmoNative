@@ -214,7 +214,7 @@ async function callPhysicsExtraction(prompt: string): Promise<string> {
   const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('No Anthropic API key configured');
 
-  const model = config.models?.strategist || 'claude-sonnet-4-20250514';
+  const model = (config.models?.strategist || 'claude-sonnet-4-20250514').replace(/^anthropic\//, '');
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',

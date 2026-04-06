@@ -1885,38 +1885,10 @@ Only after thorough analysis can you call write_draft.`;
           console.log('    ✅ Blueprint fidelity + conversational slide checks passed');
         }
 
-        // Content Physics validation (runs after structural/voice/narrative checks)
-        let physicsBlockingCount = 0;
-        if (this.structuredSlidePlan?.slides.some(s => s.physicsTarget)) {
-          try {
-            const physicsTargets = this.structuredSlidePlan!.slides
-              .map(s => s.physicsTarget).filter(Boolean) as PhysicsTarget[];
-            console.log(`    🔬 Running physics extraction on draft (${physicsTargets.length} targets)...`);
-            const extraction = await extractDraftPhysics(content, physicsTargets);
-            const physicsResult = validatePhysics(
-              extraction,
-              physicsTargets,
-              (this.blueprintAnchor as any)?.fullQuarkProfile || null,
-            );
-            (this as any).lastPhysicsValidation = physicsResult;
-
-            const blockingPhysics = [
-              ...physicsResult.perSlideViolations.filter(v => v.severity === 'blocking'),
-              ...physicsResult.conservationViolations.filter(v => v.severity === 'blocking'),
-              ...physicsResult.eventViolations.filter(v => v.severity === 'blocking'),
-            ];
-            physicsBlockingCount = blockingPhysics.length;
-
-            if (physicsResult.formattedViolations) {
-              console.log(`    🔬 Physics: score=${physicsResult.overallScore}/100, blocking=${blockingPhysics.length}, advisory=${physicsResult.perSlideViolations.length + physicsResult.transitionViolations.length + physicsResult.conservationViolations.length + physicsResult.eventViolations.length - blockingPhysics.length}`);
-              result += `\n\n${physicsResult.formattedViolations}`;
-            } else {
-              console.log(`    ✅ Physics validation passed (score: ${physicsResult.overallScore}/100)`);
-            }
-          } catch (err) {
-            console.error(`    ⚠️ Physics validation error (non-blocking):`, err);
-          }
-        }
+        // Content Physics validation — disabled for now (was making a separate uncached API call
+        // that always 404'd due to model ID prefix). Can be re-enabled using the cached codex blocks
+        // for an objective second-opinion physics check during self-edit.
+        const physicsBlockingCount = 0;
 
         // Self-evaluation
         const selfEval = args.selfEvaluation;

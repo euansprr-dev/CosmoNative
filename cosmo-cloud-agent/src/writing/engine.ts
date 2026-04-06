@@ -1830,8 +1830,10 @@ Only after thorough analysis can you call write_draft.`;
         if (!content) return 'Error: content required';
         const format = args.format as string || 'plaintext';
 
-        // Persist draft to atom body
-        await updateAtom(this.contentUUID, { body: content });
+        // Persist draft to atom body — always as rendered plaintext for display.
+        // The model may output carousel_json, but the Swift app expects plaintext slides.
+        const renderedContent = renderDraftForDisplay(content);
+        await updateAtom(this.contentUUID, { body: renderedContent });
 
         // Validate format
         const validation = validateDraft(content, this.targetFormat);

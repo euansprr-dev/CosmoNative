@@ -2059,6 +2059,18 @@ class AgentToolExecutor {
                     userDirection: args["userDirection"] as? String,
                     localMetadata: localMetadata
                 )
+
+                // Write draft directly to local GRDB — don't wait for Supabase sync
+                if let draft = result.formattedDraft, !draft.isEmpty {
+                    if var localAtom = try? await AtomRepository.shared.fetch(uuid: contentUUID) {
+                        localAtom.body = draft
+                        localAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        localAtom.localVersion += 1
+                        _ = try? await AtomRepository.shared.update(localAtom)
+                        print("☁️ [AgentToolExecutor] Draft written to local GRDB (\(draft.count) chars)")
+                    }
+                }
+
                 let encoder = JSONEncoder()
                 let data = try encoder.encode(result)
                 return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode session result")

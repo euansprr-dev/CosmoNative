@@ -2204,7 +2204,7 @@ If ALL checks pass, present the draft.
     const system: any[] = this.blocks.map(block => ({
       type: 'text' as const,
       text: block.content,
-      ...(block.cacheControl ? { cache_control: { type: 'ephemeral' as const } } : {}),
+      ...(block.cacheControl ? { cache_control: { type: 'ephemeral' as const, ttl: 3600 } } : {}),
     }));
     if (dynamicBlock) {
       system.push({ type: 'text', text: dynamicBlock.content });

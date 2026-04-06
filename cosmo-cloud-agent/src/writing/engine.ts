@@ -2254,7 +2254,7 @@ If ALL checks pass, present the draft.
             'anthropic-version': '2023-06-01',
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(600_000),
+          signal: AbortSignal.timeout(900_000), // 15 min
         });
 
         // Rate limit
@@ -2316,15 +2316,12 @@ If ALL checks pass, present the draft.
     let thinkingWordCount = 0;
     let lastProgressEmit = Date.now();
 
-    const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
+    // Use Node's native async iterator (not getReader() which breaks on Railway)
+    for await (const chunk of response.body as any) {
+      buffer += decoder.decode(chunk, { stream: true });
 
       // Parse SSE lines
       const lines = buffer.split('\n');
@@ -2495,7 +2492,7 @@ If ALL checks pass, present the draft.
             'X-Title': 'CosmoOS Writing Engine',
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(600_000), // 10 min
+          signal: AbortSignal.timeout(900_000), // 15 min // 10 min
         });
 
         if (response.status === 429 || (response.status >= 500 && response.status < 600)) {

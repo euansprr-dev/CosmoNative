@@ -86,9 +86,9 @@ final class CodexImporter {
         // Step 0: Cleanup junk from previous imports
         let cleaned = try await cleanupJunkAtoms()
 
-        // Step 1: Find the codex research atom
+        // Step 1: Find the codex research atom locally (for UUID)
         let allResearch = try await AtomRepository.shared.fetchAll(type: .research)
-        guard let codexAtom = allResearch.first(where: {
+        guard var codexAtom = allResearch.first(where: {
             if let metaStr = $0.metadata,
                let data = metaStr.data(using: .utf8),
                let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -100,7 +100,24 @@ final class CodexImporter {
             throw CodexImportError.codexNotFound
         }
 
-        guard let codexBody = codexAtom.body, !codexBody.isEmpty else {
+        // Step 1b: Fetch latest body from Supabase (cloud agent writes there, local may be stale)
+        var codexBody = codexAtom.body ?? ""
+        if let supabase = SupabaseClient.shared {
+            do {
+                if let remote = try await supabase.fetchOne(table: "atoms", uuid: codexAtom.uuid),
+                   let remoteBody = remote["body"] as? String,
+                   remoteBody.count > codexBody.count {
+                    codexBody = remoteBody
+                    codexAtom.body = remoteBody
+                    try? await AtomRepository.shared.update(codexAtom)
+                    logger.info("Synced codex from Supabase: \(remoteBody.count) chars (local was \(codexAtom.body?.count ?? 0))")
+                }
+            } catch {
+                logger.warning("Supabase fetch failed, using local codex: \(error.localizedDescription)")
+            }
+        }
+
+        guard !codexBody.isEmpty else {
             throw CodexImportError.codexNotFound
         }
 

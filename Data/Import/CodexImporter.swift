@@ -207,7 +207,7 @@ final class CodexImporter {
             let allKeys = Set(parsedElements.keys)
             let matchKey = findMatchingKey(conceptName, in: allKeys)
 
-            if let matchKey, var existing = parsedElements[matchKey] {
+            if let matchKey, let existing = parsedElements[matchKey] {
                 // Enrich in-memory element
                 parsedElements[matchKey] = CodexElement(
                     canonicalName: existing.canonicalName,
@@ -221,7 +221,13 @@ final class CodexImporter {
                     whereActive: enrichment.whereActive.isEmpty ? existing.whereActive : enrichment.whereActive,
                     whyItWorks: enrichment.whyItWorks ?? existing.whyItWorks,
                     patterns: existing.patterns,
-                    variants: existing.variants
+                    variants: existing.variants,
+                    operationalRecipe: enrichment.operationalRecipe ?? existing.operationalRecipe,
+                    generationRecipe: enrichment.generationRecipe ?? existing.generationRecipe,
+                    formatConstraints: enrichment.formatConstraints ?? existing.formatConstraints,
+                    reelExamples: enrichment.reelExamples.isEmpty ? existing.reelExamples : enrichment.reelExamples,
+                    carouselExamples: enrichment.carouselExamples.isEmpty ? existing.carouselExamples : enrichment.carouselExamples,
+                    antiExampleFix: enrichment.antiExampleFix ?? existing.antiExampleFix
                 )
                 deepEntryBodies[matchKey] = fullEntryText
             } else {
@@ -246,7 +252,13 @@ final class CodexImporter {
                             whereActive: enrichment.whereActive.isEmpty ? dbElement.whereActive : enrichment.whereActive,
                             whyItWorks: enrichment.whyItWorks ?? dbElement.whyItWorks,
                             patterns: dbElement.patterns,
-                            variants: dbElement.variants
+                            variants: dbElement.variants,
+                            operationalRecipe: enrichment.operationalRecipe ?? dbElement.operationalRecipe,
+                            generationRecipe: enrichment.generationRecipe ?? dbElement.generationRecipe,
+                            formatConstraints: enrichment.formatConstraints ?? dbElement.formatConstraints,
+                            reelExamples: enrichment.reelExamples.isEmpty ? dbElement.reelExamples : enrichment.reelExamples,
+                            carouselExamples: enrichment.carouselExamples.isEmpty ? dbElement.carouselExamples : enrichment.carouselExamples,
+                            antiExampleFix: enrichment.antiExampleFix ?? dbElement.antiExampleFix
                         )
                         if let data = try? JSONEncoder().encode(enriched),
                            let jsonStr = String(data: data, encoding: .utf8) {
@@ -299,7 +311,13 @@ final class CodexImporter {
                         whereActive: enrichment.whereActive,
                         whyItWorks: enrichment.whyItWorks,
                         patterns: [],
-                        variants: []
+                        variants: [],
+                        operationalRecipe: enrichment.operationalRecipe,
+                        generationRecipe: enrichment.generationRecipe,
+                        formatConstraints: enrichment.formatConstraints,
+                        reelExamples: enrichment.reelExamples,
+                        carouselExamples: enrichment.carouselExamples,
+                        antiExampleFix: enrichment.antiExampleFix
                     )
                     deepEntryBodies[newKey] = fullEntryText
                 }
@@ -400,6 +418,13 @@ final class CodexImporter {
         var readerEffect: String?
         var whereActive: [String] = []
         var whyItWorks: String?
+        // Pass 2 fields
+        var operationalRecipe: String?
+        var generationRecipe: CodexGenerationRecipe?
+        var formatConstraints: CodexFormatConstraints?
+        var reelExamples: [CodexExample] = []
+        var carouselExamples: [CodexExample] = []
+        var antiExampleFix: CodexAntiExampleFix?
     }
 
     private func extractDeepEntryData(from body: String) -> DeepEntryData {
@@ -522,6 +547,28 @@ final class CodexImporter {
             result.frequency = freqLine
         }
 
+        // ---- Pass 2 fields ----
+
+        // Operational recipe
+        if let recipe = findStandaloneField(in: body, headers: ["OPERATIONAL RECIPE:"]) {
+            result.operationalRecipe = recipe
+        }
+
+        // Generation recipe (steps + common mistakes)
+        result.generationRecipe = parseGenerationRecipe(from: body)
+
+        // Format constraints
+        result.formatConstraints = parseFormatConstraints(from: body)
+
+        // Reel examples
+        result.reelExamples = parseFormatExamples(from: body, header: "REEL EXAMPLES")
+
+        // Carousel examples
+        result.carouselExamples = parseFormatExamples(from: body, header: "CAROUSEL EXAMPLES")
+
+        // Anti-example with fix
+        result.antiExampleFix = parseAntiExampleFix(from: body)
+
         return result
     }
 
@@ -550,7 +597,10 @@ final class CodexImporter {
         // These are section headers ONLY when the line IS the header (all caps or very short)
         // Per-example "Why it works: ..." is NOT a section header
         let sectionHeaders = ["ANTI-PATTERNS", "PATTERNS:", "STRONG FORMS",
-                               "REEL EXAMPLES", "CAROUSEL EXAMPLES"]
+                               "REEL EXAMPLES", "CAROUSEL EXAMPLES",
+                               "OPERATIONAL RECIPE", "GENERATION RECIPE",
+                               "FORMAT-SPECIFIC CONSTRAINTS", "FORMAT CONSTRAINTS",
+                               "ANTI-EXAMPLE WITH FIX", "ANTI-EXAMPLE:"]
         if sectionHeaders.contains(where: { upper.hasPrefix($0) }) { return true }
 
         // These keywords are section headers ONLY when they appear alone on a line
@@ -569,6 +619,198 @@ final class CodexImporter {
         }
 
         return false
+    }
+
+    // MARK: - Pass 2 Parsers
+
+    /// Parse GENERATION RECIPE section: numbered steps + common mistakes
+    private func parseGenerationRecipe(from body: String) -> CodexGenerationRecipe? {
+        let lines = body.components(separatedBy: "\n")
+        var inRecipe = false
+        var inMistakes = false
+        var steps: [String] = []
+        var mistakes: [String] = []
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let upper = trimmed.uppercased()
+
+            if upper.hasPrefix("GENERATION RECIPE") {
+                inRecipe = true
+                inMistakes = false
+                continue
+            }
+
+            if inRecipe && upper.hasPrefix("COMMON MISTAKES") {
+                inMistakes = true
+                continue
+            }
+
+            // End of section
+            if inRecipe && isStandaloneSectionHeader(trimmed) && !upper.hasPrefix("COMMON MISTAKES") {
+                break
+            }
+
+            guard inRecipe else { continue }
+
+            if inMistakes {
+                let cleaned = trimmed.replacingOccurrences(of: "^-\\s*", with: "", options: .regularExpression)
+                if !cleaned.isEmpty { mistakes.append(cleaned) }
+            } else if trimmed.hasPrefix("Step ") || trimmed.range(of: #"^\d+[.):]\s"#, options: .regularExpression) != nil {
+                // Strip "Step N: " or "N. " prefix
+                var step = trimmed
+                if let colonRange = step.range(of: ": ") {
+                    let prefix = step[step.startIndex..<colonRange.lowerBound]
+                    if prefix.contains("Step") || prefix.allSatisfy({ $0.isNumber || $0 == "." }) {
+                        step = String(step[colonRange.upperBound...])
+                    }
+                }
+                if !step.isEmpty { steps.append(step) }
+            }
+        }
+
+        guard !steps.isEmpty else { return nil }
+        return CodexGenerationRecipe(steps: steps, commonMistakes: mistakes)
+    }
+
+    /// Parse FORMAT-SPECIFIC CONSTRAINTS or FORMAT CONSTRAINTS section
+    private func parseFormatConstraints(from body: String) -> CodexFormatConstraints? {
+        let lines = body.components(separatedBy: "\n")
+        var inSection = false
+        var reel = ""
+        var carousel = ""
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let upper = trimmed.uppercased()
+
+            if upper.hasPrefix("FORMAT-SPECIFIC CONSTRAINTS") || upper.hasPrefix("FORMAT CONSTRAINTS") {
+                inSection = true
+                continue
+            }
+
+            if inSection && isStandaloneSectionHeader(trimmed)
+                && !upper.hasPrefix("FORMAT") && !upper.hasPrefix("- REEL") && !upper.hasPrefix("- CAROUSEL") {
+                break
+            }
+
+            guard inSection else { continue }
+
+            if upper.hasPrefix("- REEL") || upper.hasPrefix("REEL (") || upper.hasPrefix("REEL:") {
+                let content = trimmed.replacingOccurrences(of: #"^-?\s*REEL[^:]*:\s*"#, with: "", options: [.regularExpression, .caseInsensitive])
+                reel = content
+            } else if upper.hasPrefix("- CAROUSEL") || upper.hasPrefix("CAROUSEL (") || upper.hasPrefix("CAROUSEL:") {
+                let content = trimmed.replacingOccurrences(of: #"^-?\s*CAROUSEL[^:]*:\s*"#, with: "", options: [.regularExpression, .caseInsensitive])
+                carousel = content
+            }
+        }
+
+        guard !reel.isEmpty || !carousel.isEmpty else { return nil }
+        return CodexFormatConstraints(reel: reel, carousel: carousel)
+    }
+
+    /// Parse format-specific example sections (REEL EXAMPLES or CAROUSEL EXAMPLES)
+    private func parseFormatExamples(from body: String, header: String) -> [CodexExample] {
+        let lines = body.components(separatedBy: "\n")
+        var inSection = false
+        var currentExampleLines: [String] = []
+        var examples: [CodexExample] = []
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let upper = trimmed.uppercased()
+
+            if upper.hasPrefix(header.uppercased()) {
+                inSection = true
+                continue
+            }
+
+            guard inSection else { continue }
+
+            // End of section
+            if isStandaloneSectionHeader(trimmed) && !upper.hasPrefix(header.uppercased()) {
+                if !currentExampleLines.isEmpty {
+                    if let ex = parseExampleBlock(currentExampleLines) { examples.append(ex) }
+                    currentExampleLines = []
+                }
+                break
+            }
+
+            let isNewExample = isNumberedExampleStart(trimmed)
+            if isNewExample && !currentExampleLines.isEmpty {
+                if let ex = parseExampleBlock(currentExampleLines) { examples.append(ex) }
+                currentExampleLines = []
+            }
+
+            if isNewExample || (!currentExampleLines.isEmpty && !trimmed.isEmpty) {
+                currentExampleLines.append(trimmed)
+            }
+        }
+
+        // Flush final
+        if !currentExampleLines.isEmpty {
+            if let ex = parseExampleBlock(currentExampleLines) { examples.append(ex) }
+        }
+
+        return examples
+    }
+
+    /// Parse ANTI-EXAMPLE WITH FIX section
+    private func parseAntiExampleFix(from body: String) -> CodexAntiExampleFix? {
+        let lines = body.components(separatedBy: "\n")
+        var inSection = false
+        var bad = ""
+        var whyFails = ""
+        var fixed = ""
+        var whyWorks = ""
+        var currentField = ""
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let upper = trimmed.uppercased()
+
+            if upper.hasPrefix("ANTI-EXAMPLE WITH FIX") || upper.hasPrefix("ANTI-EXAMPLE:") {
+                inSection = true
+                continue
+            }
+
+            guard inSection else { continue }
+
+            // End of section
+            if isStandaloneSectionHeader(trimmed)
+                && !upper.hasPrefix("BAD:") && !upper.hasPrefix("WHY IT FAILS")
+                && !upper.hasPrefix("FIXED:") && !upper.hasPrefix("WHY THE FIX WORKS") {
+                break
+            }
+
+            if upper.hasPrefix("BAD:") {
+                currentField = "bad"
+                let content = trimmed.dropFirst(4).trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                bad = content
+            } else if upper.hasPrefix("WHY IT FAILS:") {
+                currentField = "whyFails"
+                whyFails = String(trimmed.dropFirst(13)).trimmingCharacters(in: .whitespaces)
+            } else if upper.hasPrefix("FIXED:") {
+                currentField = "fixed"
+                let content = trimmed.dropFirst(6).trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                fixed = content
+            } else if upper.hasPrefix("WHY THE FIX WORKS:") {
+                currentField = "whyWorks"
+                whyWorks = String(trimmed.dropFirst(18)).trimmingCharacters(in: .whitespaces)
+            } else if !trimmed.isEmpty {
+                // Continuation of current field
+                switch currentField {
+                case "bad": bad += " " + trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                case "whyFails": whyFails += " " + trimmed
+                case "fixed": fixed += " " + trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                case "whyWorks": whyWorks += " " + trimmed
+                default: break
+                }
+            }
+        }
+
+        guard !bad.isEmpty && !fixed.isEmpty else { return nil }
+        return CodexAntiExampleFix(bad: bad, whyItFails: whyFails, fixed: fixed, whyTheFixWorks: whyWorks)
     }
 
     /// Parse a block of lines into a CodexExample
@@ -658,7 +900,9 @@ final class CodexImporter {
             "###", "═══", "EXAMPLES", "REAL EXAMPLES", "FREQUENCY:", "DEFINITION:",
             "HOW TO APPLY", "ANTI-PATTERNS", "PATTERNS:", "STRONG FORMS",
             "WHY IT WORKS", "WHERE ACTIVE", "READER EFFECT",
-            "REEL EXAMPLES", "CAROUSEL EXAMPLES"
+            "REEL EXAMPLES", "CAROUSEL EXAMPLES",
+            "OPERATIONAL RECIPE", "GENERATION RECIPE", "FORMAT-SPECIFIC CONSTRAINTS",
+            "FORMAT CONSTRAINTS", "ANTI-EXAMPLE WITH FIX", "ANTI-EXAMPLE:"
         ]
 
         for line in bodyLines {

@@ -84,17 +84,13 @@ export async function prepareExemplarData(options?: { skipProfiles?: boolean }):
   const carouselCount = entries.filter(e => e.detectedFormat === 'carousel').length;
   const otherCount = N - reelCount - carouselCount;
 
-  lines.push(`PREPARED DATA FOR EXEMPLAR CODEX SYNTHESIS — ${N} analyzed viral posts`);
+  lines.push(`RAW SLIDE DATA — ${N} curated viral posts`);
   lines.push(`Format split: ${reelCount} reels, ${carouselCount} carousels, ${otherCount} other`);
-  lines.push(`All posts are curated high-quality viral content.\n`);
-  lines.push(`NOTE: Different extractions may use different names for the same concept.`);
-  lines.push(`Opus will unify naming and curate the definitive language.`);
-  lines.push(`Each example is tagged [REEL] or [CAROUSEL] — Opus should identify UNIVERSAL`);
-  lines.push(`principles that hold across both AND format-specific physics.\n`);
-  if (options?.skipProfiles) {
-    lines.push(`STRUCTURE: Part 1 = Every post individually (full slide text only — profiles omitted, see Codex for physics analysis).`);
-    lines.push(`           Part 2 = Aggregated voice DNA.\n`);
-  } else {
+  lines.push(`Each post is tagged [REEL] or [CAROUSEL].\n`);
+
+  if (!options?.skipProfiles) {
+    lines.push(`NOTE: Different extractions may use different names for the same concept.`);
+    lines.push(`Opus will unify naming and curate the definitive language.\n`);
     lines.push(`STRUCTURE: Part 1 = Every post individually (full text + quark profile).`);
     lines.push(`           Part 2 = Aggregated voice DNA.\n`);
     lines.push(`PROFILE NOTATION LEGEND (compact format — every field from the 10-pass extraction):`);

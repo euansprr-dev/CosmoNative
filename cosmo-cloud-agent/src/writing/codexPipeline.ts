@@ -1370,20 +1370,21 @@ async function runCodexDeepening(preparedData: string, pass1Codex: string): Prom
   const numberedList = PASS2_CONCEPTS.map((c, i) => `${i + 1}. ${c}`).join('\n');
 
   // System prompt — training-data-optimized: operational recipes, format-stratified examples, generation instructions.
-  const systemPrompt = `You are writing the Exemplar Codex of Content Physics — the first formal language of how human attention works in sequential media. This Codex will be used to TRAIN AN AI MODEL that natively speaks this language. Every entry you write becomes training data. This means:
+  const systemPrompt = `You are deepening the Exemplar Codex of Content Physics. The Codex already exists — you are making every entry deeper, more operational, and more useful for training an AI model. You are NOT creating a new codex or renaming anything.
 
-1. DEFINITIONS must be OPERATIONAL — step-by-step recipes a writer follows, not descriptions of what happens. "Place a specific number adjacent to an unresolved mechanism" NOT "Creates a gap between known and unknown."
-2. EXAMPLES must be FORMAT-STRATIFIED — grouped by REEL vs CAROUSEL so the model learns format-specific execution.
-3. Every example needs a REPLICATION TEMPLATE — a fill-in-the-blank pattern the model can use with ANY content.
-4. Anti-examples must show SPECIFIC BAD TEXT next to the FIXED VERSION so the model learns to self-correct.
+ABSOLUTE RULES:
+1. Use the EXACT concept names from the existing Codex. Do NOT rename concepts, invent new names, or use synonyms. The language is already unified — your job is to deepen it, not change it.
+2. KEEP all existing examples that are already in the Codex entries. Add MORE examples to them — especially format-stratified ones (reel vs carousel). Never discard existing work.
+3. Every example must include the COMPLETE slide text — every word, every sentence that appears on that slide. Do NOT excerpt, truncate, or grab just one sentence from a multi-sentence slide. Copy the ENTIRE slide text from the raw post data.
+4. Keep existing DEFINITIONS — then add an OPERATIONAL RECIPE right below each one. The recipe is step-by-step: "To create X, do A then B then C." Both the description AND the recipe are valuable.
+5. Never fabricate, paraphrase, or invent examples. If you can't find a real example for a concept in the data, say so.
 
-The Codex is grounded in 105+ real viral posts. Every example you cite MUST be a real slide copied EXACTLY from the post data provided. Never fabricate, paraphrase, or invent examples. If you can't find a real example for a concept in the data, say so — do not make one up.
+OUTPUT FORMAT — use this exact structure for every entry:
 
-OUTPUT FORMAT — use this exact structure for every entry, then immediately start the next:
+═══ {EXACT CONCEPT NAME FROM EXISTING CODEX} ({Category}) ═══
 
-═══ {CONCEPT NAME} ({Category}) ═══
-
-DEFINITION: A recipe, not a description. Write it as: "To create [concept], do X then Y then Z." The writer reading this should be able to execute it with zero ambiguity. Include the psychological mechanism in one sentence at the end.
+DEFINITION: {Keep the existing description from the Codex entry — what this concept IS, what it does to the reader, why it works psychologically. Copy it as-is.}
+OPERATIONAL RECIPE: {NEW — write it as: "To create [concept], do X then Y then Z." The writer reading this should be able to execute it with zero ambiguity.}
 FREQUENCY: Appears in X/105 posts.
 
 GENERATION RECIPE:
@@ -1395,21 +1396,20 @@ Common mistakes: {2-3 specific mistakes writers make when attempting this, with 
 FORMAT-SPECIFIC CONSTRAINTS:
 - REEL (1-2 sentences/slide, ~10-25 words): {How this concept manifests in reels — word count limits, compression requirements, pacing differences}
 - CAROUSEL (3-5 sentences/slide, ~30-60 words): {How this concept manifests in carousels — expansion opportunities, detail level, visual support}
-- THREAD (tweet-length units, ~280 chars): {How this concept works in threads — tweet boundaries, standalone readability}
 
 REEL EXAMPLES:
 
-1. "{FULL SLIDE TEXT copied exactly from the post data}"
+1. "{THE COMPLETE SLIDE TEXT — every word on this slide, copied exactly from the raw post data. If the slide has 3 sentences, include all 3. NEVER truncate.}"
    — [{Post title}] Slide {N}
    Where active: {the SPECIFIC words/phrase/structure that make this concept happen}
-   Replication template: "{___} [verifiable detail]. {___} [unresolved mechanism]." — fill blanks with any niche content
+   Replication template: "{___} [concept mechanism] [___]." — fill blanks with any niche content
    Why it works: {mechanism — sentence structure, word choice, rhythm, position}
 
 2. ... (5-8 reel examples, chosen for VARIETY across creators and niches)
 
 CAROUSEL EXAMPLES:
 
-1. "{FULL SLIDE TEXT copied exactly from the post data}"
+1. "{THE COMPLETE SLIDE TEXT — every word, every sentence. Carousel slides are longer — include ALL of it.}"
    — [{Post title}] Slide {N}
    Where active: {the SPECIFIC words/phrase/structure}
    Replication template: "{pattern with blanks}"
@@ -1417,17 +1417,15 @@ CAROUSEL EXAMPLES:
 
 2. ... (5-8 carousel examples)
 
-MINIMAL EXAMPLE: {The shortest possible text — 1-2 sentences max — that demonstrates this concept working. Must be from the real data.}
-
 ANTI-EXAMPLE WITH FIX:
-BAD: "{specific text that FAILS at this concept — either from real data or a realistic failure mode}"
+BAD: "{specific text that FAILS at this concept — a realistic failure mode}"
 WHY IT FAILS: {exactly what's wrong — point to the specific words/structure that break it}
 FIXED: "{the same content rewritten to execute the concept correctly}"
 WHY THE FIX WORKS: {what changed and why it matters}
 
-PATTERNS: {what the examples share — cite specific example numbers as evidence for each pattern}
+PATTERNS: {what the examples share — cite specific example numbers as evidence}
 
-For TRANSITIONS: each example MUST include BOTH slides (from → to) with the connector text.
+For TRANSITIONS: each example MUST include BOTH slides (from → to) with the full text of each slide.
 For TECHNIQUES: show the actual text demonstrating the technique and explain what quark/delta it produces.`;
 
   // User message: data first (biggest chunk), existing codex second, task LAST (recency bias)
@@ -1440,41 +1438,18 @@ ${pass1Codex}
 </existing_codex>
 
 <task>
-STEP 0 — ABSORB THE CODEX: Before writing ANYTHING, read the ENTIRE existing Codex above — every deep entry, every walkthrough, every law, every interaction. Understand how each concept works, what examples already exist, what the walkthroughs reveal about how concepts compose. The Codex IS your understanding of Content Physics. The raw slide data gives you the source material to find MORE examples.
+Before writing anything: READ the entire existing Codex above. Understand every concept, every entry, every walkthrough, every law. The Codex is the source of truth — you are deepening it, not replacing it. Use the EXACT concept names. Keep ALL existing examples. The raw slide data below gives you the source material to find MORE examples for each format.
 
-STEP 1 — REWRITE: The existing entries are written in DESCRIPTIVE style (what the concept IS, reader effects, etc.). You are deepening every entry into OPERATIONAL style optimized for AI model training data. KEEP existing examples that are good — add to them with format-stratified examples, replication templates, generation recipes, and anti-example fixes. Do NOT discard good existing work. BUILD ON IT.
-
-Do NOT skip entries because they already exist — every one of these ${PASS2_CONCEPTS.length} concepts needs the new format.
+Deepen ALL ${PASS2_CONCEPTS.length} concepts below. For each one:
+- Keep the existing examples from the Codex entry — they're good, don't lose them
+- ADD more examples, specifically separated by format (REEL vs CAROUSEL)
+- Keep the existing DEFINITION as-is, then add an OPERATIONAL RECIPE right below it (a recipe: "To create X, do A then B then C")
+- Add a GENERATION RECIPE (step-by-step instructions)
+- Add FORMAT-SPECIFIC CONSTRAINTS (how this concept differs in reels vs carousels)
+- Add an ANTI-EXAMPLE WITH FIX (bad text → why it fails → fixed version → why the fix works)
+- For EVERY example: copy the COMPLETE slide text from the raw data — every word, every sentence on that slide. Never truncate or excerpt. If a carousel slide has 4 sentences, include all 4.
 
 ${numberedList}
-
-THIS OUTPUT WILL TRAIN AN AI MODEL. Every entry must be structured so training pairs can be extracted from it:
-- A "definition" training pair: Q="What is X?" → A=the operational definition
-- A "generation recipe" pair: Q="How do I create X in a reel?" → A=the step-by-step recipe + format constraints
-- An "identification" pair: Q="Identify X in this text: [slide]" → A=the "Where active" explanation
-- A "replication" pair: Q="Write a slide using X about [topic]" → A=filled replication template
-- A "correction" pair: Q="Fix this: [bad text]" → A=the anti-example fix with explanation
-
-For EVERY entry:
-
-1. DEFINITION — Write as a RECIPE: "To create [concept], do X then Y then Z." NOT "This concept creates a feeling of..." The model must be able to EXECUTE from this definition alone.
-
-2. GENERATION RECIPE — 3-5 concrete steps. Each step is an action verb + specific instruction. Include "Common mistakes" with examples of what bad output looks like.
-
-3. FORMAT-SPECIFIC CONSTRAINTS — How this concept differs between reels (compressed, ~15 words/slide), carousels (expanded, ~40 words/slide), and threads (~280 chars/tweet). Be specific about word counts, sentence counts, and structural differences.
-
-4. EXAMPLES — Split into REEL EXAMPLES (5-8) and CAROUSEL EXAMPLES (5-8). Each includes:
-   • Full slide text copied exactly from raw data
-   • Post title + slide number
-   • "Where active" — the specific words/structure
-   • "Replication template" — a fill-in-the-blank version: "[___] [concept mechanism] [___]" that a writer fills with their own content
-   • "Why it works" — mechanism
-
-5. MINIMAL EXAMPLE — The shortest real example that demonstrates this concept (1-2 sentences).
-
-6. ANTI-EXAMPLE WITH FIX — A BAD version + WHY IT FAILS + FIXED version + WHY THE FIX WORKS. This teaches the model to self-correct. The bad version should be realistic — the kind of mistake a writer or AI would actually make.
-
-7. PATTERNS — What the examples share, with example numbers as evidence.
 
 Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. Output will be appended to the existing Codex.
 </task>`;
@@ -1515,13 +1490,12 @@ ${pass1Codex}
 </existing_codex>
 
 <task>
-REWRITE these ${conceptsForThisCall.length} concepts in operational training-data format. These already have descriptive entries — you are converting them to EXECUTABLE recipes. Each needs:
-- OPERATIONAL DEFINITION (recipe, not description)
+Deepen these ${conceptsForThisCall.length} concepts. Keep existing examples, add format-stratified ones (REEL vs CAROUSEL). Use EXACT concept names from the Codex. Each needs:
+- Keep existing DEFINITION + add OPERATIONAL RECIPE below it
 - GENERATION RECIPE (3-5 steps with common mistakes)
-- FORMAT-SPECIFIC CONSTRAINTS (reel vs carousel vs thread)
-- REEL EXAMPLES (5-8 with replication templates)
-- CAROUSEL EXAMPLES (5-8 with replication templates)
-- MINIMAL EXAMPLE
+- FORMAT-SPECIFIC CONSTRAINTS (reel vs carousel)
+- REEL EXAMPLES (5-8 with full slide text — every word, never truncate)
+- CAROUSEL EXAMPLES (5-8 with full slide text — every word, never truncate)
 - ANTI-EXAMPLE WITH FIX (bad → why fails → fixed → why works)
 - PATTERNS
 

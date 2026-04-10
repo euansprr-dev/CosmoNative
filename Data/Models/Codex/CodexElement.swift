@@ -19,6 +19,31 @@ struct CodexElement: Codable, Sendable, Equatable, Identifiable {
     let whyItWorks: String?
     let patterns: [String]
     let variants: [String]
+
+    // Pass 2 training-data fields
+    var operationalRecipe: String? = nil
+    var generationRecipe: CodexGenerationRecipe? = nil
+    var formatConstraints: CodexFormatConstraints? = nil
+    var reelExamples: [CodexExample]? = nil
+    var carouselExamples: [CodexExample]? = nil
+    var antiExampleFix: CodexAntiExampleFix? = nil
+}
+
+struct CodexGenerationRecipe: Codable, Sendable, Equatable {
+    let steps: [String]
+    let commonMistakes: [String]
+}
+
+struct CodexFormatConstraints: Codable, Sendable, Equatable {
+    let reel: String
+    let carousel: String
+}
+
+struct CodexAntiExampleFix: Codable, Sendable, Equatable {
+    let bad: String
+    let whyItFails: String
+    let fixed: String
+    let whyTheFixWorks: String
 }
 
 struct CodexExample: Codable, Sendable, Equatable, Identifiable {
@@ -28,4 +53,5 @@ struct CodexExample: Codable, Sendable, Equatable, Identifiable {
     let postReference: String
     let slideNumber: Int?
     let mechanism: String?
+    var replicationTemplate: String? = nil
 }

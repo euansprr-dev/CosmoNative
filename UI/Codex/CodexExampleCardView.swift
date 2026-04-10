@@ -1,5 +1,6 @@
 // CosmoOS/UI/Codex/CodexExampleCardView.swift
-// Rich example quote card for Codex element detail views.
+// Rich example quote card for Codex element detail views — Akashic manuscript aesthetic.
+// April 2026 — Akashic Records Premium Redesign
 
 import SwiftUI
 
@@ -14,14 +15,11 @@ struct CodexExampleCardView: View {
             quoteArea
             referenceRow
             mechanismCallout
+            replicationTemplateCallout
         }
         .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(categoryColor.opacity(0.12), lineWidth: 1)
-        )
+        .dsVellumCard(cornerRadius: DS.radiusMedium)
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 8)
         .onAppear {
@@ -37,9 +35,9 @@ struct CodexExampleCardView: View {
         ZStack(alignment: .topLeading) {
             decorativeQuote
             Text(example.slideText)
-                .font(.system(size: 14, design: .serif))
+                .font(DS.dateSerif)
                 .italic()
-                .foregroundStyle(DS.text)
+                .foregroundStyle(DS.inkWash)
                 .lineSpacing(4)
                 .padding(.leading, 20)
         }
@@ -48,7 +46,7 @@ struct CodexExampleCardView: View {
     private var decorativeQuote: some View {
         Text("\u{201C}")
             .font(.system(size: 36, weight: .bold, design: .serif))
-            .foregroundStyle(categoryColor.opacity(0.15))
+            .foregroundStyle(DS.gilt.opacity(0.2))
             .offset(x: -4, y: -8)
     }
 
@@ -68,10 +66,10 @@ struct CodexExampleCardView: View {
                         .font(DS.caption2)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(DS.surface, in: Capsule())
+                        .background(DS.vellumDeep, in: .rect(cornerRadius: DS.radiusXSmall))
                 }
             }
-            .foregroundStyle(DS.textMuted)
+            .foregroundStyle(DS.giltMuted)
         }
     }
 
@@ -81,25 +79,43 @@ struct CodexExampleCardView: View {
     private var mechanismCallout: some View {
         if let mechanism = example.mechanism, !mechanism.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
-                Text("MECHANISM")
-                    .font(DS.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(categoryColor.opacity(0.6))
-                    .tracking(0.5)
+                AkashicSectionHeader(title: "MECHANISM")
                 Text(mechanism)
                     .font(DS.caption)
-                    .foregroundStyle(DS.textSecondary)
+                    .foregroundStyle(DS.inkFaded)
                     .lineSpacing(2)
             }
             .padding(DS.space8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(categoryColor.opacity(0.04), in: .rect(cornerRadius: DS.radiusSmall))
-            .overlay(alignment: .leading) {
-                Rectangle()
-                    .fill(categoryColor.opacity(0.3))
-                    .frame(width: 2)
-                    .padding(.vertical, 4)
+            .background(DS.vellumDeep, in: .rect(cornerRadius: DS.radiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.sepiaSubtle, lineWidth: 0.5)
+            )
+        }
+    }
+
+    // MARK: - Replication Template
+
+    @ViewBuilder
+    private var replicationTemplateCallout: some View {
+        if let template = example.replicationTemplate, !template.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                AkashicSectionHeader(title: "REPLICATION TEMPLATE")
+                Text(template)
+                    .font(DS.caption)
+                    .fontDesign(.monospaced)
+                    .foregroundStyle(DS.inkFaded)
+                    .lineSpacing(2)
+                    .italic()
             }
+            .padding(DS.space8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.giltSoft.opacity(0.3), in: .rect(cornerRadius: DS.radiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.giltMuted.opacity(0.4), lineWidth: 0.5)
+            )
         }
     }
 }

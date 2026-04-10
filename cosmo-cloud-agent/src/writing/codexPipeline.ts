@@ -1384,14 +1384,14 @@ OUTPUT FORMAT — use this exact structure for every entry:
 ═══ {EXACT CONCEPT NAME FROM EXISTING CODEX} ({Category}) ═══
 
 DEFINITION: {Keep the existing description from the Codex entry — what this concept IS, what it does to the reader, why it works psychologically. Copy it as-is.}
-OPERATIONAL RECIPE: {NEW — write it as: "To create [concept], do X then Y then Z." The writer reading this should be able to execute it with zero ambiguity.}
+OPERATIONAL RECIPE: {NEW — Study ALL the examples for this concept (both existing Codex examples and any new ones you find). Identify the core structural pattern that every example shares — what do they ALL do, mechanically, at the sentence level? Then distill that pattern into concrete steps: "To create [concept]: 1) do X, 2) do Y, 3) do Z." The recipe must be derived FROM the examples, not invented abstractly. A writer following these steps with completely different content should produce the same effect.}
 FREQUENCY: Appears in X/105 posts.
 
-GENERATION RECIPE:
-Step 1: {The first concrete action — e.g., "Choose a specific, verifiable detail that proves you have insider knowledge"}
-Step 2: {The second action — e.g., "Place it adjacent to an unresolved 'how' or 'why' that the detail implies but doesn't answer"}
-Step 3: {Continue until the concept is fully executable}
-Common mistakes: {2-3 specific mistakes writers make when attempting this, with examples of the bad output}
+GENERATION RECIPE: {Derived from analyzing ALL examples above — what is the repeatable process every example follows?}
+Step 1: {First action — grounded in what you observed across examples, e.g., "Choose a specific, verifiable detail that proves insider knowledge (see examples #1, #4, #7 — all open with a concrete number or name)"}
+Step 2: {Second action — cite which examples demonstrate this step}
+Step 3: {Continue until the full pattern is captured}
+Common mistakes: {2-3 mistakes derived from comparing successful examples to the anti-example — what specifically goes wrong when writers attempt this concept?}
 
 FORMAT-SPECIFIC CONSTRAINTS:
 - REEL (1-2 sentences/slide, ~10-25 words): {How this concept manifests in reels — word count limits, compression requirements, pacing differences}

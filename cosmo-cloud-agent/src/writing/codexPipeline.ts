@@ -287,8 +287,16 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean; skip
       const cleanedCodex = cleanupCodexText(existingCodex.body);
       console.log(`  🧹 Cleaned Codex: ${existingCodex.body.length} → ${cleanedCodex.length} chars`);
       console.log(`  ⏭️ Skipping Pass 1 — using cleaned Codex (${cleanedCodex.length} chars)`);
+
+      // Re-prepare exemplar data WITHOUT quark profiles — the full codex already has the
+      // physics analysis. Pass 2 only needs raw slide text to find examples.
+      // This saves ~400K+ tokens of context, fitting within the 1M limit.
+      updateProgress({ status: 'computing_stats', phase: 'Preparing slide text (without profiles) for Pass 2...' });
+      const { codexText: pass2PrepText } = await prepareExemplarData({ skipProfiles: true });
+      console.log(`  📊 Pass 2 prep data (no profiles): ${pass2PrepText.length} chars (~${Math.round(pass2PrepText.length / 4)} tokens)`);
+
       updateProgress({ status: 'synthesizing', phase: 'Pass 2: Deepening existing Codex with real examples...' });
-      await runCodexDeepening(prepText, cleanedCodex);
+      await runCodexDeepening(pass2PrepText, cleanedCodex);
     } else {
       // STEP 3: Pass 1 — Foundation (inventory + first batch of deep concept entries)
       updateProgress({ status: 'synthesizing', phase: 'Pass 1: Building Codex foundation...' });
@@ -1432,7 +1440,11 @@ ${pass1Codex}
 </existing_codex>
 
 <task>
-The existing Codex has deep entries for ALL concepts listed below, but they are written in DESCRIPTIVE style (what the concept IS, reader effects, etc.). You are REWRITING every single entry in OPERATIONAL style optimized for AI model training data. Do NOT skip entries because they already exist — every one of these ${PASS2_CONCEPTS.length} concepts needs the new format with generation recipes, format-stratified examples, replication templates, and anti-example fixes.
+STEP 0 — ABSORB THE CODEX: Before writing ANYTHING, read the ENTIRE existing Codex above — every deep entry, every walkthrough, every law, every interaction. Understand how each concept works, what examples already exist, what the walkthroughs reveal about how concepts compose. The Codex IS your understanding of Content Physics. The raw slide data gives you the source material to find MORE examples.
+
+STEP 1 — REWRITE: The existing entries are written in DESCRIPTIVE style (what the concept IS, reader effects, etc.). You are deepening every entry into OPERATIONAL style optimized for AI model training data. KEEP existing examples that are good — add to them with format-stratified examples, replication templates, generation recipes, and anti-example fixes. Do NOT discard good existing work. BUILD ON IT.
+
+Do NOT skip entries because they already exist — every one of these ${PASS2_CONCEPTS.length} concepts needs the new format.
 
 ${numberedList}
 

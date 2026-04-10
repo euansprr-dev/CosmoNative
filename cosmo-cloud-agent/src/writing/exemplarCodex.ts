@@ -45,7 +45,7 @@ interface Example {
 // Main: Compute Exemplar Codex
 // ============================================================
 
-export async function prepareExemplarData(): Promise<{ codexText: string; stats: ExemplarCodexStats }> {
+export async function prepareExemplarData(options?: { skipProfiles?: boolean }): Promise<{ codexText: string; stats: ExemplarCodexStats }> {
   // Fetch all swipes with extracted quark profiles
   const allAtoms = await fetchAllByType('research', { limit: 500 });
   const profiledAtoms = allAtoms.filter(a =>
@@ -91,27 +91,32 @@ export async function prepareExemplarData(): Promise<{ codexText: string; stats:
   lines.push(`Opus will unify naming and curate the definitive language.`);
   lines.push(`Each example is tagged [REEL] or [CAROUSEL] — Opus should identify UNIVERSAL`);
   lines.push(`principles that hold across both AND format-specific physics.\n`);
-  lines.push(`STRUCTURE: Part 1 = Every post individually (full text + quark profile).`);
-  lines.push(`           Part 2 = Aggregated voice DNA.\n`);
-  lines.push(`PROFILE NOTATION LEGEND (compact format — every field from the 10-pass extraction):`);
-  lines.push(`  SA = Speech Act (type + mechanism). What the speaker is psychologically doing.`);
-  lines.push(`  RD = Reader Deltas (what changes in reader's mind + how). Multiple per slide.`);
-  lines.push(`  F = Frame (how slide positions its content: loss/decision/consequence/success/setup/etc).`);
-  lines.push(`  D = Experiential Distance (zero=inside moment | near=telling friend | far=reporting).`);
-  lines.push(`  P = Proof Type (metric/sacrifice/timeline/sensory/named-entity/contradiction).`);
-  lines.push(`  M = Motivation (escape/identity/money/love/defiance — why subject acts NOW).`);
-  lines.push(`  C = Compression (how skipped time/info is handled: earned/intriguing/confusing).`);
-  lines.push(`  T = Techniques (craft moves: ALL-CAPS, ellipsis, subject-drop, present-tense-shift, etc).`);
-  lines.push(`  RF = Resonance Frequency (detail that hits mass unspoken experience + reach).`);
-  lines.push(`  Transitions: from→to type(mechanism) [DH]=double helix [S]=strong(can't swap)`);
-  lines.push(`  RSV: OL=open loops TR=trust TN=tension PE=pattern expectation FR=frame EB=energy balance SP=superpositions`);
-  lines.push(`  Reader Sim: EM=emotion INV=investment Qs=active questions AS=assumptions PR=prediction\n`);
+  if (options?.skipProfiles) {
+    lines.push(`STRUCTURE: Part 1 = Every post individually (full slide text only — profiles omitted, see Codex for physics analysis).`);
+    lines.push(`           Part 2 = Aggregated voice DNA.\n`);
+  } else {
+    lines.push(`STRUCTURE: Part 1 = Every post individually (full text + quark profile).`);
+    lines.push(`           Part 2 = Aggregated voice DNA.\n`);
+    lines.push(`PROFILE NOTATION LEGEND (compact format — every field from the 10-pass extraction):`);
+    lines.push(`  SA = Speech Act (type + mechanism). What the speaker is psychologically doing.`);
+    lines.push(`  RD = Reader Deltas (what changes in reader's mind + how). Multiple per slide.`);
+    lines.push(`  F = Frame (how slide positions its content: loss/decision/consequence/success/setup/etc).`);
+    lines.push(`  D = Experiential Distance (zero=inside moment | near=telling friend | far=reporting).`);
+    lines.push(`  P = Proof Type (metric/sacrifice/timeline/sensory/named-entity/contradiction).`);
+    lines.push(`  M = Motivation (escape/identity/money/love/defiance — why subject acts NOW).`);
+    lines.push(`  C = Compression (how skipped time/info is handled: earned/intriguing/confusing).`);
+    lines.push(`  T = Techniques (craft moves: ALL-CAPS, ellipsis, subject-drop, present-tense-shift, etc).`);
+    lines.push(`  RF = Resonance Frequency (detail that hits mass unspoken experience + reach).`);
+    lines.push(`  Transitions: from→to type(mechanism) [DH]=double helix [S]=strong(can't swap)`);
+    lines.push(`  RSV: OL=open loops TR=trust TN=tension PE=pattern expectation FR=frame EB=energy balance SP=superpositions`);
+    lines.push(`  Reader Sim: EM=emotion INV=investment Qs=active questions AS=assumptions PR=prediction\n`);
+  }
 
   // ═══════════════════════════════════════════════════
-  // PART 1: EVERY POST — Full body + Full quark profile
+  // PART 1: EVERY POST — Full body text
   // ═══════════════════════════════════════════════════
   lines.push(`${'═'.repeat(70)}`);
-  lines.push(`PART 1: ALL ${N} POSTS — Full text + Complete Content Physics Profile`);
+  lines.push(`PART 1: ALL ${N} POSTS — Full text${options?.skipProfiles ? '' : ' + Complete Content Physics Profile'}`);
   lines.push(`${'═'.repeat(70)}\n`);
 
   for (let i = 0; i < entries.length; i++) {
@@ -133,9 +138,11 @@ export async function prepareExemplarData(): Promise<{ codexText: string; stats:
     lines.push(`└${'─'.repeat(66)}┘\n`);
 
     // Section B: Complete quark profile — per-slide quarks match slide numbers above
-    lines.push(`┌─ CONTENT PHYSICS PROFILE ${'─'.repeat(42)}┐`);
-    lines.push(formatProfileAsText(entry.profile));
-    lines.push(`└${'─'.repeat(66)}┘`);
+    if (!options?.skipProfiles) {
+      lines.push(`┌─ CONTENT PHYSICS PROFILE ${'─'.repeat(42)}┐`);
+      lines.push(formatProfileAsText(entry.profile));
+      lines.push(`└${'─'.repeat(66)}┘`);
+    }
   }
 
   // ═══════════════════════════════════════════════════

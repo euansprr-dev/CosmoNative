@@ -168,14 +168,16 @@ export function cleanupCodexText(raw: string): string {
     }
   }
 
-  // Also cut any "PASS 2: DEEPENED CONCEPT ENTRIES" sections that survived
-  const pass2Idx = text.indexOf('PASS 2: DEEPENED CONCEPT ENTRIES');
-  if (pass2Idx > -1) {
-    const beforePass2 = text.lastIndexOf('═══', pass2Idx);
-    if (beforePass2 > -1) {
-      const removed = text.length - beforePass2;
-      text = text.substring(0, beforePass2).trimEnd();
-      console.log(`  🧹 Cut ${removed} chars of remaining Pass 2 content`);
+  // Cut any Pass 2 sections (both old "DEEPENED" and new "OPERATIONAL TRAINING") that survived
+  for (const pass2Header of ['PASS 2: DEEPENED CONCEPT ENTRIES', 'PASS 2: OPERATIONAL TRAINING ENTRIES']) {
+    const pass2Idx = text.indexOf(pass2Header);
+    if (pass2Idx > -1) {
+      const beforePass2 = text.lastIndexOf('═══', pass2Idx);
+      if (beforePass2 > -1) {
+        const removed = text.length - beforePass2;
+        text = text.substring(0, beforePass2).trimEnd();
+        console.log(`  🧹 Cut ${removed} chars of ${pass2Header}`);
+      }
     }
   }
 
@@ -1048,6 +1050,54 @@ This is the foundational text of Content Physics. It should read like a textbook
 // Concept list for Pass 2 — each becomes a numbered entry the model must produce
 // ALL concepts that need deep entries with 10-15 real examples
 const PASS2_CONCEPTS = [
+  // Speech Acts (already had descriptive entries — need operational rewrite)
+  'HOOK (Speech Act)',
+  'CONFESSION (Speech Act)',
+  'QUESTION (Speech Act)',
+  'CLAIM (Speech Act)',
+  'CONTRAST (Speech Act)',
+  'OBSERVATION (Speech Act)',
+  'DECISION (Speech Act)',
+  'INSTRUCTION (Speech Act)',
+  'REVEAL (Speech Act)',
+  'PROOF (Speech Act)',
+  'REFRAME (Speech Act)',
+  'VALIDATION (Speech Act)',
+  'PERMISSION (Speech Act)',
+  'WARNING (Speech Act)',
+  'INVITATION (Speech Act)',
+  'GRATITUDE (Speech Act)',
+  'THESIS (Speech Act)',
+  // Transitions (already had descriptive entries — need operational rewrite)
+  'ANSWER (Transition)',
+  'ESCALATION (Transition)',
+  'ACCUMULATION (Transition)',
+  'PIVOT (Transition)',
+  'PARTIAL RESOLUTION (Transition)',
+  'CAUSE-TO-CONSEQUENCE (Transition)',
+  'OBJECTION-TO-RESOLUTION (Transition)',
+  // Reader Deltas (already had descriptive entries — need operational rewrite)
+  'IDENTIFICATION+ (Reader Delta)',
+  'TENSION+ (Reader Delta)',
+  'TRUST+ (Reader Delta)',
+  'SURPRISE (Reader Delta)',
+  'EMPATHY+ (Reader Delta)',
+  'ASPIRATION+ (Reader Delta)',
+  'RELIEF (Reader Delta)',
+  'FEAR+ (Reader Delta)',
+  'AWE (Reader Delta)',
+  'GUILT (Reader Delta)',
+  'WARMTH (Reader Delta)',
+  'CATHARSIS (Reader Delta)',
+  // Concepts that had Pass 1/3 deep entries — need operational rewrite
+  'FALSE FLOOR (Physics Event)',
+  'DIALOGUE-BASED OBJECTION VENTRILOQUISM (Compound Pattern)',
+  'SPECIFICITY AS CREDIBILITY PROXY (Law)',
+  'OMITTED MECHANISM (Technique)',
+  'STATE CHANGE THROUGH CONTRAST (Compound Pattern)',
+  'PARTICIPATORY VALIDATION (Proof Type)',
+  'ANTI-GLAMOUR POSITIONING (Technique)',
+  'EAVESDROPPING PHYSICS (Compound Pattern)',
   // Forces
   'OPEN LOOP GRAVITY (Force)',
   'TRUST ACCRETION (Force)',
@@ -1311,33 +1361,63 @@ async function runCodexDeepening(preparedData: string, pass1Codex: string): Prom
   // Build the numbered concept list for the prompt
   const numberedList = PASS2_CONCEPTS.map((c, i) => `${i + 1}. ${c}`).join('\n');
 
-  // System prompt — context + rigor + format. No behavioral nagging.
-  const systemPrompt = `You are writing the Exemplar Codex of Content Physics — the first formal language that defines how human attention works in sequential media. This is a new field. No one has ever formalized this before. The Codex is grounded in 105+ real viral posts, each analyzed through 10-pass extraction (speech acts, transitions, reader state, physics events, rhythm, long-range interactions, antimatter, deep fabric). Every concept in this language exists because we observed it in real content that went viral.
+  // System prompt — training-data-optimized: operational recipes, format-stratified examples, generation instructions.
+  const systemPrompt = `You are writing the Exemplar Codex of Content Physics — the first formal language of how human attention works in sequential media. This Codex will be used to TRAIN AN AI MODEL that natively speaks this language. Every entry you write becomes training data. This means:
 
-This is empirical science with the rigor of physics — every claim must be backed by real evidence from real posts. Every example you cite MUST be a real slide copied EXACTLY from the post data provided. Never fabricate, paraphrase, or invent examples. If you can't find a real example for a concept in the data, say so — do not make one up. The writing model that reads this Codex will use these examples as ground truth for generating content. A hallucinated example teaches the wrong pattern and produces bad content.
+1. DEFINITIONS must be OPERATIONAL — step-by-step recipes a writer follows, not descriptions of what happens. "Place a specific number adjacent to an unresolved mechanism" NOT "Creates a gap between known and unknown."
+2. EXAMPLES must be FORMAT-STRATIFIED — grouped by REEL vs CAROUSEL so the model learns format-specific execution.
+3. Every example needs a REPLICATION TEMPLATE — a fill-in-the-blank pattern the model can use with ANY content.
+4. Anti-examples must show SPECIFIC BAD TEXT next to the FIXED VERSION so the model learns to self-correct.
 
-The "Where active" line in each example is critical — it teaches the writing model to SEE the concept operating inside real text, not just recognize the label. Point to the specific words, phrase, or sentence structure that make the concept happen.
+The Codex is grounded in 105+ real viral posts. Every example you cite MUST be a real slide copied EXACTLY from the post data provided. Never fabricate, paraphrase, or invent examples. If you can't find a real example for a concept in the data, say so — do not make one up.
 
 OUTPUT FORMAT — use this exact structure for every entry, then immediately start the next:
 
 ═══ {CONCEPT NAME} ({Category}) ═══
 
-DEFINITION: What this concept IS — mechanically, what happens in the text and what it produces in the reader. Why it works psychologically.
+DEFINITION: A recipe, not a description. Write it as: "To create [concept], do X then Y then Z." The writer reading this should be able to execute it with zero ambiguity. Include the psychological mechanism in one sentence at the end.
 FREQUENCY: Appears in X/105 posts.
 
-EXAMPLES:
+GENERATION RECIPE:
+Step 1: {The first concrete action — e.g., "Choose a specific, verifiable detail that proves you have insider knowledge"}
+Step 2: {The second action — e.g., "Place it adjacent to an unresolved 'how' or 'why' that the detail implies but doesn't answer"}
+Step 3: {Continue until the concept is fully executable}
+Common mistakes: {2-3 specific mistakes writers make when attempting this, with examples of the bad output}
+
+FORMAT-SPECIFIC CONSTRAINTS:
+- REEL (1-2 sentences/slide, ~10-25 words): {How this concept manifests in reels — word count limits, compression requirements, pacing differences}
+- CAROUSEL (3-5 sentences/slide, ~30-60 words): {How this concept manifests in carousels — expansion opportunities, detail level, visual support}
+- THREAD (tweet-length units, ~280 chars): {How this concept works in threads — tweet boundaries, standalone readability}
+
+REEL EXAMPLES:
 
 1. "{FULL SLIDE TEXT copied exactly from the post data}"
    — [{Post title}] Slide {N}
-   Where active: {the SPECIFIC words/phrase/structure that make this concept happen — e.g., "The word 'cheated' without an object creates the curiosity gap" or "The shift from past to present tense at 'I find businesses...' is where distance drops to zero"}
+   Where active: {the SPECIFIC words/phrase/structure that make this concept happen}
+   Replication template: "{___} [verifiable detail]. {___} [unresolved mechanism]." — fill blanks with any niche content
    Why it works: {mechanism — sentence structure, word choice, rhythm, position}
-   Reader effect: {what changes in the reader's mind}
-   How to apply: {operational instruction — how a writer uses this same structure with different content}
 
-2. ... (10-15 examples per entry, chosen for VARIETY — different creators, niches, approaches to the same concept)
+2. ... (5-8 reel examples, chosen for VARIETY across creators and niches)
 
-PATTERNS: {what the examples share — cite specific example numbers as evidence}
-ANTI-PATTERNS: {what would destroy this concept — with specific BAD wording so the writer knows what to avoid}
+CAROUSEL EXAMPLES:
+
+1. "{FULL SLIDE TEXT copied exactly from the post data}"
+   — [{Post title}] Slide {N}
+   Where active: {the SPECIFIC words/phrase/structure}
+   Replication template: "{pattern with blanks}"
+   Why it works: {mechanism}
+
+2. ... (5-8 carousel examples)
+
+MINIMAL EXAMPLE: {The shortest possible text — 1-2 sentences max — that demonstrates this concept working. Must be from the real data.}
+
+ANTI-EXAMPLE WITH FIX:
+BAD: "{specific text that FAILS at this concept — either from real data or a realistic failure mode}"
+WHY IT FAILS: {exactly what's wrong — point to the specific words/structure that break it}
+FIXED: "{the same content rewritten to execute the concept correctly}"
+WHY THE FIX WORKS: {what changed and why it matters}
+
+PATTERNS: {what the examples share — cite specific example numbers as evidence for each pattern}
 
 For TRANSITIONS: each example MUST include BOTH slides (from → to) with the connector text.
 For TECHNIQUES: show the actual text demonstrating the technique and explain what quark/delta it produces.`;
@@ -1352,32 +1432,39 @@ ${pass1Codex}
 </existing_codex>
 
 <task>
-The existing Codex has a Periodic Table (definitions + frequencies for every concept) and detailed entries (with 10-15 real examples each) for these 13 concepts ONLY:
-- CONFESSION, FALSE FLOOR, DIALOGUE-BASED OBJECTION VENTRILOQUISM, SPECIFICITY AS CREDIBILITY PROXY, OMITTED MECHANISM, STATE CHANGE THROUGH CONTRAST (from Pass 1)
-- CONTRAST, VALIDATION, PARTICIPATORY VALIDATION, PHASE TRANSITION, ANTI-GLAMOUR POSITIONING, EAVESDROPPING PHYSICS (from Pass 3 gap-fill)
-- Plus Laws 1-6, Interactions, Deep Structure, Hypothesis Tests, Conversational DNA, 10 Walkthroughs
-
-The following ${PASS2_CONCEPTS.length} concepts appear in the Periodic Table but have NO detailed entry with real examples yet. Write all ${PASS2_CONCEPTS.length} entries sequentially:
+The existing Codex has deep entries for ALL concepts listed below, but they are written in DESCRIPTIVE style (what the concept IS, reader effects, etc.). You are REWRITING every single entry in OPERATIONAL style optimized for AI model training data. Do NOT skip entries because they already exist — every one of these ${PASS2_CONCEPTS.length} concepts needs the new format with generation recipes, format-stratified examples, replication templates, and anti-example fixes.
 
 ${numberedList}
 
-For EVERY entry above:
-- DEFINITION: One precise paragraph — what mechanically happens in the text, what it produces in the reader, why it works psychologically.
-- FREQUENCY: "Appears in X/105 posts" — count from the quark profiles in the raw data.
-- 10-15 REAL EXAMPLES chosen for VARIETY (different creators, niches, approaches to the same concept). Each example must include:
-  • The FULL SLIDE TEXT copied exactly from the raw data — not a reference like "Post 47, Slide 3" but the actual words. The writing model reading this Codex will NOT have access to the original posts.
-  • Post title + slide number for attribution.
-  • "Where active" — point to the SPECIFIC words, phrase, or sentence structure within that slide that make this concept happen. This is the most important line. Without it, the model knows the name but cannot locate the physics in actual sentences.
-  • "Why it works" — the mechanism (sentence structure, word choice, rhythm, position in the post).
-  • "Reader effect" — what changes in the reader's mind and why.
-  • "How to apply" — operational instruction a writer follows to use this same structure with different content.
-- PATTERNS: What the examples share — cite specific example numbers as evidence for each pattern.
-- ANTI-PATTERNS: What would DESTROY this concept — with specific bad wording examples so the writer knows what to avoid.
+THIS OUTPUT WILL TRAIN AN AI MODEL. Every entry must be structured so training pairs can be extracted from it:
+- A "definition" training pair: Q="What is X?" → A=the operational definition
+- A "generation recipe" pair: Q="How do I create X in a reel?" → A=the step-by-step recipe + format constraints
+- An "identification" pair: Q="Identify X in this text: [slide]" → A=the "Where active" explanation
+- A "replication" pair: Q="Write a slide using X about [topic]" → A=filled replication template
+- A "correction" pair: Q="Fix this: [bad text]" → A=the anti-example fix with explanation
 
-For TRANSITION entries: every example MUST include BOTH slides (the "from" slide and the "to" slide) with the actual connector/bridge text between them.
-For TECHNIQUE entries: show the actual text demonstrating the technique, and explain what quark or reader delta it produces.
+For EVERY entry:
 
-Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. Output will be appended to the existing Codex — do not repeat entries already deeply covered.
+1. DEFINITION — Write as a RECIPE: "To create [concept], do X then Y then Z." NOT "This concept creates a feeling of..." The model must be able to EXECUTE from this definition alone.
+
+2. GENERATION RECIPE — 3-5 concrete steps. Each step is an action verb + specific instruction. Include "Common mistakes" with examples of what bad output looks like.
+
+3. FORMAT-SPECIFIC CONSTRAINTS — How this concept differs between reels (compressed, ~15 words/slide), carousels (expanded, ~40 words/slide), and threads (~280 chars/tweet). Be specific about word counts, sentence counts, and structural differences.
+
+4. EXAMPLES — Split into REEL EXAMPLES (5-8) and CAROUSEL EXAMPLES (5-8). Each includes:
+   • Full slide text copied exactly from raw data
+   • Post title + slide number
+   • "Where active" — the specific words/structure
+   • "Replication template" — a fill-in-the-blank version: "[___] [concept mechanism] [___]" that a writer fills with their own content
+   • "Why it works" — mechanism
+
+5. MINIMAL EXAMPLE — The shortest real example that demonstrates this concept (1-2 sentences).
+
+6. ANTI-EXAMPLE WITH FIX — A BAD version + WHY IT FAILS + FIXED version + WHY THE FIX WORKS. This teaches the model to self-correct. The bad version should be realistic — the kind of mistake a writer or AI would actually make.
+
+7. PATTERNS — What the examples share, with example numbers as evidence.
+
+Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. Output will be appended to the existing Codex.
 </task>`;
 
   // Independent calls with only remaining concepts — no conversation accumulation
@@ -1416,7 +1503,15 @@ ${pass1Codex}
 </existing_codex>
 
 <task>
-Write deep entries for these ${conceptsForThisCall.length} concepts. Same format as before — each needs DEFINITION, FREQUENCY, 10-15 REAL EXAMPLES with full slide text, PATTERNS, and ANTI-PATTERNS.
+REWRITE these ${conceptsForThisCall.length} concepts in operational training-data format. These already have descriptive entries — you are converting them to EXECUTABLE recipes. Each needs:
+- OPERATIONAL DEFINITION (recipe, not description)
+- GENERATION RECIPE (3-5 steps with common mistakes)
+- FORMAT-SPECIFIC CONSTRAINTS (reel vs carousel vs thread)
+- REEL EXAMPLES (5-8 with replication templates)
+- CAROUSEL EXAMPLES (5-8 with replication templates)
+- MINIMAL EXAMPLE
+- ANTI-EXAMPLE WITH FIX (bad → why fails → fixed → why works)
+- PATTERNS
 
 ${thisNumberedList}
 
@@ -1488,8 +1583,9 @@ Write ALL ${conceptsForThisCall.length} entries. Do not stop early.
     return;
   }
 
-  // Append Pass 2 to the existing Codex atom
-  const combinedCodex = pass1Codex + '\n\n═══ PASS 2: DEEPENED CONCEPT ENTRIES ═══\n\n' + allPass2Text;
+  // Append Pass 2 operational entries AFTER existing codex.
+  // Old descriptive entries are kept for comparison — can strip them later once validated.
+  const combinedCodex = pass1Codex + '\n\n═══ PASS 2: OPERATIONAL TRAINING ENTRIES ═══\n\n' + allPass2Text;
 
   const allAtomsForSave = await fetchAllByType('research', { limit: 500 });
   const existingCodex = allAtomsForSave.find(a => a.metadata?.isCodexSynthesis);

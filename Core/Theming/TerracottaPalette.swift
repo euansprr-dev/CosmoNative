@@ -37,6 +37,17 @@ struct TerracottaPalette: ThemePalette {
     let redSoft = Color(hex: "F5E0E0")
     let infoSoft = Color(hex: "E0EBF5")
 
+    // Akashic Codex — premium material system (warm earthy)
+    let gilt = Color(hex: "C7894A")
+    let giltSoft = Color(hex: "F5E8D5")
+    let giltMuted = Color(hex: "D4BEA0")
+    let vellum = Color(hex: "F5EDE5")
+    let vellumDeep = Color(hex: "F2E8DE")
+    let inkWash = Color(hex: "3D2C2C")
+    let inkFaded = Color(hex: "7A6858")
+    let sepiaBorder = Color(hex: "E0D5C8")
+    let sepiaSubtle = Color(hex: "EAE0D5")
+
     // Borders
     let border = Color(hex: "E0D5C8")
     let borderSubtle = Color(hex: "EAE0D5")

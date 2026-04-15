@@ -104,9 +104,51 @@ class SyncEngine: ObservableObject {
         // 2. Pull remote changes
         await pullRemoteChanges()
 
+        // 3. One-shot catch-up: convert any inbox-capture atoms that were pulled
+        // before this fix shipped (they're in GRDB but never became InboxItems).
+        await runInboxCatchupMigrationIfNeeded()
+
         // Update state
         lastSyncTime = Date()
         syncState = .idle
+    }
+
+    // MARK: - Inbox Catch-Up Migration
+    /// Recovers cloud inbox captures that were pulled into GRDB before the
+    /// batch-pull path learned how to convert them. Runs once per install.
+    private func runInboxCatchupMigrationIfNeeded() async {
+        let key = "inboxCatchupMigrationRan_v1"
+        if UserDefaults.standard.bool(forKey: key) { return }
+
+        let rows: [[String: Any]]? = try? await database.asyncRead { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT uuid, body, title, metadata, is_deleted
+                FROM atoms
+                WHERE is_deleted = 0
+                  AND metadata LIKE '%"isInboxCapture":true%'
+                """
+            )
+            return rows.map { row -> [String: Any] in
+                var dict: [String: Any] = [:]
+                for name in ["uuid", "body", "title", "metadata"] {
+                    if let s: String = row[name] { dict[name] = s }
+                }
+                dict["is_deleted"] = (row["is_deleted"] as? Int) ?? 0
+                return dict
+            }
+        }
+
+        if let rows, !rows.isEmpty {
+            print("📥 SyncEngine: inbox catch-up migration processing \(rows.count) stuck capture(s)")
+            for row in rows {
+                guard let uuid = row["uuid"] as? String else { continue }
+                await InboxCaptureConverter.convertIfInboxCapture(uuid: uuid, atomData: row)
+            }
+        }
+
+        UserDefaults.standard.set(true, forKey: key)
     }
 
     // MARK: - Push Local Changes (Invisible)
@@ -273,6 +315,9 @@ class SyncEngine: ObservableObject {
                         let source = change["_source"] as? String ?? "mac"
                         if source != "mac" {
                             pulledAtomUUIDs.append(uuid)
+                            // Cloud inbox captures that arrived while this Mac was offline
+                            // never hit Realtime — convert them here so they reach the Inbox UI.
+                            await InboxCaptureConverter.convertIfInboxCapture(uuid: uuid, atomData: change)
                         }
                     }
                 }

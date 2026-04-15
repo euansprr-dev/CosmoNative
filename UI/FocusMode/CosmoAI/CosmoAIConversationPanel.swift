@@ -68,11 +68,11 @@ struct CosmoAIConversationPanel: View {
 
             ZStack {
                 Circle()
-                    .fill(DS.accent.opacity(0.1))
+                    .fill(DS.giltSoft)
                     .frame(width: 56, height: 56)
                 Image(systemName: "brain")
                     .font(.system(size: 24, weight: .medium))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.gilt)
             }
 
             Text("Cosmo AI")

@@ -295,10 +295,8 @@ struct InstagramReelLayout: View {
     private var transcriptHeader: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("TRANSCRIPT & ANNOTATIONS")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundColor(DS.textSecondary)
+                Text("Transcript & Annotations")
+                    .dsSmallCapsLabel()
 
                 Text("Manual transcription · \(sectionCount) sections · \(annotationCount) annotations")
                     .font(.system(size: 11))
@@ -591,17 +589,11 @@ struct AnnotationBubbleView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            // Type indicator
-            RoundedRectangle(cornerRadius: 2)
-                .fill(annotationColor)
-                .frame(width: 3)
-
             VStack(alignment: .leading, spacing: 4) {
                 // Type label
-                Text(annotation.type.rawValue.uppercased())
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.5)
-                    .foregroundColor(annotationColor)
+                Text(annotation.type.rawValue)
+                    .font(DS.smallCaps)
+                    .foregroundStyle(annotationColor)
 
                 // Content
                 CosmoDocumentEditor(

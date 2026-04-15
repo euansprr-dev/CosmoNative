@@ -55,10 +55,8 @@ public struct StreakDetailsView: View {
 
     private var activeStreaksSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Text("ACTIVE STREAKS")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.5)
+            Text("Active Streaks")
+                .dsSmallCapsLabel()
 
             LazyVGrid(columns: [
                 GridItem(.flexible()),
@@ -82,10 +80,8 @@ public struct StreakDetailsView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(DS.entityStickyNote)
 
-                Text("AT RISK TODAY")
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(DS.textSecondary)
-                    .tracking(1.5)
+                Text("At Risk Today")
+                    .dsSmallCapsLabel()
             }
 
             VStack(spacing: DS.space8) {
@@ -108,10 +104,8 @@ public struct StreakDetailsView: View {
 
     private var streakRecordsSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Text("PERSONAL RECORDS")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.5)
+            Text("Personal Records")
+                .dsSmallCapsLabel()
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: DS.space12) {
@@ -128,10 +122,8 @@ public struct StreakDetailsView: View {
     private var streakCalendarSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
-                Text("STREAK CALENDAR")
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(DS.textSecondary)
-                    .tracking(1.5)
+                Text("Streak Calendar")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 
@@ -156,10 +148,8 @@ public struct StreakDetailsView: View {
 
     private var streakMultipliersSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Text("XP MULTIPLIERS")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.5)
+            Text("XP Multipliers")
+                .dsSmallCapsLabel()
 
             VStack(spacing: 0) {
                 MultiplierRow(days: 7, multiplier: 1.1, isUnlocked: true, isCurrent: false)
@@ -188,10 +178,8 @@ public struct StreakDetailsView: View {
 
     private var streakHistorySection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Text("STREAK HISTORY")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.5)
+            Text("Streak History")
+                .dsSmallCapsLabel()
 
             VStack(spacing: DS.space8) {
                 StreakHistoryRow(type: "Writing", length: 124, startDate: "Apr 12, 2025", endDate: "Aug 14, 2025", endReason: "Vacation")

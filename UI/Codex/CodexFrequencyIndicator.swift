@@ -1,5 +1,6 @@
 // CosmoOS/UI/Codex/CodexFrequencyIndicator.swift
-// Visual frequency indicator — compact bar for cards, full ring for detail views.
+// Visual frequency indicator — constellation dots for cards, gilt ring for detail views.
+// April 2026 — Akashic Records Premium Redesign
 
 import SwiftUI
 
@@ -9,8 +10,8 @@ struct CodexFrequencyIndicator: View {
     let mode: Mode
 
     enum Mode {
-        case compact  // thin horizontal bar for cards
-        case full     // circular ring for detail views
+        case compact  // constellation dots for cards
+        case full     // gilt circular ring for detail views
     }
 
     @State private var animatedRatio: Double = 0
@@ -28,47 +29,15 @@ struct CodexFrequencyIndicator: View {
     var body: some View {
         if let data = parsed {
             switch mode {
-            case .compact: compactBar(data)
-            case .full: fullRing(data)
+            case .compact:
+                ConstellationDots(frequency: frequency)
+            case .full:
+                fullRing(data)
             }
         }
     }
 
-    // MARK: - Compact Bar
-
-    private func compactBar(_ data: (numerator: Int, denominator: Int, ratio: Double)) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            frequencyBarTrack(data)
-            frequencyBarLabel(data)
-        }
-        .onAppear {
-            withAnimation(ProMotionSprings.gentle) {
-                animatedRatio = data.ratio
-            }
-        }
-    }
-
-    private func frequencyBarTrack(_ data: (numerator: Int, denominator: Int, ratio: Double)) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(color.opacity(0.12))
-                    .frame(height: 4)
-                Capsule()
-                    .fill(color.opacity(0.6))
-                    .frame(width: geo.size.width * animatedRatio, height: 4)
-            }
-        }
-        .frame(height: 4)
-    }
-
-    private func frequencyBarLabel(_ data: (numerator: Int, denominator: Int, ratio: Double)) -> some View {
-        Text("\(data.numerator)/\(data.denominator)")
-            .font(DS.caption2)
-            .foregroundStyle(DS.textMuted)
-    }
-
-    // MARK: - Full Ring
+    // MARK: - Full Ring (gilt-styled)
 
     private func fullRing(_ data: (numerator: Int, denominator: Int, ratio: Double)) -> some View {
         ZStack {
@@ -86,13 +55,13 @@ struct CodexFrequencyIndicator: View {
 
     private var ringBackground: some View {
         Circle()
-            .stroke(color.opacity(0.12), lineWidth: 4)
+            .stroke(DS.sepiaBorder, lineWidth: 3)
     }
 
     private func ringForeground(_ data: (numerator: Int, denominator: Int, ratio: Double)) -> some View {
         Circle()
             .trim(from: 0, to: animatedRatio)
-            .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+            .stroke(DS.gilt, style: StrokeStyle(lineWidth: 3, lineCap: .round))
             .rotationEffect(.degrees(-90))
     }
 
@@ -100,10 +69,10 @@ struct CodexFrequencyIndicator: View {
         VStack(spacing: 0) {
             Text("\(Int(data.ratio * 100))")
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(color)
+                .foregroundStyle(DS.inkWash)
             Text("%")
-                .font(.system(size: 9))
-                .foregroundStyle(DS.textMuted)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
         }
     }
 }

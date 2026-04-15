@@ -422,9 +422,7 @@ struct ContentPolishSidebar: View {
                 .font(.system(size: 9))
                 .foregroundColor(DS.textMuted)
             Text(title)
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+                .dsSmallCapsLabel()
         }
     }
 

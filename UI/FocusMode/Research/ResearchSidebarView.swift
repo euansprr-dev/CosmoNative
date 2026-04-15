@@ -305,17 +305,12 @@ struct ResearchSidebarView: View {
 
     @ViewBuilder
     private func highlightedTextReference(_ text: String) -> some View {
-        HStack(spacing: 4) {
-            Rectangle()
-                .fill(DS.borderActive)
-                .frame(width: 2)
-            Text(text)
-                .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
-                .lineLimit(2)
-                .italic()
-        }
-        .padding(.leading, 4)
+        Text(text)
+            .font(.system(size: 9))
+            .foregroundColor(DS.textMuted)
+            .lineLimit(2)
+            .italic()
+            .padding(.leading, 4)
     }
 
     @ViewBuilder
@@ -533,9 +528,8 @@ struct ResearchSidebarView: View {
                 .font(.system(size: 9))
                 .foregroundColor(color)
             Text(title)
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(color)
+                .font(DS.smallCaps)
+                .foregroundStyle(color)
         }
         .padding(.top, 8)
     }
@@ -796,9 +790,7 @@ struct ResearchSidebarView: View {
                 .font(.system(size: 9))
                 .foregroundColor(DS.textMuted)
             Text(title)
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+                .dsSmallCapsLabel()
         }
     }
 

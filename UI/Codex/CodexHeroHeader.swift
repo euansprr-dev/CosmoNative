@@ -1,5 +1,6 @@
 // CosmoOS/UI/Codex/CodexHeroHeader.swift
-// Dramatic hero header for the Content Physics Codex main page.
+// Dramatic hero header for the Content Physics Codex — Akashic manuscript aesthetic.
+// April 2026 — Akashic Records Premium Redesign
 
 import SwiftUI
 
@@ -17,29 +18,21 @@ struct CodexHeroHeader: View {
         heroContent
             .background {
                 ZStack {
-                    DS.surfaceElevated
-                    ambientGradient
+                    DS.vellum
+                    RadialGradient(
+                        colors: [DS.giltSoft.opacity(0.15), .clear],
+                        center: .top,
+                        startRadius: 0,
+                        endRadius: 300
+                    )
                 }
-                .filmGrain(opacity: 0.02)
+                .filmGrain(opacity: 0.025)
             }
             .onAppear {
                 withAnimation(ProMotionSprings.cardEntrance) {
                     appeared = true
                 }
             }
-    }
-
-    private var ambientGradient: some View {
-        LinearGradient(
-            colors: [
-                CodexElementCategory.speechAct.color.opacity(0.04),
-                CodexElementCategory.readerDelta.color.opacity(0.03),
-                CodexElementCategory.physicsEvent.color.opacity(0.04),
-                .clear,
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
     }
 
     // MARK: - Content
@@ -56,39 +49,39 @@ struct CodexHeroHeader: View {
 
     private var titleColumn: some View {
         VStack(alignment: .leading, spacing: DS.space4) {
-            Text("Content Physics Codex")
-                .font(DS.pageTitle)
-                .foregroundStyle(DS.text)
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 6)
-            Text("The complete language of viral content")
-                .font(DS.caption)
-                .foregroundStyle(DS.textSecondary)
-                .italic()
-                .opacity(appeared ? 1 : 0)
+            heroTitle
+            heroSubtitle
             statsRow
         }
     }
 
-    private var statsRow: some View {
-        HStack(spacing: DS.space8) {
-            statBadge(icon: "atom", text: "\(elementCount) elements")
-            statBadge(icon: "square.grid.3x3", text: "\(categoryCount) categories")
-        }
+    private var heroTitle: some View {
+        Text("Content Physics Codex")
+            .font(DS.displaySerif)
+            .foregroundStyle(DS.inkWash)
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared ? 0 : 6)
     }
 
-    private func statBadge(icon: String, text: String) -> some View {
+    private var heroSubtitle: some View {
+        Text("The complete language of viral content")
+            .font(DS.dateSerif)
+            .foregroundStyle(DS.inkFaded)
+            .italic()
+            .opacity(appeared ? 1 : 0)
+    }
+
+    private var statsRow: some View {
         HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .accessibilityHidden(true)
-            Text(text)
-                .font(DS.caption)
+            Text("\(elementCount) elements")
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
+            Text("\u{00B7}")
+                .foregroundStyle(DS.gilt)
+            Text("\(categoryCount) categories")
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
         }
-        .foregroundStyle(DS.accent)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(DS.accent.opacity(0.08), in: Capsule())
     }
 
     // MARK: - Controls
@@ -105,7 +98,7 @@ struct CodexHeroHeader: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13))
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.inkFaded)
                 .accessibilityHidden(true)
             TextField("Search elements...", text: $searchQuery)
                 .textFieldStyle(.plain)
@@ -113,10 +106,10 @@ struct CodexHeroHeader: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.border, lineWidth: 1)
+                .stroke(DS.sepiaBorder, lineWidth: 0.5)
         )
         .frame(width: 240)
     }
@@ -140,11 +133,15 @@ struct CodexHeroHeader: View {
             }
             Text(isImporting ? "Importing..." : "Import")
         }
-        .font(DS.caption)
-        .foregroundStyle(DS.accent)
+        .font(DS.smallCaps)
+        .foregroundStyle(DS.giltMuted)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(DS.accent.opacity(0.1), in: Capsule())
+        .background(DS.vellumDeep, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.giltMuted, lineWidth: 0.5)
+        )
     }
 
     private var gridToggle: some View {
@@ -153,9 +150,13 @@ struct CodexHeroHeader: View {
         } label: {
             Image(systemName: showGrid ? "square.grid.2x2" : "list.bullet")
                 .font(.system(size: 14))
-                .foregroundStyle(DS.textSecondary)
+                .foregroundStyle(DS.inkFaded)
                 .frame(width: 32, height: 32)
-                .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                )
         }
         .buttonStyle(.plain)
         .accessibilityLabel(showGrid ? "Switch to list view" : "Switch to grid view")
@@ -166,17 +167,6 @@ struct CodexHeroHeader: View {
 
 struct CodexCategoryDivider: View {
     var body: some View {
-        LinearGradient(
-            colors: [
-                CodexElementCategory.speechAct.color.opacity(0.2),
-                CodexElementCategory.readerDelta.color.opacity(0.15),
-                CodexElementCategory.technique.color.opacity(0.2),
-                CodexElementCategory.physicsEvent.color.opacity(0.15),
-                CodexElementCategory.arcShape.color.opacity(0.2),
-            ],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-        .frame(height: 1)
+        AkashicSectionDivider()
     }
 }

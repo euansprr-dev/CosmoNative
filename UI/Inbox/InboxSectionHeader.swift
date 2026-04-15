@@ -10,10 +10,8 @@ struct InboxSectionHeader: View {
 
     var body: some View {
         HStack(spacing: DS.space8) {
-            Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.8)
+            Text(title)
+                .dsSmallCapsLabel()
 
             Text("\(itemCount)")
                 .font(.system(size: 10, weight: .semibold))

@@ -89,10 +89,9 @@ struct FocusFloatingBlockView: View {
                 .foregroundColor(typeConfig.accentColor)
 
             // Type badge
-            Text(typeConfig.label.uppercased())
-                .font(.system(size: 8, weight: .bold))
-                .tracking(0.6)
-                .foregroundColor(typeConfig.accentColor.opacity(0.8))
+            Text(typeConfig.label)
+                .font(DS.smallCaps)
+                .foregroundStyle(typeConfig.accentColor.opacity(0.8))
 
             Spacer()
 

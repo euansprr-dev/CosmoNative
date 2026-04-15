@@ -86,7 +86,7 @@ struct UnifiedSidebarSection<Content: View>: View {
 
             if showsDivider {
                 Rectangle()
-                    .fill(DS.glassBorder)
+                    .fill(DS.sepiaSubtle)
                     .frame(height: 0.5)
                     .padding(.leading, isCollapsed ? 14 : 6)
                     .padding(.trailing, 6)
@@ -121,8 +121,8 @@ extension View {
         isActive: Bool,
         isHovered: Bool,
         cornerRadius: CGFloat = UnifiedSidebarMetrics.rowRadius,
-        activeFill: Color = DS.accentSoft,
-        hoverFill: Color = DS.bg,
+        activeFill: Color = DS.giltSoft,
+        hoverFill: Color = DS.vellumDeep,
         activeBorder: Color = .clear
     ) -> some View {
         modifier(
@@ -181,13 +181,13 @@ struct UnifiedSidebar: View {
         let radius = UnifiedSidebarMetrics.floatingCornerRadius
         if reduceTransparency {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(DS.surface)
+                .fill(DS.vellum)
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(.ultraThinMaterial)
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(DS.surface.opacity(DS.palette.isDark ? 0.65 : 0.50))
+                    .fill(DS.vellum.opacity(DS.palette.isDark ? 0.65 : 0.50))
             }
         }
     }

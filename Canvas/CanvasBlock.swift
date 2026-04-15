@@ -88,6 +88,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .stickyNote: return CGSize(width: 220, height: 220)
         case .liveQuery:  return CGSize(width: 280, height: 360)
         case .ideaBoard:  return CGSize(width: 280, height: 400)
+        case .template:   return CGSize(width: 260, height: 380)
         default:          return CGSize(width: 220, height: 310)
         }
     }
@@ -155,6 +156,8 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             } else {
                 size = CGSize(width: 320, height: 240)
             }
+        case .templateInstance, .blockTemplate:
+            size = CGSize(width: 260, height: 380)
         default:
             size = CGSize(width: 220, height: 310)
         }
@@ -249,6 +252,11 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             let projectWrapper = ProjectWrapper(atom: atom)
             metadata["status"] = projectWrapper.status
             metadata["priority"] = projectWrapper.priority
+        case .templateInstance:
+            if let templateData = atom.templateInstanceData {
+                metadata["templateUUID"] = templateData.templateUUID
+                metadata["instanceStatus"] = templateData.instanceStatus ?? "active"
+            }
         default:
             break
         }
@@ -256,13 +264,23 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         return CanvasBlock(
             position: position,
             size: size,
-            entityType: EntityType(rawValue: atom.type.rawValue) ?? .idea,
+            entityType: Self.entityType(for: atom.type),
             entityId: atom.id ?? -1,
             entityUuid: atom.uuid,
             title: atom.title ?? "Untitled",
             subtitle: subtitle,
             metadata: metadata
         )
+    }
+
+    /// Map AtomType to EntityType, handling cases where raw values differ
+    private static func entityType(for atomType: AtomType) -> EntityType {
+        switch atomType {
+        case .templateInstance, .blockTemplate:
+            return .template
+        default:
+            return EntityType(rawValue: atomType.rawValue) ?? .idea
+        }
     }
 
     // MARK: - Legacy Convenience Methods (using AtomWrappers)

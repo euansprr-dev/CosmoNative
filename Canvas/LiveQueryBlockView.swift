@@ -29,12 +29,22 @@ struct LiveQueryBlockView: View {
             footerSection
         }
         .frame(width: 280, height: 360)
-        .background(DS.surface)
+        .background(DS.vellum)
         .clipShape(.rect(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(DS.border, lineWidth: 1)
+                .stroke(DS.sepiaBorder, lineWidth: 0.5)
         )
+        .overlay(alignment: .topLeading) {
+            GiltCornerBracket()
+                .stroke(DS.gilt, lineWidth: 0.8)
+                .frame(width: 12, height: 12)
+                .padding(7)
+                .opacity(0.6)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .shadow(color: .black.opacity(0.02), radius: 2, y: 1)
         .task {
             await executeQuery()
             startObservation()
@@ -81,10 +91,9 @@ struct LiveQueryBlockView: View {
                         }
                 )
 
-            Text("LIVE")
-                .font(.system(size: 8, weight: .bold))
+            Text("Live")
+                .font(DS.smallCaps)
                 .foregroundStyle(DS.green)
-                .tracking(0.6)
         }
     }
 
@@ -118,17 +127,20 @@ struct LiveQueryBlockView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 20)
             } else if results.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "tray")
-                        .font(.system(size: 18, weight: .light))
-                        .foregroundStyle(DS.textMuted.opacity(0.4))
+                VStack(spacing: 8) {
+                    Image(systemName: "sparkle")
+                        .font(.system(size: 16, weight: .light))
+                        .foregroundStyle(DS.gilt.opacity(0.45))
 
-                    Text("No matches")
-                        .font(.system(size: 11, weight: .medium))
+                    Text("NO MATCHES")
+                        .dsSmallCapsLabel()
+
+                    Text("widen the query to catch more")
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.top, 20)
+                .padding(.top, 24)
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(results) { result in

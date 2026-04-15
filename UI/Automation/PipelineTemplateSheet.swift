@@ -158,10 +158,8 @@ struct PipelineTemplateSheet: View {
 
     private var clientPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("SELECT CLIENT")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.8)
+            Text("Select Client")
+                .dsSmallCapsLabel()
 
             if clientProfiles.isEmpty {
                 TextField("Client name", text: $clientName)

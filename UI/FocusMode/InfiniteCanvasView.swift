@@ -285,8 +285,13 @@ struct CanvasGridView: View {
 
         Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
             let resolved = context.resolve(Image(nsImage: tileImage))
-            let startX = -offset.x.truncatingRemainder(dividingBy: tileSize)
-            let startY = -offset.y.truncatingRemainder(dividingBy: tileSize)
+            // Match thinkspace GridPatternView: compute where canvas origin maps to in screen space
+            // Content is rendered with scaleEffect(zoom) then offset(offset), so canvas (0,0)
+            // maps to screen (size.width/2 + offset.x, size.height/2 + offset.y)
+            let gridOriginX = size.width / 2 + offset.x
+            let gridOriginY = size.height / 2 + offset.y
+            let startX = gridOriginX.truncatingRemainder(dividingBy: tileSize)
+            let startY = gridOriginY.truncatingRemainder(dividingBy: tileSize)
 
             for x in stride(from: startX - tileSize, through: size.width + tileSize, by: tileSize) {
                 for y in stride(from: startY - tileSize, through: size.height + tileSize, by: tileSize) {

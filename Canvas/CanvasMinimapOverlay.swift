@@ -19,7 +19,8 @@ struct CanvasMinimapOverlay: View {
         .content: DS.entityContent,     // Slate blue
         .research: DS.entityResearch,   // Forest teal
         .connection: DS.entityConnection, // Soft purple
-        .note: DS.entityNote,           // Warm umber
+        .note: DS.entityStickyNote,     // Yellow
+        .stickyNote: DS.entityStickyNote, // Yellow
         .task: DS.entityTask,           // Dusty rose
         .cosmoAI: DS.accent,            // Forest green
     ]
@@ -83,11 +84,11 @@ struct CanvasMinimapOverlay: View {
                 .frame(width: overlaySize.width, height: overlaySize.height)
                 .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(DS.surfaceElevated)
+                        .fill(DS.vellum)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(DS.border, lineWidth: 1)
+                        .stroke(DS.sepiaBorder, lineWidth: 0.5)
                 )
                 .dsFloatingShadow()
                 .position(x: geo.size.width / 2, y: geo.size.height / 2)
@@ -108,11 +109,10 @@ struct CanvasMinimapOverlay: View {
         HStack {
             HStack(spacing: 8) {
                 Image(systemName: "map")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.accent)
-                Text("Minimap")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.gilt)
+                Text("MINIMAP")
+                    .dsSmallCapsLabel()
             }
 
             Spacer()
@@ -123,6 +123,7 @@ struct CanvasMinimapOverlay: View {
                 legendItem(color: DS.entityIdea, label: "Ideas")
                 legendItem(color: DS.entityResearch, label: "Research")
                 legendItem(color: DS.entityContent, label: "Content")
+                legendItem(color: DS.entityStickyNote, label: "Notes")
             }
 
             Spacer()

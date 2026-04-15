@@ -333,9 +333,8 @@ private struct AntimatterFooterView: View {
                 .font(DS.callout)
                 .foregroundStyle(DS.red)
                 .accessibilityHidden(true)
-            Text("ANTIMATTER")
-                .font(DS.caption)
-                .tracking(0.8)
+            Text("Antimatter")
+                .font(DS.smallCaps)
                 .foregroundStyle(DS.red)
         }
     }

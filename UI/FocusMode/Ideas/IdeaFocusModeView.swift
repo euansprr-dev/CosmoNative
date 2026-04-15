@@ -1,6 +1,9 @@
 // CosmoOS/UI/FocusMode/Ideas/IdeaFocusModeView.swift
-// 2-column brainstorm workspace: left editing, right intelligence panel, bottom action bar
-// April 2026 — Full rewrite
+// The Atelier — manuscript column + marginalia gutter.
+// April 2026 — V2 redesign following the Akashic Codex aesthetic.
+//
+// The idea is a manuscript on vellum. Intelligence is marginalia in the gutter.
+// Gilt is ornament, never fill.
 
 import SwiftUI
 import AppKit
@@ -9,10 +12,10 @@ import UniformTypeIdentifiers
 
 // MARK: - Idea Focus Mode View
 
-/// Full-screen brainstorm workspace for ideas.
-/// Left column: editable title, context/direction, hooks, supporting swipes.
-/// Right column: fixed 320pt intelligence panel (blueprint, research, arcs, chat).
-/// Bottom: action bar with content type toggle and write CTA.
+/// Full-screen thinking surface for an idea.
+/// Centered manuscript column: serif title, chromeless context editor, numbered hooks, outline.
+/// Right marginalia gutter: swipes, framework, blueprint, research, cosmo — all quiet, chromeless.
+/// Centered gilt-bracketed CTA at the bottom.
 struct IdeaFocusModeView: View {
     // MARK: - Properties
 
@@ -22,20 +25,25 @@ struct IdeaFocusModeView: View {
     // MARK: - State
 
     @StateObject private var viewModel: IdeaFocusModeViewModel
+    @StateObject private var cosmoSession: FocusCosmoSession
     @State private var newHookText: String = ""
     @State private var isPromoting: Bool = false
     @State private var showProfileEditor: Bool = false
     @State private var showBlueprintPicker: Bool = false
     @State private var isLoadingArcRecs: Bool = false
-    @State private var chatExpanded: Bool = false
-    @State private var blueprintExpanded: Bool = true
     @State private var outlineAdvancedMode: Bool = false
+    @State private var hasAppeared: Bool = false
+    @State private var showBlueprintSheet: Bool = false
+    @State private var showResearchSheet: Bool = false
+    @State private var chatExpanded: Bool = false
+    @State private var showFrameworkSheet: Bool = false
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
 
     // MARK: - Constants
 
-    private let ideaGold = DS.entityIdea
+    /// The idea's own accent — used sparingly for the focus rule and interactive states.
+    private let ideaAccent = DS.entityIdea
 
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
@@ -47,6 +55,11 @@ struct IdeaFocusModeView: View {
         self.atom = atom
         self.onClose = onClose
         _viewModel = StateObject(wrappedValue: IdeaFocusModeViewModel(atom: atom))
+        _cosmoSession = StateObject(wrappedValue: FocusCosmoSession(
+            atomUUID: atom.uuid,
+            atomTitle: atom.title,
+            contextKind: .idea
+        ))
     }
 
     // MARK: - Body
@@ -56,14 +69,21 @@ struct IdeaFocusModeView: View {
             DS.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                headerBar
+                atelierHeader
 
-                HStack(spacing: 0) {
-                    leftColumn
-                    intelligencePanel
+                ScrollView {
+                    HStack(alignment: .top, spacing: DS.space24) {
+                        manuscriptColumn
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        marginaliaGutter
+                            .frame(width: 220)
+                            .padding(.top, 64)
+                    }
+                    .padding(.horizontal, DS.space24)
+                    .padding(.top, DS.space4)
+                    .padding(.bottom, DS.space20)
                 }
-
-                actionBar
+                .scrollIndicators(.hidden)
             }
 
             overlayPresentations
@@ -73,6 +93,9 @@ struct IdeaFocusModeView: View {
             let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
             if !isPaneContext || isPaneActive {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
+            withAnimation(.easeOut(duration: 0.45).delay(0.05)) {
+                hasAppeared = true
             }
         }
         .onChange(of: isPaneActive) { _, isActive in
@@ -102,6 +125,116 @@ struct IdeaFocusModeView: View {
             return .handled
         }
         .overlay { profileEditorOverlay }
+        .sheet(isPresented: $showBlueprintSheet) { atelierBlueprintSheet }
+        .sheet(isPresented: $showResearchSheet) { atelierResearchSheet }
+        .sheet(isPresented: $showFrameworkSheet) { atelierFrameworkSheet }
+    }
+
+    // MARK: - Marginalia sheets
+
+    @ViewBuilder
+    private var atelierBlueprintSheet: some View {
+        VStack(spacing: 0) {
+            AtelierSheetHeader(title: "BLUEPRINT") { showBlueprintSheet = false }
+            if let blueprint = viewModel.selectedBlueprint {
+                BlueprintDisplayView(
+                    blueprintAtom: blueprint,
+                    displayMode: $viewModel.blueprintDisplayMode
+                )
+                .padding(DS.space24)
+            } else {
+                Text("No blueprint selected")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(DS.inkFaded)
+                    .padding(DS.space48)
+            }
+        }
+        .frame(width: 720, height: 640)
+        .background(DS.bg)
+    }
+
+    @ViewBuilder
+    private var atelierResearchSheet: some View {
+        VStack(spacing: 0) {
+            AtelierSheetHeader(title: "RESEARCH") { showResearchSheet = false }
+            IdeaResearchPanel(
+                results: $viewModel.researchResults,
+                ideaText: viewModel.editableBody,
+                clientNiche: viewModel.linkedClient?.title
+            )
+            .padding(DS.space24)
+        }
+        .frame(width: 720, height: 640)
+        .background(DS.bg)
+    }
+
+    @ViewBuilder
+    private var atelierFrameworkSheet: some View {
+        VStack(spacing: 0) {
+            AtelierSheetHeader(title: "FRAMEWORK") { showFrameworkSheet = false }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.space16) {
+                    if isLoadingArcRecs {
+                        HStack(spacing: DS.space8) {
+                            ProgressView().controlSize(.small)
+                            Text("analyzing idea…")
+                                .font(DS.dateSerif)
+                                .italic()
+                                .foregroundStyle(DS.inkFaded)
+                        }
+                    } else if viewModel.arcRecommendations.isEmpty {
+                        Text("add context to get arc suggestions")
+                            .font(DS.dateSerif)
+                            .italic()
+                            .foregroundStyle(DS.inkFaded)
+                    } else {
+                        ForEach(viewModel.arcRecommendations) { rec in
+                            atelierFrameworkRow(rec)
+                        }
+                    }
+                }
+                .padding(DS.space24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(width: 560, height: 540)
+        .background(DS.bg)
+    }
+
+    private func atelierFrameworkRow(_ rec: ArcRecommendation) -> some View {
+        let isSelected = viewModel.selectedArcType == rec.arcName
+        return Button {
+            viewModel.selectedArcType = rec.arcName
+        } label: {
+            VStack(alignment: .leading, spacing: DS.space6) {
+                HStack(spacing: DS.space8) {
+                    Text(rec.arcName)
+                        .font(.system(size: 15, weight: .regular, design: .serif))
+                        .foregroundStyle(DS.text)
+                    Text("\(Int(rec.confidence * 100)) %")
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(DS.inkFaded)
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.gilt)
+                    }
+                }
+                Text(rec.explanation)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.inkFaded)
+                    .lineLimit(3)
+                Rectangle()
+                    .fill(DS.sepiaSubtle)
+                    .frame(height: 0.5)
+                    .padding(.top, DS.space4)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Overlay Presentations
@@ -154,72 +287,54 @@ struct IdeaFocusModeView: View {
     }
 }
 
-// MARK: - Header Bar
+// MARK: - Atelier Header (quiet, no chrome)
 
 extension IdeaFocusModeView {
-    private var headerBar: some View {
+    /// A whisper-thin nav strip. No filled bar, no divider — the only things present
+    /// are a back chevron on the left and a client picker on the right.
+    private var atelierHeader: some View {
         HStack(spacing: DS.space12) {
-            headerLeadingGroup
-            ideaBadge
-            clientPickerPill
+            if !isPaneContext {
+                atelierBackButton
+            }
             Spacer()
-            headerTrailingGroup
+            clientPickerPill
+            if isPaneContext {
+                atelierCloseButton
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(DS.bg)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(ideaGold.opacity(0.1)).frame(height: 1)
-        }
+        .padding(.horizontal, DS.space20)
+        .padding(.vertical, DS.space12)
+        .opacity(hasAppeared ? 1 : 0)
     }
 
-    @ViewBuilder
-    private var headerLeadingGroup: some View {
-        if !isPaneContext {
-            Button {
-                withAnimation(ProMotionSprings.sidebar) {
-                    isSidebarHidden.toggle()
-                }
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(DS.border, in: Circle())
+    private var atelierBackButton: some View {
+        Button(action: onClose) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .medium))
+                Text("back")
+                    .font(DS.dateSerif)
+                    .italic()
             }
-            .buttonStyle(.plain)
-            .help(isSidebarHidden ? "Show sidebar" : "Hide sidebar")
-            .accessibilityLabel("Toggle sidebar")
-
-            Button(action: onClose) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(DS.buttonText)
-                    Text("Back")
-                        .font(DS.callout)
-                }
-                .foregroundStyle(DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DS.surface, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Go back")
+            .foregroundStyle(DS.inkFaded)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.escape, modifiers: [])
+        .accessibilityLabel("Go back")
     }
 
-    private var ideaBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "lightbulb.fill")
-                .foregroundStyle(ideaGold)
-                .accessibilityHidden(true)
-            Text("Idea")
-                .foregroundStyle(ideaGold)
+    private var atelierCloseButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.inkFaded)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
-        .font(DS.caption)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(ideaGold.opacity(0.12), in: Capsule())
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close pane")
     }
 
     private var clientPickerPill: some View {
@@ -255,91 +370,25 @@ extension IdeaFocusModeView {
     @ViewBuilder
     private var clientPickerLabel: some View {
         if let client = viewModel.linkedClient {
-            HStack(spacing: 4) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(DS.caption)
-                    .accessibilityHidden(true)
-                Text(client.title ?? "Client")
-                    .font(DS.caption)
+            HStack(spacing: DS.space6) {
+                Circle()
+                    .fill(DS.clientColor(for: client.uuid))
+                    .frame(width: 5, height: 5)
+                Text(client.title?.lowercased() ?? "client")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(DS.inkFaded)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundStyle(DS.inkFaded.opacity(0.6))
             }
-            .foregroundStyle(DS.textSecondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(DS.surface, in: Capsule())
-            .overlay(Capsule().stroke(DS.border, lineWidth: 0.5))
+            .contentShape(Rectangle())
         } else {
-            HStack(spacing: 4) {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .semibold))
-                    .accessibilityHidden(true)
-                Text("No client")
-                    .font(DS.caption)
-            }
-            .foregroundStyle(DS.textMuted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(DS.surface, in: Capsule())
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        DS.textMuted.opacity(0.3),
-                        style: StrokeStyle(lineWidth: 1, dash: [5, 3])
-                    )
-            )
-        }
-    }
-
-    private var writeButton: some View {
-        Button {
-            guard !isPromoting else { return }
-            isPromoting = true
-            Task {
-                await viewModel.promoteToContent()
-                isPromoting = false
-            }
-        } label: {
-            writeButtonLabel
-        }
-        .buttonStyle(.plain)
-        .disabled(isPromoting || isBodyEmpty)
-        .opacity((isPromoting || isBodyEmpty) ? 0.5 : 1)
-        .accessibilityLabel("Write content from this idea")
-    }
-
-    @ViewBuilder
-    private var writeButtonLabel: some View {
-        HStack(spacing: 6) {
-            if isPromoting {
-                ProgressView()
-                    .controlSize(.mini)
-                Text("Writing...")
-            } else {
-                Image(systemName: "pencil.line")
-                    .accessibilityHidden(true)
-                Text("Write")
-            }
-        }
-        .font(.system(size: 13, weight: .semibold))
-        .foregroundStyle(DS.textOnAccent)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-        .background(DS.green, in: Capsule())
-    }
-
-    @ViewBuilder
-    private var headerTrailingGroup: some View {
-        if isPaneContext {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(DS.buttonText)
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(DS.surface, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close pane")
+            Text("no client")
+                .font(DS.dateSerif)
+                .italic()
+                .foregroundStyle(DS.inkFaded.opacity(0.7))
+                .contentShape(Rectangle())
         }
     }
 
@@ -351,135 +400,240 @@ extension IdeaFocusModeView {
 // MARK: - Left Column
 
 extension IdeaFocusModeView {
-    private var leftColumn: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.space24) {
-                if isBodyEmpty && !isContextFocused {
-                    emptyStateView
-                }
+    /// The centered manuscript column — serif title, chromeless editor, numbered hooks,
+    /// floating-stanza outline, then the gilt CTA.
+    private var manuscriptColumn: some View {
+        VStack(alignment: .leading, spacing: DS.space24) {
+            atelierTitleHero
+                .atelierStaggerIn(delay: 0.16, appeared: hasAppeared)
 
-                titleEditor
-                contextEditor
-                hooksSection
-                outlineSection
-            }
-            .padding(.horizontal, 48)
-            .padding(.top, 28)
-            .padding(.bottom, 80)
+            atelierContextEditor
+                .atelierStaggerIn(delay: 0.32, appeared: hasAppeared)
+
+            atelierHooksSection
+                .atelierStaggerIn(delay: 0.40, appeared: hasAppeared)
+
+            atelierOutlineSection
+                .atelierStaggerIn(delay: 0.48, appeared: hasAppeared)
+
+            atelierCTA
+                .padding(.top, DS.space24)
+                .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
         }
-        .scrollIndicators(.hidden)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var emptyStateView: some View {
-        VStack(spacing: DS.space12) {
-            Image(systemName: "lightbulb.fill")
-                .font(.system(size: 36))
-                .foregroundStyle(ideaGold.opacity(0.4))
-                .accessibilityHidden(true)
+    // MARK: Title hero
 
-            Text("What's this idea about?")
-                .font(DS.title2)
-                .foregroundStyle(DS.textSecondary)
+    private var atelierTitleHero: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            Text(statusOrnamentLabel)
+                .font(DS.smallCaps)
+                .tracking(2.2)
+                .foregroundStyle(DS.giltMuted)
 
-            Text("Describe the angle, key points, and why it matters.\nThe more context you give, the better the AI can help.")
-                .font(DS.callout)
-                .foregroundStyle(DS.textMuted)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 400)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
-    }
-
-    private var titleEditor: some View {
-        TextField("Idea title...", text: $viewModel.editableTitle)
-            .textFieldStyle(.plain)
-            .font(DS.pageTitle)
-            .foregroundStyle(DS.text)
-            .focused($isTitleFocused)
-            .onChange(of: viewModel.editableTitle) { _ in
-                viewModel.scheduleAutoSave()
-            }
-            .accessibilityLabel("Idea title")
-    }
-
-    private var contextEditor: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            contextEditorHeader
-            contextEditorBody
-        }
-    }
-
-    private var contextEditorHeader: some View {
-        HStack(spacing: 6) {
-            Text("CONTEXT & DIRECTION")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
-            Spacer()
-            wordCount
-        }
-    }
-
-    private var contextEditorBody: some View {
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(ideaGold)
-                .frame(width: 3)
-
-            TextEditor(text: $viewModel.editableBody)
-                .font(DS.body)
+            TextField("Untitled idea", text: $viewModel.editableTitle, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(DS.displaySerif)
                 .foregroundStyle(DS.text)
-                .lineSpacing(5)
-                .scrollContentBackground(.hidden)
-                .focused($isContextFocused)
-                .frame(minHeight: 240, maxHeight: 500)
-                .padding(14)
-                .onChange(of: viewModel.editableBody) { _ in
+                .tracking(-0.5)
+                .lineLimit(1...3)
+                .focused($isTitleFocused)
+                .onChange(of: viewModel.editableTitle) { _ in
                     viewModel.scheduleAutoSave()
-                    viewModel.autoEnrich()
                 }
-                .accessibilityLabel("Idea context and direction")
+                .accessibilityLabel("Idea title")
+
+            HStack(spacing: DS.space8) {
+                Text(formattedCreatedDate)
+                Text("·")
+                Text(viewModel.selectedFormat?.rawValue.lowercased() ?? "unformatted")
+                if let client = viewModel.linkedClient {
+                    Text("·")
+                    Text(client.title?.lowercased() ?? "client")
+                }
+            }
+            .font(DS.dateSerif)
+            .italic()
+            .foregroundStyle(DS.inkFaded)
+
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(width: 120, height: 0.5)
+                .padding(.top, DS.space4)
         }
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(isContextFocused ? ideaGold.opacity(0.5) : DS.border, lineWidth: 1)
-        )
     }
 
-    private var wordCount: some View {
-        Text("\(viewModel.editableBody.split(separator: " ").count) words")
-            .font(DS.caption2)
-            .foregroundStyle(DS.textMuted)
+    private var statusOrnamentLabel: String {
+        let status = viewModel.selectedStatus.rawValue.uppercased()
+        return "· · · IDEA · \(status) · · ·"
+    }
+
+    private var formattedCreatedDate: String {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = iso.date(from: atom.createdAt)
+            ?? ISO8601DateFormatter().date(from: atom.createdAt)
+            ?? Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d"
+        return formatter.string(from: date).lowercased()
+    }
+
+    // MARK: Context editor — chromeless manuscript
+
+    private var atelierContextEditor: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            contextMentionChips
+
+            ZStack(alignment: .topLeading) {
+                if viewModel.editableBody.isEmpty {
+                    Text("What's the angle?")
+                        .font(.system(size: 17, weight: .regular, design: .serif))
+                        .italic()
+                        .foregroundStyle(DS.inkFaded.opacity(0.6))
+                        .padding(.top, 8)
+                        .padding(.leading, 6)
+                        .allowsHitTesting(false)
+                }
+
+                TextEditor(text: $viewModel.editableBody)
+                    .font(.system(size: 17, weight: .regular, design: .serif))
+                    .foregroundStyle(DS.text)
+                    .lineSpacing(7)
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.hidden)
+                    .scrollDisabled(true)
+                    .focused($isContextFocused)
+                    .frame(minHeight: 200)
+                    .onChange(of: viewModel.editableBody) { newValue in
+                        viewModel.scheduleAutoSave()
+                        viewModel.autoEnrich()
+                        handleMentionTrigger(newValue)
+                    }
+                    .accessibilityLabel("Idea context and direction")
+            }
+            .overlay(alignment: .leading) {
+                // Focus rule — the only affordance. Slides in from -12 on focus.
+                Rectangle()
+                    .fill(ideaAccent)
+                    .frame(width: 2)
+                    .padding(.vertical, 6)
+                    .opacity(isContextFocused ? 1 : 0)
+                    .offset(x: isContextFocused ? -12 : -24)
+                    .animation(ProMotionSprings.snappy, value: isContextFocused)
+            }
+            .overlay(alignment: .topLeading) {
+                if viewModel.showMentionOverlay {
+                    CosmoMentionOverlay(
+                        isVisible: $viewModel.showMentionOverlay,
+                        searchText: $viewModel.mentionSearchText,
+                        onSelect: { mentioned in
+                            viewModel.addMention(mentioned)
+                            if let atIndex = viewModel.editableBody.lastIndex(of: "@") {
+                                viewModel.editableBody = String(viewModel.editableBody[viewModel.editableBody.startIndex..<atIndex])
+                            }
+                        },
+                        onDismiss: {
+                            viewModel.showMentionOverlay = false
+                            viewModel.mentionSearchText = ""
+                        }
+                    )
+                    .frame(width: 360)
+                    .frame(maxHeight: 340)
+                    .offset(y: 28)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .zIndex(10)
+                }
+            }
+        }
+    }
+
+    private func handleMentionTrigger(_ newValue: String) {
+        if newValue.hasSuffix("@") && !viewModel.showMentionOverlay {
+            withAnimation(ProMotionSprings.snappy) {
+                viewModel.showMentionOverlay = true
+                viewModel.mentionSearchText = ""
+            }
+        }
+        if viewModel.showMentionOverlay {
+            if let atIndex = newValue.lastIndex(of: "@") {
+                let afterAt = String(newValue[newValue.index(after: atIndex)...])
+                viewModel.mentionSearchText = afterAt
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var contextMentionChips: some View {
+        if !viewModel.mentionedAtoms.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DS.space6) {
+                    ForEach(viewModel.mentionedAtoms, id: \.uuid) { mentioned in
+                        contextMentionChip(mentioned)
+                    }
+                }
+                .padding(.horizontal, 1)
+            }
+        }
+    }
+
+    private func contextMentionChip(_ mentioned: Atom) -> some View {
+        let entityType = EntityType(rawValue: mentioned.type.rawValue) ?? .idea
+        let chipColor = CosmoMentionColors.color(for: entityType)
+        return HStack(spacing: 4) {
+            Image(systemName: mentioned.type.iconName)
+                .font(.system(size: 9))
+            Text(mentioned.title ?? "Untitled")
+                .font(DS.dateSerif)
+                .italic()
+                .lineLimit(1)
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.removeMention(mentioned)
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(chipColor.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+        }
+        .foregroundStyle(chipColor.opacity(0.85))
+        .padding(.vertical, 2)
     }
 }
 
-// MARK: - Hooks Section
+// MARK: - Hooks Section — numbered, no fills
 
 extension IdeaFocusModeView {
-    private var hooksSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("HOOKS")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+    private var atelierHooksSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            AtelierOrnamentalSectionLabel(label: "HOOKS")
 
-            ForEach(Array(viewModel.editableHooks.enumerated()), id: \.offset) { index, hook in
-                hookRow(hook, at: index)
+            VStack(alignment: .leading, spacing: DS.space10) {
+                ForEach(Array(viewModel.editableHooks.enumerated()), id: \.offset) { index, hook in
+                    atelierHookRow(hook, at: index)
+                }
+                atelierAddHookRow
             }
-
-            addHookField
+            .padding(.horizontal, DS.space4)
         }
     }
 
-    private func hookRow(_ hook: String, at index: Int) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+    private func atelierHookRow(_ hook: String, at index: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space12) {
+            Text(romanNumeral(for: index + 1) + ".")
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundStyle(DS.giltMuted)
+                .frame(width: 28, alignment: .leading)
+
             Text(hook)
                 .font(DS.callout)
                 .foregroundStyle(DS.text)
-            Spacer()
+
+            Spacer(minLength: DS.space8)
+
             Button {
                 withAnimation(ProMotionSprings.snappy) {
                     viewModel.editableHooks.remove(at: index)
@@ -487,41 +641,47 @@ extension IdeaFocusModeView {
                 }
             } label: {
                 Image(systemName: "xmark")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(DS.inkFaded.opacity(0.5))
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Remove hook")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(ideaGold.opacity(0.06), in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(ideaGold.opacity(0.15), lineWidth: 0.5)
-        )
     }
 
-    private var addHookField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "plus.circle.fill")
-                .font(DS.callout)
-                .foregroundStyle(ideaGold.opacity(0.5))
-                .accessibilityHidden(true)
-            TextField("Add a hook...", text: $newHookText)
+    private var atelierAddHookRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space12) {
+            Text("+")
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundStyle(DS.gilt.opacity(0.6))
+                .frame(width: 28, alignment: .leading)
+
+            TextField("add another", text: $newHookText)
                 .textFieldStyle(.plain)
                 .font(DS.callout)
+                .italic()
+                .foregroundStyle(DS.inkFaded)
                 .onSubmit { addHook() }
                 .accessibilityLabel("New hook text")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(DS.surface, in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
+        .padding(.top, DS.space4)
+    }
+
+    private func romanNumeral(for value: Int) -> String {
+        let numerals: [(Int, String)] = [
+            (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")
+        ]
+        var result = ""
+        var n = value
+        for (val, letters) in numerals {
+            while n >= val {
+                result += letters
+                n -= val
+            }
+        }
+        return result.isEmpty ? "\(value)" : result
     }
 
     private func addHook() {
@@ -539,9 +699,9 @@ extension IdeaFocusModeView {
 
 extension IdeaFocusModeView {
     @ViewBuilder
-    private var outlineSection: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            outlineSectionHeader
+    private var atelierOutlineSection: some View {
+        VStack(alignment: .leading, spacing: DS.space16) {
+            atelierOutlineHeader
 
             if let outline = viewModel.codexOutline {
                 if outlineAdvancedMode {
@@ -552,7 +712,6 @@ extension IdeaFocusModeView {
             }
         }
         .onAppear {
-            // Always show outline — auto-create with 1 empty slide if none exists
             if viewModel.codexOutline == nil {
                 viewModel.codexOutline = CodexOutlineModel(arcShape: nil, slides: [
                     CodexOutlineSlide(id: UUID(), position: 1, speechAct: nil,
@@ -563,115 +722,75 @@ extension IdeaFocusModeView {
         }
     }
 
-    private var outlineSectionHeader: some View {
-        HStack {
-            Text("OUTLINE")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+    private var atelierOutlineHeader: some View {
+        HStack(spacing: DS.space12) {
+            AtelierOrnamentalSectionLabel(label: "OUTLINE")
+                .layoutPriority(0)
 
-            if let outline = viewModel.codexOutline {
-                Text("\(outline.slides.count)")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.accent)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(DS.accent.opacity(0.12), in: Capsule())
-
-                if outlineAdvancedMode {
-                    Image(systemName: "questionmark.circle")
-                        .font(.system(size: 11))
-                        .foregroundStyle(DS.textMuted)
-                        .help("""
-                        Advanced Outline Fields:
-                        • Speech Act — The primary action this slide performs (HOOK, CONFESSION, PROOF, REVEAL...)
-                        • Reader Deltas — What the reader feels (CURIOSITY+, TRUST+, TENSION+...)
-                        • Frame — How this slide is positioned (SETUP, LOSS, TRANSFORMATION...)
-                        • Distance — Reader proximity: ZERO (live scene), NEAR (remembered), FAR (observed)
-                        • Techniques — Craft moves (ELLIPSIS MOMENTUM, DIRECT DIALOGUE, NUMBER FORMATTING...)
-                        • → Next — Transition to next slide (ESCALATION, ANSWER, PIVOT...)
-
-                        Drag elements from the browser on the right onto each slot.
-                        """)
+            HStack(spacing: DS.space12) {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        outlineAdvancedMode.toggle()
+                    }
+                } label: {
+                    Text(outlineAdvancedMode ? "advanced" : "simple")
+                        .font(DS.dateSerif)
+                        .italic()
+                        .foregroundStyle(outlineAdvancedMode ? DS.text : DS.inkFaded)
+                        .contentShape(Rectangle())
                 }
-            }
+                .buttonStyle(.plain)
 
-            Spacer()
-
-            // Mode toggle
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    outlineAdvancedMode.toggle()
+                Button { addNewSlide() } label: {
+                    Text("+ slide")
+                        .font(DS.dateSerif)
+                        .italic()
+                        .foregroundStyle(DS.gilt.opacity(0.8))
+                        .contentShape(Rectangle())
                 }
-            } label: {
-                Text(outlineAdvancedMode ? "Advanced" : "Simple")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(outlineAdvancedMode ? DS.accent : DS.textMuted)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(
-                        outlineAdvancedMode ? DS.accent.opacity(0.1) : DS.surface,
-                        in: Capsule()
-                    )
-                    .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.5))
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add slide")
             }
-            .buttonStyle(.plain)
-
-            // Add slide
-            Button { addNewSlide() } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "plus")
-                        .accessibilityHidden(true)
-                    Text("Slide")
-                }
-                .font(DS.caption)
-                .foregroundStyle(ideaGold)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Add slide")
+            .layoutPriority(1)
         }
     }
 
-    // MARK: Normal Mode (simple text notes per slide)
+    // MARK: Normal Mode — floating stanzas, no cards
 
     private func normalOutlineSlides(_ outline: CodexOutlineModel) -> some View {
-        VStack(spacing: DS.space4) {
+        VStack(alignment: .leading, spacing: DS.space20) {
             ForEach(outline.slides) { slide in
                 normalSlideCard(slide)
             }
         }
+        .padding(.horizontal, DS.space4)
     }
 
     private func normalSlideCard(_ slide: CodexOutlineSlide) -> some View {
-        HStack(spacing: DS.space8) {
-            Text("\(slide.position)")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(ideaGold)
-                .frame(width: 20)
+        HStack(alignment: .firstTextBaseline, spacing: DS.space16) {
+            Text(romanNumeral(for: slide.position))
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundStyle(DS.giltMuted)
+                .frame(width: 36, alignment: .leading)
 
-            TextField("What should this slide do?",
+            TextField("what should this slide do?",
                       text: slideNoteBinding(for: slide.id),
                       axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(DS.callout)
                 .foregroundStyle(DS.text)
-                .lineLimit(1...3)
+                .lineLimit(1...4)
 
             Button { removeSlide(slide.id) } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9))
-                    .foregroundStyle(DS.textMuted)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(DS.inkFaded.opacity(0.4))
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Remove slide \(slide.position)")
         }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space8)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.borderSubtle, lineWidth: 0.5)
-        )
     }
 
     private func slideNoteBinding(for slideId: UUID) -> Binding<String> {
@@ -699,10 +818,10 @@ extension IdeaFocusModeView {
                 Text("Start Outline")
             }
             .font(DS.caption)
-            .foregroundStyle(ideaGold)
+            .foregroundStyle(ideaAccent)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(ideaGold.opacity(0.1), in: Capsule())
+            .background(ideaAccent.opacity(0.1), in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Start outline")
@@ -1131,9 +1250,7 @@ extension IdeaFocusModeView {
 
     private func slotLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 8, weight: .semibold))
-            .foregroundStyle(DS.textMuted)
-            .tracking(0.5)
+            .dsSmallCapsLabel()
     }
 
     private func slotRemoveButton(action: @escaping () -> Void) -> some View {
@@ -1151,320 +1268,137 @@ extension IdeaFocusModeView {
     }
 }
 
-// MARK: - Supporting Swipes Section
+// MARK: - Marginalia Gutter (the intelligence, rendered as marginal notes)
 
 extension IdeaFocusModeView {
-    private var supportingSwipesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            supportingSwipesHeader
-            supportingSwipesContent
+    /// 260pt right gutter. Transparent, no dividers, no card chrome — just smallCaps
+    /// section labels and quiet rows. Each section reveals its full panel as a modal
+    /// sheet rather than dominating the gutter inline.
+    private var marginaliaGutter: some View {
+        VStack(alignment: .leading, spacing: DS.space24) {
+            marginaliaSwipesSection
+                .atelierStaggerIn(delay: 0.56, appeared: hasAppeared)
+            marginaliaFrameworkSection
+                .atelierStaggerIn(delay: 0.60, appeared: hasAppeared)
+            marginaliaBlueprintSection
+                .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
+            marginaliaResearchSection
+                .atelierStaggerIn(delay: 0.68, appeared: hasAppeared)
+            marginaliaCosmoSection
+                .atelierStaggerIn(delay: 0.72, appeared: hasAppeared)
         }
     }
 
-    private var supportingSwipesHeader: some View {
-        HStack {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(ideaGold)
-                    .frame(width: 22, height: 22)
-                    .background(ideaGold.opacity(0.1), in: Circle())
-                    .accessibilityHidden(true)
-                Text("Supporting Swipes")
-                    .font(DS.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(DS.text)
-                if !viewModel.linkedSwipes.isEmpty {
-                    Text("\(viewModel.linkedSwipes.count)")
-                        .font(DS.caption2)
-                        .foregroundStyle(ideaGold)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(ideaGold.opacity(0.1), in: Capsule())
-                }
-            }
-            Spacer()
-            Button {
-                viewModel.showLinkSwipesOverlay = true
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "plus")
-                        .accessibilityHidden(true)
-                    Text("Link")
-                }
-                .font(DS.caption)
-                .foregroundStyle(ideaGold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(ideaGold.opacity(0.08), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Link a swipe file")
-        }
-    }
+    // MARK: Swipes — vertical list, up to 3 visible
 
-    @ViewBuilder
-    private var supportingSwipesContent: some View {
-        if viewModel.linkedSwipes.isEmpty {
-            VStack(spacing: 6) {
-                Image(systemName: "link.badge.plus")
-                    .font(.system(size: 16))
-                    .foregroundStyle(ideaGold.opacity(0.3))
-                    .accessibilityHidden(true)
-                Text("Link swipes to give the AI structural inspiration")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(ideaGold.opacity(0.02), in: .rect(cornerRadius: DS.radiusSmall))
-        } else {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(viewModel.linkedSwipes, id: \.uuid) { swipe in
-                        compactSwipeCard(swipe)
+    private var marginaliaSwipesSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("SWIPES",
+                            countText: viewModel.linkedSwipes.isEmpty
+                                ? nil
+                                : "\(viewModel.linkedSwipes.count) matched")
+
+            if viewModel.linkedSwipes.isEmpty {
+                Button {
+                    viewModel.showLinkSwipesOverlay = true
+                } label: {
+                    Text("no swipes yet →")
+                        .font(DS.dateSerif)
+                        .italic()
+                        .foregroundStyle(DS.inkFaded.opacity(0.7))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Link swipes")
+            } else {
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    ForEach(viewModel.linkedSwipes.prefix(3), id: \.uuid) { swipe in
+                        marginaliaSwipeRow(swipe)
+                    }
+                    if viewModel.linkedSwipes.count > 3 {
+                        Button {
+                            viewModel.showLinkSwipesOverlay = true
+                        } label: {
+                            Text("see all \(viewModel.linkedSwipes.count) →")
+                                .font(DS.dateSerif)
+                                .italic()
+                                .foregroundStyle(DS.gilt.opacity(0.7))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, DS.space2)
                     }
                 }
             }
         }
     }
 
-    private func compactSwipeCard(_ swipe: Atom) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(swipe.title ?? "Untitled")
-                .font(DS.caption)
-                .fontWeight(.medium)
-                .foregroundStyle(DS.text)
-                .lineLimit(2)
-            if let hook = swipe.researchMetadata?.hook {
-                Text(hook)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
-            }
-        }
-        .frame(width: 160)
-        .padding(10)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(ideaGold.opacity(0.3))
-                .frame(width: 2)
-                .padding(.vertical, 6)
-                .padding(.leading, 1)
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.borderSubtle, lineWidth: 0.5)
-        )
-    }
-}
+    private func marginaliaSwipeRow(_ swipe: Atom) -> some View {
+        HStack(alignment: .top, spacing: DS.space8) {
+            Rectangle()
+                .fill(DS.entitySwipe.opacity(0.18))
+                .frame(width: 3)
+                .frame(maxHeight: .infinity)
 
-// MARK: - Intelligence Panel (Right Column)
-
-extension IdeaFocusModeView {
-    private var intelligencePanel: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.space20) {
-                blueprintSection
-                sidebarSectionDivider
-                supportingSwipesSection
-                sidebarSectionDivider
-                researchSection
-                sidebarSectionDivider
-                arcRecommendationsSection
-                sidebarSectionDivider
-                chatSection
-            }
-            .padding(DS.space16)
-        }
-        .scrollIndicators(.hidden)
-        .frame(width: 320)
-        .background(DS.surface)
-        .overlay(alignment: .leading) {
-            Rectangle().fill(ideaGold.opacity(0.1)).frame(width: 1)
-        }
-    }
-
-    private var sidebarSectionDivider: some View {
-        Rectangle()
-            .fill(ideaGold.opacity(0.06))
-            .frame(height: 1)
-    }
-
-    // MARK: Blueprint
-
-    private var blueprintSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            blueprintToggleHeader
-            blueprintContent
-        }
-    }
-
-    private var blueprintToggleHeader: some View {
-        Button {
-            withAnimation(ProMotionSprings.bouncy) {
-                blueprintExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(ideaGold)
-                    .frame(width: 22, height: 22)
-                    .background(ideaGold.opacity(0.1), in: Circle())
-                    .accessibilityHidden(true)
-                Text("Blueprint")
-                    .font(DS.caption)
-                    .fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(swipe.title ?? "Untitled")
+                    .font(DS.callout)
                     .foregroundStyle(DS.text)
-                Spacer()
-                if viewModel.selectedBlueprint != nil {
-                    Button { showBlueprintPicker = true } label: {
-                        Text("Change")
-                            .font(DS.caption2)
-                            .foregroundStyle(ideaGold)
+                    .lineLimit(2)
+                if let hook = swipe.researchMetadata?.hook {
+                    Text(hook)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: Framework — name + confidence + change
+
+    private var marginaliaFrameworkSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("FRAMEWORK")
+
+            if let framework = viewModel.selectedArcType ?? viewModel.arcRecommendations.first?.arcName {
+                VStack(alignment: .leading, spacing: DS.space4) {
+                    Text(framework)
+                        .font(.system(size: 14, weight: .regular, design: .serif))
+                        .foregroundStyle(DS.text)
+
+                    if let top = viewModel.arcRecommendations.first(where: { $0.arcName == framework }) {
+                        Text("\(Int(top.confidence * 100)) % match")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(DS.inkFaded)
+                    }
+
+                    Button {
+                        showFrameworkSheet = true
+                    } label: {
+                        Text("change →")
+                            .font(DS.dateSerif)
+                            .italic()
+                            .foregroundStyle(DS.gilt.opacity(0.7))
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .padding(.top, DS.space2)
                 }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .rotationEffect(.degrees(blueprintExpanded ? 90 : 0))
-                    .accessibilityHidden(true)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(blueprintExpanded ? "Collapse blueprint" : "Expand blueprint")
-    }
-
-    @ViewBuilder
-    private var blueprintContent: some View {
-        if blueprintExpanded {
-            if let blueprint = viewModel.selectedBlueprint {
-                BlueprintDisplayView(
-                    blueprintAtom: blueprint,
-                    displayMode: $viewModel.blueprintDisplayMode
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
-                blueprintEmptyState
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-
-    private var blueprintEmptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 24))
-                .foregroundStyle(ideaGold.opacity(0.3))
-                .accessibilityHidden(true)
-            Text("Choose a proven post as your structural skeleton")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .multilineTextAlignment(.center)
-            Button {
-                showBlueprintPicker = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus.circle.fill")
-                        .accessibilityHidden(true)
-                    Text("Select Blueprint")
+                Button {
+                    refreshArcRecommendations()
+                    showFrameworkSheet = true
+                } label: {
+                    Text(isLoadingArcRecs ? "analyzing…" : "suggest →")
+                        .font(DS.dateSerif)
+                        .italic()
+                        .foregroundStyle(DS.inkFaded.opacity(0.7))
+                        .contentShape(Rectangle())
                 }
-                .font(DS.caption)
-                .foregroundStyle(ideaGold)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(ideaGold.opacity(0.08), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Select blueprint")
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, DS.space16)
-        .background(ideaGold.opacity(0.02), in: .rect(cornerRadius: DS.radiusMedium))
-    }
-
-    // MARK: Research
-
-    private var researchSection: some View {
-        IdeaResearchPanel(
-            results: $viewModel.researchResults,
-            ideaText: viewModel.editableBody,
-            clientNiche: viewModel.linkedClient?.title
-        )
-    }
-
-    // MARK: Arc Recommendations
-
-    private var arcRecommendationsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            arcRecsHeader
-            arcRecsContent
-        }
-    }
-
-    private var arcRecsHeader: some View {
-        HStack {
-            HStack(spacing: 6) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(CodexElementCategory.arcShape.color)
-                    .frame(width: 22, height: 22)
-                    .background(CodexElementCategory.arcShape.color.opacity(0.1), in: Circle())
-                    .accessibilityHidden(true)
-                Text("Arc Recommendations")
-                    .font(DS.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(DS.text)
-            }
-            Spacer()
-            Button {
-                refreshArcRecommendations()
-            } label: {
-                if isLoadingArcRecs {
-                    ProgressView()
-                        .controlSize(.mini)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.accent)
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(isLoadingArcRecs || viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityLabel("Refresh arc recommendations")
-        }
-    }
-
-    @ViewBuilder
-    private var arcRecsContent: some View {
-        if isLoadingArcRecs {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Analyzing idea...")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-            }
-            .padding(.vertical, 8)
-        } else if viewModel.arcRecommendations.isEmpty {
-            VStack(spacing: 6) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 16))
-                    .foregroundStyle(CodexElementCategory.arcShape.color.opacity(0.3))
-                    .accessibilityHidden(true)
-                Text("Add context to get arc suggestions")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(CodexElementCategory.arcShape.color.opacity(0.02), in: .rect(cornerRadius: DS.radiusSmall))
-        } else {
-            ForEach(viewModel.arcRecommendations) { rec in
-                arcRecommendationCard(rec)
+                .buttonStyle(.plain)
+                .disabled(isLoadingArcRecs)
             }
         }
     }
@@ -1478,188 +1412,120 @@ extension IdeaFocusModeView {
         }
     }
 
-    private func arcRecommendationCard(_ rec: ArcRecommendation) -> some View {
-        Button {
-            viewModel.selectedArcType = rec.arcName
-        } label: {
-            arcRecommendationCardContent(rec)
-        }
-        .buttonStyle(.plain)
-    }
+    // MARK: Blueprint — one-line summary, expand opens sheet
 
-    @ViewBuilder
-    private func arcRecommendationCardContent(_ rec: ArcRecommendation) -> some View {
-        let isSelected = viewModel.selectedArcType == rec.arcName
-        let arcColor = CodexElementCategory.arcShape.color
+    private var marginaliaBlueprintSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("BLUEPRINT")
 
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                CodexConceptTag(name: rec.arcName, color: arcColor)
-                if rec.confidence > 0.7 {
-                    Text("\(Int(rec.confidence * 100))%")
-                        .font(DS.caption2)
-                        .foregroundStyle(arcColor.opacity(0.6))
-                }
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(DS.green)
-                        .font(DS.caption)
-                        .accessibilityLabel("Selected")
-                }
-            }
-            Text(rec.explanation)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textSecondary)
-                .lineLimit(2)
-        }
-        .padding(10)
-        .background(
-            isSelected ? DS.green.opacity(0.04) : DS.surfaceElevated,
-            in: .rect(cornerRadius: DS.radiusSmall)
-        )
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(isSelected ? DS.green.opacity(0.4) : arcColor.opacity(0.3))
-                .frame(width: 2)
-                .padding(.vertical, 6)
-                .padding(.leading, 1)
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(
-                    isSelected ? DS.green.opacity(0.3) : DS.borderSubtle,
-                    lineWidth: 0.5
-                )
-        )
-    }
-
-    // MARK: Chat
-
-    private var chatSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            chatToggleHeader
-            chatContent
-        }
-    }
-
-    private var chatToggleHeader: some View {
-        Button {
-            withAnimation(ProMotionSprings.snappy) {
-                chatExpanded.toggle()
-            }
-        } label: {
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(ideaGold)
-                        .frame(width: 22, height: 22)
-                        .background(ideaGold.opacity(0.1), in: Circle())
-                        .accessibilityHidden(true)
-                    Text("Brainstorm Chat")
-                        .font(DS.caption)
-                        .fontWeight(.semibold)
+            if let blueprint = viewModel.selectedBlueprint {
+                VStack(alignment: .leading, spacing: DS.space4) {
+                    Text(blueprint.title?.lowercased() ?? "blueprint")
+                        .font(.system(size: 14, weight: .regular, design: .serif))
                         .foregroundStyle(DS.text)
-                    if !viewModel.chatHistory.isEmpty {
-                        Text("\(viewModel.chatHistory.count)")
-                            .font(DS.caption2)
-                            .foregroundStyle(ideaGold)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(ideaGold.opacity(0.1), in: Capsule())
+                        .lineLimit(2)
+                    HStack(spacing: DS.space8) {
+                        Button {
+                            showBlueprintSheet = true
+                        } label: {
+                            Text("expand →")
+                                .font(DS.dateSerif)
+                                .italic()
+                                .foregroundStyle(DS.gilt.opacity(0.7))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            showBlueprintPicker = true
+                        } label: {
+                            Text("change")
+                                .font(DS.dateSerif)
+                                .italic()
+                                .foregroundStyle(DS.inkFaded)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.top, DS.space2)
+                }
+            } else {
+                Button {
+                    showBlueprintPicker = true
+                } label: {
+                    Text("select blueprint →")
+                        .font(DS.dateSerif)
+                        .italic()
+                        .foregroundStyle(DS.inkFaded.opacity(0.7))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: Research — stat lines, tap opens sheet
+
+    private var marginaliaResearchSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("RESEARCH")
+
+            Button {
+                showResearchSheet = true
+            } label: {
+                VStack(alignment: .leading, spacing: DS.space4) {
+                    if viewModel.researchResults.isEmpty {
+                        Text("no sources yet →")
+                            .font(DS.dateSerif)
+                            .italic()
+                            .foregroundStyle(DS.inkFaded.opacity(0.7))
+                    } else {
+                        Text("· \(viewModel.researchResults.count) sources")
+                            .font(DS.callout)
+                            .foregroundStyle(DS.text)
+                        Text("open panel →")
+                            .font(DS.dateSerif)
+                            .italic()
+                            .foregroundStyle(DS.gilt.opacity(0.7))
                     }
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .rotationEffect(.degrees(chatExpanded ? 90 : 0))
-                    .accessibilityHidden(true)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(chatExpanded ? "Collapse brainstorm chat" : "Expand brainstorm chat")
     }
 
-    @ViewBuilder
-    private var chatContent: some View {
-        if chatExpanded {
-            IdeaChatPanel(
-                messages: $viewModel.chatHistory,
-                ideaContext: viewModel.editableBody
-            )
-            .frame(height: 300)
-            .transition(.opacity.combined(with: .move(edge: .top)))
-        }
+    // MARK: Cosmo — smart agent inline (Gemini 3 Flash, full tool access)
+
+    private var marginaliaCosmoSection: some View {
+        FocusCosmoPanel(session: cosmoSession, isExpanded: $chatExpanded)
+            .task { await cosmoSession.load() }
     }
+
 }
 
-// MARK: - Action Bar
+// MARK: - CTA — gilt-bracketed serif "begin writing"
 
 extension IdeaFocusModeView {
-    private var actionBar: some View {
-        HStack(spacing: 16) {
-            contentTypePicker
+    private var atelierCTA: some View {
+        HStack {
             Spacer()
-            actionBarWriteButton
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(DS.surface)
-        .overlay(alignment: .top) {
-            Rectangle().fill(ideaGold.opacity(0.1)).frame(height: 1)
+            GiltBracketedCTA(
+                title: isPromoting ? "writing…" : "begin writing",
+                disabled: isPromoting || isBodyEmpty,
+                action: beginWriting
+            )
+            .keyboardShortcut(.return, modifiers: [.command])
+            Spacer()
         }
     }
 
-    private var contentTypePicker: some View {
-        Picker("Type", selection: Binding(
-            get: { viewModel.selectedContentType ?? "carousel" },
-            set: { viewModel.selectedContentType = $0 }
-        )) {
-            Text("Reel").tag("reel")
-            Text("Carousel").tag("carousel")
+    private func beginWriting() {
+        guard !isPromoting, !isBodyEmpty else { return }
+        isPromoting = true
+        Task {
+            await viewModel.promoteToContent()
+            isPromoting = false
         }
-        .pickerStyle(.segmented)
-        .frame(width: 180)
-        .accessibilityLabel("Content type")
-    }
-
-    private var actionBarWriteButton: some View {
-        Button {
-            guard !isPromoting else { return }
-            isPromoting = true
-            Task {
-                await viewModel.promoteToContent()
-                isPromoting = false
-            }
-        } label: {
-            actionBarWriteButtonLabel
-        }
-        .buttonStyle(.plain)
-        .disabled(isPromoting || isBodyEmpty)
-        .opacity((isPromoting || isBodyEmpty) ? 0.5 : 1)
-        .accessibilityLabel("Write content from this idea")
-    }
-
-    @ViewBuilder
-    private var actionBarWriteButtonLabel: some View {
-        HStack(spacing: 6) {
-            if isPromoting {
-                ProgressView()
-                    .controlSize(.mini)
-                Text("Writing...")
-            } else {
-                Image(systemName: "pencil.line")
-                    .accessibilityHidden(true)
-                Text("Write")
-            }
-        }
-        .font(.system(size: 13, weight: .semibold))
-        .foregroundStyle(DS.textOnAccent)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .background(DS.green, in: Capsule())
     }
 }
 

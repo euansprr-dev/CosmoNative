@@ -153,11 +153,6 @@ struct CodexConceptPopover: View {
         }
         .frame(width: 420)
         .frame(maxHeight: 480)
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(accentColor)
-                .frame(width: 3)
-        }
         .background(DS.surface)
     }
 
@@ -202,10 +197,8 @@ struct CodexConceptPopover: View {
 
     private var examplesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("EXAMPLES FROM VIRAL POSTS")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+            Text("Examples from Viral Posts")
+                .dsSmallCapsLabel()
 
             ForEach(Array(entry.examples.enumerated()), id: \.offset) { _, example in
                 exampleCard(example)
@@ -243,10 +236,8 @@ struct CodexConceptPopover: View {
 
     private func whereActiveSection(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("HOW TO SPOT IT (from Codex)")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+            Text("How to Spot It (from Codex)")
+                .dsSmallCapsLabel()
 
             Text(text)
                 .font(DS.caption2)
@@ -260,9 +251,8 @@ struct CodexConceptPopover: View {
 
     private var applicationRulesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("HOW TO USE")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
+            Text("How to Use")
+                .font(DS.smallCaps)
                 .foregroundStyle(DS.green.opacity(0.8))
 
             ForEach(Array(entry.applicationRules.enumerated()), id: \.offset) { idx, rule in
@@ -284,9 +274,8 @@ struct CodexConceptPopover: View {
 
     private var antiPatternsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("ANTI-PATTERNS")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
+            Text("Anti-Patterns")
+                .font(DS.smallCaps)
                 .foregroundStyle(DS.red.opacity(0.8))
 
             ForEach(Array(entry.antiPatterns.enumerated()), id: \.offset) { _, ap in

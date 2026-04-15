@@ -68,8 +68,21 @@ struct ContentFocusModeView: View {
     @State private var isGeneratingDraft = false
     @State private var draftGenerationError: String?
 
-    // Left sidebar visibility
-    @State private var sidebarVisible: Bool = false
+    // Scriptorium V2 state
+    @State private var zenMode: Bool = false
+    @State private var hasAppeared: Bool = false
+    @State private var isContinuation: Bool = false
+    @State private var cosmoExpanded: Bool = false
+    @StateObject private var cosmoSession: FocusCosmoSession
+
+    // Inherited context for the right marginalia (source / swipes / framework / brand / hooks)
+    @State private var sourceIdeaAtom: Atom?
+    @State private var matchedSwipeAtoms: [Atom] = []
+    @State private var inheritedFramework: String?
+    @State private var clientProfileAtom: Atom?
+    @State private var availableClientProfiles: [Atom] = []
+    @State private var coreIdeaExpanded: Bool = false
+    @State private var hoveredSwipeUUID: String?
 
     enum DraftSaveState { case idle, saving, saved }
 
@@ -155,111 +168,52 @@ struct ContentFocusModeView: View {
         self.onClose = onClose
         self._editableTitle = State(initialValue: atom.title ?? "Untitled Content")
         self._viewModel = StateObject(wrappedValue: ContentFocusModeViewModel(atom: atom))
+        self._cosmoSession = StateObject(wrappedValue: FocusCosmoSession(
+            atomUUID: atom.uuid,
+            atomTitle: atom.title,
+            contextKind: .content
+        ))
     }
 
-    // MARK: - Body
+    // MARK: - Body — The Scriptorium
 
     var body: some View {
         ZStack {
-            // Background
-            DS.bg
-                .ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
-            // Main content
-            VStack(spacing: 0) {
-                // Top bar spacer
-                Spacer().frame(height: topSpacerHeight)
-
-                // Unified editor or post-creation phase
-                mainContent
+            if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
+                scriptoriumBody
+            } else {
+                // Post-creation phase — wrap in Atelier header chrome
+                VStack(spacing: 0) {
+                    scriptoriumHeader
+                    PostCreationPhaseView(
+                        phase: viewModel.displayPhase,
+                        atom: atom,
+                        state: $viewModel.state,
+                        onAdvancePhase: { phase in viewModel.goToPhase(phase) }
+                    )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            // Top bar overlay (fixed)
-            VStack {
-                topBar
-                Spacer()
-            }
-            .zIndex(10)
-
-            // Left sidebar trigger + overlay (UniversalFocusSidebar)
-            if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
-                leftSidebarOverlay
-                    .zIndex(50)
-            }
-
-            if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
-                floatingPolishButtonOverlay
-                    .zIndex(40)
-            }
-
-            // AI Collaborator floating popover (hidden when global Cosmo window is enabled)
-            if !cosmoWindowEnabled && showAICollaborator {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        ContentAICollaboratorView(
-                            engine: writingEngine,
-                            isVisible: $showAICollaborator,
-                            contentAtom: atom,
-                            state: $viewModel.state
-                        )
-                        .transition(.asymmetric(
-                            insertion: .scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity),
-                            removal: .scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity)
-                        ))
-                    }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 64)
-                }
-                .zIndex(100)
-            }
-
-            // Pane close button overlay
-            if isPaneContext {
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button(action: onClose) {
-                            Image(systemName: "xmark")
-                                .font(DS.buttonText)
-                                .foregroundStyle(DS.textMuted)
-                                .frame(width: 28, height: 28)
-                                .background(DS.border, in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.trailing, 16)
-                        .padding(.top, 16)
-                    }
-                    Spacer()
                 }
             }
 
-            // XP award animation overlay
+            // XP award — italic serif gilt, no glow
             if let xp = viewModel.xpAwarded {
                 VStack {
                     Spacer()
-                    HStack {
-                        Spacer()
-                        Text("+\(xp) XP")
-                            .font(DS.title2)
-                            .foregroundStyle(DS.green)
-                            .shadow(color: DS.green.opacity(0.5), radius: 8)
-                            .transition(.asymmetric(
-                                insertion: .scale(scale: 0.5).combined(with: .opacity).combined(with: .move(edge: .bottom)),
-                                removal: .opacity.combined(with: .move(edge: .top))
-                            ))
-                        Spacer()
-                    }
-                    .padding(.bottom, 80)
+                    Text("+\(xp) · \(viewModel.state.currentStep.label.lowercased()) complete")
+                        .font(.system(size: 14, weight: .regular, design: .serif))
+                        .italic()
+                        .foregroundStyle(DS.gilt)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .padding(.bottom, 120)
                 }
-                .animation(.spring(response: 0.4, dampingFraction: 0.7), value: viewModel.xpAwarded)
+                .animation(.easeOut(duration: 0.6), value: viewModel.xpAwarded)
                 .zIndex(200)
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: viewModel.xpAwarded)
-        .animation(ProMotionSprings.snappy, value: showAICollaborator)
+        .animation(.easeOut(duration: 0.4), value: viewModel.xpAwarded)
+        .animation(ProMotionSprings.snappy, value: zenMode)
         .animation(ProMotionSprings.snappy, value: isPolishModeActive)
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
@@ -276,13 +230,30 @@ struct ContentFocusModeView: View {
             Task {
                 await viewModel.searchRelatedAtoms()
             }
-            // Migration: auto-open sidebar if in brainstorm step (not in pane mode), auto-activate polish if in polish step
-            if viewModel.state.currentStep == .brainstorm && !isPaneContext {
-                sidebarVisible = true
-            } else if viewModel.state.currentStep == .polish {
+            // If the atom landed here in brainstorm (legacy), bump to draft
+            if viewModel.state.currentStep == .brainstorm {
+                viewModel.state.currentStep = .draft
+            }
+            if viewModel.state.currentStep == .polish {
                 isPolishModeActive = true
                 updatePolishAnalysis()
             }
+            // Check if this mount is a direct continuation from Idea Focus
+            // (user just pressed "begin writing →"). If so, skip the stagger
+            // and cross-fade the whole page in place.
+            isContinuation = FocusTransitionCoordinator.shared.consumePromotion(matching: atom.uuid)
+            if isContinuation {
+                withAnimation(.easeOut(duration: 0.26)) {
+                    hasAppeared = true
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.45).delay(0.05)) {
+                    hasAppeared = true
+                }
+            }
+            // Load inherited context (source idea, swipes, framework, client profile)
+            // for the right marginalia sections.
+            Task { await loadInheritedContext() }
             // Register context provider for global Cosmo window
             let provider = ContentContextProvider(atom: atom, stateRef: { [viewModel] in viewModel.state }, phaseRef: { [viewModel] in viewModel.displayPhase })
             if !isPaneContext || isPaneActive {
@@ -430,218 +401,751 @@ struct ContentFocusModeView: View {
         }
     }
 
-    // MARK: - Main Content
+    // MARK: - Scriptorium body (draft + polish steps)
 
-    @ViewBuilder
-    private var mainContent: some View {
-        if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
-            // Creation phase — unified editor
-            unifiedEditorContent
-        } else {
-            // Post-creation phase
-            PostCreationPhaseView(
-                phase: viewModel.displayPhase,
-                atom: atom,
-                state: $viewModel.state,
-                onAdvancePhase: { phase in
-                    viewModel.goToPhase(phase)
-                }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+    /// The Atelier-style stagger runs on fresh opens. When this mount came
+    /// directly from an Idea Focus `begin writing →` press, we want the whole
+    /// page to cross-fade in as a single movement instead — that's what sells
+    /// the "same page, now a manuscript" feel. These two helpers pick the right
+    /// mode per element.
+    private func continuationStagger(_ delay: Double) -> Double {
+        isContinuation ? 0 : delay
     }
 
-    // MARK: - Unified Editor Content
+    private var scriptoriumBody: some View {
+        VStack(spacing: 0) {
+            // Whisper-thin nav — zen ornament stays visible so you can always exit zen mode
+            scriptoriumHeader
+                .atelierStaggerIn(delay: continuationStagger(0.05), appeared: hasAppeared)
 
-    private var unifiedEditorContent: some View {
-        HStack(spacing: 0) {
-            // Center: Editor area
-            editorArea
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Page-wide title hero + step ledger — centered to the whole window,
+            // not just the manuscript column. This is what makes the page feel
+            // like a single composition rather than a left-heavy layout.
+            VStack(spacing: DS.space20) {
+                scriptoriumTitleHero
+                    .atelierStaggerIn(delay: continuationStagger(0.12), appeared: hasAppeared)
+                scriptoriumStepLedger
+                    .atelierStaggerIn(delay: continuationStagger(0.20), appeared: hasAppeared)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, DS.space12)
+            .padding(.bottom, DS.space24)
+            .opacity(zenMode ? 0 : 1)
 
-            // Right sidebar: Polish sidebar only (hidden in compact pane mode)
-            if isPolishModeActive && layoutMode != .compact {
-                ContentPolishSidebar(
-                    state: $viewModel.state,
-                    atom: atom,
-                    analysis: polishAnalysis
-                )
-                .frame(width: layoutMode == .regular ? 260 : 320)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+            GeometryReader { geo in
+                ZStack(alignment: .topLeading) {
+                    // Margins are outside the scroll view so they stay pinned
+                    // while only the center manuscript column scrolls.
+                    HStack(spacing: 0) {
+                        Spacer(minLength: DS.space24)
+
+                        HStack(alignment: .top, spacing: DS.space24) {
+                            scriptoriumLeftMargin
+                                .frame(width: 200, alignment: .leading)
+                                .padding(.top, DS.space12)
+                                .opacity(zenMode ? 0 : 1)
+                                .allowsHitTesting(!zenMode)
+                                .atelierStaggerIn(delay: continuationStagger(0.28), appeared: hasAppeared)
+
+                            ScrollView {
+                                scriptoriumManuscript(height: geo.size.height)
+                                    .atelierStaggerIn(delay: continuationStagger(0.36), appeared: hasAppeared)
+                                    .padding(.top, DS.space4)
+                                    .padding(.bottom, DS.space20)
+                            }
+                            .scrollIndicators(.hidden)
+
+                            scriptoriumRightMargin
+                                .frame(width: 220, alignment: .leading)
+                                .padding(.top, DS.space12)
+                                .opacity(zenMode ? 0 : 1)
+                                .allowsHitTesting(!zenMode)
+                                .atelierStaggerIn(delay: continuationStagger(0.44), appeared: hasAppeared)
+                        }
+                        .frame(maxWidth: 1244)
+
+                        Spacer(minLength: DS.space24)
+                    }
+                    .padding(.top, DS.space4)
+
+                    // Inline AI Result Popover — preserved verbatim
+                    if case .processing = inlineAIState {
+                        inlineResultPopover
+                            .position(
+                                x: min(max(draftEditorOrigin.x + selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
+                                y: max(draftEditorOrigin.y + selectionInfo.rectInEditor.minY - 80, 60)
+                            )
+                            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
+                    } else if inlineAIState == .showingResult {
+                        inlineResultPopover
+                            .position(
+                                x: min(max(draftEditorOrigin.x + selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
+                                y: max(draftEditorOrigin.y + selectionInfo.rectInEditor.minY - 80, 60)
+                            )
+                            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
+                    }
+
+                    // Word & character counter — bottom left, updates on text selection
+                    wordCharCounter
+                }
+                .coordinateSpace(name: "editorOverlay")
+                .onPreferenceChange(DraftEditorFrameKey.self) { frame in
+                    draftEditorOrigin = frame.origin
+                }
+                .onAppear { updateLayoutMode(for: geo.size.width) }
+                .onChange(of: geo.size) { _, newSize in
+                    updateLayoutMode(for: newSize.width)
+                }
             }
         }
-        .background(DS.bg)
-        // Keyboard shortcuts for inline AI
         .background(inlineAIKeyboardShortcuts)
     }
 
-    // MARK: - Left Sidebar Overlay
+    // MARK: - Scriptorium manuscript (title hero + step ledger + rich editor)
 
-    @ViewBuilder
-    private var leftSidebarOverlay: some View {
-        // Trigger zone at left edge + sidebar overlay
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .allowsHitTesting(false)
-            .overlay(alignment: .topLeading) {
-                FocusSidebarTrigger(isVisible: $sidebarVisible)
-                    .frame(maxHeight: .infinity)
-            }
-            .overlay(alignment: .topLeading) {
-                UniversalFocusSidebar(
-                    title: "Context",
-                    icon: "sidebar.left",
-                    accentColor: CosmoMentionColors.content,
-                    isVisible: $sidebarVisible,
-                    isLocked: .constant(false)
-                ) {
-                    ContentOutlineSidebarContent(
-                        state: $viewModel.state,
-                        atom: atom,
-                        writingEngine: cosmoWindowEnabled ? nil : writingEngine
-                    )
+    private func scriptoriumManuscript(height: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: DS.space20) {
+            // Title editor — serif display, chromeless (matches Atelier)
+            TextField("untitled content", text: $editableTitle, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(DS.displaySerif)
+                .foregroundStyle(DS.text)
+                .tracking(-0.5)
+                .lineLimit(1...3)
+                .onChange(of: editableTitle) { _, newTitle in
+                    viewModel.updateTitle(newTitle)
                 }
-                .padding(.leading, 16)
-                .padding(.top, 80) // Below top bar
+
+            // Metadata line
+            HStack(spacing: DS.space8) {
+                Text(formattedCreatedDate)
+                Text("·")
+                if !viewModel.state.contentDescription.isEmpty {
+                    Text(viewModel.state.contentDescription)
+                        .lineLimit(1)
+                } else {
+                    Text("no description")
+                }
             }
+            .font(DS.dateSerif)
+            .italic()
+            .foregroundStyle(DS.inkFaded)
+
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(width: 120, height: 0.5)
+
+            if localDraftContent.isEmpty {
+                aiDraftButton
+            }
+
+            // Main draft editor — machinery preserved exactly
+            CosmoDocumentEditor(
+                document: $draftDocument,
+                fontSize: 17,
+                placeholder: "begin writing…",
+                allowSlashCommands: true,
+                allowMentions: true,
+                allowSelectionMenu: true,
+                allowImages: true,
+                typewriterMode: typewriterMode,
+                polishHighlights: isPolishModeActive ? polishAnalysis : nil,
+                onSelectionChanged: { snapshot in
+                    handleSelectionChange(
+                        DraftSelectionInfo(
+                            text: snapshot.text,
+                            range: snapshot.range,
+                            rectInEditor: snapshot.rectInEditor
+                        )
+                    )
+                },
+                onContentHeightChange: { measuredHeight in
+                    textContentHeight = max(400, measuredHeight)
+                },
+                onAIAction: { action in triggerInlineAction(action) },
+                onCustomPrompt: { prompt in triggerCustomPrompt(prompt) },
+                onDocumentChange: { document, plainText in
+                    let changed = plainText != localDraftContent
+                    print("[FOCUS-CONTENT] onDocumentChange(draft) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
+                    localDraftContent = plainText
+                    draftDocument = document
+                    draftEditedLocally = true
+                    triggerAutoSave()
+                    if isPolishModeActive { debouncedPolishUpdate() }
+                }
+            )
+            .frame(minHeight: max(textContentHeight, height - 200), alignment: .top)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(key: DraftEditorFrameKey.self,
+                                    value: proxy.frame(in: .named("editorOverlay")))
+                }
+            )
+
+            scriptoriumCTA
+                .padding(.top, DS.space24)
+                .atelierStaggerIn(delay: continuationStagger(0.52), appeared: hasAppeared)
+        }
+        .frame(width: 760, alignment: .leading)
     }
 
-    // MARK: - Editor Area
+    // MARK: - Scriptorium header (quiet nav + zen ornament)
 
-    private var editorArea: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                // Centered editor with NSTextView
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        // Title (editable)
-                        CosmoDocumentEditor(
-                            document: $titleDocument,
-                            fontSize: titleFontSize,
-                            placeholder: "Untitled Content",
-                            allowSlashCommands: false,
-                            allowMentions: true,
-                            allowSelectionMenu: false,
-                            allowImages: false,
-                            singleLine: true,
-                            baseFontWeight: .semibold,
-                            onPlainTextChange: { plainText in
-                                editableTitle = plainText
-                            },
-                            onStructuredDocumentChange: { document, plainText in
-                                titleDocument = document
-                                editableTitle = plainText
-                                viewModel.updateTitleDocument(document, plainTitle: plainText)
-                            }
-                        )
-                        .frame(minHeight: titleMinHeight)
-                        .padding(.bottom, 8)
-
-                        // Description subtitle
-                        if !viewModel.state.contentDescription.isEmpty {
-                            Text(viewModel.state.contentDescription)
-                                .font(DS.body)
-                                .foregroundStyle(DS.textSecondary)
-                                .lineLimit(3)
-                                .padding(.bottom, 20)
-                        }
-
-                        LinearGradient(
-                            colors: [DS.accent.opacity(0.3), .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(height: 2)
-                        .frame(maxWidth: 430, alignment: .leading)
-                        .padding(.bottom, 24)
-
-                        // AI Draft button — visible when draft is empty
-                        if localDraftContent.isEmpty {
-                            aiDraftButton
-                        }
-
-                        // Draft editor — NSTextView for selection tracking
-                        CosmoDocumentEditor(
-                            document: $draftDocument,
-                            fontSize: 17,
-                            placeholder: "Start writing...",
-                            allowSlashCommands: true,
-                            allowMentions: true,
-                            allowSelectionMenu: true,
-                            allowImages: true,
-                            typewriterMode: typewriterMode,
-                            polishHighlights: isPolishModeActive ? polishAnalysis : nil,
-                            onSelectionChanged: { snapshot in
-                                handleSelectionChange(
-                                    DraftSelectionInfo(
-                                        text: snapshot.text,
-                                        range: snapshot.range,
-                                        rectInEditor: snapshot.rectInEditor
-                                    )
-                                )
-                            },
-                            onContentHeightChange: { measuredHeight in
-                                textContentHeight = max(400, measuredHeight)
-                            },
-                            onAIAction: { action in
-                                triggerInlineAction(action)
-                            },
-                            onCustomPrompt: { prompt in
-                                triggerCustomPrompt(prompt)
-                            },
-                            onDocumentChange: { document, plainText in
-                                let changed = plainText != localDraftContent
-                                print("[FOCUS-CONTENT] onDocumentChange(draft) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
-                                localDraftContent = plainText
-                                draftDocument = document
-                                draftEditedLocally = true
-                                triggerAutoSave()
-                                if isPolishModeActive { debouncedPolishUpdate() }
-                            }
-                        )
-                        .frame(minHeight: max(textContentHeight, geo.size.height - 150))
-                        .background(
-                            GeometryReader { proxy in
-                                Color.clear
-                                    .preference(key: DraftEditorFrameKey.self,
-                                                value: proxy.frame(in: .named("editorOverlay")))
-                            }
-                        )
+    private var scriptoriumHeader: some View {
+        HStack(spacing: DS.space12) {
+            if !isPaneContext {
+                Button(action: onClose) {
+                    HStack(spacing: DS.space6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("back")
+                            .font(DS.dateSerif)
+                            .italic()
                     }
-                    .frame(maxWidth: editorMaxWidth)
-                    .padding(.top, editorTopPadding)
-                    .padding(.bottom, editorBottomPadding)
-                    .padding(.horizontal, editorHorizontalPadding)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    .foregroundStyle(DS.inkFaded)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity)
-
-                // Inline AI Result Popover
-                if case .processing = inlineAIState {
-                    inlineResultPopover
-                        .position(
-                            x: min(max(draftEditorOrigin.x + selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
-                            y: max(draftEditorOrigin.y + selectionInfo.rectInEditor.minY - 80, 60)
-                        )
-                        .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
-                } else if inlineAIState == .showingResult {
-                    inlineResultPopover
-                        .position(
-                            x: min(max(draftEditorOrigin.x + selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
-                            y: max(draftEditorOrigin.y + selectionInfo.rectInEditor.minY - 80, 60)
-                        )
-                        .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
+                .buttonStyle(.plain)
+                .accessibilityLabel("Go back")
+                .opacity(zenMode ? 0 : 1)
+                .allowsHitTesting(!zenMode)
+            }
+            Spacer()
+            // Zen ornament is always visible — it's the only way to exit zen mode
+            ZenOrnament(isOn: $zenMode)
+            if isPaneContext {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.inkFaded)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
-            }
-            .coordinateSpace(name: "editorOverlay")
-            .onPreferenceChange(DraftEditorFrameKey.self) { frame in
-                draftEditorOrigin = frame.origin
-            }
-            .onAppear { updateLayoutMode(for: geo.size.width) }
-            .onChange(of: geo.size) { _, newSize in
-                updateLayoutMode(for: newSize.width)
+                .buttonStyle(.plain)
+                .padding(.leading, DS.space8)
+                .accessibilityLabel("Close pane")
+                .opacity(zenMode ? 0 : 1)
+                .allowsHitTesting(!zenMode)
             }
         }
+        .padding(.horizontal, DS.space20)
+        .padding(.vertical, DS.space12)
+    }
+
+    // MARK: - Title hero (smallCaps status ornament)
+
+    private var scriptoriumTitleHero: some View {
+        Text(statusOrnamentLabel)
+            .font(DS.smallCaps)
+            .tracking(2.2)
+            .foregroundStyle(DS.giltMuted)
+            .frame(maxWidth: .infinity)
+    }
+
+    private var statusOrnamentLabel: String {
+        let status: String
+        if let step = ContentFocusModeState.stepForPhase(viewModel.displayPhase) {
+            status = step.rawValue.uppercased()
+        } else {
+            status = viewModel.displayPhase.rawValue.uppercased()
+        }
+        return "· · · CONTENT · \(status) · · ·"
+    }
+
+    private var formattedCreatedDate: String {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = iso.date(from: atom.createdAt)
+            ?? ISO8601DateFormatter().date(from: atom.createdAt)
+            ?? Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d"
+        return formatter.string(from: date).lowercased()
+    }
+
+    // MARK: - Step ledger (i ─── ii)
+
+    private var scriptoriumStepLedger: some View {
+        let currentStep = viewModel.state.currentStep
+        return HStack(spacing: 0) {
+            Spacer()
+            stepLedgerNumeral("i", label: "draft", isCurrent: currentStep == .draft, isCompleted: currentStep == .polish) {
+                viewModel.goToStep(.draft)
+            }
+            Rectangle()
+                .fill(currentStep == .polish ? DS.gilt.opacity(0.5) : DS.sepiaSubtle)
+                .frame(width: 48, height: 0.5)
+                .padding(.horizontal, DS.space8)
+            stepLedgerNumeral("ii", label: "polish", isCurrent: currentStep == .polish, isCompleted: false) {
+                viewModel.goToStep(.polish)
+                isPolishModeActive = true
+                updatePolishAnalysis()
+            }
+            Spacer()
+        }
+    }
+
+    private func stepLedgerNumeral(_ numeral: String, label: String, isCurrent: Bool, isCompleted: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Text(numeral)
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isCurrent ? DS.gilt : (isCompleted ? DS.gilt.opacity(0.6) : DS.giltMuted))
+                Text(label)
+                    .font(DS.smallCaps)
+                    .tracking(1.6)
+                    .foregroundStyle(isCurrent ? DS.text : DS.inkFaded)
+                if isCurrent {
+                    Rectangle()
+                        .fill(DS.gilt)
+                        .frame(width: 3, height: 3)
+                        .rotationEffect(.degrees(45))
+                        .padding(.top, 1)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    // MARK: - Left marginalia (hooks + outline + core idea  /  score swaps in polish)
+
+    private var scriptoriumLeftMargin: some View {
+        VStack(alignment: .leading, spacing: DS.space24) {
+            if isPolishModeActive, viewModel.state.contentScorecard != nil {
+                scoreMarginaliaSection
+            }
+            if !viewModel.state.hooks.isEmpty {
+                hooksMarginaliaSection
+            }
+            outlineMarginaliaSection
+            if !viewModel.state.contentDescription.isEmpty {
+                coreIdeaMarginaliaSection
+            }
+        }
+    }
+
+    private var outlineMarginaliaSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("OUTLINE", countText: viewModel.state.outline.isEmpty ? nil : "\(viewModel.state.outline.count)")
+            if viewModel.state.outline.isEmpty {
+                Text("no outline yet")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(DS.inkFaded.opacity(0.6))
+            } else {
+                ForEach(Array(viewModel.state.outline.enumerated()), id: \.element.id) { idx, item in
+                    HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                        Text(romanNumeral(for: idx + 1))
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundStyle(DS.giltMuted)
+                            .frame(width: 24, alignment: .leading)
+                        Text(item.title)
+                            .font(DS.callout)
+                            .foregroundStyle(DS.text)
+                            .lineLimit(2)
+                    }
+                }
+            }
+        }
+    }
+
+    private var coreIdeaMarginaliaSection: some View {
+        let desc = viewModel.state.contentDescription
+        let needsTruncation = desc.count > 140
+        return VStack(alignment: .leading, spacing: DS.space6) {
+            MarginaliaLabel("CORE IDEA")
+            Text(desc)
+                .font(.system(size: 14, weight: .regular, design: .serif))
+                .italic()
+                .foregroundStyle(DS.text)
+                .lineLimit(coreIdeaExpanded ? nil : 4)
+                .fixedSize(horizontal: false, vertical: true)
+            if needsTruncation {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        coreIdeaExpanded.toggle()
+                    }
+                } label: {
+                    Text(coreIdeaExpanded ? "show less" : "show more…")
+                        .font(DS.dateSerif)
+                        .italic()
+                        .foregroundStyle(DS.gilt.opacity(0.75))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, DS.space2)
+            }
+        }
+    }
+
+    private var scoreMarginaliaSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("SCORE")
+            Text("analyzing…")
+                .font(DS.dateSerif)
+                .italic()
+                .foregroundStyle(DS.inkFaded.opacity(0.6))
+            // Full scorecard dimension render will ship in V1.5 — polish analysis
+            // (WritingAnalyzer) still drives inline highlights via polishAnalysis.
+        }
+    }
+
+    // MARK: - Right marginalia (SOURCE · SWIPES · FRAMEWORK · BRAND · HOOKS)
+
+    private var scriptoriumRightMargin: some View {
+        VStack(alignment: .leading, spacing: DS.space24) {
+            if sourceIdeaAtom != nil {
+                sourceMarginaliaSection
+            }
+            if !matchedSwipeAtoms.isEmpty {
+                swipesMarginaliaSection
+            }
+            if let framework = inheritedFramework, !framework.isEmpty {
+                frameworkMarginaliaSection(framework)
+            }
+            if clientProfileAtom != nil || !availableClientProfiles.isEmpty {
+                brandMarginaliaSection
+            }
+            FocusCosmoPanel(session: cosmoSession, isExpanded: $cosmoExpanded)
+                .task { await cosmoSession.load() }
+        }
+    }
+
+    @ViewBuilder
+    private var sourceMarginaliaSection: some View {
+        if let idea = sourceIdeaAtom {
+            Button {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openBlockInFocusMode,
+                    object: nil,
+                    userInfo: ["atomUUID": idea.uuid]
+                )
+            } label: {
+                VStack(alignment: .leading, spacing: DS.space10) {
+                    MarginaliaLabel("SOURCE")
+                    HStack(alignment: .top, spacing: DS.space8) {
+                        Rectangle()
+                            .fill(DS.entityIdea.opacity(0.25))
+                            .frame(width: 3)
+                            .frame(maxHeight: .infinity)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(idea.title ?? "untitled idea")
+                                .font(.system(size: 14, weight: .regular, design: .serif))
+                                .foregroundStyle(DS.text)
+                                .lineLimit(2)
+                            if let body = idea.body, !body.isEmpty {
+                                Text(String(body.prefix(80)))
+                                    .font(DS.dateSerif)
+                                    .italic()
+                                    .foregroundStyle(DS.inkFaded)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open source idea")
+        }
+    }
+
+    private var swipesMarginaliaSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("SWIPES", countText: "\(matchedSwipeAtoms.count) matched")
+            ForEach(matchedSwipeAtoms.prefix(3), id: \.uuid) { swipe in
+                swipeMarginaliaRow(swipe)
+            }
+        }
+    }
+
+    private func swipeMarginaliaRow(_ swipe: Atom) -> some View {
+        let isHovered = hoveredSwipeUUID == swipe.uuid
+        return Button {
+            openAtomInPane(swipe.uuid)
+        } label: {
+            HStack(alignment: .top, spacing: DS.space8) {
+                Rectangle()
+                    .fill(DS.entitySwipe.opacity(isHovered ? 0.55 : 0.18))
+                    .frame(width: 3)
+                    .frame(maxHeight: .infinity)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(swipe.title ?? "untitled")
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(2)
+                    if let hook = swipe.researchMetadata?.hook {
+                        Text(hook)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.inkFaded)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, DS.space4)
+            .padding(.horizontal, DS.space6)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(DS.vellum.opacity(isHovered ? 0.55 : 0))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                hoveredSwipeUUID = hovering ? swipe.uuid : nil
+            }
+        }
+        .accessibilityLabel("Open swipe \(swipe.title ?? "untitled")")
+    }
+
+    private func openAtomInPane(_ uuid: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": uuid, "asPane": true]
+        )
+    }
+
+    private func frameworkMarginaliaSection(_ framework: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            MarginaliaLabel("FRAMEWORK")
+            Text(framework)
+                .font(.system(size: 14, weight: .regular, design: .serif))
+                .foregroundStyle(DS.text)
+                .lineLimit(2)
+        }
+    }
+
+    @ViewBuilder
+    private var brandMarginaliaSection: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            MarginaliaLabel("BRAND")
+            brandPickerMenu
+            if let profile = clientProfileAtom,
+               let meta = profile.metadataValue(as: ClientProfileMetadata.self) {
+                brandVoiceBullets(meta)
+            }
+        }
+    }
+
+    private var brandPickerMenu: some View {
+        Menu {
+            ForEach(availableClientProfiles, id: \.uuid) { profile in
+                Button {
+                    assignClientProfile(profile)
+                } label: {
+                    HStack {
+                        Text(profile.title ?? "unnamed")
+                        if profile.uuid == clientProfileAtom?.uuid {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+            if availableClientProfiles.isEmpty {
+                Text("no client profiles available")
+            }
+            if clientProfileAtom != nil {
+                Divider()
+                Button(role: .destructive) {
+                    clearClientProfile()
+                } label: {
+                    Label("remove brand", systemImage: "xmark.circle")
+                }
+            }
+        } label: {
+            HStack(spacing: DS.space6) {
+                Text(brandMenuTitle)
+                    .font(.system(size: 14, weight: .regular, design: .serif))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(DS.gilt.opacity(0.7))
+            }
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Select client profile")
+    }
+
+    private var brandMenuTitle: String {
+        if let profile = clientProfileAtom {
+            return (profile.title ?? "unnamed").lowercased()
+        }
+        return "pick brand"
+    }
+
+    @ViewBuilder
+    private func brandVoiceBullets(_ meta: ClientProfileMetadata) -> some View {
+        let bullets = collectBrandBullets(meta).prefix(3)
+        if !bullets.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
+                    HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+                        Text("·")
+                            .font(.system(size: 11))
+                            .foregroundStyle(DS.gilt.opacity(0.6))
+                        Text(bullet)
+                            .font(DS.dateSerif)
+                            .italic()
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+    }
+
+    private func assignClientProfile(_ profile: Atom) {
+        clientProfileAtom = profile
+        viewModel.state.clientProfileUUID = profile.uuid
+        viewModel.state.save()
+    }
+
+    private func clearClientProfile() {
+        clientProfileAtom = nil
+        viewModel.state.clientProfileUUID = nil
+        viewModel.state.save()
+    }
+
+    private func collectBrandBullets(_ meta: ClientProfileMetadata) -> [String] {
+        var bullets: [String] = []
+        if let niche = meta.niche, !niche.isEmpty { bullets.append(niche) }
+        if let voice = meta.voiceNotes, !voice.isEmpty {
+            bullets.append(String(voice.prefix(50)))
+        }
+        if let audience = meta.targetAudience, !audience.isEmpty {
+            bullets.append(String(audience.prefix(50)))
+        }
+        if let story = meta.brandStory, !story.isEmpty, bullets.count < 3 {
+            bullets.append(String(story.prefix(50)))
+        }
+        return bullets
+    }
+
+    private var hooksMarginaliaSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("HOOKS", countText: "\(viewModel.state.hooks.count)")
+            ForEach(Array(viewModel.state.hooks.prefix(3).enumerated()), id: \.offset) { idx, hook in
+                HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                    Text(romanNumeral(for: idx + 1) + ".")
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(DS.giltMuted)
+                        .frame(width: 22, alignment: .leading)
+                    Text(hook)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    // MARK: - Word & character counter (bottom-left overlay)
+
+    private var counterValues: (words: Int, chars: Int) {
+        let text = selectedText.isEmpty ? localDraftContent : selectedText
+        let words = text.split(whereSeparator: \.isWhitespace).count
+        let chars = text.count
+        return (words, chars)
+    }
+
+    private var wordCharCounter: some View {
+        let words = counterValues.words
+        let chars = counterValues.chars
+        let isSelection = !selectedText.isEmpty
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: DS.space8) {
+                Text("\(words)")
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(DS.inkFaded)
+                Text(words == 1 ? "word" : "words")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(DS.inkFaded.opacity(0.7))
+                Text("·")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.sepiaSubtle)
+                Text("\(chars)")
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(DS.inkFaded)
+                Text(chars == 1 ? "char" : "chars")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(DS.inkFaded.opacity(0.7))
+            }
+            if isSelection {
+                Text("selection")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.gilt.opacity(0.6))
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        .padding(.leading, DS.space20)
+        .padding(.bottom, DS.space20)
+        .opacity(localDraftContent.isEmpty || zenMode ? 0 : 1)
+        .allowsHitTesting(false)
+        .animation(ProMotionSprings.snappy, value: isSelection)
+    }
+
+    // MARK: - CTA
+
+    private var scriptoriumCTA: some View {
+        HStack {
+            Spacer()
+            GiltBracketedCTA(
+                title: ctaTitle,
+                disabled: localDraftContent.isEmpty,
+                action: advanceFromCTA
+            )
+            .keyboardShortcut(.return, modifiers: [.command])
+            Spacer()
+        }
+    }
+
+    private var ctaTitle: String {
+        switch viewModel.state.currentStep {
+        case .brainstorm, .draft: return "polish it"
+        case .polish: return "ship it"
+        }
+    }
+
+    private func advanceFromCTA() {
+        switch viewModel.state.currentStep {
+        case .brainstorm, .draft:
+            viewModel.goToPhase(.polish)
+            isPolishModeActive = true
+            updatePolishAnalysis()
+        case .polish:
+            viewModel.goToPhase(.scheduled)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func romanNumeral(for value: Int) -> String {
+        let numerals: [(Int, String)] = [
+            (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")
+        ]
+        var result = ""
+        var n = value
+        for (val, letters) in numerals {
+            while n >= val {
+                result += letters
+                n -= val
+            }
+        }
+        return result.isEmpty ? "\(value)" : result
     }
 
     // MARK: - AI Draft Button
@@ -650,15 +1154,9 @@ struct ContentFocusModeView: View {
     private var aiDraftButton: some View {
         VStack(alignment: .leading, spacing: 12) {
             if isGeneratingDraft {
-                VStack(spacing: 10) {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                        .tint(DS.accent)
-                    Text("Opus is writing your draft...")
-                        .font(DS.callout)
-                        .foregroundStyle(DS.textSecondary)
-                }
-                .padding(.vertical, 24)
+                AIWritingProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 300)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
                 Button(action: generateAIDraft) {
                     HStack(spacing: 6) {
@@ -715,7 +1213,16 @@ struct ContentFocusModeView: View {
                 if let updated = try? await AtomRepository.shared.fetch(uuid: contentUUID),
                    let body = updated.body, !body.isEmpty {
                     await MainActor.run {
+                        // Reset local-edit guard so onChange won't block this update
+                        draftEditedLocally = false
+                        let richDoc = RichDocument.migrateLegacy(body)
+                        // Set both rich document and plain text on viewModel
+                        viewModel.state.richDraftDocument = richDoc
                         viewModel.state.draftContent = body
+                        // Directly update editor bindings (belt-and-suspenders)
+                        localDraftContent = body
+                        draftDocument = richDoc
+                        lastAIGeneratedDraft = body
                         viewModel.state.save()
                     }
                 }
@@ -733,54 +1240,6 @@ struct ContentFocusModeView: View {
                 }
             }
         }
-    }
-
-    // MARK: - Floating Polish Button
-
-    @ViewBuilder
-    private var floatingPolishButtonOverlay: some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-
-                if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
-                    Button {
-                        withAnimation(ProMotionSprings.snappy) {
-                            isPolishModeActive.toggle()
-                            if isPolishModeActive { updatePolishAnalysis() }
-                        }
-                    } label: {
-                        polishToggleLabel
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 24)
-                    .padding(.bottom, 24)
-                }
-            }
-        }
-        .allowsHitTesting(true)
-    }
-
-    @ViewBuilder
-    private var polishToggleLabel: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "sparkles")
-                .font(DS.buttonText)
-            Text("Polish")
-                .font(DS.caption)
-        }
-        .foregroundStyle(isPolishModeActive ? DS.green : DS.textSecondary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(isPolishModeActive ? DS.green.opacity(0.15) : DS.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(isPolishModeActive ? DS.green.opacity(0.3) : DS.border, lineWidth: 1)
-        )
     }
 
     // MARK: - Polish Analysis
@@ -1117,6 +1576,50 @@ struct ContentFocusModeView: View {
         }
     }
 
+    // MARK: - Inherited Context Loading
+
+    /// Loads the source idea, matched swipes, inherited framework, and client
+    /// profile from the content atom's metadata. Mirrors the loader used by
+    /// `ContentContextPanel.loadInheritedContext()`, minus the intelligence /
+    /// meta-pattern pieces that don't render in the marginalia.
+    private func loadInheritedContext() async {
+        guard let metadata = atom.metadataValue(as: ContentAtomMetadata.self) else { return }
+
+        // Source idea
+        if let ideaUUID = metadata.sourceIdeaUUID,
+           let idea = try? await AtomRepository.shared.fetch(uuid: ideaUUID) {
+            await MainActor.run { self.sourceIdeaAtom = idea }
+        }
+
+        // Matched swipes — at most 5, we only show 3
+        if let swipeUUIDs = metadata.inheritedSwipeUUIDs {
+            var loaded: [Atom] = []
+            for uuid in swipeUUIDs.prefix(5) {
+                if let swipe = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    loaded.append(swipe)
+                }
+            }
+            if !loaded.isEmpty {
+                await MainActor.run { self.matchedSwipeAtoms = loaded }
+            }
+        }
+
+        // Framework (string)
+        if let framework = metadata.inheritedFramework, !framework.isEmpty {
+            await MainActor.run { self.inheritedFramework = framework }
+        }
+
+        // Client profile atom (brand voice lives in its metadata)
+        if let clientUUID = metadata.clientProfileUUID,
+           let client = try? await AtomRepository.shared.fetch(uuid: clientUUID) {
+            await MainActor.run { self.clientProfileAtom = client }
+        }
+
+        // All available client profiles for the brand picker menu
+        let profiles = (try? await AtomRepository.shared.fetchAll(type: .clientProfile)) ?? []
+        await MainActor.run { self.availableClientProfiles = profiles }
+    }
+
     // MARK: - Auto-save
 
     private func triggerAutoSave() {
@@ -1147,116 +1650,41 @@ struct ContentFocusModeView: View {
         }
     }
 
-    // MARK: - Top Bar
+}
 
-    private var topBar: some View {
-        HStack(spacing: 16) {
-            // Main sidebar toggle (standalone only)
-            if !isPaneContext {
-                Button {
-                    withAnimation(ProMotionSprings.sidebar) {
-                        isSidebarHidden.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+// MARK: - Zen Ornament (concentric circles → toggles zen mode)
+
+struct ZenOrnament: View {
+    @Binding var isOn: Bool
+    @State private var hover: Bool = false
+
+    var body: some View {
+        Button {
+            withAnimation(ProMotionSprings.snappy) { isOn.toggle() }
+        } label: {
+            ZStack {
+                Circle()
+                    .stroke(DS.gilt.opacity(0.25), lineWidth: 0.4)
+                    .frame(width: 18, height: 18)
+                Circle()
+                    .stroke(DS.gilt.opacity(0.5), lineWidth: 0.6)
+                    .frame(width: 12, height: 12)
+                Circle()
+                    .fill(DS.gilt)
+                    .frame(width: 3, height: 3)
             }
-
-            // Back button (hidden in pane mode — X button handles close)
-            if !isPaneContext {
-                Button(action: onClose) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(DS.buttonText)
-                        Text("Back")
-                            .font(DS.callout)
-                    }
-                    .foregroundStyle(DS.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(DS.border, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Editable title
-            Text(editableTitle.isEmpty ? "Content title..." : editableTitle)
-                .font(DS.headline)
-                .foregroundStyle(editableTitle.isEmpty ? DS.textMuted : DS.text)
-                .lineLimit(1)
-                .frame(maxWidth: layoutMode == .compact ? 180 : 300, alignment: .leading)
-
-            // Type badge (hidden in compact mode)
-            if layoutMode != .compact {
-                HStack(spacing: 4) {
-                    Image(systemName: "doc.text.fill")
-                        .font(DS.caption2)
-                    Text("Content")
-                        .font(DS.caption2)
-                        .tracking(0.5)
-                }
-                .foregroundStyle(DS.entityContent)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(DS.entityContent.opacity(0.12), in: Capsule())
-            }
-
-            Spacer()
-
-            // Word + character count pill — selection-aware
-            if !localDraftContent.isEmpty {
-                let textToCount = selectedText.isEmpty ? localDraftContent : selectedText
-                let words = textToCount.split(whereSeparator: \.isWhitespace).count
-                let chars = textToCount.count
-                Text("\(words) words · \(chars) chars")
-                    .font(DS.caption.monospacedDigit())
-                    .foregroundStyle(DS.textMuted)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(DS.border, in: Capsule())
-            }
-
-            // Focus mode sidebar toggle
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    sidebarVisible.toggle()
-                }
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(DS.callout)
-                    .foregroundStyle(sidebarVisible ? DS.entityContent : DS.textSecondary)
-                    .padding(8)
-                    .background(
-                        sidebarVisible ? DS.entityContent.opacity(0.15) : DS.border,
-                        in: Circle()
-                    )
-            }
-            .buttonStyle(.plain)
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+            .scaleEffect(hover ? 1.08 : 1)
+            .rotationEffect(.degrees(hover ? 0.5 : 0))
+            .animation(ProMotionSprings.snappy, value: hover)
         }
-        .padding(.horizontal, layoutMode == .compact ? 12 : 20)
-        .padding(.vertical, 12)
-        .background(
-            LinearGradient(
-                colors: [
-                    DS.bg.opacity(0.95),
-                    DS.bg.opacity(0.8),
-                    DS.bg.opacity(0.4),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: layoutMode == .compact ? 80 : 120)
-            .allowsHitTesting(false)
-        , alignment: .top)
+        .buttonStyle(.plain)
+        .keyboardShortcut(".", modifiers: [.command])
+        .onHover { hover = $0 }
+        .help(isOn ? "Exit zen mode (⌘.)" : "Zen mode (⌘.)")
+        .accessibilityLabel(isOn ? "Exit zen mode" : "Zen mode")
     }
-
 }
 
 // MARK: - Content Focus Mode ViewModel

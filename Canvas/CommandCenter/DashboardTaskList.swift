@@ -12,7 +12,6 @@ struct DashboardTaskList: View {
     @State private var selectedTaskUUIDs: Set<String> = []
     @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
     @State private var showOverdueRescheduleMenu = false
-    @State private var activeTaskMenuUUID: String?
     @State private var hoveredTaskUUID: String?
     @State private var draggedTaskUUID: String?
     @State private var dropTargetTaskUUID: String?
@@ -257,11 +256,8 @@ struct DashboardTaskList: View {
         ForEach(tasks) { task in
             taskRow(task)
                 .draggable(task.uuid) {
-                    // Drag preview
+                    // Drag preview — vellum card, no accent bar
                     HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(task.priority.color)
-                            .frame(width: 4, height: 20)
                         TaskTitleWithMentions(
                             title: task.title,
                             mentions: task.titleMentions,
@@ -276,7 +272,12 @@ struct DashboardTaskList: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.vellum, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(DS.giltMuted, lineWidth: 0.5)
+                    )
+                    .dsFloatingShadow()
                     .onAppear { draggedTaskUUID = task.uuid }
                 }
                 .dropDestination(for: String.self) { droppedItems, _ in
@@ -337,18 +338,23 @@ struct DashboardTaskList: View {
         showReschedule: Bool = false
     ) -> some View {
         HStack(spacing: 6) {
-            Text(title.uppercased())
-                .font(DS.caption)
-                .tracking(0.8)
+            Text(title)
+                .font(DS.smallCaps)
                 .foregroundStyle(color)
 
             if let trailing {
-                Text(trailing)
-                    .font(DS.caption2)
-                    .foregroundStyle(color.opacity(0.7))
+                Text("(\(trailing))")
+                    .font(DS.smallCaps)
+                    .foregroundStyle(color.opacity(0.6))
             }
 
-            Spacer()
+            // Anchoring line — extends to right edge like a ledger rule
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(height: 0.5)
+                .padding(.leading, DS.space8)
+
+            Spacer(minLength: 0)
 
             if showReschedule {
                 Button {
@@ -398,8 +404,7 @@ struct DashboardTaskList: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text(upcomingDayLabel(day))
-                    .font(DS.caption)
-                    .tracking(0.8)
+                    .font(DS.smallCaps)
                     .foregroundStyle(day.isToday ? DS.accent : DS.textSecondary)
 
                 Text("\(day.taskCount)")
@@ -445,82 +450,17 @@ struct DashboardTaskList: View {
 
         let isHovered = hoveredTaskUUID == task.uuid && !isAnimatingCompletion
 
-        HStack(spacing: 0) {
-            // Priority color bar — widens on hover
-            RoundedRectangle(cornerRadius: 2)
-                .fill(task.priority.color.opacity(isHovered ? 1.0 : 0.85))
-                .frame(width: isHovered ? 5 : 4)
-                .padding(.vertical, 4)
-
-            HStack(spacing: 10) {
-                // Checkbox
-                checkboxButton(task, completionState: completionState)
-
-                // Title + meta
-                Button {
-                    guard !isAnimatingCompletion else { return }
-                    if NSEvent.modifierFlags.contains(.shift) {
-                        if selectedTaskUUIDs.contains(task.uuid) {
-                            selectedTaskUUIDs.remove(task.uuid)
-                        } else {
-                            selectedTaskUUIDs.insert(task.uuid)
-                        }
-                    } else {
-                        selectedTaskUUIDs.removeAll()
-                        onSelectTask?(task)
-                    }
-                } label: {
-                    taskContent(task, completionState: completionState)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                Spacer(minLength: 4)
-
-                // Due date chip
-                if let dueInfo = task.dueInfo, !task.isCompleted {
-                    dueDateChip(dueInfo, isOverdue: task.isOverdue)
-                }
-
-                // Play button
-                if !task.isCompleted && !isAnimatingCompletion {
-                    playButton(task, isActive: isActiveSession)
-                }
-
-                if !isAnimatingCompletion {
-                    taskActionButton(task)
-                }
-            }
-            .padding(.leading, 8)
-            .padding(.trailing, 10)
-        }
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(
-                    isActiveSession ? DS.accent.opacity(0.06)
-                        : isMultiSelected ? DS.accent.opacity(0.06)
-                        : isKeyboardSelected ? DS.accentSoft
-                        : isHovered ? DS.surfaceHover
-                        : Color.clear
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(
-                    isActiveSession ? DS.accent.opacity(0.3)
-                        : isMultiSelected ? DS.accent.opacity(0.4)
-                        : isKeyboardSelected ? DS.accent.opacity(0.2)
-                        : Color.clear,
-                    lineWidth: isMultiSelected ? 2 : 1
-                )
-        )
+        rowBase(task, completionState: completionState, isActiveSession: isActiveSession, isAnimatingCompletion: isAnimatingCompletion)
+        .background(rowBackground(isActiveSession: isActiveSession, isMultiSelected: isMultiSelected, isKeyboardSelected: isKeyboardSelected, isHovered: isHovered))
+        .overlay(alignment: .bottom) { rowPriorityWash(task, isAnimatingCompletion: isAnimatingCompletion) }
+        .overlay(rowBorder(isActiveSession: isActiveSession, isMultiSelected: isMultiSelected, isKeyboardSelected: isKeyboardSelected))
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .scaleEffect(completionState?.rowScale ?? 1)
         .opacity(completionState?.rowOpacity ?? 1)
         .offset(y: completionState?.rowOffsetY ?? 0)
         .blur(radius: completionState?.blurRadius ?? 0)
         .contentShape(Rectangle())
+        .onTapGesture { handleRowTap(task, isAnimatingCompletion: isAnimatingCompletion) }
         .onHover { hovering in
             hoveredTaskUUID = hovering ? task.uuid : (hoveredTaskUUID == task.uuid ? nil : hoveredTaskUUID)
         }
@@ -687,15 +627,16 @@ struct DashboardTaskList: View {
     // MARK: - Due Date Chip
 
     private func dueDateChip(_ text: String, isOverdue: Bool) -> some View {
-        Text(text)
-            .font(DS.caption2)
-            .foregroundStyle(isOverdue ? DS.red : DS.textMuted)
-            .padding(.horizontal, DS.space6)
-            .padding(.vertical, DS.space2)
-            .background(
-                Capsule()
-                    .fill(isOverdue ? DS.red.opacity(0.1) : DS.surface)
-            )
+        HStack(spacing: 3) {
+            if isOverdue {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(DS.red)
+            }
+            Text(text)
+                .font(DS.caption2)
+                .foregroundStyle(isOverdue ? DS.red : DS.inkFaded)
+        }
     }
 
     // MARK: - Play Button
@@ -711,64 +652,115 @@ struct DashboardTaskList: View {
         } label: {
             Image(systemName: isActive ? "pause.fill" : "play.fill")
                 .font(DS.caption2)
-                .foregroundStyle(isActive ? DS.accent : DS.textMuted)
-                .frame(width: DS.space24, height: DS.space24)
+                .foregroundStyle(isActive ? DS.accent : DS.inkFaded)
+                .frame(width: 22, height: 22)
                 .background(
                     Circle()
-                        .fill(isActive ? DS.accentSoft : DS.surface)
+                        .fill(isActive ? DS.accentSoft : Color.clear)
                 )
         }
         .buttonStyle(.plain)
     }
 
-    private func taskActionButton(_ task: TaskViewModel) -> some View {
-        Button {
-            activeTaskMenuUUID = task.uuid
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(DS.caption2)
-                .foregroundStyle(activeTaskMenuUUID == task.uuid ? DS.text : DS.textMuted)
-                .frame(width: DS.space24, height: DS.space24)
-                .background(
-                    Circle()
-                        .fill(activeTaskMenuUUID == task.uuid ? DS.accentSoft : DS.surface)
-                )
-                .overlay(
-                    Circle()
-                        .stroke(activeTaskMenuUUID == task.uuid ? DS.accent.opacity(0.22) : DS.borderSubtle, lineWidth: 1)
-                )
+    @ViewBuilder
+    private func rowBase(
+        _ task: TaskViewModel,
+        completionState: CommandCenterTaskCompletionState?,
+        isActiveSession: Bool,
+        isAnimatingCompletion: Bool
+    ) -> some View {
+        HStack(spacing: 0) {
+            rowPriorityLead(task)
+            rowContent(task, completionState: completionState, isActiveSession: isActiveSession, isAnimatingCompletion: isAnimatingCompletion)
+                .padding(.trailing, 10)
         }
-        .buttonStyle(.plain)
-        .popover(
-            isPresented: Binding(
-                get: { activeTaskMenuUUID == task.uuid },
-                set: { if !$0 { activeTaskMenuUUID = nil } }
-            ),
-            attachmentAnchor: .rect(.bounds),
-            arrowEdge: .top
-        ) {
-            CommandCenterTaskActionPopover(
-                task: task,
-                currentHabit: viewModel.resolvedHabit(for: task),
-                availableHabits: viewModel.availableHabitDefinitions,
-                loadRecurrenceRule: { await viewModel.recurrenceRule(for: task) },
-                onToggleCompletion: { handleTaskCompletionTap(task) },
-                onReschedule: { date in
-                    Task { await viewModel.rescheduleTask(uuid: task.uuid, toDate: date) }
-                },
-                onApplyHabit: { habitUUID in
-                    Task { await viewModel.applyHabit(habitUUID, to: task.uuid) }
-                },
-                onApplyRecurrence: { rule in
-                    Task { await viewModel.setTaskRecurrence(uuid: task.uuid, rule: rule) }
-                },
-                onDelete: {
-                    Task { await viewModel.deleteTask(uuid: task.uuid) }
-                },
-                onDismiss: {
-                    activeTaskMenuUUID = nil
-                }
+        .padding(.vertical, 7)
+    }
+
+    @ViewBuilder
+    private func rowPriorityLead(_ task: TaskViewModel) -> some View {
+        if task.priority == .high || task.priority == .critical {
+            Rectangle()
+                .fill(task.priority.color.opacity(0.30))
+                .frame(width: 4, height: 4)
+                .rotationEffect(.degrees(45))
+                .padding(.leading, 6)
+                .padding(.trailing, 2)
+        } else {
+            Spacer().frame(width: 12)
+        }
+    }
+
+    private func rowBackground(isActiveSession: Bool, isMultiSelected: Bool, isKeyboardSelected: Bool, isHovered: Bool) -> some View {
+        let fill: Color = {
+            if isActiveSession { return DS.accentSoft.opacity(0.5) }
+            if isMultiSelected { return DS.accent.opacity(0.06) }
+            if isKeyboardSelected { return DS.accentSoft }
+            if isHovered { return DS.vellum.opacity(0.5) }
+            return Color.clear
+        }()
+        return RoundedRectangle(cornerRadius: 6).fill(fill)
+    }
+
+    @ViewBuilder
+    private func rowPriorityWash(_ task: TaskViewModel, isAnimatingCompletion: Bool) -> some View {
+        if !task.isCompleted && !isAnimatingCompletion {
+            LinearGradient(
+                colors: [task.priority.color.opacity(0.06), Color.clear],
+                startPoint: .leading,
+                endPoint: UnitPoint(x: 0.4, y: 0.5)
             )
+            .frame(height: 1)
+            .clipShape(.rect(cornerRadius: 6))
+        }
+    }
+
+    private func rowBorder(isActiveSession: Bool, isMultiSelected: Bool, isKeyboardSelected: Bool) -> some View {
+        let stroke: Color = {
+            if isActiveSession { return DS.accent.opacity(0.3) }
+            if isMultiSelected { return DS.accent.opacity(0.4) }
+            if isKeyboardSelected { return DS.accent.opacity(0.2) }
+            return Color.clear
+        }()
+        return RoundedRectangle(cornerRadius: 6)
+            .stroke(stroke, lineWidth: isMultiSelected ? 2 : 1)
+    }
+
+    @ViewBuilder
+    private func rowContent(
+        _ task: TaskViewModel,
+        completionState: CommandCenterTaskCompletionState?,
+        isActiveSession: Bool,
+        isAnimatingCompletion: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            checkboxButton(task, completionState: completionState)
+
+            taskContent(task, completionState: completionState)
+
+            Spacer(minLength: 4)
+
+            if let dueInfo = task.dueInfo, !task.isCompleted {
+                dueDateChip(dueInfo, isOverdue: task.isOverdue)
+            }
+
+            if !task.isCompleted && !isAnimatingCompletion {
+                playButton(task, isActive: isActiveSession)
+            }
+        }
+    }
+
+    private func handleRowTap(_ task: TaskViewModel, isAnimatingCompletion: Bool) {
+        guard !isAnimatingCompletion else { return }
+        if NSEvent.modifierFlags.contains(.shift) {
+            if selectedTaskUUIDs.contains(task.uuid) {
+                selectedTaskUUIDs.remove(task.uuid)
+            } else {
+                selectedTaskUUIDs.insert(task.uuid)
+            }
+        } else {
+            selectedTaskUUIDs.removeAll()
+            onSelectTask?(task)
         }
     }
 
@@ -803,23 +795,11 @@ struct DashboardTaskList: View {
 
     private func emptyState(message: String, icon: String) -> some View {
         VStack(spacing: DS.space10) {
-            ZStack {
-                Circle()
-                    .stroke(DS.accent.opacity(0.08), lineWidth: 1)
-                    .frame(width: 56, height: 56)
-
-                Circle()
-                    .fill(DS.accentSoft.opacity(0.5))
-                    .frame(width: 44, height: 44)
-
-                Image(systemName: icon)
-                    .font(DS.title2)
-                    .foregroundStyle(DS.accent.opacity(0.6))
-            }
+            OrnamentalRule(color: DS.giltMuted)
 
             Text(message)
-                .font(DS.cardMeta)
-                .foregroundStyle(DS.textSecondary)
+                .font(.system(size: 14, weight: .regular, design: .serif))
+                .foregroundStyle(DS.inkFaded)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DS.space32)

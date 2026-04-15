@@ -893,7 +893,6 @@ private struct ThinkspaceRowChrome: ViewModifier {
             )
             .overlay(springLoadFill)
             .overlay(strokeOverlay)
-            .overlay(alignment: .leading) { leadingIndicator }
             .shadow(
                 color: (isDropTarget || isSpringLoading)
                     ? DS.accentGlow.opacity(0.18 + springLoadPulse * 0.34)
@@ -919,14 +918,6 @@ private struct ThinkspaceRowChrome: ViewModifier {
                     : (isDropTarget ? DS.accent.opacity(0.26) : Color.clear),
                 lineWidth: (isDropTarget || isSpringLoading) ? 1.5 : 1
             )
-    }
-
-    private var leadingIndicator: some View {
-        RoundedRectangle(cornerRadius: 2, style: .continuous)
-            .fill(DS.accent.opacity(isSpringLoading ? 0.36 + springLoadPulse * 0.42 : (isDropTarget ? 0.28 : 0)))
-            .frame(width: 3)
-            .padding(.vertical, 8)
-            .opacity(isDropTarget || isSpringLoading ? 1 : 0)
     }
 
     private var frameTracker: some View {

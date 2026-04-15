@@ -170,10 +170,9 @@ public struct LevelUpCelebrationView: View {
     private var levelDisplaySection: some View {
         VStack(spacing: 24) {
             // Level label
-            Text(levelUp.isCosmosIndexLevel ? "COSMO INDEX" : levelUp.dimension.uppercased())
-                .font(.system(size: 14, weight: .bold))
+            Text(levelUp.isCosmosIndexLevel ? "Cosmo Index" : levelUp.dimension)
+                .font(DS.smallCaps)
                 .foregroundStyle(.white.opacity(0.7))
-                .tracking(3)
 
             // Level number with rings
             ZStack {
@@ -254,10 +253,9 @@ public struct LevelUpCelebrationView: View {
         HStack(spacing: 24) {
             // Total XP
             VStack(spacing: 4) {
-                Text("TOTAL XP")
-                    .font(.system(size: 10, weight: .semibold))
+                Text("Total XP")
+                    .font(DS.smallCaps)
                     .foregroundStyle(.white.opacity(0.5))
-                    .tracking(1)
 
                 Text("\(formatNumber(levelUp.totalXP))")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
@@ -272,10 +270,9 @@ public struct LevelUpCelebrationView: View {
 
             // XP to next
             VStack(spacing: 4) {
-                Text("NEXT LEVEL")
-                    .font(.system(size: 10, weight: .semibold))
+                Text("Next Level")
+                    .font(DS.smallCaps)
                     .foregroundStyle(.white.opacity(0.5))
-                    .tracking(1)
 
                 Text("\(formatNumber(levelUp.xpToNextLevel)) XP")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
@@ -294,10 +291,9 @@ public struct LevelUpCelebrationView: View {
 
     private var unlocksSection: some View {
         VStack(spacing: 16) {
-            Text("UNLOCKED")
-                .font(.system(size: 12, weight: .bold))
+            Text("Unlocked")
+                .font(DS.smallCaps)
                 .foregroundStyle(.white.opacity(0.5))
-                .tracking(2)
 
             // Features
             if !levelUp.unlockedFeatures.isEmpty {

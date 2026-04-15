@@ -57,8 +57,16 @@ struct NoteFocusModeView: View {
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @AppStorage("typewriterMode") private var typewriterMode = false
 
+    // V2 "Scholar's Carrel" rail state
+    @AppStorage("noteFocusV2.leftRail") private var leftRailVisible: Bool = true
+    @AppStorage("noteFocusV2.rightRail") private var rightRailVisible: Bool = true
+    @State private var graphOverlayVisible: Bool = false
+    @State private var backlinkPreviews: [NoteBacklinkPreview] = []
+    @State private var mentionedInCounts: [AtomType: Int] = [:]
+    @State private var contentHeadings: [NoteHeadingEntry] = []
+
     private let database = CosmoDatabase.shared
-    private let autoSaveDelay: TimeInterval = 1.5
+    private let autoSaveDelay: TimeInterval = 0.5
     private let titleStyle = SharedTitleSurfaceStyle.noteFocus
 
     @Environment(\.isPaneContext) private var isPaneContext
@@ -82,70 +90,29 @@ struct NoteFocusModeView: View {
 
     var body: some View {
         ZStack {
-            // Full-bleed dark background
-            DS.bg
+            // Warm parchment background with a faint sepia wash at the edges
+            backgroundSurface
                 .ignoresSafeArea()
 
-            // Main content
+            // Main three-rail layout
             VStack(spacing: 0) {
-                // Top bar with gradient
                 topBar
 
-                // Scrollable writing surface
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        // Title field
-                        titleSection
-                            .padding(.top, DS.space32)
-
-                        // Date + tags row
-                        dateTagsRow
-                            .padding(.top, DS.space12)
-                            .padding(.bottom, DS.space24)
-
-                        // Divider
-                        Rectangle()
-                            .fill(DS.border)
-                            .frame(height: 1)
-                            .frame(maxWidth: CosmoTypography.optimalReadingWidth)
-
-                        // Full note body expands to its measured document height.
-                        CosmoDocumentEditor(
-                            document: $bodyDocument,
-                            fontSize: 17,
-                            placeholder: "Start writing...",
-                            darkMode: false,
-                            allowSlashCommands: true,
-                            allowMentions: true,
-                            allowSelectionMenu: true,
-                            allowImages: true,
-                            typewriterMode: typewriterMode,
-                            scrollsInternally: false,
-                            onContentHeightChange: { newHeight in
-                                bodyEditorHeight = max(400, newHeight)
-                            },
-                            onDocumentChange: { _, plainText in
-                                let changed = plainText != plainContent
-                                print("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
-                                plainContent = plainText
-                                if !isInitialLoad { triggerAutoSave() }
-                            }
-                        )
-                        .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
-                        .frame(
-                            minHeight: max(bodyEditorHeight, scrollViewportHeight - 200),
-                            alignment: .topLeading
-                        )
-                        .padding(.top, DS.space24)
-                        .padding(.bottom, DS.space24)
+                HStack(alignment: .top, spacing: 0) {
+                    if showsLeftRail {
+                        outlineRail
+                            .frame(width: 208)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, DS.space40)
-                }
-                .onGeometryChange(for: CGFloat.self) { proxy in
-                    proxy.size.height
-                } action: { newValue in
-                    scrollViewportHeight = newValue
+
+                    centerColumn
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if showsRightRail {
+                        carrelRail
+                            .frame(width: 272)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
                 }
             }
 
@@ -154,24 +121,30 @@ struct NoteFocusModeView: View {
                 FocusFloatingBlocksLayer(manager: floatingBlocksManager)
                     .frame(width: geo.size.width, height: geo.size.height)
             }
-        }
-        .overlay(alignment: .topLeading) {
-            FocusSidebarTrigger(isVisible: $sidebarVisible)
-                .frame(maxHeight: .infinity)
-        }
-        .overlay(alignment: .topLeading) {
-            UniversalFocusSidebar(
-                title: "Note",
-                icon: "doc.text",
-                accentColor: DS.accent,
-                isVisible: $sidebarVisible,
-                isLocked: .constant(false)
-            ) {
-                noteSidebarContent
+
+            // Graph overlay (⌘G)
+            if graphOverlayVisible {
+                NoteGraphOverlayView(
+                    centerAtom: atom,
+                    onClose: { withAnimation(ProMotionSprings.modal) { graphOverlayVisible = false } }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .zIndex(100)
             }
-            .padding(.leading, DS.space8)
-            .padding(.top, 56)
         }
+        .background(
+            // Hidden keyboard shortcut buttons (rule 10: macOS shortcuts for primary actions)
+            Group {
+                Button("Toggle graph") { toggleGraphOverlay() }
+                    .keyboardShortcut("g", modifiers: .command)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+                Button("Toggle panels") { togglePanels() }
+                    .keyboardShortcut("\\", modifiers: .command)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
+        )
         .focusBlockContextMenu(
             manager: floatingBlocksManager,
             ownerAtomUUID: atom.uuid
@@ -249,58 +222,64 @@ struct NoteFocusModeView: View {
         }
     }
 
-    // MARK: - Top Bar
+    // MARK: - V2 Derived state
+
+    private var showsLeftRail: Bool {
+        leftRailVisible && !typewriterMode && !isPaneContext
+    }
+
+    private var showsRightRail: Bool {
+        rightRailVisible && !typewriterMode
+    }
+
+    private var isEmptyNote: Bool {
+        titlePlainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var estimatedReadingMinutes: Int {
+        max(1, Int(ceil(Double(wordCount) / 220.0)))
+    }
+
+    private var inLinkCount: Int { backlinkPreviews.count }
+
+    private var outLinkCount: Int {
+        // Heuristic: count [[wiki-link]] occurrences in plain content
+        var count = 0
+        var searchRange = plainContent.startIndex..<plainContent.endIndex
+        while let range = plainContent.range(of: "[[", range: searchRange) {
+            count += 1
+            searchRange = range.upperBound..<plainContent.endIndex
+        }
+        return count
+    }
+
+    // MARK: - Background Surface
+
+    private var backgroundSurface: some View {
+        ZStack {
+            DS.bg
+            // Subtle vignette that darkens edges to emphasize the center column
+            RadialGradient(
+                colors: [Color.clear, DS.inkWash.opacity(0.04)],
+                center: .center,
+                startRadius: 360,
+                endRadius: 900
+            )
+            .blendMode(.multiply)
+        }
+    }
+
+    // MARK: - Top Bar (V2)
 
     private var topBar: some View {
-        HStack(spacing: DS.space16) {
-            // Main sidebar toggle (standalone only)
+        HStack(spacing: DS.space12) {
             if !isPaneContext {
-                Button {
-                    withAnimation(ProMotionSprings.sidebar) {
-                        isSidebarHidden.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+                backButton
             }
 
-            // Back button (hidden in pane mode -- X button handles close)
-            if !isPaneContext {
-                Button(action: onClose) {
-                    HStack(spacing: DS.space6) {
-                        Image(systemName: "chevron.left")
-                            .font(DS.buttonText)
-                        Text("Back")
-                            .font(DS.callout)
-                    }
-                    .foregroundStyle(DS.textSecondary)
-                    .padding(.horizontal, DS.space12)
-                    .padding(.vertical, DS.space8)
-                    .background(DS.border, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
+            noteTypeBadge
 
-            // Type badge
-            HStack(spacing: DS.space4) {
-                Image(systemName: "note.text")
-                    .font(DS.caption2)
-                Text("NOTE")
-                    .font(DS.caption2)
-                    .tracking(0.8)
-            }
-            .foregroundStyle(DS.entityNote)
-            .padding(.horizontal, DS.space8)
-            .padding(.vertical, DS.space4)
-            .background(DS.entityNote.opacity(DS.opacitySubtle), in: Capsule())
-
-            // Save indicator
             if saveState != .idle {
                 noteSaveBadge
                     .transition(.scale.combined(with: .opacity))
@@ -308,61 +287,510 @@ struct NoteFocusModeView: View {
 
             Spacer()
 
-            // Focus mode sidebar toggle
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    sidebarVisible.toggle()
-                }
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(DS.callout)
-                    .foregroundStyle(sidebarVisible ? DS.accent : DS.textSecondary)
-                    .padding(DS.space8)
-                    .background(
-                        sidebarVisible ? DS.accent.opacity(0.15) : DS.border,
-                        in: Circle()
-                    )
-            }
-            .buttonStyle(.plain)
+            topBarChromeButtons
+        }
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space12)
+        .background(topBarBackground)
+    }
 
-            // Typewriter mode toggle
-            Button {
-                withAnimation(ProMotionSprings.snappy) { typewriterMode.toggle() }
-            } label: {
-                Image(systemName: typewriterMode ? "line.3.horizontal.circle.fill" : "line.3.horizontal.circle")
+    private var backButton: some View {
+        Button(action: onClose) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "chevron.left")
+                    .font(DS.buttonText)
+                    .accessibilityLabel("Back")
+                Text("Back")
                     .font(DS.callout)
-                    .foregroundStyle(typewriterMode ? DS.accent : DS.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(typewriterMode ? DS.accent.opacity(0.12) : DS.border, in: Circle())
             }
-            .buttonStyle(.plain)
-            .help("Typewriter mode — cursor stays centered")
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8)
+            .frame(minWidth: 44, minHeight: 32)
+            .background(DS.border.opacity(0.5), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
 
-            // Pane close button
-            if isPaneContext {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(DS.buttonText)
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
-                }
-                .buttonStyle(.plain)
+    private var noteTypeBadge: some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: "note.text")
+                .font(DS.caption2)
+                .accessibilityLabel("Note")
+            Text("NOTE")
+                .font(DS.smallCaps)
+            if !isEmptyNote {
+                Text("·")
+                    .foregroundStyle(DS.textMuted)
+                Text("\(wordCount) words · \(estimatedReadingMinutes) min")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
             }
         }
-        .padding(.horizontal, DS.space20)
-        .padding(.vertical, DS.space12)
-        .background(
-            LinearGradient(
-                colors: [
-                    DS.bg.opacity(0.95),
-                    DS.bg.opacity(0.8),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
+        .foregroundStyle(DS.entityNote)
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space6)
+        .background(DS.entityNote.opacity(DS.opacitySubtle), in: Capsule())
+    }
+
+    private var topBarChromeButtons: some View {
+        HStack(spacing: DS.space8) {
+            chromeIconButton(
+                systemName: "point.3.filled.connected.trianglepath.dotted",
+                isActive: graphOverlayVisible,
+                tint: DS.gilt,
+                help: "Graph view (⌘G)",
+                accessibilityLabel: "Toggle graph view",
+                action: { toggleGraphOverlay() }
             )
+            chromeIconButton(
+                systemName: "rectangle.split.3x1",
+                isActive: leftRailVisible || rightRailVisible,
+                tint: DS.accent,
+                help: "Toggle panels (⌘\\)",
+                accessibilityLabel: "Toggle side panels",
+                action: { togglePanels() }
+            )
+            chromeIconButton(
+                systemName: typewriterMode ? "keyboard.fill" : "keyboard",
+                isActive: typewriterMode,
+                tint: DS.accent,
+                help: "Typewriter mode",
+                accessibilityLabel: "Toggle typewriter mode",
+                action: { withAnimation(ProMotionSprings.snappy) { typewriterMode.toggle() } }
+            )
+            if isPaneContext {
+                chromeIconButton(
+                    systemName: "xmark",
+                    isActive: false,
+                    tint: DS.textMuted,
+                    help: "Close",
+                    accessibilityLabel: "Close note",
+                    action: onClose
+                )
+            }
+        }
+    }
+
+    private func chromeIconButton(
+        systemName: String,
+        isActive: Bool,
+        tint: Color,
+        help: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(DS.callout)
+                .foregroundStyle(isActive ? tint : DS.textMuted)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
+                        .fill(isActive ? tint.opacity(0.14) : DS.border.opacity(0.4))
+                )
+                .accessibilityLabel(accessibilityLabel)
+        }
+        .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44)
+        .help(help)
+    }
+
+    private var topBarBackground: some View {
+        LinearGradient(
+            colors: [DS.bg.opacity(0.96), DS.bg.opacity(0.78), .clear],
+            startPoint: .top,
+            endPoint: .bottom
         )
+    }
+
+    // MARK: - Center Column
+
+    private var centerColumn: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
+                if isEmptyNote {
+                    NoteFocusEmptyStateView()
+                        .padding(.top, DS.space48)
+                        .frame(maxWidth: CosmoTypography.optimalReadingWidth)
+                } else {
+                    titleSection
+                        .padding(.top, DS.space36)
+                    dateTagsRow
+                        .padding(.top, DS.space12)
+                        .padding(.bottom, DS.space24)
+                    giltDivider
+                }
+
+                CosmoDocumentEditor(
+                    document: $bodyDocument,
+                    fontSize: 17,
+                    placeholder: "Start writing…",
+                    darkMode: false,
+                    allowSlashCommands: true,
+                    allowMentions: true,
+                    allowSelectionMenu: true,
+                    allowImages: true,
+                    typewriterMode: typewriterMode,
+                    scrollsInternally: false,
+                    onContentHeightChange: { newHeight in
+                        bodyEditorHeight = max(400, newHeight)
+                    },
+                    onDocumentChange: { _, plainText in
+                        let changed = plainText != plainContent
+                        print("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
+                        plainContent = plainText
+                        refreshHeadings()
+                        if !isInitialLoad { triggerAutoSave() }
+                    }
+                )
+                .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
+                .frame(
+                    minHeight: max(bodyEditorHeight, scrollViewportHeight - 200),
+                    alignment: .topLeading
+                )
+                .padding(.top, isEmptyNote ? DS.space32 : DS.space24)
+                .padding(.bottom, DS.space48)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, DS.space40)
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { newValue in
+            scrollViewportHeight = newValue
+        }
+    }
+
+    private var giltDivider: some View {
+        HStack(spacing: DS.space12) {
+            Rectangle()
+                .fill(DS.gilt.opacity(0.3))
+                .frame(height: 0.5)
+            Image(systemName: "diamond.fill")
+                .font(DS.caption2)
+                .foregroundStyle(DS.gilt.opacity(0.5))
+                .accessibilityHidden(true)
+            Rectangle()
+                .fill(DS.gilt.opacity(0.3))
+                .frame(height: 0.5)
+        }
+        .frame(maxWidth: CosmoTypography.optimalReadingWidth * 0.6)
+    }
+
+    // MARK: - Outline Rail (left)
+
+    private var outlineRail: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: DS.space20) {
+                railSectionLabel("❡  ON THIS NOTE")
+
+                if contentHeadings.isEmpty {
+                    Text(isEmptyNote ? "No headings yet" : "No sections — use # or ## to create sections")
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(alignment: .leading, spacing: DS.space6) {
+                        ForEach(Array(contentHeadings.enumerated()), id: \.offset) { _, entry in
+                            outlineEntryRow(entry)
+                        }
+                    }
+                }
+
+                Rectangle()
+                    .fill(DS.gilt.opacity(0.2))
+                    .frame(height: 0.5)
+
+                railSectionLabel("LINKS")
+                VStack(alignment: .leading, spacing: DS.space4) {
+                    linkCountRow(label: "backlinks", count: inLinkCount, tint: DS.gilt)
+                    linkCountRow(label: "out links", count: outLinkCount, tint: DS.entityNote)
+                }
+
+                if !tags.isEmpty {
+                    Rectangle()
+                        .fill(DS.gilt.opacity(0.2))
+                        .frame(height: 0.5)
+
+                    railSectionLabel("TAGS")
+                    FlowTagCloud(tags: tags)
+                }
+
+                Spacer(minLength: DS.space24)
+            }
+            .padding(.horizontal, DS.space20)
+            .padding(.top, DS.space36)
+            .padding(.bottom, DS.space24)
+        }
+        .frame(maxHeight: .infinity)
+        .background(
+            Rectangle()
+                .fill(DS.vellum.opacity(0.5))
+                .overlay(
+                    Rectangle()
+                        .fill(DS.sepiaBorder.opacity(0.4))
+                        .frame(width: 0.5),
+                    alignment: .trailing
+                )
+        )
+    }
+
+    private func outlineEntryRow(_ entry: NoteHeadingEntry) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+            Text(entry.level == 1 ? "¶" : "›")
+                .font(DS.caption2)
+                .foregroundStyle(DS.gilt.opacity(0.6))
+                .frame(width: 10, alignment: .leading)
+            Text(entry.text)
+                .font(entry.level == 1 ? DS.subheadline : DS.caption)
+                .foregroundStyle(entry.level == 1 ? DS.text : DS.textSecondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, CGFloat(entry.level - 1) * DS.space8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func linkCountRow(label: String, count: Int, tint: Color) -> some View {
+        HStack(spacing: DS.space6) {
+            Text("\(count)")
+                .font(DS.title3)
+                .foregroundStyle(count > 0 ? tint : DS.textMuted)
+                .monospacedDigit()
+            Text(label)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func railSectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(DS.smallCaps)
+            .tracking(0.8)
+            .foregroundStyle(DS.gilt.opacity(0.85))
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    // MARK: - Carrel Rail (right)
+
+    private var carrelRail: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: DS.space24) {
+                railSectionLabel("⟡  CARREL")
+
+                backlinksSection
+                mentionedInSection
+                resonanceSection
+                askCosmoSection
+
+                Spacer(minLength: DS.space24)
+            }
+            .padding(.horizontal, DS.space20)
+            .padding(.top, DS.space36)
+            .padding(.bottom, DS.space24)
+        }
+        .frame(maxHeight: .infinity)
+        .background(
+            Rectangle()
+                .fill(DS.vellum.opacity(0.5))
+                .overlay(
+                    Rectangle()
+                        .fill(DS.sepiaBorder.opacity(0.4))
+                        .frame(width: 0.5),
+                    alignment: .leading
+                )
+        )
+    }
+
+    private var backlinksSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            HStack(spacing: DS.space6) {
+                railSectionLabel("BACKLINKS")
+                Text("\(inLinkCount)")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .monospacedDigit()
+            }
+
+            if backlinkPreviews.isEmpty {
+                Text("No backlinks yet")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+            } else {
+                VStack(spacing: DS.space8) {
+                    ForEach(Array(backlinkPreviews.prefix(8).enumerated()), id: \.element.atomUUID) { index, preview in
+                        BacklinkCardView(preview: preview)
+                            .transition(.opacity.combined(with: .offset(y: 4)))
+                            .animation(ProMotionSprings.staggered(index: index), value: backlinkPreviews.count)
+                    }
+                }
+            }
+        }
+    }
+
+    private var mentionedInSection: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            railSectionLabel("MENTIONED IN")
+            if mentionedInCounts.isEmpty || mentionedInCounts.values.reduce(0, +) == 0 {
+                Text("Not yet referenced")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+            } else {
+                VStack(alignment: .leading, spacing: DS.space4) {
+                    ForEach(Array(mentionedInCounts.keys.sorted(by: { $0.rawValue < $1.rawValue })), id: \.self) { type in
+                        if let count = mentionedInCounts[type], count > 0 {
+                            HStack(spacing: DS.space6) {
+                                Image(systemName: type.iconName)
+                                    .font(DS.caption2)
+                                    .foregroundStyle(DS.textSecondary)
+                                    .accessibilityLabel(type.displayName)
+                                Text("\(count) \(type.pluralDisplayName.lowercased())")
+                                    .font(DS.caption)
+                                    .foregroundStyle(DS.textSecondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var resonanceSection: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            HStack(spacing: DS.space6) {
+                railSectionLabel("∿  RESONANCE")
+                Text("ai")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.gilt.opacity(0.6))
+                    .italic()
+            }
+
+            Text("Ambient adjacencies — notes that sit near this one by tag, theme, and connection graph.")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if resonantThemes.isEmpty {
+                Text("Tag this note to surface resonances")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted.opacity(0.7))
+                    .italic()
+            } else {
+                VStack(alignment: .leading, spacing: DS.space4) {
+                    ForEach(resonantThemes, id: \.self) { theme in
+                        HStack(spacing: DS.space6) {
+                            Image(systemName: "sparkle")
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.gilt.opacity(0.7))
+                                .accessibilityHidden(true)
+                            Text(theme)
+                                .font(DS.caption)
+                                .foregroundStyle(DS.text)
+                                .italic()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var resonantThemes: [String] {
+        // Lightweight local resonance: derived from tags + first-line themes.
+        // (Deeper embedding-based resonance lives in HybridSearchEngine — future pass.)
+        let tagThemes = tags.prefix(3).map { $0 }
+        return Array(tagThemes)
+    }
+
+    private var askCosmoSection: some View {
+        Button {
+            openCosmoWithNoteContext()
+        } label: {
+            HStack(spacing: DS.space8) {
+                Image(systemName: "sparkles")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.accent)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ask Cosmo")
+                        .font(DS.subheadline.weight(.semibold))
+                        .foregroundStyle(DS.text)
+                    Text("scoped to this note + backlinks")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .accessibilityHidden(true)
+            }
+            .padding(DS.space12)
+            .frame(minHeight: 44)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                    .fill(DS.accent.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.radiusMedium)
+                            .stroke(DS.accent.opacity(0.2), lineWidth: 0.5)
+                    )
+            )
+            .clipShape(.rect(cornerRadius: DS.radiusMedium))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ask Cosmo about this note")
+    }
+
+    // MARK: - Actions
+
+    private func togglePanels() {
+        withAnimation(ProMotionSprings.sidebar) {
+            let anyVisible = leftRailVisible || rightRailVisible
+            if anyVisible {
+                leftRailVisible = false
+                rightRailVisible = false
+            } else {
+                leftRailVisible = true
+                rightRailVisible = true
+            }
+        }
+    }
+
+    private func toggleGraphOverlay() {
+        withAnimation(ProMotionSprings.modal) {
+            graphOverlayVisible.toggle()
+        }
+    }
+
+    private func openCosmoWithNoteContext() {
+        let provider = NoteContextProvider(
+            atom: atom,
+            titleRef: { [self] in self.titlePlainText },
+            contentRef: { [self] in self.plainContent },
+            tagsRef: { [self] in self.tags }
+        )
+        CosmoWindowViewModel.shared.updateContext(provider: provider)
+        CosmoWindowPanelController.shared.show()
+    }
+
+    // MARK: - Heading Parser
+
+    private func refreshHeadings() {
+        let lines = plainContent.split(separator: "\n", omittingEmptySubsequences: false)
+        var entries: [NoteHeadingEntry] = []
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("# ") {
+                entries.append(NoteHeadingEntry(level: 1, text: String(trimmed.dropFirst(2))))
+            } else if trimmed.hasPrefix("## ") {
+                entries.append(NoteHeadingEntry(level: 2, text: String(trimmed.dropFirst(3))))
+            } else if trimmed.hasPrefix("### ") {
+                entries.append(NoteHeadingEntry(level: 3, text: String(trimmed.dropFirst(4))))
+            }
+        }
+        contentHeadings = Array(entries.prefix(25))
     }
 
     // MARK: - Title Section
@@ -582,17 +1010,58 @@ struct NoteFocusModeView: View {
     }
 
     private func loadLinkedAtoms() {
-        Task {
-            let edges = try? await GraphQueryEngine().getEdges(for: atom.uuid)
-            let uuids = (edges ?? []).map { $0.sourceUUID == atom.uuid ? $0.targetUUID : $0.sourceUUID }
+        let ownUUID = atom.uuid
+        let ownTitle = atom.title ?? ""
+        Task { @MainActor in
+            let edges = (try? await GraphQueryEngine().getEdges(for: ownUUID)) ?? []
+            let uuids = edges.map { $0.sourceUUID == ownUUID ? $0.targetUUID : $0.sourceUUID }
             var atoms: [Atom] = []
             for uuid in uuids.prefix(20) {
                 if let a = try? await AtomRepository.shared.fetch(uuid: uuid) {
                     atoms.append(a)
                 }
             }
-            await MainActor.run { linkedAtoms = atoms }
+            linkedAtoms = atoms
+
+            // Build rich backlink previews with excerpts
+            var previews: [NoteBacklinkPreview] = []
+            for linked in atoms {
+                let excerpt = extractExcerpt(from: linked.content ?? "", referencing: ownTitle)
+                previews.append(NoteBacklinkPreview(
+                    atomUUID: linked.uuid,
+                    title: linked.title ?? "Untitled",
+                    type: linked.type,
+                    excerpt: excerpt
+                ))
+            }
+            backlinkPreviews = previews
+
+            // Aggregate mentioned-in counts by atom type (excluding notes)
+            var counts: [AtomType: Int] = [:]
+            for linked in atoms where linked.type != .note {
+                counts[linked.type, default: 0] += 1
+            }
+            mentionedInCounts = counts
         }
+    }
+
+    private func extractExcerpt(from body: String, referencing title: String) -> String {
+        guard !title.isEmpty else {
+            return String(body.prefix(120)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let lower = body.lowercased()
+        let needle = title.lowercased()
+        if let range = lower.range(of: needle) {
+            let start = body.index(range.lowerBound, offsetBy: -40, limitedBy: body.startIndex) ?? body.startIndex
+            let end = body.index(range.upperBound, offsetBy: 80, limitedBy: body.endIndex) ?? body.endIndex
+            let snippet = String(body[start..<end])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            return (start > body.startIndex ? "…" : "") + snippet + (end < body.endIndex ? "…" : "")
+        }
+        return String(body.prefix(120))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
     }
 
     // MARK: - Floating Block Listeners
@@ -748,6 +1217,7 @@ struct NoteFocusModeView: View {
         print("[FOCUS-NOTE] saveAtomImmediately() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
         let titleDocumentCopy = titleDocument
         let bodyDocumentCopy = bodyDocument
+        let plainContentCopy = plainContent
         let uuid = atom.uuid
 
         do {
@@ -757,10 +1227,22 @@ struct NoteFocusModeView: View {
                     existingMetadata = row["metadata"]
                 }
 
+                // plainContent is updated per-keystroke and is more reliable than bodyDocument,
+                // which goes through a 150ms debounced binding chain. If plainContent has more
+                // content, use it to build the document — this prevents data loss when the
+                // binding hasn't fully propagated (e.g. on app termination or fast close).
+                let effectiveBodyDoc: RichDocument
+                if plainContentCopy.count > (bodyDocumentCopy.plainText.count + 5) {
+                    print("[FOCUS-NOTE] saveAtomImmediately() FALLBACK to plainContent — bodyDocLen=\(bodyDocumentCopy.plainText.count) plainContentLen=\(plainContentCopy.count)")
+                    effectiveBodyDoc = RichDocument.migrateLegacy(plainContentCopy)
+                } else {
+                    effectiveBodyDoc = bodyDocumentCopy
+                }
+
                 let fields = RichDocumentPersistence.writeAtomDocuments(
                     existingMetadata: existingMetadata,
                     titleDocument: titleDocumentCopy,
-                    bodyDocument: bodyDocumentCopy
+                    bodyDocument: effectiveBodyDoc
                 )
 
                 var metadataDict: [String: Any] = [:]
@@ -853,10 +1335,20 @@ struct NoteFocusModeView: View {
                         existingMetadata = row["metadata"]
                     }
 
+                    // contentCopy (plainContent) is captured at save trigger time and is more
+                    // reliable than bodyDocumentCopy, which goes through a 150ms debounced binding.
+                    // Fall back to it when it has more content to prevent checkpoint data loss.
+                    let effectiveBodyDoc: RichDocument
+                    if contentCopy.count > (bodyDocumentCopy.plainText.count + 5) {
+                        effectiveBodyDoc = RichDocument.migrateLegacy(contentCopy)
+                    } else {
+                        effectiveBodyDoc = bodyDocumentCopy
+                    }
+
                     let fields = RichDocumentPersistence.writeAtomDocuments(
                         existingMetadata: existingMetadata,
                         titleDocument: titleDocumentCopy,
-                        bodyDocument: bodyDocumentCopy
+                        bodyDocument: effectiveBodyDoc
                     )
 
                     var metadataDict: [String: Any] = [:]
@@ -937,6 +1429,397 @@ struct NoteFocusModeView: View {
         titleDocument = document
         titlePlainText = RichDocumentPersistence.titlePlainText(from: document)
         titleUnderlineProgress = titlePlainText.isEmpty ? 0.28 : 1
+    }
+}
+
+// MARK: - V2 Support Types
+
+fileprivate struct NoteHeadingEntry: Equatable {
+    let level: Int
+    let text: String
+}
+
+fileprivate struct NoteBacklinkPreview: Equatable, Identifiable {
+    var id: String { atomUUID }
+    let atomUUID: String
+    let title: String
+    let type: AtomType
+    let excerpt: String
+}
+
+// MARK: - Backlink Card
+
+fileprivate struct BacklinkCardView: View {
+    let preview: NoteBacklinkPreview
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            HStack(alignment: .top, spacing: DS.space6) {
+                Image(systemName: preview.type.iconName)
+                    .font(DS.caption2)
+                    .foregroundStyle(entityTint)
+                    .frame(width: 14, alignment: .leading)
+                    .accessibilityLabel(preview.type.displayName)
+                Text(preview.title)
+                    .font(DS.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            if !preview.excerpt.isEmpty {
+                Text(preview.excerpt)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .italic()
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: DS.space4) {
+                Text(preview.type.displayName.uppercased())
+                    .font(DS.smallCaps)
+                    .foregroundStyle(entityTint.opacity(0.8))
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(DS.space10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(isHovered ? DS.surface : DS.surface.opacity(0.6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.sepiaBorder.opacity(0.5), lineWidth: 0.5)
+                )
+        )
+        .clipShape(.rect(cornerRadius: DS.radiusSmall))
+        .shadow(color: DS.inkWash.opacity(isHovered ? 0.08 : 0.04), radius: isHovered ? 6 : 3, y: isHovered ? 3 : 1)
+        .scaleEffect(isHovered ? 1.012 : 1.0)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(preview.type.displayName) backlink: \(preview.title)")
+    }
+
+    private var entityTint: Color {
+        switch preview.type {
+        case .idea: return DS.entityIdea
+        case .content: return DS.entityContent
+        case .research: return DS.entityResearch
+        case .note: return DS.entityNote
+        case .task: return DS.entityTask
+        default: return DS.textSecondary
+        }
+    }
+}
+
+// MARK: - Tag Cloud
+
+fileprivate struct FlowTagCloud: View {
+    let tags: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            ForEach(tags.prefix(10), id: \.self) { tag in
+                HStack(spacing: DS.space4) {
+                    Circle()
+                        .fill(DS.gilt.opacity(0.5))
+                        .frame(width: 4, height: 4)
+                    Text(tag)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textSecondary)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Empty State
+
+fileprivate struct NoteFocusEmptyStateView: View {
+    @State private var appeared = false
+
+    var body: some View {
+        VStack(spacing: DS.space20) {
+            Image(systemName: "diamond")
+                .font(.system(size: 32, weight: .ultraLight))
+                .foregroundStyle(DS.gilt.opacity(0.6))
+                .accessibilityHidden(true)
+                .rotationEffect(.degrees(appeared ? 0 : -8))
+                .opacity(appeared ? 1 : 0)
+
+            VStack(spacing: DS.space8) {
+                Text("Untitled note")
+                    .font(DS.displaySerif)
+                    .foregroundStyle(DS.text)
+                    .accessibilityAddTraits(.isHeader)
+                Rectangle()
+                    .fill(DS.gilt.opacity(0.35))
+                    .frame(width: appeared ? 120 : 40, height: 0.8)
+            }
+
+            Text("Start writing, or press ⌘K to capture from\nyour clipboard, a voice memo, or a quote\nyou've highlighted elsewhere.")
+                .font(DS.body)
+                .foregroundStyle(DS.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(4)
+                .padding(.top, DS.space8)
+
+            HStack(spacing: DS.space12) {
+                emptyStatePill(icon: "command", label: "⌘K capture")
+                emptyStatePill(icon: "slash.circle", label: "/ insert")
+                emptyStatePill(icon: "link", label: "⌥⌘L link")
+            }
+            .padding(.top, DS.space8)
+        }
+        .padding(.vertical, DS.space32)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 12)
+        .onAppear {
+            withAnimation(ProMotionSprings.cardEntrance.delay(0.1)) {
+                appeared = true
+            }
+        }
+    }
+
+    private func emptyStatePill(icon: String, label: String) -> some View {
+        HStack(spacing: DS.space4) {
+            Image(systemName: icon)
+                .font(DS.caption2)
+                .accessibilityHidden(true)
+            Text(label)
+                .font(DS.caption)
+        }
+        .foregroundStyle(DS.textMuted)
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space6)
+        .frame(minHeight: 32)
+        .background(
+            Capsule()
+                .fill(DS.surface.opacity(0.6))
+                .overlay(Capsule().stroke(DS.sepiaBorder.opacity(0.5), lineWidth: 0.5))
+        )
+    }
+}
+
+// MARK: - Graph Overlay
+
+fileprivate struct NoteGraphOverlayView: View {
+    let centerAtom: Atom
+    let onClose: () -> Void
+
+    @State private var nodes: [GraphOverlayNode] = []
+    @State private var isLoading = true
+    @State private var hops: Int = 1
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(DS.bg.opacity(0.96))
+                .ignoresSafeArea()
+                .onTapGesture { onClose() }
+
+            VStack(spacing: 0) {
+                graphTopBar
+                graphCanvas
+                graphLegend
+            }
+        }
+        .task { await loadNeighborhood() }
+        .onChange(of: hops) { _, _ in
+            Task { await loadNeighborhood() }
+        }
+    }
+
+    private var graphTopBar: some View {
+        HStack(spacing: DS.space12) {
+            Button(action: onClose) {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: "chevron.left")
+                        .font(DS.buttonText)
+                    Text("Close")
+                        .font(DS.callout)
+                }
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space8)
+                .frame(minHeight: 32)
+                .background(DS.border.opacity(0.5), in: Capsule())
+                .accessibilityLabel("Close graph view")
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+
+            Text("GRAPH VIEW  ·  \(centerAtom.title ?? "Untitled")")
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.gilt)
+                .tracking(1)
+
+            Spacer()
+
+            Picker("Hops", selection: $hops) {
+                Text("1-hop").tag(1)
+                Text("2-hop").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 140)
+        }
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space16)
+    }
+
+    private var graphCanvas: some View {
+        GeometryReader { geo in
+            let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            ZStack {
+                // Edges
+                ForEach(nodes.indices.filter { nodes[$0].atomUUID != centerAtom.uuid }, id: \.self) { idx in
+                    Path { path in
+                        path.move(to: center)
+                        path.addLine(to: nodes[idx].position(in: geo.size, center: center))
+                    }
+                    .stroke(DS.gilt.opacity(0.35), style: StrokeStyle(lineWidth: 0.6, lineCap: .round))
+                }
+
+                // Nodes
+                ForEach(nodes, id: \.atomUUID) { node in
+                    graphNodeDot(node: node, in: geo.size, center: center)
+                }
+
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .position(center)
+                }
+            }
+        }
+    }
+
+    private func graphNodeDot(node: GraphOverlayNode, in size: CGSize, center: CGPoint) -> some View {
+        let isCenter = node.atomUUID == centerAtom.uuid
+        let pos = node.position(in: size, center: center)
+        return VStack(spacing: DS.space4) {
+            Image(systemName: node.type.iconName)
+                .font(isCenter ? DS.title3 : DS.caption)
+                .foregroundStyle(isCenter ? DS.entityNote : tint(for: node.type))
+                .frame(width: isCenter ? 44 : 32, height: isCenter ? 44 : 32)
+                .background(
+                    Circle()
+                        .fill(DS.surface)
+                        .overlay(Circle().stroke(isCenter ? DS.entityNote : DS.sepiaBorder.opacity(0.6), lineWidth: isCenter ? 1.5 : 0.5))
+                )
+                .shadow(color: DS.inkWash.opacity(0.1), radius: isCenter ? 10 : 4, y: 2)
+                .accessibilityLabel(node.title)
+            Text(node.title)
+                .font(DS.caption2)
+                .foregroundStyle(isCenter ? DS.text : DS.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 120)
+        }
+        .position(pos)
+    }
+
+    private var graphLegend: some View {
+        HStack(spacing: DS.space16) {
+            legendDot(color: DS.entityNote, label: "note")
+            legendDot(color: DS.entityIdea, label: "idea")
+            legendDot(color: DS.entityContent, label: "content")
+            legendDot(color: DS.entitySwipe, label: "swipe")
+            Spacer()
+        }
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space16)
+    }
+
+    private func legendDot(color: Color, label: String) -> some View {
+        HStack(spacing: DS.space4) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(label)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private func tint(for type: AtomType) -> Color {
+        switch type {
+        case .idea: return DS.entityIdea
+        case .content: return DS.entityContent
+        case .research: return DS.entityResearch
+        case .note: return DS.entityNote
+        case .task: return DS.entityTask
+        default: return DS.textSecondary
+        }
+    }
+
+    @MainActor
+    private func loadNeighborhood() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        guard let result = try? await GraphQueryEngine().getNeighborhood(
+            of: centerAtom.uuid,
+            depth: hops,
+            maxNodesPerLevel: hops == 1 ? 8 : 12
+        ) else { return }
+
+        // Hydrate titles via AtomRepository
+        let allUUIDs = result.allUUIDs
+        let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: allUUIDs)) ?? []
+        let byUUID = Dictionary(uniqueKeysWithValues: atoms.map { ($0.uuid, $0) })
+
+        var built: [GraphOverlayNode] = []
+        // Center
+        built.append(GraphOverlayNode(
+            atomUUID: centerAtom.uuid,
+            title: centerAtom.title ?? "Untitled",
+            type: centerAtom.type,
+            angleIndex: 0,
+            totalInRing: 1,
+            ring: 0
+        ))
+        for (levelIndex, level) in result.levels.enumerated() {
+            let total = max(1, level.count)
+            for (i, neighbor) in level.enumerated() {
+                guard let a = byUUID[neighbor.node.atomUUID] else { continue }
+                built.append(GraphOverlayNode(
+                    atomUUID: a.uuid,
+                    title: a.title ?? "Untitled",
+                    type: a.type,
+                    angleIndex: i,
+                    totalInRing: total,
+                    ring: levelIndex + 1
+                ))
+            }
+        }
+        withAnimation(ProMotionSprings.cardEntrance) {
+            nodes = built
+        }
+    }
+}
+
+fileprivate struct GraphOverlayNode: Equatable {
+    let atomUUID: String
+    let title: String
+    let type: AtomType
+    let angleIndex: Int
+    let totalInRing: Int
+    let ring: Int
+
+    func position(in size: CGSize, center: CGPoint) -> CGPoint {
+        if ring == 0 { return center }
+        let radius = CGFloat(ring) * min(size.width, size.height) * 0.28
+        let theta = (Double(angleIndex) / Double(max(totalInRing, 1))) * 2 * .pi - .pi / 2
+        return CGPoint(
+            x: center.x + radius * CGFloat(cos(theta)),
+            y: center.y + radius * CGFloat(sin(theta))
+        )
     }
 }
 

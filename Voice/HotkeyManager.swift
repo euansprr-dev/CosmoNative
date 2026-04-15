@@ -125,6 +125,20 @@ final class HotkeyManager {
         print("🪟 Cosmo Window hotkey (⌥A) callback registered")
     }
 
+    // MARK: - Atom Window Hotkey (Option+W)
+    private var atomWindowCallback: (() -> Void)?
+    private let atomWindowHotkey = HotkeyConfig(
+        keyCode: 14,  // 'E' key (same position on QWERTY/AZERTY)
+        modifiers: CGEventFlags.maskAlternate.rawValue,
+        displayName: "⌥E"
+    )
+
+    /// Register callback for Option+W to toggle the floating atom viewer
+    func registerAtomWindowHotkey(onTrigger: @escaping () -> Void) {
+        self.atomWindowCallback = onTrigger
+        print("📄 Atom Window hotkey (⌥E) callback registered")
+    }
+
     // MARK: - Persistence
     private static func loadHotkeyConfig() -> HotkeyConfig {
         if let data = UserDefaults.standard.data(forKey: "voiceHotkeyConfig"),
@@ -306,6 +320,23 @@ final class HotkeyManager {
             if hasOnlyCosmoMods {
                 print("🪟 Cosmo Window hotkey triggered (⌥A)")
                 cosmoWindowCallback?()
+                return nil // Consume event
+            }
+        }
+
+        // MARK: Check for Atom Window hotkey (Option+W)
+        if type == .keyDown && keyCode == Int64(atomWindowHotkey.keyCode) {
+            let atomMods = atomWindowHotkey.modifierFlags
+            let hasAtomMods = flags.contains(atomMods)
+
+            let hasOnlyAtomMods = hasAtomMods &&
+                !flags.contains(.maskCommand) &&
+                !flags.contains(.maskShift) &&
+                !flags.contains(.maskControl)
+
+            if hasOnlyAtomMods {
+                print("📄 Atom Window hotkey triggered (⌥E)")
+                atomWindowCallback?()
                 return nil // Consume event
             }
         }

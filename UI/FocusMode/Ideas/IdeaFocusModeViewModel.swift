@@ -61,6 +61,12 @@ class IdeaFocusModeViewModel: ObservableObject {
     @Published var showLinkSwipesOverlay: Bool = false
     @Published var showLinkConnectionsOverlay: Bool = false
 
+    // MARK: - Mention State
+
+    @Published var mentionedAtoms: [Atom] = []
+    @Published var showMentionOverlay: Bool = false
+    @Published var mentionSearchText: String = ""
+
     // MARK: - Session State
 
     @Published var sessionState: IdeaFocusModeState
@@ -155,6 +161,7 @@ class IdeaFocusModeViewModel: ObservableObject {
         // Load linked swipes and connections
         Task { await loadLinkedSwipes() }
         Task { await loadLinkedConnections() }
+        Task { await loadMentionedAtoms() }
         Task { await loadSuggestedConnections() }
     }
 
@@ -384,8 +391,16 @@ class IdeaFocusModeViewModel: ObservableObject {
 
             // Build ContentFocusModeState with description = the original idea text
             var focusState = ContentFocusModeState(atomUUID: contentAtom.uuid)
-            focusState.contentDescription = editableBody
-            focusState.coreIdea = editableBody
+            // Expand mentioned atoms into the core idea text for writing context
+            let mentionedUUIDs = idea.ideaMetadata?.mentionedAtomUUIDs ?? []
+            var enrichedBody = editableBody
+            if !mentionedAtoms.isEmpty {
+                enrichedBody = MentionContextHelper.expandMentionsForWritingEngine(
+                    text: editableBody, atoms: mentionedAtoms, bodyLimit: 3000
+                )
+            }
+            focusState.contentDescription = enrichedBody
+            focusState.coreIdea = enrichedBody
             focusState.hooks = inheritedHooks
 
             // Convert user's codex outline notes to focusState.outline for display
@@ -414,6 +429,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             contentMeta.sourceIdeaUUID = idea.uuid
             contentMeta.inheritedSwipeUUIDs = inheritedSwipeUUIDs.isEmpty ? nil : inheritedSwipeUUIDs
             contentMeta.inheritedConnectionIds = linkedConnectionUUIDs.isEmpty ? nil : linkedConnectionUUIDs
+            contentMeta.inheritedMentionedAtomUUIDs = mentionedUUIDs.isEmpty ? nil : mentionedUUIDs
             contentMeta.inheritedFramework = inheritedFramework
             contentMeta.inheritedHooks = inheritedHooks.isEmpty ? nil : inheritedHooks
             contentMeta.clientProfileUUID = linkedClient?.uuid
@@ -485,6 +501,10 @@ class IdeaFocusModeViewModel: ObservableObject {
                 object: nil,
                 userInfo: ["uuid": idea.uuid]
             )
+
+            // Leave a breadcrumb so Content Focus Mode recognizes this mount as a
+            // continuation of the Atelier and uses a cross-fade instead of a stagger.
+            FocusTransitionCoordinator.shared.markPromotion(contentAtomUUID: contentAtom.uuid)
 
             // Post notification to open the new content in focus mode with auto-draft trigger
             NotificationCenter.default.post(
@@ -705,6 +725,35 @@ class IdeaFocusModeViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Mentioned Atoms (@)
+
+    /// Load mentioned atoms from persisted UUIDs.
+    func loadMentionedAtoms() async {
+        let uuids = idea.ideaMetadata?.mentionedAtomUUIDs ?? []
+        var atoms: [Atom] = []
+        for uuid in uuids {
+            if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                atoms.append(atom)
+            }
+        }
+        mentionedAtoms = atoms
+    }
+
+    /// Add an atom as @-mentioned context.
+    func addMention(_ atom: Atom) {
+        guard !mentionedAtoms.contains(where: { $0.uuid == atom.uuid }) else { return }
+        mentionedAtoms.append(atom)
+        showMentionOverlay = false
+        mentionSearchText = ""
+        scheduleAutoSave()
+    }
+
+    /// Remove an atom from @-mentioned context.
+    func removeMention(_ atom: Atom) {
+        mentionedAtoms.removeAll { $0.uuid == atom.uuid }
+        scheduleAutoSave()
+    }
+
     /// Load suggested connections — connections assigned to the idea's client, or semantically related.
     func loadSuggestedConnections() async {
         let linkedIds = Set(idea.ideaMetadata?.linkedConnectionIds ?? [])
@@ -897,6 +946,9 @@ class IdeaFocusModeViewModel: ObservableObject {
             meta.ideaStatus = selectedStatus
             meta.hooks = editableHooks.isEmpty ? nil : editableHooks
             meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
+
+            // Mentioned atoms
+            meta.mentionedAtomUUIDs = mentionedAtoms.isEmpty ? nil : mentionedAtoms.map(\.uuid)
 
             // Codex-era fields
             meta.context = editableContext.isEmpty ? nil : editableContext

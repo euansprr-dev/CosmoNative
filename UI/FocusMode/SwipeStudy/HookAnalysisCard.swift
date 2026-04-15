@@ -97,21 +97,14 @@ struct HookAnalysisCard: View {
 
             // Hook score reason callout
             if let reason = analysis.hookScoreReason, !reason.isEmpty {
-                HStack(alignment: .top, spacing: 0) {
-                    // Left accent border
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(ringColor)
-                        .frame(width: 2)
-
-                    Text(reason)
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.textSecondary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(reason)
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(ringColor.opacity(0.06))

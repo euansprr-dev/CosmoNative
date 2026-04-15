@@ -18,12 +18,12 @@ struct SlashCommandMenu: View {
     @FocusState private var isSearchFocused: Bool
 
     // MARK: - Theme-Aware Colors
-    private var bgColor: Color { DS.surface }
+    private var bgColor: Color { DS.vellum }
     private var textPrimary: Color { DS.text }
     private var textSecondary: Color { DS.textSecondary }
     private var textTertiary: Color { DS.textMuted }
     private var accentColor: Color { DS.accent }
-    private var borderColor: Color { DS.border }
+    private var borderColor: Color { DS.sepiaBorder }
     private var shadowColor: Color { .black.opacity(0.10) }
 
     private var filteredCommands: [SlashCommand] {
@@ -45,10 +45,7 @@ struct SlashCommandMenu: View {
             .background(bgColor)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(menuBorder)
-            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-            .shadow(color: shadowColor, radius: 16, y: 6)
-            .shadow(color: accentColor.opacity(0.15), radius: 24, y: 8)
-            .withAccentSeam(accentColor, position: .leading, cornerRadius: 14)
+            .dsFloatingShadow()
             .scaleEffect(menuAppeared ? 1 : 0.95)
             .opacity(menuAppeared ? 1 : 0)
             .blur(radius: menuAppeared ? 0 : 4)
@@ -94,15 +91,7 @@ struct SlashCommandMenu: View {
     }
 
     private var dividerView: some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [accentColor.opacity(0.4), borderColor],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .frame(height: 1)
+        CosmoGradientDivider()
     }
 
     private var commandListView: some View {
@@ -153,21 +142,7 @@ struct SlashCommandMenu: View {
     }
 
     private var keyboardHintView: some View {
-        HStack {
-            Text("↑↓ Navigate")
-                .font(.caption2)
-                .foregroundStyle(DS.textMuted)
-            Spacer()
-            Text("↵ Select")
-                .font(.caption2)
-                .foregroundStyle(DS.textMuted)
-            Text("⎋ Cancel")
-                .font(.caption2)
-                .foregroundStyle(DS.textMuted)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(DS.surfaceElevated)
+        CosmoKeyboardFooter()
     }
 
     private var menuBorder: some View {

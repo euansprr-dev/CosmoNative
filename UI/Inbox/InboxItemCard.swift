@@ -23,7 +23,6 @@ struct InboxItemCard: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            entityBar
             cardContent
         }
         .background { styledBackground }
@@ -32,15 +31,6 @@ struct InboxItemCard: View {
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
-    }
-
-    // MARK: - Entity Bar
-
-    private var entityBar: some View {
-        RoundedRectangle(cornerRadius: 2)
-            .fill(item.entityColor)
-            .frame(width: 3)
-            .padding(.vertical, DS.space8)
     }
 
     // MARK: - Card Content

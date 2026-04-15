@@ -89,13 +89,6 @@ struct IdeaChatPanel: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14))
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(ideaGold.opacity(0.3))
-                            .frame(width: 2)
-                            .padding(.vertical, 6)
-                            .padding(.leading, 2)
-                    }
 
                 if let cards = message.actionCards, !cards.isEmpty {
                     actionCardsRow(cards)

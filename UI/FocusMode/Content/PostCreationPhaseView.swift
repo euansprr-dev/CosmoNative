@@ -57,10 +57,8 @@ struct PostCreationPhaseView: View {
 
         // Platform confirmation
         VStack(alignment: .leading, spacing: 10) {
-            Text("PLATFORM")
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+            Text("Platform")
+                .dsSmallCapsLabel()
 
             platformPills
         }
@@ -68,10 +66,8 @@ struct PostCreationPhaseView: View {
 
         // Date/time picker
         VStack(alignment: .leading, spacing: 12) {
-            Text("SCHEDULE FOR")
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+            Text("Schedule For")
+                .dsSmallCapsLabel()
 
             DatePicker(
                 "",
@@ -128,10 +124,8 @@ struct PostCreationPhaseView: View {
         let metadata = atom.metadataValue(as: ContentAtomMetadata.self)
         return HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("PREDICTED REACH")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundColor(DS.textMuted)
+                Text("Predicted Reach")
+                    .dsSmallCapsLabel()
 
                 if let predicted = metadata?.predictedReach {
                     Text(formatNumber(predicted))
@@ -148,10 +142,8 @@ struct PostCreationPhaseView: View {
 
             if let engagement = metadata?.predictedEngagement {
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text("EST. ENGAGEMENT")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundColor(DS.textMuted)
+                    Text("Est. Engagement")
+                        .dsSmallCapsLabel()
 
                     Text(String(format: "%.1f%%", engagement))
                         .font(.system(size: 18, weight: .semibold, design: .monospaced))
@@ -177,10 +169,8 @@ struct PostCreationPhaseView: View {
 
             // Editable post URL
             VStack(alignment: .leading, spacing: 6) {
-                Text("POST URL")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundColor(DS.textMuted)
+                Text("Post URL")
+                    .dsSmallCapsLabel()
 
                 HStack(spacing: 8) {
                     Image(systemName: "link")
@@ -308,9 +298,8 @@ struct PostCreationPhaseView: View {
         HStack(spacing: 6) {
             Image(systemName: "flame.fill")
                 .font(.system(size: 14))
-            Text("VIRAL")
-                .font(.system(size: 12, weight: .bold))
-                .tracking(1)
+            Text("Viral")
+                .font(DS.smallCaps)
         }
         .foregroundColor(DS.orange)
         .padding(.horizontal, 16)
@@ -322,10 +311,8 @@ struct PostCreationPhaseView: View {
     @ViewBuilder
     private var manualEntrySection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("ENTER METRICS")
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+            Text("Enter Metrics")
+                .dsSmallCapsLabel()
 
             Text("Enter your post metrics from the platform to track performance.")
                 .font(.system(size: 12))
@@ -400,10 +387,8 @@ struct PostCreationPhaseView: View {
 
         // Lifecycle summary
         VStack(alignment: .leading, spacing: 16) {
-            Text("LIFECYCLE SUMMARY")
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+            Text("Lifecycle Summary")
+                .dsSmallCapsLabel()
 
             // Creation date
             archivedRow(
@@ -473,10 +458,8 @@ struct PostCreationPhaseView: View {
         // Performance summary (if available)
         if let perf = atom.metadataValue(as: ContentPerformanceMetadata.self) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("PERFORMANCE SNAPSHOT")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundColor(DS.textMuted)
+                Text("Performance Snapshot")
+                    .dsSmallCapsLabel()
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     metricCard(label: "Reach", value: formatNumber(perf.reach), icon: "person.2")

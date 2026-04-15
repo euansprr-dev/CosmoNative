@@ -526,10 +526,8 @@ struct InstagramTranscriptView: View {
     private var transcriptEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("TRANSCRIPT")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.2)
-                    .foregroundColor(DS.textMuted)
+                Text("Transcript")
+                    .dsSmallCapsLabel()
 
                 if let contentType = autoTranscriptionContentType {
                     igContentTypeBadge(contentType)

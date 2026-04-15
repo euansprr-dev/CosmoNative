@@ -111,6 +111,10 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     // MARK: - Automation
     case automation                                     // Automation rules (reactive canvas behaviors)
 
+    // MARK: - Smart Templates
+    case blockTemplate = "block_template"               // Template definition (reusable block blueprint)
+    case templateInstance = "template_instance"          // Instantiated block from a template
+
     // MARK: - Content Physics Codex
     case codexElement = "codex_element"
     case codexWalkthrough = "codex_walkthrough"
@@ -140,7 +144,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .journalInsight, .analysisChunk, .emotionalState, .clarityScore:
             return .reflection
         case .dailySummary, .weeklySummary, .syncEvent, .systemEvent, .userPreference, .routineDefinition,
-             .thinkspace, .agentLearning, .automation:
+             .thinkspace, .agentLearning, .automation, .blockTemplate, .templateInstance:
             return .system
         case .correlationInsight, .causalityComputation, .semanticExtraction, .sanctuarySnapshot,
              .livingInsight, .syncState:
@@ -151,7 +155,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     /// Whether this atom type contributes to XP
     var contributesToXP: Bool {
         switch self {
-        case .codexElement, .codexWalkthrough:
+        case .codexElement, .codexWalkthrough, .blockTemplate:
             return false
         default:
             break
@@ -273,6 +277,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .area: return "Area"
         // Automation
         case .automation: return "Automation"
+        // Smart Templates
+        case .blockTemplate: return "Template"
+        case .templateInstance: return "Template Block"
         // Codex
         case .codexElement: return "Codex Element"
         case .codexWalkthrough: return "Walkthrough"
@@ -366,6 +373,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .area: return "Areas"
         // Automation
         case .automation: return "Automations"
+        // Smart Templates
+        case .blockTemplate: return "Templates"
+        case .templateInstance: return "Template Blocks"
         // Codex
         case .codexElement: return "Codex Elements"
         case .codexWalkthrough: return "Walkthroughs"
@@ -459,6 +469,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .area: return "square.stack.fill"
         // Automation
         case .automation: return "bolt.fill"
+        // Smart Templates
+        case .blockTemplate: return "rectangle.3.group.fill"
+        case .templateInstance: return "rectangle.on.rectangle.fill"
         // Codex
         case .codexElement: return "atom"
         case .codexWalkthrough: return "text.book.closed"
@@ -618,6 +631,11 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     // MARK: - Automation Links
     case automationScope = "automation_scope"              // Automation rule → scoped thinkspace/cluster
 
+    // MARK: - Smart Template Links
+    case templateDefinition = "template_definition"        // Instance → its template definition
+    case templateInstance = "template_instance"             // Template → one of its instances
+    case templateAutomation = "template_automation"         // Template → bound automation rule
+
     // MARK: - Codex Links
     case codexElementToWalkthrough = "codex_element_to_walkthrough"
     case walkthroughToCodexElement = "walkthrough_to_codex_element"
@@ -640,7 +658,8 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .project, .parentIdea, .originIdea, .connection, .recurrenceParent,
              .draftToContent, .publishSource, .clarityOf, .journalSource,
-             .sleepToReadiness, .deepWorkProject, .routineInstance:
+             .sleepToReadiness, .deepWorkProject, .routineInstance,
+             .templateDefinition:
             return true
         default:
             return false
@@ -672,6 +691,8 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .walkthroughToCodexElement: return .codexElementToWalkthrough
         case .ideaToBlueprint: return .blueprintToIdea
         case .blueprintToIdea: return .ideaToBlueprint
+        case .templateDefinition: return .templateInstance
+        case .templateInstance: return .templateDefinition
         default: return nil
         }
     }
@@ -744,6 +765,10 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .clientToSwipe: return "Client to Swipe"
         // Automation
         case .automationScope: return "Automation Scope"
+        // Smart Templates
+        case .templateDefinition: return "Template Definition"
+        case .templateInstance: return "Template Instance"
+        case .templateAutomation: return "Template Automation"
         // Codex
         case .codexElementToWalkthrough: return "Element to Walkthrough"
         case .walkthroughToCodexElement: return "Walkthrough to Element"
@@ -1919,6 +1944,7 @@ struct IdeaMetadata: Codable, Sendable {
     // Linked context (Idea Page Redesign)
     var linkedSwipeIds: [String]?
     var linkedConnectionIds: [String]?
+    var mentionedAtomUUIDs: [String]?
     // Hook + Description fields (Content Pipeline integration)
     var hooks: [String]?
     var ideaDescription: String?
@@ -2748,4 +2774,191 @@ enum CaptureMethod: String, Codable, CaseIterable, Sendable {
     case paste = "paste"
     case quickCapture = "quick_capture"
     case api = "api"
+}
+
+// MARK: - Smart Template Types
+
+/// Layout mode for template block rendering
+enum TemplateLayoutMode: String, Codable, Sendable, CaseIterable {
+    case form       // Vertical field list (default)
+    case card       // Compact card with key fields only
+    case freeform   // User-arranged field positions
+}
+
+/// Visual style for template action buttons
+enum TemplateButtonStyle: String, Codable, Sendable, CaseIterable {
+    case primary
+    case secondary
+    case destructive
+    case success
+}
+
+/// Field type for template field definitions
+enum TemplateFieldType: String, Codable, Sendable, CaseIterable {
+    case text           // Single line
+    case longText       // Multi-line
+    case number
+    case currency
+    case date
+    case dateTime
+    case select         // Single choice from options
+    case multiSelect    // Multiple choices
+    case toggle         // Boolean
+    case atomReference  // Link to another atom (renders as chip)
+    case url
+    case rating         // 1-5 stars
+    case progress       // 0-100 slider
+    case computed       // Formula field (references other fields)
+
+    var displayName: String {
+        switch self {
+        case .text: return "Text"
+        case .longText: return "Long Text"
+        case .number: return "Number"
+        case .currency: return "Currency"
+        case .date: return "Date"
+        case .dateTime: return "Date & Time"
+        case .select: return "Select"
+        case .multiSelect: return "Multi-Select"
+        case .toggle: return "Toggle"
+        case .atomReference: return "Atom Reference"
+        case .url: return "URL"
+        case .rating: return "Rating"
+        case .progress: return "Progress"
+        case .computed: return "Computed"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .text: return "textformat"
+        case .longText: return "text.alignleft"
+        case .number: return "number"
+        case .currency: return "dollarsign.circle"
+        case .date: return "calendar"
+        case .dateTime: return "calendar.badge.clock"
+        case .select: return "list.bullet"
+        case .multiSelect: return "checklist"
+        case .toggle: return "switch.2"
+        case .atomReference: return "link"
+        case .url: return "globe"
+        case .rating: return "star.fill"
+        case .progress: return "chart.bar.fill"
+        case .computed: return "function"
+        }
+    }
+}
+
+/// Definition of a single field in a block template
+struct TemplateFieldDefinition: Codable, Sendable, Identifiable, Equatable {
+    var id: String
+    var key: String                     // Machine key (snake_case)
+    var label: String                   // Display label
+    var fieldType: TemplateFieldType
+    var isRequired: Bool
+    var defaultValue: String?           // JSON-encoded default
+    var placeholder: String?
+    var options: [String]?              // For .select, .multiSelect
+    var sortOrder: Int
+    var aiExtractionHint: String?       // e.g. "Extract the deal size from the body"
+    var autoPopulateFrom: String?       // e.g. "atom.title", "date.today"
+
+    static func new(key: String, label: String, fieldType: TemplateFieldType, sortOrder: Int) -> TemplateFieldDefinition {
+        TemplateFieldDefinition(
+            id: UUID().uuidString,
+            key: key,
+            label: label,
+            fieldType: fieldType,
+            isRequired: false,
+            sortOrder: sortOrder
+        )
+    }
+}
+
+/// Definition of an action button in a block template
+struct TemplateButtonDefinition: Codable, Sendable, Identifiable, Equatable {
+    var id: String
+    var label: String
+    var icon: String?                   // SF Symbol
+    var style: TemplateButtonStyle
+    var actions: [AutomationAction]     // Reuses existing automation action type
+    var confirmationMessage: String?    // Optional "Are you sure?" prompt
+    var sortOrder: Int
+
+    static func new(label: String, style: TemplateButtonStyle, actions: [AutomationAction], sortOrder: Int) -> TemplateButtonDefinition {
+        TemplateButtonDefinition(
+            id: UUID().uuidString,
+            label: label,
+            style: style,
+            actions: actions,
+            sortOrder: sortOrder
+        )
+    }
+}
+
+/// Spawn trigger binding for a block template
+struct TemplateSpawnTrigger: Codable, Sendable, Equatable {
+    var triggerType: AutomationTriggerType
+    var triggerConfig: [String: String]
+    var conditions: [AutomationCondition]
+    var targetThinkspaceId: String?
+    var targetClusterId: String?
+    var autoFill: Bool
+    var boundRuleUUID: String?          // UUID of the created AutomationRule (set after binding)
+}
+
+/// Metadata for a block template definition (stored in atom.metadata)
+struct BlockTemplateMetadata: Codable, Sendable, Equatable {
+    var icon: String                    // SF Symbol
+    var accentColorHex: String          // Block chrome color
+    var category: String?               // User grouping ("Reviews", "Deals")
+    var description: String?
+    var fields: [TemplateFieldDefinition]
+    var buttons: [TemplateButtonDefinition]
+    var defaultWidth: Double?
+    var defaultHeight: Double?
+    var layoutMode: TemplateLayoutMode
+    var spawnTriggers: [TemplateSpawnTrigger]
+    var aiPromptContext: String?         // Context for AI field filling
+    var autoFillEnabled: Bool
+    var schemaVersion: Int
+    var isArchived: Bool
+    var instanceCount: Int              // Denormalized for display
+    var lastInstantiatedAt: String?
+
+    /// Create a new empty template metadata
+    static func new(icon: String = "rectangle.3.group.fill", accentColorHex: String = "#6366F1") -> BlockTemplateMetadata {
+        BlockTemplateMetadata(
+            icon: icon,
+            accentColorHex: accentColorHex,
+            fields: [],
+            buttons: [],
+            layoutMode: .form,
+            spawnTriggers: [],
+            autoFillEnabled: false,
+            schemaVersion: 1,
+            isArchived: false,
+            instanceCount: 0
+        )
+    }
+}
+
+/// Structured data for a template instance (stored in atom.structured)
+struct TemplateInstanceStructured: Codable, Sendable, Equatable {
+    var templateUUID: String
+    var templateSchemaVersion: Int
+    var fieldValues: [String: ConditionValue]
+    var completedButtons: [String]       // Button IDs already pressed
+    var instanceStatus: String?          // "active", "completed", "archived"
+    var spawnContext: String?             // What triggered the spawn
+
+    static func new(templateUUID: String, schemaVersion: Int) -> TemplateInstanceStructured {
+        TemplateInstanceStructured(
+            templateUUID: templateUUID,
+            templateSchemaVersion: schemaVersion,
+            fieldValues: [:],
+            completedButtons: [],
+            instanceStatus: "active"
+        )
+    }
 }

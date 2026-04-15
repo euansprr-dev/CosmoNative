@@ -37,6 +37,17 @@ struct ObsidianPalette: ThemePalette {
     let redSoft = Color(hex: "2D1418")
     let infoSoft = Color(hex: "12243D")
 
+    // Akashic Codex — premium material system (true dark)
+    let gilt = Color(hex: "58E6A0")
+    let giltSoft = Color(hex: "122D20")
+    let giltMuted = Color(hex: "2D6648")
+    let vellum = Color(hex: "161B22")
+    let vellumDeep = Color(hex: "0D1117")
+    let inkWash = Color(hex: "C9D1D9")
+    let inkFaded = Color(hex: "8B949E")
+    let sepiaBorder = Color(hex: "30363D")
+    let sepiaSubtle = Color(hex: "21262D")
+
     // Borders
     let border = Color(hex: "30363D")
     let borderSubtle = Color(hex: "21262D")

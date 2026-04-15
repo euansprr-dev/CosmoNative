@@ -1549,6 +1549,27 @@ Write ALL ${conceptsForThisCall.length} entries. Do not stop early.
       allPass2Text += '\n\n' + text;
     }
 
+    // INCREMENTAL SAVE — save after every continuation so progress isn't lost on crash/redeploy
+    {
+      const incrementalCodex = pass1Codex + '\n\n═══ PASS 2: OPERATIONAL TRAINING ENTRIES ═══\n\n' + allPass2Text;
+      const saveAtoms = await fetchAllByType('research', { limit: 500 });
+      const saveTarget = saveAtoms.find(a => a.metadata?.isCodexSynthesis);
+      if (saveTarget) {
+        const covered = detectCoveredConcepts(allPass2Text);
+        await updateAtom(saveTarget.uuid, {
+          body: incrementalCodex,
+          metadata: {
+            ...saveTarget.metadata,
+            updatedAt: new Date().toISOString(),
+            pass2Complete: false,
+            pass2Concepts: PASS2_CONCEPTS.length,
+            pass2Covered: covered.size,
+          },
+        });
+        console.log(`  💾 Incremental save: ${covered.size}/${PASS2_CONCEPTS.length} concepts, ${incrementalCodex.length} chars`);
+      }
+    }
+
     // Check coverage after this round
     const newCovered = detectCoveredConcepts(allPass2Text);
     const newRemaining = PASS2_CONCEPTS.length - newCovered.size;
@@ -1569,8 +1590,7 @@ Write ALL ${conceptsForThisCall.length} entries. Do not stop early.
     return;
   }
 
-  // Append Pass 2 operational entries AFTER existing codex.
-  // Old descriptive entries are kept for comparison — can strip them later once validated.
+  // Final save with pass2Complete = true
   const combinedCodex = pass1Codex + '\n\n═══ PASS 2: OPERATIONAL TRAINING ENTRIES ═══\n\n' + allPass2Text;
 
   const allAtomsForSave = await fetchAllByType('research', { limit: 500 });
@@ -1588,7 +1608,7 @@ Write ALL ${conceptsForThisCall.length} entries. Do not stop early.
         pass2Continuations: totalOutputTokens > 0 ? Math.ceil(totalOutputTokens / 3000) : 0,
       },
     });
-    console.log(`  📊 Updated Codex with Pass 2 content: ${combinedCodex.length} total chars`);
+    console.log(`  📊 Final save: ${combinedCodex.length} total chars`);
   }
 }
 

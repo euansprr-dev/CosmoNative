@@ -64,10 +64,8 @@ struct UniversalFocusSidebar<Content: View>: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(accentColor)
 
-            Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundColor(DS.textSecondary)
-                .tracking(1.2)
+            Text(title)
+                .dsSmallCapsLabel()
 
             Spacer()
 

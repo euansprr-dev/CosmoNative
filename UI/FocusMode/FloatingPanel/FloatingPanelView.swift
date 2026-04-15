@@ -117,10 +117,8 @@ struct FloatingPanelView: View {
             // Title + type
             VStack(alignment: .leading, spacing: 2) {
                 Text(config.label)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(config.accentColor)
-                    .textCase(.uppercase)
-                    .tracking(0.8)
+                    .font(DS.smallCaps)
+                    .foregroundStyle(config.accentColor)
 
                 Text(content.title)
                     .font(.system(size: 13, weight: .medium))
@@ -146,10 +144,8 @@ struct FloatingPanelView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(config.label)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(config.accentColor)
-                        .textCase(.uppercase)
-                        .tracking(0.8)
+                        .font(DS.smallCaps)
+                        .foregroundStyle(config.accentColor)
 
                     Text(content.title)
                         .font(.system(size: 14, weight: .medium))
@@ -231,10 +227,8 @@ struct FloatingPanelView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(config.label)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(config.accentColor)
-                        .textCase(.uppercase)
-                        .tracking(0.8)
+                        .font(DS.smallCaps)
+                        .foregroundStyle(config.accentColor)
 
                     Text(content.title)
                         .font(.system(size: 16, weight: .semibold))
@@ -258,10 +252,8 @@ struct FloatingPanelView: View {
             // Preview text
             if let preview = content.preview, !preview.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("SUMMARY")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(DS.textMuted)
-                        .tracking(1)
+                    Text("Summary")
+                        .dsSmallCapsLabel()
 
                     Text(preview)
                         .font(.system(size: 12))

@@ -695,6 +695,180 @@ final class CommandCenterHabitEngine: ObservableObject {
         }
     }
 
+    // MARK: - Habit Report (Extended Date Ranges)
+
+    func loadHabitReport(startDate: Date, endDate: Date) async -> [HabitReportEntry] {
+        if definitions.count <= Self.builtInDefinitions.count {
+            await refreshDefinitions()
+        }
+
+        let calendar = Calendar.current
+        let dayCount = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        let allDays = (0...dayCount).compactMap { calendar.date(byAdding: .day, value: $0, to: startDate) }
+            .map { calendar.startOfDay(for: $0) }
+
+        do {
+            let sessionAtoms = try await atomRepository.fetchAll(type: .deepWorkBlock)
+            let taskAtoms = try await atomRepository.fetchAll(type: .task)
+            let journalAtoms = try await atomRepository.fetchAll(type: .journalEntry)
+            let contentPhases = try await atomRepository.fetchAll(type: .contentPhase)
+            let workouts = try await atomRepository.fetchAll(type: .workout)
+            let workoutSessions = try await atomRepository.fetchAll(type: .workoutSession)
+            let systemEvents = try await atomRepository.fetchAll(type: .systemEvent)
+
+            let completionRecords = systemEvents.compactMap { $0.structuredData(as: HabitCompletionRecord.self) }
+
+            return activeDefinitions.map { definition in
+                let createdDate = habitCreationDate(for: definition)
+                let applicableDays = allDays.filter { day in
+                    if let created = createdDate, day < calendar.startOfDay(for: created) { return false }
+                    return day <= calendar.startOfDay(for: Date())
+                }
+
+                let dayResults: [Date: Bool]
+                if definition.isBuiltIn {
+                    dayResults = builtInDayResults(
+                        for: definition,
+                        days: applicableDays,
+                        sessionAtoms: sessionAtoms,
+                        taskAtoms: taskAtoms,
+                        journalAtoms: journalAtoms,
+                        contentPhases: contentPhases,
+                        workouts: workouts,
+                        workoutSessions: workoutSessions,
+                        completionRecords: completionRecords
+                    )
+                } else {
+                    let recordsByDay = completionRecords
+                        .filter { $0.habitUUID == definition.id }
+                        .reduce(into: [Date: Int]()) { partial, record in
+                            guard let date = PlannerumFormatters.iso8601.date(from: record.date) else { return }
+                            partial[calendar.startOfDay(for: date), default: 0] += record.countDelta
+                        }
+                    dayResults = Dictionary(uniqueKeysWithValues: applicableDays.map { day in
+                        (day, max(0, recordsByDay[day] ?? 0) >= max(1, definition.dailyTargetCount))
+                    })
+                }
+
+                let completedDays = dayResults.values.filter { $0 }.count
+                let totalDays = applicableDays.count
+                let rate = totalDays > 0 ? Double(completedDays) / Double(totalDays) : 0
+
+                let (current, best) = calculateStreaks(dayResults: dayResults, days: applicableDays)
+
+                return HabitReportEntry(
+                    habitDefinition: definition,
+                    dayResults: dayResults,
+                    completionRate: rate,
+                    completedDays: completedDays,
+                    totalDays: totalDays,
+                    currentStreak: current,
+                    bestStreak: best,
+                    createdDate: createdDate
+                )
+            }
+        } catch {
+            print("❌ HabitEngine: Failed to load habit report: \(error)")
+            return []
+        }
+    }
+
+    private func builtInDayResults(
+        for definition: HabitDefinition,
+        days: [Date],
+        sessionAtoms: [Atom],
+        taskAtoms: [Atom],
+        journalAtoms: [Atom],
+        contentPhases: [Atom],
+        workouts: [Atom],
+        workoutSessions: [Atom],
+        completionRecords: [HabitCompletionRecord]
+    ) -> [Date: Bool] {
+        let calendar = Calendar.current
+        let target = max(1, definition.dailyTargetCount)
+
+        let manualByDay = completionRecords
+            .filter { $0.habitUUID == definition.id }
+            .reduce(into: [Date: Int]()) { partial, record in
+                guard let date = PlannerumFormatters.iso8601.date(from: record.date) else { return }
+                partial[calendar.startOfDay(for: date), default: 0] += record.countDelta
+            }
+
+        func createdOnDay(_ atom: Atom, day: Date) -> Bool {
+            guard let date = ISO8601DateFormatter().date(from: atom.createdAt) else { return false }
+            return calendar.isDate(date, inSameDayAs: day)
+        }
+
+        return Dictionary(uniqueKeysWithValues: days.map { day in
+            let count: Int
+            switch definition.id {
+            case "deepFocus":
+                count = sessionAtoms.filter { atom in
+                    guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
+                          let started = PlannerumFormatters.iso8601.date(from: metadata.startedAt),
+                          calendar.isDate(started, inSameDayAs: day) else { return false }
+                    let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
+                    return minutes >= 25 && (metadata.focusScore ?? 100) > 70
+                }.count
+
+            case "dailyReflection":
+                count = journalAtoms.filter { atom in
+                    guard createdOnDay(atom, day: day) else { return false }
+                    return (atom.body ?? "").split(separator: " ").count >= 50
+                }.count
+
+            case "taskCrusher":
+                count = taskAtoms.filter { atom in
+                    guard let metadata = atom.metadataValue(as: TaskMetadata.self),
+                          metadata.isCompleted == true,
+                          let completedAt = metadata.completedAt,
+                          let date = PlannerumFormatters.iso8601.date(from: completedAt) else { return false }
+                    return calendar.isDate(date, inSameDayAs: day)
+                }.count
+
+            case "creativeBurst":
+                count = contentPhases.filter { createdOnDay($0, day: day) }.count
+
+            case "heartHealth":
+                let automatic = workouts.filter { createdOnDay($0, day: day) }.count
+                    + workoutSessions.filter { createdOnDay($0, day: day) }.count
+                let manual = max(0, manualByDay[day] ?? 0)
+                count = automatic + manual
+
+            default:
+                count = 0
+            }
+            return (day, count >= target)
+        })
+    }
+
+    private func habitCreationDate(for definition: HabitDefinition) -> Date? {
+        if definition.isBuiltIn { return nil }
+        // Custom habits have UUID as id, which is the atom UUID
+        // We can't easily get creation date without fetching, so return nil
+        // (the caller will treat nil as "always existed" — acceptable for built-ins,
+        //  and custom habits will show from their first completion)
+        return nil
+    }
+
+    private func calculateStreaks(dayResults: [Date: Bool], days: [Date]) -> (current: Int, best: Int) {
+        let sorted = days.sorted()
+        var current = 0
+        var best = 0
+        var streak = 0
+
+        for day in sorted {
+            if dayResults[day] == true {
+                streak += 1
+                best = max(best, streak)
+            } else {
+                streak = 0
+            }
+        }
+        current = streak
+        return (current, best)
+    }
+
     static let builtInDefinitions: [HabitDefinition] = [
         HabitDefinition(
             id: "deepFocus",

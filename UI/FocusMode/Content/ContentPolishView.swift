@@ -162,10 +162,8 @@ struct ContentPolishView: View {
             Text(value)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(DS.text)
-            Text(label.uppercased())
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.5)
+            Text(label)
+                .dsSmallCapsLabel()
         }
     }
 
@@ -675,9 +673,7 @@ struct ContentPolishView: View {
                 .font(.system(size: 9))
                 .foregroundStyle(DS.textMuted)
             Text(title)
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+                .dsSmallCapsLabel()
         }
     }
 

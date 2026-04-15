@@ -1,5 +1,6 @@
 // CosmoOS/UI/Codex/CodexElementHeroSection.swift
-// Dramatic hero section for Codex element detail views.
+// Dramatic hero section for Codex element detail views — Akashic manuscript aesthetic.
+// April 2026 — Akashic Records Premium Redesign
 
 import SwiftUI
 
@@ -26,13 +27,15 @@ struct CodexElementHeroSection: View {
 
     private var heroBackground: some View {
         ZStack {
-            LinearGradient(
-                colors: [categoryColor.opacity(0.05), categoryColor.opacity(0.02), .clear],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+            DS.vellum
+            RadialGradient(
+                colors: [categoryColor.opacity(0.03), .clear],
+                center: .topLeading,
+                startRadius: 0,
+                endRadius: 400
             )
-            .filmGrain(opacity: 0.015)
         }
+        .filmGrain(opacity: 0.02)
     }
 
     // MARK: - Content
@@ -59,13 +62,11 @@ struct CodexElementHeroSection: View {
 
     private var categoryIconRow: some View {
         HStack(spacing: DS.space8) {
-            Image(systemName: element.category.icon)
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(categoryColor)
-                .frame(width: 40, height: 40)
-                .background(categoryColor.opacity(0.1), in: Circle())
-                .accessibilityHidden(true)
-
+            AkashicCategoryDiamond(
+                icon: element.category.icon,
+                color: categoryColor,
+                size: .large
+            )
             Text(element.category.displayName)
                 .font(DS.callout)
                 .foregroundStyle(categoryColor)
@@ -74,33 +75,30 @@ struct CodexElementHeroSection: View {
 
     private var elementName: some View {
         Text(element.canonicalName)
-            .font(DS.display)
-            .foregroundStyle(DS.text)
+            .font(DS.displaySerif)
+            .foregroundStyle(DS.inkWash)
     }
 
     private var badgeRow: some View {
         HStack(spacing: DS.space8) {
-            categoryBadge
+            categoryDescription
             if !element.variants.isEmpty {
                 variantCount
             }
         }
     }
 
-    private var categoryBadge: some View {
+    private var categoryDescription: some View {
         Text(element.category.description)
-            .font(DS.caption)
-            .foregroundStyle(DS.textSecondary)
+            .font(DS.dateSerif)
+            .foregroundStyle(DS.inkFaded)
             .italic()
     }
 
     private var variantCount: some View {
         Text("\(element.variants.count) variants")
-            .font(DS.caption2)
-            .foregroundStyle(DS.textMuted)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(DS.surface, in: Capsule())
+            .font(DS.smallCaps)
+            .foregroundStyle(DS.giltMuted)
     }
 
     private var frequencyRing: some View {

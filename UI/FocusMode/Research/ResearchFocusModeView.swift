@@ -481,8 +481,7 @@ struct ResearchFocusModeView: View {
                 Image(systemName: "magnifyingglass")
                     .font(DS.caption2)
                 Text("Research")
-                    .font(DS.caption2)
-                    .tracking(0.5)
+                    .font(DS.smallCaps)
             }
             .foregroundStyle(DS.entityResearch)
             .padding(.horizontal, 8)
@@ -666,6 +665,9 @@ struct ResearchFocusModeView: View {
 
         case .fromDatabase:
             showCommandK = true
+
+        case .createTemplate:
+            break // Templates not supported in focus mode
         }
     }
 
@@ -1401,10 +1403,9 @@ struct ResearchAgentPanelView: View {
                     .font(DS.subheadline)
                     .foregroundStyle(agentColor)
 
-                Text("RESEARCH AGENT")
-                    .font(DS.caption2)
+                Text("Research Agent")
+                    .font(DS.smallCaps)
                     .foregroundStyle(agentColor)
-                    .tracking(0.8)
 
                 Spacer()
 

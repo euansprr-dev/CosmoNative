@@ -172,6 +172,17 @@ struct CosmoApp: App {
         }
         print("🪟 Cosmo Window panel initialized (⌥A hotkey registered)")
 
+        // Initialize the floating Atom Window (⌥E)
+        // Force singleton creation so its NSEvent monitors are active immediately
+        // (CGEvent tap may not be available without Accessibility permission)
+        _ = AtomWindowPanelController.shared
+        HotkeyManager.shared.registerAtomWindowHotkey {
+            Task { @MainActor in
+                AtomWindowPanelController.shared.toggle()
+            }
+        }
+        print("📄 Atom Window panel initialized (⌥E hotkey registered)")
+
         // Observe voice engine state for recording indicator updates
         NotificationCenter.default.addObserver(
             forName: .voiceRecordingStateChanged,
@@ -463,6 +474,7 @@ public enum EntityType: String, Codable, Sendable {
     case stickyNote = "sticky_note" // Square sticky note blocks on canvas
     case liveQuery = "live_query"   // Live query block that auto-updates with matching atoms
     case ideaBoard = "idea_board"   // Client idea board — live-updating idea list from Command-K
+    case template                   // Smart templatable block (user-defined structured blocks)
 
     public var icon: String {
         switch self {
@@ -482,6 +494,7 @@ public enum EntityType: String, Codable, Sendable {
         case .image: return "photo.fill"
         case .liveQuery: return "bolt.horizontal.fill"
         case .ideaBoard: return "list.bullet.rectangle.portrait.fill"
+        case .template: return "rectangle.3.group.fill"
         }
     }
 
@@ -504,6 +517,7 @@ public enum EntityType: String, Codable, Sendable {
         case .image: return DS.entityImage
         case .liveQuery: return DS.accent
         case .ideaBoard: return DS.entityIdea
+        case .template: return DS.accent
         }
     }
 }

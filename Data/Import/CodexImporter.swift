@@ -181,7 +181,17 @@ final class CodexImporter {
 
         // Step 4: Parse deep concept entries (═══ headers) for richer data
         // Store FULL text as atom body + best-effort parsed fields
-        let sections = codexBody.components(separatedBy: "═══")
+        // Start from Pass 2 operational entries if present (they supersede old entries)
+        let pass2Marker = "PASS 2: OPERATIONAL TRAINING ENTRIES"
+        let deepEntrySource: String
+        if let pass2Range = codexBody.range(of: pass2Marker) {
+            deepEntrySource = String(codexBody[pass2Range.lowerBound...])
+            logger.info("Found Pass 2 marker — parsing deep entries from operational section only")
+        } else {
+            deepEntrySource = codexBody
+            logger.info("No Pass 2 marker — parsing deep entries from full codex")
+        }
+        let sections = deepEntrySource.components(separatedBy: "═══")
         var deepEntryBodies: [String: String] = [:]  // key → full entry text
         var sectionIdx = 1
         while sectionIdx < sections.count {
@@ -220,9 +230,18 @@ final class CodexImporter {
             // Extract best-effort structured fields
             let enrichment = extractDeepEntryData(from: body)
 
+            if conceptName.uppercased() == "HOOK" {
+                logger.warning("🔍 HOOK body first 200 chars: \(String(body.prefix(200)))")
+                logger.warning("🔍 HOOK body contains 'OPERATIONAL': \(body.contains("OPERATIONAL"))")
+                logger.warning("🔍 HOOK body contains 'GENERATION': \(body.contains("GENERATION"))")
+            }
+            logger.info("Enrichment for '\(conceptName)': opRecipe=\(enrichment.operationalRecipe != nil) genRecipe=\(enrichment.generationRecipe != nil) formatConst=\(enrichment.formatConstraints != nil) reelEx=\(enrichment.reelExamples.count) carouselEx=\(enrichment.carouselExamples.count) antiEx=\(enrichment.antiExampleFix != nil) bodyLen=\(body.count)")
+
             // Find matching key using multi-strategy matching
             let allKeys = Set(parsedElements.keys)
             let matchKey = findMatchingKey(conceptName, in: allKeys)
+
+            logger.debug("Processing concept: '\(conceptName)' matchKey=\(matchKey ?? "nil") dbMatch=\(self.findMatchingKey(conceptName, in: existingNames) ?? "nil")")
 
             if let matchKey, let existing = parsedElements[matchKey] {
                 // Enrich in-memory element
@@ -279,11 +298,15 @@ final class CodexImporter {
                         )
                         if let data = try? JSONEncoder().encode(enriched),
                            let jsonStr = String(data: data, encoding: .utf8) {
-                            var updatedAtom = dbAtom
-                            updatedAtom.structured = jsonStr
-                            updatedAtom.body = fullEntryText  // FULL deep entry text
-                            _ = try? await AtomRepository.shared.update(updatedAtom)
-                            logger.info("Enriched DB element with full text: \(conceptName)")
+                            // Delete old atom and create fresh one to avoid version conflicts
+                            _ = try? await AtomRepository.shared.delete(uuid: dbAtom.uuid)
+                            try? await AtomRepository.shared.create(
+                                type: .codexElement,
+                                title: enriched.canonicalName,
+                                body: fullEntryText,
+                                structured: jsonStr
+                            )
+                            logger.info("Replaced codex element: \(conceptName)")
                         }
                     }
                 } else if !existingNames.contains(conceptName.lowercased()) {
@@ -566,9 +589,10 @@ final class CodexImporter {
 
         // ---- Pass 2 fields ----
 
-        // Operational recipe
-        if let recipe = findStandaloneField(in: body, headers: ["OPERATIONAL RECIPE:"]) {
-            result.operationalRecipe = recipe
+        // Operational recipe (multi-line — grab everything from header to next section)
+        let opRecipeLines = extractMultiLineSection(from: body, headers: ["OPERATIONAL RECIPE:"])
+        if !opRecipeLines.isEmpty {
+            result.operationalRecipe = opRecipeLines
         }
 
         // Generation recipe (steps + common mistakes)
@@ -952,6 +976,51 @@ final class CodexImporter {
         }
 
         return results
+    }
+
+    /// Extract a multi-line section (everything from header to next section header)
+    private func extractMultiLineSection(from body: String, headers: [String]) -> String {
+        let bodyLines = body.components(separatedBy: "\n")
+        var capturing = false
+        var lines: [String] = []
+        let sectionEnders = [
+            "###", "═══", "EXAMPLES", "REAL EXAMPLES", "FREQUENCY:", "DEFINITION:",
+            "HOW TO APPLY", "ANTI-PATTERNS", "PATTERNS:", "STRONG FORMS",
+            "WHY IT WORKS", "WHERE ACTIVE", "READER EFFECT",
+            "REEL EXAMPLES", "CAROUSEL EXAMPLES",
+            "OPERATIONAL RECIPE", "GENERATION RECIPE", "FORMAT-SPECIFIC CONSTRAINTS",
+            "FORMAT CONSTRAINTS", "ANTI-EXAMPLE WITH FIX", "ANTI-EXAMPLE:"
+        ]
+
+        for line in bodyLines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let upper = trimmed.uppercased()
+
+            // Start capturing
+            if !capturing {
+                if headers.contains(where: { upper.hasPrefix($0.uppercased()) }) {
+                    capturing = true
+                    // Include content on the same line after the header
+                    let afterHeader = headers.compactMap { h -> String? in
+                        guard upper.hasPrefix(h.uppercased()) else { return nil }
+                        return String(trimmed.dropFirst(h.count)).trimmingCharacters(in: .whitespaces)
+                    }.first ?? ""
+                    if !afterHeader.isEmpty { lines.append(afterHeader) }
+                }
+                continue
+            }
+
+            // Stop at next section header
+            if sectionEnders.contains(where: { upper.hasPrefix($0) && !headers.contains(where: { upper.hasPrefix($0.uppercased()) }) }) {
+                break
+            }
+
+            if !trimmed.isEmpty {
+                lines.append(trimmed)
+            }
+        }
+
+        return lines.joined(separator: " ")
     }
 
     /// Find a standalone field value (single line after header)

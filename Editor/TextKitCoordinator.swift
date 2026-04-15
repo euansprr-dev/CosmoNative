@@ -184,6 +184,15 @@ final class CosmoTextView: NSTextView {
         }
         return resigned
     }
+
+    override func scrollRangeToVisible(_ range: NSRange) {
+        // When embedded in a SwiftUI ScrollView (non-scrolling mode), suppress
+        // internal scroll-to-cursor. NSTextView calls this during insertText,
+        // which shifts the clip view BEFORE the frame has grown to fit the new
+        // content — causing a visible upward jitter on newline insertion.
+        guard scrollsInternally else { return }
+        super.scrollRangeToVisible(range)
+    }
 }
 
 extension CosmoTextView {
@@ -255,6 +264,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var compact: Bool = false
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
+    var overrideFont: NSFont? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowImages: Bool = true
@@ -292,6 +302,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         configureTextView(textView, context: context, isInitial: true)
         textView.textStorage?.setAttributedString(attributedText)
+        applyStorageOverrides(textView.textStorage)
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.textViewReference = textView
         context.coordinator.installScrollDismissObserver(for: scrollView)
@@ -333,6 +344,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         if !textView.attributedString().isEqual(to: attributedText) {
             let selectedRange = textView.selectedRange()
             textView.textStorage?.setAttributedString(attributedText)
+            applyStorageOverrides(textView.textStorage)
             let safeLocation = min(selectedRange.location, textView.string.count)
             let safeLength = min(selectedRange.length, textView.string.count - safeLocation)
             textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
@@ -387,7 +399,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // Setting these on every update overwrites the entire text storage,
         // destroying any rich text formatting (bold, italic, etc.).
         if isInitial {
-            textView.font = resolvedBaseFont()
+            textView.font = overrideFont ?? resolvedBaseFont()
             textView.textColor = overrideTextColor ?? (darkMode ? .white : NSColor(CosmoColors.textPrimary))
             textView.alignment = textAlignment
             textView.defaultParagraphStyle = baseParagraphStyle()
@@ -446,10 +458,33 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
     private func defaultTypingAttributes() -> [NSAttributedString.Key: Any] {
         [
-            .font: resolvedBaseFont(),
+            .font: overrideFont ?? resolvedBaseFont(),
             .foregroundColor: overrideTextColor ?? (darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)),
             .paragraphStyle: baseParagraphStyle()
         ]
+    }
+
+    /// Post-processes the text storage to force overrideTextColor and overrideFont
+    /// across all ranges. The RichDocument serializer bakes theme colors into the
+    /// attributed string, so passing overrideTextColor to the text view is not
+    /// enough — stored per-character attributes win. This reapplies the overrides
+    /// after each setAttributedString call.
+    func applyStorageOverrides(_ storage: NSTextStorage?) {
+        guard let storage, storage.length > 0 else { return }
+        guard overrideTextColor != nil || overrideFont != nil else { return }
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.beginEditing()
+        if let color = overrideTextColor {
+            storage.enumerateAttribute(RichDocumentAttributeKeys.entityType, in: fullRange, options: []) { value, range, _ in
+                // Preserve mention colors (entities carry their own color).
+                guard value == nil else { return }
+                storage.addAttribute(.foregroundColor, value: color, range: range)
+            }
+        }
+        if let font = overrideFont {
+            storage.addAttribute(.font, value: font, range: fullRange)
+        }
+        storage.endEditing()
     }
 
     private func resolvedBaseFont() -> NSFont {
@@ -650,8 +685,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // MARK: - Shortcut Delegate
 
         func textViewDidRequestFormattingShortcut(_ shortcut: FormattingType) {
-            guard let textView = textViewReference,
-                  textView.window?.firstResponder === textView else { return }
+            guard let textView = textViewReference else { return }
             applyFormatting(shortcut, to: textView)
         }
 
@@ -921,18 +955,21 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 textView.insertText("\n", replacementRange: textView.selectedRange())
 
                 // Stamp normal attributes on the \n character we just inserted,
-                // so adjacent text insertion (slash command prefixes) won't inherit heading font
+                // so adjacent text insertion (slash command prefixes) won't inherit heading font.
+                // Batch inside beginEditing/endEditing so a single processEditing fires
+                // (instead of separate cycles for addAttributes + removeAttribute).
                 let cursorPos = textView.selectedRange().location
                 if cursorPos > 0 {
                     let nlRange = NSRange(location: cursorPos - 1, length: 1)
+                    textView.textStorage?.beginEditing()
                     textView.textStorage?.addAttributes([
                         .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
                         .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
                         .paragraphStyle: defaultParagraphStyle()
                     ], range: nlRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: nlRange)
+                    textView.textStorage?.endEditing()
                 }
-                syncBindings(from: textView)
                 return true
             }
 
@@ -1725,12 +1762,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
         }
 
-        /// Lightweight AppKit-only resize — ensures the NSTextView + CosmoScrollView
-        /// frame matches the current text layout immediately, without firing the
-        /// SwiftUI height callback. This prevents visual glitches on newline insertion
-        /// where AppKit has already laid out the new line but SwiftUI's frame constraint
-        /// hasn't caught up yet (the SwiftUI callback is deferred to the next run loop
-        /// inside `notifyContentHeightChange`).
+        /// Immediate AppKit resize + single coordinated SwiftUI update.
+        /// Resizes the NSTextView frame, updates intrinsicContentSize, AND fires
+        /// the SwiftUI height callback in one synchronous pass. This prevents the
+        /// double-jitter caused by intrinsicContentSize invalidation and the deferred
+        /// SwiftUI callback landing in separate layout passes.
         private func resizeAppKitFrameIfNeeded(for textView: NSTextView) {
             guard !parent.scrollsInternally,
                   let layoutManager = textView.layoutManager,
@@ -1750,6 +1786,22 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if abs((scrollView.intrinsicHeight ?? 0) - newHeight) > 1.0 {
                 scrollView.intrinsicHeight = newHeight
                 scrollView.invalidateIntrinsicContentSize()
+            }
+
+            // Fire the SwiftUI callback NOW — keeps intrinsicContentSize and
+            // bodyEditorHeight/textContentHeight in sync so SwiftUI does a single
+            // layout pass, not two (which caused the visible double-jitter).
+            if abs(newHeight - lastReportedHeight) > 1.0 {
+                lastReportedHeight = newHeight
+                parent.onContentHeightChange?(newHeight)
+            }
+
+            // Reset any internal scroll offset — in non-scrolling mode the clip
+            // view should always sit at origin so content doesn't shift visually.
+            let clipView = scrollView.contentView
+            if clipView.bounds.origin != .zero {
+                clipView.scroll(to: .zero)
+                scrollView.reflectScrolledClipView(clipView)
             }
         }
 

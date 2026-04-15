@@ -106,7 +106,7 @@ struct LibraryTab: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .background(DS.surface)
+        .background(Color.clear)
         .animation(ProMotionSprings.snappy, value: viewModel.isMultiSelectActive)
         .task {
             await libraryViewModel.loadLibrary()
@@ -525,7 +525,7 @@ struct LibraryTab: View {
         }
         .padding(.horizontal, CommandKMetrics.contentPadding)
         .padding(.vertical, 8)
-        .background(DS.surface)
+        .background(Color.clear)
     }
 
     // MARK: - Client Profile Filter

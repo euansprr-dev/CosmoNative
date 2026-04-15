@@ -97,12 +97,12 @@ struct SanctuarySettingsView: View {
         VStack(spacing: 0) {
             header
             Rectangle()
-                .fill(DS.borderSubtle)
+                .fill(DS.sepiaSubtle)
                 .frame(height: 1)
             HStack(spacing: 0) {
                 sidebar
                 Rectangle()
-                    .fill(DS.borderSubtle)
+                    .fill(DS.sepiaSubtle)
                     .frame(width: 1)
                 content
             }
@@ -563,9 +563,7 @@ struct SanctuarySettingsView: View {
                     .foregroundStyle(color)
 
                 Text(title)
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(1.2)
+                    .dsSmallCapsLabel()
             }
 
             content()
@@ -728,7 +726,7 @@ struct SanctuarySettingsView: View {
                     .fill(DS.surface)
                     .overlay(
                         RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .stroke(DS.borderSubtle, lineWidth: 1)
+                            .stroke(DS.sepiaSubtle, lineWidth: 1)
                     )
             )
             .onSubmit {
@@ -949,7 +947,7 @@ struct SanctuarySettingsView: View {
             .fill(DS.surface)
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
+                    .stroke(DS.sepiaSubtle, lineWidth: 1)
             )
     }
 }
@@ -982,7 +980,7 @@ private struct APIKeyCard: View {
                 .fill(DS.surface)
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusMedium)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
+                        .stroke(DS.sepiaSubtle, lineWidth: 1)
                 )
         )
         .onAppear {
@@ -1070,7 +1068,7 @@ private struct APIKeyCard: View {
                 .fill(DS.surface)
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
+                        .stroke(DS.sepiaSubtle, lineWidth: 1)
                 )
         )
     }
@@ -1445,7 +1443,7 @@ private struct SocialPlatformConnectionCard: View {
             .fill(DS.surface)
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
+                    .stroke(DS.sepiaSubtle, lineWidth: 1)
             )
     }
 
@@ -1454,7 +1452,7 @@ private struct SocialPlatformConnectionCard: View {
             .fill(DS.surface)
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .stroke(isConnected ? platform.accentColor.opacity(0.2) : DS.borderSubtle, lineWidth: 1)
+                    .stroke(isConnected ? platform.accentColor.opacity(0.2) : DS.sepiaSubtle, lineWidth: 1)
             )
     }
 

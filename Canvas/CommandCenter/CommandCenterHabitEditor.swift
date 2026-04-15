@@ -67,11 +67,11 @@ struct CommandCenterHabitEditor: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(habit == nil ? "New Habit" : draft.title)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
 
                     Text(isBuiltIn ? "Built-in habit" : "Custom habit")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 Spacer()
@@ -82,16 +82,18 @@ struct CommandCenterHabitEditor: View {
                     .overlay(
                         Image(systemName: draft.icon)
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(Color(hex: draft.accentColor))
+                            .foregroundStyle(Color(hex: draft.accentColor))
                     )
             }
+
+            CosmoGradientDivider()
 
             Group {
                 labeledField("Title") {
                     TextField("Habit name", text: $draft.title)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 9)
                         .background(RoundedRectangle(cornerRadius: 8).fill(DS.surface))
@@ -106,7 +108,7 @@ struct CommandCenterHabitEditor: View {
                             } label: {
                                     Image(systemName: icon)
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(draft.icon == icon ? DS.accent : DS.textSecondary)
+                                    .foregroundStyle(draft.icon == icon ? DS.accent : DS.textSecondary)
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 36)
                                     .background(
@@ -149,7 +151,7 @@ struct CommandCenterHabitEditor: View {
                     Stepper(value: $draft.dailyTargetCount, in: 1...12) {
                         Text("\(draft.dailyTargetCount) completions")
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(DS.text)
+                            .foregroundStyle(DS.text)
                     }
                     .padding(.horizontal, 11)
                     .padding(.vertical, 9)
@@ -161,7 +163,7 @@ struct CommandCenterHabitEditor: View {
                     TextField("write, drafting, article", text: $draft.keywordInput)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 9)
                         .background(RoundedRectangle(cornerRadius: 8).fill(DS.surface))
@@ -185,7 +187,7 @@ struct CommandCenterHabitEditor: View {
                                         .font(.system(size: 11, weight: .medium))
                                         .lineLimit(1)
                                 }
-                                .foregroundColor(draft.mappedIntents.contains(intent) ? DS.textOnAccent : DS.textSecondary)
+                                .foregroundStyle(draft.mappedIntents.contains(intent) ? DS.textOnAccent : DS.textSecondary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
                                 .background(
@@ -210,14 +212,16 @@ struct CommandCenterHabitEditor: View {
                 }
             }
 
+            CosmoGradientDivider()
+
             Toggle(isOn: $draft.allowManualCompletion) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Allow manual check-ins")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                     Text("Lets you tap the habit card directly when there is no task.")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
             .toggleStyle(.switch)
@@ -249,22 +253,24 @@ struct CommandCenterHabitEditor: View {
 
             HStack {
                 Button("Close") {
+                    CosmicHaptics.shared.play(.selection)
                     dismiss()
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
                 Spacer()
 
                 if !isBuiltIn {
                     Button {
+                        CosmicHaptics.shared.play(.selection)
                         onSave(draft)
                         dismiss()
                     } label: {
                         Text(habit == nil ? "Create Habit" : "Save Changes")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(DS.textOnAccent)
+                            .foregroundStyle(DS.textOnAccent)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
                             .background(DS.accent, in: Capsule())
@@ -276,23 +282,15 @@ struct CommandCenterHabitEditor: View {
         }
         .padding(16)
         .frame(width: 380)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 4)
-        .shadow(color: .black.opacity(0.05), radius: 32, y: 16)
+        .cosmoMenuChrome(cornerRadius: 16)
         .environment(\.colorScheme, .light)
     }
 
     @ViewBuilder
     private func labeledField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.7)
-                .foregroundColor(DS.textMuted)
+            Text(title)
+                .dsSmallCapsLabel()
             content()
         }
     }
@@ -305,7 +303,7 @@ struct CommandCenterHabitEditor: View {
                 Text(title)
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(tint)
+            .foregroundStyle(tint)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(RoundedRectangle(cornerRadius: 8).fill(DS.surface))
@@ -316,7 +314,7 @@ struct CommandCenterHabitEditor: View {
     private func intentHint(_ intent: TaskIntent) -> some View {
         Text(intentHintText(for: intent))
             .font(.system(size: 10, weight: .medium))
-            .foregroundColor(DS.text)
+            .foregroundStyle(DS.text)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(DS.surfaceElevated, in: Capsule())

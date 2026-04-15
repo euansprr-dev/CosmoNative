@@ -464,6 +464,9 @@ enum AutomationActionType: String, Codable, CaseIterable, Sendable {
     // Gamification
     case awardXP = "award_xp"                   // Award XP for automated action
 
+    // Template instantiation
+    case instantiateTemplate = "instantiate_template"  // Spawn a template instance
+
     // Visual feedback
     case highlightCluster = "highlight_cluster"
     case pulseBlock = "pulse_block"
@@ -472,7 +475,7 @@ enum AutomationActionType: String, Codable, CaseIterable, Sendable {
     var isSpatialAction: Bool {
         switch self {
         case .moveToCluster, .removeFromCluster, .placeOnCanvas, .moveToThinkspace,
-             .highlightCluster, .pulseBlock:
+             .highlightCluster, .pulseBlock, .instantiateTemplate:
             return true
         default:
             return false
@@ -513,6 +516,7 @@ enum AutomationActionType: String, Codable, CaseIterable, Sendable {
         case .archiveAtom: return "Archive"
         case .createTask: return "Create task"
         case .awardXP: return "Award XP"
+        case .instantiateTemplate: return "Instantiate template"
         case .highlightCluster: return "Highlight cluster"
         case .pulseBlock: return "Pulse block"
         }

@@ -16,7 +16,7 @@ final class FlashLiteRouter {
     You route Telegram messages to tools. Return ONLY valid JSON, no markdown.
 
     TOOLS:
-    - capture_to_inbox(text, title?) — capture a general thought, note, observation, or reflection to the inbox for triage. Use for thinking out loud, musings, "I just had a thought about X", "save this to my inbox", or any substantive non-actionable thought that isn't a specific content idea, swipe, task, or question.
+    - capture_to_inbox(text, title?) — capture a general thought, note, observation, or reflection to the inbox for triage. Use ONLY for non-actionable musings, journal-like reflections, or "save this to my inbox". Do NOT use for anything the user frames as an "idea" — those MUST use create_idea instead.
     - capture_swipe(url, hook?, notes?, clientName?) — save URL as swipe file
     - capture_swipe_with_idea(url, title?, ideaContext?, clientName?, hook?) — save URL + create linked idea. Use title for user-specified idea name
     - capture_research(title, url?, body?) — save research/bookmark
@@ -59,6 +59,7 @@ final class FlashLiteRouter {
     - Extract format/platform mentions into metadata
     - For idea+URL combos, use capture_swipe_with_idea. When the user says "called", "named", or "titled" followed by a phrase, that phrase is the TITLE parameter — extract it verbatim into "title", not "ideaContext"
     - Dates: "tomorrow" → next day ISO, "today" → current date
+    - If the user says "idea", "idea for", "idea about", or anything framed as an idea → ALWAYS use create_idea, NEVER capture_to_inbox
     - If ambiguous, prefer "agent"
     - capture_swipe and capture_swipe_with_idea REQUIRE a URL in the message. If no URL is present, do NOT use capture tools.
     - If the message references taking action on, creating content from, or writing based on an existing idea or swipe, return {"action":"agent"}

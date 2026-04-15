@@ -11,16 +11,14 @@ struct MentionMenu: View {
     @State private var selectedIndex = 0
     @State private var isLoading = true
     @State private var appearedRows: Set<String> = []
-    @State private var menuAppeared = false
     @State private var searchTask: Task<Void, Never>?
 
     private let provider = MentionSearchProvider.shared
     private let menuWidth: CGFloat = 360
     private let menuHeight: CGFloat = 320
 
-    private var bgColor: Color { darkMode ? DS.surfaceElevated : CosmoColors.softWhite }
-    private var borderColor: Color { darkMode ? Color.white.opacity(0.08) : DS.border }
-    private var shadowColor: Color { darkMode ? Color.black.opacity(0.38) : Color.black.opacity(0.12) }
+    private var bgColor: Color { DS.vellum }
+    private var borderColor: Color { darkMode ? Color.white.opacity(0.08) : DS.sepiaBorder }
     private var textPrimary: Color { darkMode ? .white : DS.text }
     private var textSecondary: Color { darkMode ? Color.white.opacity(0.65) : DS.textSecondary }
     private var textMuted: Color { darkMode ? Color.white.opacity(0.45) : DS.textMuted }
@@ -29,27 +27,16 @@ struct MentionMenu: View {
         VStack(spacing: 0) {
             header
 
-            Rectangle()
-                .fill(borderColor)
-                .frame(height: 1)
+            CosmoGradientDivider()
 
             content
+
+            CosmoKeyboardFooter()
         }
         .frame(width: menuWidth, height: menuHeight, alignment: .top)
-        .background(bgColor)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
-        )
-        .shadow(color: shadowColor, radius: 22, y: 10)
+        .cosmoMenuChrome(cornerRadius: 18, darkMode: darkMode)
         .position(x: position.x + (menuWidth / 2), y: position.y + (menuHeight / 2))
-        .scaleEffect(menuAppeared ? 1 : 0.97)
-        .opacity(menuAppeared ? 1 : 0)
         .onAppear {
-            withAnimation(ProMotionSprings.gentle) {
-                menuAppeared = true
-            }
             loadEntities()
         }
         .onChange(of: searchQuery) { _, _ in
@@ -75,17 +62,17 @@ struct MentionMenu: View {
 
                 Image(systemName: "at")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Link Item")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(textPrimary)
+                    .foregroundStyle(textPrimary)
 
                 Text(searchQuery.isEmpty ? "Recent and relevant items" : "Results for @\(searchQuery)")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(textSecondary)
+                    .foregroundStyle(textSecondary)
                     .lineLimit(1)
             }
 
@@ -94,7 +81,7 @@ struct MentionMenu: View {
             if !isLoading {
                 Text("\(entities.count)")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(DS.accentSoft, in: Capsule())
@@ -134,6 +121,7 @@ struct MentionMenu: View {
         )
         .id(index)
         .onTapGesture {
+            CosmicHaptics.shared.play(.selection)
             onSelect(entity)
         }
         .onHover { hovering in
@@ -177,15 +165,15 @@ struct MentionMenu: View {
         VStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 22, weight: .medium))
-                .foregroundColor(textMuted)
+                .foregroundStyle(textMuted)
 
             Text("No items found")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(textPrimary)
+                .foregroundStyle(textPrimary)
 
             Text("Try a different name or keyword.")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(textSecondary)
+                .foregroundStyle(textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -219,21 +207,25 @@ struct MentionMenu: View {
 
     private func handleUpArrow() -> KeyPress.Result {
         selectedIndex = max(0, selectedIndex - 1)
+        CosmicHaptics.shared.play(.threshold)
         return .handled
     }
 
     private func handleDownArrow() -> KeyPress.Result {
         selectedIndex = min(max(0, entities.count - 1), selectedIndex + 1)
+        CosmicHaptics.shared.play(.threshold)
         return .handled
     }
 
     private func handleReturn() -> KeyPress.Result {
         guard let entity = entities[safe: selectedIndex] else { return .handled }
+        CosmicHaptics.shared.play(.selection)
         onSelect(entity)
         return .handled
     }
 
     private func handleEscape() -> KeyPress.Result {
+        CosmicHaptics.shared.play(.selection)
         onDismiss()
         return .handled
     }
@@ -271,19 +263,19 @@ struct MentionRow: View {
                 .overlay(
                     Image(systemName: entity.type.icon)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(entityColor)
+                        .foregroundStyle(entityColor)
                 )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(entity.title)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(textPrimary)
+                    .foregroundStyle(textPrimary)
                     .lineLimit(1)
 
                 if let subtitle = entity.subtitle {
                     Text(subtitle)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(textSecondary)
+                        .foregroundStyle(textSecondary)
                         .lineLimit(1)
                 }
             }
@@ -292,8 +284,15 @@ struct MentionRow: View {
 
             Text(entity.typeLabel)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(textSecondary)
+                .foregroundStyle(textSecondary)
                 .lineLimit(1)
+
+            if isSelected {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(entityColor)
+                    .transition(.scale.combined(with: .opacity))
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -307,6 +306,8 @@ struct MentionRow: View {
         )
         .contentShape(Rectangle())
         .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 6)
+        .offset(x: hasAppeared ? 0 : -12)
+        .blur(radius: hasAppeared ? 0 : 2)
+        .scaleEffect(x: hasAppeared ? 1 : 0.98, y: 1, anchor: .leading)
     }
 }

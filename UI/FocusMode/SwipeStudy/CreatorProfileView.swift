@@ -483,10 +483,8 @@ struct CreatorProfileView: View {
             }
         } else {
             HStack {
-                Text("SWIPES (\(cachedFilteredSwipes.count))")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.2)
-                    .foregroundStyle(DS.textMuted)
+                Text("Swipes (\(cachedFilteredSwipes.count))")
+                    .dsSmallCapsLabel()
                 Spacer()
                 swipeFilterMenus
             }

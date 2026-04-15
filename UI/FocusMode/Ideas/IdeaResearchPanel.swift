@@ -148,13 +148,6 @@ struct IdeaResearchPanel: View {
         }
         .padding(10)
         .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(proofColor.opacity(0.4))
-                .frame(width: 2)
-                .padding(.vertical, 6)
-                .padding(.leading, 1)
-        }
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .stroke(result.isIncluded ? DS.green.opacity(0.3) : DS.borderSubtle, lineWidth: 0.5)

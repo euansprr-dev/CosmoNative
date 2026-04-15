@@ -69,9 +69,6 @@ struct BlueprintDisplayView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(alignment: .leading) {
-            slideAccentBar(quark)
-        }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 6)
         .animation(ProMotionSprings.staggered(index: index), value: appeared)
@@ -168,22 +165,6 @@ struct BlueprintDisplayView: View {
         }
     }
 
-    // MARK: - Accent Bar
-
-    private func slideAccentBar(_ quark: SlideQuark) -> some View {
-        let color = categoryColorForSpeechAct(quark.speechAct.type)
-        return RoundedRectangle(cornerRadius: 2)
-            .fill(color.opacity(0.4))
-            .frame(width: 2)
-            .padding(.vertical, 6)
-            .padding(.leading, 1)
-    }
-
-    private func categoryColorForSpeechAct(_ type: String?) -> Color {
-        guard let type = type, !type.isEmpty else { return DS.entityIdea }
-        return CodexElementCategory.speechAct.color
-    }
-
     // MARK: - Slide Number Badge
 
     private func slideNumberBadge(_ number: Int) -> some View {
@@ -230,13 +211,6 @@ struct BlueprintDisplayView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(DS.entityIdea.opacity(0.3))
-                .frame(width: 2)
-                .padding(.vertical, 6)
-                .padding(.leading, 1)
-        }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 6)
         .animation(ProMotionSprings.staggered(index: index), value: appeared)

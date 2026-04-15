@@ -95,9 +95,8 @@ struct TranscriptSpineView: View {
             HStack(spacing: 6) {
                 Image(systemName: "text.alignleft")
                     .font(.system(size: 12, weight: .medium))
-                Text("TRANSCRIPT")
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.8)
+                Text("Transcript")
+                    .font(DS.smallCaps)
             }
             .foregroundColor(CosmoColors.blockResearch)
             .padding(.horizontal, 10)
@@ -195,10 +194,8 @@ struct TranscriptSectionRow: View {
             // Speaker name if available
             if let speaker = section.speakerName {
                 Text(speaker)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(CosmoColors.blockResearch)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
+                    .font(DS.smallCaps)
+                    .foregroundStyle(CosmoColors.blockResearch)
             }
 
             // Transcript text (selectable with highlight support)
@@ -433,11 +430,10 @@ struct AnnotationDetailPopover: View {
                     .frame(width: 3, height: 14)
                 Image(systemName: type.icon)
                     .font(.system(size: 10, weight: .semibold))
-                Text("\(type.label.uppercased()) (\(annotations.count))")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.5)
+                Text("\(type.label) (\(annotations.count))")
+                    .font(DS.smallCaps)
             }
-            .foregroundColor(type.color)
+            .foregroundStyle(type.color)
 
             ForEach(annotations) { annotation in
                 annotationRow(annotation)

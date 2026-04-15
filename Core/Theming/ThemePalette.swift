@@ -49,6 +49,18 @@ protocol ThemePalette {
     var borderActive: Color { get }
     var focusRing: Color { get }
 
+    // MARK: - Akashic Codex (premium material system)
+
+    var gilt: Color { get }
+    var giltSoft: Color { get }
+    var giltMuted: Color { get }
+    var vellum: Color { get }
+    var vellumDeep: Color { get }
+    var inkWash: Color { get }
+    var inkFaded: Color { get }
+    var sepiaBorder: Color { get }
+    var sepiaSubtle: Color { get }
+
     // MARK: - Glass
 
     var glassCardFill: Color { get }

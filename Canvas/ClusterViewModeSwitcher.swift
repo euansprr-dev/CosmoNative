@@ -18,50 +18,66 @@ struct ClusterInspectorPanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showRecipePopover = false
     @State private var clusterRules: [AutomationRule] = []
-    private let panelWidth: CGFloat = 320
+    @State private var appeared = false
+    private let panelWidth: CGFloat = 360
 
     var body: some View {
+        panelBody
+            .offset(x: appeared ? 0 : 24)
+            .opacity(appeared ? 1 : 0)
+            .compositingGroup()
+            .onAppear {
+                withAnimation(reduceMotion ? .linear(duration: 0.01) : ProMotionSprings.gentle) {
+                    appeared = true
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var panelBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerSection
-            sectionDivider
+            hairlineDivider
             intentSection
-            sectionDivider
+            hairlineDivider
             colorSection
-            sectionDivider
+            hairlineDivider
             viewModeSection
-            sectionDivider
+            hairlineDivider
             automationSection
-            sectionDivider
+            hairlineDivider
             deleteSection
         }
         .frame(width: panelWidth)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(DS.surfaceElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.06), radius: 16, y: 6)
-        .shadow(color: .black.opacity(0.03), radius: 4, y: 2)
+        .cortexInspectorPanel(cornerRadius: 24)
     }
 
-    private var sectionDivider: some View {
+    private var hairlineDivider: some View {
         Rectangle()
-            .fill(DS.border)
+            .fill(Color.white.opacity(0.06))
             .frame(height: 1)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
     }
 
     // MARK: - Header
 
     private var headerSection: some View {
-        HStack(spacing: 8) {
-            Text(cluster.name)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(DS.text)
-                .lineLimit(1)
+        HStack(spacing: 10) {
+            Circle()
+                .fill(cluster.color)
+                .frame(width: 8, height: 8)
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(cluster.name)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                Text("CLUSTER")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(DS.giltMuted)
+            }
 
             Spacer(minLength: 0)
 
@@ -69,18 +85,17 @@ struct ClusterInspectorPanel: View {
                 onDismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(DS.textMuted)
-                    .frame(width: 20, height: 20)
-                    .background(
-                        Circle().fill(DS.surface)
-                    )
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DS.text.opacity(0.7))
+                    .frame(width: 28, height: 28)
+                    .background(DS.glassInputFill, in: Circle())
+                    .overlay(Circle().strokeBorder(DS.glassBorder, lineWidth: 0.5))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 14)
     }
 
     // MARK: - Intent Section
@@ -113,10 +128,8 @@ struct ClusterInspectorPanel: View {
 
     private var colorSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("SECTION COLOR")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textMuted)
-                .tracking(0.8)
+            Text("Section Color")
+                .dsSmallCapsLabel()
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
                 ForEach(0..<8, id: \.self) { index in
@@ -135,29 +148,29 @@ struct ClusterInspectorPanel: View {
         Button {
             onChangeColor(index)
         } label: {
-            Circle()
-                .fill(CanvasCluster.palette[index])
-                .frame(width: 22, height: 22)
-                .overlay(
-                    Circle()
-                        .stroke(DS.text.opacity(0.6), lineWidth: 2)
-                        .frame(width: 28, height: 28)
-                        .opacity(isActive ? 1 : 0)
-                )
-                .frame(width: 28, height: 28) // Reserve space for selection ring
+            ZStack {
+                Circle()
+                    .strokeBorder(Color.white.opacity(isActive ? 0.75 : 0), lineWidth: 1)
+                    .frame(width: 30, height: 30)
+
+                Circle()
+                    .fill(CanvasCluster.palette[index])
+                    .frame(width: 22, height: 22)
+                    .overlay(
+                        Circle().strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
+                    )
+            }
+            .frame(width: 30, height: 30)
         }
         .buttonStyle(.plain)
-        .animation(.spring(response: 0.15), value: isActive)
     }
 
     // MARK: - View Mode Section
 
     private var viewModeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("VIEW MODE")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textMuted)
-                .tracking(0.8)
+            Text("View Mode")
+                .dsSmallCapsLabel()
 
             HStack(spacing: 6) {
                 ForEach(ClusterViewMode.allCases, id: \.self) { mode in
@@ -188,13 +201,17 @@ struct ClusterInspectorPanel: View {
             }
         } label: {
             Text(mode.displayName)
-                .font(.system(size: 12, weight: isActive ? .semibold : .regular))
-                .foregroundColor(isActive ? DS.text : DS.textSecondary)
+                .font(.system(size: 12, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? DS.text : DS.text.opacity(0.6))
                 .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.vertical, 7)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isActive ? DS.surface : Color.clear)
+                    Capsule(style: .continuous)
+                        .fill(isActive ? DS.glassInputFillFocused : Color.clear)
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(isActive ? DS.glassBorderFocused : Color.clear, lineWidth: 0.5)
                 )
         }
         .buttonStyle(.plain)
@@ -202,10 +219,8 @@ struct ClusterInspectorPanel: View {
 
     private var boardGroupingSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("BOARD GROUPING")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textMuted)
-                .tracking(0.8)
+            Text("Board Grouping")
+                .dsSmallCapsLabel()
 
             HStack(spacing: 6) {
                 ForEach(ClusterBoardGrouping.allCases, id: \.self) { grouping in
@@ -231,13 +246,17 @@ struct ClusterInspectorPanel: View {
             }
         } label: {
             Text(grouping.displayName)
-                .font(.system(size: 11, weight: isActive ? .semibold : .regular))
-                .foregroundColor(isActive ? DS.text : DS.textSecondary)
+                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? DS.text : DS.text.opacity(0.6))
                 .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isActive ? DS.surface : Color.clear)
+                    Capsule(style: .continuous)
+                        .fill(isActive ? DS.glassInputFillFocused : Color.clear)
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(isActive ? DS.glassBorderFocused : Color.clear, lineWidth: 0.5)
                 )
         }
         .buttonStyle(.plain)
@@ -266,10 +285,8 @@ struct ClusterInspectorPanel: View {
 
     private var automationSectionHeader: some View {
         HStack(spacing: 6) {
-            Text("AUTOMATIONS")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.8)
+            Text("Automations")
+                .dsSmallCapsLabel()
 
             // Active count pill — matches the existing UI density
             if !clusterRules.isEmpty {
@@ -469,9 +486,7 @@ private struct InspectorRuleRow: View {
                 .stroke(isHovered ? DS.border : DS.borderSubtle, lineWidth: 0.5)
         )
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
-                isHovered = hovering
-            }
+            withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
         }
         .contextMenu {
             Button {

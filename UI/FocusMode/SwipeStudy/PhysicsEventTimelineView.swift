@@ -28,10 +28,8 @@ struct PhysicsEventTimelineView: View {
     @ViewBuilder
     private var sectionHeader: some View {
         HStack(spacing: DS.space6) {
-            Text("PHYSICS EVENTS")
-                .font(DS.caption)
-                .tracking(1.2)
-                .foregroundStyle(DS.textMuted)
+            Text("Physics Events")
+                .dsSmallCapsLabel()
             Spacer()
             Text("\(eventMarkers.count) events")
                 .font(DS.caption2)

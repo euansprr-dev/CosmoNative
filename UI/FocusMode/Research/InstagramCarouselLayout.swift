@@ -171,10 +171,8 @@ struct InstagramCarouselLayout: View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack {
-                Text("NOTES FOR SLIDE \(currentSlideIndex + 1)")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundColor(DS.textSecondary)
+                Text("Notes for Slide \(currentSlideIndex + 1)")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 
@@ -342,10 +340,9 @@ struct CarouselAnnotationView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 // Type label
-                Text(annotation.type.rawValue.uppercased())
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.5)
-                    .foregroundColor(annotationColor)
+                Text(annotation.type.rawValue)
+                    .font(DS.smallCaps)
+                    .foregroundStyle(annotationColor)
 
                 // Content
                 CosmoDocumentEditor(

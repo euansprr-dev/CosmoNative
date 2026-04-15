@@ -29,9 +29,8 @@ struct PhysicsRhythmView: View {
     // MARK: - Header & Empty
 
     private var sectionHeader: some View {
-        Text("RHYTHM & PACING")
-            .font(DS.caption)
-            .tracking(1.2)
+        Text("Rhythm & Pacing")
+            .font(DS.smallCaps)
             .foregroundStyle(DS.green)
     }
 
@@ -296,21 +295,15 @@ struct PhysicsRhythmView: View {
 
     @ViewBuilder
     private func calloutBlock(label: String, text: String) -> some View {
-        HStack(spacing: DS.space10) {
-            Rectangle()
-                .fill(DS.green)
-                .frame(width: 3)
+        VStack(alignment: .leading, spacing: DS.space4) {
+            Text(label)
+                .font(DS.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(DS.green)
 
-            VStack(alignment: .leading, spacing: DS.space4) {
-                Text(label)
-                    .font(DS.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(DS.green)
-
-                Text(text)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textSecondary)
-            }
+            Text(text)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
         }
         .fixedSize(horizontal: false, vertical: true)
     }

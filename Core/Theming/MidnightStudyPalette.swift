@@ -37,6 +37,17 @@ struct MidnightStudyPalette: ThemePalette {
     let redSoft = Color(hex: "2E1E1E")
     let infoSoft = Color(hex: "1E2430")
 
+    // Akashic Codex — premium material system (dark warm)
+    let gilt = Color(hex: "D4A76A")
+    let giltSoft = Color(hex: "2E2820")
+    let giltMuted = Color(hex: "6B5D42")
+    let vellum = Color(hex: "1F2037")
+    let vellumDeep = Color(hex: "1A1B2E")
+    let inkWash = Color(hex: "E8E4DC")
+    let inkFaded = Color(hex: "9B978E")
+    let sepiaBorder = Color(hex: "3A3548")
+    let sepiaSubtle = Color(hex: "2E2F42")
+
     // Borders
     let border = Color(hex: "2E2F42")
     let borderSubtle = Color(hex: "262838")

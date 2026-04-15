@@ -382,6 +382,18 @@ enum CosmoNotification {
         static let deferredActionsReady = Notification.Name("com.cosmo.automation.deferredActionsReady")
     }
 
+    // MARK: - Smart Template Notifications
+    enum Template {
+        /// A template instance was created (spawned)
+        static let instantiated = Notification.Name("com.cosmo.template.instantiated")
+        /// A template button was pressed
+        static let buttonPressed = Notification.Name("com.cosmo.template.buttonPressed")
+        /// A template instance field value was updated
+        static let fieldUpdated = Notification.Name("com.cosmo.template.fieldUpdated")
+        /// Open template builder to edit a template definition
+        static let editTemplate = Notification.Name("com.cosmo.template.editTemplate")
+    }
+
     // MARK: - Daemon Notifications
     enum Daemon {
         static let connected = Notification.Name("com.cosmo.daemon.connected")
@@ -426,6 +438,14 @@ enum CosmoNotification {
     enum CosmoWindow {
         static let toggle = Notification.Name("com.cosmo.window.toggle")
         static let contextChanged = Notification.Name("com.cosmo.window.contextChanged")
+    }
+
+    // MARK: - Atom Window Notifications (Floating Atom Viewer)
+    enum AtomWindow {
+        /// Toggle the floating atom viewer panel
+        static let toggle = Notification.Name("com.cosmo.atomWindow.toggle")
+        /// Open a specific atom in the floating viewer — userInfo: ["uuid": String]
+        static let openAtom = Notification.Name("com.cosmo.atomWindow.openAtom")
     }
 }
 

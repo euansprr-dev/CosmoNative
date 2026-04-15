@@ -108,13 +108,28 @@ struct StickyNoteBlockView: View {
     // Current sticky color
     @State private var stickyColor: StickyNoteColor = .yellow
 
+    private static let stickyFontSize: CGFloat = 15
+    /// Hand-lettered font for sticky notes. Preference order picks a readable
+    /// display face with character — not a cursive script. Falls back to the
+    /// system font if none are available.
+    private static let stickyFont: NSFont = {
+        let candidates = ["Bradley Hand", "Noteworthy-Light", "Noteworthy", "Marker Felt"]
+        for name in candidates {
+            if let font = NSFont(name: name, size: Self.stickyFontSize) {
+                return font
+            }
+        }
+        return NSFont.systemFont(ofSize: Self.stickyFontSize)
+    }()
+
     var body: some View {
         CosmoDocumentEditor(
             document: $noteBodyDocument,
-            fontSize: 14,
+            fontSize: Self.stickyFontSize,
             compact: true,
             placeholder: "Type here...",
-            overrideTextColor: NSColor(red: 0.2, green: 0.18, blue: 0.15, alpha: 1),
+            overrideTextColor: NSColor(red: 0.12, green: 0.10, blue: 0.08, alpha: 1),
+            overrideFont: Self.stickyFont,
             allowSlashCommands: false,
             allowMentions: isEditingBody,
             allowSelectionMenu: false,
@@ -465,32 +480,46 @@ struct StickyNoteBlockView: View {
 
         do {
             try CosmoDatabase.shared.write { db in
+                // Always persist to canvas_blocks.note_content — this is the primary
+                // storage path for sticky notes (which may not have a backing atom row).
+                try db.execute(
+                    sql: """
+                    UPDATE canvas_blocks
+                    SET note_content = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE entity_uuid = ? AND is_deleted = 0
+                    """,
+                    arguments: [noteText, uuid]
+                )
+
+                // Also update the atom if one exists
                 var existingMetadata: String?
                 if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
                     existingMetadata = row["metadata"]
                 }
-                let fields = RichDocumentPersistence.writeAtomDocuments(
-                    existingMetadata: existingMetadata,
-                    titleDocument: nil,
-                    bodyDocument: noteBodyDocument
-                )
-                try db.execute(
-                    sql: """
-                    UPDATE atoms
-                    SET body = ?,
-                        metadata = ?,
-                        updated_at = ?,
-                        _local_version = _local_version + 1,
-                        _local_pending = 1
-                    WHERE uuid = ?
-                    """,
-                    arguments: [
-                        fields.body ?? "",
-                        fields.metadata,
-                        ISO8601DateFormatter().string(from: Date()),
-                        uuid
-                    ]
-                )
+                if existingMetadata != nil {
+                    let fields = RichDocumentPersistence.writeAtomDocuments(
+                        existingMetadata: existingMetadata,
+                        titleDocument: nil,
+                        bodyDocument: noteBodyDocument
+                    )
+                    try db.execute(
+                        sql: """
+                        UPDATE atoms
+                        SET body = ?,
+                            metadata = ?,
+                            updated_at = ?,
+                            _local_version = _local_version + 1,
+                            _local_pending = 1
+                        WHERE uuid = ?
+                        """,
+                        arguments: [
+                            noteText,
+                            fields.metadata,
+                            ISO8601DateFormatter().string(from: Date()),
+                            uuid
+                        ]
+                    )
+                }
             }
         } catch {
             print("StickyNote: sync save failed: \(error)")

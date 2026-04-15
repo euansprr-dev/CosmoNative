@@ -329,10 +329,8 @@ struct CompareCreatorsView: View {
                 Image(systemName: "text.book.closed.fill")
                     .font(DS.footnote)
                     .foregroundStyle(gold)
-                Text("NARRATIVE STYLES")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.0)
-                    .foregroundStyle(DS.textMuted)
+                Text("Narrative Styles")
+                    .dsSmallCapsLabel()
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -382,10 +380,8 @@ struct CompareCreatorsView: View {
                 Image(systemName: "rectangle.3.group")
                     .font(DS.footnote)
                     .foregroundStyle(gold)
-                Text("FRAMEWORKS")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.0)
-                    .foregroundStyle(DS.textMuted)
+                Text("Frameworks")
+                    .dsSmallCapsLabel()
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -435,10 +431,8 @@ struct CompareCreatorsView: View {
                 Image(systemName: "heart.fill")
                     .font(DS.footnote)
                     .foregroundStyle(gold)
-                Text("EMOTIONAL PATTERNS")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.0)
-                    .foregroundStyle(DS.textMuted)
+                Text("Emotional Patterns")
+                    .dsSmallCapsLabel()
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -488,10 +482,8 @@ struct CompareCreatorsView: View {
                 Image(systemName: "wand.and.stars")
                     .font(DS.footnote)
                     .foregroundStyle(gold)
-                Text("PERSUASION TECHNIQUES")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.0)
-                    .foregroundStyle(DS.textMuted)
+                Text("Persuasion Techniques")
+                    .dsSmallCapsLabel()
             }
 
             HStack(alignment: .top, spacing: 12) {

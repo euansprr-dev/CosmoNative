@@ -21,10 +21,8 @@ struct ThemePickerView: View {
 private struct ThemePickerHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space4) {
-            Text("APPEARANCE")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.88)
+            Text("Appearance")
+                .dsSmallCapsLabel()
             Text("Choose a theme that matches your mood")
                 .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)

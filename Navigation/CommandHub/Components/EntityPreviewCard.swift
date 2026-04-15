@@ -695,10 +695,9 @@ struct ProjectCard: View {
 
                     // Status badge
                     if let status = entity.metadata["status"] {
-                        Text(status.uppercased())
-                            .font(.system(size: 9, weight: .semibold))
-                            .tracking(0.5)
-                            .foregroundColor(statusColor(status))
+                        Text(status)
+                            .font(DS.smallCaps)
+                            .foregroundStyle(statusColor(status))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(statusColor(status).opacity(0.1), in: Capsule())

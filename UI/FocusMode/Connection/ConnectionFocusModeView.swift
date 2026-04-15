@@ -460,9 +460,8 @@ struct ConnectionFocusModeView: View {
             HStack(spacing: DS.space4) {
                 Image(systemName: "link.circle.fill")
                     .font(DS.caption2)
-                Text("CONNECTION")
-                    .font(DS.caption2)
-                    .tracking(0.8)
+                Text("Connection")
+                    .font(DS.smallCaps)
             }
             .foregroundStyle(DS.entityConnection)
             .padding(.horizontal, DS.space8)
@@ -674,6 +673,9 @@ struct ConnectionFocusModeView: View {
 
         case .fromDatabase:
             showCommandK = true
+
+        case .createTemplate:
+            break // Templates not supported in focus mode
         }
     }
 
@@ -877,8 +879,7 @@ private struct RelationAreaOverlayCard: View {
                     .lineLimit(1)
 
                 Text(sourceTypeLabel(state.sourceAtom.type))
-                    .font(DS.caption2)
-                    .tracking(0.4)
+                    .font(DS.smallCaps)
                     .foregroundStyle(sourceColor(state.sourceAtom.type))
             }
 

@@ -37,11 +37,11 @@ struct BlockContextMenu: View {
     private var navigationItems: [MenuItem] {
         guard !isStickyNote else { return [] }
         var items: [MenuItem] = []
-        let focusTypes: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note]
+        let focusTypes: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note, .template]
         if focusTypes.contains(block.entityType) {
             items.append(MenuItem("focus", icon: "arrow.up.left.and.arrow.down.right", label: "Open Focus Mode", shortcut: "⏎"))
         }
-        let paneTypes: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note]
+        let paneTypes: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note, .template]
         if paneTypes.contains(block.entityType) {
             items.append(MenuItem("pane", icon: "rectangle.split.2x1", label: "Open as Pane"))
         }
@@ -61,6 +61,9 @@ struct BlockContextMenu: View {
             items.append(MenuItem("askCosmo", icon: "sparkle", label: "Ask Cosmo"))
         }
         items.append(MenuItem("duplicate", icon: "plus.square.on.square", label: "Duplicate", shortcut: "⌘D"))
+        if block.entityType == .template {
+            items.append(MenuItem("editTemplate", icon: "rectangle.3.group.fill", label: "Edit Template"))
+        }
         return items
     }
 
@@ -102,20 +105,8 @@ struct BlockContextMenu: View {
             }
         }
         .padding(.vertical, 6)
-        .frame(width: 220)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(DS.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(DS.borderSubtle, lineWidth: 0.5)
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .dsFloatingShadow()
+        .frame(width: 240)
+        .cortexInspectorPanel(cornerRadius: 18)
         .scaleEffect(appeared ? 1.0 : 0.85)
         .opacity(appeared ? 1.0 : 0)
         .position(x: position.x + 110, y: position.y)
@@ -140,14 +131,21 @@ struct BlockContextMenu: View {
                 .frame(width: 6, height: 6)
             Text(title)
                 .font(.system(size: 11.5, weight: .semibold))
-                .foregroundColor(typeColor)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
+            Spacer(minLength: 0)
+            Text(block.entityType.rawValue.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(DS.giltMuted)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(
-            Capsule()
-                .fill(typeColor.opacity(0.1))
+            Capsule().fill(DS.glassInputFill)
+        )
+        .overlay(
+            Capsule().strokeBorder(DS.glassBorder, lineWidth: 0.5)
         )
     }
 
@@ -218,44 +216,39 @@ struct BlockContextMenu: View {
         let isHovered = hoveredItem == item.id
         let itemColor: Color = item.isDestructive ? DS.red : DS.text
         let hoverBg: Color = item.isDestructive
-            ? DS.red.opacity(0.07)
-            : DS.accent.opacity(0.07)
+            ? DS.red.opacity(0.10)
+            : DS.glassInputFillFocused
 
         Button {
             handleAction(item.id)
             onDismiss()
         } label: {
             HStack(spacing: 0) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(isHovered ? (item.isDestructive ? DS.red : DS.accent) : Color.clear)
-                    .frame(width: 2, height: 16)
-                    .padding(.trailing, 8)
-
                 Image(systemName: item.icon)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isHovered ? itemColor : DS.textMuted)
+                    .foregroundStyle(isHovered ? itemColor : DS.text.opacity(0.6))
                     .frame(width: 18)
 
                 Text(item.label)
                     .font(.system(size: 13, weight: isHovered ? .medium : .regular))
-                    .foregroundColor(isHovered && item.isDestructive ? DS.red : DS.text)
-                    .padding(.leading, 8)
+                    .foregroundStyle(item.isDestructive ? (isHovered ? DS.red : DS.red.opacity(0.8)) : DS.text)
+                    .padding(.leading, 10)
 
                 Spacer()
 
                 if let shortcut = item.shortcut {
                     Text(shortcut)
                         .font(.system(size: 11, weight: .regular))
-                        .foregroundColor(DS.textMuted.opacity(0.6))
+                        .foregroundStyle(DS.text.opacity(0.45))
                         .padding(.trailing, 2)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(isHovered ? hoverBg : Color.clear)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 6)
             )
         }
         .buttonStyle(.plain)
@@ -329,6 +322,12 @@ struct BlockContextMenu: View {
                 name: .removeBlock,
                 object: nil,
                 userInfo: ["blockId": blockId]
+            )
+        case "editTemplate":
+            NotificationCenter.default.post(
+                name: CosmoNotification.Template.editTemplate,
+                object: nil,
+                userInfo: ["blockUUID": block.entityUuid]
             )
         default:
             break

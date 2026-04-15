@@ -83,23 +83,34 @@ struct ResearchBlockView: View {
     private var researchContent: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
-                // Entity identity strip
-                Capsule()
-                    .fill(accentColor.opacity(0.35))
-                    .frame(height: 3)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-
-                // Header with metadata
+                // Header with metadata — gilt corner bracket from the wrapper
+                // replaces the old accent identity strip.
                 metadataHeader
                     .padding(.horizontal, 16)
-                    .padding(.top, 6)
+                    .padding(.top, 18)
+                    .padding(.bottom, 10)
+
+                // Warm sepia rule separating header from body
+                Rectangle()
+                    .fill(DS.sepiaSubtle)
+                    .frame(height: 0.5)
+                    .padding(.horizontal, 16)
                     .padding(.bottom, 12)
 
-                // Video area (replaces raw body text)
-                videoArea
-                    .padding(.horizontal, 16)
+                // Video area (replaces raw body text) — wrapped with filmstrip sprockets
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(spacing: 10) {
+                        ForEach(0..<3) { _ in
+                            Circle()
+                                .fill(DS.inkFaded.opacity(0.35))
+                                .frame(width: 3, height: 3)
+                        }
+                    }
+                    .frame(width: 6)
+
+                    videoArea
+                }
+                .padding(.horizontal, 12)
 
                 // Dropdown toggle for Transcript & Notes
                 dropdownSection
@@ -114,6 +125,7 @@ struct ResearchBlockView: View {
                     .padding(.bottom, 12)
             }
         }
+        .scrollBounceBehavior(.basedOnSize)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -121,11 +133,10 @@ struct ResearchBlockView: View {
 
     private var metadataHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Content type badge
+            // Content type badge — warm gilt label matches CommandCenter section labels
             Text(isSwipeFile ? "SWIPE FILE" : contentType.uppercased())
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(accentColor)
-                .tracking(0.8)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
 
             // Title
             Text((atom?.title ?? block.title).isEmpty ? "Untitled Research" : (atom?.title ?? block.title))
@@ -316,11 +327,11 @@ struct ResearchBlockView: View {
                 HStack(spacing: 6) {
                     Image(systemName: isDropdownOpen ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(accentColor)
+                        .foregroundStyle(DS.gilt)
 
-                    Text("Transcript & Notes")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.textSecondary)
+                    Text("TRANSCRIPT · NOTES")
+                        .font(DS.smallCaps)
+                        .foregroundStyle(DS.giltMuted)
 
                     Spacer()
 

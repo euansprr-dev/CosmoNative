@@ -1,6 +1,6 @@
 // CosmoOS/UI/Codex/CodexWalkthroughDetailView.swift
 // Full walkthrough detail — slide breakdown, transitions, composition lesson, antimatter.
-// April 2026 — WP3 Codex Navigation + Premium Redesign
+// April 2026 — Akashic Records Premium Redesign
 
 import SwiftUI
 
@@ -17,7 +17,7 @@ struct CodexWalkthroughDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 walkthroughHero
-                CodexCategorySectionDivider(color: frameColor)
+                AkashicSectionDivider()
                 detailSections
             }
         }
@@ -41,19 +41,23 @@ struct CodexWalkthroughDetailView: View {
     }
 
     private var heroBackground: some View {
-        LinearGradient(
-            colors: [frameColor.opacity(0.05), frameColor.opacity(0.02), .clear],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .filmGrain(opacity: 0.015)
+        ZStack {
+            DS.vellum
+            RadialGradient(
+                colors: [frameColor.opacity(0.03), .clear],
+                center: .topLeading,
+                startRadius: 0,
+                endRadius: 400
+            )
+        }
+        .filmGrain(opacity: 0.02)
     }
 
     private var heroContent: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             Text(walkthrough.postTitle)
-                .font(DS.display)
-                .foregroundStyle(DS.text)
+                .font(DS.displaySerif)
+                .foregroundStyle(DS.inkWash)
             creatorRow
             headerTags
         }
@@ -65,8 +69,8 @@ struct CodexWalkthroughDetailView: View {
     private var creatorRow: some View {
         if let creator = walkthrough.creatorName {
             Text(creator)
-                .font(DS.title3)
-                .foregroundStyle(DS.textSecondary)
+                .font(DS.dateSerif)
+                .foregroundStyle(DS.inkFaded)
         }
     }
 
@@ -79,11 +83,8 @@ struct CodexWalkthroughDetailView: View {
                 CodexConceptTag(name: arc, color: CodexElementCategory.arcShape.color)
             }
             Text("\(walkthrough.slides.count) slides")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(DS.surface, in: Capsule())
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
         }
     }
 
@@ -111,20 +112,8 @@ struct CodexWalkthroughDetailView: View {
     private var whySelectedSection: some View {
         if let why = walkthrough.whySelected, !why.isEmpty {
             VStack(alignment: .leading, spacing: DS.space8) {
-                Text("WHY SELECTED")
-                    .dsSectionLabel()
-                HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(frameColor)
-                        .frame(width: 3)
-                    Text(why)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-                        .lineSpacing(3)
-                        .padding(DS.space16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .background(frameColor.opacity(0.04), in: .rect(cornerRadius: DS.radiusMedium))
+                AkashicSectionHeader(title: "WHY SELECTED")
+                AkashicCallout(text: why, tintColor: frameColor, font: DS.callout)
             }
         }
     }
@@ -135,34 +124,23 @@ struct CodexWalkthroughDetailView: View {
     private var slidesSection: some View {
         if !walkthrough.slides.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                Text("SLIDE BREAKDOWN")
-                    .dsSectionLabel()
+                AkashicSectionHeader(title: "SLIDE BREAKDOWN")
                     .padding(.bottom, DS.space12)
 
                 ForEach(Array(walkthrough.slides.enumerated()), id: \.element.id) { idx, slide in
                     WalkthroughSlideCard(slide: slide, index: idx)
                     if idx < walkthrough.slides.count - 1 {
-                        slideConnector(fromIndex: idx)
+                        slideConnector
                     }
                 }
             }
         }
     }
 
-    private func slideConnector(fromIndex: Int) -> some View {
-        HStack(spacing: 6) {
+    private var slideConnector: some View {
+        HStack {
             Spacer().frame(width: 14)
-            VStack(spacing: 0) {
-                Rectangle()
-                    .fill(CodexElementCategory.transition.color.opacity(0.2))
-                    .frame(width: 2, height: 16)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(CodexElementCategory.transition.color.opacity(0.3))
-                Rectangle()
-                    .fill(CodexElementCategory.transition.color.opacity(0.2))
-                    .frame(width: 2, height: 8)
-            }
+            GiltDotConnector()
             Spacer()
         }
     }
@@ -173,8 +151,7 @@ struct CodexWalkthroughDetailView: View {
     private var transitionsSection: some View {
         if !walkthrough.transitions.isEmpty {
             VStack(alignment: .leading, spacing: DS.space12) {
-                Text("TRANSITIONS")
-                    .dsSectionLabel()
+                AkashicSectionHeader(title: "TRANSITIONS")
                 ForEach(walkthrough.transitions) { transition in
                     transitionRow(transition)
                 }
@@ -192,30 +169,21 @@ struct CodexWalkthroughDetailView: View {
         }
         .padding(DS.space12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(CodexElementCategory.transition.color.opacity(0.3))
-                .frame(width: 3)
-                .padding(.vertical, 6)
-                .padding(.leading, 1)
-        }
+        .dsVellumCard(cornerRadius: DS.radiusMedium)
     }
 
     private func transitionBadge(from: Int, to: Int) -> some View {
         HStack(spacing: 4) {
             Text("S\(from)")
-                .font(DS.caption)
-                .fontWeight(.medium)
-                .foregroundStyle(DS.textMuted)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.inkFaded)
             Image(systemName: "arrow.right")
                 .font(.system(size: 9))
-                .foregroundStyle(CodexElementCategory.transition.color.opacity(0.5))
+                .foregroundStyle(DS.giltMuted)
                 .accessibilityHidden(true)
             Text("S\(to)")
-                .font(DS.caption)
-                .fontWeight(.medium)
-                .foregroundStyle(DS.textMuted)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.inkFaded)
         }
     }
 
@@ -224,7 +192,7 @@ struct CodexWalkthroughDetailView: View {
         if let explanation = transition.explanation, !explanation.isEmpty {
             Text(explanation)
                 .font(DS.caption)
-                .foregroundStyle(DS.textSecondary)
+                .foregroundStyle(DS.inkFaded)
                 .lineSpacing(2)
         }
     }
@@ -235,20 +203,8 @@ struct CodexWalkthroughDetailView: View {
     private var compositionLessonSection: some View {
         if let lesson = walkthrough.compositionLesson, !lesson.isEmpty {
             VStack(alignment: .leading, spacing: DS.space8) {
-                Text("COMPOSITION LESSON")
-                    .dsSectionLabel()
-                HStack(alignment: .top, spacing: DS.space12) {
-                    Rectangle()
-                        .fill(DS.green)
-                        .frame(width: 3)
-                    Text(lesson)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-                        .lineSpacing(4)
-                }
-                .padding(DS.space16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DS.green.opacity(0.04), in: .rect(cornerRadius: DS.radiusMedium))
+                AkashicSectionHeader(title: "COMPOSITION LESSON")
+                AkashicCallout(text: lesson, tintColor: DS.green, font: DS.callout)
             }
         }
     }
@@ -259,8 +215,7 @@ struct CodexWalkthroughDetailView: View {
     private var antimatterSection: some View {
         if let antimatter = walkthrough.antimatter, !antimatter.isEmpty {
             VStack(alignment: .leading, spacing: DS.space8) {
-                Text("ANTIMATTER")
-                    .dsSectionLabel()
+                AkashicSectionHeader(title: "ANTIMATTER")
                 antimatterContent(antimatter)
             }
         }
@@ -277,21 +232,21 @@ struct CodexWalkthroughDetailView: View {
                         .accessibilityHidden(true)
                     Text(item)
                         .font(DS.callout)
-                        .foregroundStyle(DS.text)
+                        .foregroundStyle(DS.inkWash)
                         .lineSpacing(3)
                 }
             }
         }
         .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.red.opacity(0.04), in: .rect(cornerRadius: DS.radiusMedium))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(DS.red.opacity(0.3))
-                .frame(width: 3)
-                .padding(.vertical, 6)
-                .padding(.leading, 1)
-        }
+        .background(
+            DS.vellumDeep.opacity(0.8),
+            in: .rect(cornerRadius: DS.radiusMedium)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(DS.red.opacity(0.12), lineWidth: 0.5)
+        )
     }
 
     // MARK: - The Fabric
@@ -300,25 +255,33 @@ struct CodexWalkthroughDetailView: View {
     private var fabricSection: some View {
         if let fabric = walkthrough.theFabric, !fabric.isEmpty {
             VStack(alignment: .leading, spacing: DS.space8) {
-                Text("THE FABRIC")
-                    .dsSectionLabel()
-                Text(fabric)
-                    .font(DS.body)
-                    .foregroundStyle(DS.text)
-                    .lineSpacing(4)
-                    .italic()
-                    .padding(DS.space16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(frameColor.opacity(0.3))
-                            .frame(width: 3)
-                            .padding(.vertical, 6)
-                            .padding(.leading, 1)
-                    }
+                AkashicSectionHeader(title: "THE FABRIC")
+                fabricContent(fabric)
             }
         }
+    }
+
+    private func fabricContent(_ text: String) -> some View {
+        VStack(spacing: 0) {
+            OrnamentalRule(width: 60, color: DS.gilt)
+                .padding(.bottom, DS.space12)
+            Text(text)
+                .font(DS.body)
+                .fontDesign(.serif)
+                .foregroundStyle(DS.inkWash)
+                .lineSpacing(5)
+                .italic()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            OrnamentalRule(width: 60, color: DS.gilt)
+                .padding(.top, DS.space12)
+        }
+        .padding(DS.space16)
+        .background(DS.vellumDeep, in: .rect(cornerRadius: DS.radiusMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(DS.giltMuted, lineWidth: 0.5)
+        )
+        .filmGrain(opacity: 0.025)
     }
 }
 
@@ -339,11 +302,7 @@ struct WalkthroughSlideCard: View {
         }
         .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(DS.border.opacity(0.5), lineWidth: 1)
-        )
+        .dsVellumCard(cornerRadius: DS.radiusMedium)
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 8)
         .onAppear {
@@ -355,12 +314,11 @@ struct WalkthroughSlideCard: View {
 
     private var slideBadge: some View {
         Text("Slide \(slide.slideNumber)")
-            .font(DS.caption)
-            .fontWeight(.bold)
-            .foregroundStyle(.white)
+            .font(DS.smallCaps)
+            .foregroundStyle(DS.gilt)
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(DS.accent, in: Capsule())
+            .background(DS.giltSoft, in: .rect(cornerRadius: DS.radiusXSmall))
     }
 
     @ViewBuilder
@@ -368,7 +326,8 @@ struct WalkthroughSlideCard: View {
         if let text = slide.text, !text.isEmpty {
             Text(text)
                 .font(DS.body)
-                .foregroundStyle(DS.text)
+                .fontDesign(.serif)
+                .foregroundStyle(DS.inkWash)
                 .italic()
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -422,7 +381,7 @@ struct WalkthroughSlideCard: View {
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(color.opacity(0.1), in: Capsule())
+            .background(color.opacity(0.1), in: .rect(cornerRadius: DS.radiusXSmall))
     }
 
     @ViewBuilder
@@ -430,7 +389,7 @@ struct WalkthroughSlideCard: View {
         if let why = slide.whyThisSlideWorks, !why.isEmpty {
             Text(why)
                 .font(DS.caption)
-                .foregroundStyle(DS.textSecondary)
+                .foregroundStyle(DS.inkFaded)
                 .lineSpacing(2)
                 .padding(.top, 4)
         }

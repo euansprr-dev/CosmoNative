@@ -25,13 +25,28 @@ struct CanvasSelectionInspector: View {
     @State private var isSaving = false
     @State private var hoveredAction: String?
     @State private var hoveredColor: StickyNoteColor?
+    @State private var appeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let repository = AtomRepository.shared
-    private let inspectorWidth: CGFloat = 320
+    private let inspectorWidth: CGFloat = 340
 
     private var isStickyNote: Bool { block.entityType == .stickyNote }
 
     var body: some View {
+        panelBody
+            .offset(x: appeared ? 0 : 24)
+            .opacity(appeared ? 1 : 0)
+            .compositingGroup()
+            .onAppear {
+                withAnimation(reduceMotion ? .linear(duration: 0.01) : ProMotionSprings.gentle) {
+                    appeared = true
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var panelBody: some View {
         Group {
             if isStickyNote {
                 VStack(alignment: .leading, spacing: 20) {
@@ -42,15 +57,12 @@ struct CanvasSelectionInspector: View {
                 .padding(18)
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 18) {
                         if let atom {
                             header(atom)
                             actionsGrid(atom)
-                            sectionDivider
                             provenanceSection
-                            sectionDivider
                             outlineSection(atom)
-                            sectionDivider
                             backlinksSection
                         } else {
                             ProgressView()
@@ -66,15 +78,7 @@ struct CanvasSelectionInspector: View {
         }
         .frame(width: inspectorWidth, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(DS.surfaceElevated.opacity(0.98))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(DS.borderActive, lineWidth: 1)
-                )
-        )
-        .shadow(color: Color.black.opacity(0.06), radius: 18, y: 8)
+        .cortexInspectorPanel(cornerRadius: 24)
         .task(id: block.entityUuid) {
             guard !isStickyNote else { return }
             await loadInspectorData()
@@ -87,93 +91,119 @@ struct CanvasSelectionInspector: View {
 
     @ViewBuilder
     private func header(_ atom: Atom) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(color(for: atom.type).opacity(0.12))
-                    .frame(width: 38, height: 38)
+                    .fill(color(for: atom.type).opacity(0.14))
+                    .frame(width: 40, height: 40)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(color(for: atom.type).opacity(0.25), lineWidth: 0.5)
+                    )
                     .overlay(
                         Image(systemName: atom.type.iconName)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(color(for: atom.type))
                     )
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(atom.title ?? block.title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(DS.text)
                         .lineLimit(2)
 
-                    HStack(spacing: 8) {
-                        tag(atom.type.displayName, tint: color(for: atom.type))
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(color(for: atom.type))
+                            .frame(width: 5, height: 5)
+                        Text(atom.type.displayName.uppercased())
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(DS.giltMuted)
 
                         if atom.outlineReferenceCount > 0 {
-                            tag("\(atom.outlineReferenceCount) refs", tint: DS.accent)
+                            Text("·")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(DS.giltMuted.opacity(0.6))
+                            Text("\(atom.outlineReferenceCount) refs")
+                                .font(.system(size: 10, weight: .semibold))
+                                .tracking(0.4)
+                                .foregroundStyle(DS.giltMuted)
                         }
                     }
                 }
 
                 Spacer(minLength: 0)
 
-                Button("Close", systemImage: "xmark", action: onClose)
-                    .buttonStyle(.plain)
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(DS.bg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                glassCloseButton
             }
 
             if let preview = atom.body?.trimmingCharacters(in: .whitespacesAndNewlines),
                !preview.isEmpty {
                 Text(preview)
-                    .font(.system(size: 12))
-                    .foregroundStyle(DS.textMuted)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DS.text.opacity(0.72))
                     .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var glassCloseButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DS.text.opacity(0.7))
+                .frame(width: 28, height: 28)
+                .background(DS.glassInputFill, in: Circle())
+                .overlay(Circle().strokeBorder(DS.glassBorder, lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Sticky Note Inspector
 
     @ViewBuilder
     private var stickyNoteHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(currentStickyColor.paper)
-                    .frame(width: 38, height: 38)
+                    .frame(width: 40, height: 40)
                     .overlay(
                         Image(systemName: "square.and.pencil")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(currentStickyColor.selectedBorder)
                     )
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("Sticky Note")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(DS.text)
 
-                    tag("Sticky Note", tint: DS.entityStickyNote)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(DS.entityStickyNote)
+                            .frame(width: 5, height: 5)
+                        Text("STICKY NOTE")
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(DS.giltMuted)
+                    }
                 }
 
                 Spacer(minLength: 0)
 
-                Button("Close", systemImage: "xmark", action: onClose)
-                    .buttonStyle(.plain)
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(DS.bg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                glassCloseButton
             }
 
             if let content = block.metadata["content"],
                !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(content)
-                    .font(.system(size: 12))
-                    .foregroundStyle(DS.textMuted)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DS.text.opacity(0.72))
                     .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -333,30 +363,15 @@ struct CanvasSelectionInspector: View {
             action.handler()
             onClose()
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: action.icon)
-                    .font(.system(size: 10, weight: .medium))
-                Text(action.label)
                     .font(.system(size: 11, weight: .medium))
+                Text(action.label)
+                    .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
             }
-            .foregroundStyle(
-                isDelete
-                    ? DS.red
-                    : (hoveredAction == action.id ? DS.text : DS.textSecondary)
-            )
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(hoveredAction == action.id ? DS.surfaceHover : DS.bg)
-            )
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            hoveredAction = hovering ? action.id : nil
-        }
-        .animation(.easeInOut(duration: 0.15), value: hoveredAction)
+        .buttonStyle(CortexChipStyle(isDestructive: isDelete))
     }
 
     @ViewBuilder
@@ -412,7 +427,11 @@ struct CanvasSelectionInspector: View {
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
-                        .background(DS.bg, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
+            )
 
                     if addReferenceQuery.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 {
                         if addReferenceCandidates.isEmpty {
@@ -436,7 +455,7 @@ struct CanvasSelectionInspector: View {
             if backlinks.isEmpty {
                 Text("No backlinks yet")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.text.opacity(0.45))
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(backlinks.prefix(6), id: \.uuid) { backlink in
@@ -478,7 +497,11 @@ struct CanvasSelectionInspector: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(DS.bg, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
         .overlay(alignment: .trailing) {
@@ -518,7 +541,11 @@ struct CanvasSelectionInspector: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(DS.bg, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -545,7 +572,11 @@ struct CanvasSelectionInspector: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(DS.bg, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -556,25 +587,21 @@ struct CanvasSelectionInspector: View {
         systemImage: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DS.giltMuted)
+                Text(title.uppercased())
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DS.textSecondary)
+                    .tracking(1.2)
+                    .foregroundStyle(DS.giltMuted)
             }
+            .padding(.leading, 2)
 
             content()
+                .cortexSectionPane(cornerRadius: 16, padding: 12)
         }
-    }
-
-    private var sectionDivider: some View {
-        Rectangle()
-            .fill(DS.borderSubtle)
-            .frame(height: 1)
-            .padding(.horizontal, 4)
     }
 
     private func tag(_ text: String, tint: Color) -> some View {

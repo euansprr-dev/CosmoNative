@@ -24,9 +24,8 @@ struct PhysicsSlideQuarksView: View {
     @ViewBuilder
     private var sectionHeader: some View {
         HStack {
-            Text("SLIDE QUARKS")
-                .font(DS.caption)
-                .tracking(1.2)
+            Text("Slide Quarks")
+                .font(DS.smallCaps)
                 .foregroundStyle(DS.entitySwipe)
             Spacer()
             Text("\(quarks.count) slides")
@@ -171,9 +170,8 @@ struct PhysicsSlideQuarksView: View {
     private func resonanceCard(_ quark: SlideQuark) -> some View {
         if let resonance = quark.resonanceFrequency, let detail = resonance.detail {
             VStack(alignment: .leading, spacing: DS.space4) {
-                Text("RESONANCE")
-                    .font(DS.caption)
-                    .tracking(1.0)
+                Text("Resonance")
+                    .font(DS.smallCaps)
                     .foregroundStyle(DS.entitySwipe)
                 Text(detail)
                     .font(DS.callout)
@@ -187,9 +185,6 @@ struct PhysicsSlideQuarksView: View {
             }
             .padding(DS.space8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .leading) {
-                DS.entitySwipe.frame(width: 3).clipShape(.rect(cornerRadius: 2))
-            }
             .background(DS.entitySwipe.opacity(DS.opacitySubtle), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         }
     }

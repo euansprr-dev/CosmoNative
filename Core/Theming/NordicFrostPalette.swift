@@ -37,6 +37,17 @@ struct NordicFrostPalette: ThemePalette {
     let redSoft = Color(hex: "FEE2E2")
     let infoSoft = Color(hex: "DBEAFE")
 
+    // Akashic Codex — premium material system (cool light)
+    let gilt = Color(hex: "8BA0B8")
+    let giltSoft = Color(hex: "E0EDF5")
+    let giltMuted = Color(hex: "B8C8D8")
+    let vellum = Color(hex: "EDF0F5")
+    let vellumDeep = Color(hex: "E4E7EC")
+    let inkWash = Color(hex: "2C3E50")
+    let inkFaded = Color(hex: "64748B")
+    let sepiaBorder = Color(hex: "D1D5DB")
+    let sepiaSubtle = Color(hex: "E2E5EA")
+
     // Borders
     let border = Color(hex: "D1D5DB")
     let borderSubtle = Color(hex: "E2E5EA")

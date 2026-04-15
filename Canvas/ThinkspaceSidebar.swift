@@ -182,10 +182,8 @@ struct ThinkspaceSidebar: View {
 
     private var header: some View {
         HStack {
-            Text("THINKSPACES")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundColor(DS.textSecondary)
-                .tracking(1.2)
+            Text("Thinkspaces")
+                .dsSmallCapsLabel()
 
             Spacer()
 
@@ -1422,10 +1420,8 @@ struct RecentlyDeletedSection: View {
 
                     AnimatedTrashIcon(isExpanded: isExpanded)
 
-                    Text("RECENTLY DELETED")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.textSecondary)
-                        .tracking(1)
+                    Text("Recently Deleted")
+                        .dsSmallCapsLabel()
 
                     if !deletedItems.isEmpty {
                         Text("\(deletedItems.count)")

@@ -230,10 +230,8 @@ struct InboxView: View {
 
     private var howToCaptureCard: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
-            Text("HOW TO CAPTURE")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.8)
+            Text("How to Capture")
+                .dsSmallCapsLabel()
 
             captureMethodRow(
                 icon: "paperplane.fill",
@@ -283,10 +281,8 @@ struct InboxView: View {
     private var recentActivitySection: some View {
         if !viewModel.recentHistory.isEmpty {
             VStack(alignment: .leading, spacing: DS.space8) {
-                Text("RECENT ACTIVITY")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.8)
+                Text("Recent Activity")
+                    .dsSmallCapsLabel()
 
                 ForEach(viewModel.recentHistory) { item in
                     recentHistoryRow(item)

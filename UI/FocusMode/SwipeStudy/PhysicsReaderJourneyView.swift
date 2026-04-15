@@ -34,9 +34,8 @@ struct PhysicsReaderJourneyView: View {
 
 private extension PhysicsReaderJourneyView {
     var sectionHeader: some View {
-        Text("READER JOURNEY")
-            .font(DS.caption)
-            .tracking(1.2)
+        Text("Reader Journey")
+            .font(DS.smallCaps)
             .foregroundStyle(DS.orange)
     }
 

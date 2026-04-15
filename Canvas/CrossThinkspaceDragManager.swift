@@ -344,10 +344,7 @@ struct CrossThinkspaceDragPreview: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(block.entityType.rawValue.capitalized)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(DS.textMuted)
-                            .textCase(.uppercase)
-                            .tracking(0.5)
+                            .dsSmallCapsLabel()
 
                         Text(block.title)
                             .font(.system(size: 12, weight: .semibold))

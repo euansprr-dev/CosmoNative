@@ -79,18 +79,15 @@ struct AutomationRecipePopover: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(clusterColor)
 
-            Text("NEW RULE")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.8)
+            Text("New Rule")
+                .dsSmallCapsLabel()
 
             Spacer()
 
             if !clusterId.isEmpty {
-                Text(clusterName.uppercased())
-                    .font(.system(size: 9, weight: .semibold))
+                Text(clusterName)
+                    .font(DS.smallCaps)
                     .foregroundStyle(clusterColor)
-                    .tracking(0.4)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
@@ -152,9 +149,7 @@ struct AutomationRecipePopover: View {
     private var hintText: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Try something like:")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.4)
+                .dsSmallCapsLabel()
 
             VStack(alignment: .leading, spacing: 3) {
                 hintExample("When ideas for Josh are created, run analysis")
@@ -182,10 +177,8 @@ struct AutomationRecipePopover: View {
         VStack(alignment: .leading, spacing: 6) {
             // Confidence bar
             HStack(spacing: 4) {
-                Text("PARSED")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.6)
+                Text("Parsed")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 
@@ -481,9 +474,8 @@ private struct RecipeRow<Content: View>: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(label)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(DS.smallCaps)
                     .foregroundStyle(accentColor)
-                    .tracking(0.4)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(accentColor.opacity(0.1)))

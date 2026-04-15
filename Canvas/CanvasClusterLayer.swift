@@ -34,6 +34,8 @@ struct CanvasClusterLayer: View {
     var onBoardColumnDrop: ((BoardDropEvent) -> Void)?
     var onClusterViewDrop: ((ClusterTransferEvent) -> Void)?
     var onOpenFocusMode: ((String) -> Void)?
+    var onMagnify: ((CGFloat) -> Void)?
+    var onMagnifyEnd: ((CGFloat) -> Void)?
     var expandedBlockUUIDs: [UUID: String] = [:]
 
     // MARK: - State
@@ -78,20 +80,38 @@ struct CanvasClusterLayer: View {
         let dragOffset = draggingCluster(cluster.id) ? (clusterDragOffset ?? .zero) : .zero
 
         ZStack {
+            // Vellum inset parchment base — clusters feel like pages from a manuscript
+            RoundedRectangle(cornerRadius: 16)
+                .fill(DS.vellumDeep)
+
+            // Colored accent wash on top of the parchment — cluster identity
             RoundedRectangle(cornerRadius: 16)
                 .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            isSelected ? cluster.color.opacity(0.55) : cluster.color.opacity(isDropTarget ? 0.5 : 0.2),
-                            style: StrokeStyle(
-                                lineWidth: isSelected || isDropTarget ? 2 : 1.5,
-                                dash: (isSelected || isDropTarget) ? [] : [4, 4]
-                            )
-                        )
+
+            // Sepia hairline border + accent stroke on selection / drop target
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(DS.sepiaBorder, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(
+                    isSelected ? cluster.color.opacity(0.6) : cluster.color.opacity(isDropTarget ? 0.55 : 0.18),
+                    style: StrokeStyle(
+                        lineWidth: isSelected || isDropTarget ? 2 : 1,
+                        dash: (isSelected || isDropTarget) ? [] : [5, 5]
+                    )
                 )
-                .shadow(color: isDropTarget ? cluster.color.opacity(0.22) : .clear, radius: isDropTarget ? 10 : 0)
                 .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
+
+            // Four gilt corner brackets — manuscript corner ornaments
+            if cluster.isUserCreated {
+                clusterGiltCorners(rect: rect, isActive: isSelected || isHovered)
+            }
+
+            // Drop-target accent glow
+            if isDropTarget {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(cluster.color.opacity(0.28), lineWidth: 4)
+                    .blur(radius: 6)
+            }
 
             if showLabel || hasAltContent {
                 VStack(spacing: 0) {
@@ -184,6 +204,48 @@ struct CanvasClusterLayer: View {
             return (cluster.viewMode != .canvas || isZone) ? 0.09 : 0.06
         }
         return 0.05
+    }
+
+    // MARK: - Gilt Corner Brackets
+
+    /// Four gilt L-brackets pinned to the cluster corners — akashic manuscript ornament.
+    @ViewBuilder
+    private func clusterGiltCorners(rect: CGRect, isActive: Bool) -> some View {
+        let opacity = isActive ? 0.75 : 0.45
+        let size: CGFloat = 14
+        let inset: CGFloat = 10
+
+        ZStack {
+            // Top-left
+            GiltCornerBracket()
+                .stroke(DS.gilt, lineWidth: 0.9)
+                .frame(width: size, height: size)
+                .position(x: inset + size / 2, y: inset + size / 2)
+
+            // Top-right (rotated 90°)
+            GiltCornerBracket()
+                .stroke(DS.gilt, lineWidth: 0.9)
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(90))
+                .position(x: rect.width - inset - size / 2, y: inset + size / 2)
+
+            // Bottom-right (rotated 180°)
+            GiltCornerBracket()
+                .stroke(DS.gilt, lineWidth: 0.9)
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(180))
+                .position(x: rect.width - inset - size / 2, y: rect.height - inset - size / 2)
+
+            // Bottom-left (rotated 270°)
+            GiltCornerBracket()
+                .stroke(DS.gilt, lineWidth: 0.9)
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(270))
+                .position(x: inset + size / 2, y: rect.height - inset - size / 2)
+        }
+        .frame(width: rect.width, height: rect.height)
+        .opacity(opacity)
+        .allowsHitTesting(false)
     }
 
     // MARK: - Title Bar
@@ -316,6 +378,16 @@ struct CanvasClusterLayer: View {
             }
             .frame(width: contentWidth, height: contentHeight, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            // Allow pinch-to-zoom to pass through cluster ScrollViews to the canvas
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .onChanged { value in
+                        onMagnify?(value.magnification)
+                    }
+                    .onEnded { value in
+                        onMagnifyEnd?(value.magnification)
+                    }
+            )
         }
     }
 
@@ -413,19 +485,18 @@ struct CanvasClusterLayer: View {
                 .onSubmit { commitRename(cluster) }
                 .onExitCommand { editingClusterID = nil }
         } else {
-            Text(cluster.name.uppercased())
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(DS.text)
+            Text(cluster.name)
+                .dsSmallCapsLabel()
                 .lineLimit(1)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(DS.surfaceElevated)
+                        .fill(DS.vellum)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(DS.border, lineWidth: 1)
+                        .stroke(DS.sepiaBorder, lineWidth: 0.5)
                 )
                 .onTapGesture(count: 2) {
                     if cluster.isUserCreated {

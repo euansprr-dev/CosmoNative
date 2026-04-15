@@ -333,10 +333,7 @@ struct CanvasDrawingToolbar: View {
 
     private func styleSectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(DS.textMuted)
-            .textCase(.uppercase)
-            .tracking(0.5)
+            .dsSmallCapsLabel()
     }
 
     private var strokeColorGrid: some View {
@@ -435,10 +432,7 @@ struct CanvasDrawingToolbar: View {
     private var opacitySection: some View {
         HStack(spacing: 8) {
             Text("Opacity")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textMuted)
-                .textCase(.uppercase)
-                .tracking(0.5)
+                .dsSmallCapsLabel()
 
             // Simple discrete opacity buttons
             ForEach([0.25, 0.5, 0.75, 1.0], id: \.self) { value in
@@ -468,10 +462,7 @@ struct CanvasDrawingToolbar: View {
     private var customColorSection: some View {
         HStack {
             Text("Custom")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textMuted)
-                .textCase(.uppercase)
-                .tracking(0.5)
+                .dsSmallCapsLabel()
 
             Spacer()
 

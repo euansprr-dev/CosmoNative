@@ -36,6 +36,7 @@ struct CanvasView: View {
     // Canvas zoom state - smooth, Apple Silicon optimized
     @State private var canvasScale: CGFloat = 1.0
     @GestureState private var magnificationState: CGFloat = 1.0
+    @State private var clusterMagnification: CGFloat = 1.0
     @State private var scrollWheelMonitor: Any?
     @State private var keyMonitor: Any?
     @State private var isSpaceHeld = false
@@ -125,7 +126,7 @@ struct CanvasView: View {
             committedOffset: canvasOffset,
             gesturePanOffset: combinedPan,
             committedScale: canvasScale,
-            gestureMagnification: magnificationState,
+            gestureMagnification: magnificationState * clusterMagnification,
             minScale: minScale,
             maxScale: maxScale
         )
@@ -203,11 +204,14 @@ struct CanvasView: View {
                         },
                         onClusterViewDrop: { event in
                             // Transfer block between clusters (grid/list drag-and-drop)
-                            if let sourceCluster = clusterEngine.allClusters.first(where: { $0.blockUUIDs.contains(event.blockUUID) }),
-                               sourceCluster.id != event.targetClusterId {
-                                clusterEngine.removeBlockFromCluster(blockUUID: event.blockUUID, clusterId: sourceCluster.id, blocks: spatialEngine.blocks)
-                            }
-                            clusterEngine.addBlockToCluster(blockUUID: event.blockUUID, clusterId: event.targetClusterId, blocks: spatialEngine.blocks)
+                            let sourceClusterId = clusterEngine.allClusters
+                                .first(where: { $0.blockUUIDs.contains(event.blockUUID) && $0.id != event.targetClusterId })?.id
+                            clusterEngine.transferBlock(
+                                blockUUID: event.blockUUID,
+                                from: sourceClusterId,
+                                to: event.targetClusterId,
+                                blocks: spatialEngine.blocks
+                            )
                         },
                         onOpenFocusMode: { uuid in
                             if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
@@ -221,6 +225,14 @@ struct CanvasView: View {
                                     ]
                                 )
                             }
+                        },
+                        onMagnify: { magnification in
+                            clusterMagnification = magnification
+                        },
+                        onMagnifyEnd: { magnification in
+                            let newScale = canvasScale * magnification
+                            canvasScale = min(max(newScale, minScale), maxScale)
+                            clusterMagnification = 1.0
                         },
                         expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
                     )
@@ -324,8 +336,8 @@ struct CanvasView: View {
                 }
                 .padding(.trailing, 16)
                 .padding(.top, 16)
-                .animation(ProMotionSprings.snappy, value: selectedBlockId)
-                .animation(ProMotionSprings.snappy, value: clusterEngine.selectedClusterId)
+                .animation(ProMotionSprings.gentle, value: selectedBlockId)
+                .animation(ProMotionSprings.gentle, value: clusterEngine.selectedClusterId)
             }
             // Thinkspace sidebar trigger + overlay disabled — UnifiedSidebar + peek rail handle navigation
             // Ambient knowledge panel (right edge)
@@ -481,7 +493,7 @@ struct CanvasView: View {
                     clearSelectedBlock()
                 }
             )
-            .transition(.move(edge: .trailing).combined(with: .opacity))
+            .transition(.opacity)
         } else if let clusterId = clusterEngine.selectedClusterId,
                   let cluster = clusterEngine.userClusters.first(where: { $0.id == clusterId }) {
             ClusterInspectorPanel(
@@ -503,7 +515,7 @@ struct CanvasView: View {
                     clusterEngine.selectCluster(nil)
                 }
             )
-            .transition(.move(edge: .trailing).combined(with: .opacity))
+            .transition(.opacity)
         }
     }
 
@@ -2070,7 +2082,7 @@ struct CanvasView: View {
         // Find the source cluster containing this block
         guard let sourceCluster = clusterEngine.allClusters.first(where: { $0.blockUUIDs.contains(blockUUID) }) else { return }
 
-        // Remove from source cluster
+        // Remove from source cluster (persists internally)
         clusterEngine.removeBlockFromCluster(blockUUID: blockUUID, clusterId: sourceCluster.id, blocks: spatialEngine.blocks)
 
         // Restore block's position and default size on the canvas
@@ -2084,7 +2096,6 @@ struct CanvasView: View {
         }
 
         clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
-        clusterEngine.persistAfterMove()
         ClusterViewDragSession.sourceClusterId = nil
     }
 
@@ -2419,48 +2430,17 @@ struct CanvasView: View {
     /// Update cluster membership when a block is dragged into/out of a user cluster zone.
     /// Uses a generous proximity check (80pt outset) so blocks dropped near a cluster get absorbed.
     private func updateClusterMembership(for block: CanvasBlock, resolvedTargetClusterId: UUID? = nil) {
-        let blockUUID = block.entityUuid
-        let position = block.position
-
         // Clear the visual drop target highlight
         clusterEngine.clearDropTarget()
 
-        if let targetClusterId = resolvedTargetClusterId {
-            let sourceClusterIds = clusterEngine.userClusters
-                .filter { $0.id != targetClusterId && $0.blockUUIDs.contains(blockUUID) }
-                .map(\.id)
-
-            for sourceClusterId in sourceClusterIds {
-                clusterEngine.removeBlockFromCluster(
-                    blockUUID: blockUUID,
-                    clusterId: sourceClusterId,
-                    blocks: spatialEngine.blocks
-                )
-            }
-
-            clusterEngine.addBlockToCluster(
-                blockUUID: blockUUID,
-                clusterId: targetClusterId,
-                blocks: spatialEngine.blocks
-            )
-        } else {
-            // Remove from clusters where the block has been dragged far away.
-            // Use a slightly larger rect so small movements within the zone don't eject.
-            let ejectInset: CGFloat = -40  // 40pt grace zone before ejecting
-            for cluster in clusterEngine.userClusters {
-                let expandedRect = cluster.boundingRect.insetBy(dx: ejectInset, dy: ejectInset)
-                if cluster.blockUUIDs.contains(blockUUID) && !expandedRect.contains(position) {
-                    clusterEngine.removeBlockFromCluster(
-                        blockUUID: blockUUID,
-                        clusterId: cluster.id,
-                        blocks: spatialEngine.blocks
-                    )
-                }
-            }
-        }
-
-        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
-        clusterEngine.persistAfterMove()
+        // Single atomic persist — avoids race between concurrent remove/add Tasks
+        clusterEngine.updateMembership(
+            blockUUID: block.entityUuid,
+            targetClusterId: resolvedTargetClusterId,
+            blockPosition: block.position,
+            ejectInset: -40,  // 40pt grace zone before ejecting
+            blocks: spatialEngine.blocks
+        )
     }
 
     private func updateCanvasClusterDropPreview(for block: CanvasBlock, draggedPosition: CGPoint) {
@@ -4108,6 +4088,8 @@ struct CanvasBlockStaticView: View {
             LiveQueryBlockView(block: block)
         case .ideaBoard:
             IdeaBoardBlockView(block: block)
+        case .template:
+            TemplateBlockView(block: block)
         default:
             FloatingBlockView(block: block)
         }

@@ -81,12 +81,9 @@ struct ContentBlockView: View {
 
     private var workflowCardView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Entity identity strip + step indicator
+            // Header strip — gilt corner lives on the wrapper
             VStack(alignment: .leading, spacing: 0) {
-                Capsule()
-                    .fill(accentColor.opacity(0.35))
-                    .frame(height: 3)
-                    .frame(maxWidth: .infinity)
+                Color.clear.frame(height: 6)
 
                 HStack {
                     Spacer()

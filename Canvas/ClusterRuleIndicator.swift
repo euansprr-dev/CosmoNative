@@ -74,10 +74,8 @@ struct ClusterRuleIndicator: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(clusterColor)
 
-                Text("RULES")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.8)
+                Text("Rules")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 

@@ -101,9 +101,7 @@ struct ResearchCoreView: View {
                 Image(systemName: contentType.icon)
                     .font(.system(size: 12, weight: .medium))
                 Text(contentType.label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .textCase(.uppercase)
-                    .tracking(0.8)
+                    .font(DS.smallCaps)
             }
             .foregroundColor(accentColor)
             .padding(.horizontal, 10)

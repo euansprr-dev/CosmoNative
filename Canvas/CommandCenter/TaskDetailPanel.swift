@@ -24,6 +24,11 @@ struct TaskDetailPanel: View {
     @State private var showWhenPicker = false
     @State private var showDeadlinePicker = false
 
+    @State private var recurrenceRule: RecurrenceRule?
+    @State private var recurrencePreset: TaskDetailRepeatPreset = .weekly
+    @State private var recurrenceDays: Set<DayOfWeek> = []
+    @State private var recurrenceHasLoaded = false
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: DS.space16) {
@@ -34,6 +39,11 @@ struct TaskDetailPanel: View {
 
                 // Scheduling
                 schedulingSection
+
+                gradientDivider
+
+                // Recurrence
+                recurrenceSection
 
                 gradientDivider
 
@@ -65,9 +75,13 @@ struct TaskDetailPanel: View {
         .scrollIndicators(.hidden)
         .onAppear {
             syncStateFromTask()
+            Task { await loadRecurrence() }
         }
         .onChange(of: task.uuid) {
             syncStateFromTask()
+            recurrenceHasLoaded = false
+            recurrenceRule = nil
+            Task { await loadRecurrence() }
         }
     }
 
@@ -528,5 +542,190 @@ struct TaskDetailPanel: View {
         Rectangle()
             .fill(DS.borderSubtle.opacity(0.5))
             .frame(height: 1)
+    }
+
+    // MARK: - Recurrence
+
+    private var recurrenceSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "repeat")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                Text("Repeat")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                Spacer()
+                if recurrenceRule != nil || task.isRecurring {
+                    Button("Stop") {
+                        clearRecurrence()
+                    }
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.red)
+                    .buttonStyle(.plain)
+                }
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 6)], spacing: 6) {
+                ForEach(TaskDetailRepeatPreset.allCases, id: \.self) { preset in
+                    Button {
+                        selectPreset(preset)
+                    } label: {
+                        Text(preset.label)
+                            .font(DS.caption2)
+                            .foregroundStyle(isPresetActive(preset) ? DS.textOnAccent : DS.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(
+                                isPresetActive(preset) ? DS.accent : DS.surface,
+                                in: RoundedRectangle(cornerRadius: 7)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(isPresetActive(preset) ? Color.clear : DS.borderSubtle, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if recurrenceRule != nil && recurrencePreset.requiresDaySelection {
+                HStack(spacing: 4) {
+                    ForEach(DayOfWeek.allCases, id: \.self) { day in
+                        Button {
+                            toggleDay(day)
+                        } label: {
+                            Text(day.shortName)
+                                .font(DS.caption2)
+                                .foregroundStyle(recurrenceDays.contains(day) ? DS.textOnAccent : DS.textSecondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                                .background(
+                                    recurrenceDays.contains(day) ? DS.accent : DS.surface,
+                                    in: RoundedRectangle(cornerRadius: 6)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func isPresetActive(_ preset: TaskDetailRepeatPreset) -> Bool {
+        recurrenceRule != nil && recurrencePreset == preset
+    }
+
+    private func loadRecurrence() async {
+        let rule = await viewModel.recurrenceRule(for: task)
+        await MainActor.run {
+            recurrenceRule = rule
+            hydrateRecurrenceEditor()
+            recurrenceHasLoaded = true
+        }
+    }
+
+    private func hydrateRecurrenceEditor() {
+        guard let rule = recurrenceRule else {
+            recurrencePreset = .weekly
+            recurrenceDays = defaultDays(for: .weekly)
+            return
+        }
+        switch rule.frequency {
+        case .daily: recurrencePreset = .daily
+        case .weekdays: recurrencePreset = .weekdays
+        case .monthly, .yearly: recurrencePreset = .monthly
+        case .weekly, .biweekly: recurrencePreset = .weekly
+        case .custom: recurrencePreset = .custom
+        }
+        if let days = rule.daysOfWeek {
+            recurrenceDays = Set(days)
+        } else {
+            recurrenceDays = defaultDays(for: recurrencePreset)
+        }
+    }
+
+    private func selectPreset(_ preset: TaskDetailRepeatPreset) {
+        recurrencePreset = preset
+        if recurrenceDays.isEmpty || !preset.requiresDaySelection {
+            recurrenceDays = defaultDays(for: preset)
+        }
+        applyRecurrence()
+    }
+
+    private func toggleDay(_ day: DayOfWeek) {
+        if recurrenceDays.contains(day) {
+            recurrenceDays.remove(day)
+        } else {
+            recurrenceDays.insert(day)
+        }
+        applyRecurrence()
+    }
+
+    private func applyRecurrence() {
+        let rule = buildRule()
+        recurrenceRule = rule
+        Task { await viewModel.setTaskRecurrence(uuid: task.uuid, rule: rule) }
+    }
+
+    private func clearRecurrence() {
+        recurrenceRule = nil
+        Task { await viewModel.setTaskRecurrence(uuid: task.uuid, rule: nil) }
+    }
+
+    private func defaultDays(for preset: TaskDetailRepeatPreset) -> Set<DayOfWeek> {
+        switch preset {
+        case .weekdays:
+            return Set(DayOfWeek.weekdays)
+        case .daily, .monthly, .weekly, .custom:
+            let weekday = Calendar.current.component(.weekday, from: task.dueDate ?? Date())
+            return Set(DayOfWeek.allCases.filter { $0.rawValue == weekday })
+        }
+    }
+
+    private func buildRule() -> RecurrenceRule {
+        switch recurrencePreset {
+        case .daily:
+            return .daily()
+        case .weekdays:
+            return .weekdays()
+        case .weekly:
+            let days = recurrenceDays.isEmpty ? Array(defaultDays(for: .weekly)) : Array(recurrenceDays)
+            return .weekly(on: days.sorted { $0.rawValue < $1.rawValue })
+        case .monthly:
+            let day = Calendar.current.component(.day, from: task.dueDate ?? Date())
+            return .monthly(onDay: day)
+        case .custom:
+            let days = recurrenceDays.isEmpty ? Array(defaultDays(for: .custom)) : Array(recurrenceDays)
+            return RecurrenceRule(
+                frequency: .custom,
+                interval: 1,
+                daysOfWeek: days.sorted { $0.rawValue < $1.rawValue },
+                dayOfMonth: nil,
+                monthOfYear: nil,
+                endCondition: .never
+            )
+        }
+    }
+}
+
+private enum TaskDetailRepeatPreset: CaseIterable {
+    case daily, weekdays, weekly, monthly, custom
+
+    var label: String {
+        switch self {
+        case .daily: return "Daily"
+        case .weekdays: return "Weekdays"
+        case .weekly: return "Weekly"
+        case .monthly: return "Monthly"
+        case .custom: return "Custom"
+        }
+    }
+
+    var requiresDaySelection: Bool {
+        switch self {
+        case .weekly, .custom: return true
+        case .daily, .weekdays, .monthly: return false
+        }
     }
 }

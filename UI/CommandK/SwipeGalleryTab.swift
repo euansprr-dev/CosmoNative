@@ -294,11 +294,11 @@ struct SwipeGalleryTab: View {
                     .font(.system(size: 12, weight: .bold).monospacedDigit())
                     .foregroundColor(DS.textSecondary)
                     .frame(width: thumbSize, height: thumbSize)
-                    .background(DS.surfaceElevated)
+                    .background(DS.glassCardFill)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(DS.border, lineWidth: 1)
+                            .strokeBorder(DS.glassBorder, lineWidth: 1)
                     )
             }
         }

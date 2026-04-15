@@ -118,6 +118,8 @@ struct DocumentBlocksLayer: View {
                 ContentBlockView(block: block)
             case .task:
                 TaskBlockView(block: block)
+            case .template:
+                TemplateBlockView(block: block)
             default:
                 // Fallback for unknown types
                 DocumentBlockView(

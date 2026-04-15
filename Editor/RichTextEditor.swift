@@ -25,6 +25,7 @@ struct RichTextEditor: View {
     var compact: Bool = false  // Compact mode for notes
     var darkMode: Bool = false  // Dark mode for Thinkspace blocks
     var overrideTextColor: NSColor? = nil
+    var overrideFont: NSFont? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowSelectionMenu: Bool = true
@@ -72,6 +73,7 @@ struct RichTextEditor: View {
         placeholder: String = "Start typing...",
         darkMode: Bool = false,
         overrideTextColor: NSColor? = nil,
+        overrideFont: NSFont? = nil,
         allowSlashCommands: Bool = true,
         allowMentions: Bool = true,
         allowSelectionMenu: Bool = true,
@@ -102,6 +104,7 @@ struct RichTextEditor: View {
         self.placeholder = placeholder
         self.darkMode = darkMode
         self.overrideTextColor = overrideTextColor
+        self.overrideFont = overrideFont
         self.allowSlashCommands = allowSlashCommands
         self.allowMentions = allowMentions
         self.allowSelectionMenu = allowSelectionMenu
@@ -138,6 +141,7 @@ struct RichTextEditor: View {
                 compact: compact,
                 darkMode: darkMode,
                 overrideTextColor: overrideTextColor,
+                overrideFont: overrideFont,
                 allowSlashCommands: allowSlashCommands,
                 allowMentions: allowMentions,
                 allowImages: allowImages,

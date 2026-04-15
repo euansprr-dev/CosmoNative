@@ -23,9 +23,8 @@ struct PhysicsTransitionFlowView: View {
 
     private var headerRow: some View {
         HStack {
-            Text("TRANSITION FLOW")
-                .font(DS.caption)
-                .tracking(1.2)
+            Text("Transition Flow")
+                .font(DS.smallCaps)
                 .foregroundStyle(DS.info)
             Spacer()
             Text("\(transitions.count) transitions")

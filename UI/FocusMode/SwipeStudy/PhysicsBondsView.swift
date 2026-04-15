@@ -32,9 +32,8 @@ struct PhysicsBondsView: View {
     @ViewBuilder
     private var headerRow: some View {
         HStack {
-            Text("LONG-RANGE BONDS")
-                .font(DS.caption)
-                .tracking(1.2)
+            Text("Long-Range Bonds")
+                .font(DS.smallCaps)
                 .foregroundStyle(DS.entityConnection)
             Spacer()
             if let bonds = interactions?.setupPayoffBonds {
@@ -288,10 +287,5 @@ struct PhysicsBondsView: View {
             }
         }
         .padding(.leading, 4)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(DS.red)
-                .frame(width: 3)
-        }
     }
 }

@@ -228,11 +228,11 @@ struct UnifiedSearchResultsView: View {
             .foregroundStyle(DS.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(DS.surface)
+            .background(DS.glassCardFill)
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
+                    .stroke(DS.glassBorder, lineWidth: 0.5)
             )
     }
 

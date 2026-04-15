@@ -1,159 +1,114 @@
 // CosmoOS/UI/CommandK/CommandKView.swift
-// Main Command-K overlay view - NodeGraph OS search interface
-// Glass material overlay with grouped results, custom formatters, keyboard navigation
+// Cosmo Cortex — Spotlight-inspired morphing Command-K interface
+// Three modes: Compact (bubbles + recents) → Search Results → Expanded Domain
 
 import SwiftUI
 
 // MARK: - CommandKView
-/// Main overlay for Command-K search interface
-/// Features: grouped results, type-specific formatters, keyboard nav, #prefix filtering, quick-create
+
 public struct CommandKView: View {
 
-    // MARK: - Tab Enum
-    enum CommandKTab: CaseIterable {
-        case database
-        case swipeGallery
-        case ideas
-        case readwise
-    }
+    // MARK: - Compatibility alias (MainView references CommandKView.CommandKTab)
+    typealias CommandKTab = CosmoOS.CommandKTab
 
     // MARK: - State
-    var initialTab: CommandKTab = .database
+    var initialTab: CommandKTab?
     @StateObject private var viewModel = CommandKViewModel()
     @FocusState private var isSearchFocused: Bool
-    @State private var activeTab: CommandKTab
-    @Namespace private var tabNamespace
+    @Namespace private var cortexNamespace
 
     init(initialTab: CommandKTab = .database) {
-        self.initialTab = initialTab
-        _activeTab = State(initialValue: initialTab)
+        if initialTab == .database {
+            self.initialTab = nil
+        } else {
+            self.initialTab = initialTab
+        }
     }
 
-    // MARK: - Layout Constants
-    private let overlayWidthPercent: CGFloat = 0.78
-    private let overlayHeightPercent: CGFloat = 0.72
-    private let overlayMinSize = CGSize(width: 960, height: 620)
-    private let overlayMaxSize = CGSize(width: 1480, height: 940)
-
     // MARK: - Body
+
     public var body: some View {
         GeometryReader { geometry in
             ZStack {
                 backgroundLayer
-                overlayContainer(geometry: geometry)
+                panelContainer(geometry: geometry)
             }
             .ignoresSafeArea()
             .onAppear {
+                viewModel.initialExpandedTab = initialTab
+                viewModel.initializeCortexMode()
                 isSearchFocused = true
             }
         }
-        .onKeyPress(.escape) {
-            if viewModel.isMultiSelectActive {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.clearSelection()
-                }
-            } else {
+        .onKeyPress(.escape) { handleEscape() }
+        .onKeyPress(.downArrow) { viewModel.selectNext(); return .handled }
+        .onKeyPress(.upArrow) { viewModel.selectPrevious(); return .handled }
+        .onKeyPress(.return) { viewModel.openSelected(); return .handled }
+        .onKeyPress(.tab) { handleTab() }
+    }
+
+    // MARK: - Background
+
+    private var backgroundLayer: some View {
+        // Lighter backdrop than FloatingOverlayBackdrop — just a dim scrim
+        // so the glass panels can blur the actual app content underneath.
+        Color.black.opacity(0.3)
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture {
                 NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
             }
-            return .handled
+    }
+
+    // MARK: - Panel Container
+
+    private func panelContainer(geometry: GeometryProxy) -> some View {
+        VStack(spacing: DS.space12) {
+            searchBarPill(geometry: geometry)
+            contentPanel(geometry: geometry)
         }
-        .onKeyPress(.downArrow) {
-            viewModel.selectNext()
-            return .handled
-        }
-        .onKeyPress(.upArrow) {
-            viewModel.selectPrevious()
-            return .handled
-        }
-        .onKeyPress(.return) {
-            viewModel.openSelected()
-            return .handled
-        }
-        .onKeyPress(.tab) {
-            // During unified search, Tab is a no-op (results span all sources)
-            guard !viewModel.isUnifiedSearchActive else { return .handled }
-            withAnimation(ProMotionSprings.snappy) {
-                viewModel.clearSelection()
-                switch activeTab {
-                case .database: activeTab = .swipeGallery
-                case .swipeGallery: activeTab = .ideas
-                case .ideas: activeTab = .readwise
-                case .readwise: activeTab = .database
+        .frame(width: CommandKMetrics.compactWidth)
+        .animation(ProMotionSprings.gentle, value: viewModel.cortexMode)
+    }
+
+    // MARK: - Search Bar Pill (Spotlight-style)
+
+    private func searchBarPill(geometry: GeometryProxy) -> some View {
+        HStack(spacing: DS.space12) {
+            // Back button in expanded mode
+            if case .expandedDomain = viewModel.cortexMode {
+                Button {
+                    withAnimation(ProMotionSprings.modal) {
+                        viewModel.returnToCompact()
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(DS.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(DS.textSecondary)
+                        .frame(width: 28, height: 28)
                 }
+                .buttonStyle(.plain)
             }
-            return .handled
-        }
-    }
 
-    // MARK: - Background Layer
-    private var backgroundLayer: some View {
-        FloatingOverlayBackdrop {
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-        }
-    }
-
-    // MARK: - Overlay Container
-    private func overlayContainer(geometry: GeometryProxy) -> some View {
-        let width = min(max(geometry.size.width * overlayWidthPercent, overlayMinSize.width), overlayMaxSize.width)
-        let height = min(max(geometry.size.height * overlayHeightPercent, overlayMinSize.height), overlayMaxSize.height)
-
-        return VStack(spacing: 0) {
-            searchBarSection
-
-            Divider()
-                .background(DS.borderSubtle)
-
-            tabBar
-
-            Divider()
-                .background(DS.borderSubtle)
-
-            if viewModel.isUnifiedSearchActive {
-                UnifiedSearchResultsView(viewModel: viewModel)
-                    .transition(.opacity)
-            } else {
-                switch activeTab {
-                case .database:
-                    LibraryTab(viewModel: viewModel, searchQuery: viewModel.query)
-
-                case .readwise:
-                    ReadwiseLibraryTab(viewModel: viewModel, searchQuery: viewModel.query)
-
-                case .swipeGallery:
-                    SwipeGalleryTab(viewModel: viewModel, searchQuery: viewModel.query)
-
-                case .ideas:
-                    IdeasTab(viewModel: viewModel, searchQuery: viewModel.query)
-                }
-            }
-        }
-        .frame(width: width, height: height)
-        .floatingOverlayPanel()
-    }
-
-    // Glass background removed — using solid DS.surfaceElevated + DS.border overlay inline
-
-    // MARK: - Search Bar Section
-    private var searchBarSection: some View {
-        HStack(spacing: 14) {
-            Image(systemName: viewModel.isTaskCreationMode ? "plus.circle.fill" : "magnifyingglass")
+            // Search icon
+            Image(systemName: searchIcon)
                 .font(DS.title2)
-                .foregroundStyle(viewModel.isTaskCreationMode ? DS.accent : (isSearchFocused ? DS.accent : DS.textSecondary))
+                .foregroundStyle(isSearchFocused ? DS.accent : DS.textSecondary)
                 .symbolEffect(.pulse, isActive: viewModel.currentPhase == .searching)
                 .frame(width: 22)
 
+            // Text field
             TextField(searchPlaceholder, text: $viewModel.query)
                 .textFieldStyle(.plain)
                 .font(DS.title2)
                 .foregroundStyle(DS.text)
                 .focused($isSearchFocused)
-                .onSubmit {
-                    viewModel.openSelected()
-                }
+                .onSubmit { viewModel.openSelected() }
 
             Spacer()
 
-            // Type prefix indicator
+            // Type prefix badge
             if let prefixType = viewModel.activeTypePrefix {
                 typePrefixBadge(prefixType)
             }
@@ -163,44 +118,225 @@ public struct CommandKView: View {
                 Text("Enter to create task")
                     .font(DS.caption)
                     .foregroundStyle(DS.accent)
-                    .commandKToolbarChip(
-                        isActive: true,
-                        activeFill: DS.accentSoft,
-                        activeBorder: DS.accent.opacity(0.18)
-                    )
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DS.accent.opacity(0.12), in: Capsule())
             }
 
-            Button {
-                viewModel.isVoiceActive.toggle()
-            } label: {
-                Image(systemName: viewModel.isVoiceActive ? "mic.fill" : "mic")
-                    .font(DS.headline)
-                    .foregroundStyle(viewModel.isVoiceActive ? DS.accent : DS.textSecondary)
-                    .frame(width: DS.space32, height: DS.space32)
-                    .background(
-                        Circle()
-                            .fill(viewModel.isVoiceActive ? DS.accentSoft : DS.surface)
-                    )
-                    .overlay(
-                        Circle()
-                            .stroke(viewModel.isVoiceActive ? DS.accent.opacity(0.18) : DS.borderSubtle, lineWidth: 1)
-                    )
+            // Domain bubbles inline (compact mode only)
+            if viewModel.cortexMode == .compact {
+                domainBubblesInline
             }
-            .buttonStyle(.plain)
 
+            // Expanded domain title
+            if case .expandedDomain(let tab) = viewModel.cortexMode {
+                expandedTabChip(tab)
+            }
+
+            // Voice button
+            voiceButton
+
+            // Loading spinner
             if viewModel.currentPhase == .searching {
                 ProgressView()
-                    .scaleEffect(0.8)
+                    .scaleEffect(0.7)
                     .tint(DS.textSecondary)
             }
         }
-        .padding(.horizontal, DS.space24)
-        .frame(height: CommandKMetrics.searchBarHeight)
+        .padding(.horizontal, DS.space20)
+        .frame(height: 52)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.15), radius: 24, x: 0, y: 10)
     }
 
-    private var searchPlaceholder: String {
-        "Search everything..."
+    // MARK: - Domain Bubbles (inline in search bar)
+
+    private var domainBubblesInline: some View {
+        HStack(spacing: DS.space6) {
+            ForEach(CommandKTab.allCases, id: \.rawValue) { tab in
+                CortexInlineBubble(
+                    tab: tab,
+                    count: viewModel.domainCounts[tab] ?? 0,
+                    namespace: cortexNamespace
+                ) {
+                    withAnimation(ProMotionSprings.snappy) {
+                        viewModel.transitionToExpanded(tab)
+                    }
+                }
+            }
+        }
     }
+
+    // MARK: - Content Panel
+
+    @ViewBuilder
+    private func contentPanel(geometry: GeometryProxy) -> some View {
+        switch viewModel.cortexMode {
+        case .compact:
+            if viewModel.recentItems.isEmpty {
+                EmptyView()
+            } else {
+                compactContent
+                    .fixedSize(horizontal: false, vertical: true)
+                    .cortexGlassPanel()
+            }
+        case .searchResults:
+            CortexSearchResultsView(viewModel: viewModel)
+                .frame(maxHeight: min(geometry.size.height * 0.65, 600))
+                .cortexGlassPanel()
+        case .expandedDomain(let tab):
+            expandedDomainContent(tab)
+                .frame(maxHeight: min(max(geometry.size.height * 0.60, 480), 700))
+                .cortexGlassPanel()
+        }
+    }
+
+    // MARK: - Compact Content
+
+    private var compactContent: some View {
+        VStack(spacing: 0) {
+            if !viewModel.recentItems.isEmpty {
+                recentsSection
+                    .padding(DS.space20)
+            }
+            keyboardHintBar
+                .padding(.horizontal, DS.space20)
+                .padding(.bottom, DS.space12)
+        }
+    }
+
+    private var keyboardHintBar: some View {
+        HStack(spacing: DS.space16) {
+            keyHint(keys: "↑↓", label: "Navigate")
+            keyHint(keys: "↵", label: "Open")
+            keyHint(keys: "⎋", label: "Close")
+            Spacer()
+        }
+    }
+
+    private func keyHint(keys: String, label: String) -> some View {
+        HStack(spacing: DS.space4) {
+            Text(keys)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(DS.textMuted)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(DS.glassCardFill.opacity(0.5), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(DS.border.opacity(0.15), lineWidth: 0.5)
+                )
+            Text(label)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private var recentsSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            Text("RECENTS")
+                .font(DS.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.textMuted)
+                .tracking(0.5)
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 140, maximum: 220), spacing: DS.space12)],
+                spacing: DS.space12
+            ) {
+                ForEach(Array(viewModel.recentItems.enumerated()), id: \.element.id) { index, item in
+                    CortexRecentCard(item: item) {
+                        viewModel.openRecent(item)
+                    }
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+                    .animation(ProMotionSprings.staggered(index: index), value: viewModel.recentItems.count)
+                }
+            }
+        }
+    }
+
+    // MARK: - Expanded Domain Content
+
+    @ViewBuilder
+    private func expandedDomainContent(_ tab: CommandKTab) -> some View {
+        VStack(spacing: 0) {
+            // Domain header bar
+            HStack(spacing: DS.space8) {
+                Image(systemName: tab.icon)
+                    .font(DS.callout)
+                    .foregroundStyle(tab.accentColor)
+
+                Text(tab.title)
+                    .font(DS.headline)
+                    .foregroundStyle(DS.text)
+
+                Spacer()
+
+                Text("\(viewModel.domainCounts[tab] ?? 0) items")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(.horizontal, DS.space20)
+            .frame(height: 40)
+
+            Divider().foregroundStyle(DS.border.opacity(0.3))
+
+            // Cortex-native compact browsers (640px purpose-built)
+            switch tab {
+            case .database:
+                CortexDatabaseBrowser(viewModel: viewModel)
+            case .swipeGallery:
+                CortexSwipeBrowser(viewModel: viewModel)
+            case .ideas:
+                CortexIdeasBrowser(viewModel: viewModel)
+            case .readwise:
+                CortexReadwiseBrowser(viewModel: viewModel)
+            }
+        }
+    }
+
+    // MARK: - Expanded Tab Chip
+
+    private func expandedTabChip(_ tab: CommandKTab) -> some View {
+        HStack(spacing: DS.space4) {
+            Image(systemName: tab.icon)
+                .font(DS.caption2)
+            Text(tab.title)
+                .font(DS.caption)
+        }
+        .foregroundStyle(tab.accentColor)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(tab.accentColor.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: - Voice Button
+
+    private var voiceButton: some View {
+        Button {
+            viewModel.isVoiceActive.toggle()
+        } label: {
+            Image(systemName: viewModel.isVoiceActive ? "mic.fill" : "mic")
+                .font(DS.callout)
+                .foregroundStyle(viewModel.isVoiceActive ? DS.accent : DS.textSecondary)
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(viewModel.isVoiceActive ? DS.accent.opacity(0.15) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Type Prefix Badge
 
     @ViewBuilder
     private func typePrefixBadge(_ type: AtomType) -> some View {
@@ -213,88 +349,23 @@ public struct CommandKView: View {
         .foregroundStyle(entityColor(type))
         .padding(.horizontal, DS.space8)
         .padding(.vertical, DS.space4)
-        .background(entityColor(type).opacity(0.15))
-        .clipShape(Capsule())
+        .background(entityColor(type).opacity(0.15), in: Capsule())
     }
 
-    // MARK: - Tab Bar
-    private var tabBar: some View {
-        HStack(spacing: DS.space6) {
-            CommandKTabButton(
-                title: "Database",
-                icon: "tray.full.fill",
-                isActive: activeTab == .database && !viewModel.isUnifiedSearchActive,
-                count: viewModel.totalCount,
-                namespace: tabNamespace,
-                isDimmed: viewModel.isUnifiedSearchActive
-            ) {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.query = ""
-                    activeTab = .database
-                }
-            }
-
-            CommandKTabButton(
-                title: "Swipe Gallery",
-                icon: "bolt.fill",
-                isActive: activeTab == .swipeGallery && !viewModel.isUnifiedSearchActive,
-                accentColor: DS.entitySwipe,
-                count: viewModel.swipeGalleryItems.count,
-                namespace: tabNamespace,
-                isDimmed: viewModel.isUnifiedSearchActive
-            ) {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.query = ""
-                    activeTab = .swipeGallery
-                }
-            }
-
-            CommandKTabButton(
-                title: "Ideas",
-                icon: "lightbulb.fill",
-                isActive: activeTab == .ideas && !viewModel.isUnifiedSearchActive,
-                accentColor: DS.entityIdea,
-                count: viewModel.ideaGalleryItems.count,
-                namespace: tabNamespace,
-                isDimmed: viewModel.isUnifiedSearchActive
-            ) {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.query = ""
-                    activeTab = .ideas
-                }
-            }
-
-            CommandKTabButton(
-                title: "Readwise",
-                icon: "books.vertical.fill",
-                isActive: activeTab == .readwise && !viewModel.isUnifiedSearchActive,
-                accentColor: DS.entityReadwise,
-                count: ReadwiseBookStore.shared.books.count,
-                namespace: tabNamespace,
-                isDimmed: viewModel.isUnifiedSearchActive
-            ) {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.query = ""
-                    activeTab = .readwise
-                }
-            }
-
-            Spacer()
-
-            HStack(spacing: DS.space4) {
-                Image(systemName: "arrow.right.to.line.compact")
-                    .font(DS.caption2)
-                Text("Tab")
-                    .font(DS.caption)
-            }
-            .foregroundStyle(DS.textMuted)
-            .commandKToolbarChip(cornerRadius: 8)
-        }
-        .padding(.horizontal, DS.space20)
-        .frame(height: CommandKMetrics.tabBarHeight + 4)
-    }
+    // MARK: - Panel Sizing
 
     // MARK: - Helpers
+
+    private var searchIcon: String {
+        viewModel.isTaskCreationMode ? "plus.circle.fill" : "magnifyingglass"
+    }
+
+    private var searchPlaceholder: String {
+        if case .expandedDomain(let tab) = viewModel.cortexMode {
+            return tab.searchPlaceholder
+        }
+        return "Spotlight Search"
+    }
 
     private func entityColor(_ type: AtomType) -> Color {
         switch type {
@@ -319,86 +390,91 @@ public struct CommandKView: View {
         default: return "circle.fill"
         }
     }
+
+    // MARK: - Keyboard Handlers
+
+    private func handleEscape() -> KeyPress.Result {
+        switch viewModel.cortexMode {
+        case .expandedDomain:
+            if viewModel.isMultiSelectActive {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.clearSelection()
+                }
+            } else {
+                withAnimation(ProMotionSprings.modal) {
+                    viewModel.returnToCompact()
+                }
+            }
+        case .searchResults:
+            viewModel.query = ""
+        case .compact:
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        }
+        return .handled
+    }
+
+    private func handleTab() -> KeyPress.Result {
+        return .handled
+    }
 }
 
-// MARK: - Command-K Tab Button
+// MARK: - Inline Bubble (inside search bar)
 
-private struct CommandKTabButton: View {
-    let title: String
-    let icon: String
-    let isActive: Bool
-    var accentColor: Color = DS.accent
-    var count: Int = 0
-    var namespace: Namespace.ID
-    var isDimmed: Bool = false
+/// Small circular bubble shown inline in the search bar (compact mode).
+/// Tapping expands to full domain view.
+private struct CortexInlineBubble: View {
+    let tab: CommandKTab
+    let count: Int
+    let namespace: Namespace.ID
     let action: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 5) {
-                tabLabel
-                    .padding(.horizontal, DS.space12)
-                    .frame(height: CommandKMetrics.tabBarHeight)
-                    .background(tabBackground)
+            ZStack {
+                Circle()
+                    .fill(isHovered ? tab.accentColor.opacity(0.18) : tab.accentColor.opacity(0.08))
 
-                tabIndicator
+                Circle()
+                    .stroke(isHovered ? tab.accentColor.opacity(0.35) : DS.border.opacity(0.2), lineWidth: 0.5)
+
+                Image(systemName: tab.icon)
+                    .font(DS.caption)
+                    .foregroundStyle(tab.accentColor)
             }
-            .opacity(isDimmed ? 0.45 : 1.0)
-        }
-        .buttonStyle(.plain)
-        .animation(ProMotionSprings.snappy, value: isActive)
-        .animation(ProMotionSprings.snappy, value: isDimmed)
-    }
-
-    private var tabLabel: some View {
-        HStack(spacing: DS.space6) {
-            Image(systemName: icon)
-                .font(DS.buttonText)
-                .foregroundStyle(isActive ? accentColor : DS.textMuted)
-            Text(title)
-                .font(DS.headline)
-                .foregroundStyle(isActive ? DS.text : DS.textSecondary)
-            if count > 0 {
-                Text("\(count)")
-                    .font(DS.caption2)
-                    .contentTransition(.numericText(value: Double(count)))
-                    .foregroundStyle(isActive ? accentColor : DS.textMuted)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(
-                        Capsule()
-                            .fill(isActive ? accentColor.opacity(0.12) : DS.surface)
-                    )
+            .frame(width: 32, height: 32)
+            .contentShape(Circle())
+            .matchedGeometryEffect(id: "cortexDomain-\(tab.rawValue)", in: namespace)
+            .overlay(alignment: .top) {
+                // Count badge on hover
+                if isHovered && count > 0 {
+                    Text("\(count)")
+                        .font(DS.caption2)
+                        .foregroundStyle(tab.accentColor)
+                        .padding(.horizontal, DS.space4)
+                        .padding(.vertical, 1)
+                        .background(tab.accentColor.opacity(0.15), in: Capsule())
+                        .offset(y: -14)
+                        .transition(.opacity.combined(with: .offset(y: 4)))
+                }
             }
         }
-    }
-
-    @ViewBuilder
-    private var tabBackground: some View {
-        if isActive {
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .fill(DS.surface)
-                .matchedGeometryEffect(id: "commandKTabBg", in: namespace)
-        }
-    }
-
-    @ViewBuilder
-    private var tabIndicator: some View {
-        if isActive {
-            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(accentColor)
-                .frame(width: 28, height: 2.5)
-                .matchedGeometryEffect(id: "commandKTabLine", in: namespace)
-        } else {
-            Color.clear
-                .frame(width: 28, height: 2.5)
-        }
+        .buttonStyle(.borderless)
+        .onHover { isHovered = $0 }
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .accessibilityLabel("\(tab.title), \(count) items")
     }
 }
 
 // MARK: - Preview
 
-#Preview("Command K") {
+#Preview("Cortex - Compact") {
     CommandKView()
+        .frame(width: 1200, height: 800)
+}
+
+#Preview("Cortex - Expanded") {
+    CommandKView(initialTab: .swipeGallery)
         .frame(width: 1200, height: 800)
 }

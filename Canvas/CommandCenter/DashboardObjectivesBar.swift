@@ -13,8 +13,12 @@ struct DashboardObjectivesBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !viewModel.objectives.isEmpty {
-                sectionHeader
-                objectivesList
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionHeader
+                    objectivesList
+                }
+                .padding(14)
+                .dsVellumInset(cornerRadius: 10)
             }
         }
     }
@@ -25,19 +29,24 @@ struct DashboardObjectivesBar: View {
         HStack(spacing: 6) {
             Image(systemName: "target")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textMuted)
+                .foregroundColor(DS.giltMuted)
 
-            Text("OBJECTIVES")
-                .dsSectionLabel()
+            Text("Objectives")
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
 
             Spacer()
 
             Text("Q\(currentQuarter)")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textSecondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(DS.surface, in: Capsule())
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(DS.gilt)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(DS.giltSoft, in: .rect(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(DS.giltMuted, lineWidth: 0.5)
+                )
         }
     }
 
@@ -69,7 +78,7 @@ struct DashboardObjectivesBar: View {
             HStack {
                 Text(objective.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundColor(DS.inkWash)
                     .lineLimit(1)
 
                 Spacer()
@@ -79,26 +88,16 @@ struct DashboardObjectivesBar: View {
                     .foregroundColor(objective.paceStatus.color)
             }
 
-            // Progress bar — animated fill
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(DS.surface)
-                        .frame(height: 4)
-
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(objective.paceStatus.color)
-                        .frame(
-                            width: geo.size.width * (animateProgress ? min(objective.progress, 1.0) : 0),
-                            height: 4
-                        )
-                        .animation(
-                            reduceMotion ? .none : .spring(response: 0.6, dampingFraction: 0.8).delay(Double(index) * 0.1),
-                            value: animateProgress
-                        )
-                }
-            }
-            .frame(height: 4)
+            // Track-and-bead — replaces flat progress bar
+            TrackAndBead(
+                progress: objective.progress,
+                color: objective.paceStatus.color,
+                animate: animateProgress
+            )
+            .animation(
+                reduceMotion ? .none : .spring(response: 0.6, dampingFraction: 0.8).delay(Double(index) * 0.1),
+                value: animateProgress
+            )
         }
     }
 

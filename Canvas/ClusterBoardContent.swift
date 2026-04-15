@@ -68,9 +68,7 @@ struct ClusterBoardContent: View {
     private func columnHeader(_ column: BoardColumn) -> some View {
         HStack(spacing: 6) {
             Text(column.title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textSecondary)
-                .tracking(0.6)
+                .dsSmallCapsLabel()
                 .lineLimit(1)
 
             Text("\(column.blocks.count)")

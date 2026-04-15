@@ -101,7 +101,8 @@ struct CanvasConnectionLinesLayer: View {
                 edges: cachedVisibleEdges,
                 cachedPaths: screenPaths,
                 animationPhase: animationPhase,
-                effectiveScale: transform.effectiveScale
+                effectiveScale: transform.effectiveScale,
+                selectedEdgeKey: selectedEdgeKey
             )
             .allowsHitTesting(false)
 
@@ -507,6 +508,37 @@ struct CanvasConnectionLinesLayer: View {
 
 // MARK: - Visual Renderer
 
+/// Style resolver — color, dash pattern, and relative weight per edge type.
+/// Explicit/reference links feel solid (structural), semantic/conceptual feel
+/// dashed (inferred). Contextual sits in between.
+private struct EdgeStyle {
+    let color: Color
+    let dash: [CGFloat]
+    /// Multiplier applied to base width (structural edges feel slightly heavier)
+    let widthMultiplier: CGFloat
+
+    static func forType(_ type: GraphEdgeType) -> EdgeStyle {
+        switch type {
+        case .explicit:
+            return EdgeStyle(color: DS.entityResearch, dash: [], widthMultiplier: 1.0)
+        case .reference:
+            return EdgeStyle(color: DS.entityConnection, dash: [], widthMultiplier: 1.0)
+        case .semantic:
+            return EdgeStyle(color: DS.entityIdea, dash: [2, 4], widthMultiplier: 0.85)
+        case .conceptual:
+            return EdgeStyle(color: DS.entityNote, dash: [5, 4], widthMultiplier: 0.85)
+        case .contextual:
+            return EdgeStyle(color: DS.entityContent, dash: [8, 5], widthMultiplier: 0.9)
+        case .transitive:
+            return EdgeStyle(color: DS.textMuted, dash: [1, 5], widthMultiplier: 0.75)
+        }
+    }
+
+    static func forRawType(_ raw: String) -> EdgeStyle {
+        forType(GraphEdgeType(rawValue: raw) ?? .explicit)
+    }
+}
+
 /// Renders connection lines using SwiftUI Path shapes in screen coordinates.
 /// Paths are pre-transformed from canvas space via CGAffineTransform.
 private struct CanvasConnectionVisualRenderer: View {
@@ -514,6 +546,7 @@ private struct CanvasConnectionVisualRenderer: View {
     let cachedPaths: [String: Path]
     let animationPhase: Double
     let effectiveScale: CGFloat
+    let selectedEdgeKey: String?
 
     var body: some View {
         ZStack {
@@ -523,7 +556,9 @@ private struct CanvasConnectionVisualRenderer: View {
                         edge: edge,
                         path: path,
                         animationPhase: animationPhase,
-                        effectiveScale: effectiveScale
+                        effectiveScale: effectiveScale,
+                        isSelected: selectedEdgeKey == edge.deduplicationKey,
+                        isDimmed: selectedEdgeKey != nil && selectedEdgeKey != edge.deduplicationKey
                     )
                 }
             }
@@ -538,40 +573,54 @@ private struct ConnectionLineShape: View {
     let path: Path
     let animationPhase: Double
     let effectiveScale: CGFloat
+    let isSelected: Bool
+    let isDimmed: Bool
 
     var body: some View {
+        let style = EdgeStyle.forRawType(edge.edgeType)
         let weight = edge.combinedWeight
-        let baseWidth = 1.0 + CGFloat(weight)
+        let baseWidth = (1.0 + CGFloat(weight)) * style.widthMultiplier
         let modulation = 0.1 * CGFloat(sin(animationPhase * 0.308))
-        // Scale line width by effectiveScale so it matches the scaled block visuals
-        let lineWidth = (baseWidth + modulation) * effectiveScale
-        let baseOpacity = 0.15 + weight * 0.20
+        // Scale line width by effectiveScale so it matches the scaled block visuals.
+        // Selected edges thicken slightly to feel grasped.
+        let selectionMul: CGFloat = isSelected ? 1.4 : 1.0
+        let lineWidth = (baseWidth + modulation) * effectiveScale * selectionMul
+
+        // Opacity envelope: selected brightens, dimmed recedes, otherwise neutral.
+        let selectionOpacity: Double = {
+            if isSelected { return 0.75 }
+            if isDimmed   { return 0.08 }
+            return 0.15 + weight * 0.20
+        }()
+
         let pulseProgress = CGFloat((animationPhase * 0.192).truncatingRemainder(dividingBy: 1.0))
         let stop1 = max(0, min(pulseProgress, 0.79))
         let stop2 = max(stop1 + 0.001, min(pulseProgress + 0.08, 0.89))
         let stop3 = max(stop2 + 0.001, min(pulseProgress + 0.16, 0.99))
-        let lineColor = DS.textMuted
+        let lineColor = style.color
 
         ZStack {
-            // Glow stroke
+            // Glow stroke — wider, blurred. Selection brightens with accent glow tint.
             path.stroke(
-                lineColor.opacity(baseOpacity * 0.3),
+                (isSelected ? DS.accentGlow : lineColor).opacity(selectionOpacity * (isSelected ? 0.8 : 0.3)),
                 style: StrokeStyle(
-                    lineWidth: lineWidth * 2.5,
+                    lineWidth: lineWidth * (isSelected ? 3.4 : 2.5),
                     lineCap: .round,
-                    lineJoin: .round
+                    lineJoin: .round,
+                    dash: style.dash
                 )
             )
+            .blur(radius: isSelected ? 6 : 3)
 
-            // Main stroke with gradient pulse
+            // Main stroke — typed gradient pulse with per-edge dash pattern
             path.stroke(
                 LinearGradient(
                     stops: [
-                        .init(color: lineColor.opacity(baseOpacity * 0.4), location: 0),
-                        .init(color: lineColor.opacity(baseOpacity), location: stop1),
-                        .init(color: lineColor.opacity(baseOpacity * 0.7), location: stop2),
-                        .init(color: lineColor.opacity(baseOpacity), location: stop3),
-                        .init(color: lineColor.opacity(baseOpacity * 0.4), location: 1),
+                        .init(color: lineColor.opacity(selectionOpacity * 0.4), location: 0),
+                        .init(color: lineColor.opacity(selectionOpacity), location: stop1),
+                        .init(color: lineColor.opacity(selectionOpacity * 0.7), location: stop2),
+                        .init(color: lineColor.opacity(selectionOpacity), location: stop3),
+                        .init(color: lineColor.opacity(selectionOpacity * 0.4), location: 1),
                     ],
                     startPoint: UnitPoint(x: 0, y: 0),
                     endPoint: UnitPoint(x: 1, y: 1)
@@ -579,10 +628,13 @@ private struct ConnectionLineShape: View {
                 style: StrokeStyle(
                     lineWidth: lineWidth,
                     lineCap: .round,
-                    lineJoin: .round
+                    lineJoin: .round,
+                    dash: style.dash
                 )
             )
         }
+        .animation(ProMotionSprings.gentle, value: isSelected)
+        .animation(ProMotionSprings.gentle, value: isDimmed)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

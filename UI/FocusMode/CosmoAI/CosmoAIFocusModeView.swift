@@ -205,10 +205,8 @@ struct CosmoAIFocusModeView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, 20)
             } else {
-                Text("CONTEXT SOURCES")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.textMuted)
-                    .tracking(0.8)
+                Text("Context Sources")
+                    .dsSmallCapsLabel()
 
                 ForEach(viewModel.contextSources) { source in
                     HStack(spacing: 8) {

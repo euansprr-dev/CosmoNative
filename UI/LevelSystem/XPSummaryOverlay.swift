@@ -168,10 +168,9 @@ public struct XPSummaryOverlay: View {
 
     private var xpCounterSection: some View {
         VStack(spacing: 16) {
-            Text("XP EARNED")
-                .font(.system(size: 12, weight: .semibold))
+            Text("XP Earned")
+                .font(DS.smallCaps)
                 .foregroundStyle(.white.opacity(0.5))
-                .tracking(2)
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("+")
@@ -205,10 +204,9 @@ public struct XPSummaryOverlay: View {
 
     private var dimensionBreakdownSection: some View {
         VStack(spacing: 12) {
-            Text("BY DIMENSION")
-                .font(.system(size: 10, weight: .semibold))
+            Text("By Dimension")
+                .font(DS.smallCaps)
                 .foregroundStyle(.white.opacity(0.5))
-                .tracking(1.5)
 
             HStack(spacing: 16) {
                 DimensionXPChip(
@@ -267,10 +265,9 @@ public struct XPSummaryOverlay: View {
                     .font(.system(size: 18))
                     .foregroundColor(.yellow)
 
-                Text("LEVEL UP!")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.yellow)
-                    .tracking(1)
+                Text("Level Up!")
+                    .font(DS.smallCaps)
+                    .foregroundStyle(.yellow)
             }
 
             HStack(spacing: 24) {
@@ -305,10 +302,9 @@ public struct XPSummaryOverlay: View {
 
     private var badgesSection: some View {
         VStack(spacing: 12) {
-            Text("BADGES UNLOCKED")
-                .font(.system(size: 10, weight: .semibold))
+            Text("Badges Unlocked")
+                .font(DS.smallCaps)
                 .foregroundStyle(.white.opacity(0.5))
-                .tracking(1.5)
 
             HStack(spacing: 16) {
                 BadgeUnlockCard(
@@ -374,10 +370,9 @@ public struct XPSummaryOverlay: View {
 
     private var todayFocusSection: some View {
         VStack(spacing: 12) {
-            Text("TODAY'S FOCUS")
-                .font(.system(size: 10, weight: .semibold))
+            Text("Today's Focus")
+                .font(DS.smallCaps)
                 .foregroundStyle(.white.opacity(0.5))
-                .tracking(1.5)
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {

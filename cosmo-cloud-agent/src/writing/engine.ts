@@ -146,6 +146,9 @@ export class CloudWritingEngine {
   private inheritedCreativeDirection: string | null = null;
   private inheritedContext: string | null = null;
 
+  // Mentioned context atoms (@ mentions from Ideas focus mode)
+  private mentionedContextBlock: string | null = null;
+
   // Reference material cache — persists across turns, 25K char budget
   private referenceMaterial: Map<string, string> = new Map();
   private referenceMaterialChars = 0;
@@ -237,6 +240,26 @@ export class CloudWritingEngine {
       || (meta.contentDescription as string)
       || null;
     this.inheritedContext = (meta.inheritedContext as string) || null;
+
+    // Load mentioned context atoms (@ mentions from Ideas focus mode)
+    const mentionedUUIDs = (meta.inheritedMentionedAtomUUIDs as string[]) || [];
+    if (mentionedUUIDs.length > 0) {
+      const blocks: string[] = [];
+      for (const uuid of mentionedUUIDs) {
+        const ctxAtom = await fetchAtom(uuid);
+        if (!ctxAtom) continue;
+        if (ctxAtom.type === 'connection') {
+          blocks.push(this.formatConnectionContext(ctxAtom));
+        } else {
+          const body = ctxAtom.body || '';
+          blocks.push(`[${(ctxAtom.type || 'unknown').toUpperCase()}: ${ctxAtom.title || 'Untitled'}]\n${body}`);
+        }
+      }
+      if (blocks.length > 0) {
+        this.mentionedContextBlock = `\n--- REFERENCED CONTEXT (@ mentioned atoms from idea) ---\nThese atoms were explicitly linked by the user as context. Use them as raw material.\n\n${blocks.join('\n\n')}`;
+        console.log(`  ✍️ Loaded ${blocks.length} mentioned context atoms`);
+      }
+    }
 
     // Restore persisted conversation + writing context
     const structured = this.contentAtom.structured || {};
@@ -560,6 +583,12 @@ USER FEEDBACK:
       this.writingContext,
     );
 
+    // Append mentioned context atoms (@ mentions from idea)
+    let content = base.content;
+    if (this.mentionedContextBlock) {
+      content += '\n' + this.mentionedContextBlock;
+    }
+
     // In Codex mode, prepend the system prompt (role + voice rules + antimatter)
     // to the dynamic block so it's the LAST thing before the conversation —
     // recency bias means these instructions influence generation most strongly.
@@ -568,11 +597,50 @@ USER FEEDBACK:
       const systemPrompt = buildCodexSystemPrompt(this.targetFormat, clientName);
       return {
         ...base,
-        content: systemPrompt + '\n\n' + base.content,
+        content: systemPrompt + '\n\n' + content,
       };
     }
 
-    return base;
+    return { ...base, content };
+  }
+
+  /**
+   * Format a connection atom with all 8 structured sections as building blocks.
+   * Mirrors tools/writing.ts formatConnectionForWriting().
+   */
+  private formatConnectionContext(atom: Atom): string {
+    const model = (atom.structured || {}) as Record<string, any>;
+    const sections: string[] = [];
+    sections.push(`=== CONNECTION: ${atom.title || 'Untitled'} ===`);
+    if (model.idea) sections.push(`Core Idea: ${model.idea}`);
+    if (model.personalBelief) sections.push(`Personal Belief: ${model.personalBelief}`);
+
+    sections.push('\n--- CONTENT BUILDING BLOCKS ---');
+    sections.push('These are raw material. Any piece can serve ANY beat — a belief can be a hook,');
+    sections.push('a problem can be a CTA, an example can open the piece. Use them creatively.');
+
+    if (model.goal) sections.push(`\nGOAL:\n${model.goal}`);
+    if (model.problems) sections.push(`\nPROBLEMS:\n${model.problems}`);
+    if (model.benefit) sections.push(`\nBENEFITS:\n${model.benefit}`);
+    if (model.example) sections.push(`\nEXAMPLES:\n${model.example}`);
+    if (model.beliefsObjections) sections.push(`\nBELIEFS & OBJECTIONS:\n${model.beliefsObjections}`);
+    if (model.process) sections.push(`\nPROCESS:\n${model.process}`);
+    if (model.conceptName) sections.push(`\nCONCEPT NAME: "${model.conceptName}"`);
+
+    if (model.referencesData) {
+      try {
+        const raw = typeof model.referencesData === 'string' ? model.referencesData : JSON.stringify(model.referencesData);
+        const refs = JSON.parse(raw);
+        if (Array.isArray(refs) && refs.length > 0) {
+          sections.push(`\nREFERENCES:`);
+          for (const ref of refs as any[]) {
+            sections.push(`  • ${ref.title || ref.url || 'Source'}${ref.notes ? ': ' + ref.notes : ''}`);
+          }
+        }
+      } catch {}
+    }
+
+    return sections.join('\n');
   }
 
   // ============================================================

@@ -189,8 +189,9 @@ struct FrostedGlass: ViewModifier {
 
 // MARK: - Accent Seam
 
-/// A vertical accent bar for cards to indicate entity type.
-/// From the Cosmo Bible: "A 3px gradient bar on the left edge".
+/// DEPRECATED — Use section-specific visual treatments instead (dsVellumCard, dsGiltCornerOrnament).
+/// The accent bar pattern has been replaced by the Akashic Codex design system.
+@available(*, deprecated, message: "Use dsVellumCard() or dsGiltCornerOrnament() instead")
 struct AccentSeam: View {
     let color: Color
     let position: Edge
@@ -256,7 +257,8 @@ extension View {
         ))
     }
 
-    /// Add an accent seam to indicate entity type
+    /// DEPRECATED — Accent seam pattern replaced by Akashic Codex design system
+    @available(*, deprecated, message: "Remove accent seam — use dsVellumCard() or section-specific treatments")
     func withAccentSeam(_ color: Color, position: Edge = .leading, cornerRadius: CGFloat = 0) -> some View {
         overlay(alignment: position.alignment) {
             AccentSeam(color: color, position: position)

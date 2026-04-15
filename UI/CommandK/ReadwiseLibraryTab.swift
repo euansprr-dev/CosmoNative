@@ -587,11 +587,6 @@ private struct HighlightRowView: View {
 
     private var rowContent: some View {
         HStack(alignment: .top, spacing: 10) {
-            // Color bar
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(highlight.highlightColor)
-                .frame(width: 3)
-
             VStack(alignment: .leading, spacing: 6) {
                 // Highlight text
                 Text(highlight.text)

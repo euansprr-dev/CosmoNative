@@ -59,16 +59,25 @@ struct IdeaBoardBlockView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
             }
+            .scrollBounceBehavior(.basedOnSize)
         }
         .frame(width: 280, height: 400)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .fill(DS.surfaceElevated)
+                .fill(DS.vellum)
         )
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
+                .stroke(DS.sepiaBorder, lineWidth: 0.5)
         )
+        .overlay(alignment: .topLeading) {
+            GiltCornerBracket()
+                .stroke(DS.gilt, lineWidth: 0.8)
+                .frame(width: 12, height: 12)
+                .padding(7)
+                .opacity(0.6)
+                .allowsHitTesting(false)
+        }
         .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
         .shadow(color: .black.opacity(0.02), radius: 2, y: 1)
         .task {
@@ -87,9 +96,8 @@ struct IdeaBoardBlockView: View {
 
     private var boardHeader: some View {
         HStack(spacing: 8) {
-            Text(clientName.uppercased())
-                .font(.system(size: 11, weight: .bold))
-                .tracking(0.5)
+            Text(clientName)
+                .font(DS.smallCaps)
                 .foregroundStyle(sectionColor)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -111,17 +119,20 @@ struct IdeaBoardBlockView: View {
     // MARK: - Empty (matches IdeasTab emptyColumnPlaceholder)
 
     private var emptyPlaceholder: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "lightbulb")
-                .font(.system(size: 24, weight: .light))
-                .foregroundStyle(sectionColor.opacity(0.25))
+        VStack(spacing: 10) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 18, weight: .light))
+                .foregroundStyle(DS.gilt.opacity(0.45))
 
-            Text("No ideas yet")
-                .font(.system(size: 12, weight: .medium))
+            Text("NO IDEAS YET")
+                .dsSmallCapsLabel()
+
+            Text("first spark goes here")
+                .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, 28)
     }
 
     // MARK: - Color

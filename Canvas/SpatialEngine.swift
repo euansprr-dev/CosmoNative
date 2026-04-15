@@ -97,7 +97,7 @@ class SpatialEngine: ObservableObject {
             // This ensures hasMediaContent() routes correctly and images load after restart
             var enrichedBlocks: [CanvasBlock] = []
             for block in loadedBlocks {
-                if block.entityType == .research || block.entityType == .image || block.entityType == .note {
+                if block.entityType == .research || block.entityType == .image || block.entityType == .note || block.entityType == .template {
                     // Fetch atom by ID first, fall back to UUID (fixes blocks saved with entityId = -1)
                     var atom = try? await AtomRepository.shared.fetch(id: block.entityId)
                     if atom == nil, !block.entityUuid.isEmpty {

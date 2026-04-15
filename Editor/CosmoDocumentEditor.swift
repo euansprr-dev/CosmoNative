@@ -29,6 +29,7 @@ struct CosmoDocumentEditor: View {
     var placeholder: String = "Start typing..."
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
+    var overrideFont: NSFont? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowSelectionMenu: Bool = true
@@ -62,6 +63,7 @@ struct CosmoDocumentEditor: View {
             placeholder: placeholder,
             darkMode: darkMode,
             overrideTextColor: overrideTextColor,
+            overrideFont: overrideFont,
             allowSlashCommands: allowSlashCommands,
             allowMentions: allowMentions,
             allowSelectionMenu: allowSelectionMenu,

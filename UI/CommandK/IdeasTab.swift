@@ -565,9 +565,8 @@ private struct IdeaBoardView: View {
     private func columnHeader(_ section: IdeaClientSection) -> some View {
         HStack(spacing: 8) {
             // Colored profile name badge — long-press to drag idea board to canvas
-            Text(section.clientName.uppercased())
-                .font(.system(size: 11, weight: .bold))
-                .tracking(0.5)
+            Text(section.clientName)
+                .font(DS.smallCaps)
                 .foregroundStyle(section.color)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -752,10 +751,10 @@ private struct IdeaBoardView: View {
             }
         }
         .padding(10)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(section.color.opacity(0.3), lineWidth: 1)
+                .stroke(section.color.opacity(0.2), lineWidth: 0.5)
         )
         .padding(.horizontal, 8)
         .padding(.bottom, 8)
@@ -845,10 +844,9 @@ struct IdeaBoardCard: View {
             // Content
             VStack(alignment: .leading, spacing: 2) {
                 if let format = item.contentFormat {
-                    Text(format.displayName.uppercased())
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(columnColor.opacity(0.7))
-                        .tracking(0.3)
+                    Text(format.displayName)
+                        .font(DS.smallCaps)
+                        .foregroundStyle(columnColor.opacity(0.7))
                 }
 
                 Text(item.title)

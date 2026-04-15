@@ -87,10 +87,8 @@ struct AutomationRuleRow: View {
                     .lineLimit(1)
 
                 if rule.isBuiltIn {
-                    Text("BUILT-IN")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(DS.textMuted)
-                        .tracking(0.6)
+                    Text("Built-In")
+                        .dsSmallCapsLabel()
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(

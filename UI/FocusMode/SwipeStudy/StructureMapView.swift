@@ -27,11 +27,8 @@ struct StructureMapView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Section header
-            Text("STRUCTURE")
-                .font(.system(size: 13, weight: .bold))
-                .tracking(1.2)
-                .foregroundColor(DS.textMuted)
-                .textCase(.uppercase)
+            Text("Structure")
+                .dsSmallCapsLabel()
 
             if validSections.isEmpty {
                 placeholderView

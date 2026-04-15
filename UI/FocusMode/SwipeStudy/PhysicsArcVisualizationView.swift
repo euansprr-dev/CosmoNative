@@ -41,10 +41,8 @@ struct PhysicsArcVisualizationView: View {
                     .accessibilityLabel("\(reversals) reversals")
             }
             Spacer()
-            Text("NARRATIVE ARC")
-                .font(DS.caption)
-                .tracking(1.2)
-                .foregroundStyle(DS.textMuted)
+            Text("Narrative Arc")
+                .dsSmallCapsLabel()
         }
     }
 

@@ -540,18 +540,111 @@ struct LibraryItem: Identifiable {
         ISO8601.date(from: value)
     }
 
+    /// Extract readable text from JSON body (slide-based content, structured data)
+    private static func extractTextFromJSON(_ json: String) -> String? {
+        guard let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) else { return nil }
+
+        var texts: [String] = []
+
+        if let dict = obj as? [String: Any] {
+            // {"slides": [{"number": 1, "text": "..."}]} format
+            if let slides = dict["slides"] as? [[String: Any]] {
+                for slide in slides {
+                    if let text = slide["text"] as? String, !text.isEmpty {
+                        texts.append(text)
+                    }
+                }
+            }
+            // Direct text fields
+            for key in ["text", "content", "body", "hook", "caption"] {
+                if let val = dict[key] as? String, !val.isEmpty {
+                    texts.append(val)
+                }
+            }
+        } else if let arr = obj as? [[String: Any]] {
+            // Array of slides directly
+            for item in arr {
+                if let text = item["text"] as? String, !text.isEmpty {
+                    texts.append(text)
+                }
+            }
+        }
+
+        let result = texts.joined(separator: "\n\n")
+        return result.isEmpty ? nil : result
+    }
+
+    /// Structured section preview for connections — labeled paragraphs create visual fingerprint
+    private static func connectionPreviewText(atom: Atom) -> String? {
+        let fields: [(String, String?)] = [
+            ("IDEA", atom.idea),
+            ("BELIEF", atom.personalBelief),
+            ("GOAL", atom.goal),
+            ("PROBLEMS", atom.problems),
+            ("BENEFIT", atom.benefit),
+            ("OBJECTIONS", atom.beliefsObjections),
+            ("EXAMPLE", atom.example),
+            ("PROCESS", atom.process),
+            ("NOTES", atom.notes),
+        ]
+        let sections = fields.compactMap { label, value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return "\(label)\n\(value)"
+        }
+        return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
+    }
+
     init(atom: Atom, childCount: Int = 0, project: Atom? = nil, thinkspaces: [Thinkspace] = []) {
         let thinkspaceMetadata = atom.type == .thinkspace
             ? atom.metadataValue(as: ThinkspaceMetadata.self)
             : nil
+        // 500 chars is enough to fill a thumbnail page at 4pt font — more kills perf
+        let previewLimit = 500
         let previewText: String? = {
             if let body = atom.body, !body.isEmpty {
-                return String(body.prefix(100))
+                // JSON body (slide-based content) — extract slide text
+                let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
+                    if let plain = Self.extractTextFromJSON(trimmed) {
+                        return String(plain.prefix(previewLimit))
+                    }
+                }
+                return String(body.prefix(previewLimit))
             }
-            if atom.type == .thinkspace, let thinkspaceMetadata {
-                return "\(thinkspaceMetadata.blockIds.count) block\(thinkspaceMetadata.blockIds.count == 1 ? "" : "s")"
+            // Type-specific fallbacks from structured/metadata
+            switch atom.type {
+            case .connection:
+                if let text = Self.connectionPreviewText(atom: atom) {
+                    return String(text.prefix(previewLimit))
+                }
+                // Fallback: combinedText joins all connection fields + title
+                let combined = atom.combinedText
+                return combined.isEmpty ? nil : String(combined.prefix(previewLimit))
+            case .research:
+                let meta = atom.researchMetadata
+                let parts = [meta?.findings, meta?.summary, meta?.hook].compactMap { $0 }.filter { !$0.isEmpty }
+                return parts.isEmpty ? nil : String(parts.joined(separator: "\n\n").prefix(previewLimit))
+            case .project:
+                return atom.projectMetadata?.projectNotes.map { String($0.prefix(previewLimit)) }
+            case .task:
+                return atom.taskMetadata?.description.map { String($0.prefix(previewLimit)) }
+            case .content:
+                let meta = atom.metadataDict
+                let parts = [
+                    meta?["coreIdea"] as? String,
+                    meta?["contentDescription"] as? String,
+                    (meta?["hooks"] as? [String])?.joined(separator: "\n"),
+                ].compactMap { $0 }.filter { !$0.isEmpty }
+                return parts.isEmpty ? nil : String(parts.joined(separator: "\n\n").prefix(previewLimit))
+            case .thinkspace:
+                if let thinkspaceMetadata {
+                    return "\(thinkspaceMetadata.blockIds.count) block\(thinkspaceMetadata.blockIds.count == 1 ? "" : "s")"
+                }
+                return nil
+            default:
+                return nil
             }
-            return nil
         }()
 
         self.id = atom.uuid

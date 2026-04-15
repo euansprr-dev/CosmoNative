@@ -191,9 +191,8 @@ struct BrainstormContextSidebar: View {
                     .frame(width: 12, height: 2)
 
                 Text(tier.label)
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundColor(tier.accentColor)
+                    .font(DS.smallCaps)
+                    .foregroundStyle(tier.accentColor)
 
                 Spacer()
 
@@ -322,9 +321,8 @@ struct BrainstormContextSidebar: View {
                     .foregroundColor(DS.text)
                     .lineLimit(1)
             } else {
-                Text("LOADING")
-                    .dsSectionLabel()
-                    .tracking(0.8)
+                Text("Loading")
+                    .dsSmallCapsLabel()
             }
 
             Spacer()

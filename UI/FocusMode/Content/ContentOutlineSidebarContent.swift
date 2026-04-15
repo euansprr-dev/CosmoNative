@@ -94,10 +94,8 @@ struct ContentOutlineSidebarContent: View {
                 Image(systemName: "person.crop.circle.fill")
                     .font(DS.caption2)
                     .foregroundStyle(accentColor)
-                Text("CLIENT")
-                    .font(DS.caption2)
-                    .tracking(0.8)
-                    .foregroundStyle(DS.textMuted)
+                Text("Client")
+                    .dsSmallCapsLabel()
                 Spacer()
             }
 
@@ -181,10 +179,8 @@ struct ContentOutlineSidebarContent: View {
                 Image(systemName: "link.circle.fill")
                     .font(DS.caption2)
                     .foregroundStyle(accentColor)
-                Text("CONTEXT")
-                    .font(DS.caption2)
-                    .tracking(0.8)
-                    .foregroundStyle(DS.textMuted)
+                Text("Context")
+                    .dsSmallCapsLabel()
                 Spacer()
 
                 if isLoadingContext {
@@ -224,10 +220,8 @@ struct ContentOutlineSidebarContent: View {
 
     private var coreIdeaSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("CORE IDEA")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.88)
+            Text("Core Idea")
+                .dsSmallCapsLabel()
 
             TextEditor(text: $state.coreIdea)
                 .font(DS.callout)
@@ -260,10 +254,8 @@ struct ContentOutlineSidebarContent: View {
     private var hooksSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text("HOOKS")
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.88)
+                Text("Hooks")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 
@@ -410,10 +402,8 @@ struct ContentOutlineSidebarContent: View {
     @ViewBuilder
     private var outlineSectionHeader: some View {
         HStack(spacing: 6) {
-            Text("OUTLINE")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.88)
+            Text("Outline")
+                .dsSmallCapsLabel()
 
             if state.outline.isEmpty {
                 generateOutlineButton
@@ -995,10 +985,8 @@ struct ContentOutlineSidebarContent: View {
             ) {
                 if hasContext {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("IDEA CONTEXT")
-                            .font(.system(size: 9, weight: .semibold))
-                            .tracking(0.6)
-                            .foregroundStyle(DS.textMuted)
+                        Text("Idea Context")
+                            .dsSmallCapsLabel()
                         Text(state.inheritedIdeaContext)
                             .font(DS.caption2)
                             .foregroundStyle(DS.textSecondary)
@@ -1007,10 +995,8 @@ struct ContentOutlineSidebarContent: View {
                 }
                 if hasDirection {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("CREATIVE DIRECTION")
-                            .font(.system(size: 9, weight: .semibold))
-                            .tracking(0.6)
-                            .foregroundStyle(DS.textMuted)
+                        Text("Creative Direction")
+                            .dsSmallCapsLabel()
                         Text(state.inheritedCreativeDirection)
                             .font(DS.caption2)
                             .foregroundStyle(DS.textSecondary)
@@ -1104,10 +1090,8 @@ struct ContentOutlineSidebarContent: View {
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
 
-            Text("INTELLIGENCE")
-                .font(DS.caption2)
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+            Text("Intelligence")
+                .dsSmallCapsLabel()
 
             Spacer()
 
@@ -1167,10 +1151,8 @@ struct ContentOutlineSidebarContent: View {
                 Image(systemName: "chart.line.uptrend.xyaxis")
                     .font(DS.caption2)
                     .foregroundStyle(DS.green)
-                Text("WHAT'S WORKING")
-                    .font(DS.caption2)
-                    .tracking(0.8)
-                    .foregroundStyle(DS.textMuted)
+                Text("What's Working")
+                    .dsSmallCapsLabel()
             }
 
             whatsWorkingScopeRow(report)
@@ -1288,10 +1270,8 @@ struct ContentOutlineSidebarContent: View {
                 Image(systemName: "sparkles")
                     .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
-                Text("DRAFT INTELLIGENCE")
-                    .font(DS.caption2)
-                    .tracking(0.8)
-                    .foregroundStyle(DS.textMuted)
+                Text("Draft Intelligence")
+                    .dsSmallCapsLabel()
             }
 
             HStack(spacing: 6) {
@@ -1346,10 +1326,8 @@ struct ContentOutlineSidebarContent: View {
                     Image(systemName: "link")
                         .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
-                    Text("RELATED")
-                        .font(DS.caption2)
-                        .tracking(0.8)
-                        .foregroundStyle(DS.textMuted)
+                    Text("Related")
+                        .dsSmallCapsLabel()
                 }
 
                 VStack(spacing: 3) {
@@ -1452,10 +1430,8 @@ struct ContentOutlineSidebarContent: View {
             Image(systemName: "sparkles")
                 .font(DS.caption2)
                 .foregroundStyle(DS.accent)
-            Text("AMBIENT")
-                .font(DS.caption2)
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+            Text("Ambient")
+                .dsSmallCapsLabel()
 
             Spacer()
 
@@ -1478,9 +1454,7 @@ struct ContentOutlineSidebarContent: View {
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
             Text(title)
-                .font(DS.caption2)
-                .tracking(0.8)
-                .foregroundStyle(DS.textMuted)
+                .dsSmallCapsLabel()
         }
     }
 

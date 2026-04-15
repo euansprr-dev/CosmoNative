@@ -517,9 +517,7 @@ struct CloudSyncSettingsTab: View {
                 .foregroundStyle(color)
 
             Text(title)
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textMuted)
-                .tracking(1.2)
+                .dsSmallCapsLabel()
         }
     }
 

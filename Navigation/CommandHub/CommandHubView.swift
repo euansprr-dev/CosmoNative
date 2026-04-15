@@ -69,10 +69,8 @@ struct CommandHubView: View {
 
                 // Divider with dynamic label
                 HStack {
-                    Text(currentMode == .library ? "LIBRARY" : "INBOX VIEWS")
-                        .font(.system(size: 11, weight: .semibold))
-                        .tracking(1.2)
-                        .foregroundColor(CosmoColors.textTertiary)
+                    Text(currentMode == .library ? "Library" : "Inbox Views")
+                        .dsSmallCapsLabel()
 
                     Rectangle()
                         .fill(CosmoColors.glassGrey.opacity(0.5))

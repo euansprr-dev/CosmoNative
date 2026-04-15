@@ -667,10 +667,6 @@ private struct CosmoMarkdownBlockView: View {
             }
         case .quote(let text):
             HStack(alignment: .top, spacing: 12) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(DS.accent)
-                    .frame(width: 3)
-
                 Text(.init(text))
                     .font(.system(size: 14))
                     .foregroundColor(DS.textSecondary)

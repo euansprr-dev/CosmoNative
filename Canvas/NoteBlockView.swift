@@ -29,6 +29,11 @@ struct NoteBlockView: View {
     @State private var autoSaveTask: Task<Void, Never>?
     @State private var saveClosed = false
 
+    // Guards against stale writes: only save if the user actually edited this block.
+    // Without this, onDisappear would write back whatever was loaded from DB,
+    // which could be an old version if a GRDB observation update was blocked by isEditingBody.
+    @State private var hasLocalEdits = false
+
     // Prevents GRDB observation updates from triggering auto-save
     @State private var isSyncingFromDB = false
 
@@ -162,12 +167,8 @@ struct NoteBlockView: View {
 
     private var noteContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Entity identity strip
-            Capsule()
-                .fill(accentColor.opacity(0.35))
-                .frame(height: 3)
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, -8)
+            // Gilt corner lives on the wrapper; keep minimal header top inset.
+            Color.clear.frame(height: 2)
 
             titleView
 
@@ -188,7 +189,10 @@ struct NoteBlockView: View {
                     print("[BLOCK-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
                     noteText = plainText
                     noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
-                    if !isSyncingFromDB { scheduleAutoSave() }
+                    if !isSyncingFromDB {
+                        hasLocalEdits = true
+                        scheduleAutoSave()
+                    }
                 },
                 onActivate: { isEditingBody = true }
             )
@@ -211,8 +215,18 @@ struct NoteBlockView: View {
                 }
             }
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Signature detail: a faint sepia ruled margin down the left edge for
+        // the journal feel. Lives behind the content so the editor ignores it.
+        .background(alignment: .leading) {
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(width: 0.5)
+                .padding(.vertical, 14)
+                .padding(.leading, 14)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
             isEditingTitle = false
             isEditingBody = false
@@ -244,7 +258,10 @@ struct NoteBlockView: View {
                         print("[BLOCK-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
                         noteTitleDocument = document
                         noteTitleText = plainText
-                        if !isSyncingFromDB { scheduleAutoSave() }
+                        if !isSyncingFromDB {
+                            hasLocalEdits = true
+                            scheduleAutoSave()
+                        }
                     },
                     onDeactivate: { isEditingTitle = false },
                     onCommit: { isEditingTitle = false },
@@ -394,6 +411,8 @@ struct NoteBlockView: View {
                     }
 
                     guard didApplyDatabaseState else { return }
+                    // DB state was applied — local content now matches DB, so no local edits to protect.
+                    hasLocalEdits = false
                     isSyncingFromDB = true
                     DispatchQueue.main.async {
                         isSyncingFromDB = false
@@ -574,8 +593,16 @@ struct NoteBlockView: View {
     /// Used on close to guarantee data is persisted before the block/app exits.
     private func saveNoteSync() {
         let uuid = trackedEntityUuid
-        print("[BLOCK-NOTE] saveNoteSync() — uuid=\(uuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(80)))\"")
+        print("[BLOCK-NOTE] saveNoteSync() — uuid=\(uuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) hasLocalEdits=\(hasLocalEdits) bodyPreview=\"\(String(noteText.prefix(80)))\"")
         guard !uuid.isEmpty else { print("[BLOCK-NOTE] saveNoteSync() SKIPPED — empty uuid"); return }
+        // Only write if the user actually made edits in this block. Without this guard,
+        // onDisappear would write back stale state (e.g. the block loaded with 100 chars,
+        // focus mode saved 2474 chars, but isEditingBody blocked the GRDB observation from
+        // applying the update — so we'd overwrite the good data with the old version).
+        guard hasLocalEdits else {
+            print("[BLOCK-NOTE] saveNoteSync() SKIPPED — no local edits, avoiding stale overwrite uuid=\(uuid)")
+            return
+        }
 
         do {
             try CosmoDatabase.shared.write { db in

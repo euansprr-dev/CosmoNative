@@ -20,10 +20,8 @@ struct ClusterIntentField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text("CLUSTER INTENT")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.8)
+                Text("Cluster Intent")
+                    .dsSmallCapsLabel()
 
                 Spacer(minLength: 0)
 

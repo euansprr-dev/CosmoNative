@@ -14,7 +14,6 @@ struct PhysicsFabricView: View {
         .padding(DS.space24)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
-        .overlay(alignment: .leading) { accentBar }
         .dsRestingShadow()
     }
 
@@ -74,17 +73,6 @@ struct PhysicsFabricView: View {
             .foregroundStyle(DS.text.opacity(0.9))
             .lineSpacing(6)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    // MARK: - Accent Bar
-
-    @ViewBuilder
-    private var accentBar: some View {
-        RoundedRectangle(cornerRadius: 1.5)
-            .fill(DS.entityNote)
-            .frame(width: 3)
-            .padding(.vertical, DS.space24)
-            .padding(.leading, DS.space24)
     }
 
     // MARK: - Parser

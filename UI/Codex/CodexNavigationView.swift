@@ -53,7 +53,7 @@ struct CodexNavigationView: View {
                     onImport: importCodex,
                     showGrid: $showGrid
                 )
-                CodexCategoryDivider()
+                AkashicSectionDivider()
                 categoryTabBar
                 contentArea
             }
@@ -324,34 +324,46 @@ private struct CodexCategoryTabLabel: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .accessibilityHidden(true)
-            Text(label)
-                .font(DS.caption)
-            Text("\(count)")
-                .font(DS.caption2)
-                .foregroundStyle(isSelected ? .white.opacity(0.7) : DS.textMuted)
+        VStack(spacing: 0) {
+            tabContent
+            tabUnderline
         }
-        .foregroundStyle(isSelected ? .white : (isHovered ? color : DS.textSecondary))
-        .padding(.horizontal, 12)
-        .frame(height: 32)
-        .background(tabBackgroundColor, in: Capsule())
-        .overlay {
-            if !isSelected {
-                Capsule().stroke(isHovered ? color.opacity(0.2) : DS.border, lineWidth: 1)
-            }
-        }
-        .scaleEffect(isHovered && !isSelected ? 1.03 : 1.0)
         .animation(ProMotionSprings.hover, value: isHovered)
         .onHover { isHovered = $0 }
     }
 
+    private var tabContent: some View {
+        HStack(spacing: 5) {
+            AkashicCategoryDiamond(icon: icon, color: color, size: .small)
+            Text(label)
+                .font(DS.caption)
+                .fontDesign(.serif)
+            Text("\(count)")
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
+        }
+        .foregroundStyle(tabTextColor)
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(tabBackgroundColor, in: .rect(cornerRadius: DS.radiusXSmall))
+    }
+
+    private var tabUnderline: some View {
+        Rectangle()
+            .fill(isSelected ? DS.gilt : DS.sepiaSubtle)
+            .frame(height: isSelected ? 2 : 0.5)
+    }
+
+    private var tabTextColor: Color {
+        if isSelected { return DS.inkWash }
+        if isHovered { return color }
+        return DS.inkFaded
+    }
+
     private var tabBackgroundColor: Color {
-        if isSelected { return color }
-        if isHovered { return color.opacity(0.08) }
-        return DS.surface
+        if isSelected { return DS.giltSoft }
+        if isHovered { return DS.giltSoft.opacity(0.5) }
+        return .clear
     }
 }
 
@@ -383,14 +395,13 @@ struct CodexElementCardView: View {
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             cardHeader
-            CodexFrequencyIndicator(frequency: entry.element.frequency, color: categoryColor, mode: .compact)
+            GiltHairline()
+            ConstellationDots(frequency: entry.element.frequency)
             definitionText
         }
         .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
-        .clipShape(.rect(cornerRadius: DS.radiusMedium))
-        .overlay(alignment: .leading) { categoryAccentBar }
+        .dsVellumCard(cornerRadius: DS.radiusMedium)
     }
 
     private var cardHeader: some View {
@@ -398,51 +409,23 @@ struct CodexElementCardView: View {
             Text(entry.element.canonicalName)
                 .font(DS.title3)
                 .fontWeight(.bold)
-                .foregroundStyle(DS.text)
+                .fontDesign(.serif)
+                .foregroundStyle(DS.inkWash)
                 .lineLimit(1)
             Spacer()
-            categoryBadge
+            AkashicCategoryDiamond(
+                icon: entry.element.category.icon,
+                color: categoryColor,
+                size: .small
+            )
         }
-    }
-
-    private var categoryBadge: some View {
-        HStack(spacing: 3) {
-            Image(systemName: entry.element.category.icon)
-                .font(.system(size: 9))
-                .accessibilityHidden(true)
-            Text(entry.element.category.displayName)
-                .font(DS.caption2)
-        }
-        .foregroundStyle(categoryColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(categoryColor.opacity(0.12), in: Capsule())
     }
 
     private var definitionText: some View {
         Text(entry.element.definition)
             .font(DS.callout)
-            .foregroundStyle(DS.textSecondary)
+            .foregroundStyle(DS.inkFaded)
             .lineLimit(2)
-    }
-
-    private var cardBackground: some View {
-        ZStack {
-            DS.surfaceElevated
-            LinearGradient(
-                colors: [categoryColor.opacity(0.04), .clear],
-                startPoint: .top,
-                endPoint: .center
-            )
-        }
-    }
-
-    private var categoryAccentBar: some View {
-        RoundedRectangle(cornerRadius: 2)
-            .fill(categoryColor)
-            .frame(width: 3)
-            .padding(.vertical, 8)
-            .padding(.leading, 1)
     }
 }
 
@@ -488,22 +471,15 @@ struct CodexWalkthroughCardView: View {
         }
         .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.surfaceElevated)
-        .clipShape(.rect(cornerRadius: DS.radiusMedium))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(CodexElementCategory.dominantFrame.color)
-                .frame(width: 3)
-                .padding(.vertical, 8)
-                .padding(.leading, 1)
-        }
+        .dsVellumCard(cornerRadius: DS.radiusMedium)
     }
 
     private var titleRow: some View {
         Text(entry.walkthrough.postTitle)
             .font(DS.title3)
             .fontWeight(.bold)
-            .foregroundStyle(DS.text)
+            .fontDesign(.serif)
+            .foregroundStyle(DS.inkWash)
             .lineLimit(1)
     }
 

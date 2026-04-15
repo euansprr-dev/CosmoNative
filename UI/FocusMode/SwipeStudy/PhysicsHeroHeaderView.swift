@@ -30,9 +30,8 @@ struct PhysicsHeroHeaderView: View {
                 .foregroundStyle(DS.entitySwipe)
                 .accessibilityHidden(true)
 
-            Text("CONTENT PHYSICS")
-                .font(DS.title2)
-                .tracking(1.5)
+            Text("Content Physics")
+                .font(DS.smallCaps)
                 .foregroundStyle(DS.entitySwipe)
 
             Spacer()

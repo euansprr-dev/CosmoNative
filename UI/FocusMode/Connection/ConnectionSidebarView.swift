@@ -536,9 +536,7 @@ struct ConnectionSidebarView: View {
                 .font(.system(size: 10))
                 .foregroundColor(DS.textMuted)
             Text(title)
-                .font(.system(size: 10, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+                .dsSmallCapsLabel()
         }
     }
 
@@ -575,9 +573,8 @@ struct ConnectionSidebarView: View {
                 .fill(maturityColor(level))
                 .frame(width: 6, height: 6)
             Text(level.displayName)
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.5)
-                .foregroundColor(maturityColor(level))
+                .font(DS.smallCaps)
+                .foregroundStyle(maturityColor(level))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -603,9 +600,8 @@ struct ConnectionSidebarView: View {
         }
 
         return Text(label)
-            .font(.system(size: 8, weight: .bold))
-            .tracking(0.4)
-            .foregroundColor(colorForType(type))
+            .font(DS.smallCaps)
+            .foregroundStyle(colorForType(type))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(colorForType(type).opacity(0.12), in: Capsule())

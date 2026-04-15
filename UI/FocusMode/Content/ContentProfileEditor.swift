@@ -840,10 +840,8 @@ struct ContentProfileEditor: View {
     // MARK: - Shared Field Components
 
     private func sectionLabel(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(DS.caption)
-            .foregroundStyle(DS.textMuted)
-            .tracking(1.2)
+        Text(title)
+            .dsSmallCapsLabel()
     }
 
     private func fieldLabel(_ label: String) -> some View {

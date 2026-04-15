@@ -300,6 +300,113 @@ enum MentionContextHelper {
         }
         return mentionBlock
     }
+
+    // MARK: - Writing Engine Expansion
+
+    /// Expands @-mentioned atoms for the writing engine with richer context.
+    /// Connections include their full structured section data (Goal, Problems, Examples, etc.)
+    /// so the writer can map sections to blueprint physics.
+    static func expandMentionsForWritingEngine(text: String, atoms: [Atom], bodyLimit: Int = 3000) -> String {
+        var result = text
+        var usedUUIDs: Set<String> = []
+
+        for atom in atoms {
+            let title = atom.title ?? "Untitled"
+            let pattern = "@\(title)"
+            let typeLabel = atom.type.rawValue.lowercased()
+
+            var contextBlock = "@\(title)\n<referenced_\(typeLabel) title=\"\(title)\" uuid=\"\(atom.uuid)\">"
+
+            // Body content
+            let body = String((atom.body ?? "").prefix(bodyLimit))
+            if !body.isEmpty {
+                contextBlock += "\n\(body)"
+            }
+
+            // Connection-specific: include all structured sections
+            if atom.type == .connection,
+               let structured = atom.structured,
+               let data = ConnectionStructuredData.fromJSON(structured) {
+                let filledSections = data.sections.filter { !$0.items.isEmpty }
+                if !filledSections.isEmpty {
+                    contextBlock += "\n\nStructured Sections:"
+                    for section in filledSections {
+                        contextBlock += "\n  \(section.type.displayName):"
+                        for item in section.items {
+                            let content = item.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !content.isEmpty {
+                                contextBlock += "\n    - \(content)"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Swipe analysis (same as chat expansion)
+            if atom.isSwipeFileAtom, let analysis = atom.swipeAnalysis {
+                let summary = swipeAnalysisSummary(analysis)
+                if !summary.isEmpty {
+                    contextBlock += "\nSwipe Analysis: \(summary)"
+                }
+            }
+
+            contextBlock += "\n</referenced_\(typeLabel)>"
+
+            if let range = result.range(of: pattern) {
+                result = result.replacingCharacters(in: range, with: contextBlock)
+                usedUUIDs.insert(atom.uuid)
+            }
+        }
+
+        // Append atoms not found inline as a trailing block
+        let unusedAtoms = atoms.filter { !usedUUIDs.contains($0.uuid) }
+        if !unusedAtoms.isEmpty {
+            result += "\n\n" + buildWritingEngineBlock(atoms: unusedAtoms, bodyLimit: bodyLimit)
+        }
+
+        return result
+    }
+
+    /// Builds a full referenced context block for the writing engine, with rich connection data.
+    private static func buildWritingEngineBlock(atoms: [Atom], bodyLimit: Int = 3000) -> String {
+        var block = "## Referenced Context\n"
+        for atom in atoms {
+            let typeLabel = atom.type.rawValue.uppercased()
+            let title = atom.title ?? "Untitled"
+            let body = String((atom.body ?? "").prefix(bodyLimit))
+            block += "[\(typeLabel): \"\(title)\"] (UUID: \(atom.uuid))\n"
+            if !body.isEmpty { block += "\(body)\n" }
+
+            // Connection structured sections
+            if atom.type == .connection,
+               let structured = atom.structured,
+               let data = ConnectionStructuredData.fromJSON(structured) {
+                let filledSections = data.sections.filter { !$0.items.isEmpty }
+                if !filledSections.isEmpty {
+                    block += "Structured Sections:\n"
+                    for section in filledSections {
+                        block += "  \(section.type.displayName):\n"
+                        for item in section.items {
+                            let content = item.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !content.isEmpty {
+                                block += "    - \(content)\n"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Swipe analysis
+            if atom.isSwipeFileAtom, let analysis = atom.swipeAnalysis {
+                let summary = swipeAnalysisSummary(analysis)
+                if !summary.isEmpty {
+                    block += "Swipe Analysis: \(summary)\n"
+                }
+            }
+            block += "\n"
+        }
+        return block
+    }
 }
 
 // MARK: - Message

@@ -1,5 +1,6 @@
 // CosmoOS/UI/Codex/CodexCardHoverModifier.swift
-// Shared hover interaction for Codex cards — scale, shadow, and border glow.
+// Akashic hover interaction — gilt border transition, warm shadow, subtle lift.
+// April 2026 — Akashic Records Premium Redesign
 
 import SwiftUI
 
@@ -9,17 +10,17 @@ struct CodexCardHoverModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isHovered ? 1.02 : 1.0)
+            .scaleEffect(isHovered ? 1.015 : 1.0)
             .shadow(
-                color: isHovered ? accentColor.opacity(0.15) : .clear,
-                radius: isHovered ? 12 : 0,
-                y: isHovered ? 4 : 0
+                color: isHovered ? DS.gilt.opacity(0.15) : .clear,
+                radius: isHovered ? 10 : 0,
+                y: isHovered ? 3 : 0
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
                     .stroke(
-                        isHovered ? accentColor.opacity(0.3) : .clear,
-                        lineWidth: 1.5
+                        isHovered ? DS.giltMuted : .clear,
+                        lineWidth: 0.5
                     )
             )
             .animation(ProMotionSprings.hover, value: isHovered)

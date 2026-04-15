@@ -84,7 +84,7 @@ struct ContentContextPanel: View {
             .background(DS.surface)
             .overlay(alignment: .leading) {
                 Rectangle()
-                    .fill(DS.border)
+                    .fill(DS.entityContent.opacity(0.1))
                     .frame(width: 1)
             }
             .onAppear {
@@ -95,7 +95,7 @@ struct ContentContextPanel: View {
                 let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
                 ambientEngine.updateContext(focusAtomUUID: atom.uuid, currentText: queryText)
             }
-            .onChange(of: state.draftContent) { _ in
+            .onChange(of: state.draftContent) {
                 debounceRelatedRefresh()
             }
         }
@@ -106,12 +106,13 @@ struct ContentContextPanel: View {
     private var panelHeader: some View {
         HStack(spacing: 8) {
             Image(systemName: "link.circle.fill")
-                .font(.system(size: 14))
-                .foregroundColor(accentColor)
+                .font(DS.body)
+                .foregroundStyle(accentColor)
 
             Text("Context")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(DS.text)
+                .font(DS.callout)
+                .fontWeight(.semibold)
+                .foregroundStyle(DS.text)
 
             Spacer()
         }
@@ -128,8 +129,8 @@ struct ContentContextPanel: View {
                 .controlSize(.small)
                 .tint(DS.textMuted)
             Text("Loading context...")
-                .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -143,16 +144,17 @@ struct ContentContextPanel: View {
 
             Image(systemName: "text.below.photo")
                 .font(.system(size: 28, weight: .light))
-                .foregroundColor(DS.textMuted.opacity(0.5))
+                .foregroundStyle(DS.textMuted.opacity(0.5))
 
             VStack(spacing: 4) {
                 Text("Start writing to build context")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(DS.textMuted)
 
                 Text("Context from linked ideas, swipes,\nand research will appear here")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted.opacity(0.7))
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted.opacity(0.7))
                     .multilineTextAlignment(.center)
             }
 
@@ -182,19 +184,20 @@ struct ContentContextPanel: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(CosmoMentionColors.idea)
+                    .font(DS.caption)
+                    .foregroundStyle(CosmoMentionColors.idea)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(idea.title ?? "Untitled Idea")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .font(DS.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(DS.text)
                         .lineLimit(2)
 
                     if let body = idea.body, !body.isEmpty {
                         Text(String(body.prefix(80)))
-                            .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textMuted)
                             .lineLimit(2)
                     }
 
@@ -208,7 +211,7 @@ struct ContentContextPanel: View {
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(12)
             .dsGlassSection()
@@ -223,7 +226,7 @@ struct ContentContextPanel: View {
                 .frame(width: 6, height: 6)
             Text(status.displayName)
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(status.color)
+                .foregroundStyle(status.color)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -267,7 +270,7 @@ struct ContentContextPanel: View {
             Image(systemName: showAllSwipes ? "chevron.up" : "chevron.down")
                 .font(.system(size: 8, weight: .bold))
         }
-        .foregroundColor(DS.textMuted)
+        .foregroundStyle(DS.textMuted)
         .frame(maxWidth: .infinity)
         .padding(.top, 4)
     }
@@ -286,8 +289,9 @@ struct ContentContextPanel: View {
                     .frame(width: 5, height: 5)
 
                 Text(swipe.title ?? "Untitled Swipe")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Spacer()
@@ -297,7 +301,7 @@ struct ContentContextPanel: View {
                    let hookType = swipeAnalysis.hookType {
                     Text(hookType.displayName)
                         .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(DS.entitySwipe)
+                        .foregroundStyle(DS.entitySwipe)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(DS.entitySwipe.opacity(0.12), in: Capsule())
@@ -338,8 +342,9 @@ struct ContentContextPanel: View {
         } label: {
             HStack(spacing: 8) {
                 Text(conn.title ?? "Connection")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Spacer()
@@ -364,7 +369,7 @@ struct ContentContextPanel: View {
 
         Text(maturity.capitalized)
             .font(.system(size: 9, weight: .medium))
-            .foregroundColor(color)
+            .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(color.opacity(0.12), in: Capsule())
@@ -378,8 +383,9 @@ struct ContentContextPanel: View {
             sectionHeader(title: "FRAMEWORK", icon: "rectangle.3.group.fill")
 
             Text(framework)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(accentColor)
+                .font(DS.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(accentColor)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(accentColor.opacity(0.12), in: Capsule())
@@ -406,13 +412,13 @@ struct ContentContextPanel: View {
     private func hookCard(_ hook: String, index: Int) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text("\(index + 1)")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundColor(accentColor)
+                .font(DS.caption2.weight(.bold))
+                .foregroundStyle(accentColor)
                 .frame(width: 16)
 
             Text(hook)
-                .font(.system(size: 11))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textSecondary)
                 .lineLimit(3)
 
             Spacer(minLength: 4)
@@ -423,7 +429,7 @@ struct ContentContextPanel: View {
             } label: {
                 Image(systemName: "doc.on.clipboard")
                     .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 24, height: 24)
                     .background(DS.glassCardFill, in: Circle())
             }
@@ -461,17 +467,15 @@ struct ContentContextPanel: View {
         HStack(spacing: 6) {
             Image(systemName: showIntelligence ? "chevron.down" : "chevron.right")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 12)
 
             Image(systemName: "brain.head.profile")
                 .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
-            Text("INTELLIGENCE")
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+            Text("Intelligence")
+                .dsSmallCapsLabel()
 
             Spacer()
 
@@ -479,7 +483,7 @@ struct ContentContextPanel: View {
             if count > 0 {
                 Text("\(count)")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(accentColor)
+                    .foregroundStyle(accentColor)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(accentColor.opacity(0.12), in: Capsule())
@@ -507,8 +511,8 @@ struct ContentContextPanel: View {
                 ProgressView()
                     .controlSize(.small)
                 Text("Analyzing patterns...")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(10)
         }
@@ -521,39 +525,39 @@ struct ContentContextPanel: View {
             HStack(spacing: 6) {
                 Image(systemName: "chart.line.uptrend.xyaxis")
                     .font(.system(size: 9))
-                    .foregroundColor(Color(hex: "#34D399"))
-                Text("WHAT'S WORKING")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(Color(hex: "#34D399"))
+                Text("What's Working")
+                    .dsSmallCapsLabel()
             }
 
             HStack(spacing: 6) {
                 Image(systemName: "sparkle")
                     .font(.system(size: 9))
-                    .foregroundColor(Color(hex: "#34D399"))
+                    .foregroundStyle(Color(hex: "#34D399"))
                 Text("\(report.platform.capitalized) \(report.format) — \(report.niche)")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(Color(hex: "#34D399"))
+                    .font(DS.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Color(hex: "#34D399"))
                 Spacer()
                 Text("\(report.sampleSize) swipes")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             if let topHook = report.dominantHooks.first {
                 HStack(spacing: 8) {
                     Image(systemName: "text.quote")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.entityIdea)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.entityIdea)
                         .frame(width: 16)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(topHook.hookType)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.text)
+                            .font(DS.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(DS.text)
                         Text("\(String(format: "%.0f", topHook.frequency * 100))% of top content")
                             .font(.system(size: 9))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                 }
             }
@@ -561,16 +565,17 @@ struct ContentContextPanel: View {
             if let topFw = report.winningStructures.first {
                 HStack(spacing: 8) {
                     Image(systemName: "rectangle.3.group.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(Color(hex: "#FBBF24"))
+                        .font(DS.caption2)
+                        .foregroundStyle(Color(hex: "#FBBF24"))
                         .frame(width: 16)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(topFw.framework)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.text)
+                            .font(DS.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(DS.text)
                         Text("\(String(format: "%.0f", topFw.frequency * 100))% adoption")
                             .font(.system(size: 9))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                 }
             }
@@ -579,12 +584,12 @@ struct ContentContextPanel: View {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Color(hex: "#34D399"))
+                        .foregroundStyle(Color(hex: "#34D399"))
                         .frame(width: 16)
                     ForEach(report.trendingTopics.prefix(3), id: \.self) { item in
                         Text(item)
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(Color(hex: "#34D399"))
+                            .foregroundStyle(Color(hex: "#34D399"))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color(hex: "#34D399").opacity(0.12), in: Capsule())
@@ -612,20 +617,19 @@ struct ContentContextPanel: View {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 9))
-                        .foregroundColor(DS.textMuted)
-                    Text("DRAFT INTELLIGENCE")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
+                    Text("Draft Intelligence")
+                        .dsSmallCapsLabel()
                 }
 
                 HStack(spacing: 8) {
                     Image(systemName: "doc.on.doc.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.entitySwipe)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.entitySwipe)
                     Text("\(swipeUUIDs.count) matched swipe\(swipeUUIDs.count == 1 ? "" : "s")")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(DS.textSecondary)
                 }
 
                 if let draftPackageData = atom.structured,
@@ -633,11 +637,12 @@ struct ContentContextPanel: View {
                    let draftPackage = try? JSONDecoder().decode(ContentDraftPackage.self, from: data) {
                     HStack(spacing: 8) {
                         Image(systemName: "chart.bar.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.accent)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.accent)
                         Text("Confidence: \(String(format: "%.0f%%", draftPackage.confidence * 100))")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(DS.textSecondary)
+                            .font(DS.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(DS.textSecondary)
                     }
                 }
 
@@ -669,9 +674,10 @@ struct ContentContextPanel: View {
                 .scaleEffect(0.6)
                 .tint(DS.text)
             Text("Generating...")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption2)
+                .fontWeight(.medium)
         }
-        .foregroundColor(DS.textSecondary)
+        .foregroundStyle(DS.textSecondary)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
         .background(DS.accent.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
@@ -681,11 +687,12 @@ struct ContentContextPanel: View {
     private var draftButtonContent: some View {
         HStack(spacing: 6) {
             Image(systemName: "sparkles")
-                .font(.system(size: 11))
+                .font(DS.caption2)
             Text("Generate Draft")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.caption2)
+                .fontWeight(.semibold)
         }
-        .foregroundColor(DS.text)
+        .foregroundStyle(DS.text)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
         .background(DS.accent, in: RoundedRectangle(cornerRadius: 8))
@@ -761,8 +768,8 @@ struct ContentContextPanel: View {
                 ProgressView()
                     .controlSize(.small)
                 Text("Finding related...")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(10)
         } else if !relatedContent.isEmpty {
@@ -770,11 +777,9 @@ struct ContentContextPanel: View {
                 HStack(spacing: 6) {
                     Image(systemName: "link")
                         .font(.system(size: 9))
-                        .foregroundColor(DS.textMuted)
-                    Text("RELATED")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
+                    Text("Related")
+                        .dsSmallCapsLabel()
                 }
 
                 VStack(spacing: 4) {
@@ -800,20 +805,21 @@ struct ContentContextPanel: View {
                     .frame(width: 2, height: 28)
 
                 Image(systemName: iconForAtomType(ref.type))
-                    .font(.system(size: 10))
-                    .foregroundColor(colorForAtomType(ref.type))
+                    .font(DS.caption2)
+                    .foregroundStyle(colorForAtomType(ref.type))
                     .frame(width: 14)
 
                 Text(ref.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text(String(format: "%.0f%%", ref.relevanceScore * 100))
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(8)
             .dsGlassSection(cornerRadius: 8)
@@ -830,18 +836,16 @@ struct ContentContextPanel: View {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 9))
-                        .foregroundColor(DS.accent)
-                    Text("AMBIENT")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.accent)
+                    Text("Ambient")
+                        .dsSmallCapsLabel()
 
                     Spacer()
 
                     if !ambientEngine.ambientResults.isEmpty {
                         Text("\(ambientEngine.ambientResults.count)")
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(DS.accent)
+                            .foregroundStyle(DS.accent)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(DS.accent.opacity(0.15), in: Capsule())
@@ -854,8 +858,8 @@ struct ContentContextPanel: View {
                             .controlSize(.small)
                             .tint(DS.accent)
                         Text("Searching...")
-                            .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
@@ -884,11 +888,9 @@ struct ContentContextPanel: View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             Text(title)
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+                .dsSmallCapsLabel()
         }
     }
 

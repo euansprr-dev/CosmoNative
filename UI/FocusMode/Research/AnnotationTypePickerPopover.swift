@@ -17,10 +17,8 @@ struct AnnotationTypePickerPopover: View {
         VStack(alignment: .leading, spacing: 8) {
             // Header label
             Text("Annotate:")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(Color.white.opacity(0.5))
-                .textCase(.uppercase)
-                .tracking(0.5)
+                .font(DS.smallCaps)
+                .foregroundStyle(Color.white.opacity(0.5))
 
             // Selected text preview (truncated)
             Text("\"\(selectedText.prefix(60))\(selectedText.count > 60 ? "..." : "")\"")

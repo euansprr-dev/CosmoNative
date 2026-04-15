@@ -290,8 +290,7 @@ struct LinkConnectionsOverlay: View {
                 .fill(color)
                 .frame(width: 5, height: 5)
             Text(level.displayName)
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.3)
+                .font(DS.smallCaps)
                 .foregroundStyle(color)
         }
         .padding(.horizontal, 6)

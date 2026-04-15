@@ -132,7 +132,7 @@ struct SidebarNavSection: View {
                     .background(isActive ? DS.bg : DS.surface, in: Capsule())
                     .overlay(
                         Capsule()
-                            .stroke(isActive ? DS.accent.opacity(0.12) : DS.borderSubtle, lineWidth: 1)
+                            .stroke(isActive ? DS.accent.opacity(0.12) : DS.sepiaSubtle, lineWidth: 0.5)
                     )
             }
         }

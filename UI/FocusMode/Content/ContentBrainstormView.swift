@@ -77,10 +77,8 @@ struct ContentBrainstormView: View {
     private var hooksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Text("HOOKS")
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.88)
+                Text("Hooks")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 
@@ -162,10 +160,8 @@ struct ContentBrainstormView: View {
 
     private var descriptionSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("DESCRIPTION")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.88)
+            Text("Description")
+                .dsSmallCapsLabel()
 
             Text("Context, theme, or background for the content")
                 .font(DS.callout)
@@ -192,11 +188,6 @@ struct ContentBrainstormView: View {
                                     )
                             )
 
-                        // Left accent bar
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(DS.accent.opacity(0.5))
-                            .frame(width: 3)
-                            .padding(.vertical, 12)
                     }
                 )
                 .onChange(of: state.contentDescription) { _, _ in

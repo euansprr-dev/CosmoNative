@@ -6,8 +6,16 @@
 
 import SwiftUI
 
-/// A clean white wrapper that provides minimal chrome
-/// for all floating block types on the Thinkspace canvas.
+/// Surface style for a block wrapper. Most blocks use `.vellum` (aged parchment,
+/// the default for the Akashic canvas). Photographic / chromatically-sensitive
+/// blocks like Media opt into `.crisp` for pure white backgrounds.
+enum BlockSurfaceStyle {
+    case vellum
+    case crisp
+}
+
+/// Akashic canvas wrapper — vellum surface, gilt corner ornament, tiered shadow
+/// and accent-glow selection. Shared chrome for all floating block types.
 struct CosmoBlockWrapper<Content: View>: View {
     let block: CanvasBlock
     let accentColor: Color
@@ -21,6 +29,12 @@ struct CosmoBlockWrapper<Content: View>: View {
     // When true, the block grows vertically to fit content (no fixed height, no scaling)
     var autoHeight: Bool = false
 
+    // Surface style — .vellum (default) or .crisp (pure white, for Media)
+    var surfaceStyle: BlockSurfaceStyle = .vellum
+
+    // When true, suppresses the gilt corner ornament (for blocks with their own chrome)
+    var suppressGiltCorner: Bool = false
+
     // Optional callbacks
     var onClose: (() -> Void)? = nil
     var onFocusMode: (() -> Void)? = nil
@@ -32,6 +46,7 @@ struct CosmoBlockWrapper<Content: View>: View {
     @State private var blockSize: CGSize
     @State private var isResizing = false
     @State private var isDragging = false
+    @State private var hasAppeared = false
 
     // Selection is read from block, not a binding
     private var isSelected: Bool { block.isSelected }
@@ -48,6 +63,8 @@ struct CosmoBlockWrapper<Content: View>: View {
         icon: String,
         title: String,
         autoHeight: Bool = false,
+        surfaceStyle: BlockSurfaceStyle = .vellum,
+        suppressGiltCorner: Bool = false,
         onClose: (() -> Void)? = nil,
         onFocusMode: (() -> Void)? = nil,
         onDuplicate: (() -> Void)? = nil,
@@ -59,6 +76,8 @@ struct CosmoBlockWrapper<Content: View>: View {
         self.icon = icon
         self.title = title
         self.autoHeight = autoHeight
+        self.surfaceStyle = surfaceStyle
+        self.suppressGiltCorner = suppressGiltCorner
         self.onClose = onClose
         self.onFocusMode = onFocusMode
         self.onDuplicate = onDuplicate
@@ -121,7 +140,16 @@ struct CosmoBlockWrapper<Content: View>: View {
             .background(blockBackground)
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
             .overlay(blockBorder)
-            // Top-edge highlight — removed for light mode (no-op)
+            .overlay(alignment: .topLeading) {
+                if !suppressGiltCorner {
+                    GiltCornerBracket()
+                        .stroke(DS.gilt, lineWidth: 0.8)
+                        .frame(width: 12, height: 12)
+                        .padding(7)
+                        .opacity(isHovered || isSelected ? 0.85 : 0.55)
+                        .allowsHitTesting(false)
+                }
+            }
             // Simple edge resize overlay (safe implementation)
             .overlay {
                 SimpleResizeOverlay(
@@ -132,12 +160,25 @@ struct CosmoBlockWrapper<Content: View>: View {
                 )
             }
             // PERF: Fixed shadow during drag — avoids GPU shadow recomputation per frame.
-            // Shadow params set once on drag start/end, not interpolated every frame.
+            // Resting / hover / drag tiers use soft natural-light shadow pair.
             .shadow(
-                color: .black.opacity(isDragging ? 0.10 : (isSelected ? 0.06 : 0.04)),
-                radius: isDragging ? 20 : (isHovered ? 14 : 8),
+                color: .black.opacity(isDragging ? 0.10 : (isHovered ? 0.06 : 0.04)),
+                radius: isDragging ? 20 : (isHovered ? 16 : 8),
                 x: 0,
                 y: isDragging ? 8 : (isHovered ? 4 : 2)
+            )
+            .shadow(
+                color: .black.opacity(isDragging ? 0.05 : (isHovered ? 0.03 : 0.02)),
+                radius: isDragging ? 4 : (isHovered ? 4 : 2),
+                x: 0,
+                y: isDragging ? 2 : (isHovered ? 2 : 1)
+            )
+            // Accent glow layer — lights up on selection to echo CommandCenter affordance
+            .shadow(
+                color: isSelected ? DS.accentGlow.opacity(0.6) : .clear,
+                radius: isSelected ? 14 : 0,
+                x: 0,
+                y: 0
             )
             .animation(isDragging ? nil : ProMotionSprings.hover, value: isDragging)
             // Per design language: card hover is depth change, not scale.
@@ -170,6 +211,9 @@ struct CosmoBlockWrapper<Content: View>: View {
         // ProMotion-optimized animations
         // NOTE: Removed animation on isSelected to avoid conflicts with toolbar transition
         .animation(ProMotionSprings.hover, value: isHovered)
+        // Entrance: gentle fade + spring-up on first paint
+        .opacity(hasAppeared ? 1.0 : 0.0)
+        .offset(y: hasAppeared ? 0 : 6)
         .onChange(of: block.size) { _, newSize in
             guard !isResizing, blockSize != newSize else { return }
             blockSize = newSize
@@ -177,23 +221,35 @@ struct CosmoBlockWrapper<Content: View>: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .onAppear {
+            guard !hasAppeared else { return }
+            withAnimation(ProMotionSprings.cardEntrance) {
+                hasAppeared = true
+            }
+        }
     }
 
     // MARK: - Background
 
+    /// Base surface fill — vellum (warm parchment) for most blocks,
+    /// crisp white for media/photographic content.
+    private var baseSurface: Color {
+        switch surfaceStyle {
+        case .vellum: return DS.vellum
+        case .crisp:  return DS.surfaceElevated
+        }
+    }
+
     @ViewBuilder
     private var blockBackground: some View {
-        // Greenhouse: clean white card surface with optional accent tint when selected
+        let shape = RoundedRectangle(cornerRadius: DS.radiusMedium)
         if isSelected {
             ZStack {
-                RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .fill(DS.surfaceElevated)
-                RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .fill(accentColor.opacity(0.03))
+                shape.fill(baseSurface)
+                shape.fill(accentColor.opacity(0.035))
             }
         } else {
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .fill(DS.surfaceElevated)
+            shape.fill(baseSurface)
         }
     }
 
@@ -202,9 +258,9 @@ struct CosmoBlockWrapper<Content: View>: View {
     private var blockBorder: some View {
         let shape = RoundedRectangle(cornerRadius: DS.radiusMedium)
         return ZStack {
-            // Base border — solid 1px for light mode
             if isSelected {
-                shape.stroke(accentColor.opacity(0.5), lineWidth: 1)
+                // Selected: accent stroke + warm inner sepia line for richness
+                shape.stroke(accentColor.opacity(0.55), lineWidth: 1)
             } else if crystallizationLevel > .raw {
                 // Crystallization levels keep accent-tinted borders
                 shape.stroke(
@@ -212,11 +268,9 @@ struct CosmoBlockWrapper<Content: View>: View {
                     lineWidth: crystallizationLevel >= .distilled ? 1.5 : 1
                 )
             } else if isHovered {
-                // Hovered: slightly darker border
-                shape.stroke(DS.borderActive, lineWidth: 1)
+                shape.stroke(DS.sepiaBorder, lineWidth: 1)
             } else {
-                // Normal: standard neutral border
-                shape.stroke(DS.border, lineWidth: 1)
+                shape.stroke(DS.sepiaBorder, lineWidth: 0.5)
             }
 
             // Outer glow for connected+ levels
@@ -233,7 +287,7 @@ struct CosmoBlockWrapper<Content: View>: View {
     private var crystallizationBorderColor: Color {
         switch crystallizationLevel {
         case .raw:
-            return DS.border // fallback, handled by gradient above
+            return DS.sepiaBorder // fallback, handled by gradient above
         case .highlighted:
             return accentColor.opacity(0.15)
         case .distilled:

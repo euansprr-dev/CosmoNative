@@ -950,10 +950,7 @@ private struct FlowSuggestionsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Try asking")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.textMuted)
-                .textCase(.uppercase)
-                .tracking(0.7)
+                .dsSmallCapsLabel()
 
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(items, id: \.self) { item in

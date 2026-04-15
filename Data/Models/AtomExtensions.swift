@@ -1074,4 +1074,46 @@ extension Atom {
     var codexCategory: CodexElementCategory? {
         codexElement?.category
     }
+
+    // MARK: - Smart Template Accessors
+
+    /// Decode block template metadata (for .blockTemplate atoms)
+    var blockTemplateMetadata: BlockTemplateMetadata? {
+        metadataValue(as: BlockTemplateMetadata.self)
+    }
+
+    /// Return template metadata or a fresh default
+    var blockTemplateMetadataOrNew: BlockTemplateMetadata {
+        blockTemplateMetadata ?? .new()
+    }
+
+    /// Return a copy with updated block template metadata
+    func withBlockTemplateMetadata(_ meta: BlockTemplateMetadata) -> Atom {
+        withMetadata(meta)
+    }
+
+    /// Decode template instance structured data (for .templateInstance atoms)
+    var templateInstanceData: TemplateInstanceStructured? {
+        structuredData(as: TemplateInstanceStructured.self)
+    }
+
+    /// Return a copy with updated template instance data
+    func withTemplateInstanceData(_ data: TemplateInstanceStructured) -> Atom {
+        withStructured(data)
+    }
+
+    /// Whether this atom is a template instance
+    var isTemplateInstance: Bool {
+        type == .templateInstance
+    }
+
+    /// Whether this atom is a template definition
+    var isBlockTemplate: Bool {
+        type == .blockTemplate
+    }
+
+    /// Get the template definition UUID for a template instance
+    var templateDefinitionUUID: String? {
+        link(ofType: .templateDefinition)?.uuid
+    }
 }

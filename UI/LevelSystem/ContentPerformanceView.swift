@@ -173,10 +173,8 @@ public struct ContentPerformanceView: View {
 
     private var reachChartSection: some View {
         VStack(alignment: .leading, spacing: DS.space16) {
-            Text("REACH OVER TIME")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.5)
+            Text("Reach Over Time")
+                .dsSmallCapsLabel()
 
             ReachChartView(platform: selectedPlatform, timeframe: selectedTimeframe)
                 .frame(height: 200)
@@ -193,10 +191,8 @@ public struct ContentPerformanceView: View {
 
     private var engagementMetricsSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Text("ENGAGEMENT")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.5)
+            Text("Engagement")
+                .dsSmallCapsLabel()
 
             LazyVGrid(columns: [
                 GridItem(.flexible()),
@@ -218,10 +214,8 @@ public struct ContentPerformanceView: View {
     private var viralContentSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
-                Text("VIRAL CONTENT")
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(DS.textSecondary)
-                    .tracking(1.5)
+                Text("Viral Content")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 
@@ -249,10 +243,8 @@ public struct ContentPerformanceView: View {
     private var topContentSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
-                Text("TOP PERFORMING")
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(DS.textSecondary)
-                    .tracking(1.5)
+                Text("Top Performing")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 
@@ -275,10 +267,8 @@ public struct ContentPerformanceView: View {
 
     private var clientPerformanceSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Text("CLIENT BREAKDOWN")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.5)
+            Text("Client Breakdown")
+                .dsSmallCapsLabel()
 
             VStack(spacing: DS.space8) {
                 ClientPerformanceRow(clientName: "Tech Founder A", platforms: [.twitter, .linkedin], reach: "124.5M", posts: 847, avgER: "4.2%")
@@ -296,10 +286,8 @@ struct ContentPerformanceHeroCard: View {
 
     var body: some View {
         VStack(spacing: DS.space8) {
-            Text("LIFETIME REACH")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.5)
+            Text("Lifetime Reach")
+                .dsSmallCapsLabel()
 
             Text(viewModel.formatNumber(viewModel.lifetimeReach))
                 .font(DS.display)

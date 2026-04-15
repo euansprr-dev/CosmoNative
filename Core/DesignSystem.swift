@@ -112,6 +112,38 @@ enum DS {
     static var focusRing: Color { palette.focusRing }
 
     // ═══════════════════════════════════════════════════════════════
+    // AKASHIC CODEX — Premium material system
+    // Gilt ornaments, vellum surfaces, warm ink, sepia borders
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Gold accent for ornamental details — never a fill, never a bar
+    static var gilt: Color { palette.gilt }
+
+    /// Subtle gold wash for premium backgrounds
+    static var giltSoft: Color { palette.giltSoft }
+
+    /// Fine lines, filigree strokes, section labels
+    static var giltMuted: Color { palette.giltMuted }
+
+    /// Aged paper surface (warmer than surface)
+    static var vellum: Color { palette.vellum }
+
+    /// Deeper parchment for inset/recessed areas
+    static var vellumDeep: Color { palette.vellumDeep }
+
+    /// Near-black with warm undertone for display text
+    static var inkWash: Color { palette.inkWash }
+
+    /// Faded ink for secondary information (WCAG AA safe)
+    static var inkFaded: Color { palette.inkFaded }
+
+    /// Warm border replacing cool gray
+    static var sepiaBorder: Color { palette.sepiaBorder }
+
+    /// Warm subtle border
+    static var sepiaSubtle: Color { palette.sepiaSubtle }
+
+    // ═══════════════════════════════════════════════════════════════
     // ENTITY COLORS — Bespoke muted palette for light backgrounds
     // ═══════════════════════════════════════════════════════════════
 
@@ -232,6 +264,22 @@ enum DS {
 
     /// Caption 2 — 10pt regular, smallest readable text
     static let caption2 = Font.system(size: 10, weight: .regular)
+
+    // ═══════════════════════════════════════════════════════════════
+    // AKASHIC CODEX TYPOGRAPHY — Serif display, monospace data
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Display serif — 32pt light New York, greeting hero ONLY
+    static let displaySerif = Font.system(size: 32, weight: .light, design: .serif)
+
+    /// Date serif — 14pt regular New York, date line below greeting ONLY
+    static let dateSerif = Font.system(size: 14, weight: .regular, design: .serif)
+
+    /// Monospace tabular — 28pt ultralight, timer digits
+    static let monoTabular = Font.system(size: 28, weight: .ultraLight, design: .monospaced)
+
+    /// Small caps — 10pt semibold, section labels (replaces uppercase + tracking)
+    static let smallCaps = Font.system(size: 10, weight: .semibold).smallCaps()
 
     // Legacy aliases (map to new scale for backward compat)
 
@@ -418,28 +466,27 @@ struct DSAccentSoftButtonStyle: ButtonStyle {
 
 extension View {
 
-    /// Standard section label style — 11px UPPERCASE textMuted with 0.08em tracking
+    /// Akashic section label — 10px smallCaps in warm gilt
     func dsSectionLabel() -> some View {
         self
-            .font(DS.sectionLabel)
-            .foregroundStyle(DS.textMuted)
-            .tracking(0.88) // 0.08em at 11px
-            .textCase(.uppercase)
+            .font(DS.smallCaps)
+            .foregroundStyle(DS.giltMuted)
     }
 
-    /// Standard card chrome — white bg, 1px neutral border, resting shadow
+    /// Standard card chrome — white bg, warm sepia border, resting shadow
     func dsCard() -> some View {
         self
             .background(DS.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .stroke(DS.border, lineWidth: 1)
+                    .stroke(DS.sepiaBorder, lineWidth: 0.5)
             )
             .dsRestingShadow()
     }
 
-    /// Editor card — white bg, 12px radius, accent left bar, resting shadow
+    /// DEPRECATED — Use dsGiltCornerOrnament() instead. Accent left bar is removed.
+    @available(*, deprecated, renamed: "dsGiltCornerOrnament")
     func dsEditorCard() -> some View {
         self
             .background(DS.surfaceElevated)
@@ -621,5 +668,154 @@ extension View {
     /// REMOVED (dark mode trick) — no-op
     func dsTopHighlight(cornerRadius: CGFloat = DS.radiusLarge, height: CGFloat = 60) -> some View {
         self
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // AKASHIC CODEX MODIFIERS — Premium material card system
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Vellum card — warm aged-paper surface, sepia border, resting shadow
+    func dsVellumCard(cornerRadius: CGFloat = 10) -> some View {
+        self
+            .background(DS.vellum, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DS.sepiaBorder, lineWidth: 0.5)
+            )
+            .dsRestingShadow()
+    }
+
+    /// Vellum inset — deeper parchment for recessed areas (calendars, chart containers)
+    func dsVellumInset(cornerRadius: CGFloat = 8) -> some View {
+        self
+            .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DS.sepiaBorder, lineWidth: 0.5)
+            )
+    }
+
+    /// Gilt corner ornament card — replaces dsEditorCard. Vellum bg + L-bracket at top-left
+    func dsGiltCornerOrnament(cornerRadius: CGFloat = 12) -> some View {
+        self
+            .background(DS.vellum, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DS.sepiaBorder, lineWidth: 0.5)
+            )
+            .overlay(alignment: .topLeading) {
+                GiltCornerBracket()
+                    .stroke(DS.gilt, lineWidth: 0.8)
+                    .frame(width: 12, height: 12)
+                    .padding(6)
+            }
+            .dsRestingShadow()
+    }
+
+    /// Small caps section label — replaces dsSectionLabel (no more uppercase + tracking hack)
+    func dsSmallCapsLabel() -> some View {
+        self
+            .font(DS.smallCaps)
+            .foregroundStyle(DS.giltMuted)
+    }
+}
+
+// MARK: - Akashic Codex Section Divider
+
+/// Double-line divider replacing gradient dividers — two parallel 0.5px lines, 2px apart
+struct AkashicSectionDivider: View {
+    var body: some View {
+        VStack(spacing: 2) {
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(height: 0.5)
+            Rectangle()
+                .fill(DS.sepiaSubtle.opacity(0.5))
+                .frame(height: 0.5)
+        }
+        .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - Gilt Corner Bracket Shape
+
+/// L-shaped bracket for top-left corner of premium cards.
+/// Replaces the generic accent bar pattern.
+struct GiltCornerBracket: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        // Horizontal line from left to right
+        path.move(to: CGPoint(x: 0, y: 0))
+        path.addLine(to: CGPoint(x: rect.width, y: 0))
+        // Corner bend down
+        path.move(to: CGPoint(x: 0, y: 0))
+        path.addLine(to: CGPoint(x: 0, y: rect.height))
+        return path
+    }
+}
+
+// MARK: - Ornamental Rule
+
+/// Horizontal decorative rule with diamond center — used in greeting, empty states.
+/// A thin line (40px) with a small rotated square at center.
+struct OrnamentalRule: View {
+    var width: CGFloat = 40
+    var color: Color = DS.gilt
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(color)
+                .frame(width: (width - 8) / 2, height: 0.5)
+
+            Rectangle()
+                .fill(color)
+                .frame(width: 4, height: 4)
+                .rotationEffect(.degrees(45))
+
+            Rectangle()
+                .fill(color)
+                .frame(width: (width - 8) / 2, height: 0.5)
+        }
+        .frame(height: 6)
+    }
+}
+
+// MARK: - Track and Bead Progress
+
+/// Navigational progress indicator for objectives — 1px track + filled portion + circle bead.
+/// Replaces flat progress bars with a cartographic-feeling plot line.
+struct TrackAndBead: View {
+    let progress: Double
+    let color: Color
+    let animate: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { geo in
+            let fillWidth = geo.size.width * (animate ? min(progress, 1.0) : 0)
+
+            ZStack(alignment: .leading) {
+                // Track (unfilled)
+                Rectangle()
+                    .fill(DS.sepiaSubtle)
+                    .frame(height: 1)
+
+                // Filled portion
+                Rectangle()
+                    .fill(color)
+                    .frame(width: fillWidth, height: 2)
+
+                // Bead at endpoint
+                Circle()
+                    .fill(color)
+                    .frame(width: 5, height: 5)
+                    .offset(x: max(fillWidth - 2.5, 0))
+            }
+            .frame(height: 5)
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
+        .frame(height: 5)
     }
 }

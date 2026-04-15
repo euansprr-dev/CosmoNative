@@ -38,11 +38,8 @@ struct EmotionalArcView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Section header
-            Text("EMOTIONAL ARC")
-                .font(.system(size: 13, weight: .bold))
-                .tracking(1.2)
-                .foregroundColor(DS.textMuted)
-                .textCase(.uppercase)
+            Text("Emotional Arc")
+                .dsSmallCapsLabel()
 
             if dataPoints.isEmpty {
                 placeholderView

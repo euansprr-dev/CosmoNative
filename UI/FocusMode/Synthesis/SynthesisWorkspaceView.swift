@@ -94,10 +94,8 @@ struct SynthesisWorkspaceView: View {
     private var sourcesColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Section header
-            Text("SOURCES")
-                .font(DS.sectionLabel)
-                .foregroundColor(DS.textMuted)
-                .tracking(0.8)
+            Text("Sources")
+                .dsSmallCapsLabel()
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
                 .padding(.bottom, 12)
@@ -120,10 +118,8 @@ struct SynthesisWorkspaceView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Section header with regenerate button
             HStack {
-                Text("SYNTHESIS")
-                    .font(DS.sectionLabel)
-                    .foregroundColor(DS.textMuted)
-                    .tracking(0.8)
+                Text("Synthesis")
+                    .dsSmallCapsLabel()
 
                 Spacer()
 
@@ -307,16 +303,10 @@ struct SynthesisWorkspaceView: View {
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(DS.text)
 
-                            HStack(spacing: 4) {
-                                Rectangle()
-                                    .fill(DS.accent.opacity(0.4))
-                                    .frame(width: 2)
-
-                                Text("\"\(span.excerpt)\"")
-                                    .font(.system(size: 11, weight: .regular))
-                                    .foregroundColor(DS.textMuted)
-                                    .italic()
-                            }
+                            Text("\"\(span.excerpt)\"")
+                                .font(.system(size: 11, weight: .regular))
+                                .foregroundColor(DS.textMuted)
+                                .italic()
 
                             // Source label
                             if let sourceAtom = sourceAtoms.first(where: { $0.uuid == span.sourceAtomUUID }) {

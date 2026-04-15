@@ -28,13 +28,14 @@ struct RadialMenuView: View {
         self.customActions = customActions
     }
 
-    // Default 5 block types for canvas creation
+    // Default 6 block types for canvas creation
     private static let defaultActions: [RadialAction] = [
         RadialAction(icon: "doc.text.fill", label: "Content", color: DS.entityContent, type: .createContent),
         RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
         RadialAction(icon: "square.and.pencil", label: "Sticky", color: DS.entityStickyNote, type: .createStickyNote),
         RadialAction(icon: "point.3.connected.trianglepath.dotted", label: "Connection", color: DS.entityConnection, type: .createConnection),
         RadialAction(icon: "tray.full.fill", label: "Database", color: DS.textSecondary, type: .fromDatabase),
+        RadialAction(icon: "rectangle.3.group.fill", label: "Template", color: DS.accent, type: .createTemplate),
     ]
 
     private var actions: [RadialAction] {
@@ -57,13 +58,13 @@ struct RadialMenuView: View {
             Button(action: { onDismiss() }) {
                 ZStack {
                     Circle()
-                        .fill(DS.surfaceElevated)
+                        .fill(DS.vellum)
                         .frame(width: isCenterHovered ? 52 : 48, height: isCenterHovered ? 52 : 48)
                         .overlay(
                             Circle()
                                 .stroke(
-                                    isCenterHovered ? DS.border : DS.borderSubtle,
-                                    lineWidth: isCenterHovered ? 1.5 : 1
+                                    isCenterHovered ? DS.sepiaBorder : DS.sepiaSubtle,
+                                    lineWidth: isCenterHovered ? 1 : 0.5
                                 )
                         )
                         .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 4)
@@ -177,9 +178,9 @@ struct RadialMenuButton: View {
             VStack(spacing: 6) {
                 // Icon pill with dark glass styling
                 ZStack {
-                    // Background - white surface
+                    // Background - vellum surface
                     RoundedRectangle(cornerRadius: isHovered ? 14 : 12)
-                        .fill(DS.surfaceElevated)
+                        .fill(DS.vellum)
                         .frame(
                             width: isHovered ? 56 : 48,
                             height: isHovered ? 56 : 48
@@ -188,8 +189,8 @@ struct RadialMenuButton: View {
                     // Border with accent color on hover
                     RoundedRectangle(cornerRadius: isHovered ? 14 : 12)
                         .stroke(
-                            isHovered ? action.color : DS.border,
-                            lineWidth: isHovered ? 2 : 1
+                            isHovered ? action.color : DS.sepiaBorder,
+                            lineWidth: isHovered ? 1.5 : 0.5
                         )
                         .frame(
                             width: isHovered ? 56 : 48,
@@ -269,6 +270,7 @@ enum RadialActionType {
     case createStickyNote   // Creates a sticky note block
     case researchAgent      // Opens Research Agent panel (Perplexity AI)
     case fromDatabase       // Opens database picker overlay
+    case createTemplate     // Opens template gallery to spawn a template block
 }
 
 // MARK: - Preview

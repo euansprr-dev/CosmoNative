@@ -286,9 +286,7 @@ struct IntelligenceModelView: View {
                 .foregroundColor(color)
 
             Text(title)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(DS.textSecondary)
-                .tracking(1.0)
+                .dsSmallCapsLabel()
 
             Spacer()
 
@@ -507,9 +505,7 @@ struct IntelligenceModelView: View {
                 .foregroundColor(.red)
 
             Text(title)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(DS.textSecondary)
-                .tracking(1.0)
+                .dsSmallCapsLabel()
 
             Spacer()
 

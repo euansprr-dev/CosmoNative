@@ -24,10 +24,11 @@ struct DashboardTimeTracker: View {
         HStack(spacing: 6) {
             Image(systemName: "timer")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textMuted)
+                .foregroundColor(DS.giltMuted)
 
-            Text("TIME TRACKING")
-                .dsSectionLabel()
+            Text("Time Tracking")
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
         }
     }
 
@@ -84,10 +85,10 @@ struct DashboardTimeTracker: View {
             }
         }
         .padding(12)
-        .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.vellum, in: RoundedRectangle(cornerRadius: 14))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.accent.opacity(0.2), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(DS.gilt.opacity(0.4), lineWidth: 0.5)
         )
     }
 
@@ -107,22 +108,31 @@ struct DashboardTimeTracker: View {
             HStack {
                 Text(formattedTodayTotal)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundColor(DS.inkWash)
 
                 Text("tracked today")
                     .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundColor(DS.inkFaded)
 
                 Spacer()
             }
 
             if !viewModel.todaySessionsByIntent.isEmpty {
                 intentBreakdownBar
+                    .padding(2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                    )
                 intentLegend
             }
         }
         .padding(10)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.vellum, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(DS.sepiaBorder, lineWidth: 0.5)
+        )
     }
 
     private var intentBreakdownBar: some View {

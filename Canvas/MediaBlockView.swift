@@ -324,9 +324,8 @@ struct MediaBlockView: View {
             HStack(spacing: scaled(3)) {
                 Image(systemName: "bookmark.fill")
                     .font(.system(size: scaled(8)))
-                Text("SWIPE")
-                    .font(.system(size: scaled(8), weight: .bold))
-                    .tracking(scaled(0.5))
+                Text("Swipe")
+                    .font(DS.smallCaps)
             }
             .foregroundColor(Color(hex: "FFD700"))
             .padding(.horizontal, scaled(6))
@@ -768,6 +767,7 @@ struct MediaBlockView: View {
                     .lineSpacing(scaled(3))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollBounceBehavior(.basedOnSize)
             .frame(maxHeight: max(blockSize.height - mediaAreaHeight - scaled(80), scaled(60)))
             .padding(.top, scaled(2))
             .padding(.bottom, scaled(4))

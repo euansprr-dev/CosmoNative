@@ -6,6 +6,76 @@
 import SwiftUI
 import Combine
 
+// MARK: - CommandKTab
+
+/// The four domain tabs available in Command-K
+public enum CommandKTab: String, CaseIterable, Equatable {
+    case database
+    case swipeGallery
+    case ideas
+    case readwise
+
+    var title: String {
+        switch self {
+        case .database: return "Database"
+        case .swipeGallery: return "Swipe Gallery"
+        case .ideas: return "Ideas"
+        case .readwise: return "Readwise"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .database: return "tray.full.fill"
+        case .swipeGallery: return "bolt.fill"
+        case .ideas: return "lightbulb.fill"
+        case .readwise: return "books.vertical.fill"
+        }
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .database: return DS.accent
+        case .swipeGallery: return DS.entitySwipe
+        case .ideas: return DS.entityIdea
+        case .readwise: return DS.entityReadwise
+        }
+    }
+
+    var searchPlaceholder: String {
+        switch self {
+        case .database: return "Search database..."
+        case .swipeGallery: return "Search swipes..."
+        case .ideas: return "Search ideas..."
+        case .readwise: return "Search books..."
+        }
+    }
+}
+
+// MARK: - CortexMode
+
+/// The three interaction modes of the Cortex Command-K interface
+public enum CortexMode: Equatable {
+    /// Compact: search bar + domain bubbles + recents grid
+    case compact
+    /// Search results: grouped results by source
+    case searchResults
+    /// Expanded domain: full tab content (Database, Swipes, Ideas, Readwise)
+    case expandedDomain(CommandKTab)
+}
+
+// MARK: - RecentDisplayItem
+
+/// Lightweight model for recent items shown in compact mode
+public struct RecentDisplayItem: Identifiable {
+    public let id: String  // atom UUID
+    let title: String
+    let type: AtomType
+    let relativeDate: String
+    let thumbnailURL: String?
+    let preview: String?
+}
+
 // MARK: - SearchPhase
 /// Current phase of the search process
 public enum SearchPhase: Sendable {
@@ -219,6 +289,7 @@ enum CommandKUnifiedSearchComposer {
         var allResults: [UnifiedSearchResult] = []
 
         for result in hybridResults.prefix(hybridLimit) {
+            if result.atomType == .idea { continue }
             includedAtomUUIDs.insert(result.atomUUID)
 
             if result.atomType == .research, let swipeItem = swipeItemsByUUID[result.atomUUID] {
@@ -436,6 +507,17 @@ enum CommandKUnifiedSearchComposer {
 @MainActor
 public final class CommandKViewModel: ObservableObject {
 
+    // MARK: - Cortex Mode State
+
+    /// Current interaction mode (compact → searchResults → expandedDomain)
+    @Published public var cortexMode: CortexMode = .compact
+
+    /// Recent items for compact mode display
+    @Published public var recentItems: [RecentDisplayItem] = []
+
+    /// The initial tab passed from MainView (nil = start compact)
+    var initialExpandedTab: CommandKTab?
+
     // MARK: - Published State
 
     /// Current search query
@@ -559,6 +641,9 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Card items for masonry grid display of unified search results
     @Published var unifiedCardItems: [UnifiedCardItem] = []
+
+    /// Library items keyed by lookup key — used to render Database section with real library previews
+    @Published var unifiedLibraryItemsByID: [String: LibraryItem] = [:]
 
     // MARK: - Idea Gallery State
 
@@ -685,9 +770,21 @@ public final class CommandKViewModel: ObservableObject {
             unifiedGroupedResults = []
             unifiedFlatResults = []
             unifiedCardItems = []
+            // Auto-return to compact when query cleared (unless in expanded domain)
+            if cortexMode == .searchResults {
+                cortexMode = .compact
+                await loadRecentsForCompact()
+            }
             await showRecents()
             return
         }
+
+        // Auto-transition to search results when typing in compact mode
+        if cortexMode == .compact {
+            cortexMode = .searchResults
+        }
+        // Reset phase so CortexSearchResultsView shows loading, not premature "no results"
+        currentPhase = .searching
 
         // Skip search in task creation mode
         if isTaskCreationMode {
@@ -736,11 +833,11 @@ public final class CommandKViewModel: ObservableObject {
                     // Map EntityType to AtomType
                     let atomType = entityTypeToAtomType(result.entityType)
 
-                    // Fetch full atom data for UUID
-                    let atomUUID = await fetchAtomUUID(entityType: result.entityType, entityId: result.entityId)
+                    // Use UUID directly from atoms_fts (no legacy ID resolution needed)
+                    let atomUUID = result.entityUUID ?? "\(result.entityType.rawValue)-\(result.entityId)"
 
                     rankedResults.append(RankedResult(
-                        atomUUID: atomUUID ?? "\(result.entityType.rawValue)-\(result.entityId)",
+                        atomUUID: atomUUID,
                         atomType: atomType,
                         title: result.title,
                         snippet: result.preview,
@@ -1124,6 +1221,126 @@ public final class CommandKViewModel: ObservableObject {
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
     }
 
+    // MARK: - Cortex Mode Transitions
+
+    /// Transition to expanded domain view for a specific tab
+    public func transitionToExpanded(_ tab: CommandKTab) {
+        cortexMode = .expandedDomain(tab)
+        selectedResultIndex = -1
+        selectedNodeId = nil
+
+        // Ensure tab data is loaded
+        switch tab {
+        case .swipeGallery:
+            if swipeGalleryItems.isEmpty {
+                Task { await loadSwipeGallery() }
+            }
+        case .ideas:
+            if ideaGalleryItems.isEmpty {
+                Task { await loadIdeaGallery() }
+            }
+        default:
+            break
+        }
+    }
+
+    /// Return to compact mode from expanded or search
+    public func returnToCompact() {
+        query = ""
+        cortexMode = .compact
+        isUnifiedSearchActive = false
+        selectedResultIndex = -1
+        selectedNodeId = nil
+        clearSelection()
+        Task { await loadRecentsForCompact() }
+    }
+
+    /// Load recent atoms for compact mode display
+    public func loadRecentsForCompact() async {
+        do {
+            let recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 12)
+            recentItems = recentAtoms.filter { $0.type != .task }.prefix(8).map { atom in
+                let researchMeta = atom.metadata.flatMap { metaStr -> ResearchMetadata? in
+                    guard let data = metaStr.data(using: .utf8) else { return nil }
+                    return try? JSONDecoder().decode(ResearchMetadata.self, from: data)
+                }
+                return RecentDisplayItem(
+                    id: atom.uuid,
+                    title: atom.title ?? "Untitled",
+                    type: atom.type,
+                    relativeDate: Self.relativeTimeString(from: atom.updatedAt),
+                    thumbnailURL: researchMeta?.thumbnailUrl,
+                    preview: atom.body
+                )
+            }
+        } catch {
+            recentItems = []
+        }
+    }
+
+    /// Open a recent item from compact mode
+    public func openRecent(_ item: RecentDisplayItem) {
+        Task {
+            try? await NodeGraphEngine.shared.recordAccess(atomUUID: item.id, type: .view)
+        }
+        NotificationCenter.default.post(
+            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+            object: nil,
+            userInfo: ["atomUUID": item.id]
+        )
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+    }
+
+    /// Cached total database atom count (loaded on init)
+    @Published public var databaseTotalCount: Int = 0
+
+    /// Domain item counts for bubbles
+    public var domainCounts: [CommandKTab: Int] {
+        [
+            .database: databaseTotalCount,
+            .swipeGallery: swipeGalleryItems.count,
+            .ideas: ideaGalleryItems.count,
+            .readwise: ReadwiseBookStore.shared.books.count
+        ]
+    }
+
+    /// Load the total database atom count for bubble display
+    private func loadDatabaseCount() async {
+        do {
+            let atoms = try await AtomRepository.shared.fetchRecent(limit: 500)
+            databaseTotalCount = atoms.count
+        } catch {
+            databaseTotalCount = 0
+        }
+    }
+
+    /// Initialize cortex mode based on initial tab from MainView
+    public func initializeCortexMode() {
+        if let tab = initialExpandedTab {
+            transitionToExpanded(tab)
+        } else {
+            cortexMode = .compact
+            Task {
+                await loadRecentsForCompact()
+                await loadDatabaseCount()
+                // Preload gallery counts for bubble display
+                if swipeGalleryItems.isEmpty { await loadSwipeGallery() }
+                if ideaGalleryItems.isEmpty { await loadIdeaGallery() }
+            }
+        }
+    }
+
+    /// Relative time string from ISO8601
+    private static func relativeTimeString(from iso: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: iso) else { return "" }
+        let interval = Date().timeIntervalSince(date)
+        if interval < 3600 { return "\(max(1, Int(interval / 60)))m" }
+        if interval < 86400 { return "\(Int(interval / 3600))h" }
+        if interval < 604800 { return "\(Int(interval / 86400))d" }
+        return "\(Int(interval / 604800))w"
+    }
+
     /// Navigate selection up
     public func selectPrevious() {
         if isUnifiedSearchActive {
@@ -1195,7 +1412,7 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Available filter types with their display info
     public var filterTypes: [AtomType] {
-        [.idea, .task, .research, .content, .connection, .project]
+        [.idea, .task, .research, .content, .connection, .project, .templateInstance]
     }
 
     /// Get count for a specific filter type
@@ -1383,8 +1600,8 @@ public final class CommandKViewModel: ObservableObject {
         guard !ideaGalleryLoaded || forceReload else { return }
 
         do {
-            // Fetch all idea atoms
-            let ideaAtoms = try await AtomRepository.shared.search(query: "", types: [.idea])
+            // Fetch all idea atoms (fetchAll avoids LIKE filter that can miss NULL title/body)
+            let ideaAtoms = try await AtomRepository.shared.fetchAll(type: .idea)
 
             // Build a client name cache for display
             var clientNameCache: [String: String] = [:]
@@ -1579,6 +1796,7 @@ public final class CommandKViewModel: ObservableObject {
 
         unifiedGroupedResults = regrouped.groupedResults
         unifiedFlatResults = regrouped.flatResults
+        unifiedLibraryItemsByID = libraryItemsByID
 
         // Reset keyboard selection to first result
         if let first = unifiedFlatResults.first {

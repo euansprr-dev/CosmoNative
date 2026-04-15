@@ -272,10 +272,8 @@ struct ProfileDetailView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(DS.accent.opacity(0.7))
 
-                Text(category.displayName.uppercased())
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(1.0)
+                Text(category.displayName)
+                    .dsSmallCapsLabel()
 
                 Text("\(docs.count)")
                     .font(.system(size: 9, weight: .bold))
@@ -359,10 +357,8 @@ struct ProfileDetailView: View {
 
     private var rawAnalysisTab: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("RAW METADATA")
-                .font(DS.sectionLabel)
-                .foregroundStyle(DS.textMuted)
-                .tracking(1.0)
+            Text("Raw Metadata")
+                .dsSmallCapsLabel()
 
             let jsonText = atom.metadata ?? "{}"
 

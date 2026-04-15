@@ -163,6 +163,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     @Published var weeklyReportData: WeeklyReportData?
     @Published var showReports: Bool = false
+    @Published var selectedReportTab: ReportTab = .week
+    @Published var reportWeekOffset: Int = 0
+    @Published var reportMonthOffset: Int = 0
+    @Published var habitReportData: HabitReportData?
 
     // MARK: - Time Tracking
 
@@ -1088,6 +1092,11 @@ class CommandCenterDashboardViewModel: ObservableObject {
                   let recurrenceJSON = metadata.recurrence,
                   let rule = RecurrenceRule.fromJSON(recurrenceJSON) else { return }
 
+            // One-active-instance invariant: bail if another incomplete
+            // instance of this template already exists.
+            let activeTemplates = try await TaskRecurrenceEngine.shared.batchTemplatesWithActiveInstance()
+            if activeTemplates.contains(templateUUID) { return }
+
             let calendar = Calendar.current
             let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
 
@@ -1639,9 +1648,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
             let calendar = Calendar.current
             let todayStart = calendar.startOfDay(for: Date())
 
-            // Build 7-day window (Mon-Sun or today-6..today)
-            let weekStart = calendar.date(byAdding: .day, value: -6, to: todayStart)!
-            let previousWeekStart = calendar.date(byAdding: .day, value: -13, to: todayStart)!
+            // Build 7-day window with offset support
+            let weekEnd = calendar.date(byAdding: .day, value: reportWeekOffset * 7, to: todayStart)!
+            let weekStart = calendar.date(byAdding: .day, value: -6, to: weekEnd)!
+            let previousWeekStart = calendar.date(byAdding: .day, value: -7, to: weekStart)!
 
             // Collect sessions for this week and previous week
             var thisWeekMinutes = 0
@@ -1726,17 +1736,220 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
             let avgFocus = totalFocusScores.isEmpty ? 0.0 : totalFocusScores.reduce(0, +) / Double(totalFocusScores.count)
 
-            weeklyReportData = WeeklyReportData(
+            weeklyReportData = ReportData(
+                timeRange: .week,
+                startDate: weekStart,
+                endDate: weekEnd,
                 days: days,
                 totalMinutes: thisWeekMinutes,
                 avgFocusScore: avgFocus,
                 tasksCompleted: totalTasksCompleted,
                 totalSessions: totalSessions,
                 intentDistribution: intentDistribution,
-                previousWeekMinutes: previousWeekMinutes
+                previousPeriodMinutes: previousWeekMinutes
             )
         } catch {
             print("❌ Dashboard: Failed to load weekly report: \(error)")
+        }
+    }
+
+    // MARK: - Month Report
+
+    func loadMonthReport() async {
+        do {
+            let sessionAtoms = try await AtomRepository.shared.fetchAll(type: .deepWorkBlock)
+            let taskAtoms = try await AtomRepository.shared.fetchAll(type: .task)
+
+            let calendar = Calendar.current
+            let today = Date()
+
+            // Calculate month start/end based on offset
+            guard let targetMonth = calendar.date(byAdding: .month, value: reportMonthOffset, to: today) else { return }
+            guard let monthRange = calendar.range(of: .day, in: .month, for: targetMonth) else { return }
+            let comps = calendar.dateComponents([.year, .month], from: targetMonth)
+            guard let monthStart = calendar.date(from: comps) else { return }
+            guard let monthEnd = calendar.date(byAdding: .day, value: monthRange.count - 1, to: monthStart) else { return }
+
+            // Previous month for trend
+            guard let prevMonth = calendar.date(byAdding: .month, value: -1, to: monthStart) else { return }
+            guard let prevMonthRange = calendar.range(of: .day, in: .month, for: prevMonth) else { return }
+            let prevComps = calendar.dateComponents([.year, .month], from: prevMonth)
+            guard let prevMonthStart = calendar.date(from: prevComps) else { return }
+
+            var thisMonthMinutes = 0
+            var prevMonthMinutes = 0
+            var dayBuckets: [Date: (minutes: Int, focusScores: [Double], tasks: Int, sessions: Int, intents: [TaskIntent: Int])] = [:]
+
+            for offset in 0..<monthRange.count {
+                guard let day = calendar.date(byAdding: .day, value: offset, to: monthStart) else { continue }
+                dayBuckets[calendar.startOfDay(for: day)] = (0, [], 0, 0, [:])
+            }
+
+            for atom in sessionAtoms {
+                guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
+                      let startedDate = PlannerumFormatters.iso8601.date(from: metadata.startedAt) else { continue }
+
+                let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
+                let dayStart = calendar.startOfDay(for: startedDate)
+
+                if startedDate >= monthStart && startedDate <= monthEnd.addingTimeInterval(86400) {
+                    thisMonthMinutes += minutes
+                    if var bucket = dayBuckets[dayStart] {
+                        bucket.minutes += minutes
+                        if let score = metadata.focusScore { bucket.focusScores.append(Double(score)) }
+                        bucket.sessions += 1
+                        let intent = metadata.intent.flatMap { TaskIntent(rawValue: $0) } ?? .general
+                        bucket.intents[intent, default: 0] += minutes
+                        dayBuckets[dayStart] = bucket
+                    }
+                } else if startedDate >= prevMonthStart && startedDate < monthStart {
+                    prevMonthMinutes += minutes
+                }
+            }
+
+            for atom in taskAtoms {
+                guard let vm = TaskViewModel.from(atom: atom),
+                      vm.isCompleted,
+                      let completedAt = vm.completedAt else { continue }
+                let dayStart = calendar.startOfDay(for: completedAt)
+                if var bucket = dayBuckets[dayStart] {
+                    bucket.tasks += 1
+                    dayBuckets[dayStart] = bucket
+                }
+            }
+
+            var days: [DayReportEntry] = []
+            var totalFocusScores: [Double] = []
+            var totalTasksCompleted = 0
+            var totalSessions = 0
+            var intentDistribution: [TaskIntent: Int] = [:]
+
+            for offset in 0..<monthRange.count {
+                guard let day = calendar.date(byAdding: .day, value: offset, to: monthStart) else { continue }
+                let dayStart = calendar.startOfDay(for: day)
+                let bucket = dayBuckets[dayStart] ?? (0, [], 0, 0, [:])
+                let avgFocus = bucket.focusScores.isEmpty ? 0.0 : bucket.focusScores.reduce(0, +) / Double(bucket.focusScores.count)
+                let dominantIntent = bucket.intents.max(by: { $0.value < $1.value })?.key
+
+                days.append(DayReportEntry(
+                    id: "\(offset)",
+                    date: day,
+                    trackedMinutes: bucket.minutes,
+                    focusScore: avgFocus,
+                    tasksCompleted: bucket.tasks,
+                    sessionCount: bucket.sessions,
+                    dominantIntent: dominantIntent
+                ))
+
+                totalFocusScores.append(contentsOf: bucket.focusScores)
+                totalTasksCompleted += bucket.tasks
+                totalSessions += bucket.sessions
+                for (intent, mins) in bucket.intents {
+                    intentDistribution[intent, default: 0] += mins
+                }
+            }
+
+            let avgFocus = totalFocusScores.isEmpty ? 0.0 : totalFocusScores.reduce(0, +) / Double(totalFocusScores.count)
+
+            weeklyReportData = ReportData(
+                timeRange: .month,
+                startDate: monthStart,
+                endDate: monthEnd,
+                days: days,
+                totalMinutes: thisMonthMinutes,
+                avgFocusScore: avgFocus,
+                tasksCompleted: totalTasksCompleted,
+                totalSessions: totalSessions,
+                intentDistribution: intentDistribution,
+                previousPeriodMinutes: prevMonthMinutes
+            )
+        } catch {
+            print("❌ Dashboard: Failed to load month report: \(error)")
+        }
+    }
+
+    // MARK: - Habit Report
+
+    func loadHabitReport() async {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let startDate: Date
+        let endDate: Date
+
+        switch selectedReportTab {
+        case .week, .habits:
+            let weekStart = calendar.date(byAdding: .day, value: reportWeekOffset * 7 - 6, to: today)!
+            let weekEnd = calendar.date(byAdding: .day, value: reportWeekOffset * 7, to: today)!
+            startDate = weekStart
+            endDate = weekEnd
+        case .month:
+            guard let targetMonth = calendar.date(byAdding: .month, value: reportMonthOffset, to: today) else { return }
+            let comps = calendar.dateComponents([.year, .month], from: targetMonth)
+            guard let monthStart = calendar.date(from: comps),
+                  let monthRange = calendar.range(of: .day, in: .month, for: targetMonth),
+                  let monthEnd = calendar.date(byAdding: .day, value: monthRange.count - 1, to: monthStart) else { return }
+            startDate = monthStart
+            endDate = monthEnd
+        }
+
+        let entries = await habitEngine.loadHabitReport(startDate: startDate, endDate: endDate)
+        let totalCompletions = entries.reduce(0) { $0 + $1.completedDays }
+        let totalPossible = entries.reduce(0) { $0 + $1.totalDays }
+        let rate = totalPossible > 0 ? Double(totalCompletions) / Double(totalPossible) : 0
+
+        habitReportData = HabitReportData(
+            timeRange: selectedReportTab == .month ? .month : .week,
+            startDate: startDate,
+            endDate: endDate,
+            habitEntries: entries,
+            overallCompletionRate: rate,
+            totalCompletions: totalCompletions,
+            totalPossible: totalPossible
+        )
+    }
+
+    // MARK: - Report Navigation
+
+    func navigateReport(direction: Int) async {
+        switch selectedReportTab {
+        case .week:
+            reportWeekOffset += direction
+            await loadWeeklyReport()
+        case .month:
+            reportMonthOffset += direction
+            await loadMonthReport()
+        case .habits:
+            reportWeekOffset += direction
+            await loadHabitReport()
+        }
+    }
+
+    var reportDateLabel: String {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+
+        switch selectedReportTab {
+        case .week:
+            let today = calendar.startOfDay(for: Date())
+            let weekStart = calendar.date(byAdding: .day, value: reportWeekOffset * 7 - 6, to: today)!
+            let weekEnd = calendar.date(byAdding: .day, value: reportWeekOffset * 7, to: today)!
+            formatter.dateFormat = "MMM d"
+            let start = formatter.string(from: weekStart)
+            let end = formatter.string(from: weekEnd)
+            formatter.dateFormat = ", yyyy"
+            let year = formatter.string(from: weekEnd)
+            return "\(start) – \(end)\(year)"
+        case .month:
+            guard let targetMonth = calendar.date(byAdding: .month, value: reportMonthOffset, to: Date()) else { return "" }
+            formatter.dateFormat = "MMMM yyyy"
+            return formatter.string(from: targetMonth)
+        case .habits:
+            if reportWeekOffset == 0 { return "This Week" }
+            let today = calendar.startOfDay(for: Date())
+            let weekStart = calendar.date(byAdding: .day, value: reportWeekOffset * 7 - 6, to: today)!
+            let weekEnd = calendar.date(byAdding: .day, value: reportWeekOffset * 7, to: today)!
+            formatter.dateFormat = "MMM d"
+            return "\(formatter.string(from: weekStart)) – \(formatter.string(from: weekEnd))"
         }
     }
 
@@ -1770,18 +1983,16 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     // MARK: - Greeting
 
-    var greetingText: String {
+    var greetingPrefix: String {
         let hour = Calendar.current.component(.hour, from: Date())
-        let timeOfDay: String
-        if hour < 12 {
-            timeOfDay = "Good morning"
-        } else if hour < 17 {
-            timeOfDay = "Good afternoon"
-        } else {
-            timeOfDay = "Good evening"
-        }
+        if hour < 12 { return "Good morning" }
+        if hour < 17 { return "Good afternoon" }
+        return "Good evening"
+    }
+
+    var greetingText: String {
         let name = UserDefaults.standard.string(forKey: "userName") ?? "there"
-        return "\(timeOfDay), \(name)"
+        return "\(greetingPrefix), \(name)"
     }
 
     var dateText: String {

@@ -2690,10 +2690,8 @@ struct SwipeStudyFocusModeView: View {
     private func transcriptSection(atom: Atom) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("TRANSCRIPT")
-                    .font(DS.callout)
-                    .tracking(1.2)
-                    .foregroundStyle(DS.textMuted)
+                Text("Transcript")
+                    .dsSmallCapsLabel()
 
                 if isFetchingTranscript {
                     ProgressView()
@@ -2935,10 +2933,8 @@ struct SwipeStudyFocusModeView: View {
     private var generateCodexProfileCard: some View {
         VStack(spacing: DS.space12) {
             HStack {
-                Text("CONTENT PHYSICS")
-                    .font(DS.caption)
-                    .tracking(1.2)
-                    .foregroundStyle(DS.textMuted)
+                Text("Content Physics")
+                    .dsSmallCapsLabel()
                 Spacer()
             }
 
@@ -3012,10 +3008,8 @@ struct SwipeStudyFocusModeView: View {
             HStack {
                 Image(systemName: "text.book.closed")
                     .foregroundStyle(DS.entitySwipe)
-                Text("WALKTHROUGH")
-                    .font(DS.caption)
-                    .tracking(1.2)
-                    .foregroundStyle(DS.textMuted)
+                Text("Walkthrough")
+                    .dsSmallCapsLabel()
                 Spacer()
                 Button {
                     showWalkthroughSheet = true

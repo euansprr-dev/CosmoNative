@@ -25,11 +25,8 @@ struct PersuasionStackView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Section header
-            Text("PERSUASION STACK")
-                .font(.system(size: 13, weight: .bold))
-                .tracking(1.2)
-                .foregroundColor(DS.textMuted)
-                .textCase(.uppercase)
+            Text("Persuasion Stack")
+                .dsSmallCapsLabel()
 
             if topTechniques.isEmpty {
                 placeholderView
@@ -117,19 +114,13 @@ struct PersuasionStackView: View {
 
             // Expandable example quote
             if isExpanded, let example = technique.example {
-                HStack(spacing: 0) {
-                    // Left accent border
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(technique.type.color)
-                        .frame(width: 3)
-
-                    Text(example)
-                        .font(.system(size: 12).italic())
-                        .foregroundColor(DS.textSecondary)
-                        .lineLimit(nil)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                }
+                Text(example)
+                    .font(.system(size: 12).italic())
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(nil)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(DS.borderSubtle)

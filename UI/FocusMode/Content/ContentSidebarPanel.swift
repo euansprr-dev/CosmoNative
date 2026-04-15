@@ -32,10 +32,8 @@ struct ContentSidebarPanel<Content: View>: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(accentColor)
 
-                Text(title.uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(DS.textMuted)
+                Text(title)
+                    .dsSmallCapsLabel()
 
                 if let badge, badge > 0 {
                     Text("\(badge)")

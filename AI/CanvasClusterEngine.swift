@@ -328,13 +328,63 @@ class CanvasClusterEngine: ObservableObject {
 
     /// Add a block to a user cluster
     func addBlockToCluster(blockUUID: String, clusterId: UUID, blocks: [CanvasBlock]) {
+        addBlockToClusterOnly(blockUUID: blockUUID, clusterId: clusterId, blocks: blocks)
+        if let index = userClusters.firstIndex(where: { $0.id == clusterId }) {
+            persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
+        }
+    }
+
+    /// Remove a block from a user cluster
+    func removeBlockFromCluster(blockUUID: String, clusterId: UUID, blocks: [CanvasBlock]) {
+        let thinkspaceId = removeBlockFromClusterOnly(blockUUID: blockUUID, clusterId: clusterId, blocks: blocks)
+        if let tsId = thinkspaceId {
+            persistUserClusters(thinkspaceId: tsId)
+        }
+    }
+
+    /// Transfer a block between clusters in a single atomic persist.
+    /// Avoids the race condition of separate remove + add persists.
+    func transferBlock(blockUUID: String, from sourceClusterId: UUID?, to targetClusterId: UUID, blocks: [CanvasBlock]) {
+        if let sourceClusterId {
+            _ = removeBlockFromClusterOnly(blockUUID: blockUUID, clusterId: sourceClusterId, blocks: blocks)
+        }
+        addBlockToClusterOnly(blockUUID: blockUUID, clusterId: targetClusterId, blocks: blocks)
+        let tsId = userClusters.first(where: { $0.id == targetClusterId })?.thinkspaceId
+            ?? userClusters.first?.thinkspaceId
+        persistUserClusters(thinkspaceId: tsId)
+    }
+
+    /// Update cluster membership after a canvas drag. Removes from old clusters,
+    /// adds to target, and persists exactly once.
+    func updateMembership(blockUUID: String, targetClusterId: UUID?, blockPosition: CGPoint, ejectInset: CGFloat, blocks: [CanvasBlock]) {
+        if let targetClusterId {
+            let sourceIds = userClusters
+                .filter { $0.id != targetClusterId && $0.blockUUIDs.contains(blockUUID) }
+                .map(\.id)
+            for sourceId in sourceIds {
+                _ = removeBlockFromClusterOnly(blockUUID: blockUUID, clusterId: sourceId, blocks: blocks)
+            }
+            addBlockToClusterOnly(blockUUID: blockUUID, clusterId: targetClusterId, blocks: blocks)
+        } else {
+            for cluster in userClusters {
+                let expandedRect = cluster.boundingRect.insetBy(dx: ejectInset, dy: ejectInset)
+                if cluster.blockUUIDs.contains(blockUUID) && !expandedRect.contains(blockPosition) {
+                    _ = removeBlockFromClusterOnly(blockUUID: blockUUID, clusterId: cluster.id, blocks: blocks)
+                }
+            }
+        }
+        updateUserClusterBounds(blocks: blocks)
+        persistAfterMove()
+    }
+
+    // MARK: - Non-persisting mutation helpers
+
+    /// Add block to cluster without persisting. Returns the thinkspace ID for callers that batch persists.
+    private func addBlockToClusterOnly(blockUUID: String, clusterId: UUID, blocks: [CanvasBlock]) {
         guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
         guard !userClusters[index].blockUUIDs.contains(blockUUID) else { return }
         userClusters[index].blockUUIDs.append(blockUUID)
 
-        // For non-canvas modes, use fitClusterRectForMode which respects
-        // grid/list/board sizing logic. updateBoundingRect computes from block
-        // canvas positions which are meaningless in alt-content modes.
         withAnimation(ProMotionSprings.gentle) {
             if userClusters[index].viewMode != .canvas {
                 if let fitted = fitClusterRectForMode(
@@ -349,18 +399,18 @@ class CanvasClusterEngine: ObservableObject {
                 userClusters[index].expandBoundsToContainMembers(blocks: blocks)
             }
         }
-        persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
     }
 
-    /// Remove a block from a user cluster
-    func removeBlockFromCluster(blockUUID: String, clusterId: UUID, blocks: [CanvasBlock]) {
-        guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
+    /// Remove block from cluster without persisting. Returns the thinkspace ID
+    /// so callers can batch the persist call.
+    @discardableResult
+    private func removeBlockFromClusterOnly(blockUUID: String, clusterId: UUID, blocks: [CanvasBlock]) -> String? {
+        guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return nil }
         userClusters[index].blockUUIDs.removeAll { $0 == blockUUID }
         if userClusters[index].blockUUIDs.isEmpty && !userClusters[index].isZone {
-            // Non-zone clusters auto-delete when empty; zone clusters persist
             let thinkspaceId = userClusters[index].thinkspaceId
             userClusters.remove(at: index)
-            persistUserClusters(thinkspaceId: thinkspaceId)
+            return thinkspaceId
         } else {
             withAnimation(ProMotionSprings.gentle) {
                 if userClusters[index].viewMode != .canvas {
@@ -373,11 +423,10 @@ class CanvasClusterEngine: ObservableObject {
                         userClusters[index].boundingRect = fitted
                     }
                 } else {
-                    // Shrink canvas cluster to tightly fit remaining members
                     userClusters[index].shrinkToFitMembers(blocks: blocks)
                 }
             }
-            persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
+            return userClusters[index].thinkspaceId
         }
     }
 

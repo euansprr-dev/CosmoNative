@@ -43,7 +43,7 @@ struct FocusCanvasView: View {
 
     /// Whether this entity type uses a full-canvas focus mode (no wrapper needed)
     private var isFullCanvasMode: Bool {
-        entity.type == .connection || entity.type == .research || entity.type == .idea || entity.type == .content || entity.type == .note || entity.type == .cosmoAI
+        entity.type == .connection || entity.type == .research || entity.type == .idea || entity.type == .content || entity.type == .note || entity.type == .cosmoAI || entity.type == .template
     }
 
     var body: some View {
@@ -58,7 +58,7 @@ struct FocusCanvasView: View {
                 // Standard focus mode with wrapper
                 ZStack {
                     // MARK: - Base Surface
-                    CosmoColors.softWhite
+                    DS.vellum
                         .ignoresSafeArea()
 
                     // Subtle ambient glow (moves with canvas for parallax effect)
@@ -250,6 +250,18 @@ struct FocusCanvasView: View {
         case .cosmoAI:
             if let atom = loadedAtom {
                 CosmoAIFocusModeView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            } else {
+                ZStack {
+                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
+                    ProgressView("Loading...")
+                        .tint(.white)
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        case .template:
+            if let atom = loadedAtom {
+                TemplateFocusModeView(atom: atom, onClose: closeFocusMode)
                     .ignoresSafeArea()
             } else {
                 ZStack {
@@ -827,7 +839,7 @@ struct FocusCanvasHeader: View {
                 .foregroundColor(CosmoColors.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(CosmoColors.softWhite, in: Capsule())
+                .background(DS.vellum, in: Capsule())
                 .shadow(color: CosmoColors.glassGrey.opacity(0.5), radius: 6, y: 2)
             }
             .buttonStyle(.plain)
@@ -963,7 +975,7 @@ struct FocusBlockView: View {
         .frame(width: block.width, height: block.isMinimized ? 40 : block.height)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(CosmoColors.softWhite)
+                .fill(DS.vellum)
                 .shadow(
                     color: blockColor.opacity(isHovered || isSelected ? 0.3 : 0.15),
                     radius: isHovered || isSelected ? 15 : 8,

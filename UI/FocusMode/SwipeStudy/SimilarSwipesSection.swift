@@ -153,10 +153,9 @@ struct SimilarSwipesSection: View {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 10))
                     .foregroundColor(DS.entitySwipe)
-                Text("YOUR WINNING FORMULA")
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1.0)
-                    .foregroundColor(DS.entitySwipe)
+                Text("Your Winning Formula")
+                    .font(DS.smallCaps)
+                    .foregroundStyle(DS.entitySwipe)
             }
 
             // Formula pills

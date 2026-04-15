@@ -150,12 +150,8 @@ struct ConnectionBlockView: View {
 
     private var compactHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Entity identity strip
-            Capsule()
-                .fill(accentColor.opacity(0.35))
-                .frame(height: 3)
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 8)
+            // Gilt corner ornament lives on the wrapper; leave top breathing room here.
+            Color.clear.frame(height: 6)
 
             if isEditingTitle {
                 CosmoDocumentEditor(

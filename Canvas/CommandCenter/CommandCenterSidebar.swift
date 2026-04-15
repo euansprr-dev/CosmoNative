@@ -56,6 +56,13 @@ struct CommandCenterSidebar: View {
             }
         } label: {
             HStack(spacing: DS.space10) {
+                // Gilt dot — selected indicator, replaces accent bar pattern
+                if isSelected {
+                    Circle()
+                        .fill(DS.gilt)
+                        .frame(width: 4, height: 4)
+                }
+
                 Image(systemName: mode.icon)
                     .font(DS.callout)
                     .foregroundStyle(iconColor(for: mode))
@@ -63,14 +70,14 @@ struct CommandCenterSidebar: View {
 
                 Text(mode.label)
                     .font(isSelected ? DS.headline : DS.callout)
-                    .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
+                    .foregroundStyle(isSelected ? DS.inkWash : DS.inkFaded)
 
                 Spacer()
 
                 if count > 0 {
                     Text("\(count)")
                         .font(DS.footnote)
-                        .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
+                        .foregroundStyle(isSelected ? DS.gilt : DS.inkFaded)
                         .monospacedDigit()
                 }
             }
@@ -78,7 +85,7 @@ struct CommandCenterSidebar: View {
             .padding(.vertical, DS.space6)
             .background(
                 isSelected
-                    ? RoundedRectangle(cornerRadius: DS.radiusSmall).fill(DS.surfaceElevated)
+                    ? RoundedRectangle(cornerRadius: 6).fill(DS.vellum)
                     : nil
             )
             .contentShape(Rectangle())
@@ -338,23 +345,21 @@ struct CommandCenterSidebar: View {
     // MARK: - Helpers
 
     private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(DS.caption2)
-            .foregroundStyle(DS.textMuted)
-            .tracking(0.8)
-            .padding(.horizontal, DS.space10)
-            .padding(.bottom, DS.space4)
+        VStack(alignment: .leading, spacing: DS.space4) {
+            Text(text)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
+                .padding(.horizontal, DS.space10)
+
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(height: 0.5)
+                .padding(.horizontal, DS.space10)
+        }
+        .padding(.bottom, DS.space4)
     }
 
     private var gradientDivider: some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [DS.borderSubtle.opacity(0), DS.borderSubtle, DS.borderSubtle.opacity(0)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .frame(height: 1)
+        AkashicSectionDivider()
     }
 }

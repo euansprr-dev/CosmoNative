@@ -151,9 +151,7 @@ struct AutomationListPanel: View {
                     .frame(width: 5, height: 5)
 
                 Text(scopeLabel(scope, rules: rules))
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.6)
+                    .dsSmallCapsLabel()
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)

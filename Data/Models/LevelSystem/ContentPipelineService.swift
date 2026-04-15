@@ -891,6 +891,8 @@ struct ContentAtomMetadata: Codable, Sendable {
     var draftingNote: String?
     var draftReady: Bool?
 
+    var inheritedMentionedAtomUUIDs: [String]?
+
     // Codex-era inherited fields
     var inheritedArcType: String?
     var inheritedCodexOutline: String?

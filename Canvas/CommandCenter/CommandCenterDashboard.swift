@@ -209,7 +209,7 @@ struct CommandCenterDashboard: View {
 
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            // Context-sensitive tab bar
+            // Context-sensitive tab bar — no container, bottom indicator
             HStack(spacing: 0) {
                 if selectedTaskForDetail != nil {
                     rightColumnTab("Details", icon: "info.circle", isActive: showingDetailTab == .details)
@@ -217,12 +217,6 @@ struct CommandCenterDashboard: View {
                 rightColumnTab("Habits", icon: "checkmark.circle", isActive: showingDetailTab == .habits)
                 rightColumnTab("Reports", icon: "chart.bar", isActive: showingDetailTab == .reports)
             }
-            .padding(DS.space2)
-            .background(DS.surface, in: .rect(cornerRadius: DS.radiusMedium))
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
-            )
 
             // Content
             switch showingDetailTab {
@@ -274,23 +268,31 @@ struct CommandCenterDashboard: View {
                     selectedTaskForDetail = nil
                 case "Details":
                     viewModel.showReports = false
-                    // selectedTaskForDetail stays as-is
                     break
                 default:
                     break
                 }
             }
         } label: {
-            HStack(spacing: DS.space4) {
-                Image(systemName: icon)
-                    .font(DS.caption2)
-                Text(title)
-                    .font(DS.caption)
+            VStack(spacing: DS.space4) {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: icon)
+                        .font(DS.caption2)
+                    Text(title)
+                        .font(DS.caption)
+                }
+                .foregroundStyle(isActive ? DS.accent : DS.inkFaded)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DS.space6)
+
+                // Bottom indicator line
+                Rectangle()
+                    .fill(isActive ? DS.accent : Color.clear)
+                    .frame(height: 2)
+                    .frame(maxWidth: .infinity)
+                    .scaleEffect(x: isActive ? 0.6 : 0, anchor: .center)
+                    .clipShape(.rect(cornerRadius: 1))
             }
-            .foregroundStyle(isActive ? DS.text : DS.textMuted)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, DS.space6)
-            .background(isActive ? DS.surfaceElevated : Color.clear, in: .rect(cornerRadius: DS.radiusSmall))
         }
         .buttonStyle(.plain)
     }
@@ -298,36 +300,67 @@ struct CommandCenterDashboard: View {
     // MARK: - Gradient Divider
 
     private var gradientDivider: some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [DS.borderSubtle.opacity(0), DS.borderSubtle, DS.borderSubtle.opacity(0)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .frame(height: 1)
+        AkashicSectionDivider()
+            .padding(.horizontal, -16) // edge-to-edge in center column
     }
 
     // MARK: - Greeting
 
+    @State private var isEditingName = false
+    @State private var editingNameText = ""
+    @FocusState private var nameFieldFocused: Bool
+
     private var greetingSection: some View {
-        VStack(alignment: .leading, spacing: DS.space4) {
-            Text(viewModel.greetingText)
-                .font(DS.pageTitle)
-                .tracking(-0.3)
-                .foregroundStyle(DS.text)
+        VStack(alignment: .leading, spacing: DS.space6) {
+            greetingTextView
 
-            HStack(spacing: DS.space6) {
-                Circle()
-                    .fill(DS.accent.opacity(0.5))
-                    .frame(width: DS.space4, height: DS.space4)
+            OrnamentalRule(color: DS.gilt)
+                .padding(.vertical, 2)
 
-                Text(viewModel.dateText)
-                    .font(DS.cardMeta)
-                    .foregroundStyle(DS.textSecondary)
-            }
+            Text(viewModel.dateText)
+                .font(DS.dateSerif)
+                .foregroundStyle(DS.inkFaded)
         }
+    }
+
+    @ViewBuilder
+    private var greetingTextView: some View {
+        if isEditingName {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text("\(viewModel.greetingPrefix), ")
+                    .font(DS.displaySerif)
+                    .tracking(-0.5)
+                    .foregroundStyle(DS.inkWash)
+
+                TextField("your name", text: $editingNameText)
+                    .textFieldStyle(.plain)
+                    .font(DS.displaySerif)
+                    .tracking(-0.5)
+                    .foregroundStyle(DS.accent)
+                    .frame(maxWidth: 200)
+                    .focused($nameFieldFocused)
+                    .onSubmit { saveName() }
+            }
+        } else {
+            Text(viewModel.greetingText)
+                .font(DS.displaySerif)
+                .tracking(-0.5)
+                .foregroundStyle(DS.inkWash)
+                .onTapGesture {
+                    let current = UserDefaults.standard.string(forKey: "userName") ?? ""
+                    editingNameText = current == "there" ? "" : current
+                    isEditingName = true
+                    nameFieldFocused = true
+                }
+        }
+    }
+
+    private func saveName() {
+        let trimmed = editingNameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            UserDefaults.standard.set(trimmed, forKey: "userName")
+        }
+        isEditingName = false
     }
 
     // MARK: - Quick Stats
@@ -338,7 +371,7 @@ struct CommandCenterDashboard: View {
                 icon: "star.fill",
                 value: "Lv.\(viewModel.xpProgress.level)",
                 detail: "\(viewModel.xpProgress.currentXP) XP",
-                color: DS.orange
+                color: DS.gilt
             )
 
             if viewModel.currentStreak > 0 {
@@ -361,15 +394,19 @@ struct CommandCenterDashboard: View {
                 .foregroundStyle(color)
 
             Text(value)
-                .font(DS.cardMeta)
-                .foregroundStyle(DS.text)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.inkWash)
 
             Text(detail)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.inkFaded)
         }
         .padding(.horizontal, DS.space10)
         .padding(.vertical, DS.space4)
-        .background(DS.surface, in: Capsule())
+        .background(DS.vellum, in: .rect(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DS.sepiaBorder, lineWidth: 0.5)
+        )
     }
 }

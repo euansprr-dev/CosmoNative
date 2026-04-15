@@ -88,30 +88,31 @@ struct DashboardViewModeBar: View {
                 selectedMode = mode
             }
         } label: {
-            HStack(spacing: DS.space4) {
-                Image(systemName: mode.icon)
-                    .font(DS.caption2)
+            VStack(spacing: DS.space4) {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: mode.icon)
+                        .font(DS.caption2)
 
-                Text(mode.label)
-                    .font(DS.buttonText)
+                    Text(mode.label)
+                        .font(isSelected ? DS.headline : DS.callout)
 
-                if count > 0 {
-                    badge(for: mode, count: count, isSelected: isSelected)
-                }
-            }
-            .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
-            .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space6)
-            .background(
-                ZStack {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .fill(DS.surfaceElevated)
-                            .matchedGeometryEffect(id: "tabBg", in: tabIndicator)
-                            .dsRestingShadow()
+                    if count > 0 {
+                        badge(for: mode, count: count, isSelected: isSelected)
                     }
                 }
-            )
+                .foregroundStyle(isSelected ? DS.accent : DS.inkFaded)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space6)
+
+                // Bottom indicator line — slides between tabs
+                Rectangle()
+                    .fill(isSelected ? DS.accent : Color.clear)
+                    .frame(height: 2)
+                    .frame(maxWidth: .infinity)
+                    .scaleEffect(x: isSelected ? 0.8 : 0, anchor: .center)
+                    .clipShape(.rect(cornerRadius: 1))
+                    .matchedGeometryEffect(id: isSelected ? "tabIndicator" : "tab_\(mode.rawValue)", in: tabIndicator)
+            }
         }
         .buttonStyle(.plain)
     }
@@ -123,15 +124,14 @@ struct DashboardViewModeBar: View {
         return Text("\(count)")
             .font(DS.caption2)
             .contentTransition(.numericText(value: Double(count)))
-            .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
+            .foregroundStyle(isSelected ? DS.accent : DS.inkFaded)
+            .frame(width: 16, height: 16)
             .background(
-                Capsule()
-                    .fill(isSelected ? DS.accentSoft : DS.surface)
+                Circle()
+                    .fill(DS.gilt.opacity(0.04))
                     .overlay(
-                        Capsule()
-                            .fill(DS.green.opacity(isPulsing ? 0.18 : 0))
+                        Circle()
+                            .fill(DS.green.opacity(isPulsing ? 0.12 : 0))
                     )
             )
             .scaleEffect(isPulsing ? 1.12 : 1.0)

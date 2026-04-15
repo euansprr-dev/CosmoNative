@@ -38,8 +38,10 @@ class TaskRecurrenceEngine {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
 
-        // Batch-fetch all tasks once to check existing instances for all templates
-        let existingTemplateUUIDs = try await batchExistingInstanceTemplateUUIDs(for: today)
+        // Enforces "at most one active instance per template": if any
+        // incomplete instance already exists (today or overdue), skip
+        // generation so rescheduling the overdue one can't produce a sibling.
+        let activeTemplateUUIDs = try await batchTemplatesWithActiveInstance()
 
         for template in templates {
             guard let metadata = template.metadataValue(as: TaskMetadata.self),
@@ -58,30 +60,24 @@ class TaskRecurrenceEngine {
                 continue
             }
 
-            // Check if instance already exists for today (from batch result)
-            if existingTemplateUUIDs.contains(template.uuid) { continue }
+            // Skip if an incomplete instance already exists for this template
+            if activeTemplateUUIDs.contains(template.uuid) { continue }
 
             // Create today's instance
             try await createInstance(from: template, metadata: metadata, for: today)
         }
     }
 
-    /// Batch-check which templates already have instances for a given date.
-    /// Returns a Set of template UUIDs that already have instances on the date.
-    private func batchExistingInstanceTemplateUUIDs(for date: Date) async throws -> Set<String> {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: date)
-        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
-
+    /// Returns template UUIDs that already have at least one incomplete
+    /// instance. Completed past instances do not block generation.
+    func batchTemplatesWithActiveInstance() async throws -> Set<String> {
         let allTasks = try await atomRepository.fetchAll(type: .task)
 
         var result = Set<String>()
         for atom in allTasks {
             guard let meta = atom.metadataValue(as: TaskMetadata.self),
                   let parentUUID = meta.recurrenceParentUUID,
-                  let focusDateStr = meta.focusDate,
-                  let focusDate = ISO8601DateFormatter().date(from: focusDateStr),
-                  focusDate >= dayStart && focusDate < dayEnd else {
+                  meta.isCompleted != true else {
                 continue
             }
             result.insert(parentUUID)

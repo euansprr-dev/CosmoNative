@@ -22,7 +22,7 @@ struct MainView: View {
 
     // Command-K (constellation-based search)
     @State private var showCommandK = false
-    @State private var commandKReturnTab: CommandKView.CommandKTab? = nil
+    @State private var commandKReturnTab: CommandKTab? = nil
     @State private var commandKBehindFocusMode = false
     @StateObject private var commandKViewModel = CommandKViewModel()
 
@@ -35,6 +35,10 @@ struct MainView: View {
     // Database picker (from radial menu "Database" option)
     @State private var showDatabasePicker = false
     @State private var databasePickerPosition: CGPoint = .zero
+
+    // Template gallery (from radial menu "Template" option)
+    @State private var showTemplateGallery = false
+    @State private var templateGalleryPosition: CGPoint = .zero
 
     // Navigation destination (Command Center is home)
     @State private var currentDestination: SidebarDestination = .commandCenter
@@ -200,6 +204,9 @@ struct MainView: View {
                 )
                 .zIndex(150)
             }
+
+            // Template Gallery (from radial menu "Template" option)
+            templateGalleryOverlay
 
             // Block Context Menu (right-click on block)
             if showBlockContextMenu, let blockId = rightClickedBlockId {
@@ -380,6 +387,15 @@ struct MainView: View {
         // Cosmo Window toggle (from menu bar, Telegram, or other sources)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.CosmoWindow.toggle)) { _ in
             CosmoWindowPanelController.shared.toggle()
+        }
+        // Atom Window toggle + open (floating atom viewer)
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.AtomWindow.toggle)) { _ in
+            AtomWindowPanelController.shared.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.AtomWindow.openAtom)) { notification in
+            if let uuid = notification.userInfo?["uuid"] as? String {
+                AtomWindowPanelController.shared.show(atomUUID: uuid)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in
             showSettings = true
@@ -728,8 +744,11 @@ struct MainView: View {
         .onAppear {
             setupCrossThinkspaceDragCallbacks()
         }
-        .onChange(of: isSidebarHidden, initial: true) { _, hidden in
-            crossDragManager.sidebarWidth = hidden ? 0 : UnifiedSidebarMetrics.defaultExpandedWidth
+        .onChange(of: isSidebarHidden) { _, hidden in
+            if hidden {
+                crossDragManager.sidebarWidth = 0
+            }
+            // When shown, UnifiedSidebar.onAppear sets the actual width
         }
     }
 
@@ -1376,9 +1395,11 @@ struct MainView: View {
             )
 
             // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
-            let sidebarTotalWidth: CGFloat = isSidebarHidden ? 0 : crossDragManager.sidebarTotalWidth
-            if screenPoint.x < sidebarTotalWidth + 4 {
-                return event
+            if !isSidebarHidden {
+                let sidebarTotalWidth = crossDragManager.sidebarTotalWidth
+                if windowPoint.x < sidebarTotalWidth + 20 {
+                    return event
+                }
             }
 
             // Don't intercept right-clicks in the pane column — let the pane's own monitor handle them
@@ -1448,6 +1469,9 @@ struct MainView: View {
         case .fromDatabase:
             databasePickerPosition = radialMenuPosition
             showDatabasePicker = true
+        case .createTemplate:
+            templateGalleryPosition = radialMenuPosition
+            showTemplateGallery = true
         }
     }
 
@@ -1461,15 +1485,60 @@ struct MainView: View {
     }
 
     private func placeAtomOnCanvas(_ atom: Atom, at position: CGPoint) {
+        // Map AtomType to EntityType, handling cases where raw values differ
+        let entityType: EntityType
+        switch atom.type {
+        case .templateInstance, .blockTemplate:
+            entityType = .template
+        default:
+            entityType = EntityType(rawValue: atom.type.rawValue) ?? .note
+        }
+
         NotificationCenter.default.post(
             name: CosmoNotification.Canvas.createEntityAtPosition,
             object: nil,
             userInfo: [
-                "type": EntityType(rawValue: atom.type.rawValue) ?? .note,
+                "type": entityType,
                 "position": position,
                 "existingAtomUUID": atom.uuid
             ]
         )
+    }
+
+    @ViewBuilder
+    private var templateGalleryOverlay: some View {
+        if showTemplateGallery {
+            templateGalleryBackdrop
+            templateGalleryPanel
+        }
+    }
+
+    private var templateGalleryBackdrop: some View {
+        Color.clear
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.2)) {
+                    showTemplateGallery = false
+                }
+            }
+            .zIndex(149)
+    }
+
+    private var templateGalleryPanel: some View {
+        TemplateGalleryView(
+            position: templateGalleryPosition,
+            onSelect: { instanceAtom in
+                showTemplateGallery = false
+                placeAtomOnCanvas(instanceAtom, at: templateGalleryPosition)
+            },
+            onDismiss: {
+                withAnimation(.spring(response: 0.2)) {
+                    showTemplateGallery = false
+                }
+            }
+        )
+        .zIndex(150)
     }
 
     private func createCosmoAIBlock(at position: CGPoint) {

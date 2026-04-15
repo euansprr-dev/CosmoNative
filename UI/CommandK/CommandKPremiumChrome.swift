@@ -14,6 +14,13 @@ enum CommandKMetrics {
     static let cardCornerRadius: CGFloat = 14
     static let sectionCornerRadius: CGFloat = 18
     static let cardSpacing: CGFloat = 18
+
+    // Cortex mode metrics
+    static let compactWidth: CGFloat = 640
+    static let searchWidth: CGFloat = 800
+    static let domainBubbleSize: CGFloat = 56
+    static let recentCardMinWidth: CGFloat = 140
+    static let compactMaxHeight: CGFloat = 520
 }
 
 private struct CommandKToolbarChipModifier: ViewModifier {
@@ -28,11 +35,11 @@ private struct CommandKToolbarChipModifier: ViewModifier {
             .padding(.horizontal, 12)
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(isActive ? activeFill : DS.surfaceElevated)
+                    .fill(isActive ? activeFill : DS.vellum)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(isActive ? activeBorder : DS.borderSubtle, lineWidth: 1)
+                    .stroke(isActive ? activeBorder : DS.sepiaSubtle, lineWidth: 0.5)
             )
     }
 }
@@ -44,11 +51,11 @@ private struct CommandKToolbarGroupModifier: ViewModifier {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(DS.surfaceElevated)
+                    .fill(DS.glassCardFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
+                    .stroke(DS.glassBorder, lineWidth: 0.5)
             )
     }
 }
@@ -63,7 +70,7 @@ private struct CommandKGalleryCardModifier: ViewModifier {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(DS.surfaceElevated)
+                    .fill(DS.glassCardFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -73,17 +80,11 @@ private struct CommandKGalleryCardModifier: ViewModifier {
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(
-                        isSelected ? accentColor.opacity(0.38) : (isHovered ? DS.borderActive : DS.border),
-                        lineWidth: 1
+                        isSelected ? DS.gilt.opacity(0.4) : (isHovered ? DS.sepiaBorder : DS.sepiaSubtle),
+                        lineWidth: 0.5
                     )
                     .allowsHitTesting(false)
             )
-            .overlay(alignment: .top) {
-                accentColor
-                    .frame(height: 2)
-                    .opacity(isHovered ? 1.0 : 0)
-                    .allowsHitTesting(false)
-            }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .shadow(
                 color: .black.opacity(isHovered ? 0.07 : 0.04),
@@ -107,11 +108,11 @@ private struct CommandKSectionModifier: ViewModifier {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(DS.surfaceElevated)
+                    .fill(DS.glassCardFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(DS.border, lineWidth: 1)
+                    .stroke(DS.glassBorder, lineWidth: 0.5)
             )
             .dsRestingShadow()
     }
@@ -156,9 +157,134 @@ extension View {
         )
     }
 
+    /// Context menu for search results (uses atomUUID, no entityId)
+    func commandKSearchResultContextMenu(result: UnifiedSearchResult) -> some View {
+        self.contextMenu {
+            if let uuid = result.atomUUID {
+                Button {
+                    if result.resultKind == .thinkspace, let tid = result.thinkspaceId {
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                            object: nil,
+                            userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: tid).userInfo
+                        )
+                        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+                    } else {
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+                            object: nil, userInfo: ["atomUUID": uuid]
+                        )
+                        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+                    }
+                } label: {
+                    Label("Open in Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
+                }
+
+                Button {
+                    Task {
+                        if let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
+                           let entityType = EntityType(rawValue: atom.type.rawValue) {
+                            NotificationCenter.default.post(
+                                name: CosmoNotification.Navigation.openAsPane,
+                                object: nil,
+                                userInfo: ["type": entityType, "id": atom.id ?? 0]
+                            )
+                        }
+                        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+                    }
+                } label: {
+                    Label("Open as Pane", systemImage: "rectangle.split.2x1")
+                }
+
+                Button {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.NodeGraph.addToCanvas,
+                        object: nil,
+                        userInfo: ["atomUUID": uuid]
+                    )
+                } label: {
+                    Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    Task { try? await AtomRepository.shared.delete(uuid: uuid) }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
+
     func commandKSectionChrome(
         cornerRadius: CGFloat = CommandKMetrics.sectionCornerRadius
     ) -> some View {
         modifier(CommandKSectionModifier(cornerRadius: cornerRadius))
+    }
+
+    /// Standard right-click menu for any atom card in Command-K
+    func commandKCardContextMenu(
+        atomUUID: String,
+        entityId: Int64,
+        atomType: AtomType,
+        isThinkspace: Bool = false,
+        onDelete: (() -> Void)? = nil
+    ) -> some View {
+        self.contextMenu {
+            Button {
+                if isThinkspace {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                        object: nil,
+                        userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: atomUUID).userInfo
+                    )
+                    NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+                } else if let entityType = EntityType(rawValue: atomType.rawValue), entityId > 0 {
+                    NotificationCenter.default.post(
+                        name: .enterFocusMode,
+                        object: nil,
+                        userInfo: ["type": entityType, "id": entityId]
+                    )
+                }
+            } label: {
+                Label(
+                    isThinkspace ? "Open Thinkspace" : "Open in Focus Mode",
+                    systemImage: isThinkspace ? "rectangle.3.group" : "arrow.up.left.and.arrow.down.right"
+                )
+            }
+
+            Button {
+                let info: [String: Any] = isThinkspace
+                    ? ["thinkspaceId": atomUUID]
+                    : ["type": EntityType(rawValue: atomType.rawValue) as Any, "id": entityId]
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openAsPane,
+                    object: nil, userInfo: info
+                )
+                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            } label: {
+                Label("Open as Pane", systemImage: "rectangle.split.2x1")
+            }
+
+            if !isThinkspace {
+                Button {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.NodeGraph.addToCanvas,
+                        object: nil,
+                        userInfo: ["atomUUID": atomUUID]
+                    )
+                } label: {
+                    Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+                }
+            }
+
+            if let onDelete {
+                Divider()
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
     }
 }

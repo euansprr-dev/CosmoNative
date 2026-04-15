@@ -169,6 +169,9 @@ class AutomationActionExecutor {
             // Deferred to WP6
             break
 
+        case .instantiateTemplate:
+            try await handleInstantiateTemplate(action, context: context)
+
         case .highlightCluster:
             handleHighlightCluster(action, context: context)
 
@@ -599,5 +602,31 @@ class AutomationActionExecutor {
             return "[]"
         }
         return json
+    }
+
+    // MARK: - Template Instantiation
+
+    private func handleInstantiateTemplate(_ action: AutomationAction, context: AutomationContext) async throws {
+        guard let templateUUID = action.configString("templateUUID") else {
+            print("⚡ [Automation] instantiateTemplate: missing templateUUID in config")
+            return
+        }
+
+        let thinkspaceId = action.configString("thinkspaceId") ?? context.thinkspaceId
+        let autoFill = action.configString("autoFill") != "false"
+
+        // Fetch triggering atom for context-aware auto-fill
+        let triggeringAtom = try? await AtomRepository.shared.fetch(uuid: context.atom.uuid)
+
+        try await TemplateEngine.shared.instantiate(
+            templateUUID: templateUUID,
+            fieldOverrides: nil,
+            triggeringAtom: triggeringAtom,
+            targetThinkspaceId: thinkspaceId,
+            targetPosition: nil,
+            autoFill: autoFill
+        )
+
+        print("⚡ [Automation] Instantiated template \(templateUUID) for atom \(context.atom.uuid)")
     }
 }

@@ -46,12 +46,7 @@ struct CommandCenterReschedulePanel: View {
         }
         .padding(12)
         .frame(width: 340)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .dsFloatingShadow()
+        .cosmoMenuChrome(cornerRadius: 14)
         .environment(\.colorScheme, .light)
     }
 
@@ -83,6 +78,7 @@ struct CommandCenterReschedulePanel: View {
     @ViewBuilder
     private func dateChip(_ label: String, icon: String, tint: Color, date: Date?, onSelect: @escaping (Date?) -> Void) -> some View {
         Button {
+            CosmicHaptics.shared.play(.selection)
             onSelect(date)
         } label: {
             HStack(spacing: 3) {
@@ -113,6 +109,7 @@ struct CommandCenterReschedulePanel: View {
         .datePickerStyle(.graphical)
         .labelsHidden()
         .tint(DS.accent)
+        .frame(width: 260)
         .environment(\.colorScheme, .light)
         .onChange(of: selectedDate) {
             onSelectDate(selectedDate)
@@ -233,7 +230,7 @@ struct CommandCenterTaskActionPopover: View {
                 .padding(.bottom, 8)
 
             // Divider
-            Rectangle().fill(DS.borderSubtle).frame(height: 1)
+            CosmoGradientDivider()
 
             // Tab strip + action buttons
             tabStrip
@@ -241,7 +238,7 @@ struct CommandCenterTaskActionPopover: View {
                 .padding(.vertical, 6)
 
             // Divider
-            Rectangle().fill(DS.borderSubtle).frame(height: 1)
+            CosmoGradientDivider()
 
             // Tab content — fixed min height prevents popover resize crash on macOS
             tabContent
@@ -250,12 +247,7 @@ struct CommandCenterTaskActionPopover: View {
                 .frame(minHeight: 200, alignment: .top)
         }
         .frame(width: 300)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .dsFloatingShadow()
+        .cosmoMenuChrome(cornerRadius: 14)
         .environment(\.colorScheme, .light)
         .animation(nil, value: activeTab)
         .task {
@@ -320,6 +312,7 @@ struct CommandCenterTaskActionPopover: View {
         HStack(spacing: 2) {
             // Complete button (standalone action, not a tab)
             Button {
+                CosmicHaptics.shared.play(.success)
                 onToggleCompletion()
                 onDismiss()
             } label: {
@@ -345,6 +338,7 @@ struct CommandCenterTaskActionPopover: View {
 
             // Delete button (standalone action)
             Button {
+                CosmicHaptics.shared.play(.delete)
                 onDelete()
                 onDismiss()
             } label: {
@@ -364,6 +358,7 @@ struct CommandCenterTaskActionPopover: View {
         let isActive = activeTab == tab
 
         Button {
+            CosmicHaptics.shared.play(.threshold)
             withAnimation(.easeInOut(duration: 0.15)) {
                 activeTab = tab
             }
@@ -425,6 +420,7 @@ struct CommandCenterTaskActionPopover: View {
                 .datePickerStyle(.graphical)
                 .labelsHidden()
                 .tint(DS.accent)
+                .frame(width: 260)
                 .environment(\.colorScheme, .light)
                 .onChange(of: calendarDate) {
                     onReschedule(calendarDate)
@@ -451,6 +447,7 @@ struct CommandCenterTaskActionPopover: View {
     @ViewBuilder
     private func quickChip(_ label: String, icon: String, tint: Color, date: Date?) -> some View {
         Button {
+            CosmicHaptics.shared.play(.selection)
             onReschedule(date)
             onDismiss()
         } label: {
@@ -551,6 +548,7 @@ struct CommandCenterTaskActionPopover: View {
                     Spacer()
 
                     Button("Apply") {
+                        CosmicHaptics.shared.play(.selection)
                         onApplyRecurrence(buildRule())
                         onDismiss()
                     }
@@ -585,7 +583,10 @@ struct CommandCenterTaskActionPopover: View {
 
     @ViewBuilder
     private func habitChip(title: String, icon: String, tint: Color, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            CosmicHaptics.shared.play(.selection)
+            action()
+        } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(DS.caption)

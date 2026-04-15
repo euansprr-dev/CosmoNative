@@ -143,6 +143,7 @@ struct ResearchBlockDropdownView: View {
                     }
                     .padding(8)
                 }
+                .scrollBounceBehavior(.basedOnSize)
                 .frame(maxHeight: 250)
             } else if !isLoaded {
                 // Loading state
@@ -184,6 +185,7 @@ struct ResearchBlockDropdownView: View {
                     }
                     .padding(8)
                 }
+                .scrollBounceBehavior(.basedOnSize)
                 .frame(maxHeight: 250)
             } else if !isLoaded {
                 HStack(spacing: 6) {
@@ -219,10 +221,9 @@ struct ResearchBlockDropdownView: View {
                     .font(.system(size: 9))
                     .foregroundColor(type.color)
 
-                Text(type.label.uppercased())
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(type.color)
-                    .tracking(0.5)
+                Text(type.label)
+                    .font(DS.smallCaps)
+                    .foregroundStyle(type.color)
 
                 // Count badge
                 Text("\(annotations.count)")
@@ -235,30 +236,23 @@ struct ResearchBlockDropdownView: View {
 
             // Annotation items
             ForEach(annotations) { annotation in
-                HStack(alignment: .top, spacing: 6) {
-                    // Colored accent bar
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(type.color.opacity(0.4))
-                        .frame(width: 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    // Timestamp
+                    Text(annotation.timestampString)
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(type.color.opacity(0.6))
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        // Timestamp
-                        Text(annotation.timestampString)
-                            .font(.system(size: 8, design: .monospaced))
-                            .foregroundColor(type.color.opacity(0.6))
-
-                        // Content
-                        if !annotation.content.isEmpty {
-                            Text(annotation.content)
-                                .font(.system(size: 10))
-                                .foregroundColor(DS.textSecondary)
-                                .lineLimit(2)
-                        } else {
-                            Text("(empty)")
-                                .font(.system(size: 10))
-                                .foregroundColor(DS.textMuted)
-                                .italic()
-                        }
+                    // Content
+                    if !annotation.content.isEmpty {
+                        Text(annotation.content)
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.textSecondary)
+                            .lineLimit(2)
+                    } else {
+                        Text("(empty)")
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.textMuted)
+                            .italic()
                     }
                 }
                 .padding(.leading, 4)

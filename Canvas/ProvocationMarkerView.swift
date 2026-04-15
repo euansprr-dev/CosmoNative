@@ -117,15 +117,10 @@ struct ProvocationMarkerView: View {
     private var evidenceSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(provocation.evidenceQuotes, id: \.self) { quote in
-                HStack(alignment: .top, spacing: 4) {
-                    Rectangle()
-                        .fill(provocation.type.color.opacity(0.4))
-                        .frame(width: 2)
-                    Text(quote)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textSecondary)
-                        .lineLimit(3)
-                }
+                Text(quote)
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(3)
             }
         }
     }

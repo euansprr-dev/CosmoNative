@@ -102,48 +102,169 @@ struct ConnectionBlockView: View {
         return trimmed.isEmpty ? "Untitled Connection" : trimmed
     }
 
-    // MARK: - Connection Content
+    // MARK: - Connection Content (V2 "The Crucible" preview)
+
+    /// Ordering for the canvas block's 2×4 station grid — mirrors TheForgeView's defaults.
+    private static let stationGridOrder: [ConnectionSectionType] = [
+        .goal, .conceptName, .problems, .benefits,
+        .process, .examples, .beliefsObjections, .references
+    ]
 
     private var connectionContent: some View {
         VStack(spacing: 0) {
-            // Compact header
-            compactHeader
-                .padding(.horizontal, 12)
+            crucibleMasthead
+                .padding(.horizontal, 14)
                 .padding(.top, 12)
-                .padding(.bottom, 8)
+                .padding(.bottom, 10)
 
-            // Divider
-            Rectangle()
-                .fill(DS.border)
-                .frame(height: 1)
+            Rectangle().fill(DS.sepiaSubtle).frame(height: 0.5)
 
-            // Sections — flow naturally so the block grows to fit content
-            VStack(spacing: 4) {
-                ForEach(Array(sections.indices), id: \.self) { index in
-                    CompactSectionRow(
-                        section: $sections[index],
-                        onAddItem: { document, plainText in
-                            addItem(document: document, plainText: plainText, toSectionIndex: index)
-                        },
-                        onDeleteItem: { itemId in
-                            deleteItem(id: itemId, fromSectionIndex: index)
-                        },
-                        onEditItem: { itemId, document, plainText in
-                            editItem(id: itemId, document: document, plainText: plainText, inSectionIndex: index)
-                        }
-                    )
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-
-            // Footer
-            footerBar
+            stationGrid
                 .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-                .padding(.top, 4)
+                .padding(.vertical, 10)
+
+            crucibleFooter
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Masthead (block)
+
+    private var crucibleMasthead: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                if isEditingTitle {
+                    inlineTitleEditor
+                } else {
+                    Text(displayTitle)
+                        .font(.system(size: 15, weight: .light, design: .serif))
+                        .tracking(0.3)
+                        .foregroundStyle(editableTitle.isEmpty ? DS.textMuted : DS.inkWash)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            titleDocumentAtEditStart = titleDocument
+                            isEditingTitle = true
+                        }
+                }
+                Text(frameworkTypeLabel)
+                    .font(DS.smallCaps)
+                    .tracking(1.6)
+                    .foregroundStyle(DS.giltMuted)
+            }
+            Spacer(minLength: 6)
+            MaturityCrystalInline(filledCount: populatedSectionCount)
+        }
+    }
+
+    private var inlineTitleEditor: some View {
+        CosmoDocumentEditor(
+            document: $titleDocument,
+            fontSize: 15,
+            compact: true,
+            placeholder: "Untitled Connection",
+            allowSlashCommands: false,
+            allowMentions: true,
+            allowSelectionMenu: false,
+            allowImages: false,
+            titleConfiguration: titleStyle.titleConfiguration,
+            baseFontWeight: .light,
+            scrollsInternally: true,
+            onContentHeightChange: { newHeight in
+                titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
+            },
+            onPlainTextChange: { _ in },
+            onStructuredDocumentChange: { document, _ in
+                titleDocument = document
+            },
+            onActivate: { isEditingTitle = true },
+            onDeactivate: { isEditingTitle = false },
+            onCommit: { isEditingTitle = false },
+            autoFocus: true
+        )
+        .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
+    }
+
+    private var frameworkTypeLabel: String {
+        // Prefer the persisted concept type from focus state when available.
+        if block.entityId > 0,
+           let state = atom.flatMap({ ConnectionFocusModeState.load(atomUUID: $0.uuid) }) {
+            return state.conceptType.displayName.uppercased()
+        }
+        return "MENTAL MODEL"
+    }
+
+    // MARK: - Station Grid
+
+    private var stationGrid: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 4)
+        return LazyVGrid(columns: columns, spacing: 4) {
+            ForEach(Self.stationGridOrder, id: \.self) { type in
+                stationCell(for: type)
+            }
+        }
+    }
+
+    private func stationCell(for type: ConnectionSectionType) -> some View {
+        let section = sections.first(where: { $0.type == type })
+        let isPopulated = (section?.items.isEmpty == false)
+        return Button {
+            openFocusAtStation(type)
+        } label: {
+            VStack(spacing: 3) {
+                Text(isPopulated ? "◆" : "·")
+                    .font(.system(size: isPopulated ? 12 : 14, weight: .regular, design: .serif))
+                    .foregroundStyle(isPopulated ? type.accentColor.opacity(0.85) : DS.inkFaded)
+                Text(type.abbreviation)
+                    .font(DS.smallCaps)
+                    .tracking(1.0)
+                    .foregroundStyle(isPopulated ? DS.inkWash.opacity(0.8) : DS.inkFaded)
+            }
+            .frame(maxWidth: .infinity, minHeight: 40)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(type.accentColor.opacity(isPopulated ? 0.05 : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DS.sepiaSubtle, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(type.displayName), \(isPopulated ? "\(section?.items.count ?? 0) items" : "empty"). Tap to open focus mode.")
+    }
+
+    // MARK: - Footer
+
+    private var crucibleFooter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 8))
+                .foregroundStyle(accentColor.opacity(0.5))
+            Text("\(totalItemCount) insights")
+                .font(DS.caption2)
+                .foregroundStyle(accentColor.opacity(0.6))
+            Spacer()
+            Text("drag here")
+                .font(DS.caption2)
+                .italic()
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private func openFocusAtStation(_ type: ConnectionSectionType) {
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: [
+                "type": EntityType.connection,
+                "id": block.entityId,
+                "focusStation": type.rawValue
+            ]
+        )
     }
 
     // MARK: - Compact Header

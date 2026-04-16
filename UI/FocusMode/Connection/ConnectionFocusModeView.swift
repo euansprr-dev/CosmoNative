@@ -41,6 +41,21 @@ struct ConnectionFocusModeView: View {
     @State private var isEditingTitle = false
     @StateObject private var coDevEngine = ConnectionCoDevEngine()
 
+    // MARK: - V2 "The Crucible" state
+
+    @State private var collaboratorEngine = ConceptCollaboratorEngine()
+    @State private var wellSources: [Atom] = []
+    @State private var wellIsLoading: Bool = false
+    @State private var hoveredSourceUUID: String?
+    @State private var hoveredStationType: ConnectionSectionType?
+    @State private var isRefreshingInsights: Bool = false
+    @State private var atelierContentUsages: [AtelierContentUsage] = []
+    @State private var atelierProfiles: [AtelierProfileChip] = []
+    // V2 mode overlays — Manuscript (⌘M), Chalkboard (⌘B), Station Mode (double-click station).
+    @State private var manuscriptActive: Bool = false
+    @State private var chalkboardActive: Bool = false
+    @State private var stationModeType: ConnectionSectionType?
+
     private let titleStyle = SharedTitleSurfaceStyle.connectionFocus
 
     private var titleFontSize: CGFloat { titleStyle.fontSize }
@@ -138,25 +153,17 @@ struct ConnectionFocusModeView: View {
             FocusSidebarTrigger(isVisible: $sidebarVisible)
                 .frame(maxHeight: .infinity)
         }
-        .overlay(alignment: .topLeading) {
-            UniversalFocusSidebar(
-                title: "Connection",
-                icon: "link",
-                accentColor: CosmoColors.blockConnection,
-                isVisible: $sidebarVisible,
-                isLocked: $sidebarLocked
-            ) {
-                ConnectionSidebarView(
-                    atom: atom,
-                    viewModel: viewModel,
-                    isVisible: true,
-                    onDropSource: { source in
-                        dropSourceOnCanvas(source)
-                    }
-                )
-            }
-            .padding(.leading, DS.space8)
-            .padding(.top, 56)
+        // V2 "The Crucible": left-docked Well
+        .overlay(alignment: .leading) {
+            theWellPanel
+                .padding(.top, 56)
+                .padding(.bottom, DS.space16)
+        }
+        // V2 "The Crucible": right-docked Atelier
+        .overlay(alignment: .trailing) {
+            theAtelierPanel
+                .padding(.top, 56)
+                .padding(.bottom, DS.space16)
         }
         .overlay(alignment: .topTrailing) {
             if isPaneContext {
@@ -172,6 +179,42 @@ struct ConnectionFocusModeView: View {
                 .padding(.top, DS.space16)
             }
         }
+        // V2 mode overlays — Chalkboard mood, Manuscript reading, Station Mode zoom.
+        .overlay {
+            ChalkboardModeOverlay(isActive: chalkboardActive) {
+                withAnimation(ProMotionSprings.focusTransition) { chalkboardActive = false }
+            }
+        }
+        .overlay {
+            if manuscriptActive {
+                ManuscriptModeView(
+                    title: editableTitle,
+                    conceptType: viewModel.state.conceptType,
+                    sections: viewModel.state.sections,
+                    onDismiss: {
+                        withAnimation(ProMotionSprings.focusTransition) { manuscriptActive = false }
+                    }
+                )
+                .transition(.opacity)
+            }
+        }
+        .overlay {
+            if let type = stationModeType, let binding = stationBinding(for: type) {
+                StationModeOverlay(
+                    section: binding,
+                    onAddItem: { doc, text in viewModel.addItem(document: doc, plainText: text, toSection: type) },
+                    onEditItem: { item in viewModel.editItem(item, inSection: type) },
+                    onDeleteItem: { id in viewModel.deleteItem(id, fromSection: type) },
+                    onSourceTap: { uuid in openSourceAsPanel(uuid) },
+                    onAcceptGhost: { ghost in viewModel.acceptGhost(ghost, inSection: type) },
+                    onDismissGhost: { id in viewModel.dismissGhost(id, inSection: type) },
+                    onDismiss: {
+                        withAnimation(ProMotionSprings.focusTransition) { stationModeType = nil }
+                    }
+                )
+                .transition(.opacity)
+            }
+        }
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             loadState()
@@ -180,11 +223,24 @@ struct ConnectionFocusModeView: View {
             titleEditorHeight = titleMinHeight
             Task {
                 await viewModel.generateGhostSuggestions()
+                await loadAtelierData()
+                // Kick off an initial insights pass if the framework has enough substance.
+                if viewModel.state.completedSectionCount >= 2 {
+                    await refreshLiveInsights()
+                }
             }
             // Register context provider for global Cosmo window
             let provider = ConnectionContextProvider(atom: atom, viewModel: viewModel)
             if !isPaneContext || isPaneActive {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
+        }
+        .onChange(of: viewModel.state.completedSectionCount) { oldValue, newValue in
+            // Threshold-crossed? Refresh insights.
+            let oldBand = thresholdBand(oldValue)
+            let newBand = thresholdBand(newValue)
+            if newBand != oldBand && newValue >= 2 {
+                Task { await refreshLiveInsights() }
             }
         }
         .onChange(of: isPaneActive) { _, isActive in
@@ -221,6 +277,19 @@ struct ConnectionFocusModeView: View {
         }
         // Keyboard shortcuts
         .onKeyPress(.escape) {
+            // V2 mode overlays dismiss first — a sequence of nested exits.
+            if stationModeType != nil {
+                withAnimation(ProMotionSprings.focusTransition) { stationModeType = nil }
+                return .handled
+            }
+            if manuscriptActive {
+                withAnimation(ProMotionSprings.focusTransition) { manuscriptActive = false }
+                return .handled
+            }
+            if chalkboardActive {
+                withAnimation(ProMotionSprings.focusTransition) { chalkboardActive = false }
+                return .handled
+            }
             if activeRelationArea != nil {
                 activeRelationArea = nil
                 return .handled
@@ -246,6 +315,30 @@ struct ConnectionFocusModeView: View {
             if keyPress.characters == "k" && keyPress.modifiers.contains(.command) {
                 showCommandK = true
                 return .handled
+            }
+            // V2 mode shortcuts — ⌘M Manuscript, ⌘B Chalkboard, ⌘F Forge (reset).
+            if keyPress.modifiers.contains(.command) {
+                switch keyPress.characters {
+                case "m":
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        manuscriptActive.toggle()
+                        if manuscriptActive { chalkboardActive = false; stationModeType = nil }
+                    }
+                    return .handled
+                case "b":
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        chalkboardActive.toggle()
+                    }
+                    return .handled
+                case "f":
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        manuscriptActive = false
+                        chalkboardActive = false
+                        stationModeType = nil
+                    }
+                    return .handled
+                default: break
+                }
             }
             return .ignored
         }
@@ -278,39 +371,51 @@ struct ConnectionFocusModeView: View {
 
     /// Section cards displayed directly on the canvas (no outer container)
     private var anchoredConnectionCard: some View {
-        VStack(spacing: 16) {
-            // Floating title header (no background container)
-            connectionTitleHeader
-                .frame(width: 420)
-                .padding(.bottom, 8)
-
-            // Section cards - each is its own card directly on canvas
-            ForEach($viewModel.state.sections) { $section in
-                ConnectionSectionView(
-                    section: $section,
-                    onAddItem: { document, plainText in
-                        viewModel.addItem(document: document, plainText: plainText, toSection: section.type)
-                    },
-                    onEditItem: { item in
-                        viewModel.editItem(item, inSection: section.type)
-                    },
-                    onDeleteItem: { id in
-                        viewModel.deleteItem(id, fromSection: section.type)
-                    },
-                    onSourceTap: { sourceUUID in
-                        openSourceAsPanel(sourceUUID)
-                    },
-                    onAcceptGhost: { ghost in
-                        viewModel.acceptGhost(ghost, inSection: section.type)
-                    },
-                    onDismissGhost: { id in
-                        viewModel.dismissGhost(id, inSection: section.type)
+        VStack(spacing: 24) {
+            // V2 "The Crucible" — Masthead + spatial Stations grid
+            TheForgeView(
+                title: Binding(
+                    get: { editableTitle },
+                    set: { newValue in
+                        editableTitle = newValue
+                        titleDocument = RichDocument.migrateLegacy(newValue)
+                        viewModel.updateTitleDocument(titleDocument, plainTitle: newValue)
                     }
-                )
-                .frame(width: 420)
-            }
+                ),
+                conceptType: $viewModel.state.conceptType,
+                state: $viewModel.state,
+                onAddItem: { document, plainText, type in
+                    viewModel.addItem(document: document, plainText: plainText, toSection: type)
+                },
+                onEditItem: { item, type in
+                    viewModel.editItem(item, inSection: type)
+                },
+                onDeleteItem: { id, type in
+                    viewModel.deleteItem(id, fromSection: type)
+                },
+                onSourceTap: { sourceUUID in
+                    openSourceAsPanel(sourceUUID)
+                },
+                onAcceptGhost: { ghost, type in
+                    viewModel.acceptGhost(ghost, inSection: type)
+                },
+                onDismissGhost: { id, type in
+                    viewModel.dismissGhost(id, inSection: type)
+                },
+                onEnterStationMode: { type in
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        stationModeType = type
+                    }
+                },
+                onTitleCommit: { _ in
+                    viewModel.flushTitleSave(titleDocument, plainTitle: editableTitle)
+                },
+                sourceCount: viewModel.state.connectedSources.count,
+                insightCount: viewModel.state.totalGhostCount
+            )
+            .frame(maxWidth: CGFloat(4) * 260 + CGFloat(3) * 20)
 
-            // Connected sources (if any)
+            // Connected sources (if any) — preserved from V1 until Phase 2 replaces with TheWellView.
             if !viewModel.state.connectedSources.isEmpty {
                 connectedSourcesSection
                     .frame(width: 420)
@@ -500,6 +605,222 @@ struct ConnectionFocusModeView: View {
                 endPoint: .bottom
             )
         )
+    }
+
+    // MARK: - V2 "The Crucible" — Well & Atelier panels
+
+    /// Left-docked sources + whispers zone.
+    private var theWellPanel: some View {
+        TheWellView(
+            sources: wellSources,
+            whispersBySource: whispersBySource,
+            isLoadingSources: wellIsLoading,
+            onAddSource: { handleAddSource() },
+            onSourceTap: { openSourceAsPanel($0) },
+            onRefreshWhispers: { sourceUUID in
+                Task { await regenerateWhispers(forSource: sourceUUID) }
+            },
+            onAcceptWhisper: { ghost in
+                viewModel.acceptGhost(ghost, inSection: ghost.targetSectionType)
+            },
+            onDismissWhisper: { id in
+                for section in viewModel.state.sections {
+                    if section.ghostSuggestions.contains(where: { $0.id == id }) {
+                        viewModel.dismissGhost(id, inSection: section.type)
+                    }
+                }
+            },
+            onHoverSource: { hoveredSourceUUID = $0 },
+            contributionsBySource: contributionsBySource
+        )
+        .background(DS.vellum.opacity(0.95))
+        .shadow(color: DS.inkWash.opacity(0.06), radius: 8, x: 2, y: 0)
+    }
+
+    /// Right-docked partner zone: collaborator, insights, crystal, usage.
+    private var theAtelierPanel: some View {
+        TheAtelierView(
+            collaboratorMessages: Binding(
+                get: { viewModel.state.collaboratorMessages },
+                set: { viewModel.state.collaboratorMessages = $0 }
+            ),
+            isCollaboratorThinking: collaboratorEngine.isThinking,
+            onSendMessage: { text in Task { await handleCollaboratorSend(text) } },
+            onCrystallizeMessage: { message in handleCollaboratorCrystallize(message) },
+            insights: viewModel.state.liveInsights,
+            isRefreshingInsights: isRefreshingInsights,
+            onRefreshInsights: { Task { await refreshLiveInsights() } },
+            onDismissInsight: { id in
+                viewModel.state.liveInsights.removeAll { $0.id == id }
+            },
+            filledSectionCount: viewModel.state.completedSectionCount,
+            thresholdLabel: maturityThresholdLabel,
+            maturityDetail: maturityDetailLine,
+            contentUsages: atelierContentUsages,
+            profiles: atelierProfiles,
+            onOpenContent: { openContentAtom($0) },
+            onAddProfile: { handleAddProfile() },
+            onOpenProfile: { openProfileAtom($0) },
+            frameworkTitle: editableTitle,
+            conceptType: viewModel.state.conceptType
+        )
+        .background(DS.vellum.opacity(0.95))
+        .shadow(color: DS.inkWash.opacity(0.06), radius: 8, x: -2, y: 0)
+    }
+
+    // MARK: - Well/Atelier computed data
+
+    private var whispersBySource: [String: [GhostSuggestion]] {
+        var out: [String: [GhostSuggestion]] = [:]
+        for section in viewModel.state.sections {
+            for ghost in section.ghostSuggestions {
+                out[ghost.sourceAtomUUID, default: []].append(ghost)
+            }
+        }
+        return out
+    }
+
+    private var contributionsBySource: [String: Set<ConnectionSectionType>] {
+        var out: [String: Set<ConnectionSectionType>] = [:]
+        for section in viewModel.state.sections {
+            for item in section.items {
+                if let uuid = item.sourceAtomUUID {
+                    out[uuid, default: []].insert(section.type)
+                }
+            }
+        }
+        return out
+    }
+
+    private var maturityThresholdLabel: String {
+        switch viewModel.state.completedSectionCount {
+        case 0...2: return "SEED"
+        case 3...4: return "SAPLING"
+        case 5...7: return "MATURE"
+        default: return "PROVEN"
+        }
+    }
+
+    private var maturityDetailLine: String {
+        "\(viewModel.state.completedSectionCount)/8 STATIONS"
+    }
+
+    // MARK: - Well/Atelier handlers
+
+    private func handleAddSource() {
+        showCommandK = true
+    }
+
+    private func handleAddProfile() {
+        // Placeholder — future work wires the profile picker.
+    }
+
+    private func openContentAtom(_ uuid: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": uuid]
+        )
+    }
+
+    private func openProfileAtom(_ uuid: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": uuid]
+        )
+    }
+
+    private func regenerateWhispers(forSource sourceUUID: String) async {
+        // Per-source whisper regeneration — Phase 2 currently falls back to the
+        // full-graph refresh. GhostSuggestionEngine.generateWhispers(forSource:)
+        // is the Phase 3 entry point when we add the specialized API.
+        await viewModel.generateGhostSuggestions()
+    }
+
+    @MainActor
+    private func loadAtelierData() async {
+        wellIsLoading = true
+        wellSources = await coDevEngine.findSourceMaterials(for: atom, limit: 10)
+        wellIsLoading = false
+
+        let usages = await coDevEngine.findContentUsage(connectionUUID: atom.uuid)
+        atelierContentUsages = usages.map { usage in
+            AtelierContentUsage(
+                id: usage.atom.uuid,
+                title: usage.atom.title ?? "Untitled",
+                formatGlyph: "doc.richtext"
+            )
+        }
+
+        let profileIds = atom.connectionLinkedProfileIds
+        var chips: [AtelierProfileChip] = []
+        for id in profileIds {
+            if let profile = try? await AtomRepository.shared.fetch(uuid: id) {
+                let initial = String((profile.title ?? "?").prefix(1))
+                chips.append(AtelierProfileChip(id: profile.uuid, initial: initial, title: profile.title ?? "Profile"))
+            }
+        }
+        atelierProfiles = chips
+    }
+
+    @MainActor
+    private func refreshLiveInsights() async {
+        isRefreshingInsights = true
+        let insights = await coDevEngine.generateLiveInsights(
+            state: viewModel.state,
+            conceptType: viewModel.state.conceptType,
+            frameworkTitle: editableTitle
+        )
+        viewModel.state.setLiveInsights(insights)
+        isRefreshingInsights = false
+    }
+
+    @MainActor
+    private func handleCollaboratorSend(_ text: String) async {
+        let userMessage = CollaboratorMessage(role: .user, text: text)
+        viewModel.state.appendCollaboratorMessage(userMessage)
+
+        let reply = await collaboratorEngine.ask(
+            prompt: text,
+            frameworkTitle: editableTitle,
+            conceptType: viewModel.state.conceptType,
+            state: viewModel.state,
+            history: viewModel.state.collaboratorMessages
+        )
+        viewModel.state.appendCollaboratorMessage(reply)
+    }
+
+    private func thresholdBand(_ count: Int) -> Int {
+        switch count {
+        case 0...2: return 0
+        case 3...4: return 1
+        case 5...7: return 2
+        default: return 3
+        }
+    }
+
+    /// Binding into a specific section by type — for Station Mode overlay.
+    private func stationBinding(for type: ConnectionSectionType) -> Binding<ConnectionSection>? {
+        guard viewModel.state.sections.firstIndex(where: { $0.type == type }) != nil else { return nil }
+        return Binding(
+            get: {
+                viewModel.state.sections.first(where: { $0.type == type })
+                    ?? ConnectionSection(type: type)
+            },
+            set: { newValue in
+                if let idx = viewModel.state.sections.firstIndex(where: { $0.type == type }) {
+                    viewModel.state.sections[idx] = newValue
+                }
+            }
+        )
+    }
+
+    private func handleCollaboratorCrystallize(_ message: CollaboratorMessage) {
+        guard let section = message.crystallizeTarget,
+              let content = message.crystallizeContent, !content.isEmpty else { return }
+        let document = RichDocument.migrateLegacy(content)
+        viewModel.addItem(document: document, plainText: content, toSection: section)
     }
 
     // MARK: - Connected Sources Section

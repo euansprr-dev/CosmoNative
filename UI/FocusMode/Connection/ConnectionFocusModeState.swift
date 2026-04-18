@@ -143,11 +143,21 @@ struct CollaboratorMessage: Identifiable, Codable, Equatable {
 
 /// CGPoint is already Codable on Foundation but we give it a stable Equatable-friendly
 /// representation so Dictionary<_, CGPoint> round-trips cleanly through JSON.
-private struct CodablePoint: Codable, Equatable {
+struct CodablePoint: Codable, Equatable {
     let x: Double
     let y: Double
     init(_ point: CGPoint) { self.x = point.x; self.y = point.y }
+    init(x: Double, y: Double) { self.x = x; self.y = y }
     var cgPoint: CGPoint { CGPoint(x: x, y: y) }
+}
+
+/// Codable wrapper for CGSize so resizable blocks can persist their size.
+struct CodableSize: Codable, Equatable {
+    let width: Double
+    let height: Double
+    init(_ size: CGSize) { self.width = size.width; self.height = size.height }
+    init(width: Double, height: Double) { self.width = width; self.height = height }
+    var cgSize: CGSize { CGSize(width: width, height: height) }
 }
 
 // MARK: - Connection Section Type
@@ -429,6 +439,8 @@ struct ConnectedSource: Identifiable, Equatable {
 
 /// Complete state for a Connection Focus Mode session
 struct ConnectionFocusModeState: Codable {
+    static let currentLayoutVersion = 2
+
     let atomUUID: String
     var sections: [ConnectionSection]
     var viewportState: CanvasViewportState
@@ -445,6 +457,26 @@ struct ConnectionFocusModeState: Codable {
     /// Empty = use the default 2x4 grid. Keyed by section type raw value
     /// because JSON dictionary keys must be strings.
     private var stationPositionsRaw: [String: CodablePoint] = [:]
+
+    /// V3 unified canvas positions keyed by stable block id:
+    /// - `"masthead"`, `"collaborator"`, `"insights"`, `"crystal"`, `"usage"`
+    /// - `"station:<ConnectionSectionType.rawValue>"`
+    /// - `"source:<atomUUID>"`
+    /// Atom blocks (user-added) store their position in `FocusFloatingBlock.positionX/Y`
+    /// via atom metadata, not here.
+    private var canvasPositionsRaw: [String: CodablePoint] = [:]
+
+    /// V3 unified canvas sizes for resizable blocks. Keyed same as `canvasPositionsRaw`.
+    /// Non-resizable blocks use their intrinsic size and don't appear here.
+    private var canvasSizesRaw: [String: CodableSize] = [:]
+
+    /// V3 Phase 3: block ids hidden from the Connection canvas. Only intrinsic
+    /// panels can be hidden (collaborator, insights, crystal, usage). `⌘⇧R`
+    /// clears this set alongside positions/sizes.
+    private var hiddenPanelsRaw: [String] = []
+
+    /// Governs persisted layout migrations for the connection workspace.
+    private var layoutVersion: Int = Self.currentLayoutVersion
 
     /// Current viewing mode. Default is `.forge`.
     var forgeMode: ForgeMode = .forge
@@ -467,6 +499,10 @@ struct ConnectionFocusModeState: Codable {
         self.lastModified = Date()
         self.conceptType = .mentalModel
         self.stationPositionsRaw = [:]
+        self.canvasPositionsRaw = [:]
+        self.canvasSizesRaw = [:]
+        self.hiddenPanelsRaw = []
+        self.layoutVersion = Self.currentLayoutVersion
         self.forgeMode = .forge
         self.liveInsights = []
         self.collaboratorMessages = []
@@ -505,6 +541,99 @@ struct ConnectionFocusModeState: Codable {
         lastModified = Date()
     }
 
+    // MARK: - V3 unified canvas positions
+
+    /// Typed view of all canvas positions keyed by stable block id.
+    var canvasPositions: [String: CGPoint] {
+        get {
+            var out: [String: CGPoint] = [:]
+            for (key, value) in canvasPositionsRaw {
+                out[key] = value.cgPoint
+            }
+            return out
+        }
+        set {
+            var raw: [String: CodablePoint] = [:]
+            for (key, value) in newValue {
+                raw[key] = CodablePoint(value)
+            }
+            canvasPositionsRaw = raw
+            lastModified = Date()
+        }
+    }
+
+    mutating func setCanvasPosition(_ id: String, to point: CGPoint) {
+        canvasPositionsRaw[id] = CodablePoint(point)
+        lastModified = Date()
+    }
+
+    func canvasPosition(_ id: String) -> CGPoint? {
+        canvasPositionsRaw[id]?.cgPoint
+    }
+
+    mutating func clearCanvasPositions() {
+        canvasPositionsRaw.removeAll()
+        canvasSizesRaw.removeAll()
+        hiddenPanelsRaw.removeAll()
+        lastModified = Date()
+    }
+
+    // MARK: - V3 Phase 3: hidden panels
+
+    var hiddenPanels: Set<String> {
+        get { Set(hiddenPanelsRaw) }
+        set {
+            hiddenPanelsRaw = Array(newValue)
+            lastModified = Date()
+        }
+    }
+
+    mutating func hidePanel(_ id: String) {
+        if !hiddenPanelsRaw.contains(id) {
+            hiddenPanelsRaw.append(id)
+            lastModified = Date()
+        }
+    }
+
+    mutating func showPanel(_ id: String) {
+        if let idx = hiddenPanelsRaw.firstIndex(of: id) {
+            hiddenPanelsRaw.remove(at: idx)
+            lastModified = Date()
+        }
+    }
+
+    func isPanelHidden(_ id: String) -> Bool {
+        hiddenPanelsRaw.contains(id)
+    }
+
+    /// Typed view of canvas sizes for resizable blocks.
+    var canvasSizes: [String: CGSize] {
+        get {
+            var out: [String: CGSize] = [:]
+            for (key, value) in canvasSizesRaw {
+                out[key] = value.cgSize
+            }
+            return out
+        }
+        set {
+            var raw: [String: CodableSize] = [:]
+            for (key, value) in newValue {
+                raw[key] = CodableSize(value)
+            }
+            canvasSizesRaw = raw
+            lastModified = Date()
+        }
+    }
+
+    mutating func setCanvasSize(_ id: String, to size: CGSize) {
+        canvasSizesRaw[id] = CodableSize(size)
+        lastModified = Date()
+    }
+
+    func canvasSize(_ id: String) -> CGSize? {
+        canvasSizesRaw[id]?.cgSize
+    }
+
     mutating func appendCollaboratorMessage(_ message: CollaboratorMessage) {
         collaboratorMessages.append(message)
         if collaboratorMessages.count > 50 {
@@ -523,6 +652,7 @@ struct ConnectionFocusModeState: Codable {
     private enum CodingKeys: String, CodingKey {
         case atomUUID, sections, viewportState, floatingPanelIDs, isGeneratingGhosts, lastModified
         case conceptType, stationPositionsRaw, forgeMode, liveInsights, collaboratorMessages
+        case canvasPositionsRaw, canvasSizesRaw, hiddenPanelsRaw, layoutVersion
     }
 
     init(from decoder: Decoder) throws {
@@ -539,6 +669,27 @@ struct ConnectionFocusModeState: Codable {
         self.forgeMode = try c.decodeIfPresent(ForgeMode.self, forKey: .forgeMode) ?? .forge
         self.liveInsights = try c.decodeIfPresent([LiveInsight].self, forKey: .liveInsights) ?? []
         self.collaboratorMessages = try c.decodeIfPresent([CollaboratorMessage].self, forKey: .collaboratorMessages) ?? []
+        self.layoutVersion = try c.decodeIfPresent(Int.self, forKey: .layoutVersion) ?? 0
+        // V3 fields — migrate from V2 stationPositionsRaw when canvasPositionsRaw is empty.
+        let decodedCanvasPositions = try c.decodeIfPresent([String: CodablePoint].self, forKey: .canvasPositionsRaw) ?? [:]
+        if decodedCanvasPositions.isEmpty && !self.stationPositionsRaw.isEmpty {
+            var migrated: [String: CodablePoint] = [:]
+            for (key, value) in self.stationPositionsRaw {
+                migrated["station:\(key)"] = value
+            }
+            self.canvasPositionsRaw = migrated
+        } else {
+            self.canvasPositionsRaw = decodedCanvasPositions
+        }
+        self.canvasSizesRaw = try c.decodeIfPresent([String: CodableSize].self, forKey: .canvasSizesRaw) ?? [:]
+        self.hiddenPanelsRaw = try c.decodeIfPresent([String].self, forKey: .hiddenPanelsRaw) ?? []
+        if layoutVersion < Self.currentLayoutVersion {
+            self.stationPositionsRaw.removeAll()
+            self.canvasPositionsRaw.removeAll()
+            self.canvasSizesRaw.removeAll()
+            self.hiddenPanelsRaw.removeAll()
+            self.layoutVersion = Self.currentLayoutVersion
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -554,6 +705,10 @@ struct ConnectionFocusModeState: Codable {
         try c.encode(forgeMode, forKey: .forgeMode)
         try c.encode(liveInsights, forKey: .liveInsights)
         try c.encode(collaboratorMessages, forKey: .collaboratorMessages)
+        try c.encode(canvasPositionsRaw, forKey: .canvasPositionsRaw)
+        try c.encode(canvasSizesRaw, forKey: .canvasSizesRaw)
+        try c.encode(hiddenPanelsRaw, forKey: .hiddenPanelsRaw)
+        try c.encode(Self.currentLayoutVersion, forKey: .layoutVersion)
     }
 
     // MARK: - Section Access

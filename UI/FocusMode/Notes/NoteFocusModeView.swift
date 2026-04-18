@@ -1124,7 +1124,8 @@ struct NoteFocusModeView: View {
                     let nextBodyDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .body,
                         metadata: fetchedAtom.metadata,
-                        fallbackPlainText: fetchedAtom.content
+                        fallbackPlainText: fetchedAtom.content,
+                        preferFallbackPlainTextWhenRicher: true
                     )
                     let nextTitlePlainText = RichDocumentPersistence.titlePlainText(from: nextTitleDocument)
                     let nextBodyPlainText = nextBodyDocument.plainText
@@ -1218,45 +1219,23 @@ struct NoteFocusModeView: View {
         let titleDocumentCopy = titleDocument
         let bodyDocumentCopy = bodyDocument
         let plainContentCopy = plainContent
+        let tagsCopy = tags
         let uuid = atom.uuid
 
         do {
-            try database.write { db in
+            let snapshot = try database.write { db -> NoteDocumentSnapshot in
                 var existingMetadata: String?
                 if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
                     existingMetadata = row["metadata"]
                 }
 
-                // plainContent is updated per-keystroke and is more reliable than bodyDocument,
-                // which goes through a 150ms debounced binding chain. If plainContent has more
-                // content, use it to build the document — this prevents data loss when the
-                // binding hasn't fully propagated (e.g. on app termination or fast close).
-                let effectiveBodyDoc: RichDocument
-                if plainContentCopy.count > (bodyDocumentCopy.plainText.count + 5) {
-                    print("[FOCUS-NOTE] saveAtomImmediately() FALLBACK to plainContent — bodyDocLen=\(bodyDocumentCopy.plainText.count) plainContentLen=\(plainContentCopy.count)")
-                    effectiveBodyDoc = RichDocument.migrateLegacy(plainContentCopy)
-                } else {
-                    effectiveBodyDoc = bodyDocumentCopy
-                }
-
-                let fields = RichDocumentPersistence.writeAtomDocuments(
+                let snapshot = RichDocumentPersistence.noteSnapshot(
                     existingMetadata: existingMetadata,
                     titleDocument: titleDocumentCopy,
-                    bodyDocument: effectiveBodyDoc
+                    bodyDocument: bodyDocumentCopy,
+                    plainBodyText: plainContentCopy
                 )
-
-                var metadataDict: [String: Any] = [:]
-                if let metadata = fields.metadata,
-                   let data = metadata.data(using: .utf8),
-                   let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    metadataDict = decoded
-                }
-                if tags.isEmpty {
-                    metadataDict.removeValue(forKey: "tags")
-                } else {
-                    metadataDict["tags"] = tags
-                }
-                let metadataString = (try? JSONSerialization.data(withJSONObject: metadataDict)).flatMap { String(data: $0, encoding: .utf8) }
+                let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
 
                 try db.execute(
                     sql: """
@@ -1270,33 +1249,16 @@ struct NoteFocusModeView: View {
                     WHERE uuid = ?
                     """,
                     arguments: [
-                        fields.title,
-                        fields.body ?? "",
-                        metadataString ?? fields.metadata,
+                        snapshot.atomTitle,
+                        snapshot.bodyPlainText,
+                        metadataString ?? snapshot.metadata,
                         ISO8601DateFormatter().string(from: Date()),
                         uuid
                     ]
                 )
+                return snapshot
             }
-            // Post notification for immediate canvas update (sync path)
-            var userInfo: [String: Any] = [
-                "atomUUID": uuid,
-                "title": titleDocumentCopy.plainText,
-                "body": bodyDocumentCopy.plainText
-            ]
-            if let bodyDocData = try? JSONEncoder().encode(bodyDocumentCopy),
-               let bodyDocString = String(data: bodyDocData, encoding: .utf8) {
-                userInfo["bodyDocumentJSON"] = bodyDocString
-            }
-            if let titleDocData = try? JSONEncoder().encode(titleDocumentCopy),
-               let titleDocString = String(data: titleDocData, encoding: .utf8) {
-                userInfo["titleDocumentJSON"] = titleDocString
-            }
-            NotificationCenter.default.post(
-                name: .noteFocusStateDidChange,
-                object: nil,
-                userInfo: userInfo
-            )
+            postNoteFocusState(snapshot: snapshot, atomUUID: uuid, notifyRichDocumentObservers: false)
             // Sync: queue for Supabase push
             Task {
                 if let updatedAtom = try? await database.asyncRead({ db in
@@ -1317,6 +1279,7 @@ struct NoteFocusModeView: View {
         let bodyDocumentCopy = bodyDocument
         let titleCopy = titlePlainText
         let contentCopy = plainContent
+        let tagsCopy = tags
         let uuid = atom.uuid
         print("[FOCUS-NOTE] performSave() — uuid=\(uuid) titleLen=\(titleCopy.count) bodyLen=\(contentCopy.count) bodyPreview=\"\(String(contentCopy.prefix(80)))\"")
 
@@ -1329,40 +1292,19 @@ struct NoteFocusModeView: View {
             }
             print("[FOCUS-NOTE] performSave() async DB write starting — uuid=\(uuid)")
             do {
-                try await database.asyncWrite { db in
+                let snapshot = try await database.asyncWrite { db -> NoteDocumentSnapshot in
                     var existingMetadata: String?
                     if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
                         existingMetadata = row["metadata"]
                     }
 
-                    // contentCopy (plainContent) is captured at save trigger time and is more
-                    // reliable than bodyDocumentCopy, which goes through a 150ms debounced binding.
-                    // Fall back to it when it has more content to prevent checkpoint data loss.
-                    let effectiveBodyDoc: RichDocument
-                    if contentCopy.count > (bodyDocumentCopy.plainText.count + 5) {
-                        effectiveBodyDoc = RichDocument.migrateLegacy(contentCopy)
-                    } else {
-                        effectiveBodyDoc = bodyDocumentCopy
-                    }
-
-                    let fields = RichDocumentPersistence.writeAtomDocuments(
+                    let snapshot = RichDocumentPersistence.noteSnapshot(
                         existingMetadata: existingMetadata,
                         titleDocument: titleDocumentCopy,
-                        bodyDocument: effectiveBodyDoc
+                        bodyDocument: bodyDocumentCopy,
+                        plainBodyText: contentCopy
                     )
-
-                    var metadataDict: [String: Any] = [:]
-                    if let metadata = fields.metadata,
-                       let data = metadata.data(using: .utf8),
-                       let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        metadataDict = decoded
-                    }
-                    if tags.isEmpty {
-                        metadataDict.removeValue(forKey: "tags")
-                    } else {
-                        metadataDict["tags"] = tags
-                    }
-                    let metadataString = (try? JSONSerialization.data(withJSONObject: metadataDict)).flatMap { String(data: $0, encoding: .utf8) }
+                    let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
 
                     try db.execute(
                         sql: """
@@ -1376,35 +1318,18 @@ struct NoteFocusModeView: View {
                         WHERE uuid = ?
                         """,
                         arguments: [
-                            fields.title,
-                            fields.body ?? "",
-                            metadataString ?? fields.metadata,
+                            snapshot.atomTitle,
+                            snapshot.bodyPlainText,
+                            metadataString ?? snapshot.metadata,
                             ISO8601DateFormatter().string(from: Date()),
                             uuid
                         ]
                     )
+                    return snapshot
                 }
                 // Notify floating blocks to reload immediately (GRDB observation is backup)
                 await MainActor.run {
-                    var userInfo: [String: Any] = ["atomUUID": uuid, "title": titleCopy, "body": contentCopy]
-                    if let bodyDocData = try? JSONEncoder().encode(bodyDocumentCopy),
-                       let bodyDocString = String(data: bodyDocData, encoding: .utf8) {
-                        userInfo["bodyDocumentJSON"] = bodyDocString
-                    }
-                    if let titleDocData = try? JSONEncoder().encode(titleDocumentCopy),
-                       let titleDocString = String(data: titleDocData, encoding: .utf8) {
-                        userInfo["titleDocumentJSON"] = titleDocString
-                    }
-                    NotificationCenter.default.post(
-                        name: .noteFocusStateDidChange,
-                        object: nil,
-                        userInfo: userInfo
-                    )
-                    NotificationCenter.default.post(
-                        name: .richDocumentDidChange,
-                        object: nil,
-                        userInfo: ["atomUUID": uuid]
-                    )
+                    postNoteFocusState(snapshot: snapshot, atomUUID: uuid)
                 }
                 // Sync: queue for Supabase push so notes sync to cloud
                 if let updatedAtom = try? await database.asyncRead({ db in
@@ -1429,6 +1354,44 @@ struct NoteFocusModeView: View {
         titleDocument = document
         titlePlainText = RichDocumentPersistence.titlePlainText(from: document)
         titleUnderlineProgress = titlePlainText.isEmpty ? 0.28 : 1
+    }
+
+    private static func metadataString(for snapshot: NoteDocumentSnapshot, tags: [String]) -> String? {
+        var metadataDict: [String: Any] = [:]
+        if let metadata = snapshot.metadata,
+           let data = metadata.data(using: .utf8),
+           let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            metadataDict = decoded
+        }
+
+        if tags.isEmpty {
+            metadataDict.removeValue(forKey: "tags")
+        } else {
+            metadataDict["tags"] = tags
+        }
+
+        return (try? JSONSerialization.data(withJSONObject: metadataDict))
+            .flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    private func postNoteFocusState(
+        snapshot: NoteDocumentSnapshot,
+        atomUUID: String,
+        notifyRichDocumentObservers: Bool = true
+    ) {
+        NotificationCenter.default.post(
+            name: .noteFocusStateDidChange,
+            object: nil,
+            userInfo: snapshot.noteFocusStatePayload(atomUUID: atomUUID)
+        )
+
+        guard notifyRichDocumentObservers else { return }
+
+        NotificationCenter.default.post(
+            name: .richDocumentDidChange,
+            object: nil,
+            userInfo: ["atomUUID": atomUUID]
+        )
     }
 }
 

@@ -298,7 +298,8 @@ struct NoteBlockView: View {
         noteBodyDocument = RichDocumentPersistence.loadBlockDocument(
             key: RichDocumentMetadataKeys.bodyDocument,
             metadata: block.metadata,
-            fallbackPlainText: block.metadata["content"]
+            fallbackPlainText: block.metadata["content"],
+            preferFallbackPlainTextWhenRicher: true
         )
         noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
         noteText = noteBodyDocument.plainText
@@ -321,10 +322,20 @@ struct NoteBlockView: View {
         }
 
         // If linked to an atom, load freshest data from database
-        if trackedEntityId > 0 {
+        if trackedEntityId > 0 || !trackedEntityUuid.isEmpty {
             Task {
                 do {
-                    if let atom = try await AtomRepository.shared.fetch(id: trackedEntityId) {
+                    let atom: Atom?
+                    if trackedEntityId > 0,
+                       let atomByID = try await AtomRepository.shared.fetch(id: trackedEntityId) {
+                        atom = atomByID
+                    } else if !trackedEntityUuid.isEmpty {
+                        atom = try await AtomRepository.shared.fetch(uuid: trackedEntityUuid)
+                    } else {
+                        atom = nil
+                    }
+
+                    if let atom {
                         await MainActor.run {
                             noteTitleDocument = RichDocumentPersistence.loadAtomDocument(
                                 field: .title,
@@ -334,10 +345,13 @@ struct NoteBlockView: View {
                             noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
                                 field: .body,
                                 metadata: atom.metadata,
-                                fallbackPlainText: atom.body
+                                fallbackPlainText: atom.body,
+                                preferFallbackPlainTextWhenRicher: true
                             )
                             noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
                             noteText = noteBodyDocument.plainText
+                            trackedEntityId = atom.id ?? trackedEntityId
+                            trackedEntityUuid = atom.uuid
                         }
                     }
                 } catch {
@@ -379,43 +393,46 @@ struct NoteBlockView: View {
                     let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .body,
                         metadata: atom.metadata,
-                        fallbackPlainText: atom.body
+                        fallbackPlainText: atom.body,
+                        preferFallbackPlainTextWhenRicher: true
                     )
                     let newTitle = RichDocumentPersistence.titlePlainText(from: newTitleDocument)
                     let newBody = newBodyDocument.plainText
-                    print("[BLOCK-NOTE] 🔔 GRDB observation fired — uuid=\(uuid) isEditingTitle=\(isEditingTitle) isEditingBody=\(isEditingBody) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbBodyPreview=\"\(String(newBody.prefix(60)))\" localBodyPreview=\"\(String(noteText.prefix(60)))\"")
-                    var didApplyDatabaseState = false
-
-                    if !isEditingTitle,
-                       newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
-                        print("[BLOCK-NOTE] 🔔 observation APPLYING title — uuid=\(uuid)")
-                        didApplyDatabaseState = true
-                        applyObservedTitleDocument(newTitleDocument)
-                    } else if isEditingTitle,
-                              newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
-                        print("[BLOCK-NOTE] 🔔 observation DEFERRED title (editing) — uuid=\(uuid)")
-                        pendingObservedTitleDocument = newTitleDocument
-                    }
-
-                    // Only overwrite body from DB when NOT actively editing —
-                    // otherwise the observation echo from auto-save overwrites
-                    // text the user typed since the save was initiated.
-                    if !isEditingBody,
-                       newBody != noteText || newBodyDocument != noteBodyDocument {
-                        print("[BLOCK-NOTE] 🔔 observation APPLYING body — uuid=\(uuid) overwriting localLen=\(noteText.count) with dbLen=\(newBody.count)")
-                        didApplyDatabaseState = true
-                        noteBodyDocument = newBodyDocument
-                        noteText = newBody
-                    } else if isEditingBody, newBody != noteText {
-                        print("[BLOCK-NOTE] 🔔 observation SKIPPED body (editing) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
-                    }
-
-                    guard didApplyDatabaseState else { return }
-                    // DB state was applied — local content now matches DB, so no local edits to protect.
-                    hasLocalEdits = false
-                    isSyncingFromDB = true
                     DispatchQueue.main.async {
-                        isSyncingFromDB = false
+                        print("[BLOCK-NOTE] 🔔 GRDB observation fired — uuid=\(uuid) isEditingTitle=\(isEditingTitle) isEditingBody=\(isEditingBody) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbBodyPreview=\"\(String(newBody.prefix(60)))\" localBodyPreview=\"\(String(noteText.prefix(60)))\"")
+                        var didApplyDatabaseState = false
+
+                        if !isEditingTitle,
+                           newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
+                            print("[BLOCK-NOTE] 🔔 observation APPLYING title — uuid=\(uuid)")
+                            didApplyDatabaseState = true
+                            applyObservedTitleDocument(newTitleDocument)
+                        } else if isEditingTitle,
+                                  newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
+                            print("[BLOCK-NOTE] 🔔 observation DEFERRED title (editing) — uuid=\(uuid)")
+                            pendingObservedTitleDocument = newTitleDocument
+                        }
+
+                        // Only overwrite body from DB when NOT actively editing —
+                        // otherwise the observation echo from auto-save overwrites
+                        // text the user typed since the save was initiated.
+                        if !isEditingBody,
+                           newBody != noteText || newBodyDocument != noteBodyDocument {
+                            print("[BLOCK-NOTE] 🔔 observation APPLYING body — uuid=\(uuid) overwriting localLen=\(noteText.count) with dbLen=\(newBody.count)")
+                            didApplyDatabaseState = true
+                            noteBodyDocument = newBodyDocument
+                            noteText = newBody
+                        } else if isEditingBody, newBody != noteText {
+                            print("[BLOCK-NOTE] 🔔 observation SKIPPED body (editing) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
+                        }
+
+                        guard didApplyDatabaseState else { return }
+                        // DB state was applied — local content now matches DB, so no local edits to protect.
+                        hasLocalEdits = false
+                        isSyncingFromDB = true
+                        DispatchQueue.main.async {
+                            isSyncingFromDB = false
+                        }
                     }
                 }
             )
@@ -447,29 +464,36 @@ struct NoteBlockView: View {
 
     private func saveNote() {
         print("[BLOCK-NOTE] saveNote() — uuid=\(trackedEntityUuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(80)))\" saveClosed=\(saveClosed)")
+        let blockSnapshot = RichDocumentPersistence.noteSnapshot(
+            existingMetadata: nil,
+            titleDocument: noteTitleDocument,
+            bodyDocument: noteBodyDocument,
+            plainBodyText: noteText
+        )
+
         // Update block metadata (for SpatialEngine persistence)
         NotificationCenter.default.post(
             name: .updateBlockContent,
             object: nil,
             userInfo: [
                 "blockId": block.id,
-                "title": noteTitleText,
-                "content": noteText
+                "title": blockSnapshot.titlePlainText,
+                "content": blockSnapshot.bodyPlainText
             ]
         )
 
         let updatedMetadata = RichDocumentPersistence
-            .writeBlockDocument(noteTitleDocument, key: RichDocumentMetadataKeys.titleDocument, metadata: block.metadata)
+            .writeBlockDocument(blockSnapshot.titleDocument, key: RichDocumentMetadataKeys.titleDocument, metadata: block.metadata)
         let bodyMetadata = RichDocumentPersistence
-            .writeBlockDocument(noteBodyDocument, key: RichDocumentMetadataKeys.bodyDocument, metadata: updatedMetadata)
+            .writeBlockDocument(blockSnapshot.bodyDocument, key: RichDocumentMetadataKeys.bodyDocument, metadata: updatedMetadata)
         NotificationCenter.default.post(
             name: .updateBlockMetadata,
             object: nil,
             userInfo: [
                 "blockId": block.id,
                 "metadata": bodyMetadata.merging([
-                    "title": noteTitleText,
-                    "content": noteText
+                    "title": blockSnapshot.titlePlainText,
+                    "content": blockSnapshot.bodyPlainText
                 ]) { _, new in new }
             ]
         )
@@ -478,14 +502,8 @@ struct NoteBlockView: View {
         let uuid = trackedEntityUuid
         if !uuid.isEmpty {
             let titleDoc = noteTitleDocument
-            // Use the CURRENT plain text to build the body document for metadata.
-            // noteBodyDocument is from the 150ms debounced RichDocument serialization
-            // and may lag behind noteText. If we use the stale document, the metadata
-            // will contain truncated text, and loadAtomDocument reads from metadata first.
-            let bodyDoc = noteBodyDocument.plainText == noteText
-                ? noteBodyDocument
-                : RichDocument.migrateLegacy(noteText)
             let titleText = noteTitleText
+            let bodyDoc = noteBodyDocument
             let bodyText = noteText
             let blockId = block.id
             Task {
@@ -501,10 +519,11 @@ struct NoteBlockView: View {
                         let atomExists = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid])
                         existingMetadata = atomExists?["metadata"]
 
-                        let fields = RichDocumentPersistence.writeAtomDocuments(
+                        let snapshot = RichDocumentPersistence.noteSnapshot(
                             existingMetadata: existingMetadata,
                             titleDocument: titleDoc,
-                            bodyDocument: bodyDoc
+                            bodyDocument: bodyDoc,
+                            plainBodyText: bodyText
                         )
                         let now = ISO8601DateFormatter().string(from: Date())
 
@@ -524,9 +543,9 @@ struct NoteBlockView: View {
                                 WHERE uuid = ?
                                 """,
                                 arguments: [
-                                    fields.title ?? titleText,
-                                    bodyText,
-                                    fields.metadata,
+                                    snapshot.atomTitle ?? titleText,
+                                    snapshot.bodyPlainText,
+                                    snapshot.metadata,
                                     now,
                                     uuid
                                 ]
@@ -542,9 +561,9 @@ struct NoteBlockView: View {
                                 arguments: [
                                     uuid,
                                     AtomType.note.rawValue,
-                                    fields.title ?? titleText,
-                                    bodyText,
-                                    fields.metadata,
+                                    snapshot.atomTitle ?? titleText,
+                                    snapshot.bodyPlainText,
+                                    snapshot.metadata,
                                     now,
                                     now
                                 ]
@@ -604,20 +623,49 @@ struct NoteBlockView: View {
             return
         }
 
+        let blockSnapshot = RichDocumentPersistence.noteSnapshot(
+            existingMetadata: nil,
+            titleDocument: noteTitleDocument,
+            bodyDocument: noteBodyDocument,
+            plainBodyText: noteText
+        )
+
+        NotificationCenter.default.post(
+            name: .updateBlockContent,
+            object: nil,
+            userInfo: [
+                "blockId": block.id,
+                "title": blockSnapshot.titlePlainText,
+                "content": blockSnapshot.bodyPlainText
+            ]
+        )
+
+        let updatedMetadata = RichDocumentPersistence
+            .writeBlockDocument(blockSnapshot.titleDocument, key: RichDocumentMetadataKeys.titleDocument, metadata: block.metadata)
+        let bodyMetadata = RichDocumentPersistence
+            .writeBlockDocument(blockSnapshot.bodyDocument, key: RichDocumentMetadataKeys.bodyDocument, metadata: updatedMetadata)
+        NotificationCenter.default.post(
+            name: .updateBlockMetadata,
+            object: nil,
+            userInfo: [
+                "blockId": block.id,
+                "metadata": bodyMetadata.merging([
+                    "title": blockSnapshot.titlePlainText,
+                    "content": blockSnapshot.bodyPlainText
+                ]) { _, new in new }
+            ]
+        )
+
         do {
-            try CosmoDatabase.shared.write { db in
+            let createdAtomId = try CosmoDatabase.shared.write { db -> Int64? in
                 let atomExists = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid])
                 let existingMetadata: String? = atomExists?["metadata"]
 
-                // Use current plain text for the body document to avoid stale metadata.
-                // noteBodyDocument may lag behind noteText (150ms RichDocument debounce).
-                let currentBodyDoc = noteBodyDocument.plainText == noteText
-                    ? noteBodyDocument
-                    : RichDocument.migrateLegacy(noteText)
-                let fields = RichDocumentPersistence.writeAtomDocuments(
+                let snapshot = RichDocumentPersistence.noteSnapshot(
                     existingMetadata: existingMetadata,
                     titleDocument: noteTitleDocument,
-                    bodyDocument: currentBodyDoc
+                    bodyDocument: noteBodyDocument,
+                    plainBodyText: noteText
                 )
                 let now = ISO8601DateFormatter().string(from: Date())
 
@@ -633,13 +681,29 @@ struct NoteBlockView: View {
                         WHERE uuid = ?
                         """,
                         arguments: [
-                            fields.title ?? noteTitleText,
-                            noteText,
-                            fields.metadata,
+                            snapshot.atomTitle ?? noteTitleText,
+                            snapshot.bodyPlainText,
+                            snapshot.metadata,
                             now,
                             uuid
                         ]
                     )
+                    try db.execute(
+                        sql: """
+                        UPDATE canvas_blocks
+                        SET entity_title = ?,
+                            note_content = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        arguments: [
+                            snapshot.titlePlainText.isEmpty ? "Note" : snapshot.titlePlainText,
+                            snapshot.bodyPlainText,
+                            now,
+                            block.id
+                        ]
+                    )
+                    return nil
                 } else {
                     // Legacy freeform block — create atom on close
                     try db.execute(
@@ -650,20 +714,43 @@ struct NoteBlockView: View {
                         arguments: [
                             uuid,
                             AtomType.note.rawValue,
-                            fields.title ?? noteTitleText,
-                            noteText,
-                            fields.metadata,
+                            snapshot.atomTitle ?? noteTitleText,
+                            snapshot.bodyPlainText,
+                            snapshot.metadata,
                             now,
                             now
                         ]
                     )
+                    let atomId = db.lastInsertedRowID
+                    try db.execute(
+                        sql: """
+                        UPDATE canvas_blocks
+                        SET entity_id = ?,
+                            entity_title = ?,
+                            note_content = ?,
+                            updated_at = ?
+                        WHERE entity_uuid = ?
+                        """,
+                        arguments: [
+                            atomId,
+                            snapshot.titlePlainText.isEmpty ? "Note" : snapshot.titlePlainText,
+                            snapshot.bodyPlainText,
+                            now,
+                            uuid
+                        ]
+                    )
+                    return atomId
                 }
             }
             // Sync: queue for Supabase push
             Task {
                 if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: uuid) {
-                    // skipVersionIncrement: raw SQL already did _local_version + 1
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
+                    if createdAtomId != nil {
+                        await ChangeTracker.shared.trackInsert(table: "atoms", entity: updatedAtom)
+                    } else {
+                        // skipVersionIncrement: raw SQL already did _local_version + 1
+                        await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
+                    }
                 }
             }
         } catch {
@@ -674,57 +761,20 @@ struct NoteBlockView: View {
     // MARK: - Focus Mode
 
     private func openFocusMode() {
-        if trackedEntityId > 0 {
-            // Has backing atom, open directly
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: [
-                    "type": EntityType.note,
-                    "id": trackedEntityId
-                ]
-            )
-        } else {
-            // Create backing atom from current note data, then open
-            Task {
-                do {
-                    var newAtom = Atom.new(
-                        type: .note,
-                        title: noteTitleText.isEmpty ? nil : noteTitleText,
-                        body: noteText
-                    )
-                    let fields = RichDocumentPersistence.writeAtomDocuments(
-                        existingMetadata: newAtom.metadata,
-                        titleDocument: noteTitleDocument,
-                        bodyDocument: noteBodyDocument
-                    )
-                    newAtom.title = fields.title
-                    newAtom.body = fields.body
-                    newAtom.metadata = fields.metadata
-                    let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
-                        try newAtom.insert(db)
-                        return db.lastInsertedRowID
-                    }
-                    // Update canvas block record to link to new atom
-                    try await CosmoDatabase.shared.asyncWrite { db in
-                        try db.execute(
-                            sql: """
-                            UPDATE canvas_blocks
-                            SET entity_id = ?, entity_uuid = ?
-                            WHERE id = ?
-                            """,
-                            arguments: [atomId, newAtom.uuid, block.id]
-                        )
-                    }
+        Task {
+            do {
+                if !trackedEntityUuid.isEmpty,
+                   let existing = try await AtomRepository.shared.fetch(uuid: trackedEntityUuid) {
                     await MainActor.run {
-                        // Update in-memory block in SpatialEngine + this view
+                        trackedEntityId = existing.id ?? trackedEntityId
+                        trackedEntityUuid = existing.uuid
                         NotificationCenter.default.post(
                             name: .updateBlockEntity,
                             object: nil,
                             userInfo: [
                                 "blockId": block.id,
-                                "entityId": atomId,
-                                "entityUuid": newAtom.uuid
+                                "entityId": existing.id ?? -1,
+                                "entityUuid": existing.uuid
                             ]
                         )
                         NotificationCenter.default.post(
@@ -732,13 +782,74 @@ struct NoteBlockView: View {
                             object: nil,
                             userInfo: [
                                 "type": EntityType.note,
-                                "id": atomId
+                                "id": existing.id ?? -1
                             ]
                         )
                     }
-                } catch {
-                    print("NoteBlock: Failed to create backing atom: \(error)")
+                    return
                 }
+
+                if trackedEntityId > 0 {
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: .enterFocusMode,
+                            object: nil,
+                            userInfo: [
+                                "type": EntityType.note,
+                                "id": trackedEntityId
+                            ]
+                        )
+                    }
+                    return
+                }
+
+                let snapshot = RichDocumentPersistence.noteSnapshot(
+                    existingMetadata: nil,
+                    titleDocument: noteTitleDocument,
+                    bodyDocument: noteBodyDocument,
+                    plainBodyText: noteText
+                )
+                let newAtom = Atom.new(
+                    type: .note,
+                    title: snapshot.atomTitle,
+                    body: snapshot.atomBody,
+                    metadata: snapshot.metadata
+                )
+                let created = try await AtomRepository.shared.create(newAtom)
+                let atomId = created.id ?? -1
+                // Update canvas block record to link to new atom
+                try await CosmoDatabase.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: """
+                        UPDATE canvas_blocks
+                        SET entity_id = ?, entity_uuid = ?
+                        WHERE id = ?
+                        """,
+                        arguments: [atomId, created.uuid, block.id]
+                    )
+                }
+                await MainActor.run {
+                    // Update in-memory block in SpatialEngine + this view
+                    NotificationCenter.default.post(
+                        name: .updateBlockEntity,
+                        object: nil,
+                        userInfo: [
+                            "blockId": block.id,
+                            "entityId": atomId,
+                            "entityUuid": created.uuid
+                        ]
+                    )
+                    NotificationCenter.default.post(
+                        name: .enterFocusMode,
+                        object: nil,
+                        userInfo: [
+                            "type": EntityType.note,
+                            "id": atomId
+                        ]
+                    )
+                }
+            } catch {
+                print("NoteBlock: Failed to create backing atom: \(error)")
             }
         }
     }

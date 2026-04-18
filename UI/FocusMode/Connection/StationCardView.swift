@@ -1,25 +1,23 @@
 // CosmoOS/UI/FocusMode/Connection/StationCardView.swift
-// April 2026 — Connection Focus Mode V2 "The Crucible"
+// April 2026 — governed Forge station card
 //
-// A single Station Card. Replaces V1's ConnectionSectionView. Stations live on
-// the spatial Forge grid — they can be dragged to rearrange and double-clicked
-// to enter Station Mode (full-focus zoom on one dimension).
-//
-// Visual anatomy:
-//   • Gilt corner bracket (top-left)
-//   • Drag handle (hover-revealed thin gilt bar, top edge)
-//   • Accent dot + small-caps section name + collapse chevron
-//   • Italic prompt question
-//   • Sepia hairline
-//   • Items (5pt accent leading dot)
-//   • Ghost whispers (embossed, breathing)
-//   • "+ add insight" (unobtrusive capture)
+// Compact by default, fully editable when expanded. The Forge owns expansion
+// and reflow; the card owns capture, committed insight editing, and whisper
+// actions without relying on internal scroll regions.
 
 import SwiftUI
 
 struct StationCardView: View {
 
-    // MARK: - Inputs
+    enum DisplayMode {
+        case collapsed
+        case expanded
+        case focus
+
+        var showsFullContent: Bool {
+            self != .collapsed
+        }
+    }
 
     @Binding var section: ConnectionSection
 
@@ -30,36 +28,32 @@ struct StationCardView: View {
     let onAcceptGhost: (GhostSuggestion) -> Void
     let onDismissGhost: (UUID) -> Void
 
-    /// Double-click handler — parent enters Station Mode focus overlay.
+    var displayMode: DisplayMode = .collapsed
+    var isSelected: Bool = false
+    var onSelect: (() -> Void)? = nil
     var onEnterStationMode: (() -> Void)? = nil
-
-    /// Hover handler for ley lines — parent can highlight related sources.
     var onHoverChange: ((Bool) -> Void)? = nil
-
-    /// Fixed width in the grid; actual height flows with content.
     var cardWidth: CGFloat = 260
 
-    // MARK: - Local state
-
-    @State private var isHovered: Bool = false
-    @State private var isAddingItem: Bool = false
-    @State private var newItemText: String = ""
-    @State private var newItemDocument: RichDocument = .empty
+    @State private var isHovered = false
+    @State private var isAddingItem = false
+    @State private var newItemText = ""
     @FocusState private var newItemFocused: Bool
 
     private var accent: Color { section.type.accentColor }
-
-    // MARK: - Body
+    private var previewItems: ArraySlice<ConnectionItem> { section.items.prefix(2) }
+    private var showsExpandButton: Bool { onSelect != nil }
+    private var showsFocusButton: Bool { displayMode == .expanded && onEnterStationMode != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             headerRow
             promptLine
             hairline
-            if section.isExpanded {
-                itemsList
-                whisperList
-                captureRow
+            if displayMode.showsFullContent {
+                expandedContent
+            } else {
+                collapsedContent
             }
         }
         .padding(.horizontal, 14)
@@ -67,79 +61,90 @@ struct StationCardView: View {
         .frame(width: cardWidth, alignment: .topLeading)
         .background(surface)
         .overlay(alignment: .topLeading) { giltCorner }
-        .overlay(alignment: .top) { dragHandle }
-        .clipShape(.rect(cornerRadius: 4))
+        .overlay(alignment: .top) { selectionHandle }
+        .clipShape(.rect(cornerRadius: 6))
         .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            withAnimation(ProMotionSprings.hover) {
+                isHovered = hovering
+            }
             onHoverChange?(hovering)
         }
-        .onTapGesture(count: 2) {
-            onEnterStationMode?()
-        }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Station: \(section.type.displayName), \(section.itemCount) items, \(section.ghostSuggestions.count) whispers")
+        .accessibilityLabel("Station: \(section.type.displayName), \(section.itemCount) insights, \(section.ghostSuggestions.count) whispers")
     }
-
-    // MARK: - Surface
 
     private var surface: some View {
         ZStack {
             Rectangle().fill(DS.vellum)
             Rectangle().stroke(DS.sepiaBorder, lineWidth: 0.5)
-            if isHovered {
+            if isSelected || isHovered {
                 Rectangle()
-                    .stroke(accent.opacity(0.35), lineWidth: 0.6)
+                    .stroke(accent.opacity(isSelected ? 0.55 : 0.28), lineWidth: isSelected ? 1.0 : 0.6)
             }
         }
     }
 
     private var giltCorner: some View {
         GiltCornerBracket()
-            .stroke(DS.gilt.opacity(0.8), lineWidth: 0.8)
+            .stroke(DS.gilt.opacity(0.78), lineWidth: 0.8)
             .frame(width: 14, height: 14)
             .padding(6)
             .allowsHitTesting(false)
     }
 
-    // MARK: - Drag handle (hover-revealed)
-
-    private var dragHandle: some View {
+    private var selectionHandle: some View {
         Rectangle()
-            .fill(DS.gilt.opacity(isHovered ? 0.55 : 0))
-            .frame(width: 32, height: 2)
+            .fill(accent.opacity(isSelected ? 0.72 : 0))
+            .frame(width: 40, height: 2)
             .padding(.top, 4)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
-
-    // MARK: - Header
 
     private var headerRow: some View {
         HStack(spacing: 8) {
             Circle()
                 .fill(accent)
                 .frame(width: 6, height: 6)
+
             Text(section.type.displayName.uppercased())
                 .font(DS.smallCaps)
                 .tracking(1.6)
                 .foregroundStyle(DS.inkWash)
+
             Spacer()
+
             if section.itemCount > 0 {
                 Text("\(section.itemCount)")
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
                     .foregroundStyle(DS.inkFaded)
             }
-            Button {
-                withAnimation(ProMotionSprings.snappy) { section.isExpanded.toggle() }
-            } label: {
-                Image(systemName: section.isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(DS.giltMuted)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
+
+            if showsFocusButton {
+                Button {
+                    onEnterStationMode?()
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(DS.giltMuted)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open station mode")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(section.isExpanded ? "Collapse" : "Expand")
+
+            if showsExpandButton {
+                Button {
+                    onSelect?()
+                } label: {
+                    Image(systemName: displayMode == .collapsed ? "plus.circle" : "minus.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(displayMode == .collapsed ? accent : DS.giltMuted)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(displayMode == .collapsed ? "Expand station" : "Collapse station")
+            }
         }
     }
 
@@ -158,7 +163,50 @@ struct StationCardView: View {
             .frame(height: 0.5)
     }
 
-    // MARK: - Items
+    @ViewBuilder
+    private var collapsedContent: some View {
+        if previewItems.isEmpty && section.ghostSuggestions.isEmpty {
+            Text("Ready for the first sharp insight.")
+                .font(.system(size: 12, weight: .regular, design: .serif))
+                .italic()
+                .foregroundStyle(DS.inkFaded)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(previewItems), id: \.id) { item in
+                    StationPreviewRow(item: item, accent: accent)
+                }
+                summaryLine
+            }
+        }
+        addBar
+    }
+
+    private var summaryLine: some View {
+        HStack(spacing: 6) {
+            if !section.ghostSuggestions.isEmpty {
+                Text("\(section.ghostSuggestions.count) whispers")
+                    .font(.system(size: 10, weight: .regular, design: .serif))
+                    .italic()
+                    .foregroundStyle(DS.giltMuted)
+            }
+            if section.itemCount > previewItems.count {
+                Text("+\(section.itemCount - previewItems.count) more")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(DS.inkFaded)
+            }
+        }
+    }
+
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !section.items.isEmpty {
+                itemsList
+            }
+            whisperList
+            captureRow
+        }
+    }
 
     private var itemsList: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -173,8 +221,6 @@ struct StationCardView: View {
             }
         }
     }
-
-    // MARK: - Whispers
 
     @ViewBuilder
     private var whisperList: some View {
@@ -194,21 +240,23 @@ struct StationCardView: View {
         }
     }
 
-    // MARK: - Capture
-
     @ViewBuilder
     private var captureRow: some View {
         if isAddingItem {
             captureField
-        } else if isHovered || section.itemCount == 0 {
-            addButton
+        } else {
+            addBar
         }
     }
 
-    private var addButton: some View {
+    private var addBar: some View {
         Button {
-            withAnimation(ProMotionSprings.snappy) { isAddingItem = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { newItemFocused = true }
+            withAnimation(ProMotionSprings.snappy) {
+                isAddingItem = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                newItemFocused = true
+            }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "plus")
@@ -217,8 +265,11 @@ struct StationCardView: View {
                     .font(.system(size: 11, weight: .regular, design: .serif))
                     .italic()
             }
-            .foregroundStyle(DS.giltMuted)
-            .padding(.vertical, 4)
+            .foregroundStyle(DS.giltMuted.opacity((isHovered || isSelected || displayMode.showsFullContent) ? 1 : 0.55))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Add insight to \(section.type.displayName)")
@@ -226,35 +277,33 @@ struct StationCardView: View {
 
     private var captureField: some View {
         HStack(alignment: .top, spacing: 6) {
-            CosmoDocumentEditor(
-                document: $newItemDocument,
-                fontSize: 12,
-                compact: true,
-                placeholder: "capture a thought...",
-                allowSlashCommands: false,
-                allowMentions: true,
-                allowSelectionMenu: false,
-                allowImages: false,
-                onDocumentChange: { _, plainText in newItemText = plainText }
-            )
-            .frame(minHeight: 24, maxHeight: 96)
-            .focused($newItemFocused)
+            TextField("capture a thought…", text: $newItemText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(DS.inkWash)
+                .lineLimit(1...5)
+                .focused($newItemFocused)
+                .onSubmit { submitCapture() }
+                .onKeyPress(.escape) {
+                    cancelCapture()
+                    return .handled
+                }
 
-            Button { cancelCapture() } label: {
+            Button(action: cancelCapture) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9))
                     .foregroundStyle(DS.inkFaded)
             }
             .buttonStyle(.plain)
 
-            Button { submitCapture() } label: {
+            Button(action: submitCapture) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(accent)
             }
             .buttonStyle(.plain)
-            .disabled(newItemText.isEmpty)
-            .opacity(newItemText.isEmpty ? 0.4 : 1)
+            .disabled(newItemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(newItemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -266,23 +315,44 @@ struct StationCardView: View {
 
     private func submitCapture() {
         let trimmed = newItemText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            onAddItem(newItemDocument, trimmed)
+        guard !trimmed.isEmpty else {
+            return
         }
-        cancelCapture()
+        onAddItem(RichDocument.migrateLegacy(trimmed), trimmed)
+        newItemText = ""
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            newItemFocused = true
+        }
     }
 
     private func cancelCapture() {
         withAnimation(ProMotionSprings.snappy) {
             isAddingItem = false
             newItemText = ""
-            newItemDocument = .empty
             newItemFocused = false
         }
     }
 }
 
-// MARK: - Station item row
+private struct StationPreviewRow: View {
+    let item: ConnectionItem
+    let accent: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(accent)
+                .frame(width: 5, height: 5)
+                .padding(.top, 6)
+
+            Text(item.resolvedPlainText)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(DS.inkWash)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
 
 private struct StationItemRow: View {
     let item: ConnectionItem
@@ -291,8 +361,8 @@ private struct StationItemRow: View {
     let onDelete: () -> Void
     let onSourceTap: (String) -> Void
 
-    @State private var isHovered: Bool = false
-    @State private var isEditing: Bool = false
+    @State private var isHovered = false
+    @State private var isEditing = false
     @State private var editDocument: RichDocument = .empty
 
     var body: some View {
@@ -302,11 +372,11 @@ private struct StationItemRow: View {
                 .frame(width: 5, height: 5)
                 .padding(.top, 6)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 if isEditing {
                     CosmoDocumentEditor(
                         document: $editDocument,
-                        fontSize: 12,
+                        fontSize: 13,
                         compact: true,
                         placeholder: "",
                         allowSlashCommands: false,
@@ -321,13 +391,15 @@ private struct StationItemRow: View {
                     )
                     .frame(minHeight: 22)
                 } else {
-                    CosmoDocumentRenderer(document: item.resolvedDocument)
-                        .font(.system(size: 12, weight: .regular))
+                    Text(item.resolvedPlainText)
+                        .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(DS.inkWash)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if item.hasSource, let sourceUUID = item.sourceAtomUUID {
+                if let sourceUUID = item.sourceAtomUUID {
                     Button {
                         onSourceTap(sourceUUID)
                     } label: {
@@ -346,35 +418,55 @@ private struct StationItemRow: View {
 
             Spacer(minLength: 0)
 
-            if isHovered {
-                HStack(spacing: 6) {
-                    Button {
-                        isEditing.toggle()
-                        if isEditing { editDocument = item.resolvedDocument }
-                    } label: {
-                        Image(systemName: isEditing ? "checkmark" : "pencil")
-                            .font(.system(size: 9))
-                            .foregroundStyle(DS.inkFaded)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 9))
-                            .foregroundStyle(DS.inkFaded)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .transition(.opacity)
+            trailingControls
+        }
+        .padding(.vertical, 2)
+        .contextMenu {
+            Button(isEditing ? "Done Editing" : "Edit Insight") {
+                toggleEditing()
             }
+            Button("Delete Insight", role: .destructive, action: onDelete)
         }
         .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            withAnimation(ProMotionSprings.hover) {
+                isHovered = hovering
+            }
         }
     }
-}
 
-// MARK: - Whisper row (embossed, breathing)
+    @ViewBuilder
+    private var trailingControls: some View {
+        if isEditing {
+            Button("Done") {
+                isEditing = false
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(accent)
+        } else {
+            Menu {
+                Button("Edit Insight") {
+                    toggleEditing()
+                }
+                Button("Delete Insight", role: .destructive, action: onDelete)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle((isHovered ? accent : DS.inkFaded).opacity(0.9))
+                    .frame(width: 18, height: 18)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+    }
+
+    private func toggleEditing() {
+        if !isEditing {
+            editDocument = item.resolvedDocument
+        }
+        isEditing.toggle()
+    }
+}
 
 private struct StationWhisperRow: View {
     let suggestion: GhostSuggestion
@@ -383,17 +475,18 @@ private struct StationWhisperRow: View {
     let onDismiss: () -> Void
     let onSourceTap: () -> Void
 
-    @State private var isHovered: Bool = false
+    @State private var isHovered = false
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isHovered)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
-            // 0.08 Hz breathing, ±0.08 around 0.5 opacity
             let breath = 0.5 + 0.08 * sin(2 * .pi * 0.08 * t)
             content(opacity: isHovered ? 0.9 : breath)
         }
         .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            withAnimation(ProMotionSprings.hover) {
+                isHovered = hovering
+            }
         }
     }
 
@@ -410,7 +503,6 @@ private struct StationWhisperRow: View {
                     .font(.system(size: 11, weight: .regular, design: .serif))
                     .italic()
                     .foregroundStyle(DS.inkWash)
-                    .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -466,34 +558,34 @@ private struct StationWhisperRow: View {
 }
 
 #if DEBUG
-#Preview("Station — Filled") {
+#Preview("Station — Collapsed") {
     StationPreviewHarness(type: .goal)
         .padding(40)
         .background(DS.vellum.opacity(0.6))
 }
 
-#Preview("Station — Empty") {
-    StationPreviewHarness(type: .problems, empty: true)
+#Preview("Station — Expanded") {
+    StationPreviewHarness(type: .problems, mode: .expanded)
         .padding(40)
         .background(DS.vellum.opacity(0.6))
 }
 
 private struct StationPreviewHarness: View {
     let type: ConnectionSectionType
-    var empty: Bool = false
+    let mode: StationCardView.DisplayMode
     @State private var section: ConnectionSection
 
-    init(type: ConnectionSectionType, empty: Bool = false) {
+    init(type: ConnectionSectionType, mode: StationCardView.DisplayMode = .collapsed) {
         self.type = type
-        self.empty = empty
-        let items: [ConnectionItem] = empty ? [] : [
+        self.mode = mode
+        let items: [ConnectionItem] = [
             ConnectionItem(content: "Identity-shift precedes behavior change."),
             ConnectionItem(
                 content: "People change when they adopt a new story about themselves.",
                 sourceAtomUUID: "source-uuid"
             )
         ]
-        let ghosts: [GhostSuggestion] = empty ? [] : [
+        let ghosts: [GhostSuggestion] = [
             GhostSuggestion(
                 content: "Framing the goal as identity unlocks all downstream mechanics.",
                 sourceAtomUUID: "research-uuid",
@@ -518,7 +610,9 @@ private struct StationPreviewHarness: View {
             onDeleteItem: { _ in },
             onSourceTap: { _ in },
             onAcceptGhost: { _ in },
-            onDismissGhost: { _ in }
+            onDismissGhost: { _ in },
+            displayMode: mode,
+            isSelected: mode == .expanded
         )
     }
 }

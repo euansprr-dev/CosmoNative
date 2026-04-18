@@ -32,6 +32,17 @@ enum ConnectionMaturityLevel: String, Codable, CaseIterable {
     }
 }
 
+private extension Atom {
+    var isEligibleWellSource: Bool {
+        switch type {
+        case .research, .idea, .note, .content, .connection:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 // MARK: - Relation Suggestion
 
 struct RelationSuggestion: Identifiable, Equatable {
@@ -293,6 +304,41 @@ class ConnectionCoDevEngine: ObservableObject {
                 }
             }
             return usages
+        } catch {
+            return []
+        }
+    }
+
+    /// Finds atoms explicitly linked to this connection and eligible to appear in
+    /// The Well before they are quoted into any station item.
+    func findLinkedSourceMaterials(for connectionUUID: String, limit: Int = 20) async -> [Atom] {
+        do {
+            let queryEngine = GraphQueryEngine()
+            let neighbors = try await queryEngine.getNeighbors(of: connectionUUID, direction: .both, limit: 80)
+
+            var seen = Set<String>()
+            var sources: [Atom] = []
+
+            for neighbor in neighbors {
+                let uuid = neighbor.node.atomUUID
+                guard uuid != connectionUUID, !seen.contains(uuid) else { continue }
+                guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
+                      atom.isEligibleWellSource else {
+                    continue
+                }
+                seen.insert(uuid)
+                sources.append(atom)
+                if sources.count >= limit {
+                    break
+                }
+            }
+
+            return sources.sorted { lhs, rhs in
+                if lhs.updatedAt != rhs.updatedAt {
+                    return lhs.updatedAt > rhs.updatedAt
+                }
+                return (lhs.title ?? "") < (rhs.title ?? "")
+            }
         } catch {
             return []
         }

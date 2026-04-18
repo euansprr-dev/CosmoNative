@@ -211,6 +211,7 @@ struct FocusCanvasBlockView: View {
     let canvasBlock: CanvasBlock
     let onRemove: () -> Void
     let onPositionChange: (CGPoint) -> Void
+    let onSelect: () -> Void
 
     @State private var dragOffset: CGSize = .zero
 
@@ -220,6 +221,7 @@ struct FocusCanvasBlockView: View {
                 x: block.positionX + dragOffset.width,
                 y: block.positionY + dragOffset.height
             )
+            .simultaneousGesture(TapGesture().onEnded { onSelect() })
             .gesture(dragGesture)
     }
 
@@ -244,6 +246,8 @@ struct FocusCanvasBlockView: View {
             TaskBlockView(block: canvasBlock)
         case .note:
             NoteBlockView(block: canvasBlock)
+        case .stickyNote:
+            StickyNoteBlockView(block: canvasBlock)
         case .cosmoAI:
             CosmoAIBlockView(block: canvasBlock)
         default:
@@ -285,6 +289,7 @@ struct FocusCanvasBlockView: View {
 /// with a compact placeholder while atom data is being fetched.
 struct FocusFloatingBlocksLayer: View {
     @ObservedObject var manager: FocusFloatingBlocksManager
+    var onSelect: (String) -> Void = { _ in }
 
     var body: some View {
         ZStack {
@@ -305,6 +310,9 @@ struct FocusFloatingBlocksLayer: View {
                         },
                         onPositionChange: { newPosition in
                             manager.updatePosition(block.id, position: newPosition)
+                        },
+                        onSelect: {
+                            onSelect(block.id)
                         }
                     )
                 } else {

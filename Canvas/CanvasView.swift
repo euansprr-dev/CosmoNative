@@ -2779,20 +2779,15 @@ struct CanvasView: View {
 
         Task {
             do {
-                // Always create a backing atom so saveNote() UPDATE never silently fails
-                let newAtom = Atom.new(type: .note)
-                let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
-                    var mutableAtom = newAtom
-                    try mutableAtom.insert(db)
-                    return db.lastInsertedRowID
-                }
+                // Always create a backing atom through the repository so sync insert tracking runs.
+                let createdAtom = try await AtomRepository.shared.create(type: .note)
 
                 var block = CanvasBlock.noteBlock(position: canvasPosition)
-                block.entityId = atomId
-                block.entityUuid = newAtom.uuid
+                block.entityId = createdAtom.id ?? -1
+                block.entityUuid = createdAtom.uuid
 
                 await spatialEngine.addBlock(block, persist: true)
-                print("📝 Created note block at \(canvasPosition) with atom \(newAtom.uuid)")
+                print("📝 Created note block at \(canvasPosition) with atom \(createdAtom.uuid)")
             } catch {
                 // Fallback: create without atom (legacy behavior)
                 let block = CanvasBlock.noteBlock(position: canvasPosition)

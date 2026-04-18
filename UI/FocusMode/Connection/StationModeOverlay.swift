@@ -52,6 +52,8 @@ struct StationModeOverlay: View {
                 onSourceTap: onSourceTap,
                 onAcceptGhost: onAcceptGhost,
                 onDismissGhost: onDismissGhost,
+                displayMode: .focus,
+                isSelected: true,
                 cardWidth: 640
             )
         }

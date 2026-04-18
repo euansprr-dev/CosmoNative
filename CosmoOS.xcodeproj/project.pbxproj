@@ -422,6 +422,7 @@
 		B9E10FDA0603EB3E18C92BEF /* PaneEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5FA955AEDF347E4CDB815D8 /* PaneEnvironment.swift */; };
 		B9F72E3A1D8C4B56A0E31F07 /* CardSelectionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */; };
 		BA86EE33E77903FFA0476F89 /* L1StreamingASR.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8C99775430F38D9AD07CB6F /* L1StreamingASR.swift */; };
+		BAF4C3429BD0B703E47EE815 /* ConnectionCoDevEngine+LiveInsights.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D39D7B17AFC7D56175396D6 /* ConnectionCoDevEngine+LiveInsights.swift */; };
 		BB4D5E6F7A8B9C0D1E2F3A4B /* ContentPolishSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA3C4D5E6F7A8B9C0D1E2F3A /* ContentPolishSidebar.swift */; };
 		BB566AC8FC13FA42A8421065 /* LegacyTypeStubs.swift in Sources */ = {isa = PBXBuildFile; fileRef = F255870EB2A86BB42CC9EB95 /* LegacyTypeStubs.swift */; };
 		BCB47D1F7F7B7CE166A406E5 /* EmotionalArcView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CFFE01D66AF6E99CBBB3BCE /* EmotionalArcView.swift */; };
@@ -540,6 +541,7 @@
 		D4E5F60718293041526A7B8C /* DashboardTaskList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6F07182930415263748A /* DashboardTaskList.swift */; };
 		D507AE2AC886494282D36081 /* IdeaBoardBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20E5085455F24C29B3F14F79 /* IdeaBoardBlockView.swift */; };
 		D5336E9899F0B09BC379A794 /* CosmoUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6062159562A0FDEE9B48FD6D /* CosmoUndoManager.swift */; };
+		D579AA43DBA1ECFA6F026842 /* ConnectionCanvasLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 816E44865DE15867280C9C14 /* ConnectionCanvasLayer.swift */; };
 		D5869C02E2D37EBA4E041837 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF6C489D8C60057A5F544D7B /* MainView.swift */; };
 		D7170FBFE0C888F66636DEDF /* VoiceStatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B605D5B1B37DA7CC7F081AD8 /* VoiceStatusBar.swift */; };
 		D7C2F4A1E9B038165F4A2C7E /* AsyncSemaphore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F918A7D2B64C0F5A1E8B3D /* AsyncSemaphore.swift */; };
@@ -621,6 +623,10 @@
 		F1F01CC99136B77926EDF94D /* CommandPaletteModeIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ACBFD4B62BDFE51DA2D9B57 /* CommandPaletteModeIndicator.swift */; };
 		F28BD17A6058A62FDB3B1C10 /* CosmicHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFF9BFF380AB4DA7648ADC7E /* CosmicHaptics.swift */; };
 		F3180EE4972465695008B242 /* CrystallizationIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 964FAB4C26027C4D0D203814 /* CrystallizationIndicator.swift */; };
+		F3EBF20147B6B91705B12D67 /* ConnectionBlockFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26F44DF2A8FEDE72E338055A /* ConnectionBlockFrame.swift */; };
+		E7199626D69440D7956CB910 /* WellSourcesBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC1FCDF88F0F40219C6215B1 /* WellSourcesBlock.swift */; };
+		F6A1B2C3D4E5F60718293A4B /* ConnectionAtelierDockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A1B2C3D4E5F60718293A4C /* ConnectionAtelierDockView.swift */; };
+		F6A1B2C3D4E5F60718293A4D /* ConnectionStructuredWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A1B2C3D4E5F60718293A4E /* ConnectionStructuredWorkspaceView.swift */; };
 		F42352F278467EAE6A0AD519 /* AgentBriefGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4DC7B9DA77FA053CEAF330F /* AgentBriefGenerator.swift */; };
 		F45B0001E5CD2C735940FDFE /* adapters.safetensors in Resources */ = {isa = PBXBuildFile; fileRef = F01F792D9108F44EC31A41B8 /* adapters.safetensors */; };
 		F4723FDE3B0E2CC4EB80CDB0 /* CanvasSelectionInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3A999E9FFEFD51C5BFF38C7 /* CanvasSelectionInspector.swift */; };
@@ -766,6 +772,10 @@
 		2592701606783E9FDCA1CC31 /* DateFormatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateFormatters.swift; sourceTree = "<group>"; };
 		25EBAF625905B5EBE5DCAF70 /* InstagramReelLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstagramReelLayout.swift; sourceTree = "<group>"; };
 		2657F08320084D15D87CC03D /* FocusFloatingBlockView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FocusFloatingBlockView.swift; path = UI/FocusMode/FocusFloatingBlockView.swift; sourceTree = SOURCE_ROOT; };
+		26F44DF2A8FEDE72E338055A /* ConnectionBlockFrame.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionBlockFrame.swift; sourceTree = "<group>"; };
+		DC1FCDF88F0F40219C6215B1 /* WellSourcesBlock.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WellSourcesBlock.swift; sourceTree = "<group>"; };
+		F6A1B2C3D4E5F60718293A4C /* ConnectionAtelierDockView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionAtelierDockView.swift; sourceTree = "<group>"; };
+		F6A1B2C3D4E5F60718293A4E /* ConnectionStructuredWorkspaceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionStructuredWorkspaceView.swift; sourceTree = "<group>"; };
 		2915DFE138DE79A9661CC653 /* AudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCapture.swift; sourceTree = "<group>"; };
 		292B33F93B9FFEA7925473B3 /* CosmoInputDock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoInputDock.swift; sourceTree = "<group>"; };
 		2AA5217883CB40981F4952DA /* FocusModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusModeView.swift; sourceTree = "<group>"; };
@@ -918,6 +928,7 @@
 		6B0D24E5A7F8C93B1D4E6F80 /* CanvasClusterEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CanvasClusterEngine.swift; path = AI/CanvasClusterEngine.swift; sourceTree = SOURCE_ROOT; };
 		6C37CE2BC7C64FCC87FFE502 /* ClusterRuleIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterRuleIndicator.swift; sourceTree = "<group>"; };
 		6CE426AAA80BF292754575D2 /* ContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextAssembler.swift; sourceTree = "<group>"; };
+		6D39D7B17AFC7D56175396D6 /* ConnectionCoDevEngine+LiveInsights.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "ConnectionCoDevEngine+LiveInsights.swift"; sourceTree = "<group>"; };
 		6D665DB3D62E4665AE45150D /* CosmoKeyboardFooter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoKeyboardFooter.swift; sourceTree = "<group>"; };
 		6D953C9D983841CEA0ED0462 /* CompareCreatorsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompareCreatorsView.swift; path = UI/FocusMode/SwipeStudy/CompareCreatorsView.swift; sourceTree = SOURCE_ROOT; };
 		6D996BE37FFB4DB66FE27D2B /* ThinkspaceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkspaceManager.swift; sourceTree = "<group>"; };
@@ -962,6 +973,7 @@
 		81293041526374859607182A /* DashboardObjectivesBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardObjectivesBar.swift; sourceTree = "<group>"; };
 		812977DD61920092434DD673 /* VoiceContextStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceContextStore.swift; sourceTree = "<group>"; };
 		812BBA57A3CDC842EEE2054D /* ToolExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolExecutor.swift; sourceTree = "<group>"; };
+		816E44865DE15867280C9C14 /* ConnectionCanvasLayer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionCanvasLayer.swift; sourceTree = "<group>"; };
 		817A1CDFD7735D812AD670B6 /* VectorDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VectorDatabase.swift; sourceTree = "<group>"; };
 		82045966472AC541D1415323 /* AmbientResultCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientResultCard.swift; sourceTree = "<group>"; };
 		821C55A79BF908395741ECE0 /* AdvancedElementBrowser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AdvancedElementBrowser.swift; path = UI/FocusMode/Ideas/AdvancedElementBrowser.swift; sourceTree = SOURCE_ROOT; };
@@ -2193,6 +2205,7 @@
 				7B3E0FCB981B80A64D66CAAE /* InboxActionExecutor.swift */,
 				41B60C91DBD0B7C7A8C67EE3 /* InboxIntelligenceEngine.swift */,
 				E96BE30A6DA389BA6761E428 /* ConceptCollaboratorEngine.swift */,
+				6D39D7B17AFC7D56175396D6 /* ConnectionCoDevEngine+LiveInsights.swift */,
 			);
 			path = AI;
 			sourceTree = "<group>";
@@ -2290,6 +2303,11 @@
 				2187375D6A2699DB69FC9AC0 /* TheAtelierView.swift */,
 				16E80C3AA36E07D5CEA6242D /* TheForgeView.swift */,
 				A3E66515D63F3712AF2A208F /* TheWellView.swift */,
+				26F44DF2A8FEDE72E338055A /* ConnectionBlockFrame.swift */,
+				816E44865DE15867280C9C14 /* ConnectionCanvasLayer.swift */,
+				F6A1B2C3D4E5F60718293A4C /* ConnectionAtelierDockView.swift */,
+				F6A1B2C3D4E5F60718293A4E /* ConnectionStructuredWorkspaceView.swift */,
+				DC1FCDF88F0F40219C6215B1 /* WellSourcesBlock.swift */,
 			);
 			path = Connection;
 			sourceTree = "<group>";
@@ -3524,6 +3542,12 @@
 				2D481E6160FA195BF1EF6A5D /* TheForgeView.swift in Sources */,
 				5D328C469B2BE774A3E250F1 /* TheWellView.swift in Sources */,
 				0DA1B24A8AB116FF7EF20992 /* ConceptCollaboratorEngine.swift in Sources */,
+				BAF4C3429BD0B703E47EE815 /* ConnectionCoDevEngine+LiveInsights.swift in Sources */,
+				F3EBF20147B6B91705B12D67 /* ConnectionBlockFrame.swift in Sources */,
+				D579AA43DBA1ECFA6F026842 /* ConnectionCanvasLayer.swift in Sources */,
+				F6A1B2C3D4E5F60718293A4B /* ConnectionAtelierDockView.swift in Sources */,
+				F6A1B2C3D4E5F60718293A4D /* ConnectionStructuredWorkspaceView.swift in Sources */,
+				E7199626D69440D7956CB910 /* WellSourcesBlock.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

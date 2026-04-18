@@ -18,29 +18,49 @@ enum RichDocumentField {
 }
 
 enum RichDocumentPersistence {
+    private static let noteLagTolerance = 5
+
     static func loadAtomDocument(
         field: RichDocumentField,
         metadata: String?,
-        fallbackPlainText: String?
+        fallbackPlainText: String?,
+        preferFallbackPlainTextWhenRicher: Bool = false
     ) -> RichDocument {
-        let document = RichDocumentMetadataStorage.readDocument(from: metadata, key: field.metadataKey)
-            ?? RichDocument.migrateLegacy(fallbackPlainText ?? "")
+        let fallbackDocument = RichDocument.migrateLegacy(fallbackPlainText ?? "")
+        let metadataDocument = RichDocumentMetadataStorage.readDocument(from: metadata, key: field.metadataKey)
+        let document = preferredDocument(
+            field: field,
+            metadataDocument: metadataDocument,
+            fallbackDocument: fallbackDocument,
+            fallbackPlainText: fallbackPlainText,
+            preferFallbackPlainTextWhenRicher: preferFallbackPlainTextWhenRicher
+        )
         return field == .title ? normalizedTitleDocument(document) : document
     }
 
     static func loadBlockDocument(
         key: String,
         metadata: [String: String],
-        fallbackPlainText: String?
+        fallbackPlainText: String?,
+        preferFallbackPlainTextWhenRicher: Bool = false
     ) -> RichDocument {
-        let document: RichDocument
+        let metadataDocument: RichDocument?
         if let encoded = metadata[key],
            let data = encoded.data(using: .utf8),
            let decoded = try? JSONDecoder().decode(RichDocument.self, from: data) {
-            document = decoded
+            metadataDocument = decoded
         } else {
-            document = RichDocument.migrateLegacy(fallbackPlainText ?? "")
+            metadataDocument = nil
         }
+        let fallbackDocument = RichDocument.migrateLegacy(fallbackPlainText ?? "")
+        let field: RichDocumentField = key == RichDocumentMetadataKeys.titleDocument ? .title : .body
+        let document = preferredDocument(
+            field: field,
+            metadataDocument: metadataDocument,
+            fallbackDocument: fallbackDocument,
+            fallbackPlainText: fallbackPlainText,
+            preferFallbackPlainTextWhenRicher: preferFallbackPlainTextWhenRicher
+        )
         return key == RichDocumentMetadataKeys.titleDocument ? normalizedTitleDocument(document) : document
     }
 
@@ -71,6 +91,82 @@ enum RichDocumentPersistence {
             body: bodyText.flatMap(nilIfEmpty),
             metadata: metadata
         )
+    }
+
+    static func canonicalNoteBodyDocument(
+        bodyDocument: RichDocument,
+        plainText: String,
+        lagTolerance: Int = noteLagTolerance
+    ) -> RichDocument {
+        let trimmedPlainText = plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let documentPlainText = bodyDocument.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard trimmedPlainText.count > documentPlainText.count + lagTolerance else {
+            return bodyDocument
+        }
+
+        return RichDocument.migrateLegacy(plainText)
+    }
+
+    static func noteSnapshot(
+        existingMetadata: String?,
+        titleDocument: RichDocument,
+        bodyDocument: RichDocument,
+        plainBodyText: String
+    ) -> NoteDocumentSnapshot {
+        let normalizedTitleDocument = normalizedTitleDocument(titleDocument)
+        let effectiveBodyDocument = canonicalNoteBodyDocument(
+            bodyDocument: bodyDocument,
+            plainText: plainBodyText
+        )
+        let fields = writeAtomDocuments(
+            existingMetadata: existingMetadata,
+            titleDocument: normalizedTitleDocument,
+            bodyDocument: effectiveBodyDocument
+        )
+
+        return NoteDocumentSnapshot(
+            titleDocument: normalizedTitleDocument,
+            bodyDocument: effectiveBodyDocument,
+            titlePlainText: titlePlainText(from: normalizedTitleDocument),
+            bodyPlainText: effectiveBodyDocument.plainText,
+            metadata: fields.metadata
+        )
+    }
+
+    static func richestPlainText(_ candidates: [String?]) -> String {
+        candidates
+            .compactMap { candidate in
+                guard let candidate else { return nil }
+                let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : candidate
+            }
+            .max(by: { $0.count < $1.count }) ?? ""
+    }
+
+    private static func preferredDocument(
+        field: RichDocumentField,
+        metadataDocument: RichDocument?,
+        fallbackDocument: RichDocument,
+        fallbackPlainText: String?,
+        preferFallbackPlainTextWhenRicher: Bool
+    ) -> RichDocument {
+        let document = metadataDocument ?? fallbackDocument
+
+        guard preferFallbackPlainTextWhenRicher,
+              field != .title,
+              let fallbackPlainText else {
+            return document
+        }
+
+        let trimmedFallback = fallbackPlainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDocument = document.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard trimmedFallback.count > trimmedDocument.count + noteLagTolerance else {
+            return document
+        }
+
+        return fallbackDocument
     }
 
     static func writeBlockDocument(
@@ -228,4 +324,40 @@ enum RichDocumentPersistence {
 
 extension Notification.Name {
     static let richDocumentDidChange = Notification.Name("com.cosmo.richDocumentDidChange")
+}
+
+struct NoteDocumentSnapshot: Equatable {
+    let titleDocument: RichDocument
+    let bodyDocument: RichDocument
+    let titlePlainText: String
+    let bodyPlainText: String
+    let metadata: String?
+
+    var atomTitle: String? {
+        RichDocumentPersistence.nilIfEmpty(titlePlainText)
+    }
+
+    var atomBody: String? {
+        RichDocumentPersistence.nilIfEmpty(bodyPlainText)
+    }
+
+    func noteFocusStatePayload(atomUUID: String) -> [String: Any] {
+        var userInfo: [String: Any] = [
+            "atomUUID": atomUUID,
+            "title": titlePlainText,
+            "body": bodyPlainText
+        ]
+
+        if let bodyDocumentData = try? JSONEncoder().encode(bodyDocument),
+           let bodyDocumentString = String(data: bodyDocumentData, encoding: .utf8) {
+            userInfo["bodyDocumentJSON"] = bodyDocumentString
+        }
+
+        if let titleDocumentData = try? JSONEncoder().encode(titleDocument),
+           let titleDocumentString = String(data: titleDocumentData, encoding: .utf8) {
+            userInfo["titleDocumentJSON"] = titleDocumentString
+        }
+
+        return userInfo
+    }
 }

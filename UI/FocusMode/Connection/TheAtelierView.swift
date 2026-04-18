@@ -183,7 +183,9 @@ private struct AtelierCrystalSection: View {
 
 // MARK: - Usage Section
 
-private struct AtelierUsageSection: View {
+/// Visible at file scope (was `private`) so V3's `ConnectionCanvasLayer` can
+/// instantiate it directly as a canvas block.
+struct AtelierUsageSection: View {
 
     let usages: [AtelierContentUsage]
     let profiles: [AtelierProfileChip]

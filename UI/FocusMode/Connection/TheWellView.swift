@@ -168,7 +168,9 @@ struct TheWellView: View {
 
 // MARK: - Source Manuscript Card
 
-private struct SourceManuscriptCard: View {
+/// Visible at file scope (was `private`) so V3's `ConnectionCanvasLayer` can
+/// instantiate it directly as a canvas block.
+struct SourceManuscriptCard: View {
 
     let source: Atom
     let whispers: [GhostSuggestion]
@@ -301,7 +303,7 @@ private struct SourceManuscriptCard: View {
 
 // MARK: - Well Whisper Row
 
-private struct WellWhisperRow: View {
+struct WellWhisperRow: View {
 
     let whisper: GhostSuggestion
     let onAccept: () -> Void

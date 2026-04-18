@@ -252,6 +252,22 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             let projectWrapper = ProjectWrapper(atom: atom)
             metadata["status"] = projectWrapper.status
             metadata["priority"] = projectWrapper.priority
+        case .note:
+            metadata["title"] = atom.title ?? ""
+            metadata["content"] = atom.body ?? ""
+
+            if let atomMetadata = atom.metadata,
+               let data = atomMetadata.data(using: .utf8),
+               let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for key in [RichDocumentMetadataKeys.titleDocument, RichDocumentMetadataKeys.bodyDocument] {
+                    guard let value = decoded[key],
+                          let jsonData = try? JSONSerialization.data(withJSONObject: value),
+                          let jsonString = String(data: jsonData, encoding: .utf8) else {
+                        continue
+                    }
+                    metadata[key] = jsonString
+                }
+            }
         case .templateInstance:
             if let templateData = atom.templateInstanceData {
                 metadata["templateUUID"] = templateData.templateUUID

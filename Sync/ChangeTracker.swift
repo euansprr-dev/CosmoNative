@@ -133,6 +133,8 @@ class ChangeTracker: ObservableObject {
                 return
             }
 
+            let serverVersion = payload["_server_version"] as? Int ?? 0
+
             // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
             payload.removeValue(forKey: "id")
             payload.removeValue(forKey: "_local_version")
@@ -156,14 +158,24 @@ class ChangeTracker: ObservableObject {
                 }
             }
 
+            let writeDisposition: SyncWriteDisposition
+            if table == "atoms" {
+                writeDisposition = SyncWriteDisposition.resolve(
+                    requestedOperation: operation,
+                    serverVersion: serverVersion
+                )
+            } else if operation == "INSERT" {
+                writeDisposition = .upsert
+            } else {
+                writeDisposition = .update
+            }
+
             do {
-                switch operation {
-                case "INSERT":
+                switch writeDisposition {
+                case .upsert:
                     try await client.upsert(table: table, data: payload, onConflict: "uuid")
-                case "UPDATE":
+                case .update:
                     try await client.update(table: table, uuid: uuid, data: payload)
-                default:
-                    break
                 }
 
                 // Mark synced in queue + update server version

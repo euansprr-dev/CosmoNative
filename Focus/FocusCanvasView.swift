@@ -346,6 +346,14 @@ struct FocusCanvasView: View {
                         entityId = atom.id ?? -1
                         entityUUID = atom.uuid
                     }
+                case .note:
+                    if let atom = try? await AtomRepository.shared.create(
+                        type: .note,
+                        title: title == "Note" ? nil : title
+                    ) {
+                        entityId = atom.id ?? -1
+                        entityUUID = atom.uuid
+                    }
                 default:
                     break
                 }
@@ -762,7 +770,11 @@ struct FocusCanvasView: View {
                 entityUUID = atom.uuid
             case .note:
                 // Notes always get a backing atom for reliable persistence
-                let atom = try await AtomRepository.shared.create(type: .note, title: title)
+                let atom = try await AtomRepository.shared.create(
+                    type: .note,
+                    title: title == "Note" ? nil : title,
+                    body: content
+                )
                 entityId = atom.id ?? -1
                 entityUUID = atom.uuid
             default:
@@ -1005,4 +1017,3 @@ struct FocusBlockView: View {
         }
     }
 }
-

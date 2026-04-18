@@ -74,6 +74,7 @@ struct CosmoApp: App {
                 RealtimeSyncService.shared.startListening()
                 PromptTemplateStore.shared.syncAllTemplatesToCloud()
             }
+            await NoteRepairService.shared.repairNotesIfNeeded()
             // NOW start the Telegram bridge — it checks isSignedIn to skip polling when cloud agent is active
             if APIKeys.hasTelegramBot {
                 await TelegramBridgeService.shared.start()

@@ -17,6 +17,7 @@ struct MediaBlockView: View {
     @State private var isLoading = true
     @State private var isProcessing = false
     @State private var isHovered = false
+    @Environment(\.canvasBlockSelectionSuppressed) private var selectionNotificationsSuppressed
     @State private var isDropdownOpen = false
     @State private var isPlayerActive = false
     @State private var currentTimestamp: TimeInterval = 0
@@ -169,6 +170,7 @@ struct MediaBlockView: View {
             }
             .frame(width: blockSize.width, height: blockSize.height)
             .onTapGesture {
+                guard !selectionNotificationsSuppressed else { return }
                 NotificationCenter.default.post(
                     name: CosmoNotification.Canvas.blockSelected,
                     object: nil,

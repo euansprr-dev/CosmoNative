@@ -230,6 +230,8 @@ class SyncEngine: ObservableObject {
             throw SyncError.invalidPayload
         }
 
+        let serverVersion = payload["_server_version"] as? Int ?? 0
+
         // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
         payload.removeValue(forKey: "id")
         payload.removeValue(forKey: "_local_version")
@@ -251,15 +253,29 @@ class SyncEngine: ObservableObject {
             payload = convertJSONFieldsForPostgres(payload)
         }
 
+        let writeDisposition: SyncWriteDisposition
+        if item.tableName == "atoms" {
+            writeDisposition = SyncWriteDisposition.resolve(
+                requestedOperation: item.operation,
+                serverVersion: serverVersion
+            )
+        } else if item.operation == "INSERT" {
+            writeDisposition = .upsert
+        } else {
+            writeDisposition = .update
+        }
+
         switch item.operation {
-        case "INSERT":
-            try await client.upsert(table: item.tableName, data: payload, onConflict: "uuid")
-
-        case "UPDATE":
-            try await client.update(table: item.tableName, uuid: item.uuid, data: payload)
-
         case "DELETE":
             try await client.softDelete(table: item.tableName, uuid: item.uuid)
+
+        case "INSERT", "UPDATE":
+            switch writeDisposition {
+            case .upsert:
+                try await client.upsert(table: item.tableName, data: payload, onConflict: "uuid")
+            case .update:
+                try await client.update(table: item.tableName, uuid: item.uuid, data: payload)
+            }
 
         default:
             throw SyncError.unknownOperation

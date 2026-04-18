@@ -187,4 +187,82 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertEqual(payload.document.blocks.first?.kind, .paragraph)
         XCTAssertEqual(payload.document.plainText, "Burger King")
     }
+
+    func testLoadAtomDocumentPrefersFallbackPlainTextWhenMetadataBodyIsShorter() {
+        let truncatedBody = String(repeating: "A", count: 80)
+        let fullBody = String(repeating: "B", count: 240)
+        let fields = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: nil,
+            bodyDocument: RichDocument.migrateLegacy(truncatedBody)
+        )
+
+        let loaded = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: fields.metadata,
+            fallbackPlainText: fullBody,
+            preferFallbackPlainTextWhenRicher: true
+        )
+
+        XCTAssertEqual(loaded.plainText, fullBody)
+    }
+
+    func testNoteSnapshotPrefersPlainBodyWhenStructuredDocumentLags() {
+        let staleBody = "Short body"
+        let fullBody = Array(repeating: "This is the body that should win.", count: 8).joined(separator: " ")
+        let snapshot = RichDocumentPersistence.noteSnapshot(
+            existingMetadata: nil,
+            titleDocument: RichDocument.migrateLegacy("Recovered note"),
+            bodyDocument: RichDocument.migrateLegacy(staleBody),
+            plainBodyText: fullBody
+        )
+
+        XCTAssertEqual(snapshot.bodyPlainText, fullBody)
+        XCTAssertEqual(snapshot.bodyDocument.plainText, fullBody)
+
+        let payload = snapshot.noteFocusStatePayload(atomUUID: "note-uuid")
+        XCTAssertEqual(payload["body"] as? String, fullBody)
+
+        let encodedBodyDocument = payload["bodyDocumentJSON"] as? String
+        let decodedBodyDocument = encodedBodyDocument
+            .flatMap { $0.data(using: .utf8) }
+            .flatMap { try? JSONDecoder().decode(RichDocument.self, from: $0) }
+        XCTAssertEqual(decodedBodyDocument?.plainText, fullBody)
+    }
+
+    func testSyncWriteDispositionUsesUpsertForUnsyncedAtomUpdates() {
+        XCTAssertEqual(
+            SyncWriteDisposition.resolve(requestedOperation: "UPDATE", serverVersion: 0),
+            .upsert
+        )
+        XCTAssertEqual(
+            SyncWriteDisposition.resolve(requestedOperation: "UPDATE", serverVersion: 3),
+            .update
+        )
+    }
+
+    func testCanvasBlockFromNoteAtomCarriesFullBodyAndRichDocuments() {
+        let fullBody = Array(repeating: "Performance note body should survive restart.", count: 12)
+            .joined(separator: " ")
+        let snapshot = RichDocumentPersistence.noteSnapshot(
+            existingMetadata: nil,
+            titleDocument: RichDocument.migrateLegacy("Ben Call April 12"),
+            bodyDocument: RichDocument.migrateLegacy("short preview"),
+            plainBodyText: fullBody
+        )
+
+        var atom = Atom.new(
+            type: .note,
+            title: snapshot.atomTitle,
+            body: snapshot.atomBody,
+            metadata: snapshot.metadata
+        )
+        atom.id = 42
+
+        let block = CanvasBlock.fromAtom(atom, position: .zero)
+
+        XCTAssertEqual(block.metadata["content"], fullBody)
+        XCTAssertEqual(block.metadata["title"], "Ben Call April 12")
+        XCTAssertNotNil(block.metadata[RichDocumentMetadataKeys.bodyDocument])
+        XCTAssertNotNil(block.metadata[RichDocumentMetadataKeys.titleDocument])
+    }
 }

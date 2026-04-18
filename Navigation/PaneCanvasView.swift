@@ -302,15 +302,10 @@ struct PaneCanvasView: View {
     private func createNoteBlock(at position: CGPoint) {
         Task { @MainActor in
             do {
-                let newAtom = Atom.new(type: .note)
-                let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
-                    var mutableAtom = newAtom
-                    try mutableAtom.insert(db)
-                    return db.lastInsertedRowID
-                }
+                let createdAtom = try await AtomRepository.shared.create(type: .note)
                 var block = CanvasBlock.noteBlock(position: position)
-                block.entityId = atomId
-                block.entityUuid = newAtom.uuid
+                block.entityId = createdAtom.id ?? -1
+                block.entityUuid = createdAtom.uuid
                 await spatialEngine.addBlock(block, persist: true)
             } catch {
                 // Fallback without DB

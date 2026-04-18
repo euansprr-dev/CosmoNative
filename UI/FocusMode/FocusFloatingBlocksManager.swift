@@ -143,6 +143,25 @@ class FocusFloatingBlocksManager: ObservableObject {
         blocks.contains { $0.linkedAtomUUID == atomUUID }
     }
 
+    /// Mark a single floating block as selected (all others unselected).
+    /// Pass `nil` to clear selection. Drives `isSelected` highlight on
+    /// `StickyNoteBlockView`, `NoteBlockView`, etc. without using the
+    /// Thinkspace-wide `blockSelected` notification.
+    func setSelected(_ id: String?) {
+        for (key, var cb) in canvasBlocks {
+            let shouldSelect = (key == id)
+            if cb.isSelected != shouldSelect {
+                cb.isSelected = shouldSelect
+                canvasBlocks[key] = cb
+            }
+        }
+    }
+
+    /// Look up a floating block by id.
+    func block(id: String) -> FocusFloatingBlock? {
+        blocks.first { $0.id == id }
+    }
+
     /// Remove all blocks
     func removeAllBlocks() {
         withAnimation(ProMotionSprings.snappy) {

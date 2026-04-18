@@ -37,9 +37,21 @@ struct LeyLineLayer: View {
     /// Max opacity when active. Spec target: 0.35 at rest, bump to ~0.55 on hover.
     var maxOpacity: Double = 0.35
 
+    /// Optional viewport rect in the same coordinate space as the endpoints. When
+    /// supplied, lines whose endpoints both sit outside a padded viewport are
+    /// skipped during draw — avoids shading offscreen bezier + glow for canvases
+    /// with tens of blocks.
+    var viewport: CGRect? = nil
+
     var body: some View {
         Canvas { context, _ in
+            let culling = viewport?.insetBy(dx: -120, dy: -120)
             for line in lines {
+                if let rect = culling,
+                   !rect.contains(line.from),
+                   !rect.contains(line.to) {
+                    continue
+                }
                 let path = leyPath(from: line.from, to: line.to)
 
                 // Soft glow underlay

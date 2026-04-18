@@ -9,6 +9,7 @@ struct ImageBlockView: View {
     @State private var loadedImage: NSImage?
     @State private var blockSize: CGSize
     @State private var isHovered = false
+    @Environment(\.canvasBlockSelectionSuppressed) private var selectionNotificationsSuppressed
 
     private var isSelected: Bool { block.isSelected }
 
@@ -72,6 +73,7 @@ struct ImageBlockView: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
         .onTapGesture {
+            guard !selectionNotificationsSuppressed else { return }
             NotificationCenter.default.post(
                 name: CosmoNotification.Canvas.blockSelected,
                 object: nil,

@@ -103,6 +103,7 @@ struct StickyNoteBlockView: View {
     // Visual states
     @State private var isSelected = false
     @State private var isHovered = false
+    @Environment(\.canvasBlockSelectionSuppressed) private var selectionNotificationsSuppressed
     @State private var hasAppeared = false
 
     // Current sticky color
@@ -197,6 +198,7 @@ struct StickyNoteBlockView: View {
             isHovered = hovering
         }
         .onTapGesture {
+            guard !selectionNotificationsSuppressed else { return }
             NotificationCenter.default.post(
                 name: CosmoNotification.Canvas.blockSelected,
                 object: nil,

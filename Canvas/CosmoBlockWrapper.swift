@@ -6,6 +6,23 @@
 
 import SwiftUI
 
+// MARK: - Environment: Suppress Canvas Selection Notifications
+
+/// When set, block wrappers skip posting `CosmoNotification.Canvas.blockSelected`
+/// on tap. Used by Connection Focus Mode (V3) to prevent Thinkspace's main
+/// `CanvasView.handleTap` from racing with in-focus selection when Connection
+/// is open as a side pane.
+private struct CanvasBlockSelectionSuppressedKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
+extension EnvironmentValues {
+    var canvasBlockSelectionSuppressed: Bool {
+        get { self[CanvasBlockSelectionSuppressedKey.self] }
+        set { self[CanvasBlockSelectionSuppressedKey.self] = newValue }
+    }
+}
+
 /// Surface style for a block wrapper. Most blocks use `.vellum` (aged parchment,
 /// the default for the Akashic canvas). Photographic / chromatically-sensitive
 /// blocks like Media opt into `.crisp` for pure white backgrounds.
@@ -47,6 +64,8 @@ struct CosmoBlockWrapper<Content: View>: View {
     @State private var isResizing = false
     @State private var isDragging = false
     @State private var hasAppeared = false
+
+    @Environment(\.canvasBlockSelectionSuppressed) private var selectionNotificationsSuppressed
 
     // Selection is read from block, not a binding
     private var isSelected: Bool { block.isSelected }
@@ -184,7 +203,9 @@ struct CosmoBlockWrapper<Content: View>: View {
             // Per design language: card hover is depth change, not scale.
             .contentShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
             .onTapGesture {
-                // Single tap to select - post notification to CanvasView
+                // Single tap to select - post notification to CanvasView, unless
+                // we're inside Connection Focus Mode (which handles selection locally).
+                guard !selectionNotificationsSuppressed else { return }
                 NotificationCenter.default.post(
                     name: CosmoNotification.Canvas.blockSelected,
                     object: nil,

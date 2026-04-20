@@ -1,86 +1,223 @@
 // CosmoOS/UI/CommandK/CortexIdeasBrowser.swift
-// Client-grouped ideas browser with collapsible sections and auto-reload
+// "The Ledger" — a manuscript-style, typographic view of ideas grouped by client.
+// Uses AtelierPrimitives to keep the aesthetic in lockstep with Idea Focus Mode.
 
 import SwiftUI
 
 struct CortexIdeasBrowser: View {
     @ObservedObject var viewModel: CommandKViewModel
     @State private var hasAppeared = false
-    @State private var statusFilter: IdeaStatus?
-    @State private var clientFilter: String? // nil = all, "__unassigned__" = unassigned only
-    @State private var sortMode: IdeaSortMode = .recent
     @State private var clientProfiles: [Atom] = []
-    @State private var collapsedClients: Set<String> = []
+    @State private var captureDraft = ""
+    @FocusState private var captureFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            filterBar
-            Divider().foregroundStyle(DS.border.opacity(0.2))
-            content
+        ScrollView {
+            VStack(spacing: 0) {
+                header
+                captureRow
+                ledger
+            }
+            .padding(.horizontal, DS.space24)
+            .padding(.vertical, DS.space20)
         }
         .task {
-            await reloadData()
-            withAnimation(ProMotionSprings.cardEntrance) { hasAppeared = true }
+            await reload()
+            withAnimation(.easeOut(duration: 0.55)) { hasAppeared = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
-            Task { await reloadData() }
+            Task { await reload() }
         }
     }
+
+    // MARK: - Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            Text(subtitle)
+                .font(DS.dateSerif)
+                .italic()
+                .foregroundStyle(DS.inkFaded)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            hairRule
+        }
+        .padding(.bottom, DS.space16)
+    }
+
+    private var subtitle: String {
+        let ideas = visibleIdeas.count
+        guard ideas > 0 else { return "the ledger awaits" }
+        let clients = clientSections.count
+        let ready = visibleIdeas.filter { $0.status == .ready }.count
+        let clientLabel = "\(clients) client\(clients == 1 ? "" : "s")"
+        let ideaLabel = "\(ideas) idea\(ideas == 1 ? "" : "s")"
+        return "\(ideaLabel) · \(clientLabel) · \(ready) ready"
+    }
+
+    // MARK: - Capture
+
+    private var captureRow: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: DS.space12) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(DS.gilt.opacity(captureFocused ? 0.9 : 0.5))
+                    .frame(width: 14)
+                    .accessibilityHidden(true)
+                TextField("what's on your mind?", text: $captureDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 16, weight: .regular, design: .serif))
+                    .italic(captureDraft.isEmpty)
+                    .foregroundStyle(DS.text)
+                    .focused($captureFocused)
+                    .onSubmit(submitCapture)
+                    .accessibilityLabel("Capture new idea")
+                if captureFocused && !captureDraft.isEmpty {
+                    Text("↵ save")
+                        .font(DS.smallCaps)
+                        .tracking(1.2)
+                        .foregroundStyle(DS.giltMuted)
+                        .transition(.opacity)
+                }
+            }
+            .padding(.vertical, DS.space12)
+            .frame(minHeight: 44)
+            .animation(ProMotionSprings.hover, value: captureFocused)
+            hairRule
+        }
+        .padding(.bottom, DS.space20)
+    }
+
+    private func submitCapture() {
+        let title = captureDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        captureDraft = ""
+        captureFocused = false
+        Task { await viewModel.createIdeaForClient(title: title, clientUUID: nil) }
+    }
+
+    // MARK: - Ledger
 
     @ViewBuilder
-    private var content: some View {
-        if viewModel.ideaGalleryItems.isEmpty && !hasAppeared {
+    private var ledger: some View {
+        if !hasAppeared && viewModel.ideaGalleryItems.isEmpty {
             loadingState
-        } else if filteredIdeas.isEmpty {
+        } else if visibleIdeas.isEmpty {
             emptyState
         } else {
-            sectionedList
+            sections
         }
     }
 
-    // MARK: - Filtered & Grouped Data
-
-    private var filteredIdeas: [IdeaGalleryItem] {
-        var items = viewModel.ideaGalleryItems
-        if let status = statusFilter {
-            items = items.filter { $0.status == status }
-        }
-        if let client = clientFilter {
-            if client == "__unassigned__" {
-                items = items.filter { $0.clientUUID == nil }
-            } else {
-                items = items.filter { $0.clientUUID == client }
+    private var sections: some View {
+        LazyVStack(spacing: DS.space24) {
+            ForEach(Array(clientSections.enumerated()), id: \.element.id) { sectionIndex, section in
+                clientSectionView(section, sectionIndex: sectionIndex)
             }
         }
-        switch sortMode {
-        case .recent:
-            items.sort { $0.updatedAt > $1.updatedAt }
-        case .priority:
-            items.sort { ($0.isPinned ? 0 : 1, $0.status.sortOrder) < ($1.isPinned ? 0 : 1, $1.status.sortOrder) }
-        case .insightScore:
-            items.sort { ($0.insightScore ?? 0) > ($1.insightScore ?? 0) }
-        }
-        return items
     }
 
-    private var clientSections: [IdeaClientSection] {
+    private func clientSectionView(_ section: IdeasLedgerSection, sectionIndex: Int) -> some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            sectionHeader(section)
+            ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
+                LedgerRow(item: item) { openIdea(item) }
+                    .atelierStaggerIn(
+                        delay: staggerDelay(sectionIndex: sectionIndex, rowIndex: index),
+                        appeared: hasAppeared
+                    )
+                if index < section.items.count - 1 {
+                    Rectangle()
+                        .fill(DS.sepiaSubtle)
+                        .frame(height: 0.5)
+                        .padding(.leading, DS.space16)
+                }
+            }
+        }
+    }
+
+    private func sectionHeader(_ section: IdeasLedgerSection) -> some View {
+        HStack(spacing: DS.space10) {
+            Rectangle()
+                .fill(section.color.opacity(0.6))
+                .frame(width: 2, height: 14)
+                .accessibilityHidden(true)
+            Text(section.clientName.uppercased())
+                .font(DS.smallCaps)
+                .tracking(1.6)
+                .foregroundStyle(DS.giltMuted)
+                .fixedSize()
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(height: 0.5)
+                .frame(maxWidth: .infinity)
+            Text(section.countText)
+                .font(.system(size: 9, weight: .regular, design: .monospaced))
+                .foregroundStyle(DS.inkFaded)
+        }
+    }
+
+    private var hairRule: some View {
+        Rectangle().fill(DS.sepiaSubtle).frame(height: 0.5)
+    }
+
+    // Stagger only the first ~12 rows to avoid cascade on large ledgers.
+    private func staggerDelay(sectionIndex: Int, rowIndex: Int) -> Double {
+        let ordinal = sectionIndex * 4 + rowIndex
+        guard ordinal < 12 else { return 0 }
+        return Double(ordinal) * 0.03
+    }
+
+    // MARK: - States
+
+    private var loadingState: some View {
+        Text("gathering the ledger…")
+            .font(DS.dateSerif)
+            .italic()
+            .foregroundStyle(DS.inkFaded)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DS.space40)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: DS.space20) {
+            Text("no ideas yet —")
+                .font(DS.dateSerif)
+                .italic()
+                .foregroundStyle(DS.inkFaded)
+            GiltBracketedCTA(title: "capture something", disabled: false) {
+                captureFocused = true
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.space40)
+    }
+
+    // MARK: - Data
+
+    private static let activatedStatuses: Set<IdeaStatus> = [.inProduction, .published, .archived]
+
+    private var visibleIdeas: [IdeaGalleryItem] {
+        viewModel.ideaGalleryItems.filter { !Self.activatedStatuses.contains($0.status) }
+    }
+
+    private var clientSections: [IdeasLedgerSection] {
         var grouped: [String: [IdeaGalleryItem]] = [:]
         var unassigned: [IdeaGalleryItem] = []
 
-        for item in filteredIdeas {
-            if let clientUUID = item.clientUUID {
-                grouped[clientUUID, default: []].append(item)
+        for item in visibleIdeas.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            if let uuid = item.clientUUID {
+                grouped[uuid, default: []].append(item)
             } else {
                 unassigned.append(item)
             }
         }
 
-        var sections: [IdeaClientSection] = []
-        let sorted = clientProfiles.sorted { ($0.title ?? "") < ($1.title ?? "") }
-        for client in sorted {
-            let items = grouped[client.uuid] ?? []
-            guard !items.isEmpty || clientFilter == nil else { continue }
-            sections.append(IdeaClientSection(
+        var sections: [IdeasLedgerSection] = []
+        let sortedClients = clientProfiles.sorted { ($0.title ?? "") < ($1.title ?? "") }
+        for client in sortedClients {
+            guard let items = grouped[client.uuid], !items.isEmpty else { continue }
+            sections.append(IdeasLedgerSection(
                 id: client.uuid,
                 clientName: client.title ?? "Client",
                 clientUUID: client.uuid,
@@ -88,10 +225,8 @@ struct CortexIdeasBrowser: View {
                 items: items
             ))
         }
-
-        // Unassigned last
-        if !unassigned.isEmpty || clientFilter == nil {
-            sections.append(IdeaClientSection(
+        if !unassigned.isEmpty {
+            sections.append(IdeasLedgerSection(
                 id: "__unassigned__",
                 clientName: "Unassigned",
                 clientUUID: nil,
@@ -99,264 +234,12 @@ struct CortexIdeasBrowser: View {
                 items: unassigned
             ))
         }
-
         return sections
     }
 
-    // MARK: - Filter Bar
-
-    private var filterBar: some View {
-        HStack(spacing: DS.space8) {
-            Text("\(filteredIdeas.count) ideas")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-
-            statusFilterMenu
-            clientFilterMenu
-            sortFilterMenu
-
-            if statusFilter != nil || clientFilter != nil {
-                Button("Clear") {
-                    statusFilter = nil
-                    clientFilter = nil
-                }
-                .font(DS.caption)
-                .foregroundStyle(DS.red)
-                .buttonStyle(.plain)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, DS.space16)
-        .frame(height: 32)
-    }
-
-    private var statusFilterMenu: some View {
-        Menu {
-            Button("All Statuses") { statusFilter = nil }
-            Divider()
-            ForEach(IdeaStatus.allCases, id: \.self) { status in
-                Button {
-                    statusFilter = status
-                } label: {
-                    HStack {
-                        Circle()
-                            .fill(colorForStatus(status))
-                            .frame(width: 8, height: 8)
-                        Text(status.displayName)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: DS.space4) {
-                if let status = statusFilter {
-                    Circle()
-                        .fill(colorForStatus(status))
-                        .frame(width: 6, height: 6)
-                    Text(status.displayName).font(DS.caption)
-                } else {
-                    Text("Status").font(DS.caption)
-                }
-                Image(systemName: "chevron.down").font(.system(size: 8))
-            }
-            .foregroundStyle(statusFilter != nil ? DS.entityIdea : DS.textSecondary)
-            .commandKToolbarChip(
-                isActive: statusFilter != nil,
-                activeFill: DS.entityIdea.opacity(0.12),
-                activeBorder: DS.entityIdea.opacity(0.2)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var clientFilterMenu: some View {
-        Menu {
-            Button("All Clients") { clientFilter = nil }
-            Divider()
-            ForEach(clientProfiles.sorted(by: { ($0.title ?? "") < ($1.title ?? "") }), id: \.uuid) { profile in
-                Button {
-                    clientFilter = profile.uuid
-                } label: {
-                    HStack {
-                        Circle()
-                            .fill(DS.clientColor(for: profile.uuid))
-                            .frame(width: 8, height: 8)
-                        Text(profile.title ?? "Client")
-                    }
-                }
-            }
-            Divider()
-            Button {
-                clientFilter = "__unassigned__"
-            } label: {
-                HStack {
-                    Circle().fill(DS.entityIdea).frame(width: 8, height: 8)
-                    Text("Unassigned")
-                }
-            }
-        } label: {
-            HStack(spacing: DS.space4) {
-                if let filter = clientFilter {
-                    Circle()
-                        .fill(filter == "__unassigned__" ? DS.entityIdea : DS.clientColor(for: filter))
-                        .frame(width: 6, height: 6)
-                    Text(clientNameForFilter(filter)).font(DS.caption)
-                } else {
-                    Text("Client").font(DS.caption)
-                }
-                Image(systemName: "chevron.down").font(.system(size: 8))
-            }
-            .foregroundStyle(clientFilter != nil ? DS.accent : DS.textSecondary)
-            .commandKToolbarChip(
-                isActive: clientFilter != nil,
-                activeFill: DS.accentSoft,
-                activeBorder: DS.accent.opacity(0.2)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var sortFilterMenu: some View {
-        Menu {
-            ForEach(IdeaSortMode.allCases, id: \.self) { mode in
-                Button(mode.displayName) { sortMode = mode }
-            }
-        } label: {
-            HStack(spacing: DS.space4) {
-                Text(sortMode.displayName).font(DS.caption)
-                Image(systemName: "chevron.down").font(.system(size: 8))
-            }
-            .foregroundStyle(DS.textSecondary)
-            .commandKToolbarChip()
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Sectioned List
-
-    private var sectionedList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(clientSections.enumerated()), id: \.element.id) { sectionIndex, section in
-                    clientSectionView(section, sectionIndex: sectionIndex)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func clientSectionView(_ section: IdeaClientSection, sectionIndex: Int) -> some View {
-        let isCollapsed = collapsedClients.contains(section.id)
-
-        // Header
-        Button {
-            withAnimation(ProMotionSprings.snappy) {
-                if isCollapsed {
-                    collapsedClients.remove(section.id)
-                } else {
-                    collapsedClients.insert(section.id)
-                }
-            }
-        } label: {
-            sectionHeader(section, isCollapsed: isCollapsed)
-        }
-        .buttonStyle(.plain)
-
-        // Ideas (when expanded)
-        if !isCollapsed {
-            ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
-                CortexIdeaRow(item: item) { openIdea(item) }
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 6)
-                    .animation(
-                        ProMotionSprings.staggered(index: sectionIndex * 10 + index),
-                        value: hasAppeared
-                    )
-                if index < section.items.count - 1 {
-                    Divider().foregroundStyle(DS.border.opacity(0.08)).padding(.leading, 36)
-                }
-            }
-        }
-    }
-
-    private func sectionHeader(_ section: IdeaClientSection, isCollapsed: Bool) -> some View {
-        HStack(spacing: DS.space8) {
-            Circle()
-                .fill(section.color)
-                .frame(width: 10, height: 10)
-                .accessibilityHidden(true)
-
-            Text(section.clientName)
-                .font(DS.callout)
-                .fontWeight(.semibold)
-                .foregroundStyle(DS.text)
-
-            Text("(\(section.items.count))")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-
-            Spacer()
-
-            Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(DS.textMuted)
-                .accessibilityLabel(isCollapsed ? "Expand" : "Collapse")
-        }
-        .padding(.horizontal, DS.space16)
-        .padding(.vertical, DS.space10)
-        .background(section.color.opacity(0.04))
-    }
-
-    // MARK: - States
-
-    private var loadingState: some View {
-        VStack(spacing: DS.space8) {
-            ProgressView().scaleEffect(0.8).tint(DS.textMuted)
-            Text("Loading ideas...")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, DS.space32)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: DS.space8) {
-            Image(systemName: "lightbulb.slash")
-                .font(.system(size: 28))
-                .foregroundStyle(DS.textMuted)
-                .accessibilityHidden(true)
-            Text(statusFilter != nil || clientFilter != nil ? "No ideas match filters" : "No ideas yet")
-                .font(DS.callout)
-                .foregroundStyle(DS.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, DS.space32)
-    }
-
-    // MARK: - Data Loading
-
-    private func reloadData() async {
+    private func reload() async {
         await viewModel.loadIdeaGallery(forceReload: true)
         clientProfiles = (try? await AtomRepository.shared.fetchAll(type: .clientProfile)) ?? []
-    }
-
-    // MARK: - Helpers
-
-    private func colorForStatus(_ status: IdeaStatus) -> Color {
-        switch status {
-        case .spark: return DS.green
-        case .developing: return DS.orange
-        case .ready: return DS.info
-        case .inProduction: return DS.orange
-        case .published: return DS.accent
-        case .archived: return DS.textMuted
-        }
-    }
-
-    private func clientNameForFilter(_ filter: String) -> String {
-        if filter == "__unassigned__" { return "Unassigned" }
-        return clientProfiles.first(where: { $0.uuid == filter })?.title ?? "Client"
     }
 
     private func openIdea(_ item: IdeaGalleryItem) {
@@ -369,31 +252,45 @@ struct CortexIdeasBrowser: View {
     }
 }
 
-// MARK: - Idea Row
+// MARK: - Section Model
 
-private struct CortexIdeaRow: View {
+private struct IdeasLedgerSection: Identifiable {
+    let id: String
+    let clientName: String
+    let clientUUID: String?
+    let color: Color
+    let items: [IdeaGalleryItem]
+
+    var countText: String {
+        "· \(items.count) idea\(items.count == 1 ? "" : "s")"
+    }
+}
+
+// MARK: - Ledger Row
+
+private struct LedgerRow: View {
     let item: IdeaGalleryItem
     let onTap: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: DS.space10) {
-                statusDot
+            HStack(alignment: .center, spacing: DS.space12) {
+                accentBar
                 titleColumn
-                Spacer()
-                metadataColumn
+                Spacer(minLength: DS.space12)
+                trailing
             }
-            .padding(.horizontal, DS.space16)
-            .padding(.leading, DS.space20) // indent under section header
-            .padding(.vertical, DS.space8)
-            .background(isHovered ? DS.glassCardFill.opacity(0.5) : Color.clear)
+            .padding(.vertical, DS.space10)
+            .padding(.horizontal, DS.space4)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
-        .animation(ProMotionSprings.hover, value: isHovered)
-        .accessibilityLabel(item.title)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .accessibilityLabel(accessibilityText)
         .commandKCardContextMenu(
             atomUUID: item.atomUUID,
             entityId: item.entityId,
@@ -411,62 +308,88 @@ private struct CortexIdeaRow: View {
         )
     }
 
-    private var statusDot: some View {
-        Circle()
-            .fill(statusColor)
-            .frame(width: 6, height: 6)
+    private var accentBar: some View {
+        Rectangle()
+            .fill(accentColor.opacity(0.6))
+            .frame(width: 2, height: 30)
             .accessibilityHidden(true)
     }
 
     private var titleColumn: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: DS.space4) {
                 if item.isPinned {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 9))
-                        .foregroundStyle(DS.orange)
+                        .foregroundStyle(DS.gilt.opacity(0.7))
                         .accessibilityLabel("Pinned")
                 }
                 Text(item.title)
-                    .font(DS.callout)
-                    .fontWeight(.medium)
+                    .font(.system(size: 15, weight: .regular, design: .serif))
+                    .italic(isHovered)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
             }
+            metaLine
+        }
+    }
 
-            HStack(spacing: DS.space4) {
-                Text(item.status.displayName)
-                    .font(DS.caption2)
-                    .foregroundStyle(statusColor)
-                if let format = item.contentFormat {
-                    Text("·").font(DS.caption2).foregroundStyle(DS.textMuted)
-                    Text(format.displayName).font(DS.caption2).foregroundStyle(DS.textMuted)
-                }
-                if let score = item.insightScore, score > 0 {
-                    Text("·").font(DS.caption2).foregroundStyle(DS.textMuted)
-                    Text(String(format: "%.0f%%", score * 100))
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.accent)
-                }
+    private var metaLine: some View {
+        HStack(spacing: DS.space6) {
+            Text(item.status.displayName.uppercased())
+                .font(DS.smallCaps)
+                .tracking(1.4)
+                .foregroundStyle(DS.giltMuted)
+            if let format = item.contentFormat {
+                dotSeparator
+                Text(format.displayName.lowercased())
+                    .font(.system(size: 12, weight: .regular, design: .serif))
+                    .italic()
+                    .foregroundStyle(DS.inkFaded)
+            }
+            if let score = item.insightScore, score > 0 {
+                dotSeparator
+                Text(String(format: "%.0f%% match", score * 100))
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(DS.gilt.opacity(0.8))
+            }
+            if let swipes = item.matchingSwipeCount, swipes > 0 {
+                dotSeparator
+                Text("\(swipes) swipe\(swipes == 1 ? "" : "s")")
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(DS.inkFaded)
             }
         }
     }
 
-    private var metadataColumn: some View {
-        Text(relativeTime)
-            .font(DS.caption2)
-            .foregroundStyle(DS.textMuted)
+    private var dotSeparator: some View {
+        Text("·")
+            .font(.system(size: 11, weight: .regular))
+            .foregroundStyle(DS.inkFaded.opacity(0.5))
     }
 
-    private var statusColor: Color {
-        switch item.status {
-        case .spark: return DS.green
-        case .developing: return DS.orange
-        case .ready: return DS.info
-        case .inProduction: return DS.orange
-        case .published: return DS.accent
-        case .archived: return DS.textMuted
+    private var trailing: some View {
+        HStack(spacing: DS.space8) {
+            Text(relativeTime)
+                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                .foregroundStyle(DS.inkFaded)
+            Image(systemName: "arrow.right")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(DS.gilt.opacity(isHovered ? 0.9 : 0.35))
+                .offset(x: isHovered ? -2 : 0)
+                .accessibilityHidden(true)
         }
+    }
+
+    private var accentColor: Color {
+        if let uuid = item.clientUUID { return DS.clientColor(for: uuid) }
+        return DS.entityIdea
+    }
+
+    private var accessibilityText: String {
+        var parts: [String] = [item.title, item.status.displayName]
+        if let client = item.clientName { parts.append(client) }
+        return parts.joined(separator: ", ")
     }
 
     private var relativeTime: String {
@@ -480,4 +403,4 @@ private struct CortexIdeaRow: View {
     }
 }
 
-// IdeaStatus.sortOrder and IdeaSortMode.displayName are defined in IdeasTab.swift
+// IdeaSortMode and IdeaStatus.sortOrder live in IdeasTab.swift (still used elsewhere).

@@ -191,20 +191,27 @@ final class SwipeProcessingService {
             return nil
         }
 
-        // Retry once for likely carousel URLs that got incomplete extraction
+        // Retry once for likely carousel URLs that got incomplete extraction.
+        // A 1-item result is treated as partial — Cobalt/GraphQL can return a
+        // truncated picker when a scrape fails mid-response. Invalidate and let
+        // the cache's best-carousel resolver (GraphQL sidecar) take a second pass.
         let urlPath = url.path.lowercased()
         let isLikelyCarousel = urlPath.contains("/p/") || urlPath.contains("/share/p/")
-        if isLikelyCarousel
-            && (mediaData.carouselItems ?? []).isEmpty
-            && mediaData.videoURL == nil
-            && mediaData.thumbnailURL != nil {
-            print("SwipeProcessingService: Likely carousel but no items extracted, retrying for \(uuid)")
+        let currentItemCount = mediaData.carouselItems?.count ?? 0
+        let looksPartial = currentItemCount <= 1 && mediaData.videoURL == nil
+        if isLikelyCarousel && looksPartial {
+            print("SwipeProcessingService: Likely carousel with \(currentItemCount) item(s), retrying for \(uuid)")
             try? await Task.sleep(for: .seconds(2))
             await MainActor.run { InstagramMediaCache.shared.invalidate(for: url) }
-            if let retryData = try? await InstagramMediaCache.shared.getMedia(for: url),
-               let retryItems = retryData.carouselItems, !retryItems.isEmpty {
-                print("SwipeProcessingService: Retry succeeded — got \(retryItems.count) carousel items for \(uuid)")
-                mediaData = retryData
+            if let retryData = try? await InstagramMediaCache.shared.getMedia(for: url) {
+                let retryCount = retryData.carouselItems?.count ?? 0
+                if retryCount > currentItemCount {
+                    print("SwipeProcessingService: Retry improved — \(currentItemCount) -> \(retryCount) items for \(uuid)")
+                    mediaData = retryData
+                } else if retryCount >= 1 {
+                    // Adopt retry result anyway — fresher CDN URLs are less likely to be expired.
+                    mediaData = retryData
+                }
             }
         }
 

@@ -162,14 +162,19 @@ final class InstagramExtractor: Sendable {
         _ mediaData: InstagramMediaData,
         requestedType: InstagramContentType
     ) -> Bool {
-        // If any strategy found carousel items, always accept — definitive result
-        if !(mediaData.carouselItems?.isEmpty ?? true) { return true }
+        // A carousel with >=2 items is a definitive result; a 1-item array is treated
+        // as partial (Cobalt/GraphQL can return a truncated picker mid-failure) so
+        // later strategies still get a chance to produce a richer result.
+        let itemCount = mediaData.carouselItems?.count ?? 0
+        if itemCount >= 2 { return true }
 
         switch requestedType {
         case .reel, .videoPost:
             return mediaData.videoURL != nil
         case .carousel:
-            return mediaData.videoURL != nil
+            // Accept only if we clearly have the full post: a video (single-video posts)
+            // or >=2 carousel slides. One-slide results may be a partial extraction.
+            return mediaData.videoURL != nil && itemCount >= 1
         case .image:
             // For /p/ URLs, thumbnail alone isn't enough — the post might be
             // a carousel where only the first image was extracted by a fast strategy.
@@ -260,12 +265,10 @@ final class InstagramExtractor: Sendable {
             return .story
         }
         if path.contains("/p/") || path.contains("/share/p/") {
-            // img_index query parameter indicates carousel content
-            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-               components.queryItems?.contains(where: { $0.name == "img_index" }) == true {
-                return .carousel
-            }
-            return .image
+            // /p/ URLs are indistinguishable between single-image posts and carousels by URL alone.
+            // Treat as carousel so extraction won't short-circuit on a partial 1-slide result;
+            // single-image posts still succeed via the GraphQL sidecar path (1 edge in children).
+            return .carousel
         }
 
         return .image
@@ -503,6 +506,13 @@ final class InstagramExtractor: Sendable {
         originalURL: URL,
         contentType: InstagramContentType
     ) -> InstagramMediaData? {
+        // Bail on carousels: embed pages render only slide 1 — returning the cover image here
+        // would short-circuit later strategies (GraphQL sidecar) that can walk every slide.
+        // Detection markers: GraphSidecar / carousel_media_count / multiple display_resources arrays.
+        if isCarouselEmbed(html: html) {
+            return nil
+        }
+
         // Pattern 1: "video_url":"..." in embedded JSON
         if let videoURL = extractVideoURLFromJSON(html: html) {
             let thumbnailURL = extractThumbnailFromHTML(html: html)
@@ -1423,6 +1433,18 @@ final class InstagramExtractor: Sendable {
 
     // MARK: - HTML Parse Helpers
 
+    /// Heuristic: does this embed HTML represent a carousel post?
+    /// Embed pages only render slide 1, so if we detect a sidecar we return nil
+    /// from parseEmbedHTML so later strategies (GraphQL) can walk every slide.
+    private func isCarouselEmbed(html: String) -> Bool {
+        if html.contains("GraphSidecar") { return true }
+        if html.contains("\"__typename\":\"XDTGraphSidecar\"") { return true }
+        if html.contains("edge_sidecar_to_children") { return true }
+        if html.range(of: #""carousel_media_count"\s*:\s*[2-9]"#, options: .regularExpression) != nil { return true }
+        if html.range(of: #""carousel_media_count"\s*:\s*\d{2,}"#, options: .regularExpression) != nil { return true }
+        return false
+    }
+
     /// Extract video_url from JSON embedded in HTML
     private func extractVideoURLFromJSON(html: String) -> URL? {
         // Try "video_url":"..." pattern (most common in embed pages)
@@ -1627,8 +1649,17 @@ final class InstagramMediaCache {
     }
 
     private func isUsableCachedResult(_ mediaData: InstagramMediaData) -> Bool {
-        // Carousel items mean we have a quality extraction
-        if !(mediaData.carouselItems?.isEmpty ?? true) { return true }
+        let itemCount = mediaData.carouselItems?.count ?? 0
+
+        // >=2 carousel items is a definitive result. A 1-item array on a /p/ URL
+        // is treated as incomplete so the cache will trigger extractBestAvailableCarouselMedia
+        // and give GraphQL a second pass; if the post really is single-image, that pass
+        // returns the same 1 item and the 60s incomplete-refresh cooldown prevents thrashing.
+        if itemCount >= 2 { return true }
+
+        let path = mediaData.originalURL.path.lowercased()
+        let isPostPath = path.contains("/p/") || path.contains("/share/p/")
+        if itemCount == 1 && isPostPath { return false }
 
         switch mediaData.contentType {
         case .reel, .videoPost:

@@ -644,9 +644,12 @@ extension ContentFocusModeState {
 
         var state = ContentFocusModeState(atomUUID: atom.uuid)
         state.currentStep = step
-        state.coreIdea = dict["coreIdea"] as? String ?? ""
+        let persistedCoreIdea = dict["coreIdea"] as? String ?? ""
+        let persistedDescription = dict["contentDescription"] as? String ?? ""
+        let canonicalIdea = persistedDescription.isEmpty ? persistedCoreIdea : persistedDescription
+        state.coreIdea = canonicalIdea
         state.hooks = dict["hooks"] as? [String] ?? dict["inheritedHooks"] as? [String] ?? []
-        state.contentDescription = dict["contentDescription"] as? String ?? ""
+        state.contentDescription = canonicalIdea
         let richDraftDocument = RichDocumentMetadataStorage.readDocument(
             from: atom.metadata,
             key: RichDocumentMetadataKeys.contentDraftDocument
@@ -749,9 +752,10 @@ extension ContentFocusModeState {
         // Write focus state fields
         metadataDict["clientProfileUUID"] = clientProfileUUID
         metadataDict["currentStep"] = currentStep.rawValue
-        metadataDict["coreIdea"] = coreIdea.isEmpty ? nil : coreIdea
+        let canonicalIdea = contentDescription.isEmpty ? coreIdea : contentDescription
+        metadataDict["coreIdea"] = canonicalIdea.isEmpty ? nil : canonicalIdea
         metadataDict["hooks"] = hooks.isEmpty ? nil : hooks
-        metadataDict["contentDescription"] = contentDescription.isEmpty ? nil : contentDescription
+        metadataDict["contentDescription"] = canonicalIdea.isEmpty ? nil : canonicalIdea
         metadataDict["polishSystemPrompt"] = polishSystemPrompt.isEmpty ? nil : polishSystemPrompt
         metadataDict["isContextPanelVisible"] = isContextPanelVisible
         metadataDict["isAISuggestedOutline"] = isAISuggestedOutline

@@ -6,6 +6,7 @@ import SwiftUI
 struct CortexRecentCard: View {
     let item: RecentDisplayItem
     let onTap: () -> Void
+    var onDelete: (() -> Void)? = nil
 
     @State private var isHovered = false
 
@@ -22,6 +23,12 @@ struct CortexRecentCard: View {
         .animation(ProMotionSprings.hover, value: isHovered)
         .accessibilityLabel(item.title)
         .accessibilityHint("Open \(item.type.displayName)")
+        .commandKCardContextMenu(
+            atomUUID: item.id,
+            entityId: item.entityId,
+            atomType: item.type,
+            onDelete: onDelete
+        )
     }
 
     // MARK: - Thumbnail

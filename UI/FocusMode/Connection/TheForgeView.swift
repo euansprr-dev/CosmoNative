@@ -24,9 +24,6 @@ struct TheForgeView: View {
 
     var sourceCount: Int = 0
     var insightCount: Int = 0
-    var usageCount: Int = 0
-    var referenceCount: Int = 0
-    var profileCount: Int = 0
     var maturityLabel: String = "Seed"
     var stationWidth: CGFloat = 260
     var stationColumns: Int = 4
@@ -52,16 +49,17 @@ struct TheForgeView: View {
     private var headerDeck: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: 24) {
+                Color.clear
+                    .frame(width: 184, height: 1)
                 masthead
                     .frame(maxWidth: .infinity, alignment: .top)
-                metadataRail
-                    .frame(width: 292)
+                maturityCard
+                    .frame(width: 184, alignment: .trailing)
             }
 
             VStack(alignment: .center, spacing: 16) {
                 masthead
-                metadataRail
-                    .frame(maxWidth: 540)
+                maturityCard
             }
         }
     }
@@ -77,12 +75,10 @@ struct TheForgeView: View {
         )
     }
 
-    private var metadataRail: some View {
-        ConnectionMetadataRail(
+    private var maturityCard: some View {
+        ConnectionMaturityCard(
             maturityLabel: maturityLabel,
-            usageCount: usageCount,
-            referenceCount: referenceCount,
-            profileCount: profileCount
+            filledCount: state.completedSectionCount
         )
     }
 
@@ -142,59 +138,33 @@ struct TheForgeView: View {
     }
 }
 
-private struct ConnectionMetadataRail: View {
+private struct ConnectionMaturityCard: View {
     let maturityLabel: String
-    let usageCount: Int
-    let referenceCount: Int
-    let profileCount: Int
+    let filledCount: Int
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                maturityPill
-                countPill(title: "USED IN", value: "\(usageCount)")
-                countPill(title: "REFS", value: "\(referenceCount)")
-                countPill(title: "PROF", value: "\(profileCount)")
+        HStack(spacing: 12) {
+            MaturityCrystalView(
+                filledCount: filledCount,
+                diameter: 56
+            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(maturityLabel.uppercased())
+                    .font(DS.smallCaps)
+                    .tracking(1.8)
+                    .foregroundStyle(DS.giltMuted)
+                Text("\(filledCount)/8 STATIONS")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(DS.inkWash)
             }
-
-            VStack(alignment: .trailing, spacing: 10) {
-                HStack(spacing: 10) {
-                    maturityPill
-                    countPill(title: "USED IN", value: "\(usageCount)")
-                }
-                HStack(spacing: 10) {
-                    countPill(title: "REFS", value: "\(referenceCount)")
-                    countPill(title: "PROF", value: "\(profileCount)")
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            Spacer(minLength: 0)
         }
-    }
-
-    private var maturityPill: some View {
-        metadataPill(title: "SEED", value: maturityLabel.uppercased())
-    }
-
-    private func countPill(title: String, value: String) -> some View {
-        metadataPill(title: title, value: value)
-    }
-
-    private func metadataPill(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(DS.smallCaps)
-                .tracking(1.5)
-                .foregroundStyle(DS.giltMuted)
-            Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .serif))
-                .foregroundStyle(DS.inkWash)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(DS.vellumDeep.opacity(0.55), in: Capsule())
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(DS.vellumDeep.opacity(0.35), in: .rect(cornerRadius: 12))
         .overlay(
-            Capsule()
-                .stroke(DS.sepiaBorder.opacity(0.85), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(DS.sepiaBorder.opacity(0.8), lineWidth: 0.5)
         )
     }
 }

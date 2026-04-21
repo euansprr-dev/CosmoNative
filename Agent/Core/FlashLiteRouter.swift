@@ -82,6 +82,33 @@ final class FlashLiteRouter {
             return nil
         }
 
+        if let parsed = SwipeIdeaCaptureParser.parse(text) {
+            var json: [String: Any] = [
+                "toolName": "capture_swipe_with_idea",
+                "arguments": [
+                    "url": parsed.url
+                ]
+            ]
+
+            if let title = parsed.title, !title.isEmpty {
+                var arguments = json["arguments"] as? [String: Any] ?? [:]
+                arguments["title"] = title
+                json["arguments"] = arguments
+            }
+
+            if let ideaContext = parsed.ideaContext, !ideaContext.isEmpty {
+                var arguments = json["arguments"] as? [String: Any] ?? [:]
+                arguments["ideaContext"] = ideaContext
+                json["arguments"] = arguments
+            }
+
+            if let clientName = parsed.clientName, !clientName.isEmpty {
+                json["clientName"] = clientName
+            }
+
+            return await executeToolCall(json: json)
+        }
+
         do {
             let response = try await ResearchService.shared.analyze(
                 prompt: text,
@@ -603,5 +630,172 @@ final class FlashLiteRouter {
         }
         // Fallback: return as-is
         return isoString
+    }
+}
+
+struct SwipeIdeaCaptureRequest: Equatable {
+    let url: String
+    let title: String?
+    let clientName: String?
+    let ideaContext: String?
+}
+
+enum SwipeIdeaCaptureParser {
+    private static let captureSignals = [
+        "swipe", "capture", "save this", "save that", "grab this",
+        "snag this", "file this", "add to swipes", "swipe this"
+    ]
+
+    private static let ideaSignals = [
+        "link it to", "link this to", "link to", "linked to", "idea", "inspiration"
+    ]
+
+    static func parse(_ text: String) -> SwipeIdeaCaptureRequest? {
+        guard let url = firstURL(in: text) else { return nil }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+
+        guard captureSignals.contains(where: { lower.contains($0) }),
+              ideaSignals.contains(where: { lower.contains($0) }) else {
+            return nil
+        }
+
+        let textWithoutURL = normalizeWhitespace(removingURLs(from: trimmed))
+        let title = extractTitle(from: textWithoutURL)
+        let clientName = extractClientName(from: textWithoutURL)
+        let ideaContext = extractIdeaContext(from: textWithoutURL, title: title, clientName: clientName)
+
+        return SwipeIdeaCaptureRequest(
+            url: url,
+            title: title,
+            clientName: clientName,
+            ideaContext: ideaContext
+        )
+    }
+
+    private static func firstURL(in text: String) -> String? {
+        let pattern = try? NSRegularExpression(pattern: #"https?://[^\s]+"#)
+        let nsRange = NSRange(text.startIndex..., in: text)
+        guard let match = pattern?.firstMatch(in: text, range: nsRange),
+              let range = Range(match.range, in: text) else {
+            return nil
+        }
+        return String(text[range])
+    }
+
+    private static func removingURLs(from text: String) -> String {
+        text.replacingOccurrences(of: #"https?://[^\s]+"#, with: "", options: .regularExpression)
+    }
+
+    private static func normalizeWhitespace(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func extractTitle(from text: String) -> String? {
+        let patterns = [
+            #"\b(?:named|called|titled)\s*:?\s*["“]?([^"\n”]+?)["”]?\s*$"#,
+            #"\bidea\s*:\s*["“]?([^"\n”]+?)["”]?\s*$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            let nsRange = NSRange(text.startIndex..., in: text)
+            guard let match = regex.firstMatch(in: text, range: nsRange),
+                  match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+
+            let candidate = normalizeWhitespace(String(text[range]))
+                .trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!-"))
+
+            if !candidate.isEmpty {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private static func extractClientName(from text: String) -> String? {
+        let patterns = [
+            #"\bidea\s+for\s+(.+?)\s+(?:named|called|titled)\b"#,
+            #"\bfor\s+(.+?)\s+(?:named|called|titled)\b"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            let nsRange = NSRange(text.startIndex..., in: text)
+            guard let match = regex.firstMatch(in: text, range: nsRange),
+                  match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+
+            let client = sanitizeClientName(String(text[range]))
+            if !client.isEmpty {
+                return client
+            }
+        }
+
+        return nil
+    }
+
+    private static func sanitizeClientName(_ raw: String) -> String {
+        normalizeWhitespace(
+            raw.replacingOccurrences(
+                of: #"\b(?:an|a|the)\s+idea\b"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        )
+        .trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!-"))
+    }
+
+    private static func extractIdeaContext(from text: String, title: String?, clientName: String?) -> String? {
+        var context = text
+
+        if let title, !title.isEmpty {
+            let escapedTitle = NSRegularExpression.escapedPattern(for: title)
+            let titlePattern = "\\b(?:named|called|titled)\\s*:?\\s*[\"“]?\(escapedTitle)[\"”]?"
+            context = context.replacingOccurrences(
+                of: titlePattern,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        if let clientName, !clientName.isEmpty {
+            let escapedClientName = NSRegularExpression.escapedPattern(for: clientName)
+            let clientPattern = "\\bidea\\s+for\\s+\(escapedClientName)\\b"
+            context = context.replacingOccurrences(
+                of: clientPattern,
+                with: "idea",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        let cleanupPatterns = [
+            #"\b(?:swipe|capture|save|grab|snag|file)\s+(?:this|that)?\b"#,
+            #"\band\s+link\s+(?:it|this)\s+to\b"#,
+            #"\blink\s+(?:it|this)\s+to\b"#,
+            #"\bto\s+an?\s+idea\b"#,
+            #"\ban?\s+idea\b"#
+        ]
+
+        for pattern in cleanupPatterns {
+            context = context.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+
+        let cleaned = normalizeWhitespace(context)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!-"))
+
+        return cleaned.isEmpty ? nil : cleaned
     }
 }

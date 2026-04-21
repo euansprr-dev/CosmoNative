@@ -17,6 +17,7 @@ struct LinkSwipesOverlay: View {
     private let overlayWidth: CGFloat = 700
     private let overlayHeight: CGFloat = 600
     private let accentIndigo = DS.accent
+    private var linkedSwipeIDs: Set<String> { Set(viewModel.idea.ideaMetadata?.linkedSwipeIds ?? []) }
 
     var body: some View {
         ZStack {
@@ -59,7 +60,10 @@ struct LinkSwipesOverlay: View {
             )
             .shadow(color: .black.opacity(0.15), radius: 40, y: 20)
         }
-        .onAppear { Task { await loadAllSwipes() } }
+        .onAppear {
+            initializeSelection()
+            Task { await loadAllSwipes() }
+        }
         .onKeyPress(.escape) {
             isPresented = false
             return .handled
@@ -74,7 +78,7 @@ struct LinkSwipesOverlay: View {
                 .font(.system(size: 14))
                 .foregroundColor(accentIndigo)
 
-            Text("Link Swipe Files")
+            Text(blueprintMode ? "Select Blueprint" : "Manage Swipe Files")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(DS.text)
 
@@ -158,7 +162,6 @@ struct LinkSwipesOverlay: View {
     }
 
     private var filteredSwipes: [Atom] {
-        let linked = Set(viewModel.idea.ideaMetadata?.linkedSwipeIds ?? [])
         let search = searchText.lowercased().trimmingCharacters(in: .whitespaces)
 
         return allSwipes.filter { swipe in
@@ -168,9 +171,11 @@ struct LinkSwipesOverlay: View {
             let hook = (swipe.researchMetadata?.hook ?? "").lowercased()
             return title.contains(search) || body.contains(search) || hook.contains(search)
         }.sorted { a, b in
-            // Already-linked swipes first
-            let aLinked = linked.contains(a.uuid)
-            let bLinked = linked.contains(b.uuid)
+            let aSelected = selectedUUIDs.contains(a.uuid)
+            let bSelected = selectedUUIDs.contains(b.uuid)
+            if aSelected != bSelected { return aSelected }
+            let aLinked = linkedSwipeIDs.contains(a.uuid)
+            let bLinked = linkedSwipeIDs.contains(b.uuid)
             if aLinked != bLinked { return aLinked }
             return (a.updatedAt ?? "") > (b.updatedAt ?? "")
         }
@@ -178,8 +183,7 @@ struct LinkSwipesOverlay: View {
 
     @ViewBuilder
     private func swipeRow(_ swipe: Atom) -> some View {
-        let linkedIds = Set(viewModel.idea.ideaMetadata?.linkedSwipeIds ?? [])
-        let isAlreadyLinked = linkedIds.contains(swipe.uuid)
+        let isAlreadyLinked = linkedSwipeIDs.contains(swipe.uuid)
         let isSelected = selectedUUIDs.contains(swipe.uuid)
         let analysis = swipe.swipeAnalysis
         let hookText = swipe.researchMetadata?.hook ?? analysis?.hookText ?? ""
@@ -187,8 +191,13 @@ struct LinkSwipesOverlay: View {
         let hookType = analysis?.hookType
 
         Button {
-            if isAlreadyLinked { return }
-            if isSelected {
+            if blueprintMode {
+                if isSelected {
+                    selectedUUIDs.remove(swipe.uuid)
+                } else {
+                    selectedUUIDs = [swipe.uuid]
+                }
+            } else if isSelected {
                 selectedUUIDs.remove(swipe.uuid)
             } else {
                 selectedUUIDs.insert(swipe.uuid)
@@ -231,39 +240,35 @@ struct LinkSwipesOverlay: View {
 
                 Spacer()
 
-                // Status indicator
-                if isAlreadyLinked {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(DS.green)
-                } else if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(accentIndigo)
-                } else {
-                    Image(systemName: "circle")
-                        .font(.system(size: 16))
-                        .foregroundColor(DS.textMuted)
+                VStack(alignment: .trailing, spacing: 6) {
+                    if blueprintMode {
+                        selectionIndicator(isSelected: isSelected)
+                    } else {
+                        selectionIndicator(isSelected: isSelected)
+
+                        let stateText = linkStateText(isAlreadyLinked: isAlreadyLinked, isSelected: isSelected)
+                        if !stateText.isEmpty {
+                            Text(stateText)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(linkStateColor(isAlreadyLinked: isAlreadyLinked, isSelected: isSelected))
+                        }
+                    }
                 }
             }
             .padding(10)
             .background(
-                (isAlreadyLinked ? DS.green.opacity(0.06) :
-                    isSelected ? accentIndigo.opacity(0.08) : DS.borderSubtle),
+                rowBackground(isAlreadyLinked: isAlreadyLinked, isSelected: isSelected),
                 in: RoundedRectangle(cornerRadius: 10)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(
-                        isAlreadyLinked ? DS.green.opacity(0.2) :
-                            isSelected ? accentIndigo.opacity(0.3) : Color.clear,
+                        rowBorder(isAlreadyLinked: isAlreadyLinked, isSelected: isSelected),
                         lineWidth: 1
                     )
             )
         }
         .buttonStyle(.plain)
-        .disabled(isAlreadyLinked)
-        .opacity(isAlreadyLinked ? 0.7 : 1)
     }
 
     @ViewBuilder
@@ -347,19 +352,26 @@ struct LinkSwipesOverlay: View {
 
             Button {
                 Task {
-                    if blueprintMode, let firstUUID = selectedUUIDs.first,
-                       let swipe = allSwipes.first(where: { $0.uuid == firstUUID }) {
-                        viewModel.selectBlueprint(swipe)
+                    if blueprintMode {
+                        if let firstUUID = selectedUUIDs.first,
+                           let swipe = allSwipes.first(where: { $0.uuid == firstUUID }) {
+                            viewModel.selectBlueprint(swipe)
+                        } else {
+                            viewModel.clearBlueprint()
+                        }
                     } else {
-                        for uuid in selectedUUIDs {
+                        let existing = linkedSwipeIDs
+                        for uuid in existing.subtracting(selectedUUIDs) {
+                            await viewModel.unlinkSwipe(uuid)
+                        }
+                        for uuid in selectedUUIDs.subtracting(existing) {
                             await viewModel.linkSwipe(uuid)
                         }
                     }
-                    selectedUUIDs.removeAll()
                     isPresented = false
                 }
             } label: {
-                Text(blueprintMode ? "Set as Blueprint" : "Link Selected (\(selectedUUIDs.count))")
+                Text(blueprintMode ? "Save Blueprint" : "Save Swipe Links")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(DS.textOnAccent)
                     .padding(.horizontal, 16)
@@ -367,8 +379,8 @@ struct LinkSwipesOverlay: View {
                     .background(accentIndigo, in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            .disabled(selectedUUIDs.isEmpty)
-            .opacity(selectedUUIDs.isEmpty ? 0.5 : 1)
+            .disabled(blueprintMode ? false : selectedUUIDs == linkedSwipeIDs)
+            .opacity(blueprintMode || selectedUUIDs != linkedSwipeIDs ? 1 : 0.5)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -385,6 +397,53 @@ struct LinkSwipesOverlay: View {
         } catch {
             print("LinkSwipesOverlay: failed to load swipes: \(error)")
         }
+    }
+
+    private func initializeSelection() {
+        if blueprintMode {
+            if let selected = viewModel.selectedBlueprintUUID {
+                selectedUUIDs = [selected]
+            } else {
+                selectedUUIDs.removeAll()
+            }
+        } else {
+            selectedUUIDs = linkedSwipeIDs
+        }
+    }
+
+    @ViewBuilder
+    private func selectionIndicator(isSelected: Bool) -> some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 16))
+            .foregroundColor(isSelected ? accentIndigo : DS.textMuted)
+    }
+
+    private func linkStateText(isAlreadyLinked: Bool, isSelected: Bool) -> String {
+        if isAlreadyLinked && isSelected { return "linked" }
+        if isAlreadyLinked && !isSelected { return "remove" }
+        if !isAlreadyLinked && isSelected { return "add" }
+        return ""
+    }
+
+    private func linkStateColor(isAlreadyLinked: Bool, isSelected: Bool) -> Color {
+        if isAlreadyLinked && isSelected { return DS.green }
+        if isAlreadyLinked && !isSelected { return DS.orange }
+        if !isAlreadyLinked && isSelected { return accentIndigo }
+        return DS.textMuted
+    }
+
+    private func rowBackground(isAlreadyLinked: Bool, isSelected: Bool) -> Color {
+        if isAlreadyLinked && isSelected { return DS.green.opacity(0.06) }
+        if isAlreadyLinked && !isSelected { return DS.orange.opacity(0.08) }
+        if !isAlreadyLinked && isSelected { return accentIndigo.opacity(0.08) }
+        return DS.borderSubtle
+    }
+
+    private func rowBorder(isAlreadyLinked: Bool, isSelected: Bool) -> Color {
+        if isAlreadyLinked && isSelected { return DS.green.opacity(0.25) }
+        if isAlreadyLinked && !isSelected { return DS.orange.opacity(0.3) }
+        if !isAlreadyLinked && isSelected { return accentIndigo.opacity(0.3) }
+        return .clear
     }
 }
 

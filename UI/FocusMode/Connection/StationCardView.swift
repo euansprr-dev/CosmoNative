@@ -179,7 +179,11 @@ struct StationCardView: View {
                 summaryLine
             }
         }
-        addBar
+        if isAddingItem {
+            captureField
+        } else {
+            addBar
+        }
     }
 
     private var summaryLine: some View {
@@ -320,8 +324,14 @@ struct StationCardView: View {
         }
         onAddItem(RichDocument.migrateLegacy(trimmed), trimmed)
         newItemText = ""
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-            newItemFocused = true
+        if displayMode == .collapsed {
+            withAnimation(ProMotionSprings.snappy) {
+                isAddingItem = false
+            }
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                newItemFocused = true
+            }
         }
     }
 

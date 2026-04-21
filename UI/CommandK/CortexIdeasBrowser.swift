@@ -222,7 +222,7 @@ struct CortexIdeasBrowser: View {
     private func showLessButton(section: IdeasLedgerSection) -> some View {
         Button {
             withAnimation(ProMotionSprings.snappy) {
-                expandedClients.remove(section.id)
+                _ = expandedClients.remove(section.id)
             }
         } label: {
             HStack(spacing: DS.space6) {

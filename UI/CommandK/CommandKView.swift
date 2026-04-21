@@ -67,7 +67,7 @@ public struct CommandKView: View {
             searchBarPill(geometry: geometry)
             contentPanel(geometry: geometry)
         }
-        .frame(width: CommandKMetrics.compactWidth)
+        .frame(width: panelWidth(for: geometry))
         .animation(ProMotionSprings.gentle, value: viewModel.cortexMode)
     }
 
@@ -255,6 +255,8 @@ public struct CommandKView: View {
                 ForEach(Array(viewModel.recentItems.enumerated()), id: \.element.id) { index, item in
                     CortexRecentCard(item: item) {
                         viewModel.openRecent(item)
+                    } onDelete: {
+                        viewModel.deleteRecent(item)
                     }
                     .transition(.opacity.combined(with: .offset(y: 6)))
                     .animation(ProMotionSprings.staggered(index: index), value: viewModel.recentItems.count)
@@ -353,6 +355,20 @@ public struct CommandKView: View {
     }
 
     // MARK: - Panel Sizing
+
+    private func panelWidth(for geometry: GeometryProxy) -> CGFloat {
+        let availableWidth = max(320, geometry.size.width - 96)
+
+        switch viewModel.cortexMode {
+        case .compact:
+            return min(CommandKMetrics.compactWidth, availableWidth)
+        case .searchResults:
+            return min(CommandKMetrics.searchWidth, availableWidth)
+        case .expandedDomain(let tab):
+            let targetWidth: CGFloat = tab == .ideas ? 1180 : 900
+            return min(targetWidth, availableWidth)
+        }
+    }
 
     // MARK: - Helpers
 

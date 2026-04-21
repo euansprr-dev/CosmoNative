@@ -7,11 +7,11 @@ import SwiftUI
 struct DashboardTaskList: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    let composer: CommandCenterComposerController
     var onSelectTask: ((TaskViewModel) -> Void)?
     // expandedTaskId removed — task detail is now right-panel only
     @State private var selectedTaskUUIDs: Set<String> = []
     @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
-    @State private var showOverdueRescheduleMenu = false
     @State private var hoveredTaskUUID: String?
     @State private var draggedTaskUUID: String?
     @State private var dropTargetTaskUUID: String?
@@ -93,7 +93,7 @@ struct DashboardTaskList: View {
 
     @ViewBuilder
     private var upcomingView: some View {
-        UpcomingBoardView(viewModel: viewModel)
+        UpcomingBoardView(viewModel: viewModel, composer: composer)
     }
 
     // MARK: - Completed View
@@ -357,8 +357,12 @@ struct DashboardTaskList: View {
             Spacer(minLength: 0)
 
             if showReschedule {
-                Button {
-                    showOverdueRescheduleMenu.toggle()
+                CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+                    .batchSchedule(
+                        title: "Reschedule overdue tasks",
+                        taskUUIDs: viewModel.overdueTasks.map(\.uuid),
+                        anchor: anchor
+                    )
                 } label: {
                     HStack(spacing: DS.space4) {
                         Image(systemName: "calendar.badge.clock")
@@ -377,18 +381,6 @@ struct DashboardTaskList: View {
                         Capsule()
                             .stroke(DS.red.opacity(0.2), lineWidth: 1)
                     )
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $showOverdueRescheduleMenu, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
-                    CommandCenterReschedulePanel(title: "Reschedule overdue tasks") { date in
-                        showOverdueRescheduleMenu = false
-                        Task {
-                            await viewModel.rescheduleTasks(
-                                uuids: viewModel.overdueTasks.map(\.uuid),
-                                toDate: date
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -746,7 +738,30 @@ struct DashboardTaskList: View {
 
             if !task.isCompleted && !isAnimatingCompletion {
                 playButton(task, isActive: isActiveSession)
+                taskActionButton(task)
             }
+        }
+    }
+
+    private func taskActionButton(_ task: TaskViewModel) -> some View {
+        CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+            .taskActions(task: task, anchor: anchor)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(composer.isShowingTaskAction(for: task.uuid) ? DS.text : DS.textMuted)
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle()
+                        .fill(composer.isShowingTaskAction(for: task.uuid) ? DS.accentSoft : DS.surface)
+                )
+                .overlay(
+                    Circle()
+                        .stroke(
+                            composer.isShowingTaskAction(for: task.uuid) ? DS.accent.opacity(0.22) : DS.borderSubtle,
+                            lineWidth: 1
+                        )
+                )
         }
     }
 

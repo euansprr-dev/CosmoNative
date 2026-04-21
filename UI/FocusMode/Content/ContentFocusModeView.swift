@@ -22,6 +22,8 @@ struct ContentFocusModeView: View {
     @StateObject private var viewModel: ContentFocusModeViewModel
     @State private var showAICollaborator = false
     @State private var showSettings = false
+    @State private var sidebarVisible = false
+    @State private var sidebarLocked = false
     @State private var editableTitle: String
     @State private var titleDocument: RichDocument = .empty
     @State private var draftDocument: RichDocument = .empty
@@ -83,6 +85,7 @@ struct ContentFocusModeView: View {
     @State private var availableClientProfiles: [Atom] = []
     @State private var coreIdeaExpanded: Bool = false
     @State private var hoveredSwipeUUID: String?
+    @State private var showSwipeAttachmentEditor = false
 
     enum DraftSaveState { case idle, saving, saved }
 
@@ -360,6 +363,36 @@ struct ContentFocusModeView: View {
             SanctuarySettingsView()
                 .frame(width: 720, height: 540)
         }
+        .sheet(isPresented: $showSwipeAttachmentEditor) {
+            ContentSwipeAttachmentEditor(
+                currentSwipeUUIDs: viewModel.currentInheritedSwipeUUIDs,
+                currentBlueprintUUID: viewModel.currentBlueprintSwipeUUID
+            ) { swipeUUIDs, blueprintUUID in
+                await viewModel.saveSwipeAttachments(swipeUUIDs: swipeUUIDs, blueprintUUID: blueprintUUID)
+                await loadInheritedContext()
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            FocusSidebarTrigger(isVisible: $sidebarVisible)
+                .frame(maxHeight: .infinity)
+        }
+        .overlay(alignment: .topLeading) {
+            UniversalFocusSidebar(
+                title: "Content",
+                icon: "doc.text.fill",
+                accentColor: DS.entityContent,
+                isVisible: $sidebarVisible,
+                isLocked: $sidebarLocked
+            ) {
+                ContentOutlineSidebarContent(
+                    state: $viewModel.state,
+                    atom: atom,
+                    writingEngine: writingEngine
+                )
+            }
+            .padding(.leading, 8)
+            .padding(.top, 56)
+        }
     }
 
     /// Toggle AI Collaborator — called from Cmd+J shortcut via keyboardShortcut
@@ -595,6 +628,23 @@ struct ContentFocusModeView: View {
     private var scriptoriumHeader: some View {
         HStack(spacing: DS.space12) {
             if !isPaneContext {
+                Button(action: toggleSidebar) {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(sidebarLocked || sidebarVisible ? DS.text : DS.inkFaded)
+                        .frame(width: 28, height: 28)
+                        .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(DS.glassBorder, lineWidth: 0.5)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(sidebarLocked || sidebarVisible ? "Hide sidebar" : "Show sidebar")
+                .opacity(zenMode ? 0 : 1)
+                .allowsHitTesting(!zenMode)
+            }
+            if !isPaneContext {
                 Button(action: onClose) {
                     HStack(spacing: DS.space6) {
                         Image(systemName: "chevron.left")
@@ -631,6 +681,18 @@ struct ContentFocusModeView: View {
         }
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space12)
+    }
+
+    private func toggleSidebar() {
+        withAnimation(ProMotionSprings.snappy) {
+            if sidebarLocked || sidebarVisible {
+                sidebarLocked = false
+                sidebarVisible = false
+            } else {
+                sidebarVisible = true
+                sidebarLocked = true
+            }
+        }
     }
 
     // MARK: - Title hero (smallCaps status ornament)
@@ -800,7 +862,7 @@ struct ContentFocusModeView: View {
             if sourceIdeaAtom != nil {
                 sourceMarginaliaSection
             }
-            if !matchedSwipeAtoms.isEmpty {
+            if sourceIdeaAtom != nil || !matchedSwipeAtoms.isEmpty {
                 swipesMarginaliaSection
             }
             if let framework = inheritedFramework, !framework.isEmpty {
@@ -856,52 +918,126 @@ struct ContentFocusModeView: View {
 
     private var swipesMarginaliaSection: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("SWIPES", countText: "\(matchedSwipeAtoms.count) matched")
-            ForEach(matchedSwipeAtoms.prefix(3), id: \.uuid) { swipe in
-                swipeMarginaliaRow(swipe)
+            if let blueprint = currentBlueprintAtom {
+                MarginaliaLabel("BLUEPRINT")
+                swipeMarginaliaRow(blueprint, removeLabel: "Remove blueprint") {
+                    Task {
+                        let remaining = matchedSwipeAtoms.filter { $0.uuid != blueprint.uuid }.map(\.uuid)
+                        await viewModel.saveSwipeAttachments(swipeUUIDs: remaining, blueprintUUID: remaining.first)
+                        await loadInheritedContext()
+                    }
+                }
+            } else {
+                MarginaliaLabel("BLUEPRINT")
+                Button {
+                    showSwipeAttachmentEditor = true
+                } label: {
+                    Text("select blueprint →")
+                        .font(DS.dateSerif)
+                        .italic()
+                        .foregroundStyle(DS.inkFaded.opacity(0.7))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
-        }
-    }
 
-    private func swipeMarginaliaRow(_ swipe: Atom) -> some View {
-        let isHovered = hoveredSwipeUUID == swipe.uuid
-        return Button {
-            openAtomInPane(swipe.uuid)
-        } label: {
-            HStack(alignment: .top, spacing: DS.space8) {
-                Rectangle()
-                    .fill(DS.entitySwipe.opacity(isHovered ? 0.55 : 0.18))
-                    .frame(width: 3)
-                    .frame(maxHeight: .infinity)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(swipe.title ?? "untitled")
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(2)
-                    if let hook = swipe.researchMetadata?.hook {
-                        Text(hook)
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.inkFaded)
-                            .lineLimit(1)
+            if !supportingSwipeAtoms.isEmpty {
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    MarginaliaLabel("RELATED SWIPES", countText: "\(supportingSwipeAtoms.count)")
+                    ForEach(supportingSwipeAtoms.prefix(3), id: \.uuid) { swipe in
+                        swipeMarginaliaRow(swipe, removeLabel: "Remove swipe \(swipe.title ?? "untitled")") {
+                            Task {
+                                let remaining = matchedSwipeAtoms.filter { $0.uuid != swipe.uuid }.map(\.uuid)
+                                let blueprintUUID = currentBlueprintAtom?.uuid == swipe.uuid
+                                    ? remaining.first
+                                    : currentBlueprintAtom?.uuid
+                                await viewModel.saveSwipeAttachments(swipeUUIDs: remaining, blueprintUUID: blueprintUUID)
+                                await loadInheritedContext()
+                            }
+                        }
                     }
                 }
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, DS.space4)
-            .padding(.horizontal, DS.space6)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(DS.vellum.opacity(isHovered ? 0.55 : 0))
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                hoveredSwipeUUID = hovering ? swipe.uuid : nil
+
+            Button {
+                showSwipeAttachmentEditor = true
+            } label: {
+                Text(matchedSwipeAtoms.isEmpty ? "add references →" : "edit references →")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(DS.gilt.opacity(0.7))
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
         }
-        .accessibilityLabel("Open swipe \(swipe.title ?? "untitled")")
+    }
+
+    private func swipeMarginaliaRow(
+        _ swipe: Atom,
+        removeLabel: String,
+        onRemove: @escaping () -> Void
+    ) -> some View {
+        let isHovered = hoveredSwipeUUID == swipe.uuid
+        return HStack(alignment: .top, spacing: DS.space8) {
+            Button {
+                openAtomInPane(swipe.uuid)
+            } label: {
+                HStack(alignment: .top, spacing: DS.space8) {
+                    Rectangle()
+                        .fill(DS.entitySwipe.opacity(isHovered ? 0.55 : 0.18))
+                        .frame(width: 3)
+                        .frame(maxHeight: .infinity)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(swipe.title ?? "untitled")
+                            .font(DS.callout)
+                            .foregroundStyle(DS.text)
+                            .lineLimit(2)
+                        if let hook = swipe.researchMetadata?.hook {
+                            Text(hook)
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.inkFaded)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, DS.space4)
+                .padding(.horizontal, DS.space6)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(DS.vellum.opacity(isHovered ? 0.55 : 0))
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    hoveredSwipeUUID = hovering ? swipe.uuid : nil
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.inkFaded)
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(removeLabel)
+        }
+    }
+
+    private var currentBlueprintAtom: Atom? {
+        let blueprintUUID = viewModel.currentBlueprintSwipeUUID ?? matchedSwipeAtoms.first?.uuid
+        guard let blueprintUUID else { return matchedSwipeAtoms.first }
+        return matchedSwipeAtoms.first(where: { $0.uuid == blueprintUUID }) ?? matchedSwipeAtoms.first
+    }
+
+    private var supportingSwipeAtoms: [Atom] {
+        guard let currentBlueprintAtom else { return matchedSwipeAtoms }
+        return matchedSwipeAtoms.filter { $0.uuid != currentBlueprintAtom.uuid }
     }
 
     private func openAtomInPane(_ uuid: String) {
@@ -1583,7 +1719,15 @@ struct ContentFocusModeView: View {
     /// `ContentContextPanel.loadInheritedContext()`, minus the intelligence /
     /// meta-pattern pieces that don't render in the marginalia.
     private func loadInheritedContext() async {
-        guard let metadata = atom.metadataValue(as: ContentAtomMetadata.self) else { return }
+        await MainActor.run {
+            sourceIdeaAtom = nil
+            matchedSwipeAtoms = []
+            inheritedFramework = nil
+            clientProfileAtom = nil
+        }
+
+        let currentAtom = (try? await AtomRepository.shared.fetch(uuid: atom.uuid)) ?? atom
+        guard let metadata = currentAtom.metadataValue(as: ContentAtomMetadata.self) else { return }
 
         // Source idea
         if let ideaUUID = metadata.sourceIdeaUUID,
@@ -2104,6 +2248,35 @@ class ContentFocusModeViewModel: ObservableObject {
         return nil
     }
 
+    var currentInheritedSwipeUUIDs: [String] {
+        atom.metadataValue(as: ContentAtomMetadata.self)?.inheritedSwipeUUIDs ?? []
+    }
+
+    var currentBlueprintSwipeUUID: String? {
+        atom.metadataValue(as: ContentAtomMetadata.self)?.blueprintSwipeUUID ?? currentInheritedSwipeUUIDs.first
+    }
+
+    func saveSwipeAttachments(swipeUUIDs: [String], blueprintUUID: String?) async {
+        guard var freshAtom = try? await AtomRepository.shared.fetch(uuid: atom.uuid) else { return }
+
+        var metadata = metadataDictionary(from: freshAtom.metadata)
+        let orderedSwipeUUIDs = normalizedSwipeUUIDs(swipeUUIDs, blueprintUUID: blueprintUUID)
+        let normalizedBlueprintUUID = orderedSwipeUUIDs.first
+
+        metadata["inheritedSwipeUUIDs"] = orderedSwipeUUIDs.isEmpty ? nil : orderedSwipeUUIDs
+        metadata["blueprintSwipeUUID"] = normalizedBlueprintUUID
+
+        if let updatedMetadata = metadataJSONString(from: metadata) {
+            freshAtom.metadata = updatedMetadata
+        }
+
+        do {
+            atom = try await AtomRepository.shared.update(freshAtom)
+        } catch {
+            print("Content focus: saveSwipeAttachments failed: \(error)")
+        }
+    }
+
     func goToPhase(_ phase: ContentPhase) {
         let currentIdx = ContentPhase.allCases.firstIndex(of: displayPhase) ?? 0
         let targetIdx = ContentPhase.allCases.firstIndex(of: phase) ?? 0
@@ -2178,6 +2351,42 @@ class ContentFocusModeViewModel: ObservableObject {
         case .draft: return .draft
         case .polish: return .polish
         }
+    }
+
+    private func metadataDictionary(from metadataString: String?) -> [String: Any] {
+        guard let metadataString,
+              let data = metadataString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return json
+    }
+
+    private func metadataJSONString(from metadata: [String: Any]) -> String? {
+        let filtered = metadata.compactMapValues { value -> Any? in
+            if value is NSNull { return nil }
+            return value
+        }
+        guard JSONSerialization.isValidJSONObject(filtered),
+              let data = try? JSONSerialization.data(withJSONObject: filtered, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func normalizedSwipeUUIDs(_ swipeUUIDs: [String], blueprintUUID: String?) -> [String] {
+        var ordered: [String] = []
+        for uuid in swipeUUIDs where !uuid.isEmpty && !ordered.contains(uuid) {
+            ordered.append(uuid)
+        }
+
+        if let blueprintUUID,
+           let existingIndex = ordered.firstIndex(of: blueprintUUID) {
+            ordered.remove(at: existingIndex)
+            ordered.insert(blueprintUUID, at: 0)
+        }
+
+        return ordered
     }
 
     // MARK: - Navigation
@@ -2280,6 +2489,352 @@ class ContentFocusModeViewModel: ObservableObject {
         } catch {
             print("❌ Content focus: related atoms search failed: \(error)")
         }
+    }
+}
+
+// MARK: - Swipe Attachment Editor
+
+struct ContentSwipeAttachmentEditor: View {
+    let currentSwipeUUIDs: [String]
+    let currentBlueprintUUID: String?
+    let onSave: ([String], String?) async -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var searchText: String = ""
+    @State private var allSwipes: [Atom] = []
+    @State private var selectedSwipeUUIDs: Set<String>
+    @State private var selectedBlueprintUUID: String?
+    @State private var isLoading = true
+    @State private var isSaving = false
+
+    init(
+        currentSwipeUUIDs: [String],
+        currentBlueprintUUID: String?,
+        onSave: @escaping ([String], String?) async -> Void
+    ) {
+        self.currentSwipeUUIDs = currentSwipeUUIDs
+        self.currentBlueprintUUID = currentBlueprintUUID
+        self.onSave = onSave
+        _selectedSwipeUUIDs = State(initialValue: Set(currentSwipeUUIDs))
+        _selectedBlueprintUUID = State(initialValue: currentBlueprintUUID ?? currentSwipeUUIDs.first)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().background(DS.border)
+            searchField
+            Divider().background(DS.border)
+            swipeList
+            Divider().background(DS.border)
+            footer
+        }
+        .frame(width: 760, height: 620)
+        .background(DS.bg)
+        .task { await loadAllSwipes() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.on.doc.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(DS.entitySwipe)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Swipe References")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                Text("Choose supporting swipes and the primary blueprint.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            Spacer()
+
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(8)
+                    .background(DS.border, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundStyle(DS.textMuted)
+
+            TextField("Search swipes by hook, topic, creator...", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(DS.text)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(DS.borderSubtle)
+    }
+
+    private var swipeList: some View {
+        ScrollView {
+            if isLoading {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading swipe library...")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DS.textMuted)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 80)
+            } else if filteredSwipes.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 28))
+                        .foregroundStyle(DS.textMuted)
+                    Text(searchText.isEmpty ? "No swipes found" : "No swipes match '\(searchText)'")
+                        .font(.system(size: 13))
+                        .foregroundStyle(DS.textMuted)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 80)
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(filteredSwipes, id: \.uuid) { swipe in
+                        swipeRow(swipe)
+                    }
+                }
+                .padding(12)
+            }
+        }
+    }
+
+    private var filteredSwipes: [Atom] {
+        let search = searchText.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return allSwipes.filter { swipe in
+            guard !search.isEmpty else { return true }
+            let title = (swipe.title ?? "").lowercased()
+            let body = (swipe.body ?? "").lowercased()
+            let hook = (swipe.researchMetadata?.hook ?? swipe.swipeAnalysis?.hookText ?? "").lowercased()
+            return title.contains(search) || body.contains(search) || hook.contains(search)
+        }
+        .sorted { lhs, rhs in
+            let lhsSelected = selectedSwipeUUIDs.contains(lhs.uuid)
+            let rhsSelected = selectedSwipeUUIDs.contains(rhs.uuid)
+            if lhsSelected != rhsSelected { return lhsSelected }
+            let lhsIndex = currentSwipeUUIDs.firstIndex(of: lhs.uuid) ?? Int.max
+            let rhsIndex = currentSwipeUUIDs.firstIndex(of: rhs.uuid) ?? Int.max
+            if lhsIndex != rhsIndex { return lhsIndex < rhsIndex }
+            return (lhs.updatedAt ?? "") > (rhs.updatedAt ?? "")
+        }
+    }
+
+    private func swipeRow(_ swipe: Atom) -> some View {
+        let isSelected = selectedSwipeUUIDs.contains(swipe.uuid)
+        let isBlueprint = selectedBlueprintUUID == swipe.uuid
+        let hookText = swipe.researchMetadata?.hook ?? swipe.swipeAnalysis?.hookText ?? ""
+
+        return HStack(spacing: 12) {
+            Button {
+                toggleSelection(for: swipe.uuid)
+            } label: {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(isSelected ? DS.entityContent : DS.textMuted)
+            }
+            .buttonStyle(.plain)
+
+            thumbnailView(for: swipe)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    openAtomInPane(swipe.uuid)
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(swipe.title ?? "Untitled Swipe")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+
+                        if !hookText.isEmpty {
+                            Text(String(hookText.prefix(100)))
+                                .font(.system(size: 11))
+                                .foregroundStyle(DS.textSecondary)
+                                .lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if let hookType = swipe.swipeAnalysis?.hookType {
+                    Text(hookType.displayName)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(DS.entitySwipe)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(DS.entitySwipe.opacity(0.12), in: Capsule())
+                }
+            }
+
+            Spacer()
+
+            Button {
+                if !isSelected {
+                    selectedSwipeUUIDs.insert(swipe.uuid)
+                }
+                selectedBlueprintUUID = swipe.uuid
+            } label: {
+                Text(isBlueprint ? "Blueprint" : "Set Blueprint")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isBlueprint ? DS.textOnAccent : DS.entityContent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        isBlueprint ? DS.entityContent : DS.entityContent.opacity(0.12),
+                        in: Capsule()
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!isSelected && !isBlueprint)
+            .opacity(!isSelected && !isBlueprint ? 0.45 : 1)
+        }
+        .padding(10)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isBlueprint ? DS.entityContent.opacity(0.35) : DS.border, lineWidth: 1)
+        )
+    }
+
+    private func thumbnailView(for swipe: Atom) -> some View {
+        let thumbUrl = swipe.researchMetadata?.thumbnailUrl
+
+        return Group {
+            if let urlStr = thumbUrl, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(DS.border)
+                }
+            } else {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(DS.border)
+                    .overlay(
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 14))
+                            .foregroundStyle(DS.textMuted)
+                    )
+            }
+        }
+        .frame(width: 48, height: 48)
+        .clipShape(.rect(cornerRadius: 6))
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Text("\(selectedSwipeUUIDs.count) selected")
+                .font(.system(size: 11))
+                .foregroundStyle(DS.textMuted)
+
+            Spacer()
+
+            Button {
+                dismiss()
+            } label: {
+                Text("Cancel")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Task {
+                    isSaving = true
+                    let orderedUUIDs = orderedSelection()
+                    let blueprintUUID = orderedUUIDs.isEmpty ? nil : (selectedBlueprintUUID ?? orderedUUIDs.first)
+                    await onSave(orderedUUIDs, blueprintUUID)
+                    isSaving = false
+                    dismiss()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if isSaving {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(DS.textOnAccent)
+                    }
+                    Text("Save References")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DS.textOnAccent)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(DS.entityContent, in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .disabled(isSaving)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private func loadAllSwipes() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let research = try await AtomRepository.shared.fetchAll(type: .research)
+            allSwipes = research.filter { $0.isSwipeFileAtom }
+        } catch {
+            print("ContentSwipeAttachmentEditor: failed to load swipes: \(error)")
+        }
+    }
+
+    private func toggleSelection(for uuid: String) {
+        if selectedSwipeUUIDs.contains(uuid) {
+            selectedSwipeUUIDs.remove(uuid)
+            if selectedBlueprintUUID == uuid {
+                selectedBlueprintUUID = selectedSwipeUUIDs.first
+            }
+        } else {
+            selectedSwipeUUIDs.insert(uuid)
+            if selectedBlueprintUUID == nil {
+                selectedBlueprintUUID = uuid
+            }
+        }
+    }
+
+    private func orderedSelection() -> [String] {
+        let currentOrder = currentSwipeUUIDs + allSwipes.map(\.uuid)
+        let ordered = currentOrder.reduce(into: [String]()) { result, uuid in
+            guard selectedSwipeUUIDs.contains(uuid), !result.contains(uuid) else { return }
+            result.append(uuid)
+        }
+
+        let blueprintUUID = selectedBlueprintUUID ?? ordered.first
+        guard let blueprintUUID, ordered.contains(blueprintUUID) else { return ordered }
+        return [blueprintUUID] + ordered.filter { $0 != blueprintUUID }
+    }
+
+    private func openAtomInPane(_ uuid: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": uuid, "asPane": true]
+        )
     }
 }
 

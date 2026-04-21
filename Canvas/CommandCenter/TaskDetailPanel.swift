@@ -8,6 +8,7 @@ struct TaskDetailPanel: View {
 
     let task: TaskViewModel
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    let composer: CommandCenterComposerController
 
     @State private var editedTitle: String = ""
     @State private var editedNotes: String = ""
@@ -21,8 +22,6 @@ struct TaskDetailPanel: View {
     @State private var editedHabitUUID: String? = nil
     @State private var editedLinkedAtoms: [TaskLinkedAtom] = []
     @State private var editedTitleMentions: [RichMention] = []
-    @State private var showWhenPicker = false
-    @State private var showDeadlinePicker = false
 
     @State private var recurrenceRule: RecurrenceRule?
     @State private var recurrencePreset: TaskDetailRepeatPreset = .weekly
@@ -77,6 +76,9 @@ struct TaskDetailPanel: View {
             syncStateFromTask()
             Task { await loadRecurrence() }
         }
+        .onChange(of: task) {
+            syncStateFromTask()
+        }
         .onChange(of: task.uuid) {
             syncStateFromTask()
             recurrenceHasLoaded = false
@@ -120,12 +122,13 @@ struct TaskDetailPanel: View {
             // When date
             detailRow(label: "When", icon: "calendar") {
                 if let date = editedWhenDate {
-                    Button(date.formatted(.dateTime.month(.abbreviated).day())) {
-                        showWhenPicker.toggle()
+                    CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+                        .taskDate(task: task, target: .whenDate, currentDate: editedWhenDate, anchor: anchor)
+                    } label: {
+                        Text(date.formatted(.dateTime.month(.abbreviated).day()))
                     }
                     .font(DS.buttonText)
                     .foregroundStyle(DS.accent)
-                    .buttonStyle(.plain)
 
                     Button {
                         editedWhenDate = nil
@@ -137,13 +140,13 @@ struct TaskDetailPanel: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Button("Set date") {
-                        editedWhenDate = Date()
-                        showWhenPicker = true
+                    CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+                        .taskDate(task: task, target: .whenDate, currentDate: editedWhenDate, anchor: anchor)
+                    } label: {
+                        Text("Set date")
                     }
                     .font(DS.cardMeta)
                     .foregroundStyle(DS.textMuted)
-                    .buttonStyle(.plain)
                 }
             }
 
@@ -161,12 +164,13 @@ struct TaskDetailPanel: View {
             // Deadline
             detailRow(label: "Deadline", icon: "flag") {
                 if let date = editedDeadline {
-                    Button(date.formatted(.dateTime.month(.abbreviated).day())) {
-                        showDeadlinePicker.toggle()
+                    CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+                        .taskDate(task: task, target: .deadline, currentDate: editedDeadline, anchor: anchor)
+                    } label: {
+                        Text(date.formatted(.dateTime.month(.abbreviated).day()))
                     }
                     .font(DS.buttonText)
                     .foregroundStyle(DS.orange)
-                    .buttonStyle(.plain)
 
                     Button {
                         editedDeadline = nil
@@ -178,13 +182,13 @@ struct TaskDetailPanel: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Button("Set deadline") {
-                        editedDeadline = Calendar.current.date(byAdding: .day, value: 7, to: Date())
-                        showDeadlinePicker = true
+                    CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+                        .taskDate(task: task, target: .deadline, currentDate: editedDeadline, anchor: anchor)
+                    } label: {
+                        Text("Set deadline")
                     }
                     .font(DS.cardMeta)
                     .foregroundStyle(DS.textMuted)
-                    .buttonStyle(.plain)
                 }
             }
 
@@ -332,17 +336,8 @@ struct TaskDetailPanel: View {
 
     private var intentSection: some View {
         detailRow(label: "Intent", icon: "sparkles") {
-            Menu {
-                ForEach([TaskIntent.general, .writeContent, .research, .studySwipes, .deepThink, .review], id: \.rawValue) { intent in
-                    Button {
-                        editedIntent = intent
-                        Task {
-                            await viewModel.updateTask(uuid: task.uuid, intent: intent)
-                        }
-                    } label: {
-                        Label(intent.displayName, systemImage: intent.iconName)
-                    }
-                }
+            CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+                .taskIntent(task: task, currentIntent: editedIntent, anchor: anchor)
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: editedIntent.iconName)
@@ -357,7 +352,6 @@ struct TaskDetailPanel: View {
                 .padding(.vertical, 4)
                 .background(editedIntent.color.opacity(0.08), in: Capsule())
             }
-            .menuStyle(.borderlessButton)
         }
     }
 
@@ -367,28 +361,8 @@ struct TaskDetailPanel: View {
         let currentHabit = viewModel.habitDefinition(for: editedHabitUUID)
 
         return detailRow(label: "Habit", icon: "tag") {
-            Menu {
-                Button("None") {
-                    editedHabitUUID = nil
-                    Task {
-                        await viewModel.applyHabit(nil, to: task.uuid)
-                    }
-                }
-
-                ForEach(viewModel.availableHabitDefinitions, id: \.id) { habit in
-                    Button {
-                        editedHabitUUID = habit.id
-                        Task {
-                            await viewModel.applyHabit(habit.id, to: task.uuid)
-                        }
-                    } label: {
-                        Label {
-                            Text(habit.title)
-                        } icon: {
-                            Image(systemName: habit.icon)
-                        }
-                    }
-                }
+            CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+                .taskHabit(task: task, currentHabitUUID: editedHabitUUID, anchor: anchor)
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: currentHabit?.icon ?? "slash.circle")
@@ -403,7 +377,6 @@ struct TaskDetailPanel: View {
                 .padding(.vertical, 4)
                 .background((currentHabit?.accent ?? DS.textMuted).opacity(0.08), in: Capsule())
             }
-            .menuStyle(.borderlessButton)
         }
     }
 

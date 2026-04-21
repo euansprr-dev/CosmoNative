@@ -71,6 +71,7 @@ public struct RecentDisplayItem: Identifiable {
     public let id: String  // atom UUID
     let title: String
     let type: AtomType
+    let entityId: Int64
     let relativeDate: String
     let thumbnailURL: String?
     let preview: String?
@@ -687,6 +688,7 @@ public final class CommandKViewModel: ObservableObject {
     private let hybridSearch = HybridSearchEngine.shared
     private var cancellables = Set<AnyCancellable>()
     private var searchTask: Task<Void, Never>?
+    private var ideaGalleryReloadTask: Task<Void, Never>?
 
     /// Unfiltered results for computing filter counts
     private var unfilteredResults: [RankedResult] = []
@@ -698,6 +700,7 @@ public final class CommandKViewModel: ObservableObject {
         setupFilterObserver()
         setupSwipeFilterPipeline()
         setupSwipeRefreshListener()
+        setupIdeaRefreshListener()
     }
 
     // MARK: - Query Handling
@@ -1268,6 +1271,7 @@ public final class CommandKViewModel: ObservableObject {
                     id: atom.uuid,
                     title: atom.title ?? "Untitled",
                     type: atom.type,
+                    entityId: atom.id ?? 0,
                     relativeDate: Self.relativeTimeString(from: atom.updatedAt),
                     thumbnailURL: researchMeta?.thumbnailUrl,
                     preview: atom.body
@@ -1289,6 +1293,15 @@ public final class CommandKViewModel: ObservableObject {
             userInfo: ["atomUUID": item.id]
         )
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+    }
+
+    public func deleteRecent(_ item: RecentDisplayItem) {
+        Task {
+            try? await AtomRepository.shared.delete(uuid: item.id)
+            await MainActor.run {
+                recentItems.removeAll { $0.id == item.id }
+            }
+        }
     }
 
     /// Cached total database atom count (loaded on init)
@@ -1590,6 +1603,105 @@ public final class CommandKViewModel: ObservableObject {
                 Task { await self.loadSwipeGallery() }
             }
             .store(in: &cancellables)
+    }
+
+    /// Listen for idea lifecycle changes so the gallery stays in sync while Command-K is open.
+    private func setupIdeaRefreshListener() {
+        let entityNotifications = [
+            CosmoNotification.Entity.created,
+            CosmoNotification.Entity.updated,
+            CosmoNotification.Entity.deleted,
+        ]
+
+        for name in entityNotifications {
+            NotificationCenter.default.publisher(for: name)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] notification in
+                    guard let self, Self.notificationTargetsIdeaGallery(notification) else { return }
+                    Task { @MainActor [weak self] in
+                        self?.handleIdeaGalleryNotification(notification)
+                    }
+                }
+                .store(in: &cancellables)
+        }
+
+        for name in [Self.legacyIdeaDeletedNotification, Self.legacyIdeaActivatedNotification] {
+            NotificationCenter.default.publisher(for: name)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] notification in
+                    guard let self else { return }
+                    Task { @MainActor [weak self] in
+                        self?.handleIdeaGalleryNotification(notification)
+                    }
+                }
+                .store(in: &cancellables)
+        }
+
+        NotificationCenter.default.publisher(for: CosmoNotification.Sync.atomsPulled)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.scheduleIdeaGalleryReload()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    @MainActor
+    private func handleIdeaGalleryNotification(_ notification: Notification) {
+        if let uuid = Self.ideaUUID(from: notification),
+           Self.notificationRemovesIdeaFromGallery(notification) {
+            ideaGalleryItems.removeAll { $0.atomUUID == uuid }
+        }
+
+        scheduleIdeaGalleryReload()
+    }
+
+    @MainActor
+    private func scheduleIdeaGalleryReload() {
+        ideaGalleryReloadTask?.cancel()
+        ideaGalleryReloadTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let self, !Task.isCancelled else { return }
+            await self.loadIdeaGallery(forceReload: true)
+        }
+    }
+
+    static let legacyIdeaDeletedNotification = Notification.Name("ideaDeleted")
+    static let legacyIdeaActivatedNotification = Notification.Name("ideaActivated")
+
+    static func notificationTargetsIdeaGallery(_ notification: Notification) -> Bool {
+        if notification.name == legacyIdeaDeletedNotification || notification.name == legacyIdeaActivatedNotification {
+            return true
+        }
+
+        if let atom = notification.userInfo?["atom"] as? Atom {
+            return atom.type == .idea
+        }
+
+        if let type = notification.userInfo?["type"] as? AtomType {
+            return type == .idea
+        }
+
+        if let type = notification.userInfo?["type"] as? String {
+            return type == AtomType.idea.rawValue
+        }
+
+        return false
+    }
+
+    static func ideaUUID(from notification: Notification) -> String? {
+        if let atom = notification.userInfo?["atom"] as? Atom {
+            return atom.uuid
+        }
+
+        return notification.userInfo?["uuid"] as? String
+    }
+
+    static func notificationRemovesIdeaFromGallery(_ notification: Notification) -> Bool {
+        notification.name == legacyIdeaDeletedNotification
+            || notification.name == legacyIdeaActivatedNotification
+            || notification.name == CosmoNotification.Entity.deleted
     }
 
     // MARK: - Idea Gallery

@@ -36,12 +36,26 @@ struct ContentOutlineSidebarContent: View {
     @State private var showAllSwipes = false
     @State private var showIntelligence = false
     @State private var isLoadingContext = true
+    @State private var showSwipeAttachmentEditor = false
 
     // Client profile picker
     @State private var clientProfiles: [Atom] = []
     @State private var linkedClient: Atom?
 
     private let accentColor = CosmoMentionColors.content
+
+    private var coreIdeaBinding: Binding<String> {
+        Binding(
+            get: {
+                if !state.contentDescription.isEmpty { return state.contentDescription }
+                return state.coreIdea
+            },
+            set: { newValue in
+                state.coreIdea = newValue
+                state.contentDescription = newValue
+            }
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -83,6 +97,15 @@ struct ContentOutlineSidebarContent: View {
             Task { await loadClientProfiles() }
             let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
             ambientEngine.updateContext(focusAtomUUID: atom.uuid, currentText: queryText)
+        }
+        .sheet(isPresented: $showSwipeAttachmentEditor) {
+            ContentSwipeAttachmentEditor(
+                currentSwipeUUIDs: currentSwipeUUIDs,
+                currentBlueprintUUID: currentBlueprintUUID
+            ) { swipeUUIDs, blueprintUUID in
+                await saveSwipeAttachments(swipeUUIDs: swipeUUIDs, blueprintUUID: blueprintUUID)
+                await loadInheritedContext()
+            }
         }
     }
 
@@ -223,7 +246,7 @@ struct ContentOutlineSidebarContent: View {
             Text("Core Idea")
                 .dsSmallCapsLabel()
 
-            TextEditor(text: $state.coreIdea)
+            TextEditor(text: coreIdeaBinding)
                 .font(DS.callout)
                 .foregroundStyle(DS.text)
                 .lineSpacing(4)
@@ -242,7 +265,9 @@ struct ContentOutlineSidebarContent: View {
                                 )
                         )
                 )
-                .onChange(of: state.coreIdea) { _, _ in
+                .onChange(of: coreIdeaBinding.wrappedValue) { _, newValue in
+                    state.coreIdea = newValue
+                    state.contentDescription = newValue
                     state.lastModified = Date()
                     state.save()
                 }
@@ -575,17 +600,32 @@ struct ContentOutlineSidebarContent: View {
     private var matchedSwipesSection: some View {
         if !matchedSwipeAtoms.isEmpty {
             // Blueprint (first swipe — set as primary in promoteToContent)
-            if let blueprint = matchedSwipeAtoms.first {
+            if let blueprint = currentBlueprintAtom {
                 contextSectionHeader(title: "BLUEPRINT", icon: "doc.text.magnifyingglass")
-                swipeCard(blueprint)
+                swipeCard(blueprint, removeLabel: "Remove blueprint") {
+                    Task {
+                        let remaining = matchedSwipeAtoms.filter { $0.uuid != blueprint.uuid }.map(\.uuid)
+                        await saveSwipeAttachments(swipeUUIDs: remaining, blueprintUUID: remaining.first)
+                        await loadInheritedContext()
+                    }
+                }
             }
 
             // Supporting swipes (remaining)
-            let supporting = Array(matchedSwipeAtoms.dropFirst())
+            let supporting = supportingSwipeAtoms
             if !supporting.isEmpty {
                 contextSectionHeader(title: "SUPPORTING SWIPES", icon: "doc.on.doc.fill")
                 supportingSwipesContent(supporting)
             }
+
+            Button {
+                showSwipeAttachmentEditor = true
+            } label: {
+                Text("Edit references")
+                    .font(DS.caption2.weight(.medium))
+                    .foregroundStyle(accentColor)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -594,7 +634,14 @@ struct ContentOutlineSidebarContent: View {
         VStack(spacing: 4) {
             let displaySwipes = showAllSwipes ? swipes : Array(swipes.prefix(3))
             ForEach(displaySwipes, id: \.uuid) { swipe in
-                swipeCard(swipe)
+                swipeCard(swipe, removeLabel: "Remove swipe \(swipe.title ?? "untitled")") {
+                    Task {
+                        let remaining = matchedSwipeAtoms.filter { $0.uuid != swipe.uuid }.map(\.uuid)
+                        let blueprintUUID = currentBlueprintUUID == swipe.uuid ? remaining.first : currentBlueprintUUID
+                        await saveSwipeAttachments(swipeUUIDs: remaining, blueprintUUID: blueprintUUID)
+                        await loadInheritedContext()
+                    }
+                }
             }
 
             if swipes.count > 3 {
@@ -632,21 +679,34 @@ struct ContentOutlineSidebarContent: View {
         .padding(.top, 2)
     }
 
-    private func swipeCard(_ swipe: Atom) -> some View {
-        Button {
-            // Open as pane (side-by-side) instead of replacing focus mode
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.openAsPane,
-                object: nil,
-                userInfo: [
-                    "type": EntityType.research,
-                    "id": swipe.id ?? Int64(0)
-                ]
-            )
-        } label: {
-            swipeCardLabel(swipe)
+    private func swipeCard(
+        _ swipe: Atom,
+        removeLabel: String,
+        onRemove: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openAsPane,
+                    object: nil,
+                    userInfo: [
+                        "type": EntityType.research,
+                        "id": swipe.id ?? Int64(0)
+                    ]
+                )
+            } label: {
+                swipeCardLabel(swipe)
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(removeLabel)
         }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -1461,7 +1521,14 @@ struct ContentOutlineSidebarContent: View {
     // MARK: - Data Loading (ported from ContentContextPanel)
 
     private func loadInheritedContext() async {
-        guard let metadata = atom.metadataValue(as: ContentAtomMetadata.self) else {
+        sourceIdea = nil
+        matchedSwipeAtoms = []
+        inheritedConnectionAtoms = []
+        selectedFramework = nil
+        inheritedHooks = []
+
+        let currentAtom = (try? await AtomRepository.shared.fetch(uuid: atom.uuid)) ?? atom
+        guard let metadata = currentAtom.metadataValue(as: ContentAtomMetadata.self) else {
             isLoadingContext = false
             return
         }
@@ -1499,6 +1566,79 @@ struct ContentOutlineSidebarContent: View {
 
         // Search related content
         await refreshRelatedContent()
+    }
+
+    private var currentSwipeUUIDs: [String] {
+        matchedSwipeAtoms.map(\.uuid)
+    }
+
+    private var currentBlueprintUUID: String? {
+        currentBlueprintAtom?.uuid
+    }
+
+    private var currentBlueprintAtom: Atom? {
+        let blueprintUUID = matchedSwipeAtoms.first?.uuid
+        guard let blueprintUUID else { return matchedSwipeAtoms.first }
+        return matchedSwipeAtoms.first(where: { $0.uuid == blueprintUUID }) ?? matchedSwipeAtoms.first
+    }
+
+    private var supportingSwipeAtoms: [Atom] {
+        guard let currentBlueprintAtom else { return matchedSwipeAtoms }
+        return matchedSwipeAtoms.filter { $0.uuid != currentBlueprintAtom.uuid }
+    }
+
+    private func saveSwipeAttachments(swipeUUIDs: [String], blueprintUUID: String?) async {
+        guard var freshAtom = try? await AtomRepository.shared.fetch(uuid: atom.uuid) else { return }
+
+        var metadata = metadataDictionary(from: freshAtom.metadata)
+        let orderedSwipeUUIDs = normalizedSwipeUUIDs(swipeUUIDs, blueprintUUID: blueprintUUID)
+        metadata["inheritedSwipeUUIDs"] = orderedSwipeUUIDs.isEmpty ? nil : orderedSwipeUUIDs
+        metadata["blueprintSwipeUUID"] = orderedSwipeUUIDs.first
+
+        guard let updatedMetadata = metadataJSONString(from: metadata) else { return }
+        freshAtom.metadata = updatedMetadata
+
+        do {
+            _ = try await AtomRepository.shared.update(freshAtom)
+        } catch {
+            print("ContentOutlineSidebarContent: saveSwipeAttachments failed: \(error)")
+        }
+    }
+
+    private func metadataDictionary(from metadataString: String?) -> [String: Any] {
+        guard let metadataString,
+              let data = metadataString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return json
+    }
+
+    private func metadataJSONString(from metadata: [String: Any]) -> String? {
+        let filtered = metadata.compactMapValues { value -> Any? in
+            if value is NSNull { return nil }
+            return value
+        }
+        guard JSONSerialization.isValidJSONObject(filtered),
+              let data = try? JSONSerialization.data(withJSONObject: filtered, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func normalizedSwipeUUIDs(_ swipeUUIDs: [String], blueprintUUID: String?) -> [String] {
+        var ordered: [String] = []
+        for uuid in swipeUUIDs where !uuid.isEmpty && !ordered.contains(uuid) {
+            ordered.append(uuid)
+        }
+
+        if let blueprintUUID,
+           let existingIndex = ordered.firstIndex(of: blueprintUUID) {
+            ordered.remove(at: existingIndex)
+            ordered.insert(blueprintUUID, at: 0)
+        }
+
+        return ordered
     }
 
     private func loadMetaPattern() async {

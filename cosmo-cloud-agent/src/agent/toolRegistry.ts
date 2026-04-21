@@ -18,7 +18,7 @@ const ALL_TOOLS: ToolDefinition[] = [
   // === IDEAS ===
   { name: 'search_ideas', description: 'Search ideas by keyword', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, limit: { type: 'integer', description: 'Max results (default 10)' } }, required: ['query'] } },
   { name: 'get_idea', description: 'Get full idea details by UUID', parameters: { type: 'object', properties: { uuid: { type: 'string' } }, required: ['uuid'] } },
-  { name: 'create_idea', description: 'Create a new idea', parameters: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' }, clientName: { type: 'string', description: 'Client to associate this idea with' } }, required: ['title'] } },
+  { name: 'create_idea', description: 'Create a new idea', parameters: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' }, context: { type: 'string', description: 'Optional angle/context text shown in Idea Focus Mode' }, clientName: { type: 'string', description: 'Client to associate this idea with' }, contentFormat: { type: 'string', enum: ['reel', 'carousel', 'thread', 'post'], description: 'Optional intended format for the idea' } }, required: ['title'] } },
   { name: 'update_idea', description: 'Update an idea', parameters: { type: 'object', properties: { uuid: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, status: { type: 'string', enum: ['spark', 'developing', 'ready', 'activated', 'parked', 'archived'] } }, required: ['uuid'] } },
   { name: 'activate_idea', description: 'Promote idea to content pipeline', parameters: { type: 'object', properties: { uuid: { type: 'string' } }, required: ['uuid'] } },
 

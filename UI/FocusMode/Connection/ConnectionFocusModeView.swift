@@ -49,8 +49,6 @@ struct ConnectionFocusModeView: View {
     @State private var isLoadingSuggestedSources: Bool = false
     @State private var isShowingSuggestedSources: Bool = false
     @State private var isRefreshingInsights: Bool = false
-    @State private var atelierContentUsages: [AtelierContentUsage] = []
-    @State private var atelierProfiles: [AtelierProfileChip] = []
     @State private var commandKIntent: CommandKIntent = .floatingBlock
     // V2 mode overlays — Manuscript (⌘M), Chalkboard (⌘B), Station Mode (double-click station).
     @State private var manuscriptActive: Bool = false
@@ -399,9 +397,6 @@ struct ConnectionFocusModeView: View {
             insights: viewModel.state.liveInsights,
             isRefreshingInsights: isRefreshingInsights,
             sourceCount: wellSources.count,
-            usageCount: atelierContentUsages.count,
-            referenceCount: referencesCount,
-            profileCount: atelierProfiles.count,
             maturityLabel: maturityThresholdLabel,
             sources: wellSources,
             suggestedSources: suggestedWellSources,
@@ -562,10 +557,6 @@ struct ConnectionFocusModeView: View {
         }
     }
 
-    private var referencesCount: Int {
-        viewModel.state.section(for: .references)?.itemCount ?? 0
-    }
-
     // MARK: - Well/Atelier handlers
 
     private func handleAddSource() {
@@ -652,26 +643,6 @@ struct ConnectionFocusModeView: View {
     @MainActor
     private func loadAtelierData() async {
         wellSources = await coDevEngine.findLinkedSourceMaterials(for: atom.uuid, limit: 20)
-
-        let usages = await coDevEngine.findContentUsage(connectionUUID: atom.uuid)
-        atelierContentUsages = usages.map { usage in
-            AtelierContentUsage(
-                id: usage.atom.uuid,
-                title: usage.atom.title ?? "Untitled",
-                formatGlyph: "doc.richtext"
-            )
-        }
-
-        let profileIds = (try? await AtomRepository.shared.fetch(uuid: atom.uuid))?.connectionLinkedProfileIds
-            ?? atom.connectionLinkedProfileIds
-        var chips: [AtelierProfileChip] = []
-        for id in profileIds {
-            if let profile = try? await AtomRepository.shared.fetch(uuid: id) {
-                let initial = String((profile.title ?? "?").prefix(1))
-                chips.append(AtelierProfileChip(id: profile.uuid, initial: initial, title: profile.title ?? "Profile"))
-            }
-        }
-        atelierProfiles = chips
         if isShowingSuggestedSources {
             let linkedIDs = Set(wellSources.map(\.uuid))
             suggestedWellSources.removeAll { linkedIDs.contains($0.uuid) }

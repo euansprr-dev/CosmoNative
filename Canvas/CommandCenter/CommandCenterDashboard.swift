@@ -8,22 +8,27 @@ import SwiftUI
 struct CommandCenterDashboard: View {
 
     @StateObject private var viewModel = CommandCenterDashboardViewModel()
+    @State private var composer = CommandCenterComposerController()
     @State private var isEditing = false
     @State private var selectedTaskForDetail: TaskViewModel?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            leftColumn
-            centerColumn
-            rightColumn
-        }
-        .padding(DS.space24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task {
-            await viewModel.loadAreas()
-            await viewModel.loadProjects()
-            await viewModel.loadAnytimeTasks()
-            await viewModel.loadSomedayTasks()
+        ZStack(alignment: .topLeading) {
+            HStack(alignment: .top, spacing: 0) {
+                leftColumn
+                centerColumn
+                rightColumn
+            }
+            .padding(DS.space24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .task {
+                await viewModel.loadAreas()
+                await viewModel.loadProjects()
+                await viewModel.loadAnytimeTasks()
+                await viewModel.loadSomedayTasks()
+            }
+
+            CommandCenterComposerHost(viewModel: viewModel, composer: composer)
         }
     }
 
@@ -64,7 +69,7 @@ struct CommandCenterDashboard: View {
                 )
 
                 // Task list (scrollable)
-                DashboardTaskList(viewModel: viewModel) { task in
+                DashboardTaskList(viewModel: viewModel, composer: composer) { task in
                     withAnimation(ProMotionSprings.snappy) {
                         selectedTaskForDetail = task
                         viewModel.showReports = false
@@ -221,8 +226,8 @@ struct CommandCenterDashboard: View {
             // Content
             switch showingDetailTab {
             case .details:
-                if let task = selectedTaskForDetail {
-                    TaskDetailPanel(task: task, viewModel: viewModel)
+                if let task = resolvedSelectedTask {
+                    TaskDetailPanel(task: task, viewModel: viewModel, composer: composer)
                         .id(task.uuid)
                 }
             case .reports:
@@ -231,7 +236,7 @@ struct CommandCenterDashboard: View {
                 }
                 .scrollIndicators(.hidden)
             case .habits:
-                DashboardHabitPanel(viewModel: viewModel)
+                DashboardHabitPanel(viewModel: viewModel, composer: composer)
             }
 
             Spacer(minLength: 0)
@@ -254,6 +259,11 @@ struct CommandCenterDashboard: View {
         } else {
             return .habits
         }
+    }
+
+    private var resolvedSelectedTask: TaskViewModel? {
+        guard let selectedTaskForDetail else { return nil }
+        return viewModel.currentVisibleTasks.first(where: { $0.uuid == selectedTaskForDetail.uuid }) ?? selectedTaskForDetail
     }
 
     private func rightColumnTab(_ title: String, icon: String, isActive: Bool) -> some View {

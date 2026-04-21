@@ -29,18 +29,17 @@ struct CommandCenterHabitEditorDraft: Equatable {
     }
 }
 
-struct CommandCenterHabitEditor: View {
-    @Environment(\.dismiss) private var dismiss
-
+struct CommandCenterHabitComposer: View {
     let habit: HabitDefinition?
     let onSave: (CommandCenterHabitEditorDraft) -> Void
     let onArchive: (() -> Void)?
     let onMoveUp: (() -> Void)?
     let onMoveDown: (() -> Void)?
     let onDisable: (() -> Void)?
+    let onOpenLibrary: (() -> Void)?
+    let onDismiss: () -> Void
 
     @State private var draft: CommandCenterHabitEditorDraft
-    @State private var hoveredIntent: TaskIntent?
 
     init(
         habit: HabitDefinition?,
@@ -48,7 +47,9 @@ struct CommandCenterHabitEditor: View {
         onArchive: (() -> Void)? = nil,
         onMoveUp: (() -> Void)? = nil,
         onMoveDown: (() -> Void)? = nil,
-        onDisable: (() -> Void)? = nil
+        onDisable: (() -> Void)? = nil,
+        onOpenLibrary: (() -> Void)? = nil,
+        onDismiss: @escaping () -> Void
     ) {
         self.habit = habit
         self.onSave = onSave
@@ -56,290 +57,403 @@ struct CommandCenterHabitEditor: View {
         self.onMoveUp = onMoveUp
         self.onMoveDown = onMoveDown
         self.onDisable = onDisable
+        self.onOpenLibrary = onOpenLibrary
+        self.onDismiss = onDismiss
         _draft = State(initialValue: habit.map(CommandCenterHabitEditorDraft.init(habit:)) ?? CommandCenterHabitEditorDraft())
     }
 
     private var isBuiltIn: Bool { habit?.isBuiltIn == true }
+    private var canSave: Bool { !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isBuiltIn }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(habit == nil ? "New Habit" : draft.title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(DS.text)
+        CommandCenterComposerShell(
+            title: habit == nil ? "NEW HABIT" : "HABIT",
+            subtitle: draft.title.isEmpty ? "Shape a fresh orbit" : draft.title,
+            onClose: onDismiss
+        ) {
+            VStack(alignment: .leading, spacing: DS.space20) {
+                previewHeader
+                identitySection
+                cadenceSection
+                mappingSection
+                completionSection
+                footer
+            }
+        }
+    }
 
-                    Text(isBuiltIn ? "Built-in habit" : "Custom habit")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
+    private var previewHeader: some View {
+        HStack(alignment: .center, spacing: DS.space12) {
+            Circle()
+                .fill(previewTint.opacity(0.14))
+                .frame(width: 56, height: 56)
+                .overlay(
+                    Image(systemName: draft.icon)
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(previewTint)
+                )
+                .overlay(
+                    Circle()
+                        .stroke(previewTint.opacity(0.25), lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(draft.title.isEmpty ? "Untitled Habit" : draft.title)
+                    .font(.system(size: 19, weight: .regular, design: .serif))
+                    .foregroundStyle(DS.text)
+
+                Text(previewSubtitle)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.inkFaded)
+
+                if let onOpenLibrary {
+                    Button("Open library →", action: onOpenLibrary)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 13, weight: .regular, design: .serif))
+                        .foregroundStyle(DS.gilt.opacity(0.8))
                 }
+            }
+        }
+    }
 
-                Spacer()
+    private var identitySection: some View {
+        VStack(alignment: .leading, spacing: DS.space16) {
+            composerSectionLabel("Identity")
 
-                Circle()
-                    .fill(Color(hex: draft.accentColor).opacity(0.16))
-                    .frame(width: 36, height: 36)
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text("Title")
+                    .dsSmallCapsLabel()
+
+                TextField("Writing Habit", text: $draft.title)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15, weight: .regular, design: .serif))
+                    .foregroundStyle(DS.text)
+                    .padding(.horizontal, DS.space12)
+                    .padding(.vertical, DS.space10)
+                    .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
                     .overlay(
-                        Image(systemName: draft.icon)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color(hex: draft.accentColor))
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(DS.sepiaBorder, lineWidth: 0.5)
                     )
-            }
-
-            CosmoGradientDivider()
-
-            Group {
-                labeledField("Title") {
-                    TextField("Habit name", text: $draft.title)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .foregroundStyle(DS.text)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 9)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(DS.surface))
-                }
-                .disabled(isBuiltIn)
-
-                labeledField("Icon") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 8)], spacing: 8) {
-                        ForEach(habitIconOptions, id: \.self) { icon in
-                            Button {
-                                draft.icon = icon
-                            } label: {
-                                    Image(systemName: icon)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(draft.icon == icon ? DS.accent : DS.textSecondary)
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 36)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .fill(draft.icon == icon ? DS.accentSoft : DS.surface)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(isBuiltIn)
-                        }
-                    }
-                }
-
-                labeledField("Color") {
-                    HStack(spacing: 8) {
-                        ForEach(habitColorOptions, id: \.self) { color in
-                            Button {
-                                draft.accentColor = color
-                            } label: {
-                                Circle()
-                                    .fill(Color(hex: color))
-                                    .frame(width: 22, height: 22)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white, lineWidth: draft.accentColor == color ? 2 : 0)
-                                    )
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color(hex: color), lineWidth: draft.accentColor == color ? 1 : 0)
-                                            .padding(-3)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(isBuiltIn)
-                        }
-                    }
-                }
-
-                labeledField("Daily target") {
-                    Stepper(value: $draft.dailyTargetCount, in: 1...12) {
-                        Text("\(draft.dailyTargetCount) completions")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(DS.text)
-                    }
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(DS.surface))
                     .disabled(isBuiltIn)
-                }
+            }
 
-                labeledField("Keyword triggers") {
-                    TextField("write, drafting, article", text: $draft.keywordInput)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .foregroundStyle(DS.text)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 9)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(DS.surface))
-                        .disabled(isBuiltIn)
-                }
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text("Icon")
+                    .dsSmallCapsLabel()
 
-                labeledField("Mapped intents") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
-                        ForEach(TaskIntent.allCases.filter { $0 != .general && $0 != .custom }, id: \.self) { intent in
-                            Button {
-                                if draft.mappedIntents.contains(intent) {
-                                    draft.mappedIntents.remove(intent)
-                                } else {
-                                    draft.mappedIntents.insert(intent)
-                                }
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: intent.iconName)
-                                        .font(.system(size: 10, weight: .semibold))
-                                    Text(intent.displayName)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .lineLimit(1)
-                                }
-                                .foregroundStyle(draft.mappedIntents.contains(intent) ? DS.textOnAccent : DS.textSecondary)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(draft.mappedIntents.contains(intent) ? DS.accent : DS.surface)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .overlay(alignment: .top) {
-                                if hoveredIntent == intent {
-                                    intentHint(intent)
-                                        .offset(y: -42)
-                                        .transition(.opacity)
-                                }
-                            }
-                            .onHover { isHovering in
-                                hoveredIntent = isHovering ? intent : (hoveredIntent == intent ? nil : hoveredIntent)
-                            }
-                            .disabled(isBuiltIn)
-                        }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 8)], spacing: 8) {
+                    ForEach(habitIconOptions, id: \.self) { icon in
+                        iconButton(icon)
                     }
                 }
             }
 
-            CosmoGradientDivider()
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text("Accent")
+                    .dsSmallCapsLabel()
+
+                HStack(spacing: DS.space10) {
+                    ForEach(habitColorOptions, id: \.self) { color in
+                        colorSwatch(color)
+                    }
+                }
+            }
+        }
+    }
+
+    private var cadenceSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            composerSectionLabel("Cadence")
+
+            HStack(spacing: DS.space12) {
+                cadenceStepButton(systemImage: "minus", enabled: draft.dailyTargetCount > 1) {
+                    draft.dailyTargetCount = max(1, draft.dailyTargetCount - 1)
+                }
+
+                VStack(spacing: 2) {
+                    Text("\(draft.dailyTargetCount)")
+                        .font(.system(size: 26, weight: .regular, design: .serif))
+                        .foregroundStyle(DS.text)
+                    Text(draft.dailyTargetCount == 1 ? "per day" : "times per day")
+                        .font(DS.callout)
+                        .foregroundStyle(DS.inkFaded)
+                }
+                .frame(maxWidth: .infinity)
+
+                cadenceStepButton(systemImage: "plus", enabled: draft.dailyTargetCount < 12) {
+                    draft.dailyTargetCount = min(12, draft.dailyTargetCount + 1)
+                }
+            }
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space12)
+            .background(DS.vellumDeep, in: .rect(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(DS.sepiaBorder, lineWidth: 0.5)
+            )
+
+            HStack(spacing: DS.space8) {
+                ForEach([1, 2, 3, 5], id: \.self) { target in
+                    cadenceChip(target)
+                }
+            }
+        }
+    }
+
+    private var mappingSection: some View {
+        VStack(alignment: .leading, spacing: DS.space16) {
+            composerSectionLabel("Mapping")
+
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text("Intent bindings")
+                    .dsSmallCapsLabel()
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+                    ForEach(TaskIntent.allCases.filter { $0 != .general && $0 != .custom }, id: \.self) { intent in
+                        intentChip(intent)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text("Keyword triggers")
+                    .dsSmallCapsLabel()
+
+                TextField("write, draft, article", text: $draft.keywordInput)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .regular, design: .serif))
+                    .foregroundStyle(DS.text)
+                    .padding(.horizontal, DS.space12)
+                    .padding(.vertical, DS.space10)
+                    .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                    )
+                    .disabled(isBuiltIn)
+            }
+        }
+    }
+
+    private var completionSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            composerSectionLabel("Completion")
 
             Toggle(isOn: $draft.allowManualCompletion) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Allow manual check-ins")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.callout)
                         .foregroundStyle(DS.text)
-                    Text("Lets you tap the habit card directly when there is no task.")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
+                    Text("Lets the orbit card record progress even when there is no linked task.")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
                 }
             }
             .toggleStyle(.switch)
             .tint(DS.accent)
             .disabled(isBuiltIn)
 
-            if !isBuiltIn, habit != nil {
-                HStack(spacing: 8) {
-                    utilityButton("Up", icon: "arrow.up") { onMoveUp?() }
-                    utilityButton("Down", icon: "arrow.down") { onMoveDown?() }
-
-                    Spacer()
-
-                    utilityButton("Archive", icon: "archivebox", tint: DS.red) {
-                        onArchive?()
-                    }
-                }
+            if isBuiltIn {
+                Text("Built-in habits keep their core identity fixed so the command center stays coherent.")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.inkFaded)
             }
+        }
+    }
 
-            if isBuiltIn, let onDisable {
-                HStack {
-                    Spacer()
-                    utilityButton("Disable Habit", icon: "eye.slash", tint: DS.textMuted) {
-                        onDisable()
-                        dismiss()
-                    }
-                }
-            }
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            AkashicSectionDivider()
+                .padding(.horizontal, 0)
 
-            HStack {
-                Button("Close") {
-                    CosmicHaptics.shared.play(.selection)
-                    dismiss()
+            HStack(spacing: DS.space10) {
+                if !isBuiltIn, habit != nil {
+                    utilityButton(title: "Up", icon: "arrow.up", action: { onMoveUp?() })
+                    utilityButton(title: "Down", icon: "arrow.down", action: { onMoveDown?() })
+                    utilityButton(title: "Archive", icon: "archivebox", tint: DS.red, action: { onArchive?() })
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.textSecondary)
 
                 Spacer()
 
-                if !isBuiltIn {
-                    Button {
-                        CosmicHaptics.shared.play(.selection)
-                        onSave(draft)
-                        dismiss()
-                    } label: {
-                        Text(habit == nil ? "Create Habit" : "Save Changes")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(DS.textOnAccent)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(DS.accent, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if isBuiltIn, let onDisable {
+                    utilityButton(title: "Disable", icon: "eye.slash", tint: DS.textMuted, action: onDisable)
                 }
+
+                Button("Close", action: onDismiss)
+                    .buttonStyle(.plain)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
+
+                Button(action: { onSave(draft) }) {
+                    HStack(spacing: DS.space6) {
+                        Text(habit == nil ? "Create" : "Save")
+                            .font(.system(size: 16, weight: .regular, design: .serif))
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(canSave ? DS.text : DS.inkFaded)
+                    .padding(.horizontal, DS.space16)
+                    .padding(.vertical, DS.space10)
+                    .overlay(alignment: .topLeading) { footerBracket(rotation: 0) }
+                    .overlay(alignment: .topTrailing) { footerBracket(rotation: 90) }
+                    .overlay(alignment: .bottomTrailing) { footerBracket(rotation: 180) }
+                    .overlay(alignment: .bottomLeading) { footerBracket(rotation: 270) }
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSave)
             }
         }
-        .padding(16)
-        .frame(width: 380)
-        .cosmoMenuChrome(cornerRadius: 16)
-        .environment(\.colorScheme, .light)
     }
 
-    @ViewBuilder
-    private func labeledField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .dsSmallCapsLabel()
-            content()
+    private var previewTint: Color {
+        Color(hex: draft.accentColor)
+    }
+
+    private var previewSubtitle: String {
+        if isBuiltIn { return "Built-in orbit" }
+        if draft.dailyTargetCount == 1 { return "1 completion per day" }
+        return "\(draft.dailyTargetCount) completions per day"
+    }
+
+    private func iconButton(_ icon: String) -> some View {
+        let isSelected = draft.icon == icon
+        return Button {
+            draft.icon = icon
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(isSelected ? previewTint : DS.inkFaded)
+                .frame(maxWidth: .infinity)
+                .frame(height: 42)
+                .background(isSelected ? previewTint.opacity(0.10) : DS.vellumDeep, in: .rect(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(isSelected ? previewTint.opacity(0.25) : DS.sepiaBorder, lineWidth: 0.5)
+                )
         }
+        .buttonStyle(.plain)
+        .disabled(isBuiltIn)
     }
 
-    private func utilityButton(_ title: String, icon: String, tint: Color = DS.textSecondary, action: @escaping () -> Void) -> some View {
+    private func colorSwatch(_ color: String) -> some View {
+        let tint = Color(hex: color)
+        let isSelected = draft.accentColor == color
+        return Button {
+            draft.accentColor = color
+        } label: {
+            Circle()
+                .fill(tint)
+                .frame(width: 26, height: 26)
+                .overlay(
+                    Circle()
+                        .stroke(isSelected ? DS.vellum : Color.clear, lineWidth: 2)
+                )
+                .overlay(
+                    Circle()
+                        .stroke(tint.opacity(isSelected ? 0.9 : 0), lineWidth: 1)
+                        .padding(-4)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(isBuiltIn)
+    }
+
+    private func cadenceStepButton(
+        systemImage: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(enabled ? DS.text : DS.inkFaded.opacity(0.5))
+                .frame(width: 36, height: 36)
+                .background(DS.vellum, in: Circle())
+                .overlay(Circle().stroke(DS.sepiaBorder, lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled || isBuiltIn)
+    }
+
+    private func cadenceChip(_ target: Int) -> some View {
+        let isSelected = draft.dailyTargetCount == target
+        return Button {
+            draft.dailyTargetCount = target
+        } label: {
+            Text("\(target)")
+                .font(DS.callout)
+                .foregroundStyle(isSelected ? DS.text : DS.inkFaded)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space8)
+                .background(isSelected ? DS.giltSoft.opacity(0.9) : DS.vellumDeep, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? DS.gilt.opacity(0.7) : DS.sepiaBorder, lineWidth: 0.5)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(isBuiltIn)
+    }
+
+    private func intentChip(_ intent: TaskIntent) -> some View {
+        let isSelected = draft.mappedIntents.contains(intent)
+        return Button {
+            if isSelected {
+                draft.mappedIntents.remove(intent)
+            } else {
+                draft.mappedIntents.insert(intent)
+            }
+        } label: {
+            HStack(spacing: DS.space6) {
+                Image(systemName: intent.iconName)
+                    .font(.system(size: 10, weight: .medium))
+                Text(intent.displayName)
+                    .font(DS.caption)
+            }
+            .foregroundStyle(isSelected ? DS.text : DS.inkFaded)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DS.space8)
+            .background(isSelected ? intent.color.opacity(0.10) : DS.vellumDeep, in: .rect(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? intent.color.opacity(0.22) : DS.sepiaBorder, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isBuiltIn)
+    }
+
+    private func utilityButton(
+        title: String,
+        icon: String,
+        tint: Color = DS.textSecondary,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: DS.space4) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .medium))
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
             }
             .foregroundStyle(tint)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 8).fill(DS.surface))
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
+            .background(DS.vellumDeep, in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(DS.sepiaBorder, lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
     }
 
-    private func intentHint(_ intent: TaskIntent) -> some View {
-        Text(intentHintText(for: intent))
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(DS.text)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(DS.surfaceElevated, in: Capsule())
-            .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 1))
-            .shadow(color: .black.opacity(0.06), radius: 6, y: 3)
-            .shadow(color: .black.opacity(0.04), radius: 16, y: 8)
-    }
-
-    private func intentHintText(for intent: TaskIntent) -> String {
-        switch intent {
-        case .writeContent:
-            return "Writing and drafting tasks"
-        case .research:
-            return "Reading, digging, and source work"
-        case .studySwipes:
-            return "Swipe study and pattern review"
-        case .deepThink:
-            return "Thinking, outlining, and synthesis"
-        case .review:
-            return "Reviewing an atom or finished work"
-        case .general:
-            return "General tasks"
-        case .custom:
-            return "Custom workflow routing"
-        }
+    private func footerBracket(rotation: Double) -> some View {
+        GiltCornerBracket()
+            .stroke(DS.gilt.opacity(canSave ? 0.8 : 0.3), lineWidth: 0.8)
+            .frame(width: 12, height: 12)
+            .rotationEffect(.degrees(rotation))
     }
 
     private let habitIconOptions = [
@@ -367,4 +481,161 @@ struct CommandCenterHabitEditor: View {
         "D97706",
         "8B6BAB",
     ]
+}
+
+struct CommandCenterHabitLibraryComposer: View {
+    let customHabits: [HabitDefinition]
+    let builtInHabits: [(definition: HabitDefinition, isEnabled: Bool)]
+    let onToggleBuiltIn: (String, Bool) -> Void
+    let onCreate: () -> Void
+    let onEdit: (HabitDefinition) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        CommandCenterComposerShell(title: "HABIT LIBRARY", subtitle: "Manage the orbits around your days", onClose: onClose) {
+            VStack(alignment: .leading, spacing: DS.space20) {
+                VStack(alignment: .leading, spacing: DS.space12) {
+                    composerSectionLabel("Custom")
+
+                    if customHabits.isEmpty {
+                        Text("No custom habits yet. Start one and map it to the kinds of work you want to reinforce.")
+                            .font(DS.callout)
+                            .foregroundStyle(DS.inkFaded)
+                    } else {
+                        ForEach(customHabits, id: \.id) { habit in
+                            customHabitRow(habit)
+                        }
+                    }
+
+                    Button(action: onCreate) {
+                        HStack(spacing: DS.space6) {
+                            Image(systemName: "plus")
+                                .font(DS.caption2)
+                            Text("New habit")
+                                .font(.system(size: 15, weight: .regular, design: .serif))
+                        }
+                        .foregroundStyle(DS.accent)
+                        .padding(.vertical, DS.space6)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                VStack(alignment: .leading, spacing: DS.space12) {
+                    composerSectionLabel("Built In")
+
+                    ForEach(builtInHabits, id: \.definition.id) { item in
+                        builtInHabitRow(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private func customHabitRow(_ habit: HabitDefinition) -> some View {
+        Button {
+            onEdit(habit)
+        } label: {
+            HStack(spacing: DS.space10) {
+                Circle()
+                    .fill(habit.accent.opacity(0.14))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Image(systemName: habit.icon)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(habit.accent)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(habit.title)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                    Text("\(habit.dailyTargetCount) per day")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.inkFaded)
+            }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
+            .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(DS.sepiaBorder, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func builtInHabitRow(_ item: (definition: HabitDefinition, isEnabled: Bool)) -> some View {
+        HStack(spacing: DS.space10) {
+            Circle()
+                .fill(item.definition.accent.opacity(item.isEnabled ? 0.14 : 0.08))
+                .frame(width: 34, height: 34)
+                .overlay(
+                    Image(systemName: item.definition.icon)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(item.definition.accent.opacity(item.isEnabled ? 1 : 0.5))
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.definition.title)
+                    .font(DS.callout)
+                    .foregroundStyle(item.isEnabled ? DS.text : DS.inkFaded)
+                Text("Built-in")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.inkFaded)
+            }
+
+            Spacer()
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { item.isEnabled },
+                    set: { onToggleBuiltIn(item.definition.id, $0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .tint(item.definition.accent)
+            .labelsHidden()
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space8)
+        .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(DS.sepiaBorder, lineWidth: 0.5)
+        )
+    }
+}
+
+#Preview("Habit Composer") {
+    CommandCenterHabitComposer(
+        habit: HabitDefinition.previewHabit(),
+        onSave: { _ in },
+        onOpenLibrary: {},
+        onDismiss: {}
+    )
+    .frame(width: 440, height: 680)
+    .padding()
+    .background(DS.bg)
+}
+
+#Preview("Habit Library") {
+    CommandCenterHabitLibraryComposer(
+        customHabits: [HabitDefinition.previewHabit()],
+        builtInHabits: [(HabitDefinition.previewHabit(), true)],
+        onToggleBuiltIn: { _, _ in },
+        onCreate: {},
+        onEdit: { _ in },
+        onClose: {}
+    )
+    .frame(width: 400, height: 560)
+    .padding()
+    .background(DS.bg)
 }

@@ -30,7 +30,6 @@ struct WellSourcesBlock: View {
         VStack(alignment: .leading, spacing: 16) {
             MarginaliaLabel("THE WELL", countText: "\(sources.count)")
             content
-            footerActions
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -154,13 +153,6 @@ struct WellSourcesBlock: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(DS.sepiaBorder.opacity(0.8), lineWidth: 0.5)
         )
-    }
-
-    private var footerActions: some View {
-        HStack(spacing: 8) {
-            actionButton(title: "Add Source", systemImage: "plus.circle", action: onAddSource)
-            actionButton(title: "Find Related", systemImage: "sparkles", action: onRequestSuggestions)
-        }
     }
 
     private var divider: some View {

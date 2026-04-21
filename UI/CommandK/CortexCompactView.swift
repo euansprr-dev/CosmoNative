@@ -66,6 +66,8 @@ struct CortexCompactView: View {
             ForEach(Array(viewModel.recentItems.enumerated()), id: \.element.id) { index, item in
                 CortexRecentCard(item: item) {
                     viewModel.openRecent(item)
+                } onDelete: {
+                    viewModel.deleteRecent(item)
                 }
                 .transition(.opacity.combined(with: .offset(y: 6)))
                 .animation(ProMotionSprings.staggered(index: index), value: viewModel.recentItems.count)

@@ -67,6 +67,8 @@ export async function createIdea(args: Record<string, any>): Promise<string> {
 
   const body = args.body as string | undefined;
   const clientName = args.clientName as string | undefined;
+  const contentFormat = args.contentFormat as string | undefined;
+  const context = args.context as string | undefined;
 
   // Resolve client if provided
   let clientUUID: string | undefined;
@@ -91,6 +93,8 @@ export async function createIdea(args: Record<string, any>): Promise<string> {
     metadata: {
       ideaStatus: 'spark',
       captureSource: 'telegram_cloud',
+      ...(context ? { context } : {}),
+      ...(contentFormat ? { contentFormat } : {}),
       ...(clientUUID ? { clientUUID } : {}),
     },
     links: links.length > 0 ? links : null,
@@ -102,6 +106,8 @@ export async function createIdea(args: Record<string, any>): Promise<string> {
     success: true,
     uuid: atom.uuid,
     title: atom.title,
+    ...(context ? { context } : {}),
+    ...(contentFormat ? { contentFormat } : {}),
     ...(resolvedClientName ? { clientName: resolvedClientName } : {}),
     message: `Idea created: "${title}"${resolvedClientName ? ` for ${resolvedClientName}` : ''}`,
   });

@@ -45,8 +45,11 @@ struct ConceptCollaboratorPanel: View {
             conversation
             composerArea
         }
-        .background(DS.vellum)
-        .overlay(alignment: .bottom) { hairline }
+        .background(DS.vellumDeep.opacity(0.32), in: .rect(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(DS.sepiaBorder.opacity(0.8), lineWidth: 0.5)
+        )
     }
 
     // MARK: - Header
@@ -201,7 +204,7 @@ struct ConceptCollaboratorPanel: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(DS.vellumDeep.opacity(0.6))
+        .background(DS.vellumDeep.opacity(0.18))
         .overlay(alignment: .top) { hairline }
     }
 
@@ -248,7 +251,7 @@ struct ConceptCollaboratorPanel: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(DS.vellum, in: .rect(cornerRadius: 6))
+        .background(DS.vellumDeep.opacity(0.45), in: .rect(cornerRadius: 6))
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(DS.sepiaBorder, lineWidth: 0.5)

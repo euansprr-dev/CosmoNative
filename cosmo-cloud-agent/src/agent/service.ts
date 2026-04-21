@@ -164,6 +164,250 @@ async function tryFastInboxCapture(
   return { response, toolsUsed: ['capture_to_inbox'], createdAtomUUIDs, intent: 'capture' };
 }
 
+function parseIdeaCaptureRequest(text: string): {
+  title: string;
+  clientName?: string;
+  context?: string;
+  contentFormat?: 'reel' | 'carousel' | 'thread' | 'post';
+} | null {
+  const trimmed = text.trim();
+  if (!trimmed || /https?:\/\//i.test(trimmed)) return null;
+
+  const profiledIdeaWithContextMatch = trimmed.match(
+    /^idea\s+([^:\n]+):\s*([^\n]+?)(?:\n\s*\n|\n)?\s*context:\s*([\s\S]+)$/i
+  );
+  if (profiledIdeaWithContextMatch) {
+    let clientName = profiledIdeaWithContextMatch[1].trim();
+    let title = profiledIdeaWithContextMatch[2].trim();
+    const context = profiledIdeaWithContextMatch[3].trim();
+    let contentFormat: 'reel' | 'carousel' | 'thread' | 'post' | undefined;
+
+    const formatMatch = title.match(/\((carousel|reel|thread|post)\)\s*$/i);
+    if (formatMatch) {
+      contentFormat = formatMatch[1].toLowerCase() as 'reel' | 'carousel' | 'thread' | 'post';
+      title = title.replace(/\((carousel|reel|thread|post)\)\s*$/i, '').trim();
+    }
+
+    if (!clientName || !title) return null;
+
+    return {
+      title,
+      clientName,
+      ...(context ? { context } : {}),
+      ...(contentFormat ? { contentFormat } : {}),
+    };
+  }
+
+  const singleLine = trimmed.replace(/\s+/g, ' ').trim();
+  const lower = singleLine.toLowerCase();
+  if (singleLine.endsWith('?')) return null;
+
+  const profiledIdeaMatch = singleLine.match(/^idea\s+([^:]+):\s*(.+)$/i);
+  if (profiledIdeaMatch) {
+    let clientName = profiledIdeaMatch[1].trim();
+    let title = profiledIdeaMatch[2].trim();
+    let contentFormat: 'reel' | 'carousel' | 'thread' | 'post' | undefined;
+
+    const formatMatch = title.match(/\((carousel|reel|thread|post)\)\s*$/i);
+    if (formatMatch) {
+      contentFormat = formatMatch[1].toLowerCase() as 'reel' | 'carousel' | 'thread' | 'post';
+      title = title.replace(/\((carousel|reel|thread|post)\)\s*$/i, '').trim();
+    }
+
+    if (!clientName || !title) return null;
+
+    return {
+      title,
+      clientName,
+      ...(contentFormat ? { contentFormat } : {}),
+    };
+  }
+
+  const explicitPrefixes = [
+    /^idea[\s:]+(.+)$/i,
+    /^save idea[\s:]+(.+)$/i,
+    /^new idea[\s:]+(.+)$/i,
+    /^capture idea[\s:]+(.+)$/i,
+    /^add idea[\s:]+(.+)$/i,
+  ];
+
+  let candidate: string | null = null;
+  for (const pattern of explicitPrefixes) {
+    const match = singleLine.match(pattern);
+    if (match) {
+      candidate = match[1].trim();
+      break;
+    }
+  }
+
+  const hasTrailingFormat = /\((carousel|reel|thread|post)\)\s*$/i.test(singleLine);
+  if (!candidate && hasTrailingFormat && singleLine.length <= 220) {
+    candidate = singleLine;
+  }
+
+  if (!candidate) return null;
+
+  let contentFormat: 'reel' | 'carousel' | 'thread' | 'post' | undefined;
+  const formatMatch = candidate.match(/\((carousel|reel|thread|post)\)\s*$/i);
+  if (formatMatch) {
+    contentFormat = formatMatch[1].toLowerCase() as 'reel' | 'carousel' | 'thread' | 'post';
+    candidate = candidate.replace(/\((carousel|reel|thread|post)\)\s*$/i, '').trim();
+  }
+
+  const clientMatch = candidate.match(/^for\s+(.+?)\s*[-:]\s*(.+)$/i);
+  let clientName: string | undefined;
+  if (clientMatch) {
+    clientName = clientMatch[1].trim();
+    candidate = clientMatch[2].trim();
+  }
+
+  candidate = candidate.replace(/^idea[\s:]+/i, '').trim();
+  if (!candidate) return null;
+
+  const looksLikeWritingRequest =
+    /^(write|draft|rewrite|revise|make|turn this into|create a)\b/i.test(lower) ||
+    /\b(carousels?|reels?|threads?|posts?)\s+for\b/i.test(lower);
+  if (looksLikeWritingRequest && !hasTrailingFormat) return null;
+
+  return {
+    title: candidate,
+    ...(clientName ? { clientName } : {}),
+    ...(contentFormat ? { contentFormat } : {}),
+  };
+}
+
+async function tryFastIdeaCapture(
+  text: string,
+  chatId: string,
+  messages: AgentMessage[],
+  onToolProgress?: ToolProgressCallback,
+): Promise<ProcessResult | null> {
+  const parsed = parseIdeaCaptureRequest(text);
+  if (!parsed) return null;
+
+  onToolProgress?.({ type: 'started', tool: 'create_idea', label: 'Capturing idea...', preview: parsed.title });
+  const result = await executeTool('create_idea', parsed);
+  onToolProgress?.({ type: 'completed', tool: 'create_idea', label: 'Idea captured', preview: parsed.title });
+
+  let parsedResult: any = {};
+  try {
+    parsedResult = JSON.parse(result);
+  } catch {}
+
+  const success = parsedResult.success !== false;
+  const response = success
+    ? `💡 Idea captured\n${parsedResult.title || parsed.title}${parsed.contentFormat ? ` (${parsed.contentFormat})` : ''}`
+    : `Something went wrong capturing that idea. ${parsedResult.error || ''}`.trim();
+
+  const createdAtomUUIDs = parsedResult.uuid ? [parsedResult.uuid] : [];
+  messages.push({ role: 'user', content: text });
+  messages.push({ role: 'assistant', content: response });
+  await saveConversation(chatId, messages, { linkedAtomUUIDs: createdAtomUUIDs });
+
+  return { response, toolsUsed: ['create_idea'], createdAtomUUIDs, intent: 'capture' };
+}
+
+function parseSwipeWithIdeaRequest(text: string): {
+  url: string;
+  title?: string;
+  clientName?: string;
+  ideaContext?: string;
+} | null {
+  const urlMatch = text.match(/https?:\/\/[^\s]+/i);
+  if (!urlMatch) return null;
+
+  const lower = text.toLowerCase();
+  const hasCaptureSignal = /(swipe|capture|save this|save that|grab this|snag this|file this)/i.test(lower);
+  const hasIdeaSignal = /(idea|link it to|link this to|linked to|link to)/i.test(lower);
+  if (!hasCaptureSignal || !hasIdeaSignal) return null;
+
+  const url = urlMatch[0];
+  const withoutUrl = text.replace(url, '').replace(/\s+/g, ' ').trim();
+
+  const titleMatch =
+    withoutUrl.match(/\b(?:named|called|titled)\s*:?\s*["“]?([^"\n”]+?)["”]?\s*$/i) ||
+    withoutUrl.match(/\bidea\s*:\s*["“]?([^"\n”]+?)["”]?\s*$/i);
+  const title = titleMatch?.[1]?.trim().replace(/[.,;:!-]+$/g, '');
+
+  const clientMatch =
+    withoutUrl.match(/\bidea\s+for\s+(.+?)\s+(?:named|called|titled)\b/i) ||
+    withoutUrl.match(/\bfor\s+(.+?)\s+(?:named|called|titled)\b/i);
+  const clientName = clientMatch?.[1]?.trim().replace(/[.,;:!-]+$/g, '');
+
+  let ideaContext = withoutUrl;
+  if (title) {
+    ideaContext = ideaContext.replace(
+      new RegExp(`\\b(?:named|called|titled)\\s*:?\\s*["“]?${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["”]?`, 'i'),
+      '',
+    );
+  }
+  if (clientName) {
+    ideaContext = ideaContext.replace(
+      new RegExp(`\\bidea\\s+for\\s+${clientName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'),
+      'idea',
+    );
+  }
+  ideaContext = ideaContext
+    .replace(/\b(?:swipe|capture|save|grab|snag|file)\s+(?:this|that)?\b/gi, '')
+    .replace(/\band\s+link\s+(?:it|this)\s+to\b/gi, '')
+    .replace(/\blink\s+(?:it|this)\s+to\b/gi, '')
+    .replace(/\bto\s+an?\s+idea\b/gi, '')
+    .replace(/\ban?\s+idea\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.,;:!-]+$/g, '');
+
+  return {
+    url,
+    ...(title ? { title } : {}),
+    ...(clientName ? { clientName } : {}),
+    ...(ideaContext ? { ideaContext } : {}),
+  };
+}
+
+async function tryFastCaptureWithIdea(
+  text: string,
+  intent: AgentIntent,
+  chatId: string,
+  messages: AgentMessage[],
+  onToolProgress?: ToolProgressCallback,
+): Promise<ProcessResult | null> {
+  if (intent !== 'capture') return null;
+
+  const parsed = parseSwipeWithIdeaRequest(text);
+  if (!parsed) return null;
+
+  onToolProgress?.({ type: 'started', tool: 'capture_swipe_with_idea', label: 'Swiping + creating idea...' });
+  const result = await executeTool('capture_swipe_with_idea', parsed);
+  onToolProgress?.({ type: 'completed', tool: 'capture_swipe_with_idea', label: 'Idea linked', preview: parsed.title || parsed.url });
+
+  let response = 'Captured swipe and linked idea.';
+  let parsedResult: any = {};
+  try {
+    parsedResult = JSON.parse(result);
+  } catch {}
+
+  if (parsedResult.success !== false) {
+    const swipeTitle = parsedResult.swipeTitle || 'Swipe';
+    const ideaTitle = parsedResult.ideaTitle || parsed.title || 'Idea';
+    response = `⚡ Swiped + linked\n\n${swipeTitle}\nIdea ‣ ${ideaTitle}`;
+  } else {
+    response = `Something went wrong capturing that swipe. ${parsedResult.error || ''}`.trim();
+  }
+
+  const createdAtomUUIDs = [parsedResult.swipeUUID, parsedResult.ideaUUID].filter(Boolean);
+  messages.push({ role: 'user', content: text });
+  messages.push({ role: 'assistant', content: response });
+  await saveConversation(chatId, messages, { linkedAtomUUIDs: createdAtomUUIDs });
+
+  return {
+    response,
+    toolsUsed: ['capture_swipe_with_idea'],
+    createdAtomUUIDs,
+    intent: 'capture',
+  };
+}
+
 /**
  * Fast-path capture: if the user sends an obvious "swipe this [URL]" or "capture [URL]",
  * skip the LLM entirely and call capture_swipe directly. This avoids Haiku asking
@@ -245,7 +489,15 @@ export async function processMessage(
   const fastInboxResult = await tryFastInboxCapture(text, chatId, messages);
   if (fastInboxResult) return fastInboxResult;
 
-  // 1c. FAST PATH — deterministic capture for obvious swipe/capture commands
+  // 1c. FAST PATH — deterministic plain idea capture
+  const fastIdeaCaptureResult = await tryFastIdeaCapture(text, chatId, messages, onToolProgress);
+  if (fastIdeaCaptureResult) return fastIdeaCaptureResult;
+
+  // 1d. FAST PATH — deterministic swipe + linked idea capture
+  const fastCaptureWithIdeaResult = await tryFastCaptureWithIdea(text, intent, chatId, messages, onToolProgress);
+  if (fastCaptureWithIdeaResult) return fastCaptureWithIdeaResult;
+
+  // 1e. FAST PATH — deterministic capture for obvious swipe/capture commands
   // Bypasses LLM entirely when intent is unambiguous (e.g. "swipe this" + URL)
   const fastCaptureResult = await tryFastCapture(text, intent, chatId, messages, onToolProgress);
   if (fastCaptureResult) return fastCaptureResult;

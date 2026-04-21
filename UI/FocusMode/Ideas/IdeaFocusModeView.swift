@@ -1302,7 +1302,7 @@ extension IdeaFocusModeView {
                 Button {
                     viewModel.showLinkSwipesOverlay = true
                 } label: {
-                    Text("no swipes yet →")
+                    Text("add swipes →")
                         .font(DS.dateSerif)
                         .italic()
                         .foregroundStyle(DS.inkFaded.opacity(0.7))
@@ -1315,19 +1315,32 @@ extension IdeaFocusModeView {
                     ForEach(viewModel.linkedSwipes.prefix(3), id: \.uuid) { swipe in
                         marginaliaSwipeRow(swipe)
                     }
-                    if viewModel.linkedSwipes.count > 3 {
+                    HStack(spacing: DS.space8) {
                         Button {
                             viewModel.showLinkSwipesOverlay = true
                         } label: {
-                            Text("see all \(viewModel.linkedSwipes.count) →")
+                            Text("add / remove →")
                                 .font(DS.dateSerif)
                                 .italic()
                                 .foregroundStyle(DS.gilt.opacity(0.7))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .padding(.top, DS.space2)
+
+                        if viewModel.linkedSwipes.count > 3 {
+                            Button {
+                                viewModel.showLinkSwipesOverlay = true
+                            } label: {
+                                Text("see all \(viewModel.linkedSwipes.count)")
+                                    .font(DS.dateSerif)
+                                    .italic()
+                                    .foregroundStyle(DS.inkFaded)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
+                    .padding(.top, DS.space2)
                 }
             }
         }
@@ -1335,23 +1348,44 @@ extension IdeaFocusModeView {
 
     private func marginaliaSwipeRow(_ swipe: Atom) -> some View {
         HStack(alignment: .top, spacing: DS.space8) {
-            Rectangle()
-                .fill(DS.entitySwipe.opacity(0.18))
-                .frame(width: 3)
-                .frame(maxHeight: .infinity)
+            Button {
+                openAtomInPane(swipe.uuid)
+            } label: {
+                HStack(alignment: .top, spacing: DS.space8) {
+                    Rectangle()
+                        .fill(DS.entitySwipe.opacity(0.18))
+                        .frame(width: 3)
+                        .frame(maxHeight: .infinity)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(swipe.title ?? "Untitled")
-                    .font(DS.callout)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(2)
-                if let hook = swipe.researchMetadata?.hook {
-                    Text(hook)
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.inkFaded)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(swipe.title ?? "Untitled")
+                            .font(DS.callout)
+                            .foregroundStyle(DS.text)
+                            .lineLimit(2)
+                        if let hook = swipe.researchMetadata?.hook {
+                            Text(hook)
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.inkFaded)
+                                .lineLimit(1)
+                        }
+                    }
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
+
+            Button {
+                Task { await viewModel.unlinkSwipe(swipe.uuid) }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.inkFaded)
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove swipe \(swipe.title ?? "untitled")")
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -1420,10 +1454,16 @@ extension IdeaFocusModeView {
 
             if let blueprint = viewModel.selectedBlueprint {
                 VStack(alignment: .leading, spacing: DS.space4) {
-                    Text(blueprint.title?.lowercased() ?? "blueprint")
-                        .font(.system(size: 14, weight: .regular, design: .serif))
-                        .foregroundStyle(DS.text)
-                        .lineLimit(2)
+                    Button {
+                        showBlueprintSheet = true
+                    } label: {
+                        Text(blueprint.title?.lowercased() ?? "blueprint")
+                            .font(.system(size: 14, weight: .regular, design: .serif))
+                            .foregroundStyle(DS.text)
+                            .lineLimit(2)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                     HStack(spacing: DS.space8) {
                         Button {
                             showBlueprintSheet = true
@@ -1439,6 +1479,16 @@ extension IdeaFocusModeView {
                             showBlueprintPicker = true
                         } label: {
                             Text("change")
+                                .font(DS.dateSerif)
+                                .italic()
+                                .foregroundStyle(DS.inkFaded)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            viewModel.clearBlueprint()
+                        } label: {
+                            Text("remove")
                                 .font(DS.dateSerif)
                                 .italic()
                                 .foregroundStyle(DS.inkFaded)
@@ -1461,6 +1511,14 @@ extension IdeaFocusModeView {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private func openAtomInPane(_ uuid: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": uuid, "asPane": true]
+        )
     }
 
     // MARK: Research — stat lines, tap opens sheet

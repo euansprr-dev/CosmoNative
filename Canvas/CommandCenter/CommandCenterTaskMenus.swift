@@ -1,124 +1,1306 @@
 // Canvas/CommandCenter/CommandCenterTaskMenus.swift
-// Redesigned task action popover + reschedule panel
-// Tabbed command palette with horizontal date chips + always-visible calendar
-// March 2026
+// Command Center Menu V2
+// Shared anchored composer host + schedule / repeat / habit task surfaces
+// April 2026
 
+import Observation
 import SwiftUI
 
-// MARK: - Standalone Reschedule Panel (for overdue batch actions)
+enum CommandCenterComposerHorizontalAlignment: Equatable {
+    case leading
+    case trailing
+    case center
+}
 
-struct CommandCenterReschedulePanel: View {
-    let title: String
-    var includeNoDate: Bool = true
-    let onSelectDate: (Date?) -> Void
+struct CommandCenterComposerAnchor: Equatable {
+    var sourceRect: CGRect
+    var alignment: CommandCenterComposerHorizontalAlignment = .leading
+    var yOffset: CGFloat = 12
+}
 
-    @State private var manualInput = ""
-    @State private var selectedDate = Date()
+enum CommandCenterTaskDateTarget: Equatable {
+    case dueDate
+    case whenDate
+    case deadline
+
+    var title: String {
+        switch self {
+        case .dueDate: return "Schedule"
+        case .whenDate: return "When"
+        case .deadline: return "Deadline"
+        }
+    }
+
+    var helperText: String {
+        switch self {
+        case .dueDate: return "Choose when this task should land."
+        case .whenDate: return "Place this task into a working day."
+        case .deadline: return "Set the hard edge for this task."
+        }
+    }
+}
+
+enum CommandCenterScheduleSelection: Equatable {
+    case date(Date?)
+    case someday
+}
+
+enum CommandCenterComposerRoute: Equatable {
+    case batchSchedule(title: String, taskUUIDs: [String], anchor: CommandCenterComposerAnchor)
+    case taskActions(task: TaskViewModel, anchor: CommandCenterComposerAnchor)
+    case taskDate(
+        task: TaskViewModel,
+        target: CommandCenterTaskDateTarget,
+        currentDate: Date?,
+        anchor: CommandCenterComposerAnchor
+    )
+    case taskIntent(task: TaskViewModel, currentIntent: TaskIntent, anchor: CommandCenterComposerAnchor)
+    case taskHabit(task: TaskViewModel, currentHabitUUID: String?, anchor: CommandCenterComposerAnchor)
+    case habitEditor(habit: HabitDefinition?, anchor: CommandCenterComposerAnchor)
+    case habitLibrary(anchor: CommandCenterComposerAnchor)
+
+    var anchor: CommandCenterComposerAnchor {
+        switch self {
+        case .batchSchedule(_, _, let anchor),
+             .taskActions(_, let anchor),
+             .taskDate(_, _, _, let anchor),
+             .taskIntent(_, _, let anchor),
+             .taskHabit(_, _, let anchor),
+             .habitEditor(_, let anchor),
+             .habitLibrary(let anchor):
+            return anchor
+        }
+    }
+}
+
+@MainActor
+@Observable
+final class CommandCenterComposerController {
+    var route: CommandCenterComposerRoute?
+
+    func present(_ route: CommandCenterComposerRoute) {
+        withAnimation(ProMotionSprings.snappy) {
+            self.route = route
+        }
+    }
+
+    func dismiss() {
+        withAnimation(ProMotionSprings.snappy) {
+            route = nil
+        }
+    }
+
+    func isShowingTaskAction(for taskUUID: String) -> Bool {
+        guard case let .taskActions(task, _) = route else { return false }
+        return task.uuid == taskUUID
+    }
+}
+
+struct CommandCenterComposerHost: View {
+    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    let composer: CommandCenterComposerController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Title
-            Text(title)
-                .font(DS.buttonText)
-                .foregroundStyle(DS.text)
+        GeometryReader { proxy in
+            if let route = composer.route {
+                let metrics = CommandCenterComposerMetrics(route: route, viewport: proxy.size)
+                let position = composerPosition(
+                    for: route.anchor,
+                    metrics: metrics,
+                    viewportBounds: proxy.frame(in: .global)
+                )
 
-            // Quick date chips
-            quickDateChips { date in
-                onSelectDate(date)
-            }
+                ZStack(alignment: .topLeading) {
+                    Color.black.opacity(0.001)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { composer.dismiss() }
 
-            // Calendar
-            inlineCalendar
-
-            // Manual input (fallback, at bottom)
-            TextField("Type a date...", text: $manualInput)
-                .textFieldStyle(.plain)
-                .font(DS.cardMeta)
-                .foregroundStyle(DS.text)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
-                .onSubmit {
-                    guard let parsed = parseDateInput(manualInput) else { return }
-                    onSelectDate(parsed)
+                    composerView(for: route)
+                        .frame(width: metrics.width)
+                        .frame(maxHeight: metrics.maxHeight)
+                        .position(position)
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
+                                removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
+                            )
+                        )
+                        .zIndex(2)
                 }
-        }
-        .padding(12)
-        .frame(width: 340)
-        .cosmoMenuChrome(cornerRadius: 14)
-        .environment(\.colorScheme, .light)
-    }
-
-    // MARK: - Quick Date Chips
-
-    @ViewBuilder
-    private func quickDateChips(onSelect: @escaping (Date?) -> Void) -> some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
-                dateChip("Today", icon: "sun.max", tint: DS.green, date: Date(), onSelect: onSelect)
-                dateChip("Tomorrow", icon: "sunrise", tint: DS.orange, date: Calendar.current.date(byAdding: .day, value: 1, to: Date()), onSelect: onSelect)
-                dateChip("Weekend", icon: "sparkles", tint: DS.accent, date: nextWeekendDate(), onSelect: onSelect)
-                dateChip("+1 Wk", icon: "arrow.right", tint: DS.textSecondary, date: nextWeekStart(), onSelect: onSelect)
-            }
-
-            HStack(spacing: 6) {
-                if includeNoDate {
-                    dateChip("No date", icon: "slash.circle", tint: DS.textMuted, date: nil, onSelect: onSelect)
-                }
-                dateChip("Someday", icon: "archivebox", tint: DS.entityIdea, date: nil, onSelect: { _ in
-                    // Someday = no date but with scheduling state
-                    onSelect(nil)
-                })
-                Spacer()
             }
         }
+        .ignoresSafeArea(edges: .all)
+        .allowsHitTesting(composer.route != nil)
+        .onExitCommand(perform: composer.dismiss)
+        .zIndex(100)
     }
 
     @ViewBuilder
-    private func dateChip(_ label: String, icon: String, tint: Color, date: Date?, onSelect: @escaping (Date?) -> Void) -> some View {
+    private func composerView(for route: CommandCenterComposerRoute) -> some View {
+        switch route {
+        case let .batchSchedule(title, taskUUIDs, _):
+            CommandCenterScheduleComposer(
+                title: title.uppercased(),
+                subtitle: "\(taskUUIDs.count) tasks",
+                helperText: "Move this set in one stroke.",
+                currentDate: nil,
+                includeNilActions: true,
+                showSomedayAction: true,
+                onSelect: { selection in
+                    applyBatchScheduleSelection(selection, taskUUIDs: taskUUIDs)
+                    composer.dismiss()
+                },
+                onClose: composer.dismiss
+            )
+        case let .taskActions(task, _):
+            CommandCenterTaskActionComposer(
+                task: task,
+                currentHabit: viewModel.resolvedHabit(for: task),
+                availableHabits: viewModel.availableHabitDefinitions,
+                loadRecurrenceRule: { await viewModel.recurrenceRule(for: task) },
+                onToggleCompletion: { toggleTaskCompletion(task) },
+                onSelectSchedule: { selection in
+                    applyTaskScheduleSelection(selection, taskUUID: task.uuid)
+                },
+                onApplyHabit: { habitUUID in
+                    Task { await viewModel.applyHabit(habitUUID, to: task.uuid) }
+                },
+                onApplyRecurrence: { rule in
+                    Task { await viewModel.setTaskRecurrence(uuid: task.uuid, rule: rule) }
+                },
+                onDelete: {
+                    Task { await viewModel.deleteTask(uuid: task.uuid) }
+                },
+                onDismiss: composer.dismiss
+            )
+        case let .taskDate(task, target, currentDate, _):
+            CommandCenterScheduleComposer(
+                title: target.title.uppercased(),
+                subtitle: task.title,
+                helperText: target.helperText,
+                currentDate: currentDate,
+                includeNilActions: true,
+                showSomedayAction: target == .dueDate,
+                onSelect: { selection in
+                    applyTaskDateSelection(task: task, target: target, selection: selection)
+                    composer.dismiss()
+                },
+                onClose: composer.dismiss
+            )
+        case let .taskIntent(task, currentIntent, _):
+            CommandCenterIntentPickerComposer(
+                taskTitle: task.title,
+                currentIntent: currentIntent,
+                onSelect: { intent in
+                    Task { await viewModel.updateTask(uuid: task.uuid, intent: intent) }
+                    composer.dismiss()
+                },
+                onClose: composer.dismiss
+            )
+        case let .taskHabit(task, currentHabitUUID, _):
+            CommandCenterHabitPickerComposer(
+                taskTitle: task.title,
+                currentHabitUUID: currentHabitUUID,
+                availableHabits: viewModel.availableHabitDefinitions,
+                onSelect: { habitUUID in
+                    Task { await viewModel.applyHabit(habitUUID, to: task.uuid) }
+                    composer.dismiss()
+                },
+                onClose: composer.dismiss
+            )
+        case let .habitEditor(habit, anchor):
+            CommandCenterHabitComposer(
+                habit: habit,
+                onSave: { draft in
+                    saveHabitDraft(draft, editing: habit)
+                },
+                onArchive: habit?.isBuiltIn == true ? nil : {
+                    guard let id = habit?.id else { return }
+                    Task { await viewModel.archiveHabit(uuid: id) }
+                    composer.dismiss()
+                },
+                onMoveUp: habit?.isBuiltIn == true ? nil : {
+                    guard let id = habit?.id else { return }
+                    Task { await viewModel.moveHabit(uuid: id, direction: -1) }
+                },
+                onMoveDown: habit?.isBuiltIn == true ? nil : {
+                    guard let id = habit?.id else { return }
+                    Task { await viewModel.moveHabit(uuid: id, direction: 1) }
+                },
+                onDisable: habit?.isBuiltIn == true ? {
+                    guard let id = habit?.id else { return }
+                    Task { await viewModel.setBuiltInHabitEnabled(id: id, enabled: false) }
+                    composer.dismiss()
+                } : nil,
+                onOpenLibrary: {
+                    composer.present(.habitLibrary(anchor: anchor))
+                },
+                onDismiss: composer.dismiss
+            )
+        case let .habitLibrary(anchor):
+            CommandCenterHabitLibraryComposer(
+                customHabits: viewModel.availableHabitDefinitions.filter { !$0.isBuiltIn && !$0.isArchived },
+                builtInHabits: viewModel.builtInHabitToggles,
+                onToggleBuiltIn: { id, enabled in
+                    Task { await viewModel.setBuiltInHabitEnabled(id: id, enabled: enabled) }
+                },
+                onCreate: {
+                    composer.present(.habitEditor(habit: nil, anchor: anchor))
+                },
+                onEdit: { habit in
+                    composer.present(.habitEditor(habit: habit, anchor: anchor))
+                },
+                onClose: composer.dismiss
+            )
+        }
+    }
+
+    private func composerPosition(
+        for anchor: CommandCenterComposerAnchor,
+        metrics: CommandCenterComposerMetrics,
+        viewportBounds: CGRect
+    ) -> CGPoint {
+        let inset: CGFloat = 24
+        let minX = inset + metrics.width / 2
+        let maxX = viewportBounds.width - inset - metrics.width / 2
+        let sourceMinX = anchor.sourceRect.minX - viewportBounds.minX
+        let sourceMidX = anchor.sourceRect.midX - viewportBounds.minX
+        let sourceMaxX = anchor.sourceRect.maxX - viewportBounds.minX
+
+        let preferredX: CGFloat
+        switch anchor.alignment {
+        case .leading:
+            preferredX = sourceMinX + metrics.width / 2
+        case .trailing:
+            preferredX = sourceMaxX - metrics.width / 2
+        case .center:
+            preferredX = sourceMidX
+        }
+
+        let clampedX = min(max(preferredX, minX), maxX)
+        let preferredY = anchor.sourceRect.maxY - viewportBounds.minY + anchor.yOffset + metrics.height / 2
+        let minY = inset + metrics.height / 2
+        let maxY = viewportBounds.height - inset - metrics.height / 2
+        let clampedY = min(max(preferredY, minY), maxY)
+
+        return CGPoint(x: clampedX, y: clampedY)
+    }
+
+    private func applyTaskDateSelection(
+        task: TaskViewModel,
+        target: CommandCenterTaskDateTarget,
+        selection: CommandCenterScheduleSelection
+    ) {
+        switch target {
+        case .dueDate:
+            applyTaskScheduleSelection(selection, taskUUID: task.uuid)
+        case .whenDate:
+            guard case let .date(date) = selection else { return }
+            Task { await viewModel.setWhenDate(taskUUID: task.uuid, date: date) }
+        case .deadline:
+            guard case let .date(date) = selection else { return }
+            Task { await viewModel.setDeadline(taskUUID: task.uuid, date: date) }
+        }
+    }
+
+    private func applyTaskScheduleSelection(_ selection: CommandCenterScheduleSelection, taskUUID: String) {
+        switch selection {
+        case let .date(date):
+            Task { await viewModel.rescheduleTask(uuid: taskUUID, toDate: date) }
+        case .someday:
+            Task { await viewModel.setSchedulingState(taskUUID: taskUUID, state: "someday") }
+        }
+    }
+
+    private func applyBatchScheduleSelection(_ selection: CommandCenterScheduleSelection, taskUUIDs: [String]) {
+        switch selection {
+        case let .date(date):
+            Task { await viewModel.rescheduleTasks(uuids: taskUUIDs, toDate: date) }
+        case .someday:
+            Task {
+                for taskUUID in taskUUIDs {
+                    await viewModel.setSchedulingState(taskUUID: taskUUID, state: "someday")
+                }
+            }
+        }
+    }
+
+    private func toggleTaskCompletion(_ task: TaskViewModel) {
+        Task {
+            if task.isCompleted {
+                _ = await viewModel.uncompleteTask(uuid: task.uuid)
+            } else {
+                let completed = await viewModel.completeTask(uuid: task.uuid)
+                if completed {
+                    viewModel.notifyCompletedTaskArrival()
+                }
+            }
+        }
+        composer.dismiss()
+    }
+
+    private func saveHabitDraft(_ draft: CommandCenterHabitEditorDraft, editing habit: HabitDefinition?) {
+        let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+
+        Task {
+            if var existing = habit {
+                existing.title = title
+                existing.icon = draft.icon
+                existing.accentColor = draft.accentColor
+                existing.dailyTargetCount = draft.dailyTargetCount
+                existing.keywordTriggers = draft.keywords
+                existing.mappedIntents = draft.mappedIntents.map(\.rawValue).sorted()
+                existing.allowManualCompletion = draft.allowManualCompletion
+                await viewModel.updateHabit(existing)
+            } else {
+                await viewModel.createHabit(
+                    title: title,
+                    icon: draft.icon,
+                    accentColor: draft.accentColor,
+                    dailyTargetCount: draft.dailyTargetCount,
+                    keywordTriggers: draft.keywords,
+                    mappedIntents: Array(draft.mappedIntents).sorted { $0.displayName < $1.displayName },
+                    allowManualCompletion: draft.allowManualCompletion
+                )
+            }
+        }
+
+        composer.dismiss()
+    }
+}
+
+private struct CommandCenterComposerMetrics {
+    let width: CGFloat
+    let height: CGFloat
+    let maxHeight: CGFloat
+
+    init(route: CommandCenterComposerRoute, viewport: CGSize) {
+        switch route {
+        case .habitEditor:
+            width = 420
+            height = min(viewport.height - 48, 660)
+        case .habitLibrary:
+            width = 380
+            height = min(viewport.height - 48, 520)
+        case .taskActions:
+            width = 360
+            height = min(viewport.height - 48, 470)
+        case .taskHabit, .taskIntent:
+            width = 320
+            height = min(viewport.height - 48, 380)
+        case .taskDate, .batchSchedule:
+            width = 360
+            height = min(viewport.height - 48, 500)
+        }
+
+        maxHeight = height
+    }
+}
+
+struct CommandCenterComposerTrigger<Label: View>: View {
+    let composer: CommandCenterComposerController
+    var alignment: CommandCenterComposerHorizontalAlignment = .leading
+    let makeRoute: (CommandCenterComposerAnchor) -> CommandCenterComposerRoute
+    @ViewBuilder let label: () -> Label
+
+    @State private var frame: CGRect = .zero
+
+    var body: some View {
         Button {
-            CosmicHaptics.shared.play(.selection)
-            onSelect(date)
+            let anchor = CommandCenterComposerAnchor(sourceRect: frame, alignment: alignment)
+            composer.present(makeRoute(anchor))
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(DS.caption2)
-                Text(label)
-                    .font(DS.caption2)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+            label()
+        }
+        .buttonStyle(.plain)
+        .background(CommandCenterGlobalFrameReader(frame: $frame))
+    }
+}
+
+struct CommandCenterGlobalFrameReader: View {
+    @Binding var frame: CGRect
+
+    var body: some View {
+        GeometryReader { proxy in
+            let nextFrame = proxy.frame(in: .global)
+            Color.clear
+                .onAppear { frame = nextFrame }
+                .onChange(of: nextFrame) { _, updatedFrame in
+                    frame = updatedFrame
+                }
+        }
+    }
+}
+
+struct CommandCenterComposerShell<Content: View>: View {
+    let title: String
+    let subtitle: String?
+    let onClose: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            AkashicSectionDivider()
+                .padding(.top, 2)
+            ScrollView(.vertical, showsIndicators: false) {
+                content()
+                    .padding(.horizontal, DS.space20)
+                    .padding(.vertical, DS.space18)
             }
-            .foregroundStyle(tint)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(tint.opacity(0.08), in: Capsule())
-            .overlay(Capsule().stroke(tint.opacity(0.15), lineWidth: 1))
+        }
+        .background(DS.vellum, in: .rect(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(DS.sepiaBorder, lineWidth: 0.5)
+        )
+        .overlay(alignment: .topLeading) {
+            GiltCornerBracket()
+                .stroke(DS.gilt, lineWidth: 0.8)
+                .frame(width: 13, height: 13)
+                .padding(10)
+        }
+        .shadow(color: .black.opacity(0.08), radius: 24, y: 16)
+        .onExitCommand(perform: onClose)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: DS.space12) {
+            VStack(alignment: .leading, spacing: DS.space6) {
+                Text(title)
+                    .font(DS.smallCaps)
+                    .foregroundStyle(DS.giltMuted)
+                    .tracking(1.8)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 16, weight: .regular, design: .serif))
+                        .foregroundStyle(DS.text)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.inkFaded)
+                    .frame(width: 30, height: 30)
+                    .background(DS.vellumDeep, in: Circle())
+                    .overlay(Circle().stroke(DS.sepiaBorder, lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close composer")
+        }
+        .padding(.horizontal, DS.space20)
+        .padding(.top, DS.space18)
+        .padding(.bottom, DS.space16)
+    }
+}
+
+struct CommandCenterScheduleComposer: View {
+    let title: String
+    let subtitle: String?
+    let helperText: String
+    let currentDate: Date?
+    var includeNilActions: Bool = true
+    var showSomedayAction: Bool = false
+    let onSelect: (CommandCenterScheduleSelection) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        CommandCenterComposerShell(title: title, subtitle: subtitle, onClose: onClose) {
+            VStack(alignment: .leading, spacing: DS.space18) {
+                Text(helperText)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.inkFaded)
+
+                CommandCenterScheduleSection(
+                    currentDate: currentDate,
+                    includeNilActions: includeNilActions,
+                    showSomedayAction: showSomedayAction,
+                    onSelect: onSelect
+                )
+            }
+        }
+    }
+}
+
+struct CommandCenterTaskActionComposer: View {
+    let task: TaskViewModel
+    let currentHabit: HabitDefinition?
+    let availableHabits: [HabitDefinition]
+    let loadRecurrenceRule: () async -> RecurrenceRule?
+    let onToggleCompletion: () -> Void
+    let onSelectSchedule: (CommandCenterScheduleSelection) -> Void
+    let onApplyHabit: (String?) -> Void
+    let onApplyRecurrence: (RecurrenceRule?) -> Void
+    let onDelete: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var activeTab: ActionTab = .schedule
+    @State private var recurrenceRule: RecurrenceRule?
+    @State private var recurrencePreset: CommandCenterRepeatPreset = .weekly
+    @State private var selectedDays: Set<DayOfWeek> = []
+    @State private var isLoadingRecurrence = true
+
+    private enum ActionTab: String, CaseIterable {
+        case schedule
+        case recurrence
+        case habit
+
+        var label: String {
+            switch self {
+            case .schedule: return "Schedule"
+            case .recurrence: return "Repeat"
+            case .habit: return "Habit"
+            }
+        }
+
+        var title: String {
+            label.uppercased()
+        }
+    }
+
+    var body: some View {
+        CommandCenterComposerShell(title: activeTab.title, subtitle: task.title, onClose: onDismiss) {
+            VStack(alignment: .leading, spacing: DS.space18) {
+                actionRail
+                metadataLine
+                tabStrip
+                tabContent
+            }
+        }
+        .task {
+            recurrenceRule = await loadRecurrenceRule()
+            hydrateRepeatEditor()
+            isLoadingRecurrence = false
+        }
+    }
+
+    private var actionRail: some View {
+        HStack(spacing: DS.space8) {
+            subtleActionButton(
+                title: task.isCompleted ? "Undo" : "Complete",
+                systemImage: task.isCompleted ? "arrow.uturn.backward" : "checkmark",
+                tint: task.isCompleted ? DS.textSecondary : DS.green,
+                action: onToggleCompletion
+            )
+
+            Spacer()
+
+            subtleActionButton(
+                title: "Delete",
+                systemImage: "trash",
+                tint: DS.red.opacity(0.8),
+                action: onDelete
+            )
+        }
+    }
+
+    private var metadataLine: some View {
+        HStack(spacing: DS.space10) {
+            if let dueInfo = task.dueInfo {
+                metaGlyph(text: dueInfo, icon: "calendar", color: task.isOverdue ? DS.red : DS.inkFaded)
+            }
+
+            if recurrenceRule != nil || task.isRecurring {
+                metaGlyph(text: recurrenceRule?.shortDisplayText ?? "Repeats", icon: "repeat", color: DS.accent.opacity(0.9))
+            }
+
+            if let currentHabit {
+                metaGlyph(text: currentHabit.title, icon: currentHabit.icon, color: currentHabit.accent.opacity(0.9))
+            }
+        }
+    }
+
+    private var tabStrip: some View {
+        HStack(spacing: DS.space8) {
+            ForEach(ActionTab.allCases, id: \.self) { tab in
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        activeTab = tab
+                    }
+                } label: {
+                    VStack(spacing: 6) {
+                        Text(tab.label)
+                            .font(DS.smallCaps)
+                            .foregroundStyle(activeTab == tab ? DS.text : DS.giltMuted)
+                            .tracking(1.2)
+
+                        Rectangle()
+                            .fill(activeTab == tab ? DS.gilt.opacity(0.8) : DS.sepiaSubtle.opacity(0.001))
+                            .frame(height: 1)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch activeTab {
+        case .schedule:
+            CommandCenterScheduleSection(
+                currentDate: task.dueDate ?? task.whenDate,
+                includeNilActions: true,
+                showSomedayAction: true,
+                onSelect: { selection in
+                    onSelectSchedule(selection)
+                    onDismiss()
+                }
+            )
+        case .recurrence:
+            repeatSection
+        case .habit:
+            CommandCenterHabitPickerSection(
+                currentHabitUUID: currentHabit?.id,
+                availableHabits: availableHabits,
+                onSelect: { habitUUID in
+                    onApplyHabit(habitUUID)
+                    onDismiss()
+                }
+            )
+        }
+    }
+
+    private var repeatSection: some View {
+        VStack(alignment: .leading, spacing: DS.space16) {
+            if isLoadingRecurrence {
+                HStack {
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                    Spacer()
+                }
+                .padding(.vertical, DS.space16)
+            } else {
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    composerSectionLabel("Cadence")
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) {
+                        ForEach(CommandCenterRepeatPreset.allCases, id: \.self) { preset in
+                            repeatPresetButton(preset)
+                        }
+                    }
+                }
+
+                if recurrencePreset.requiresDaySelection {
+                    VStack(alignment: .leading, spacing: DS.space8) {
+                        composerSectionLabel("Days")
+                        HStack(spacing: DS.space6) {
+                            ForEach(DayOfWeek.allCases, id: \.self) { day in
+                                repeatDayButton(day)
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: DS.space10) {
+                    if recurrenceRule != nil || task.isRecurring {
+                        Button("Stop repeating") {
+                            onApplyRecurrence(nil)
+                            onDismiss()
+                        }
+                        .buttonStyle(.plain)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.red)
+                    }
+
+                    Spacer()
+
+                    subtleActionButton(
+                        title: "Apply",
+                        systemImage: "checkmark",
+                        tint: DS.accent,
+                        action: {
+                            onApplyRecurrence(buildRule())
+                            onDismiss()
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private func repeatPresetButton(_ preset: CommandCenterRepeatPreset) -> some View {
+        let isActive = recurrencePreset == preset
+        return Button {
+            recurrencePreset = preset
+            if selectedDays.isEmpty {
+                selectedDays = defaultDays(for: preset)
+            }
+        } label: {
+            Text(preset.label)
+                .font(DS.callout)
+                .foregroundStyle(isActive ? DS.text : DS.inkFaded)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DS.space8)
+                .background(isActive ? DS.giltSoft.opacity(0.85) : DS.vellumDeep, in: .rect(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(isActive ? DS.gilt.opacity(0.7) : DS.sepiaBorder, lineWidth: 0.5)
+                )
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Inline Calendar
+    private func repeatDayButton(_ day: DayOfWeek) -> some View {
+        let isSelected = selectedDays.contains(day)
+        return Button {
+            if isSelected {
+                selectedDays.remove(day)
+            } else {
+                selectedDays.insert(day)
+            }
+        } label: {
+            Text(day.shortName)
+                .font(DS.caption)
+                .foregroundStyle(isSelected ? DS.text : DS.inkFaded)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DS.space8)
+                .background(isSelected ? DS.accentSoft.opacity(0.75) : DS.vellumDeep, in: .rect(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isSelected ? DS.accent.opacity(0.45) : DS.sepiaBorder, lineWidth: 0.5)
+                )
+        }
+        .buttonStyle(.plain)
+    }
 
-    private var inlineCalendar: some View {
-        DatePicker(
-            "",
-            selection: $selectedDate,
-            displayedComponents: [.date]
-        )
-        .datePickerStyle(.graphical)
-        .labelsHidden()
-        .tint(DS.accent)
-        .frame(width: 260)
-        .environment(\.colorScheme, .light)
-        .onChange(of: selectedDate) {
-            onSelectDate(selectedDate)
+    private func hydrateRepeatEditor() {
+        guard let recurrenceRule else {
+            recurrencePreset = .weekly
+            selectedDays = defaultDays(for: .weekly)
+            return
+        }
+
+        switch recurrenceRule.frequency {
+        case .daily: recurrencePreset = .daily
+        case .weekdays: recurrencePreset = .weekdays
+        case .monthly, .yearly: recurrencePreset = .monthly
+        case .weekly, .biweekly: recurrencePreset = .weekly
+        case .custom: recurrencePreset = .custom
+        }
+
+        if let days = recurrenceRule.daysOfWeek {
+            selectedDays = Set(days)
+        } else {
+            selectedDays = defaultDays(for: recurrencePreset)
         }
     }
 
-    // MARK: - Date Helpers
+    private func defaultDays(for preset: CommandCenterRepeatPreset) -> Set<DayOfWeek> {
+        switch preset {
+        case .weekdays:
+            return Set(DayOfWeek.weekdays)
+        case .daily, .monthly, .weekly, .custom:
+            let weekday = Calendar.current.component(.weekday, from: task.dueDate ?? Date())
+            return Set(DayOfWeek.allCases.filter { $0.rawValue == weekday })
+        }
+    }
 
-    private func nextWeekendDate() -> Date? {
+    private func buildRule() -> RecurrenceRule {
+        switch recurrencePreset {
+        case .daily:
+            return .daily()
+        case .weekdays:
+            return .weekdays()
+        case .weekly:
+            let orderedDays = selectedDays.isEmpty ? Array(defaultDays(for: .weekly)) : Array(selectedDays)
+            return .weekly(on: orderedDays.sorted { $0.rawValue < $1.rawValue })
+        case .monthly:
+            let day = Calendar.current.component(.day, from: task.dueDate ?? Date())
+            return .monthly(onDay: day)
+        case .custom:
+            let orderedDays = selectedDays.isEmpty ? Array(defaultDays(for: .custom)) : Array(selectedDays)
+            return RecurrenceRule(
+                frequency: .custom,
+                interval: 1,
+                daysOfWeek: orderedDays.sorted { $0.rawValue < $1.rawValue },
+                dayOfMonth: nil,
+                monthOfYear: nil,
+                endCondition: .never
+            )
+        }
+    }
+}
+
+struct CommandCenterIntentPickerComposer: View {
+    let taskTitle: String
+    let currentIntent: TaskIntent
+    let onSelect: (TaskIntent) -> Void
+    let onClose: () -> Void
+
+    private let intents: [TaskIntent] = [.general, .writeContent, .research, .studySwipes, .deepThink, .review]
+
+    var body: some View {
+        CommandCenterComposerShell(title: "INTENT", subtitle: taskTitle, onClose: onClose) {
+            VStack(alignment: .leading, spacing: DS.space10) {
+                Text("Route this task toward the right working mode.")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.inkFaded)
+
+                ForEach(intents, id: \.rawValue) { intent in
+                    intentRow(intent)
+                }
+            }
+        }
+    }
+
+    private func intentRow(_ intent: TaskIntent) -> some View {
+        let isSelected = currentIntent == intent
+        return Button {
+            onSelect(intent)
+        } label: {
+            HStack(spacing: DS.space10) {
+                Image(systemName: intent.iconName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(intent.color)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(intent.displayName)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                    Text(intentHintText(for: intent))
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(DS.caption2)
+                        .foregroundStyle(intent.color)
+                }
+            }
+            .padding(.vertical, DS.space8)
+            .padding(.horizontal, DS.space10)
+            .background(isSelected ? intent.color.opacity(0.08) : Color.clear, in: .rect(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? intent.color.opacity(0.25) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func intentHintText(for intent: TaskIntent) -> String {
+        switch intent {
+        case .writeContent: return "Writing and drafting work"
+        case .research: return "Reading, digging, and synthesis"
+        case .studySwipes: return "Pattern review and swipe study"
+        case .deepThink: return "Thinking, outlining, and shaping"
+        case .review: return "Polishing and quality passes"
+        case .general: return "General task flow"
+        case .custom: return "Custom workflow routing"
+        }
+    }
+}
+
+struct CommandCenterHabitPickerComposer: View {
+    let taskTitle: String
+    let currentHabitUUID: String?
+    let availableHabits: [HabitDefinition]
+    let onSelect: (String?) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        CommandCenterComposerShell(title: "HABIT", subtitle: taskTitle, onClose: onClose) {
+            CommandCenterHabitPickerSection(
+                currentHabitUUID: currentHabitUUID,
+                availableHabits: availableHabits,
+                onSelect: onSelect
+            )
+        }
+    }
+}
+
+struct CommandCenterHabitPickerSection: View {
+    let currentHabitUUID: String?
+    let availableHabits: [HabitDefinition]
+    let onSelect: (String?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            Text("Tie the task to a rhythm so completions feed the right orbit.")
+                .font(DS.callout)
+                .foregroundStyle(DS.inkFaded)
+
+            habitRow(
+                title: "No habit",
+                subtitle: "Keep this task independent.",
+                icon: "slash.circle",
+                tint: DS.textSecondary,
+                isSelected: currentHabitUUID == nil,
+                action: { onSelect(nil) }
+            )
+
+            ForEach(availableHabits, id: \.id) { habit in
+                habitRow(
+                    title: habit.title,
+                    subtitle: habit.taskIntents.map(\.displayName).joined(separator: " · "),
+                    icon: habit.icon,
+                    tint: habit.accent,
+                    isSelected: currentHabitUUID == habit.id,
+                    action: { onSelect(habit.id) }
+                )
+            }
+        }
+    }
+
+    private func habitRow(
+        title: String,
+        subtitle: String,
+        icon: String,
+        tint: Color,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: DS.space10) {
+                Circle()
+                    .fill(tint.opacity(isSelected ? 0.16 : 0.08))
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Image(systemName: icon)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(tint)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.inkFaded)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(DS.caption2)
+                        .foregroundStyle(tint)
+                }
+            }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
+            .background(isSelected ? tint.opacity(0.06) : Color.clear, in: .rect(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? tint.opacity(0.24) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct CommandCenterScheduleSection: View {
+    let currentDate: Date?
+    var includeNilActions: Bool = true
+    var showSomedayAction: Bool = false
+    let onSelect: (CommandCenterScheduleSelection) -> Void
+
+    @State private var manualInput = ""
+    @State private var displayedMonth: Date
+
+    init(
+        currentDate: Date?,
+        includeNilActions: Bool = true,
+        showSomedayAction: Bool = false,
+        onSelect: @escaping (CommandCenterScheduleSelection) -> Void
+    ) {
+        self.currentDate = currentDate
+        self.includeNilActions = includeNilActions
+        self.showSomedayAction = showSomedayAction
+        self.onSelect = onSelect
+        _displayedMonth = State(initialValue: CommandCenterScheduleUtilities.startOfMonth(for: currentDate ?? Date()))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space16) {
+            quickActions
+            naturalLanguageField
+            calendarSection
+
+            if includeNilActions && currentDate != nil {
+                HStack {
+                    Spacer()
+                    Button("Clear date") {
+                        onSelect(.date(nil))
+                    }
+                    .buttonStyle(.plain)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.red)
+                }
+            }
+        }
+    }
+
+    private var quickActions: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            composerSectionLabel("Quick")
+
+            HStack(spacing: DS.space8) {
+                quickActionChip(title: "Today", systemImage: "sun.max", tint: DS.green, selection: .date(Date()))
+                quickActionChip(
+                    title: "Tomorrow",
+                    systemImage: "sunrise",
+                    tint: DS.orange,
+                    selection: .date(Calendar.current.date(byAdding: .day, value: 1, to: Date()))
+                )
+                quickActionChip(
+                    title: "Weekend",
+                    systemImage: "sparkles",
+                    tint: DS.accent,
+                    selection: .date(CommandCenterScheduleUtilities.nextWeekendDate())
+                )
+                quickActionChip(
+                    title: "+1 Week",
+                    systemImage: "arrow.right",
+                    tint: DS.textSecondary,
+                    selection: .date(CommandCenterScheduleUtilities.nextWeekStart())
+                )
+            }
+
+            if includeNilActions {
+                HStack(spacing: DS.space8) {
+                    if showSomedayAction {
+                        quickActionChip(title: "Someday", systemImage: "archivebox", tint: DS.giltMuted, selection: .someday)
+                    }
+                    quickActionChip(title: "No Date", systemImage: "slash.circle", tint: DS.textMuted, selection: .date(nil))
+                }
+            }
+        }
+    }
+
+    private var naturalLanguageField: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            composerSectionLabel("When")
+
+            TextField("tomorrow, next monday, apr 24", text: $manualInput)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .regular, design: .serif))
+                .foregroundStyle(DS.text)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space10)
+                .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                )
+                .onSubmit {
+                    guard let parsed = CommandCenterScheduleUtilities.parseDateInput(manualInput) else { return }
+                    displayedMonth = CommandCenterScheduleUtilities.startOfMonth(for: parsed)
+                    onSelect(.date(parsed))
+                }
+        }
+    }
+
+    private var calendarSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            CommandCenterMonthGrid(
+                displayedMonth: $displayedMonth,
+                selectedDate: currentDate,
+                onSelectDate: { onSelect(.date($0)) }
+            )
+        }
+    }
+
+    private func quickActionChip(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        selection: CommandCenterScheduleSelection
+    ) -> some View {
+        Button {
+            onSelect(selection)
+        } label: {
+            HStack(spacing: DS.space4) {
+                Image(systemName: systemImage)
+                    .font(DS.caption2)
+                Text(title)
+                    .font(DS.caption)
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
+            .background(tint.opacity(0.08), in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(tint.opacity(0.16), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct CommandCenterMonthGrid: View {
+    @Binding var displayedMonth: Date
+    let selectedDate: Date?
+    let onSelectDate: (Date?) -> Void
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            HStack(spacing: DS.space10) {
+                Button {
+                    displayedMonth = CommandCenterScheduleUtilities.month(byAdding: -1, to: displayedMonth)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+
+                Text(displayedMonth.formatted(.dateTime.month(.wide).year()))
+                    .font(.system(size: 17, weight: .regular, design: .serif))
+                    .foregroundStyle(DS.text)
+
+                Spacer()
+
+                Button {
+                    displayedMonth = CommandCenterScheduleUtilities.month(byAdding: 1, to: displayedMonth)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+            }
+
+            LazyVGrid(columns: columns, spacing: DS.space8) {
+                ForEach(CommandCenterScheduleUtilities.weekdaySymbols, id: \.self) { symbol in
+                    Text(symbol)
+                        .font(DS.smallCaps)
+                        .foregroundStyle(DS.giltMuted)
+                        .frame(maxWidth: .infinity)
+                }
+
+                ForEach(CommandCenterScheduleUtilities.days(for: displayedMonth), id: \.id) { day in
+                    if let date = day.date {
+                        dayButton(date, isCurrentMonth: day.isCurrentMonth)
+                    } else {
+                        Color.clear
+                            .frame(height: 30)
+                    }
+                }
+            }
+        }
+    }
+
+    private func dayButton(_ date: Date, isCurrentMonth: Bool) -> some View {
+        let isSelected = CommandCenterScheduleUtilities.matches(selectedDate, date)
+        let isToday = Calendar.current.isDateInToday(date)
+
+        return Button {
+            onSelectDate(date)
+        } label: {
+            Text("\(Calendar.current.component(.day, from: date))")
+                .font(.system(size: 13, weight: isSelected ? .semibold : .regular, design: .monospaced))
+                .foregroundStyle(dayColor(isSelected: isSelected, isToday: isToday, isCurrentMonth: isCurrentMonth))
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .background(dayBackground(isSelected: isSelected, isToday: isToday), in: .rect(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(dayBorder(isSelected: isSelected, isToday: isToday), lineWidth: 0.5)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func dayColor(isSelected: Bool, isToday: Bool, isCurrentMonth: Bool) -> Color {
+        if isSelected { return DS.text }
+        if isToday { return DS.accent }
+        return isCurrentMonth ? DS.text : DS.inkFaded.opacity(0.45)
+    }
+
+    private func dayBackground(isSelected: Bool, isToday: Bool) -> Color {
+        if isSelected { return DS.giltSoft.opacity(0.92) }
+        if isToday { return DS.accentSoft.opacity(0.55) }
+        return Color.clear
+    }
+
+    private func dayBorder(isSelected: Bool, isToday: Bool) -> Color {
+        if isSelected { return DS.gilt.opacity(0.85) }
+        if isToday { return DS.accent.opacity(0.25) }
+        return Color.clear
+    }
+}
+
+struct CommandCenterScheduleUtilities {
+    struct DayCell: Identifiable {
+        let id = UUID()
+        let date: Date?
+        let isCurrentMonth: Bool
+    }
+
+    static var weekdaySymbols: [String] {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        formatter.locale = calendar.locale ?? Locale.current
+        let symbols = formatter.shortStandaloneWeekdaySymbols ?? formatter.shortWeekdaySymbols ?? []
+
+        guard !symbols.isEmpty else {
+            return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        }
+
+        let firstWeekdayIndex = max(0, min(symbols.count - 1, calendar.firstWeekday - 1))
+        return Array(symbols[firstWeekdayIndex...]) + Array(symbols[..<firstWeekdayIndex])
+    }
+
+    static func startOfMonth(for date: Date) -> Date {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month], from: date)
+        return calendar.date(from: components) ?? date
+    }
+
+    static func month(byAdding offset: Int, to date: Date) -> Date {
+        Calendar.current.date(byAdding: .month, value: offset, to: startOfMonth(for: date)) ?? date
+    }
+
+    static func days(for month: Date) -> [DayCell] {
+        let calendar = Calendar.current
+        let start = startOfMonth(for: month)
+        guard let range = calendar.range(of: .day, in: .month, for: start) else { return [] }
+
+        let firstWeekday = calendar.component(.weekday, from: start)
+        let leadingSlots = (firstWeekday - calendar.firstWeekday + 7) % 7
+        var cells = Array(repeating: DayCell(date: nil, isCurrentMonth: false), count: leadingSlots)
+
+        for day in range {
+            let date = calendar.date(byAdding: .day, value: day - 1, to: start)
+            cells.append(DayCell(date: date, isCurrentMonth: true))
+        }
+
+        while cells.count % 7 != 0 {
+            cells.append(DayCell(date: nil, isCurrentMonth: false))
+        }
+
+        return cells
+    }
+
+    static func matches(_ lhs: Date?, _ rhs: Date?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return Calendar.current.isDate(lhs, inSameDayAs: rhs)
+    }
+
+    static func nextWeekendDate() -> Date? {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         let weekday = calendar.component(.weekday, from: today)
@@ -127,7 +1309,7 @@ struct CommandCenterReschedulePanel: View {
         return calendar.date(byAdding: .day, value: delta, to: today)
     }
 
-    private func nextWeekStart() -> Date? {
+    static func nextWeekStart() -> Date? {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         let weekday = calendar.component(.weekday, from: today)
@@ -137,7 +1319,7 @@ struct CommandCenterReschedulePanel: View {
         return calendar.date(byAdding: .day, value: normalized, to: today)
     }
 
-    private func parseDateInput(_ input: String) -> Date? {
+    static func parseDateInput(_ input: String) -> Date? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -145,6 +1327,12 @@ struct CommandCenterReschedulePanel: View {
         if lowercase == "today" { return Date() }
         if lowercase == "tomorrow" {
             return Calendar.current.date(byAdding: .day, value: 1, to: Date())
+        }
+        if lowercase == "next week" {
+            return nextWeekStart()
+        }
+        if lowercase == "weekend" {
+            return nextWeekendDate()
         }
 
         let weekdayMap: [String: DayOfWeek] = [
@@ -161,6 +1349,11 @@ struct CommandCenterReschedulePanel: View {
             return nextDate(for: weekday)
         }
 
+        let strippedNext = lowercase.replacingOccurrences(of: "next ", with: "")
+        if let weekday = weekdayMap[strippedNext], lowercase.hasPrefix("next ") {
+            return nextDate(for: weekday, allowingToday: false)
+        }
+
         let formats = ["M/d", "M/d/yyyy", "MMM d", "MMMM d", "MMM d yyyy", "MMMM d yyyy"]
         for format in formats {
             let formatter = DateFormatter()
@@ -174,582 +1367,38 @@ struct CommandCenterReschedulePanel: View {
         return nil
     }
 
-    private func normalizedDate(_ date: Date, for format: String) -> Date {
+    private static func normalizedDate(_ date: Date, for format: String) -> Date {
         let calendar = Calendar.current
         if format.contains("yyyy") { return date }
+
         var components = calendar.dateComponents([.month, .day], from: date)
         components.year = calendar.component(.year, from: Date())
         let candidate = calendar.date(from: components) ?? date
+
         return candidate < calendar.startOfDay(for: Date())
             ? calendar.date(byAdding: .year, value: 1, to: candidate) ?? candidate
             : candidate
     }
 
-    private func nextDate(for weekday: DayOfWeek) -> Date? {
+    private static func nextDate(for weekday: DayOfWeek, allowingToday: Bool = true) -> Date? {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         let current = calendar.component(.weekday, from: today)
         var delta = weekday.rawValue - current
         if delta < 0 { delta += 7 }
+        if delta == 0 && !allowingToday {
+            delta = 7
+        }
         return calendar.date(byAdding: .day, value: delta, to: today)
     }
 }
-
-// MARK: - Task Action Popover (tabbed command palette)
-
-struct CommandCenterTaskActionPopover: View {
-    let task: TaskViewModel
-    let currentHabit: HabitDefinition?
-    let availableHabits: [HabitDefinition]
-    let loadRecurrenceRule: () async -> RecurrenceRule?
-    let onToggleCompletion: () -> Void
-    let onReschedule: (Date?) -> Void
-    let onApplyHabit: (String?) -> Void
-    let onApplyRecurrence: (RecurrenceRule?) -> Void
-    let onDelete: () -> Void
-    let onDismiss: () -> Void
-
-    @State private var activeTab: ActionTab = .schedule
-    @State private var recurrenceRule: RecurrenceRule?
-    @State private var recurrencePreset: CommandCenterRepeatPreset = .weekly
-    @State private var selectedDays: Set<DayOfWeek> = []
-    @State private var isLoadingRecurrence = true
-    @State private var manualDateInput = ""
-    @State private var calendarDate = Date()
-
-    private enum ActionTab: String {
-        case schedule, recurrence, habit
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header: title + metadata
-            header
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-            // Divider
-            CosmoGradientDivider()
-
-            // Tab strip + action buttons
-            tabStrip
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-
-            // Divider
-            CosmoGradientDivider()
-
-            // Tab content — fixed min height prevents popover resize crash on macOS
-            tabContent
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .frame(minHeight: 200, alignment: .top)
-        }
-        .frame(width: 300)
-        .cosmoMenuChrome(cornerRadius: 14)
-        .environment(\.colorScheme, .light)
-        .animation(nil, value: activeTab)
-        .task {
-            recurrenceRule = await loadRecurrenceRule()
-            hydrateRepeatEditor()
-            isLoadingRecurrence = false
-        }
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(task.title)
-                    .font(DS.headline)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Button {
-                    onDismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 18, height: 18)
-                        .background(DS.surface, in: Circle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            HStack(spacing: 6) {
-                if let dueInfo = task.dueInfo {
-                    metaBadge(dueInfo, icon: "calendar", color: task.isOverdue ? DS.red : DS.textMuted)
-                }
-                if recurrenceRule != nil || task.isRecurring {
-                    metaBadge(recurrenceRule?.shortDisplayText ?? "Repeats", icon: "repeat", color: DS.accent)
-                }
-                if let currentHabit {
-                    metaBadge(currentHabit.title, icon: currentHabit.icon, color: currentHabit.accent)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func metaBadge(_ text: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(DS.caption2)
-            Text(text)
-                .font(DS.caption2)
-        }
-        .foregroundStyle(color)
-    }
-
-    // MARK: - Tab Strip
-
-    private var tabStrip: some View {
-        HStack(spacing: 2) {
-            // Complete button (standalone action, not a tab)
-            Button {
-                CosmicHaptics.shared.play(.success)
-                onToggleCompletion()
-                onDismiss()
-            } label: {
-                Image(systemName: task.isCompleted ? "arrow.uturn.backward" : "checkmark")
-                    .font(DS.caption2)
-                    .foregroundStyle(task.isCompleted ? DS.textSecondary : DS.green)
-                    .frame(width: 28, height: 28)
-                    .background((task.isCompleted ? DS.surface : DS.green.opacity(0.1)), in: RoundedRectangle(cornerRadius: 7))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(task.isCompleted ? "Mark incomplete" : "Complete task")
-
-            // Schedule tab
-            tabButton("calendar", label: "Schedule", tab: .schedule)
-
-            // Recurrence tab
-            tabButton("repeat", label: "Repeat", tab: .recurrence)
-
-            // Habit tab
-            tabButton("tag", label: "Habit", tab: .habit)
-
-            Spacer()
-
-            // Delete button (standalone action)
-            Button {
-                CosmicHaptics.shared.play(.delete)
-                onDelete()
-                onDismiss()
-            } label: {
-                Image(systemName: "trash")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.red.opacity(0.7))
-                    .frame(width: 28, height: 28)
-                    .background(DS.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Delete task")
-        }
-    }
-
-    @ViewBuilder
-    private func tabButton(_ icon: String, label: String, tab: ActionTab) -> some View {
-        let isActive = activeTab == tab
-
-        Button {
-            CosmicHaptics.shared.play(.threshold)
-            withAnimation(.easeInOut(duration: 0.15)) {
-                activeTab = tab
-            }
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(DS.caption2)
-                Text(label)
-                    .font(DS.caption2)
-            }
-            .foregroundStyle(isActive ? DS.accent : DS.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                isActive ? DS.accentSoft : Color.clear,
-                in: RoundedRectangle(cornerRadius: 7)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-    }
-
-    // MARK: - Tab Content
-
-    @ViewBuilder
-    private var tabContent: some View {
-        switch activeTab {
-        case .schedule:
-            scheduleContent
-        case .recurrence:
-            recurrenceContent
-        case .habit:
-            habitContent
-        }
-    }
-
-    // MARK: - Schedule Tab
-
-    private var scheduleContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Quick date chips — 2 rows
-            VStack(spacing: 6) {
-                HStack(spacing: 5) {
-                    quickChip("Today", icon: "sun.max", tint: DS.green, date: Date())
-                    quickChip("Tomorrow", icon: "sunrise", tint: DS.orange, date: Calendar.current.date(byAdding: .day, value: 1, to: Date()))
-                    quickChip("Wknd", icon: "sparkles", tint: DS.accent, date: nextWeekendDate())
-                    quickChip("+1 Wk", icon: "arrow.right", tint: DS.textSecondary, date: nextWeekStart())
-                }
-
-                HStack(spacing: 5) {
-                    quickChip("Someday", icon: "archivebox", tint: DS.entityIdea, date: nil)
-                    quickChip("No date", icon: "slash.circle", tint: DS.textMuted, date: nil)
-                    Spacer()
-                }
-            }
-
-            // Calendar
-            DatePicker("", selection: $calendarDate, displayedComponents: [.date])
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-                .tint(DS.accent)
-                .frame(width: 260)
-                .environment(\.colorScheme, .light)
-                .onChange(of: calendarDate) {
-                    onReschedule(calendarDate)
-                    onDismiss()
-                }
-
-            // Manual input
-            TextField("Type a date...", text: $manualDateInput)
-                .textFieldStyle(.plain)
-                .font(DS.footnote)
-                .foregroundStyle(DS.text)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(DS.surface, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(DS.borderSubtle, lineWidth: 1))
-                .onSubmit {
-                    guard let parsed = parseDateInput(manualDateInput) else { return }
-                    onReschedule(parsed)
-                    onDismiss()
-                }
-        }
-    }
-
-    @ViewBuilder
-    private func quickChip(_ label: String, icon: String, tint: Color, date: Date?) -> some View {
-        Button {
-            CosmicHaptics.shared.play(.selection)
-            onReschedule(date)
-            onDismiss()
-        } label: {
-            HStack(spacing: 2) {
-                Image(systemName: icon)
-                    .font(DS.caption2)
-                Text(label)
-                    .font(DS.caption2)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .foregroundStyle(tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(tint.opacity(0.08), in: Capsule())
-            .overlay(Capsule().stroke(tint.opacity(0.12), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Schedule \(label)")
-    }
-
-    // MARK: - Recurrence Tab
-
-    private var recurrenceContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if isLoadingRecurrence {
-                HStack {
-                    Spacer()
-                    ProgressView().controlSize(.small)
-                    Spacer()
-                }
-            } else {
-                // Preset chips
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 6)], spacing: 6) {
-                    ForEach(CommandCenterRepeatPreset.allCases, id: \.self) { preset in
-                        Button {
-                            recurrencePreset = preset
-                            if selectedDays.isEmpty {
-                                selectedDays = defaultDays(for: preset)
-                            }
-                        } label: {
-                            Text(preset.label)
-                                .font(DS.caption2)
-                                .foregroundStyle(recurrencePreset == preset ? DS.textOnAccent : DS.textSecondary)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 6)
-                                .background(
-                                    recurrencePreset == preset ? DS.accent : DS.surface,
-                                    in: RoundedRectangle(cornerRadius: 7)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .stroke(recurrencePreset == preset ? Color.clear : DS.borderSubtle, lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                // Day selector (weekly/custom)
-                if recurrencePreset.requiresDaySelection {
-                    HStack(spacing: 4) {
-                        ForEach(DayOfWeek.allCases, id: \.self) { day in
-                            Button {
-                                if selectedDays.contains(day) {
-                                    selectedDays.remove(day)
-                                } else {
-                                    selectedDays.insert(day)
-                                }
-                            } label: {
-                                Text(day.shortName)
-                                    .font(DS.caption2)
-                                    .foregroundStyle(selectedDays.contains(day) ? DS.textOnAccent : DS.textSecondary)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        selectedDays.contains(day) ? DS.accent : DS.surface,
-                                        in: RoundedRectangle(cornerRadius: 6)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-
-                // Action row
-                HStack(spacing: 8) {
-                    if recurrenceRule != nil || task.isRecurring {
-                        Button("Stop repeating") {
-                            onApplyRecurrence(nil)
-                            onDismiss()
-                        }
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.red)
-                        .buttonStyle(.plain)
-                    }
-
-                    Spacer()
-
-                    Button("Apply") {
-                        CosmicHaptics.shared.play(.selection)
-                        onApplyRecurrence(buildRule())
-                        onDismiss()
-                    }
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textOnAccent)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(DS.accent, in: Capsule())
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    // MARK: - Habit Tab
-
-    private var habitContent: some View {
-        VStack(spacing: 4) {
-            habitChip(title: "None", icon: "slash.circle", tint: DS.textSecondary, selected: currentHabit == nil) {
-                onApplyHabit(nil)
-                onDismiss()
-            }
-
-            ForEach(availableHabits, id: \.id) { habit in
-                habitChip(title: habit.title, icon: habit.icon, tint: habit.accent, selected: currentHabit?.id == habit.id) {
-                    onApplyHabit(habit.id)
-                    onDismiss()
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func habitChip(title: String, icon: String, tint: Color, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button {
-            CosmicHaptics.shared.play(.selection)
-            action()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(DS.caption)
-                    .foregroundStyle(tint)
-                    .frame(width: 18)
-
-                Text(title)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.text)
-
-                Spacer()
-
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(DS.caption2)
-                        .foregroundStyle(tint)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                selected ? tint.opacity(0.08) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 8)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Date Helpers
-
-    private func nextWeekendDate() -> Date? {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let weekday = calendar.component(.weekday, from: today)
-        let saturday = DayOfWeek.saturday.rawValue
-        let delta = weekday <= saturday ? saturday - weekday : (7 - weekday) + saturday
-        return calendar.date(byAdding: .day, value: delta, to: today)
-    }
-
-    private func nextWeekStart() -> Date? {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let weekday = calendar.component(.weekday, from: today)
-        let monday = DayOfWeek.monday.rawValue
-        let delta = ((7 - weekday) + monday) % 7
-        let normalized = delta == 0 ? 7 : delta
-        return calendar.date(byAdding: .day, value: normalized, to: today)
-    }
-
-    private func parseDateInput(_ input: String) -> Date? {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let lowercase = trimmed.lowercased()
-        if lowercase == "today" { return Date() }
-        if lowercase == "tomorrow" {
-            return Calendar.current.date(byAdding: .day, value: 1, to: Date())
-        }
-
-        let weekdayMap: [String: DayOfWeek] = [
-            "mon": .monday, "monday": .monday,
-            "tue": .tuesday, "tues": .tuesday, "tuesday": .tuesday,
-            "wed": .wednesday, "wednesday": .wednesday,
-            "thu": .thursday, "thur": .thursday, "thurs": .thursday, "thursday": .thursday,
-            "fri": .friday, "friday": .friday,
-            "sat": .saturday, "saturday": .saturday,
-            "sun": .sunday, "sunday": .sunday,
-        ]
-
-        if let weekday = weekdayMap[lowercase] {
-            let calendar = Calendar.current
-            let today = calendar.startOfDay(for: Date())
-            let current = calendar.component(.weekday, from: today)
-            var delta = weekday.rawValue - current
-            if delta < 0 { delta += 7 }
-            return calendar.date(byAdding: .day, value: delta, to: today)
-        }
-
-        let formats = ["M/d", "M/d/yyyy", "MMM d", "MMMM d", "MMM d yyyy", "MMMM d yyyy"]
-        for format in formats {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = format
-            if let date = formatter.date(from: trimmed) {
-                let calendar = Calendar.current
-                if format.contains("yyyy") { return date }
-                var components = calendar.dateComponents([.month, .day], from: date)
-                components.year = calendar.component(.year, from: Date())
-                let candidate = calendar.date(from: components) ?? date
-                return candidate < calendar.startOfDay(for: Date())
-                    ? calendar.date(byAdding: .year, value: 1, to: candidate) ?? candidate
-                    : candidate
-            }
-        }
-
-        return nil
-    }
-
-    // MARK: - Recurrence Logic
-
-    private func hydrateRepeatEditor() {
-        guard let recurrenceRule else {
-            recurrencePreset = .weekly
-            selectedDays = defaultDays(for: .weekly)
-            return
-        }
-
-        switch recurrenceRule.frequency {
-        case .daily: recurrencePreset = .daily
-        case .weekdays: recurrencePreset = .weekdays
-        case .monthly: recurrencePreset = .monthly
-        case .weekly, .biweekly: recurrencePreset = .weekly
-        case .custom: recurrencePreset = .custom
-        case .yearly: recurrencePreset = .monthly
-        }
-
-        if let days = recurrenceRule.daysOfWeek {
-            selectedDays = Set(days)
-        } else {
-            selectedDays = defaultDays(for: recurrencePreset)
-        }
-    }
-
-    private func defaultDays(for preset: CommandCenterRepeatPreset) -> Set<DayOfWeek> {
-        switch preset {
-        case .daily, .monthly:
-            let weekday = Calendar.current.component(.weekday, from: task.dueDate ?? Date())
-            return Set(DayOfWeek.allCases.filter { $0.rawValue == weekday })
-        case .weekdays:
-            return Set(DayOfWeek.weekdays)
-        case .weekly, .custom:
-            let weekday = Calendar.current.component(.weekday, from: task.dueDate ?? Date())
-            return Set(DayOfWeek.allCases.filter { $0.rawValue == weekday })
-        }
-    }
-
-    private func buildRule() -> RecurrenceRule {
-        switch recurrencePreset {
-        case .daily: return .daily()
-        case .weekdays: return .weekdays()
-        case .weekly:
-            let orderedDays = selectedDays.isEmpty ? Array(defaultDays(for: .weekly)) : Array(selectedDays)
-            return .weekly(on: orderedDays.sorted { $0.rawValue < $1.rawValue })
-        case .monthly:
-            let day = Calendar.current.component(.day, from: task.dueDate ?? Date())
-            return .monthly(onDay: day)
-        case .custom:
-            let orderedDays = selectedDays.isEmpty ? Array(defaultDays(for: .custom)) : Array(selectedDays)
-            return RecurrenceRule(
-                frequency: .custom, interval: 1,
-                daysOfWeek: orderedDays.sorted { $0.rawValue < $1.rawValue },
-                dayOfMonth: nil, monthOfYear: nil,
-                endCondition: .never
-            )
-        }
-    }
-}
-
-// MARK: - Repeat Preset Enum
 
 private enum CommandCenterRepeatPreset: CaseIterable {
-    case daily, weekdays, weekly, monthly, custom
+    case daily
+    case weekdays
+    case weekly
+    case monthly
+    case custom
 
     var label: String {
         switch self {
@@ -763,8 +1412,171 @@ private enum CommandCenterRepeatPreset: CaseIterable {
 
     var requiresDaySelection: Bool {
         switch self {
-        case .weekly, .custom: return true
-        case .daily, .weekdays, .monthly: return false
+        case .weekly, .custom:
+            return true
+        case .daily, .weekdays, .monthly:
+            return false
         }
+    }
+}
+
+private func subtleActionButton(
+    title: String,
+    systemImage: String,
+    tint: Color,
+    action: @escaping () -> Void
+) -> some View {
+    Button(action: action) {
+        HStack(spacing: DS.space6) {
+            Image(systemName: systemImage)
+                .font(DS.caption2)
+            Text(title)
+                .font(DS.callout)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space8)
+        .background(tint.opacity(0.08), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(tint.opacity(0.18), lineWidth: 1)
+        )
+    }
+    .buttonStyle(.plain)
+}
+
+func composerSectionLabel(_ text: String) -> some View {
+    HStack(spacing: DS.space8) {
+        Text(text.uppercased())
+            .font(DS.smallCaps)
+            .foregroundStyle(DS.giltMuted)
+            .tracking(1.4)
+        Rectangle()
+            .fill(DS.sepiaSubtle)
+            .frame(height: 0.5)
+    }
+}
+
+private func metaGlyph(text: String, icon: String, color: Color) -> some View {
+    HStack(spacing: DS.space4) {
+        Image(systemName: icon)
+            .font(DS.caption2)
+        Text(text)
+            .font(DS.caption)
+            .lineLimit(1)
+    }
+    .foregroundStyle(color)
+}
+
+#Preview("Schedule Composer") {
+    CommandCenterScheduleComposer(
+        title: "SCHEDULE",
+        subtitle: "Refine command center menus",
+        helperText: "Choose when this task should land.",
+        currentDate: Date(),
+        showSomedayAction: true,
+        onSelect: { _ in },
+        onClose: {}
+    )
+    .frame(width: 380, height: 520)
+    .padding()
+    .background(DS.bg)
+}
+
+#Preview("Task Action Composer") {
+    CommandCenterTaskActionComposer(
+        task: .previewTask(),
+        currentHabit: .previewHabit(),
+        availableHabits: [.previewHabit()],
+        loadRecurrenceRule: { .weekly(on: [.monday, .wednesday, .friday]) },
+        onToggleCompletion: {},
+        onSelectSchedule: { _ in },
+        onApplyHabit: { _ in },
+        onApplyRecurrence: { _ in },
+        onDelete: {},
+        onDismiss: {}
+    )
+    .frame(width: 380, height: 480)
+    .padding()
+    .background(DS.bg)
+}
+
+#Preview("Habit Picker Composer") {
+    CommandCenterHabitPickerComposer(
+        taskTitle: "Write landing page",
+        currentHabitUUID: HabitDefinition.previewHabit().id,
+        availableHabits: [.previewHabit()],
+        onSelect: { _ in },
+        onClose: {}
+    )
+    .frame(width: 340, height: 420)
+    .padding()
+    .background(DS.bg)
+}
+
+extension HabitDefinition {
+    static func previewHabit() -> HabitDefinition {
+        HabitDefinition(
+            id: "habit-writing",
+            title: "Writing Habit",
+            icon: "pencil.line",
+            accentColor: "2D6A4F",
+            dailyTargetCount: 3,
+            keywordTriggers: ["write", "draft"],
+            mappedIntents: [TaskIntent.writeContent.rawValue],
+            allowManualCompletion: true,
+            sortOrder: 0,
+            isBuiltIn: false,
+            isArchived: false
+        )
+    }
+}
+
+extension TaskViewModel {
+    static func previewTask() -> TaskViewModel {
+        TaskViewModel(
+            id: "task-preview",
+            uuid: "task-preview",
+            title: "Refine command center menus",
+            body: "Bring the command-center overlays into the Atelier language.",
+            projectUuid: nil,
+            projectName: "CosmoOS",
+            projectColor: DS.accent,
+            dueDate: Date(),
+            scheduledDate: Date(),
+            scheduledTime: nil,
+            estimatedMinutes: 45,
+            priority: .high,
+            isCompleted: false,
+            completedAt: nil,
+            intent: .writeContent,
+            habitUUID: HabitDefinition.previewHabit().id,
+            habitAssignmentSource: HabitAssignmentSource.manual.rawValue,
+            linkedIdeaUUID: nil,
+            linkedContentUUID: nil,
+            linkedAtomUUID: nil,
+            totalFocusMinutes: 32,
+            sessionCount: 2,
+            recurrenceParentUUID: nil,
+            isRecurring: true,
+            scheduledStart: nil,
+            scheduledEnd: nil,
+            manualSortOrder: nil,
+            taskType: nil,
+            energyLevel: nil,
+            cognitiveLoad: nil,
+            recommendationScore: 0,
+            recommendationReason: nil,
+            whenDate: Date(),
+            deadline: Calendar.current.date(byAdding: .day, value: 3, to: Date()),
+            timeOfDay: "morning",
+            schedulingState: nil,
+            headingUUID: nil,
+            checklist: [],
+            linkedAtoms: [],
+            titleMentions: [],
+            createdAt: Date(),
+            updatedAt: Date()
+        )
     }
 }

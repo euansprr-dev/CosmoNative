@@ -11,15 +11,18 @@ struct CortexIdeasBrowser: View {
     @State private var captureDraft = ""
     @FocusState private var captureFocused: Bool
 
+    private static let columnWidth: CGFloat = 272
+
     var body: some View {
-        ScrollView {
+        VStack(spacing: 0) {
             VStack(spacing: 0) {
                 header
                 captureRow
-                ledger
             }
             .padding(.horizontal, DS.space24)
-            .padding(.vertical, DS.space20)
+            .padding(.top, DS.space20)
+
+            ledger
         }
         .task {
             await reload()
@@ -102,58 +105,80 @@ struct CortexIdeasBrowser: View {
     private var ledger: some View {
         if !hasAppeared && viewModel.ideaGalleryItems.isEmpty {
             loadingState
+                .padding(.horizontal, DS.space24)
         } else if visibleIdeas.isEmpty {
             emptyState
+                .padding(.horizontal, DS.space24)
         } else {
-            sections
+            columns
         }
     }
 
-    private var sections: some View {
-        LazyVStack(spacing: DS.space24) {
-            ForEach(Array(clientSections.enumerated()), id: \.element.id) { sectionIndex, section in
-                clientSectionView(section, sectionIndex: sectionIndex)
+    private var columns: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 0) {
+                ForEach(Array(clientSections.enumerated()), id: \.element.id) { sectionIndex, section in
+                    clientColumn(section, sectionIndex: sectionIndex)
+                        .frame(width: Self.columnWidth, alignment: .top)
+
+                    if sectionIndex < clientSections.count - 1 {
+                        Rectangle()
+                            .fill(DS.sepiaSubtle)
+                            .frame(width: 0.5)
+                            .padding(.vertical, DS.space12)
+                    }
+                }
             }
+            .padding(.horizontal, DS.space24)
+            .padding(.top, DS.space12)
+            .padding(.bottom, DS.space20)
         }
     }
 
-    private func clientSectionView(_ section: IdeasLedgerSection, sectionIndex: Int) -> some View {
+    private func clientColumn(_ section: IdeasLedgerSection, sectionIndex: Int) -> some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            sectionHeader(section)
-            ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
-                LedgerRow(item: item) { openIdea(item) }
-                    .atelierStaggerIn(
-                        delay: staggerDelay(sectionIndex: sectionIndex, rowIndex: index),
-                        appeared: hasAppeared
-                    )
-                if index < section.items.count - 1 {
-                    Rectangle()
-                        .fill(DS.sepiaSubtle)
-                        .frame(height: 0.5)
-                        .padding(.leading, DS.space16)
+            columnHeader(section)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
+                        LedgerRow(item: item) { openIdea(item) }
+                            .atelierStaggerIn(
+                                delay: staggerDelay(sectionIndex: sectionIndex, rowIndex: index),
+                                appeared: hasAppeared
+                            )
+                        if index < section.items.count - 1 {
+                            Rectangle()
+                                .fill(DS.sepiaSubtle)
+                                .frame(height: 0.5)
+                                .padding(.leading, DS.space12)
+                        }
+                    }
                 }
             }
         }
+        .padding(.horizontal, DS.space16)
     }
 
-    private func sectionHeader(_ section: IdeasLedgerSection) -> some View {
-        HStack(spacing: DS.space10) {
-            Rectangle()
-                .fill(section.color.opacity(0.6))
-                .frame(width: 2, height: 14)
-                .accessibilityHidden(true)
-            Text(section.clientName.uppercased())
-                .font(DS.smallCaps)
-                .tracking(1.6)
-                .foregroundStyle(DS.giltMuted)
-                .fixedSize()
+    private func columnHeader(_ section: IdeasLedgerSection) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            HStack(spacing: DS.space10) {
+                Rectangle()
+                    .fill(section.color.opacity(0.6))
+                    .frame(width: 2, height: 14)
+                    .accessibilityHidden(true)
+                Text(section.clientName.uppercased())
+                    .font(DS.smallCaps)
+                    .tracking(1.6)
+                    .foregroundStyle(DS.giltMuted)
+                    .fixedSize()
+                Spacer(minLength: DS.space8)
+                Text(section.countText)
+                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .foregroundStyle(DS.inkFaded)
+            }
             Rectangle()
                 .fill(DS.sepiaSubtle)
                 .frame(height: 0.5)
-                .frame(maxWidth: .infinity)
-            Text(section.countText)
-                .font(.system(size: 9, weight: .regular, design: .monospaced))
-                .foregroundStyle(DS.inkFaded)
         }
     }
 
@@ -275,14 +300,13 @@ private struct LedgerRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(alignment: .center, spacing: DS.space12) {
+            HStack(alignment: .top, spacing: DS.space8) {
                 accentBar
                 titleColumn
-                Spacer(minLength: DS.space12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 trailing
             }
             .padding(.vertical, DS.space10)
-            .padding(.horizontal, DS.space4)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -311,13 +335,14 @@ private struct LedgerRow: View {
     private var accentBar: some View {
         Rectangle()
             .fill(accentColor.opacity(0.6))
-            .frame(width: 2, height: 30)
+            .frame(width: 2)
+            .frame(maxHeight: .infinity)
             .accessibilityHidden(true)
     }
 
     private var titleColumn: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: DS.space4) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.space4) {
                 if item.isPinned {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 9))
@@ -325,10 +350,12 @@ private struct LedgerRow: View {
                         .accessibilityLabel("Pinned")
                 }
                 Text(item.title)
-                    .font(.system(size: 15, weight: .regular, design: .serif))
+                    .font(.system(size: 14, weight: .regular, design: .serif))
                     .italic(isHovered)
                     .foregroundStyle(DS.text)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             metaLine
         }
@@ -343,21 +370,16 @@ private struct LedgerRow: View {
             if let format = item.contentFormat {
                 dotSeparator
                 Text(format.displayName.lowercased())
-                    .font(.system(size: 12, weight: .regular, design: .serif))
+                    .font(.system(size: 11, weight: .regular, design: .serif))
                     .italic()
                     .foregroundStyle(DS.inkFaded)
+                    .lineLimit(1)
             }
             if let score = item.insightScore, score > 0 {
                 dotSeparator
-                Text(String(format: "%.0f%% match", score * 100))
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                Text(String(format: "%.0f%%", score * 100))
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
                     .foregroundStyle(DS.gilt.opacity(0.8))
-            }
-            if let swipes = item.matchingSwipeCount, swipes > 0 {
-                dotSeparator
-                Text("\(swipes) swipe\(swipes == 1 ? "" : "s")")
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(DS.inkFaded)
             }
         }
     }
@@ -369,16 +391,17 @@ private struct LedgerRow: View {
     }
 
     private var trailing: some View {
-        HStack(spacing: DS.space8) {
+        VStack(alignment: .trailing, spacing: 4) {
             Text(relativeTime)
                 .font(.system(size: 10, weight: .regular, design: .monospaced))
                 .foregroundStyle(DS.inkFaded)
             Image(systemName: "arrow.right")
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(DS.gilt.opacity(isHovered ? 0.9 : 0.35))
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(DS.gilt.opacity(isHovered ? 0.9 : 0.3))
                 .offset(x: isHovered ? -2 : 0)
                 .accessibilityHidden(true)
         }
+        .padding(.top, 2)
     }
 
     private var accentColor: Color {

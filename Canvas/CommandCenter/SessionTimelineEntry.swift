@@ -4,10 +4,11 @@
 
 import Foundation
 
-struct SessionTimelineEntry: Identifiable {
+struct SessionTimelineEntry: Identifiable, Equatable {
     let id: String
     let title: String
-    let intent: TaskIntent
+    let intent: ResolvedIntentPresentation
+    let habitTitle: String?
     let startTime: Date
     let endTime: Date
     let focusScore: Double

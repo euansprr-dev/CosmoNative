@@ -14,11 +14,9 @@ struct MentionMenu: View {
     @State private var searchTask: Task<Void, Never>?
 
     private let provider = MentionSearchProvider.shared
-    private let menuWidth: CGFloat = 360
+    private let menuWidth: CGFloat = 280
     private let menuHeight: CGFloat = 320
 
-    private var bgColor: Color { DS.vellum }
-    private var borderColor: Color { darkMode ? Color.white.opacity(0.08) : DS.sepiaBorder }
     private var textPrimary: Color { darkMode ? .white : DS.text }
     private var textSecondary: Color { darkMode ? Color.white.opacity(0.65) : DS.textSecondary }
     private var textMuted: Color { darkMode ? Color.white.opacity(0.45) : DS.textMuted }
@@ -31,7 +29,7 @@ struct MentionMenu: View {
 
             content
 
-            CosmoKeyboardFooter()
+            CosmoKeyboardFooter(darkMode: darkMode)
         }
         .frame(width: menuWidth, height: menuHeight, alignment: .top)
         .cosmoMenuChrome(cornerRadius: 18, darkMode: darkMode)

@@ -8,6 +8,7 @@ struct CommandCenterHabitEditorDraft: Equatable {
     var allowManualCompletion: Bool = true
     var keywordInput: String = ""
     var mappedIntents: Set<TaskIntent> = []
+    var defaultIntentUUID: String? = nil
 
     init() {}
 
@@ -19,6 +20,7 @@ struct CommandCenterHabitEditorDraft: Equatable {
         allowManualCompletion = habit.allowManualCompletion
         keywordInput = habit.keywordTriggers.joined(separator: ", ")
         mappedIntents = Set(habit.taskIntents)
+        defaultIntentUUID = habit.defaultIntentUUID
     }
 
     var keywords: [String] {
@@ -38,6 +40,7 @@ struct CommandCenterHabitComposer: View {
     let onDisable: (() -> Void)?
     let onOpenLibrary: (() -> Void)?
     let onDismiss: () -> Void
+    private let availableIntents: [IntentDefinition]
 
     @State private var draft: CommandCenterHabitEditorDraft
 
@@ -49,6 +52,7 @@ struct CommandCenterHabitComposer: View {
         onMoveDown: (() -> Void)? = nil,
         onDisable: (() -> Void)? = nil,
         onOpenLibrary: (() -> Void)? = nil,
+        availableIntents: [IntentDefinition] = [],
         onDismiss: @escaping () -> Void
     ) {
         self.habit = habit
@@ -58,6 +62,7 @@ struct CommandCenterHabitComposer: View {
         self.onMoveDown = onMoveDown
         self.onDisable = onDisable
         self.onOpenLibrary = onOpenLibrary
+        self.availableIntents = availableIntents
         self.onDismiss = onDismiss
         _draft = State(initialValue: habit.map(CommandCenterHabitEditorDraft.init(habit:)) ?? CommandCenterHabitEditorDraft())
     }
@@ -232,6 +237,43 @@ struct CommandCenterHabitComposer: View {
                             .stroke(DS.sepiaBorder, lineWidth: 0.5)
                     )
                     .disabled(isBuiltIn)
+            }
+
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text("Default intent")
+                    .dsSmallCapsLabel()
+
+                Menu {
+                    Button("Unassigned") {
+                        draft.defaultIntentUUID = nil
+                    }
+
+                    ForEach(availableIntents, id: \.id) { intent in
+                        Button(intent.title) {
+                            draft.defaultIntentUUID = intent.id
+                        }
+                    }
+                } label: {
+                    HStack(spacing: DS.space6) {
+                        let selectedIntent = availableIntents.first(where: { $0.id == draft.defaultIntentUUID })
+                        Image(systemName: selectedIntent?.icon ?? "questionmark.circle")
+                            .font(DS.caption)
+                        Text(selectedIntent?.title ?? "Unassigned")
+                            .font(DS.callout)
+                        Spacer()
+                        Image(systemName: "chevron.down")
+                            .font(DS.caption2)
+                    }
+                    .foregroundStyle(DS.text)
+                    .padding(.horizontal, DS.space12)
+                    .padding(.vertical, DS.space10)
+                    .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }

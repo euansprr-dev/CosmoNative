@@ -1,9 +1,6 @@
-// CosmoOS/AI/InboxActionExecutor.swift
-// Executes inbox triage actions: merge, place, or create new
-// March 2026
-
 import Foundation
 import SwiftUI
+import GRDB
 
 @MainActor
 final class InboxActionExecutor {
@@ -11,14 +8,45 @@ final class InboxActionExecutor {
 
     private let atomRepo = AtomRepository.shared
     private let inboxRepo = InboxRepository.shared
+    private let planner = SpatialPlacementPlanner.shared
+    private let database = CosmoDatabase.shared
     private let flashModel = "google/gemini-3.1-flash-lite-preview"
 
     private init() {}
 
-    // MARK: - Merge (AI-Blended)
+    @discardableResult
+    func executePrimaryRecommendation(item: InboxItem) async throws -> Atom? {
+        if let recommendation = item.primaryRecommendationValue {
+            return try await executeRecommendation(item: item, recommendation: recommendation)
+        }
 
-    /// Merges inbox item text into an existing atom using LLM to blend coherently.
-    /// Re-indexes the atom in the vector database after merge.
+        switch item.classification {
+        case .merge:
+            guard let targetUuid = item.mergeTargetUuid else { return nil }
+            return try await executeMerge(item: item, targetAtomUuid: targetUuid)
+        case .place:
+            guard let thinkspaceId = item.placeThinkspaceId else { return try await executeNew(item: item) }
+            let atomType = AtomType(rawValue: item.placeAtomType ?? AtomType.connection.rawValue) ?? .connection
+            return try await executePlace(item: item, thinkspaceId: thinkspaceId, atomType: atomType)
+        case .new, .none:
+            return try await executeNew(item: item)
+        }
+    }
+
+    @discardableResult
+    func executeRecommendation(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        switch recommendation.kind {
+        case .mergeAtom:
+            guard let targetUuid = recommendation.mergeTargetUuid else { return nil }
+            return try await executeMerge(item: item, targetAtomUuid: targetUuid)
+        case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
+            return try await executePlacementRecommendation(item: item, recommendation: recommendation)
+        case .createStandaloneAtom:
+            let atomType = AtomType(rawValue: recommendation.suggestedAtomType) ?? .connection
+            return try await executeNew(item: item, atomType: atomType)
+        }
+    }
+
     @discardableResult
     func executeMerge(item: InboxItem, targetAtomUuid: String) async throws -> Atom? {
         guard let targetAtom = try await atomRepo.fetch(uuid: targetAtomUuid) else {
@@ -28,35 +56,350 @@ final class InboxActionExecutor {
 
         let existingBody = targetAtom.body ?? ""
         let newText = item.rawText
-
-        // AI-blended merge: use LLM to weave new context into existing body
         let mergedBody = await blendMerge(existing: existingBody, newContext: newText, title: targetAtom.title ?? "Note")
 
-        // Update atom body
         let updated = try await atomRepo.update(uuid: targetAtomUuid) { atom in
             atom.body = mergedBody
         }
 
-        // Re-index in vector database
-        if let atom = updated {
-            try? await VectorDatabase.shared.index(
-                text: mergedBody,
-                entityType: atom.type.rawValue,
-                entityId: atom.id ?? 0,
-                entityUUID: atom.uuid
+        if let updated {
+            await reindex(atom: updated)
+            try await inboxRepo.markActioned(uuid: item.uuid)
+
+            let originalItem = item
+            let targetUUID = updated.uuid
+            let merged = updated.body ?? mergedBody
+            let previousBody = existingBody
+
+            CosmoUndoManager.shared.register(
+                InlineUndoAction(actionDescription: "Merge Inbox Capture") { [weak self] in
+                    guard let self else { return }
+                    _ = try? await self.atomRepo.update(uuid: targetUUID) { atom in
+                        atom.body = previousBody
+                    }
+                    if let restored = try? await self.atomRepo.fetch(uuid: targetUUID) {
+                        await self.reindex(atom: restored)
+                    }
+                    try? await self.inboxRepo.restore(originalItem)
+                } redo: { [weak self] in
+                    guard let self else { return }
+                    _ = try? await self.atomRepo.update(uuid: targetUUID) { atom in
+                        atom.body = merged
+                    }
+                    if let restored = try? await self.atomRepo.fetch(uuid: targetUUID) {
+                        await self.reindex(atom: restored)
+                    }
+                    try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+                }
             )
         }
 
-        // Mark inbox item as actioned
-        try await inboxRepo.markActioned(uuid: item.uuid)
-
-        print("✅ [InboxAction] Merged into \(targetAtom.title ?? "atom") (\(targetAtomUuid))")
         return updated
     }
 
-    /// Uses LLM to intelligently blend new context into existing note body.
+    @discardableResult
+    func executePlace(
+        item: InboxItem,
+        thinkspaceId: String,
+        atomType: AtomType = .connection
+    ) async throws -> Atom {
+        let thinkspaceName = await resolveThinkspaceName(for: thinkspaceId) ?? "Thinkspace"
+        let plan = await planner.planForThinkspacePlacement(
+            title: item.title ?? fallbackTitle(for: item),
+            atomType: atomType,
+            thinkspaceId: thinkspaceId,
+            thinkspaceName: thinkspaceName,
+            relatedAtomUUIDs: []
+        )
+
+        let recommendation = InboxRecommendation(
+            kind: .placeInThinkspace,
+            confidence: 1.0,
+            suggestedAtomType: atomType.rawValue,
+            destinationPath: thinkspaceName,
+            rationale: "Manual override: place directly on \(thinkspaceName).",
+            thinkspaceId: thinkspaceId,
+            thinkspaceName: thinkspaceName,
+            placementPlan: plan
+        )
+
+        guard let atom = try await executePlacementRecommendation(item: item, recommendation: recommendation) else {
+            throw NSError(domain: "InboxActionExecutor", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to place inbox item"])
+        }
+        return atom
+    }
+
+    @discardableResult
+    func executeNew(item: InboxItem, atomType: AtomType = .connection) async throws -> Atom {
+        var atom = Atom.new(
+            type: atomType,
+            title: item.title ?? fallbackTitle(for: item),
+            body: item.rawText
+        )
+        atom = try await atomRepo.create(atom)
+        await reindex(atom: atom)
+        try await inboxRepo.markActioned(uuid: item.uuid)
+
+        let createdAtom = atom
+        let originalItem = item
+
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Create Inbox Atom") { [weak self] in
+                guard let self else { return }
+                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
+                try? await self.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                guard let self else { return }
+                try? await self.restoreAtomSnapshot(createdAtom)
+                await self.reindex(atom: createdAtom)
+                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
+
+        return atom
+    }
+
+    private func executePlacementRecommendation(
+        item: InboxItem,
+        recommendation: InboxRecommendation
+    ) async throws -> Atom? {
+        let atomType = AtomType(rawValue: recommendation.suggestedAtomType) ?? .connection
+        let originalItem = item
+
+        var targetThinkspaceId = recommendation.thinkspaceId
+        var mutatedThinkspaceBefore: Atom?
+        var mutatedThinkspaceAfter: Atom?
+
+        if recommendation.kind == .createThinkspaceAndPlace {
+            let thinkspaceName = recommendation.placementPlan?.targetThinkspaceName
+                ?? recommendation.thinkspaceName
+                ?? recommendation.destinationPath
+            guard let thinkspace = await ThinkspaceManager.shared.createThinkspace(name: thinkspaceName) else {
+                return nil
+            }
+            targetThinkspaceId = thinkspace.id
+        }
+
+        var atom = Atom.new(
+            type: atomType,
+            title: item.title ?? fallbackTitle(for: item),
+            body: item.rawText
+        )
+        atom = try await atomRepo.create(atom)
+        await reindex(atom: atom)
+
+        var createdBlockRecord: CanvasBlockRecord?
+
+        if let thinkspaceId = targetThinkspaceId {
+            if recommendation.kind == .placeInExistingCluster || recommendation.kind == .createClusterAndPlace || recommendation.kind == .createThinkspaceAndPlace,
+               let placementPlan = recommendation.placementPlan {
+                let snapshots = try await applyClusterMutation(
+                    thinkspaceId: thinkspaceId,
+                    recommendation: recommendation,
+                    placementPlan: placementPlan,
+                    atomUUID: atom.uuid
+                )
+                mutatedThinkspaceBefore = snapshots.before
+                mutatedThinkspaceAfter = snapshots.after
+            }
+
+            if let placementPlan = recommendation.placementPlan,
+               let x = placementPlan.blockPositionX,
+               let y = placementPlan.blockPositionY {
+                let block = CanvasBlock.fromAtom(atom, position: CGPoint(x: x, y: y))
+                let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceId)
+                try await persistCanvasBlockSnapshot(record)
+                createdBlockRecord = record
+            }
+
+            await refreshThinkspace(thinkspaceId)
+        }
+
+        try await inboxRepo.markActioned(uuid: item.uuid)
+
+        let afterThinkspaceSnapshot = mutatedThinkspaceAfter
+        let beforeThinkspaceSnapshot = mutatedThinkspaceBefore
+        let createdAtom = atom
+        let blockSnapshot = createdBlockRecord
+        let affectedThinkspaceId = targetThinkspaceId
+
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Apply Inbox Recommendation") { [weak self] in
+                guard let self else { return }
+
+                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
+
+                if let beforeThinkspaceSnapshot {
+                    try? await self.persistAtomSnapshot(beforeThinkspaceSnapshot)
+                } else if let afterThinkspaceSnapshot {
+                    try? await self.atomRepo.delete(uuid: afterThinkspaceSnapshot.uuid)
+                }
+
+                if let affectedThinkspaceId {
+                    await ThinkspaceManager.shared.loadThinkspaces()
+                    await self.refreshThinkspace(affectedThinkspaceId)
+                }
+
+                try? await self.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                guard let self else { return }
+
+                if let afterThinkspaceSnapshot {
+                    try? await self.restoreAtomSnapshot(afterThinkspaceSnapshot)
+                    await ThinkspaceManager.shared.loadThinkspaces()
+                }
+
+                try? await self.restoreAtomSnapshot(createdAtom)
+                if let blockSnapshot {
+                    try? await self.persistCanvasBlockSnapshot(blockSnapshot)
+                }
+                await self.reindex(atom: createdAtom)
+
+                if let affectedThinkspaceId {
+                    await self.refreshThinkspace(affectedThinkspaceId)
+                }
+
+                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
+
+        return atom
+    }
+
+    private func applyClusterMutation(
+        thinkspaceId: String,
+        recommendation: InboxRecommendation,
+        placementPlan: InboxPlacementPlan,
+        atomUUID: String
+    ) async throws -> (before: Atom, after: Atom) {
+        guard var thinkspaceAtom = try await atomRepo.fetch(uuid: thinkspaceId) else {
+            throw NSError(domain: "InboxActionExecutor", code: 3, userInfo: [NSLocalizedDescriptionKey: "Thinkspace not found"])
+        }
+
+        let before = thinkspaceAtom
+        var metadata = thinkspaceAtom.metadataValue(as: ThinkspaceMetadata.self) ?? ThinkspaceMetadata(
+            name: recommendation.thinkspaceName ?? thinkspaceAtom.title ?? "Thinkspace"
+        )
+
+        let clusterId = placementPlan.targetClusterId ?? recommendation.clusterId ?? UUID().uuidString
+        let clusterName = placementPlan.targetClusterName ?? recommendation.clusterName ?? "Cluster"
+        let rect = placementPlan.clusterRect
+
+        if let index = metadata.clusters.firstIndex(where: { $0.id == clusterId }) {
+            if !metadata.clusters[index].blockUUIDs.contains(atomUUID) {
+                metadata.clusters[index].blockUUIDs.append(atomUUID)
+            }
+            metadata.clusters[index].name = clusterName
+            metadata.clusters[index].intent = recommendation.rationale
+            metadata.clusters[index].viewMode = placementPlan.clusterViewMode ?? metadata.clusters[index].viewMode
+            if let rect {
+                metadata.clusters[index].originX = rect.originX
+                metadata.clusters[index].originY = rect.originY
+                metadata.clusters[index].rectWidth = rect.width
+                metadata.clusters[index].rectHeight = rect.height
+                metadata.clusters[index].manualWidth = rect.width
+                metadata.clusters[index].manualHeight = rect.height
+            }
+        } else {
+            metadata.clusters.append(
+                CodableCluster(
+                    id: clusterId,
+                    name: clusterName,
+                    blockUUIDs: [atomUUID],
+                    colorIndex: 0,
+                    originX: rect?.originX,
+                    originY: rect?.originY,
+                    rectWidth: rect?.width,
+                    rectHeight: rect?.height,
+                    manualWidth: rect?.width,
+                    manualHeight: rect?.height,
+                    isZone: true,
+                    zoneType: nil,
+                    intent: recommendation.rationale,
+                    viewMode: placementPlan.clusterViewMode ?? ClusterViewMode.canvas.rawValue,
+                    sortOrder: ClusterSortOrder.dateUpdated.rawValue,
+                    boardGrouping: ClusterBoardGrouping.auto.rawValue
+                )
+            )
+        }
+
+        if let json = try? JSONEncoder().encode(metadata),
+           let string = String(data: json, encoding: .utf8) {
+            thinkspaceAtom.metadata = string
+        }
+        thinkspaceAtom.title = metadata.name
+
+        try await persistAtomSnapshot(thinkspaceAtom)
+        return (before, thinkspaceAtom)
+    }
+
+    private func persistAtomSnapshot(_ atom: Atom) async throws {
+        try await database.asyncWrite { db in
+            var mutable = atom
+            let existing = try Atom
+                .filter(Column("uuid") == atom.uuid)
+                .fetchOne(db)
+            if existing != nil {
+                try mutable.update(db)
+            } else {
+                try mutable.insert(db)
+            }
+        }
+    }
+
+    private func restoreAtomSnapshot(_ atom: Atom) async throws {
+        try await persistAtomSnapshot(atom)
+    }
+
+    private func persistCanvasBlockSnapshot(_ record: CanvasBlockRecord) async throws {
+        try await database.asyncWrite { db in
+            var mutable = record
+            let existing = try CanvasBlockRecord
+                .filter(Column("id") == record.id)
+                .fetchOne(db)
+            if existing != nil {
+                try mutable.update(db)
+            } else {
+                try mutable.insert(db)
+            }
+        }
+    }
+
+    private func refreshThinkspace(_ thinkspaceId: String) async {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.refreshThinkspacePlacements,
+            object: nil,
+            userInfo: ["thinkspaceId": thinkspaceId]
+        )
+    }
+
+    private func resolveThinkspaceName(for thinkspaceId: String) async -> String? {
+        if let thinkspace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == thinkspaceId }) {
+            return thinkspace.name
+        }
+        let fetchedAtom = try? await atomRepo.fetch(uuid: thinkspaceId)
+        guard let atom = fetchedAtom ?? nil else {
+            return nil
+        }
+        return atom.metadataValue(as: ThinkspaceMetadata.self)?.name
+    }
+
+    private func fallbackTitle(for item: InboxItem) -> String {
+        item.title ?? String(item.rawText.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func reindex(atom: Atom) async {
+        let text = [atom.title, atom.body].compactMap { $0 }.joined(separator: "\n\n")
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        try? await VectorDatabase.shared.index(
+            text: text,
+            entityType: atom.type.rawValue,
+            entityId: atom.id ?? 0,
+            entityUUID: atom.uuid
+        )
+    }
+
     private func blendMerge(existing: String, newContext: String, title: String) async -> String {
-        // If existing body is empty, just use the new context
         guard !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return newContext
         }
@@ -66,20 +409,17 @@ final class InboxActionExecutor {
             You are merging new context into an existing note. Produce a single coherent document that integrates both.
 
             RULES:
-            - Preserve ALL information from both the existing note and new context
-            - Do NOT add commentary, headers like "Updated:" or "New addition:", or meta-text
-            - Write naturally as if it was always one note
-            - If the new context contradicts the existing note, keep both perspectives
-            - Maintain the original writing style and tone
-            - Return ONLY the merged text, nothing else
+            - Preserve all information from both texts
+            - Do not add commentary or headings
+            - Write naturally as if this were always one note
+            - Keep contradictions if both perspectives matter
+            - Return only the merged note
 
             EXISTING NOTE ("\(title)"):
             \(String(existing.prefix(3000)))
 
             NEW CONTEXT:
             \(String(newContext.prefix(2000)))
-
-            MERGED NOTE:
             """
 
             let result = try await ResearchService.shared.analyze(
@@ -92,88 +432,12 @@ final class InboxActionExecutor {
             let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
             return cleaned.isEmpty ? fallbackMerge(existing: existing, newContext: newContext) : cleaned
         } catch {
-            print("⚠️ [InboxAction] LLM merge failed, using fallback: \(error)")
             return fallbackMerge(existing: existing, newContext: newContext)
         }
     }
 
-    /// Simple append fallback when LLM is unavailable.
     private func fallbackMerge(existing: String, newContext: String) -> String {
         let datestamp = DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .none)
         return existing + "\n\n---\n\nAdded \(datestamp):\n\n" + newContext
-    }
-
-    // MARK: - Place on Thinkspace
-
-    /// Creates a new atom from inbox item and places it on a thinkspace canvas.
-    @discardableResult
-    func executePlace(
-        item: InboxItem,
-        thinkspaceId: String,
-        atomType: AtomType = .connection
-    ) async throws -> Atom {
-        // Create atom
-        var atom = Atom.new(
-            type: atomType,
-            title: item.title ?? String(item.rawText.prefix(60)),
-            body: item.rawText
-        )
-
-        atom = try await atomRepo.create(atom)
-
-        // Index in vector database
-        try? await VectorDatabase.shared.index(
-            text: item.rawText,
-            entityType: atomType.rawValue,
-            entityId: atom.id ?? 0,
-            entityUUID: atom.uuid
-        )
-
-        // Place on canvas at center
-        let block = CanvasBlock.fromAtom(atom, position: CGPoint(x: 500, y: 400))
-        // SpatialEngine needs the thinkspace context — post notification for canvas to handle
-        NotificationCenter.default.post(
-            name: CosmoNotification.Canvas.createInboxBlock,
-            object: nil,
-            userInfo: [
-                "atom": atom,
-                "thinkspaceId": thinkspaceId,
-                "position": NSValue(point: NSPoint(x: 500, y: 400))
-            ]
-        )
-
-        // Mark inbox item as actioned
-        try await inboxRepo.markActioned(uuid: item.uuid)
-
-        print("✅ [InboxAction] Placed '\(atom.title ?? "")' on thinkspace \(thinkspaceId)")
-        return atom
-    }
-
-    // MARK: - Create New (No Placement)
-
-    /// Creates a new atom from inbox item without placing on any canvas.
-    @discardableResult
-    func executeNew(item: InboxItem, atomType: AtomType = .connection) async throws -> Atom {
-        var atom = Atom.new(
-            type: atomType,
-            title: item.title ?? String(item.rawText.prefix(60)),
-            body: item.rawText
-        )
-
-        atom = try await atomRepo.create(atom)
-
-        // Index in vector database
-        try? await VectorDatabase.shared.index(
-            text: item.rawText,
-            entityType: atomType.rawValue,
-            entityId: atom.id ?? 0,
-            entityUUID: atom.uuid
-        )
-
-        // Mark inbox item as actioned
-        try await inboxRepo.markActioned(uuid: item.uuid)
-
-        print("✅ [InboxAction] Created new \(atomType.rawValue): '\(atom.title ?? "")'")
-        return atom
     }
 }

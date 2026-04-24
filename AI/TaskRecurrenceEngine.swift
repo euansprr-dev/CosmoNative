@@ -239,6 +239,7 @@ class TaskRecurrenceEngine {
         instanceMetadata.recurrenceParentUUID = template.uuid
         instanceMetadata.description = metadata.description
         instanceMetadata.intent = metadata.intent
+        instanceMetadata.intentUUID = metadata.intentUUID
         instanceMetadata.habitUUID = metadata.habitUUID
         instanceMetadata.habitAssignmentSource = metadata.habitAssignmentSource
         instanceMetadata.linkedAtomUUID = metadata.linkedAtomUUID

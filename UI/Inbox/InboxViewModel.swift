@@ -58,6 +58,11 @@ final class InboxViewModel {
     var recentHistory: [InboxItem] = []
     var triagedThisWeek: Int = 0
 
+    // MARK: - Undo Toast
+
+    var showUndoToast: Bool = false
+    var undoToastMessage: String = ""
+
     // MARK: - Expanded Cards
 
     var expandedItemIds: Set<String> = []
@@ -68,6 +73,7 @@ final class InboxViewModel {
     private let executor = InboxActionExecutor.shared
     private var cancellables = Set<AnyCancellable>()
     private var intelligenceTask: Task<Void, Never>?
+    private var undoToastTask: Task<Void, Never>?
 
     var thinkspaces: [Thinkspace] {
         ThinkspaceManager.shared.thinkspaces
@@ -192,7 +198,12 @@ final class InboxViewModel {
                 mergePreview: classification.mergeTarget?.preview,
                 placeThinkspaceId: classification.placeTarget?.thinkspaceId,
                 placeThinkspaceName: classification.placeTarget?.thinkspaceName,
-                placeAtomType: classification.placeTarget?.suggestedAtomType
+                placeAtomType: classification.placeTarget?.suggestedAtomType,
+                recommendations: classification.recommendationBundle.encodedJSONString,
+                primaryRouteKind: classification.recommendationBundle.primaryRecommendation?.kind.rawValue,
+                destinationPath: classification.recommendationBundle.primaryRecommendation?.destinationPath,
+                rationale: classification.recommendationBundle.primaryRecommendation?.rationale,
+                placementPlanSummary: classification.recommendationBundle.primaryRecommendation?.placementPlan?.summary
             )
         } catch {
             print("⚠️ [InboxVM] Capture failed: \(error)")
@@ -206,23 +217,8 @@ final class InboxViewModel {
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            switch item.classification {
-            case .merge:
-                guard let targetUuid = item.mergeTargetUuid else { return }
-                _ = try await executor.executeMerge(item: item, targetAtomUuid: targetUuid)
-
-            case .place:
-                guard let thinkspaceId = item.placeThinkspaceId else { return }
-                let atomType = AtomType(rawValue: item.placeAtomType ?? "connection") ?? .connection
-                _ = try await executor.executePlace(item: item, thinkspaceId: thinkspaceId, atomType: atomType)
-
-            case .new:
-                let atomType = AtomType(rawValue: item.placeAtomType ?? "connection") ?? .connection
-                _ = try await executor.executeNew(item: item, atomType: atomType)
-
-            case .none:
-                _ = try await executor.executeNew(item: item, atomType: .connection)
-            }
+            _ = try await executor.executePrimaryRecommendation(item: item)
+            presentUndoToast(for: item)
         } catch {
             print("⚠️ [InboxVM] Action failed: \(error)")
         }
@@ -347,6 +343,7 @@ final class InboxViewModel {
 
         do {
             _ = try await executor.executeMerge(item: item, targetAtomUuid: targetUuid)
+            presentUndoToast(for: item)
             showOverrideSheet = false
         } catch {
             print("⚠️ [InboxVM] Override merge failed: \(error)")
@@ -359,6 +356,7 @@ final class InboxViewModel {
 
         do {
             _ = try await executor.executePlace(item: item, thinkspaceId: thinkspaceId, atomType: atomType)
+            presentUndoToast(for: item)
             showOverrideSheet = false
         } catch {
             print("⚠️ [InboxVM] Override place failed: \(error)")
@@ -371,6 +369,7 @@ final class InboxViewModel {
 
         do {
             _ = try await executor.executeNew(item: item, atomType: atomType)
+            presentUndoToast(for: item)
             showOverrideSheet = false
         } catch {
             print("⚠️ [InboxVM] Override new failed: \(error)")
@@ -482,5 +481,35 @@ final class InboxViewModel {
 
     func dismissGroup(_ group: InboxItemGroup) {
         itemGroups.removeAll { $0.id == group.id }
+    }
+
+    func undoLastInboxAction() async {
+        await CosmoUndoManager.shared.undo()
+        withAnimation(.easeOut(duration: 0.2)) {
+            showUndoToast = false
+        }
+    }
+
+    func dismissUndoToast() {
+        undoToastTask?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) {
+            showUndoToast = false
+        }
+    }
+
+    private func presentUndoToast(for item: InboxItem) {
+        undoToastTask?.cancel()
+        undoToastMessage = "Applied recommendation for \(item.title ?? String(item.rawText.prefix(40)))"
+        withAnimation(.easeOut(duration: 0.2)) {
+            showUndoToast = true
+        }
+
+        undoToastTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard let self else { return }
+            withAnimation(.easeOut(duration: 0.2)) {
+                self.showUndoToast = false
+            }
+        }
     }
 }

@@ -18,13 +18,9 @@ struct SlashCommandMenu: View {
     @FocusState private var isSearchFocused: Bool
 
     // MARK: - Theme-Aware Colors
-    private var bgColor: Color { DS.vellum }
-    private var textPrimary: Color { DS.text }
-    private var textSecondary: Color { DS.textSecondary }
-    private var textTertiary: Color { DS.textMuted }
-    private var accentColor: Color { DS.accent }
-    private var borderColor: Color { DS.sepiaBorder }
-    private var shadowColor: Color { .black.opacity(0.10) }
+    private var bgColor: Color { darkMode ? DS.bg : DS.vellum }
+    private var textPrimary: Color { darkMode ? .white : DS.text }
+    private var textTertiary: Color { darkMode ? Color.white.opacity(0.45) : DS.textMuted }
 
     private var filteredCommands: [SlashCommand] {
         if searchText.isEmpty {
@@ -42,13 +38,7 @@ struct SlashCommandMenu: View {
     var body: some View {
         menuContent
             .frame(width: menuWidth, height: menuHeight, alignment: .top)
-            .background(bgColor)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(menuBorder)
-            .dsFloatingShadow()
-            .scaleEffect(menuAppeared ? 1 : 0.95)
-            .opacity(menuAppeared ? 1 : 0)
-            .blur(radius: menuAppeared ? 0 : 4)
+            .cosmoMenuChrome(cornerRadius: 18, darkMode: darkMode)
             .position(x: position.x + (menuWidth / 2), y: position.y + (menuHeight / 2))
             .onAppear(perform: handleAppear)
             .onKeyPress(.upArrow) { handleUpArrow() }
@@ -142,19 +132,7 @@ struct SlashCommandMenu: View {
     }
 
     private var keyboardHintView: some View {
-        CosmoKeyboardFooter()
-    }
-
-    private var menuBorder: some View {
-        RoundedRectangle(cornerRadius: 14)
-            .stroke(
-                LinearGradient(
-                    colors: [accentColor.opacity(0.4), borderColor],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
+        CosmoKeyboardFooter(darkMode: darkMode)
     }
 
     // MARK: - Event Handlers

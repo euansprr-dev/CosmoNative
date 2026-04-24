@@ -26,6 +26,7 @@ struct CosmoApp: App {
     // NOTE: Global floating dock removed - using in-app dock + spacebar voice overlay instead
 
     @State private var themeRefreshID = UUID()
+    @State private var interactiveStartupTask: Task<Void, Never>?
 
     var body: some Scene {
         WindowGroup {
@@ -74,17 +75,10 @@ struct CosmoApp: App {
                 RealtimeSyncService.shared.startListening()
                 PromptTemplateStore.shared.syncAllTemplatesToCloud()
             }
-            await NoteRepairService.shared.repairNotesIfNeeded()
             // NOW start the Telegram bridge — it checks isSignedIn to skip polling when cloud agent is active
             if APIKeys.hasTelegramBot {
                 await TelegramBridgeService.shared.start()
             }
-        }
-
-        // Process cloud-captured swipes that arrived while app was closed
-        Task {
-            try? await Task.sleep(for: .seconds(8))
-            SwipeProcessingService.shared.scanForPendingSwipes()
         }
 
         // Observe system wake to process swipes captured while asleep
@@ -112,32 +106,13 @@ struct CosmoApp: App {
         // Restore UI state
         restoreUIState()
 
-        // Start automation engine — seed built-in rules + start dispatcher
-        Task {
-            await BuiltInRules.seedIfNeeded()
-            AutomationDispatcher.shared.start()
-        }
-
         // Initialize voice system (hotkey registered immediately, speech/LLM loaded async)
         // Hotkey registration happens in VoiceEngine.init() for immediate availability
         // Speech recognition TCC is handled gracefully without crashing
         Task {
             await voiceEngine.initialize()
         }
-
-        // Initialize semantic search index (background)
-        Task {
-            await semanticSearch.indexAllEntities()
-        }
-
-        // Migrate existing lessons to add intent scope
-        Task { await LessonExtractor.shared.migrateExistingLessons() }
-
-        // Migrate lesson enforcement levels (source/enforcement/targetModuleId)
-        Task { await LessonExtractor.shared.migrateEnforcementLevels() }
-
-        // Import module LEARNED RULES into canonical atom storage + strip from modules
-        Task { await LessonExtractor.shared.migrateModuleLessonsToAtoms() }
+        startInteractiveStartupPipeline()
 
         // Register Swipe File hotkey (Cmd+Shift+S)
         print("📋 Registering Swipe File hotkey callback...")
@@ -275,6 +250,40 @@ struct CosmoApp: App {
         // Restore last opened entity
         if let lastEntity = statePersistence.getLastOpenedEntity() {
             appState.selectedEntity = EntitySelection(id: lastEntity.id, type: lastEntity.type)
+        }
+    }
+
+    private func startInteractiveStartupPipeline() {
+        interactiveStartupTask?.cancel()
+        interactiveStartupTask = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+
+            await BuiltInRules.seedIfNeeded()
+            await MainActor.run {
+                AutomationDispatcher.shared.start()
+            }
+
+            guard !Task.isCancelled else { return }
+            await NoteRepairService.shared.repairNotesIfNeeded()
+
+            guard !Task.isCancelled else { return }
+            await LessonExtractor.shared.migrateExistingLessons()
+
+            guard !Task.isCancelled else { return }
+            await LessonExtractor.shared.migrateEnforcementLevels()
+
+            guard !Task.isCancelled else { return }
+            await LessonExtractor.shared.migrateModuleLessonsToAtoms()
+
+            guard !Task.isCancelled else { return }
+            await semanticSearch.indexAllEntities()
+
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                SwipeProcessingService.shared.scanForPendingSwipes()
+            }
         }
     }
 }

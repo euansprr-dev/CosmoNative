@@ -2,6 +2,49 @@ import XCTest
 @testable import CosmoOS
 
 final class CommandKIdeaLifecycleTests: XCTestCase {
+    private var isoNow: String {
+        ISO8601DateFormatter().string(from: Date())
+    }
+
+    func testLedgerLayoutKeepsPreviewCollapsedUntilColumnExpanded() {
+        let items = (0..<7).map { index in
+            IdeaGalleryItem(
+                id: "idea-\(index)",
+                atomUUID: "idea-\(index)",
+                entityId: Int64(index),
+                title: "Idea \(index)",
+                body: nil,
+                status: .spark,
+                contentFormat: nil,
+                platform: nil,
+                clientName: "Client",
+                clientUUID: "client-1",
+                tags: [],
+                insightScore: nil,
+                matchingSwipeCount: nil,
+                suggestedFramework: nil,
+                isPinned: false,
+                contentCount: 0,
+                createdAt: isoNow,
+                updatedAt: isoNow
+            )
+        }
+
+        XCTAssertEqual(
+            CortexIdeasLedgerLayout.visibleItems(from: items, isExpanded: false, previewLimit: 5).count,
+            5
+        )
+        XCTAssertEqual(
+            CortexIdeasLedgerLayout.visibleItems(from: items, isExpanded: true, previewLimit: 5).count,
+            7
+        )
+    }
+
+    func testCaptureNormalizationTrimsWhitespaceOnlyDrafts() {
+        XCTAssertNil(CortexIdeasCapture.normalizedTitle(from: "   \n "))
+        XCTAssertEqual(CortexIdeasCapture.normalizedTitle(from: "  greenhouse hook  "), "greenhouse hook")
+    }
+
     func testMatchesIdeaCreationNotificationFromTelegramAgentPayload() {
         let atom = Atom.new(type: .idea, title: "TG capture", body: nil, metadata: nil)
         let notification = Notification(

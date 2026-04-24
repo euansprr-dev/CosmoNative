@@ -8,13 +8,17 @@ struct SavedTimerPreset: Identifiable, Codable, Equatable {
     let id: String
     var title: String
     var intent: TaskIntent
+    var intentUUID: String?
+    var behaviorTemplate: IntentBehaviorTemplate?
     var plannedMinutes: Int
     var lastUsedAt: Date?
 
-    init(id: String = UUID().uuidString, title: String, intent: TaskIntent = .general, plannedMinutes: Int = 30, lastUsedAt: Date? = nil) {
+    init(id: String = UUID().uuidString, title: String, intent: TaskIntent = .general, intentUUID: String? = nil, behaviorTemplate: IntentBehaviorTemplate? = nil, plannedMinutes: Int = 30, lastUsedAt: Date? = nil) {
         self.id = id
         self.title = title
         self.intent = intent
+        self.intentUUID = intentUUID
+        self.behaviorTemplate = behaviorTemplate ?? IntentBehaviorTemplate(intent)
         self.plannedMinutes = plannedMinutes
         self.lastUsedAt = lastUsedAt
     }

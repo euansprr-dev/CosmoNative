@@ -18,6 +18,8 @@ struct ActiveDeepWorkSession: Codable, Sendable {
     let taskUUID: String?
     let taskTitle: String
     let intent: TaskIntent
+    let intentUUID: String?
+    let intentTitleSnapshot: String?
     let habitUUID: String?
     let habitTitleSnapshot: String?
     var plannedMinutes: Int
@@ -38,6 +40,8 @@ struct ActiveDeepWorkSession: Codable, Sendable {
         taskUUID: String?,
         taskTitle: String,
         intent: TaskIntent,
+        intentUUID: String?,
+        intentTitleSnapshot: String?,
         habitUUID: String?,
         habitTitleSnapshot: String?,
         plannedMinutes: Int
@@ -46,6 +50,8 @@ struct ActiveDeepWorkSession: Codable, Sendable {
         self.taskUUID = taskUUID
         self.taskTitle = taskTitle
         self.intent = intent
+        self.intentUUID = intentUUID
+        self.intentTitleSnapshot = intentTitleSnapshot
         self.habitUUID = habitUUID
         self.habitTitleSnapshot = habitTitleSnapshot
         self.plannedMinutes = plannedMinutes
@@ -131,6 +137,8 @@ class DeepWorkSessionEngine: ObservableObject {
         taskUUID: String?,
         taskTitle: String,
         intent: TaskIntent,
+        intentUUID: String? = nil,
+        intentTitleSnapshot: String? = nil,
         habitUUID: String? = nil,
         habitTitleSnapshot: String? = nil,
         plannedMinutes: Int
@@ -145,6 +153,8 @@ class DeepWorkSessionEngine: ObservableObject {
             taskUUID: taskUUID,
             taskTitle: taskTitle,
             intent: intent,
+            intentUUID: intentUUID,
+            intentTitleSnapshot: intentTitleSnapshot,
             habitUUID: habitUUID,
             habitTitleSnapshot: habitTitleSnapshot,
             plannedMinutes: plannedMinutes
@@ -244,6 +254,8 @@ class DeepWorkSessionEngine: ObservableObject {
             focusScore: focusScore,
             distractionCount: distractionCount,
             intent: session.intent.rawValue,
+            intentUUID: session.intentUUID,
+            intentTitleSnapshot: session.intentTitleSnapshot,
             habitUUID: session.habitUUID,
             habitTitleSnapshot: session.habitTitleSnapshot,
             outputAtomUUIDs: outputAtomUUIDs,

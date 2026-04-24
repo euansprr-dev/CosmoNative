@@ -149,7 +149,7 @@ struct CortexDatabaseBrowser: View {
 
 // MARK: - Spotlight Document Card
 
-private struct SpotlightDocCard: View {
+struct SpotlightDocCard: View {
     let item: LibraryItem
     let onTap: () -> Void
     var onDelete: (() -> Void)?

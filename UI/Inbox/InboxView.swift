@@ -12,6 +12,7 @@ struct InboxView: View {
         ZStack(alignment: .bottom) {
             mainContent
             batchBarOverlay
+            undoToastOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.bg)
@@ -174,6 +175,50 @@ struct InboxView: View {
             InboxBatchBar(viewModel: viewModel)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .animation(ProMotionSprings.snappy, value: viewModel.isMultiSelectActive)
+        }
+    }
+
+    @ViewBuilder
+    private var undoToastOverlay: some View {
+        if viewModel.showUndoToast {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(DS.accent)
+
+                Text(viewModel.undoToastMessage)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Button("Undo") {
+                    Task { await viewModel.undoLastInboxAction() }
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.accent)
+
+                Button {
+                    viewModel.dismissUndoToast()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+            .padding(.horizontal, DS.space24)
+            .padding(.bottom, viewModel.isMultiSelectActive ? 92 : DS.space20)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 

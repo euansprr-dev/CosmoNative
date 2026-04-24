@@ -91,6 +91,44 @@ private enum SpeechPipelineSource: Sendable {
     case appleSpeech
 }
 
+private struct ReelModalityEvidence: Sendable {
+    let visualWordCount: Int
+    let speechWordCount: Int
+    let visualSlideCount: Int
+    let avgVisualWordsPerSlide: Double
+    let shortVisualSlideRatio: Double
+    let longVisualSlideRatio: Double
+    let distinctVisualRatio: Double
+    let subtitleOverlapRatio: Double
+    let speechCoverageRatio: Double
+    let speechWordsPerSecond: Double
+    let avgSpeechWordsPerSegment: Double
+    let speechUniqueWordRatio: Double
+    let repeatedSpeechSegmentRatio: Double
+    let lyricRisk: Int
+    let voiceoverScore: Int
+    let textScore: Int
+
+    var shouldPreferVoiceover: Bool {
+        if speechWordCount == 0 { return false }
+        if visualWordCount == 0 { return true }
+
+        // Burned captions or subtitles mirroring substantial speech.
+        if subtitleOverlapRatio >= 0.58 && speechWordCount >= 18 && speechCoverageRatio >= 0.25 {
+            return lyricRisk < 4 || voiceoverScore > textScore
+        }
+
+        return voiceoverScore >= textScore + 2 && lyricRisk < 4
+    }
+
+    var shouldTreatAsTextOnly: Bool {
+        if visualWordCount == 0 { return false }
+        if speechWordCount == 0 { return true }
+        if lyricRisk >= 3 && textScore >= voiceoverScore { return true }
+        return textScore >= voiceoverScore + 2 && !(speechWordCount >= 18 && subtitleOverlapRatio >= 0.4)
+    }
+}
+
 // MARK: - Instagram Auto Transcriber
 
 final class InstagramAutoTranscriber: Sendable {
@@ -668,29 +706,43 @@ final class InstagramAutoTranscriber: Sendable {
         let hasSpeech = !speech.isEmpty
 
         if hasGemini && hasSpeech {
-            // Check if visual text is just noise and speech is the real content
-            let geminiWordCount = geminiSlides.map(\.text).joined(separator: " ")
-                .split(separator: " ").count
-            let speechWordCount = speech.map(\.text).joined(separator: " ")
-                .split(separator: " ").count
+            let contentType = detectTranscriptionContentType(
+                visualSlides: geminiSlides,
+                speech: speech,
+                duration: duration
+            )
 
-            if isVoiceoverDominant(visualWordCount: geminiWordCount, speechWordCount: speechWordCount, visualSlideCount: geminiSlides.count) {
-                print("InstagramAutoTranscriber: Voiceover dominant over Gemini (\(geminiWordCount) visual words in \(geminiSlides.count) slides vs \(speechWordCount) speech words) — treating as voiceover-only")
+            if contentType == .voiceoverOnly {
+                let evidence = reelModalityEvidence(
+                    visualSlides: geminiSlides,
+                    speech: speech,
+                    duration: duration
+                )
+                print("InstagramAutoTranscriber: Voiceover dominant over Gemini (\(evidence.visualWordCount) visual words in \(geminiSlides.count) slides vs \(evidence.speechWordCount) speech words, overlap: \(String(format: "%.2f", evidence.subtitleOverlapRatio))) — treating as voiceover-only")
                 return transcriptionResult(
                     rawSlides: speechToSlides(speech: speech),
                     contentType: .voiceoverOnly,
                     averageOCRConfidence: 1.0
                 )
             }
-            let slides = mergeVisualSlidesWithSpeech(
-                visualSlides: geminiSlides,
-                speech: speech,
-                allowSpeechAlignment: allowSpeechAlignment
-            )
+
+            let slides: [TranscriptSlide]
+            switch contentType {
+            case .textOnly:
+                slides = renumberedSlides(geminiSlides)
+            case .voiceoverPlusText:
+                slides = mergeVisualSlidesWithSpeech(
+                    visualSlides: geminiSlides,
+                    speech: speech,
+                    allowSpeechAlignment: allowSpeechAlignment
+                )
+            case .voiceoverOnly, .empty:
+                slides = speechToSlides(speech: speech)
+            }
 
             return transcriptionResult(
                 rawSlides: slides,
-                contentType: .voiceoverPlusText,
+                contentType: contentType,
                 averageOCRConfidence: 0.95
             )
         } else if hasGemini {
@@ -1260,22 +1312,136 @@ final class InstagramAutoTranscriber: Sendable {
 
     // MARK: - Merge Logic
 
-    /// Detect when speech is the primary content and visual text is incidental noise
-    /// (watermarks, handles, background text) or auto-captions (subtitles that mirror speech).
-    /// Returns true when the reel should be treated as voiceover-only.
-    private func isVoiceoverDominant(visualWordCount: Int, speechWordCount: Int, visualSlideCount: Int = 0) -> Bool {
-        if visualWordCount == 0 { return true }
-        // Negligible visual text — almost certainly noise (real text reels have 15-200+ words)
-        if visualWordCount <= 10 && speechWordCount > 0 { return true }
-        // Visual text is minor compared to speech (noise + meaningful voiceover)
-        if speechWordCount >= visualWordCount * 4 && visualWordCount <= 25 { return true }
-        // Auto-caption detection: many tiny slides (1-3 words each) = subtitles, not content.
-        // Real text-on-screen reels have 5-30 words per slide; auto-captions have 1-3.
-        if visualSlideCount >= 10 && speechWordCount > 0 {
-            let avgWordsPerSlide = visualWordCount / max(visualSlideCount, 1)
-            if avgWordsPerSlide < 4 { return true }
+    func detectTranscriptionContentType(
+        visualSlides: [TranscriptSlide],
+        speech: [SpeechSegment],
+        duration: TimeInterval
+    ) -> TranscriptionContentType {
+        let hasVisual = visualSlides.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let hasSpeech = speech.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        if !hasVisual && !hasSpeech { return .empty }
+        if !hasVisual { return .voiceoverOnly }
+        if !hasSpeech { return .textOnly }
+
+        let evidence = reelModalityEvidence(
+            visualSlides: visualSlides,
+            speech: speech,
+            duration: duration
+        )
+
+        if evidence.shouldPreferVoiceover { return .voiceoverOnly }
+        if evidence.shouldTreatAsTextOnly { return .textOnly }
+        return .voiceoverPlusText
+    }
+
+    private func reelModalityEvidence(
+        visualSlides: [TranscriptSlide],
+        speech: [SpeechSegment],
+        duration: TimeInterval
+    ) -> ReelModalityEvidence {
+        let visualTexts = visualSlides
+            .map(\.text)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let speechTexts = speech
+            .map(\.text)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let visualWordCounts = visualTexts.map(wordCount(in:))
+        let speechWordCounts = speechTexts.map(wordCount(in:))
+
+        let visualWordCount = visualWordCounts.reduce(0, +)
+        let speechWordCount = speechWordCounts.reduce(0, +)
+        let visualSlideCount = visualTexts.count
+        let avgVisualWordsPerSlide = visualSlideCount > 0
+            ? Double(visualWordCount) / Double(visualSlideCount)
+            : 0
+        let shortVisualSlideRatio = visualSlideCount > 0
+            ? Double(visualWordCounts.filter { $0 <= 4 }.count) / Double(visualSlideCount)
+            : 0
+        let longVisualSlideRatio = visualSlideCount > 0
+            ? Double(visualWordCounts.filter { $0 >= 8 }.count) / Double(visualSlideCount)
+            : 0
+
+        let distinctVisualCount = Set(visualTexts.map(normalizedLineKey)).filter { !$0.isEmpty }.count
+        let distinctVisualRatio = visualSlideCount > 0
+            ? Double(distinctVisualCount) / Double(visualSlideCount)
+            : 0
+
+        let subtitleOverlapRatio = subtitleOverlapRatio(visualSlides: visualSlides, speech: speech)
+
+        let totalSpeechDuration = speech.reduce(0.0) { partial, segment in
+            partial + max(segment.duration, 0)
         }
-        return false
+        let speechCoverageRatio = duration > 0
+            ? min(totalSpeechDuration / duration, 1.0)
+            : 0
+        let speechWordsPerSecond = duration > 0
+            ? Double(speechWordCount) / duration
+            : Double(speechWordCount)
+        let avgSpeechWordsPerSegment = !speechWordCounts.isEmpty
+            ? Double(speechWordCount) / Double(speechWordCounts.count)
+            : 0
+
+        let speechTokens = tokenSet(from: speechTexts.joined(separator: " "))
+        let speechUniqueWordRatio = speechWordCount > 0
+            ? Double(speechTokens.count) / Double(speechWordCount)
+            : 0
+
+        let normalizedSegments = speechTexts.map(normalizedLineKey).filter { !$0.isEmpty }
+        var segmentFrequency: [String: Int] = [:]
+        for segment in normalizedSegments {
+            segmentFrequency[segment, default: 0] += 1
+        }
+        let repeatedSegments = segmentFrequency.values.filter { $0 > 1 }.reduce(0, +)
+        let repeatedSpeechSegmentRatio = normalizedSegments.isEmpty
+            ? 0
+            : Double(repeatedSegments) / Double(normalizedSegments.count)
+
+        var lyricRisk = 0
+        if speechWordCount > 0 && speechWordCount < 24 && avgSpeechWordsPerSegment <= 4.5 { lyricRisk += 1 }
+        if speechUniqueWordRatio < 0.55 { lyricRisk += 1 }
+        if repeatedSpeechSegmentRatio >= 0.2 { lyricRisk += 1 }
+        if speechWordsPerSecond < 0.9 { lyricRisk += 1 }
+        if subtitleOverlapRatio >= 0.7 && speechCoverageRatio < 0.25 { lyricRisk += 1 }
+
+        var voiceoverScore = 0
+        if speechWordCount >= 18 { voiceoverScore += 2 }
+        else if speechWordCount >= 10 { voiceoverScore += 1 }
+        if speechCoverageRatio >= 0.35 { voiceoverScore += 1 }
+        if speechWordsPerSecond >= 1.4 { voiceoverScore += 1 }
+        if subtitleOverlapRatio >= 0.58 { voiceoverScore += 2 }
+        else if subtitleOverlapRatio >= 0.4 { voiceoverScore += 1 }
+        if shortVisualSlideRatio >= 0.6 && visualSlideCount >= 5 { voiceoverScore += 1 }
+        if speechWordCount >= max(visualWordCount, 20) { voiceoverScore += 1 }
+
+        var textScore = 0
+        if visualWordCount >= 30 { textScore += 1 }
+        if avgVisualWordsPerSlide >= 7 { textScore += 1 }
+        if visualSlideCount >= 4 && avgVisualWordsPerSlide >= 6 && subtitleOverlapRatio < 0.4 { textScore += 2 }
+        if distinctVisualRatio >= 0.75 && longVisualSlideRatio >= 0.5 { textScore += 1 }
+        if speechWordCount <= 8 { textScore += 1 }
+
+        return ReelModalityEvidence(
+            visualWordCount: visualWordCount,
+            speechWordCount: speechWordCount,
+            visualSlideCount: visualSlideCount,
+            avgVisualWordsPerSlide: avgVisualWordsPerSlide,
+            shortVisualSlideRatio: shortVisualSlideRatio,
+            longVisualSlideRatio: longVisualSlideRatio,
+            distinctVisualRatio: distinctVisualRatio,
+            subtitleOverlapRatio: subtitleOverlapRatio,
+            speechCoverageRatio: speechCoverageRatio,
+            speechWordsPerSecond: speechWordsPerSecond,
+            avgSpeechWordsPerSegment: avgSpeechWordsPerSegment,
+            speechUniqueWordRatio: speechUniqueWordRatio,
+            repeatedSpeechSegmentRatio: repeatedSpeechSegmentRatio,
+            lyricRisk: lyricRisk,
+            voiceoverScore: voiceoverScore,
+            textScore: textScore
+        )
     }
 
     /// Merge OCR and speech results based on what was detected
@@ -1293,19 +1459,27 @@ final class InstagramAutoTranscriber: Sendable {
         let avgConfidence: Float
 
         if hasOCR && hasSpeech {
-            // Compute OCR slides to get both word count and slide count for heuristics
             let ocrSlides = ocrToSlides(ocr: ocr)
-            let ocrWordCount = ocrSlides.map(\.text).joined(separator: " ")
-                .split(separator: " ").count
-            let speechWordCount = speech.map(\.text).joined(separator: " ")
-                .split(separator: " ").count
+            let detectedContentType = detectTranscriptionContentType(
+                visualSlides: ocrSlides,
+                speech: speech,
+                duration: duration
+            )
 
-            if isVoiceoverDominant(visualWordCount: ocrWordCount, speechWordCount: speechWordCount, visualSlideCount: ocrSlides.count) {
-                // OCR text is noise or auto-captions — use speech as single block
-                print("InstagramAutoTranscriber: Voiceover dominant (\(ocrWordCount) visual words in \(ocrSlides.count) slides vs \(speechWordCount) speech words) — treating as voiceover-only")
+            if detectedContentType == .voiceoverOnly {
+                let evidence = reelModalityEvidence(
+                    visualSlides: ocrSlides,
+                    speech: speech,
+                    duration: duration
+                )
+                print("InstagramAutoTranscriber: Voiceover dominant (\(evidence.visualWordCount) visual words in \(ocrSlides.count) slides vs \(evidence.speechWordCount) speech words, overlap: \(String(format: "%.2f", evidence.subtitleOverlapRatio))) — treating as voiceover-only")
                 contentType = .voiceoverOnly
                 slides = speechToSlides(speech: speech)
                 avgConfidence = 1.0
+            } else if detectedContentType == .textOnly {
+                contentType = .textOnly
+                slides = ocrSlides
+                avgConfidence = ocr.map(\.confidence).reduce(0, +) / Float(ocr.count)
             } else {
                 contentType = .voiceoverPlusText
                 slides = mergeVoiceoverPlusText(
@@ -1480,8 +1654,10 @@ final class InstagramAutoTranscriber: Sendable {
                     let spokenText = overlapping.map(\.text).joined(separator: " ")
                     let slideNorm = normalizedLineKey(slide.text)
                     let speechNorm = normalizedLineKey(spokenText)
+                    let overlapScore = tokenOverlapScore(lhs: slide.text, rhs: spokenText)
                     if !slideNorm.isEmpty, !speechNorm.isEmpty,
-                       !slideNorm.contains(speechNorm), !speechNorm.contains(slideNorm) {
+                       !slideNorm.contains(speechNorm), !speechNorm.contains(slideNorm),
+                       overlapScore < 0.72 {
                         merged[idx].text += "\n[Voiceover: \(spokenText)]"
                         merged[idx].source = .merged
                     }
@@ -2188,6 +2364,43 @@ final class InstagramAutoTranscriber: Sendable {
         }
 
         return unique
+    }
+
+    private func wordCount(in text: String) -> Int {
+        text.split { $0.isWhitespace || $0.isNewline }.count
+    }
+
+    private func tokenSet(from text: String) -> Set<String> {
+        Set(normalizedLineKey(text).split(separator: " ").map(String.init))
+    }
+
+    private func tokenOverlapScore(lhs: String, rhs: String) -> Double {
+        let lhsTokens = tokenSet(from: lhs)
+        let rhsTokens = tokenSet(from: rhs)
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return 0 }
+        let intersection = lhsTokens.intersection(rhsTokens).count
+        return Double(intersection) / Double(min(lhsTokens.count, rhsTokens.count))
+    }
+
+    private func subtitleOverlapRatio(visualSlides: [TranscriptSlide], speech: [SpeechSegment]) -> Double {
+        guard !visualSlides.isEmpty, !speech.isEmpty else { return 0 }
+
+        var overlapScores: [Double] = []
+        for slide in visualSlides {
+            let slideStart = slide.timestamp ?? 0
+            let slideEnd = slide.endTimestamp ?? slideStart + 2
+            let overlappingSpeech = speech.filter { segment in
+                let segmentEnd = segment.timestamp + max(segment.duration, 0)
+                return segment.timestamp <= slideEnd + 0.5 && segmentEnd >= slideStart - 0.5
+            }
+
+            let spokenText = overlappingSpeech.map(\.text).joined(separator: " ")
+            guard !spokenText.isEmpty else { continue }
+            overlapScores.append(tokenOverlapScore(lhs: slide.text, rhs: spokenText))
+        }
+
+        guard !overlapScores.isEmpty else { return 0 }
+        return overlapScores.reduce(0, +) / Double(overlapScores.count)
     }
 
     private func jaccardSimilarity(_ lhs: Set<String>, _ rhs: Set<String>) -> Double {

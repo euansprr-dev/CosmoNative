@@ -9,12 +9,15 @@ struct ConnectionStructuredWorkspaceView: View {
     @Binding var conceptType: ConceptFrameworkType
     @Binding var state: ConnectionFocusModeState
     @Binding var collaboratorMessages: [CollaboratorMessage]
+    @Binding var activeDraftProposal: ConnectionDraftProposal?
+    @ObservedObject var previewStore: ConnectionCollaboratorPreviewStore
 
     let frameworkTitle: String
     let isCollaboratorThinking: Bool
     let insights: [LiveInsight]
     let isRefreshingInsights: Bool
     let sourceCount: Int
+    let linkedSourceCount: Int
     let maturityLabel: String
 
     let sources: [Atom]
@@ -34,6 +37,12 @@ struct ConnectionStructuredWorkspaceView: View {
     let onTitleCommit: (String) -> Void
     let onSendMessage: (String) -> Void
     let onCrystallizeMessage: (CollaboratorMessage) -> Void
+    let onInsertDraft: (ConnectionDraftProposal) -> Void
+    let onReviseDraft: (ConnectionDraftProposal) -> Void
+    let onMoveDraft: (ConnectionDraftProposal, ConnectionSectionType) -> Void
+    let onDismissDraft: (ConnectionDraftProposal) -> Void
+    let onResumeDraft: (ConnectionDraftProposal) -> Void
+    let onUseLinkedSources: () -> Void
     let onRefreshInsights: () -> Void
     let onDismissInsight: (UUID) -> Void
     let onAddSource: () -> Void
@@ -115,6 +124,8 @@ struct ConnectionStructuredWorkspaceView: View {
             title: $title,
             conceptType: $conceptType,
             state: $state,
+            activeDraftProposal: $activeDraftProposal,
+            previewStore: previewStore,
             onAddItem: onAddItem,
             onEditItem: onEditItem,
             onDeleteItem: onDeleteItem,
@@ -124,7 +135,7 @@ struct ConnectionStructuredWorkspaceView: View {
             onEnterStationMode: onEnterStationMode,
             onTitleCommit: onTitleCommit,
             sourceCount: sourceCount,
-            insightCount: insights.count,
+            insightCount: state.collaboratorObservationCount,
             maturityLabel: maturityLabel,
             stationWidth: metrics.stationWidth,
             stationColumns: metrics.stationColumns,
@@ -136,13 +147,22 @@ struct ConnectionStructuredWorkspaceView: View {
     private var atelierColumn: some View {
         ConnectionAtelierDockView(
             collaboratorMessages: $collaboratorMessages,
+            activeDraftProposal: $activeDraftProposal,
+            previewStore: previewStore,
             frameworkTitle: frameworkTitle,
             conceptType: conceptType,
             isCollaboratorThinking: isCollaboratorThinking,
+            linkedSourceCount: linkedSourceCount,
             insights: insights,
             isRefreshingInsights: isRefreshingInsights,
             onSendMessage: onSendMessage,
             onCrystallizeMessage: onCrystallizeMessage,
+            onInsertDraft: onInsertDraft,
+            onReviseDraft: onReviseDraft,
+            onMoveDraft: onMoveDraft,
+            onDismissDraft: onDismissDraft,
+            onResumeDraft: onResumeDraft,
+            onUseLinkedSources: onUseLinkedSources,
             onRefreshInsights: onRefreshInsights,
             onDismissInsight: onDismissInsight
         )

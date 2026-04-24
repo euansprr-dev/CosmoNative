@@ -24,6 +24,8 @@ struct CosmoMentionOverlay: View {
         (swipeFilterTag, "Swipe", "bookmark.fill"),
         (.idea, "Idea", "lightbulb"),
         (.connection, "Connection", "link"),
+        (.note, "Note", "note.text"),
+        (.clientProfile, "Profile", "person.crop.circle"),
         (.task, "Task", "checkmark.circle")
     ]
 
@@ -140,8 +142,7 @@ struct CosmoMentionOverlay: View {
     }
 
     private func categoryCapsule(_ category: (type: AtomType, label: String, icon: String)) -> some View {
-        let isSwipeCategory = category.type == Self.swipeFilterTag
-        let entityType = isSwipeCategory ? EntityType.swipeFile : (EntityType(rawValue: category.type.rawValue) ?? .idea)
+        let entityType = accentEntityType(for: category.type, isSwipe: category.type == Self.swipeFilterTag)
         let isSelected = selectedCategory == category.type
         let pillColor = CosmoMentionColors.color(for: entityType)
         let pillBg = CosmoMentionColors.pillBackground(for: entityType)
@@ -200,7 +201,7 @@ struct CosmoMentionOverlay: View {
 
     private func resultRow(atom: Atom) -> some View {
         let isSwipe = atom.isSwipeFileAtom
-        let entityType: EntityType = isSwipe ? .swipeFile : (EntityType(rawValue: atom.type.rawValue) ?? .idea)
+        let entityType = accentEntityType(for: atom.type, isSwipe: isSwipe)
         let displayLabel = isSwipe ? "Swipe" : atom.type.displayName
         let displayIcon = isSwipe ? "bookmark.fill" : atom.type.iconName
         let accent = CosmoMentionColors.color(for: entityType)
@@ -330,7 +331,7 @@ struct CosmoMentionOverlay: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(DS.text)
 
-                    Text("Type after `@` to attach ideas, swipes, research, tasks, or content as live context.")
+                    Text("Type after `@` to attach ideas, notes, profiles, swipes, research, tasks, or content as live context.")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(DS.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -342,7 +343,7 @@ struct CosmoMentionOverlay: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(DS.textMuted)
 
-                FlexibleFactRow(items: ["@Josh", "@Airbnb", "@hooks", "@research"])
+                FlexibleFactRow(items: ["@Josh", "@Airbnb", "@profile", "@note"])
             }
         }
         .padding(16)
@@ -365,6 +366,19 @@ struct CosmoMentionOverlay: View {
 
     private func label(for category: AtomType) -> String {
         categories.first(where: { $0.type == category })?.label ?? "Category"
+    }
+
+    private func accentEntityType(for atomType: AtomType, isSwipe: Bool) -> EntityType {
+        if isSwipe {
+            return .swipeFile
+        }
+
+        switch atomType {
+        case .clientProfile:
+            return .connection
+        default:
+            return EntityType(rawValue: atomType.rawValue) ?? .note
+        }
     }
 
     private func relativeDate(for atom: Atom) -> Date? {

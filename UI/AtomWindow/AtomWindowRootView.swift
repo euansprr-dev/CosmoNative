@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct AtomWindowRootView: View {
-    @State private var viewModel = AtomWindowViewModel()
+    let viewModel: AtomWindowViewModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,7 +21,6 @@ struct AtomWindowRootView: View {
         .compositingGroup()
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task { await viewModel.restoreLastSession() }
     }
 
     // MARK: - Content
@@ -83,8 +82,7 @@ struct AtomWindowRootView: View {
     }
 
     private func handleClose() {
-        viewModel.releaseCurrentLock()
-        viewModel.currentAtom = nil
+        viewModel.unloadCurrentSession()
     }
 
     // MARK: - Empty State

@@ -159,19 +159,26 @@ struct CortexSwipeBrowser: View {
     // MARK: - Masonry Grid
 
     private var thumbnailGrid: some View {
-        ScrollView {
-            CortexMasonryLayout(columns: 5, spacing: 8) {
-                ForEach(Array(viewModel.cachedFilteredSwipes.enumerated()), id: \.element.id) { index, item in
-                    CortexSwipeThumb(item: item) { openSwipe(item) }
-                        .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 8)
-                        .animation(
-                            ProMotionSprings.staggered(index: index),
-                            value: hasAppeared
-                        )
+        GeometryReader { geometry in
+            let targetColumnWidth: CGFloat = 180
+            let spacing: CGFloat = 10
+            let availableWidth = geometry.size.width - DS.space16 * 2
+            let columnCount = max(3, Int((availableWidth + spacing) / (targetColumnWidth + spacing)))
+
+            ScrollView {
+                CortexMasonryLayout(columns: columnCount, spacing: spacing) {
+                    ForEach(Array(viewModel.cachedFilteredSwipes.enumerated()), id: \.element.id) { index, item in
+                        CortexSwipeThumb(item: item) { openSwipe(item) }
+                            .opacity(hasAppeared ? 1 : 0)
+                            .offset(y: hasAppeared ? 0 : 8)
+                            .animation(
+                                ProMotionSprings.staggered(index: index),
+                                value: hasAppeared
+                            )
+                    }
                 }
+                .padding(DS.space16)
             }
-            .padding(DS.space16)
         }
     }
 
@@ -217,7 +224,7 @@ struct CortexSwipeBrowser: View {
 
 // MARK: - Swipe Thumbnail
 
-private struct CortexSwipeThumb: View {
+struct CortexSwipeThumb: View {
     let item: SwipeGalleryItem
     let onTap: () -> Void
     @State private var isHovered = false
@@ -264,28 +271,47 @@ private struct CortexSwipeThumb: View {
 
     @ViewBuilder
     private var thumbnailImage: some View {
-        if let url = item.thumbnailUrl, let nsUrl = URL(string: url) {
-            CachedAsyncImage(url: nsUrl, stableKey: item.instagramId) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fit)
-                case .empty:
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .tint(DS.textMuted)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(DS.glassCardFill.opacity(0.5))
-                case .failure:
-                    placeholderView
+        Group {
+            if let url = item.thumbnailUrl, let nsUrl = URL(string: url) {
+                CachedAsyncImage(url: nsUrl, stableKey: item.instagramId) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                    case .empty:
+                        placeholderFrame {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                                .tint(DS.textMuted)
+                        }
+                    case .failure:
+                        placeholderFrame { placeholderIcon }
+                    }
                 }
+            } else {
+                placeholderFrame { placeholderIcon }
             }
-            .frame(maxHeight: thumbMaxHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        } else {
-            placeholderView
-                .frame(height: thumbMaxHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    /// Fallback frame with platform-derived aspect ratio, used while images load or fail.
+    @ViewBuilder
+    private func placeholderFrame<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        Color.clear
+            .aspectRatio(fallbackAspectRatio, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .background(DS.glassCardFill.opacity(0.5))
+            .overlay(content())
+    }
+
+    private var placeholderIcon: some View {
+        Image(systemName: platformIcon)
+            .font(DS.callout)
+            .foregroundStyle(DS.entitySwipe)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -303,14 +329,7 @@ private struct CortexSwipeThumb: View {
     }
 
     private var placeholderView: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(DS.glassCardFill.opacity(0.5))
-            Image(systemName: platformIcon)
-                .font(DS.callout)
-                .foregroundStyle(DS.entitySwipe)
-                .accessibilityHidden(true)
-        }
+        placeholderFrame { placeholderIcon }
     }
 
     private var thumbLabel: some View {
@@ -321,12 +340,18 @@ private struct CortexSwipeThumb: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Platform-aware max height for thumbnails
-    private var thumbMaxHeight: CGFloat {
+    /// Only used as a loading/error placeholder. Real images render at their natural
+    /// aspect ratio via `.aspectRatio(contentMode: .fit)`.
+    private var fallbackAspectRatio: CGFloat {
         let platform = item.platform?.lowercased() ?? ""
-        if platform.contains("youtube") && !platform.contains("short") { return 55 }
-        if platform.contains("carousel") || platform.contains("post") { return 110 }
-        return 140  // Reels, shorts, TikTok — portrait
+        if platform.contains("youtube") && !platform.contains("short") { return 16.0 / 9.0 }
+        if platform.contains("carousel") || (platform.contains("post") && !platform.contains("reel")) {
+            return 4.0 / 5.0
+        }
+        if platform.contains("x") || platform.contains("twitter") || platform.contains("thread") {
+            return 3.0 / 4.0
+        }
+        return 9.0 / 16.0
     }
 
     private var platformIcon: String {

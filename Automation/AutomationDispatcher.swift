@@ -582,9 +582,10 @@ extension AutomationDispatcher {
             throw AutomationError.databaseNotReady
         }
 
-        var savedRule = rule
+        let savedRule = rule
         try await db.write { db in
-            try savedRule.insert(db)
+            var mutable = savedRule
+            try mutable.insert(db)
         }
 
         // Also create companion Atom for sync

@@ -259,7 +259,7 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
 
     // MARK: - Parse Post
 
-    private func parsePost(_ json: [String: Any], ownerUsername: String) -> ImportedPost? {
+    func parsePost(_ json: [String: Any], ownerUsername: String) -> ImportedPost? {
         // Extract shortcode — required for dedup
         guard let shortcode = json["shortCode"] as? String ?? json["shortcode"] as? String else {
             return nil
@@ -326,54 +326,7 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
             .flatMap { URL(string: $0) }
 
         // Carousel count + items
-        let carouselCount: Int?
-        var carouselItems: [CarouselItem]?
-        if let children = json["childPosts"] as? [[String: Any]] {
-            carouselCount = children.count
-            var items: [CarouselItem] = []
-            for (index, child) in children.enumerated() {
-                let childType = (child["type"] as? String ?? "").lowercased()
-                let isVideo = childType == "video"
-                let mediaType: CarouselMediaType = isVideo ? .video : .image
-
-                // Apify provides displayUrl for images, videoUrl for videos
-                let urlStr = isVideo
-                    ? (child["videoUrl"] as? String ?? child["displayUrl"] as? String)
-                    : (child["displayUrl"] as? String)
-                guard let urlStr, let mediaURL = URL(string: urlStr) else { continue }
-
-                let thumbStr = child["displayUrl"] as? String
-                let thumbURL = thumbStr.flatMap { URL(string: $0) }
-
-                items.append(CarouselItem(
-                    index: index,
-                    mediaType: mediaType,
-                    mediaURL: mediaURL,
-                    thumbnailURL: thumbURL
-                ))
-            }
-            if !items.isEmpty {
-                carouselItems = items
-            }
-        } else if let images = json["images"] as? [String], images.count > 1 {
-            carouselCount = images.count
-            let items = images.enumerated().compactMap { index, urlString -> CarouselItem? in
-                guard let mediaURL = URL(string: urlString) else { return nil }
-                return CarouselItem(
-                    index: index,
-                    mediaType: .image,
-                    mediaURL: mediaURL,
-                    thumbnailURL: mediaURL
-                )
-            }
-            if !items.isEmpty {
-                carouselItems = items
-            }
-        } else if let count = json["imagesCount"] as? Int, count > 1 {
-            carouselCount = count
-        } else {
-            carouselCount = nil
-        }
+        let (carouselItems, carouselCount) = Self.parseCarouselItemsAndCount(from: json)
 
         // Location
         let locationName = json["locationName"] as? String
@@ -411,5 +364,136 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
             guard let tagRange = Range(match.range(at: 1), in: caption) else { return nil }
             return String(caption[tagRange])
         }
+    }
+
+    static func parseCarouselItemsAndCount(from json: [String: Any]) -> ([CarouselItem]?, Int?) {
+        if let childPayloads = childPayloads(from: json), !childPayloads.isEmpty {
+            let items = childPayloads.enumerated().compactMap { index, child in
+                parseCarouselItem(from: child, index: index)
+            }
+            return (items.isEmpty ? nil : items, childPayloads.count)
+        }
+
+        if let images = json["images"] as? [String], images.count > 1 {
+            let items = images.enumerated().compactMap { index, urlString -> CarouselItem? in
+                guard let mediaURL = URL(string: urlString) else { return nil }
+                return CarouselItem(
+                    index: index,
+                    mediaType: .image,
+                    mediaURL: mediaURL,
+                    thumbnailURL: mediaURL
+                )
+            }
+            return (items.isEmpty ? nil : items, images.count)
+        }
+
+        if let imageDicts = json["images"] as? [[String: Any]], imageDicts.count > 1 {
+            let items = imageDicts.enumerated().compactMap { index, child in
+                parseCarouselItem(from: child, index: index)
+            }
+            return (items.isEmpty ? nil : items, imageDicts.count)
+        }
+
+        if let count = json["imagesCount"] as? Int, count > 1 {
+            return (nil, count)
+        }
+
+        return (nil, nil)
+    }
+
+    private static func childPayloads(from json: [String: Any]) -> [[String: Any]]? {
+        let directKeys = [
+            "childPosts",
+            "children",
+            "carouselMedia",
+            "carousel_media",
+            "sidecarMedia",
+            "sidecarChildren",
+            "items"
+        ]
+
+        for key in directKeys {
+            if let children = json[key] as? [[String: Any]], !children.isEmpty {
+                return children
+            }
+        }
+
+        let nestedKeys = [
+            "carousel",
+            "sidecar",
+            "sidecarData",
+            "edgeSidecarToChildren",
+            "edge_sidecar_to_children"
+        ]
+
+        for key in nestedKeys {
+            if let nested = json[key] as? [String: Any] {
+                if let edges = nested["edges"] as? [[String: Any]] {
+                    let nodes = edges.compactMap { $0["node"] as? [String: Any] }
+                    if !nodes.isEmpty {
+                        return nodes
+                    }
+                }
+
+                if let children = childPayloads(from: nested), !children.isEmpty {
+                    return children
+                }
+            }
+        }
+
+        if let edgeSidecar = json["edge_sidecar_to_children"] as? [String: Any],
+           let edges = edgeSidecar["edges"] as? [[String: Any]] {
+            let nodes = edges.compactMap { $0["node"] as? [String: Any] }
+            if !nodes.isEmpty {
+                return nodes
+            }
+        }
+
+        return nil
+    }
+
+    private static func parseCarouselItem(from child: [String: Any], index: Int) -> CarouselItem? {
+        let childType = (child["type"] as? String ?? child["mediaType"] as? String ?? "").lowercased()
+        let isVideoFlag = child["isVideo"] as? Bool ?? child["is_video"] as? Bool ?? false
+        let isVideo = isVideoFlag || childType == "video" || childType == "reel"
+        let mediaType: CarouselMediaType = isVideo ? .video : .image
+
+        let displayURLString = firstString(in: child, keys: [
+            "displayUrl",
+            "display_url",
+            "imageUrl",
+            "image_url",
+            "thumbnailUrl",
+            "thumbnail_url"
+        ])
+        let videoURLString = firstString(in: child, keys: [
+            "videoUrl",
+            "video_url"
+        ])
+
+        let mediaURLString = isVideo ? (videoURLString ?? displayURLString) : (displayURLString ?? videoURLString)
+        guard let mediaURLString, let mediaURL = URL(string: mediaURLString) else {
+            return nil
+        }
+
+        let thumbnailURL = displayURLString.flatMap(URL.init(string:))
+        let duration = child["videoDuration"] as? TimeInterval ?? child["video_duration"] as? TimeInterval
+
+        return CarouselItem(
+            index: index,
+            mediaType: mediaType,
+            mediaURL: mediaURL,
+            thumbnailURL: thumbnailURL,
+            duration: duration
+        )
+    }
+
+    private static func firstString(in json: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = json[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 }

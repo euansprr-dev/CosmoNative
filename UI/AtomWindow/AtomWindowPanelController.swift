@@ -28,6 +28,7 @@ final class AtomWindowPanelController: NSWindowController {
     private var resizeObserver: NSObjectProtocol?
     private var globalHotkeyMonitor: Any?
     private var localHotkeyMonitor: Any?
+    private var contentLoadTask: Task<Void, Never>?
 
     init() {
         let savedFrame = AtomWindowPanelController.loadSavedFrame()
@@ -85,8 +86,9 @@ final class AtomWindowPanelController: NSWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.buildHostingView()
+            Task { @MainActor in
+                self?.buildHostingView()
+            }
         }
 
         // Start hidden
@@ -98,7 +100,9 @@ final class AtomWindowPanelController: NSWindowController {
             object: panel,
             queue: .main
         ) { [weak self] _ in
-            self?.saveFrame()
+            Task { @MainActor in
+                self?.saveFrame()
+            }
         }
 
         resizeObserver = NotificationCenter.default.addObserver(
@@ -106,7 +110,9 @@ final class AtomWindowPanelController: NSWindowController {
             object: panel,
             queue: .main
         ) { [weak self] _ in
-            self?.saveFrame()
+            Task { @MainActor in
+                self?.saveFrame()
+            }
         }
 
         // Fallback hotkey monitors (Option+E, keyCode 14)
@@ -142,17 +148,20 @@ final class AtomWindowPanelController: NSWindowController {
     }
 
     deinit {
-        if let observer = moveObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = resizeObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let monitor = globalHotkeyMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        if let monitor = localHotkeyMonitor {
-            NSEvent.removeMonitor(monitor)
+        MainActor.assumeIsolated {
+            contentLoadTask?.cancel()
+            if let observer = moveObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = resizeObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let monitor = globalHotkeyMonitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            if let monitor = localHotkeyMonitor {
+                NSEvent.removeMonitor(monitor)
+            }
         }
     }
 
@@ -161,7 +170,7 @@ final class AtomWindowPanelController: NSWindowController {
     private func buildHostingView() {
         let isDark = ThemeManager.shared.currentTheme.isDark
         let contentView = NSHostingView(
-            rootView: AtomWindowRootView()
+            rootView: AtomWindowRootView(viewModel: viewModel)
                 .environment(\.cosmoWindowIsFloating, true)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, true)
@@ -187,18 +196,27 @@ final class AtomWindowPanelController: NSWindowController {
         isShown = true
         panel.orderFrontRegardless()
         panel.makeKey()
+        contentLoadTask?.cancel()
+        contentLoadTask = Task { @MainActor in
+            await viewModel.restoreLastSession()
+        }
     }
 
     func hide() {
         isShown = false
-        viewModel.releaseCurrentLock()
+        contentLoadTask?.cancel()
+        contentLoadTask = nil
+        viewModel.unloadCurrentSession()
         panel.orderOut(nil)
     }
 
     /// Open the panel and navigate to a specific atom
     func show(atomUUID: String) {
-        show()
-        Task {
+        isShown = true
+        contentLoadTask?.cancel()
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        contentLoadTask = Task { @MainActor in
             await viewModel.navigate(to: atomUUID)
         }
     }

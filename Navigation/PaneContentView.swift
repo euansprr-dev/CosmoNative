@@ -6,6 +6,7 @@ import SwiftUI
 struct PaneContentView: View {
     let content: PaneContent
     let isActive: Bool
+    let isContextOwner: Bool
     let onClose: () -> Void
 
     @State private var loadedAtom: Atom?
@@ -20,11 +21,9 @@ struct PaneContentView: View {
                 paneCloseButton
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(DS.border, lineWidth: 1)
-        )
+        .background(backgroundFill)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .overlay(borderOverlay)
         .task {
             guard case .entity(let entity) = content else { return }
             if let atom = try? await AtomRepository.shared.fetch(id: entity.id) {
@@ -42,16 +41,25 @@ struct PaneContentView: View {
             entityView(for: entity)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
+                .environment(\.isPaneContextOwner, isContextOwner)
 
         case .thinkspace(let thinkspaceId):
             PaneCanvasView(thinkspaceId: thinkspaceId)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
+                .environment(\.isPaneContextOwner, isContextOwner)
 
         case .commandCenter:
             CommandCenterDashboard()
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
+                .environment(\.isPaneContextOwner, isContextOwner)
+
+        case .collaborator(let target, let presetId):
+            CosmoCollaboratorPaneView(target: target, presetId: presetId, onClose: onClose)
+                .environment(\.isPaneContext, true)
+                .environment(\.isPaneActive, isActive)
+                .environment(\.isPaneContextOwner, isContextOwner)
         }
     }
 
@@ -111,11 +119,43 @@ struct PaneContentView: View {
         Button(action: onClose) {
             Image(systemName: "xmark")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 28, height: 28)
                 .background(DS.border, in: Circle())
         }
         .buttonStyle(.plain)
         .padding(8)
+    }
+
+    private var backgroundFill: some View {
+        Group {
+            switch content.chromeStyle {
+            case .standard:
+                DS.bg
+            case .minimal:
+                DS.bg
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var borderOverlay: some View {
+        switch content.chromeStyle {
+        case .standard:
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .stroke(DS.border, lineWidth: 1)
+        case .minimal:
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .stroke(isActive ? DS.borderSubtle : DS.borderSubtle.opacity(0.7), lineWidth: 1)
+        }
+    }
+
+    private var cornerRadius: CGFloat {
+        switch content.chromeStyle {
+        case .standard:
+            return 8
+        case .minimal:
+            return 14
+        }
     }
 }

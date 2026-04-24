@@ -18,10 +18,6 @@ struct PhysicsArcVisualizationView: View {
             dominantFrameRow
             tensionInfo
         }
-        .padding(DS.space20)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
-        .dsRestingShadow()
         .onAppear { withAnimation(.easeInOut(duration: 0.8)) { drawProgress = 1 } }
     }
 
@@ -131,7 +127,7 @@ struct PhysicsArcVisualizationView: View {
     @ViewBuilder
     private var fallbackArcShape: some View {
         RoundedRectangle(cornerRadius: DS.radiusSmall)
-            .fill(DS.entitySwipe.opacity(0.04))
+            .fill(DS.sepiaSubtle.opacity(0.6))
             .frame(height: 60)
             .overlay {
                 Text("No energy curve data")

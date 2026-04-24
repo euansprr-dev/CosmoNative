@@ -310,12 +310,13 @@ struct SidebarThinkspaceSection: View {
             if isRenaming && !isCollapsed {
                 thinkspaceRenameRow(thinkspace)
             } else {
-                Button {
-                    selectThinkspace(thinkspace)
-                } label: {
-                    thinkspaceRowLabel(thinkspace, isActive: isActive, isExpanded: isExpanded, level: level)
-                }
-                .buttonStyle(.plain)
+                thinkspaceRowLabel(
+                    thinkspace,
+                    isActive: isActive,
+                    isHovered: isHovered,
+                    isExpanded: isExpanded,
+                    level: level
+                )
             }
 
             if isExpanded && !isCollapsed {
@@ -341,9 +342,16 @@ struct SidebarThinkspaceSection: View {
     }
 
     @ViewBuilder
-    private func thinkspaceRowLabel(_ thinkspace: Thinkspace, isActive: Bool, isExpanded: Bool, level: Int) -> some View {
+    private func thinkspaceRowLabel(
+        _ thinkspace: Thinkspace,
+        isActive: Bool,
+        isHovered: Bool,
+        isExpanded: Bool,
+        level: Int
+    ) -> some View {
         let project = projectFor(thinkspace)
         let color = project.map { projectColor(for: $0) } ?? DS.accent
+        let isExpandable = thinkspaceIsExpandable(thinkspace)
 
         if isCollapsed {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -358,59 +366,110 @@ struct SidebarThinkspaceSection: View {
                 .help(thinkspace.name)
         } else {
             HStack(spacing: 8) {
-                Button(isExpanded ? "Collapse" : "Expand", systemImage: isExpanded ? "chevron.down" : "chevron.right") {
-                    toggleExpand(thinkspace)
-                }
-                .labelStyle(.iconOnly)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-                .frame(width: 20, height: 20)
-                .buttonStyle(.plain)
+                thinkspaceAvatarButton(
+                    thinkspace,
+                    color: color,
+                    isActive: isActive,
+                    isHovered: isHovered,
+                    isExpanded: isExpanded,
+                    isExpandable: isExpandable
+                )
 
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isActive ? DS.accent.opacity(0.14) : color.opacity(0.14))
-                    .frame(width: 24, height: 24)
-                    .overlay(
-                        Text(String(thinkspace.name.prefix(1)).uppercased())
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(isActive ? DS.accent : color)
-                    )
+                Button {
+                    selectThinkspace(thinkspace)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(thinkspace.name)
+                            .font(.system(size: 13, weight: isActive ? .semibold : .medium))
+                            .foregroundStyle(isActive ? DS.text : DS.textSecondary)
+                            .lineLimit(1)
 
-                Text(thinkspace.name)
-                    .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                    .foregroundStyle(isActive ? DS.text : DS.textSecondary)
-                    .lineLimit(1)
+                        if level > 0 {
+                            Text("Nested")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(DS.textMuted)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(DS.bg, in: Capsule())
+                        }
 
-                if level > 0 {
-                    Text("Nested")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(DS.textMuted)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(DS.bg, in: Capsule())
-                }
+                        Spacer()
 
-                Spacer()
+                        HStack(spacing: 8) {
+                            let nestedCount = manager.childThinkspaces(of: thinkspace.id).count
+                            if nestedCount > 0 && level == 0 {
+                                Label("\(nestedCount)", systemImage: "rectangle.stack")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(DS.textMuted)
+                            }
 
-                HStack(spacing: 8) {
-                    let nestedCount = manager.childThinkspaces(of: thinkspace.id).count
-                    if nestedCount > 0 && level == 0 {
-                        Label("\(nestedCount)", systemImage: "rectangle.stack")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(DS.textMuted)
+                            Text("\(thinkspace.blockCount)")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(DS.textMuted)
+                                .frame(minWidth: 22, alignment: .trailing)
+                        }
                     }
-
-                    Text("\(thinkspace.blockCount)")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(DS.textMuted)
-                        .frame(minWidth: 22, alignment: .trailing)
+                    .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
             .padding(.leading, 8 + CGFloat(level) * 18)
             .padding(.trailing, 8)
             .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
-            .contentShape(Rectangle())
         }
+    }
+
+    @ViewBuilder
+    private func thinkspaceAvatarButton(
+        _ thinkspace: Thinkspace,
+        color: Color,
+        isActive: Bool,
+        isHovered: Bool,
+        isExpanded: Bool,
+        isExpandable: Bool
+    ) -> some View {
+        let avatarFill = isActive ? DS.accent.opacity(0.14) : color.opacity(0.14)
+        let avatarForeground = isActive ? DS.accent : color
+        let showsDisclosure = isExpandable && isHovered
+
+        Button {
+            guard isExpandable else { return }
+            toggleExpand(thinkspace)
+        } label: {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(avatarFill)
+                .frame(width: 24, height: 24)
+                .overlay {
+                    ZStack {
+                        Text(String(thinkspace.name.prefix(1)).uppercased())
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(avatarForeground)
+                            .opacity(showsDisclosure ? 0 : 1)
+                            .scaleEffect(showsDisclosure ? 0.84 : 1)
+
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(avatarForeground)
+                            .opacity(showsDisclosure ? 1 : 0)
+                            .scaleEffect(showsDisclosure ? 1 : 0.8)
+                    }
+                    .animation(hoverAnimation, value: showsDisclosure)
+                    .animation(hoverAnimation, value: isExpanded)
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isExpandable)
+        .accessibilityLabel(
+            isExpandable
+                ? "\(isExpanded ? "Collapse" : "Expand") \(thinkspace.name)"
+                : thinkspace.name
+        )
+        .help(
+            isExpandable
+                ? (isExpanded ? "Collapse contents" : "Expand contents")
+                : thinkspace.name
+        )
     }
 
     // MARK: - Rename Row
@@ -843,6 +902,10 @@ struct SidebarThinkspaceSection: View {
     private func projectFor(_ thinkspace: Thinkspace) -> Atom? {
         guard let projectUuid = thinkspace.projectUuid else { return nil }
         return projects.first { $0.uuid == projectUuid }
+    }
+
+    private func thinkspaceIsExpandable(_ thinkspace: Thinkspace) -> Bool {
+        thinkspace.hasChildren || thinkspace.blockCount > 0
     }
 
     private func appendNavigationItems(

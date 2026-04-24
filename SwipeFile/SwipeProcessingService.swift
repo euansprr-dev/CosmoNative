@@ -34,6 +34,31 @@ final class SwipeProcessingService {
 
     private init() {}
 
+    nonisolated static func isLikelyCarouselPostURL(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        return path.contains("/p/") || path.contains("/share/p/")
+    }
+
+    nonisolated static func shouldUseThumbnailFallback(
+        mediaData: InstagramMediaData,
+        sourceURL: URL,
+        existingCarouselItems: [CarouselItem]? = nil
+    ) -> Bool {
+        guard mediaData.thumbnailURL != nil else { return false }
+        guard mediaData.videoURL == nil else { return false }
+
+        let items = existingCarouselItems ?? mediaData.carouselItems
+        if let items, !items.isEmpty {
+            return false
+        }
+
+        if isLikelyCarouselPostURL(sourceURL) {
+            return false
+        }
+
+        return true
+    }
+
     // MARK: - Pending Swipe Scanner
 
     /// Scan for cloud-captured swipes that arrived while offline and process them.
@@ -195,8 +220,7 @@ final class SwipeProcessingService {
         // A 1-item result is treated as partial — Cobalt/GraphQL can return a
         // truncated picker when a scrape fails mid-response. Invalidate and let
         // the cache's best-carousel resolver (GraphQL sidecar) take a second pass.
-        let urlPath = url.path.lowercased()
-        let isLikelyCarousel = urlPath.contains("/p/") || urlPath.contains("/share/p/")
+        let isLikelyCarousel = Self.isLikelyCarouselPostURL(url)
         let currentItemCount = mediaData.carouselItems?.count ?? 0
         let looksPartial = currentItemCount <= 1 && mediaData.videoURL == nil
         if isLikelyCarousel && looksPartial {
@@ -258,7 +282,12 @@ final class SwipeProcessingService {
                 default: break
                 }
             }
-        } else if let thumbnailURL = mediaData.thumbnailURL {
+        } else if let thumbnailURL = mediaData.thumbnailURL,
+                  Self.shouldUseThumbnailFallback(
+                    mediaData: mediaData,
+                    sourceURL: url,
+                    existingCarouselItems: carouselItems
+                  ) {
             print("SwipeProcessingService: Image post, transcribing thumbnail for \(uuid)")
             let singleItem = CarouselItem(
                 index: 0,
@@ -293,6 +322,14 @@ final class SwipeProcessingService {
                     transcriptionResult.warnings.append(warning)
                 }
             }
+        } else if isLikelyCarousel {
+            print("SwipeProcessingService: Incomplete carousel extraction for \(uuid), refusing thumbnail fallback")
+            var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+            sa.extractionRetryCount = (sa.extractionRetryCount ?? 0) + 1
+            atom = atom.withSwipeAnalysis(sa)
+            atom.processingStatus = "extraction_failed"
+            _ = try? await AtomRepository.shared.update(atom)
+            return nil
         } else {
             print("SwipeProcessingService: No transcribable content for \(uuid)")
             var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)

@@ -1,13 +1,10 @@
 // CosmoOS/AI/ConceptCollaboratorEngine.swift
-// April 2026 — Connection Focus Mode V2 "The Crucible"
+// April 2026 — connection-native collaborator
 //
-// A dedicated AI partner scoped to a single framework. NOT shared Cosmo — this
-// engine's entire purpose is to help the user crystallize one concept into a
-// rigorous framework. Socratic by default, framework-shape aware, and capable
-// of returning tool-use actions that crystallize content directly into a named
-// station.
-//
-// Model: Sonnet (strategist tier) — we want thoughtful reasoning, not speed.
+// Dedicated AI partner for one Connection artifact. The personality and
+// questioning strategy come from the shared collaborator source prompt; this
+// engine adds connection-specific context, section-aware draft staging, and
+// prompt-faithful guardrails.
 
 import Foundation
 import Observation
@@ -23,168 +20,367 @@ final class ConceptCollaboratorEngine {
 
     // MARK: - Public API
 
-    /// Ask the collaborator a question about the current framework.
-    ///
-    /// The returned message may include a `crystallizeTarget` + `crystallizeContent`
-    /// pair — those fields drive the in-chat "Crystallize into [SECTION]" button.
     func ask(
         prompt: String,
         frameworkTitle: String,
         conceptType: ConceptFrameworkType,
         state: ConnectionFocusModeState,
-        history: [CollaboratorMessage]
+        linkedSources: [Atom],
+        history: [CollaboratorMessage],
+        isBootstrap: Bool = false
     ) async -> CollaboratorMessage {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return fallbackMessage(for: state, linkedSources: linkedSources)
+        }
+
         isThinking = true
         defer { isThinking = false }
 
         let systemBlocks = buildSystemBlocks(
             frameworkTitle: frameworkTitle,
             conceptType: conceptType,
-            state: state
+            state: state,
+            linkedSources: linkedSources,
+            isBootstrap: isBootstrap
         )
 
-        var messages: [[String: Any]] = []
-        for msg in history.suffix(20) {
-            messages.append([
-                "role": msg.role == .user ? "user" : "assistant",
-                "content": msg.text
-            ])
-        }
-        messages.append(["role": "user", "content": prompt])
-
-        let tools: [[String: Any]] = [crystallizeToolDefinition]
+        var messages = history.suffix(16).map(historyMessagePayload)
+        messages.append(["role": "user", "content": trimmed])
 
         do {
             let response = try await ResearchService.shared.generateWithTools(
                 systemBlocks: systemBlocks,
                 messages: messages,
-                tools: tools,
+                tools: [stageTurnToolDefinition],
                 model: ContentModelTier.strategist.rawValue,
-                maxTokens: 2048,
-                temperature: 0.6
+                maxTokens: 2200,
+                temperature: 0.55
             )
-            return parseResponse(response)
+            return parseResponse(
+                response,
+                state: state,
+                linkedSources: linkedSources
+            )
         } catch {
             lastError = error.localizedDescription
             return CollaboratorMessage(
                 role: .assistant,
-                text: "I couldn't reach the concept collaborator. \(error.localizedDescription)"
+                text: "I couldn't reach the collaborator just now. Try again in a moment."
             )
         }
     }
 
-    // MARK: - System prompt
+    // MARK: - Prompt Construction
 
     private func buildSystemBlocks(
         frameworkTitle: String,
         conceptType: ConceptFrameworkType,
-        state: ConnectionFocusModeState
+        state: ConnectionFocusModeState,
+        linkedSources: [Atom],
+        isBootstrap: Bool
     ) -> [PromptCacheBlock] {
-        let identity = """
-        You are the Concept Collaborator — a Socratic thinking partner helping the \
-        user crystallize one concept into a rigorous framework. You are scoped to \
-        a single framework: "\(frameworkTitle)" (\(conceptType.displayName)).
+        let runtimePrompt = CollaboratorPreset.deepenConnection.runtimePrompt
 
-        Your tonal register: \(conceptType.collaboratorTone)
+        let operatingRules = """
+        ### Connection Collaborator Operating Rules
+        You are collaborating inside one Connection artifact: "\(frameworkTitle)" (\(conceptType.displayName)).
 
-        Your job is NOT to summarize what the user has written. Your job is to ask \
-        the one question they haven't asked themselves yet — or to point out a tension, \
-        gap, or echo they will want to resolve.
+        Context status:
+        - populated sections: \(state.completedSectionCount)/8
+        - linked sources: \(linkedSources.count)
+        - bootstrap turn: \(isBootstrap ? "yes" : "no")
 
-        Rules:
-        • Favor one sharp question over three safe ones.
-        • Name tensions explicitly: "Your Process assumes X, but Beliefs lists not-X".
-        • When a known framework echoes this one, name it and specify what makes this \
-          version distinct.
-        • When you have concrete content that belongs in a specific station, emit the \
-          `crystallize_into_section` tool call. Otherwise, stay conversational.
-        • Never hedge with "it depends" alone. Take a position; the user will push back.
-        • 2-6 sentences of prose max. No bullet lists unless the user asked for one.
+        Connection-specific rules:
+        - The current connection is the working surface. Additive drafts belong in one section at a time.
+        - If the connection is blank or barely started, invite the user to send the core idea even if it is messy.
+        - If the connection already has material, begin from what is already written and any linked sources.
+        - Ask one question at a time or stage one section-targeted draft. Do not do both aggressively.
+        - Never use canned filler like "What's the tension?" unless the user uses that language first.
+        - Observation kind, if any, must be one of: pattern, paradox, name, contrast, sourceLink.
+        - Use linked sources only when they materially sharpen the question, observation, or draft.
+        - Keep prose to 2-5 sentences.
+        - Use the `stage_connection_turn` tool for every reply.
         """
 
-        let contextSummary = buildContextSummary(state: state)
-
         return [
-            PromptCacheBlock(content: identity, cacheControl: true),
-            PromptCacheBlock(content: contextSummary, cacheControl: false)
+            PromptCacheBlock(
+                content: runtimePrompt,
+                cacheControl: true,
+                ttl: "1h",
+                label: "collaborator-source-prompt"
+            ),
+            PromptCacheBlock(
+                content: operatingRules,
+                cacheControl: true,
+                ttl: "1h",
+                label: "connection-operating-rules"
+            ),
+            PromptCacheBlock(
+                content: buildContextSummary(
+                    frameworkTitle: frameworkTitle,
+                    conceptType: conceptType,
+                    state: state,
+                    linkedSources: linkedSources
+                ),
+                cacheControl: false,
+                label: "connection-context"
+            )
         ]
     }
 
-    private func buildContextSummary(state: ConnectionFocusModeState) -> String {
+    private func buildContextSummary(
+        frameworkTitle: String,
+        conceptType: ConceptFrameworkType,
+        state: ConnectionFocusModeState,
+        linkedSources: [Atom]
+    ) -> String {
         var lines: [String] = []
-        lines.append("## Current framework state\n")
+        let resolvedTitle = frameworkTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Untitled Connection"
+            : frameworkTitle
+
+        lines.append("## Connection")
+        lines.append("Title: \(resolvedTitle)")
+        lines.append("Type: \(conceptType.displayName)")
+        lines.append("Completed sections: \(state.completedSectionCount)/8")
+        lines.append("")
+        lines.append("## Sections")
+
         for section in state.sections {
-            let items = section.items.map { "  • \($0.plainText ?? $0.content)" }.joined(separator: "\n")
+            let items = section.items.prefix(5).map { $0.resolvedPlainText }
             if items.isEmpty {
-                lines.append("### \(section.type.displayName)\n  (empty — prompt: \(section.type.promptQuestion))")
+                lines.append("### \(section.type.rawValue)")
+                lines.append("(empty)")
             } else {
-                lines.append("### \(section.type.displayName)\n\(items)")
+                lines.append("### \(section.type.rawValue)")
+                for item in items {
+                    lines.append("- \(item)")
+                }
             }
         }
-        lines.append("")
-        lines.append("Maturity: \(state.completedSectionCount)/8 stations populated.")
+
+        if linkedSources.isEmpty {
+            lines.append("")
+            lines.append("## Linked sources")
+            lines.append("(none)")
+        } else {
+            lines.append("")
+            lines.append("## Linked sources")
+            for source in linkedSources.prefix(6) {
+                let resolvedTitle: String
+                if let sourceTitle = source.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !sourceTitle.isEmpty {
+                    resolvedTitle = sourceTitle
+                } else {
+                    resolvedTitle = "Untitled"
+                }
+                let snippet = String(source.body?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .components(separatedBy: .newlines)
+                    .joined(separator: " ")
+                    .prefix(220) ?? "")
+                lines.append("- id: \(source.uuid)")
+                lines.append("  title: \(resolvedTitle)")
+                if !snippet.isEmpty {
+                    lines.append("  snippet: \(snippet)")
+                }
+            }
+        }
+
+        if let draft = state.activeDraftProposal {
+            lines.append("")
+            lines.append("## Active draft proposal")
+            lines.append("Section: \(draft.targetSection.rawValue)")
+            lines.append("Status: \(draft.status.rawValue)")
+            lines.append("Draft: \(draft.draftText)")
+        }
+
         return lines.joined(separator: "\n")
     }
 
-    // MARK: - Tool definition
+    private func historyMessagePayload(_ message: CollaboratorMessage) -> [String: Any] {
+        var content = message.text
+        if let draft = message.draftProposal {
+            content += "\n\n[Draft proposal for \(draft.targetSection.displayName)]: \(draft.draftText)"
+        }
+        if let observationKind = message.observationKind {
+            content += "\n[Observation: \(observationKind.rawValue)]"
+        }
+        if let question = message.questionSuggestion {
+            content += "\n[Question suggestion]: \(question)"
+        }
+        return [
+            "role": message.role == .user ? "user" : "assistant",
+            "content": content
+        ]
+    }
 
-    private var crystallizeToolDefinition: [String: Any] {
+    // MARK: - Tool Definition
+
+    private var stageTurnToolDefinition: [String: Any] {
         [
             "type": "function",
             "function": [
-                "name": "crystallize_into_section",
-                "description": "Propose specific content that the user should insert into one of the 8 stations. Use only when you have a concrete, atomic insight — not a paraphrase.",
+                "name": "stage_connection_turn",
+                "description": "Return the next collaborator turn for this connection. Include assistant_text every time. Optionally include one observation kind, one question suggestion, and one additive section-targeted draft proposal.",
                 "parameters": [
                     "type": "object",
                     "properties": [
-                        "section": [
+                        "assistant_text": [
                             "type": "string",
-                            "enum": ConnectionSectionType.allCases.map { $0.rawValue },
-                            "description": "The station to insert into."
+                            "description": "The assistant's visible reply in 2-5 sentences."
                         ],
-                        "content": [
+                        "observation_kind": [
                             "type": "string",
-                            "description": "The exact text to be inserted as a new item in that station. One tight sentence, no preamble."
+                            "enum": CollaboratorObservationKind.allCases.map(\.rawValue),
+                            "description": "Optional observation label when the reply is primarily a pattern, paradox, name, contrast, or source link."
                         ],
-                        "reasoning": [
+                        "question_suggestion": [
                             "type": "string",
-                            "description": "One sentence on why this belongs in this specific station."
+                            "description": "Optional single follow-up question grounded in the source prompt's question patterns."
+                        ],
+                        "recommended_action": [
+                            "type": "string",
+                            "description": "Optional short next move, such as using linked sources or revising a draft."
+                        ],
+                        "draft": [
+                            "type": "object",
+                            "properties": [
+                                "section": [
+                                    "type": "string",
+                                    "enum": ConnectionSectionType.allCases.map(\.rawValue),
+                                    "description": "The section that should receive the draft."
+                                ],
+                                "draft_text": [
+                                    "type": "string",
+                                    "description": "The exact additive draft text for the target section."
+                                ],
+                                "rationale": [
+                                    "type": "string",
+                                    "description": "One sentence on why this belongs in that section."
+                                ],
+                                "source_ids": [
+                                    "type": "array",
+                                    "items": ["type": "string"],
+                                    "description": "Optional array of linked source UUIDs used for the draft."
+                                ]
+                            ],
+                            "required": ["section", "draft_text"]
                         ]
                     ],
-                    "required": ["section", "content"]
+                    "required": ["assistant_text"]
                 ]
             ]
         ]
     }
 
-    // MARK: - Response parsing
+    // MARK: - Response Parsing
 
-    private func parseResponse(_ response: ClaudeToolUseResponse) -> CollaboratorMessage {
-        // If a crystallize tool call came back, prefer that.
-        if let call = response.toolCalls.first(where: { $0.name == "crystallize_into_section" }),
-           let sectionRaw = call.input["section"] as? String,
-           let section = ConnectionSectionType(rawValue: sectionRaw),
-           let content = call.input["content"] as? String, !content.isEmpty {
-            let reasoning = (call.input["reasoning"] as? String) ?? ""
-            let body: String
-            if !response.textContent.isEmpty {
-                body = response.textContent
-            } else if !reasoning.isEmpty {
-                body = reasoning
-            } else {
-                body = "This belongs in \(section.displayName)."
+    private func parseResponse(
+        _ response: ClaudeToolUseResponse,
+        state: ConnectionFocusModeState,
+        linkedSources: [Atom]
+    ) -> CollaboratorMessage {
+        let linkedSourceIDs = Set(linkedSources.map(\.uuid))
+
+        if let call = response.toolCalls.first(where: { $0.name == "stage_connection_turn" }) {
+            let input = call.input
+            let assistantText = sanitizeAssistantText(
+                (input["assistant_text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ?? response.textContent.trimmingCharacters(in: .whitespacesAndNewlines),
+                state: state
+            )
+            let observationKind = (input["observation_kind"] as? String)
+                .flatMap(CollaboratorObservationKind.init(rawValue:))
+            let questionSuggestion = sanitizeQuestionSuggestion(
+                (input["question_suggestion"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            let recommendedAction = (input["recommended_action"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            var draftProposal: ConnectionDraftProposal?
+            if let draftInput = input["draft"] as? [String: Any],
+               let sectionRaw = draftInput["section"] as? String,
+               let section = ConnectionSectionType(rawValue: sectionRaw),
+               let draftText = (draftInput["draft_text"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !draftText.isEmpty {
+                let rationale = (draftInput["rationale"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let sourceIDs = (draftInput["source_ids"] as? [String] ?? [])
+                    .filter { linkedSourceIDs.contains($0) }
+                draftProposal = ConnectionDraftProposal(
+                    targetSection: section,
+                    draftText: draftText,
+                    visibleText: "",
+                    rationale: rationale,
+                    sourceIDs: sourceIDs,
+                    status: .streaming
+                )
             }
+
             return CollaboratorMessage(
                 role: .assistant,
-                text: body,
-                crystallizeTarget: section,
-                crystallizeContent: content
+                text: assistantText,
+                observationKind: observationKind,
+                questionSuggestion: questionSuggestion,
+                recommendedAction: recommendedAction,
+                draftProposal: draftProposal
             )
         }
 
-        let text = response.textContent.isEmpty
-            ? "Tell me more about what you're holding in your head — I'll help you name the tension."
-            : response.textContent
-        return CollaboratorMessage(role: .assistant, text: text)
+        let text = sanitizeAssistantText(
+            response.textContent.trimmingCharacters(in: .whitespacesAndNewlines),
+            state: state
+        )
+        return CollaboratorMessage(
+            role: .assistant,
+            text: text.isEmpty ? fallbackText(for: state, linkedSources: linkedSources) : text
+        )
+    }
+
+    private func sanitizeAssistantText(_ text: String, state: ConnectionFocusModeState) -> String {
+        guard !text.isEmpty else {
+            return fallbackText(for: state, linkedSources: [])
+        }
+
+        return text
+            .replacingOccurrences(of: "What's the tension?", with: "What specifically about this is interesting to you?")
+            .replacingOccurrences(of: "what's the tension?", with: "what specifically about this is interesting to you?")
+            .replacingOccurrences(of: "name the tension", with: "name the idea")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func sanitizeQuestionSuggestion(_ question: String?) -> String? {
+        guard let question, !question.isEmpty else { return nil }
+        let cleaned = question
+            .replacingOccurrences(of: "What's the tension?", with: "What specifically about this is interesting to you?")
+            .replacingOccurrences(of: "what's the tension?", with: "what specifically about this is interesting to you?")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private func fallbackText(
+        for state: ConnectionFocusModeState,
+        linkedSources: [Atom]
+    ) -> String {
+        if state.completedSectionCount == 0 {
+            if linkedSources.isEmpty {
+                return "It can be messy. One sentence, a link, a half-formed question. Doesn't matter."
+            }
+            return "It can be messy. One sentence, a link, a half-formed question. Doesn't matter. If you want, I can also use the linked sources."
+        }
+        return "What specifically about this is interesting to you?"
+    }
+
+    private func fallbackMessage(
+        for state: ConnectionFocusModeState,
+        linkedSources: [Atom]
+    ) -> CollaboratorMessage {
+        CollaboratorMessage(
+            role: .assistant,
+            text: fallbackText(for: state, linkedSources: linkedSources)
+        )
     }
 }

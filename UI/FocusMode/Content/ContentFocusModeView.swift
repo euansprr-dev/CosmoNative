@@ -95,7 +95,7 @@ struct ContentFocusModeView: View {
     @AppStorage("cosmoWindowEnabled") private var cosmoWindowEnabled = true
 
     @Environment(\.isPaneContext) private var isPaneContext
-    @Environment(\.isPaneActive) private var isPaneActive
+    @Environment(\.isPaneContextOwner) private var isPaneContextOwner
 
     // Responsive layout
     @State private var layoutMode: ContentLayoutMode = .full
@@ -259,12 +259,12 @@ struct ContentFocusModeView: View {
             Task { await loadInheritedContext() }
             // Register context provider for global Cosmo window
             let provider = ContentContextProvider(atom: atom, stateRef: { [viewModel] in viewModel.state }, phaseRef: { [viewModel] in viewModel.displayPhase })
-            if !isPaneContext || isPaneActive {
+            if !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
-        .onChange(of: isPaneActive) { _, isActive in
-            if isActive {
+        .onChange(of: isPaneContextOwner) { _, isOwner in
+            if isOwner {
                 let provider = ContentContextProvider(atom: atom, stateRef: { [viewModel] in viewModel.state }, phaseRef: { [viewModel] in viewModel.displayPhase })
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
@@ -2905,7 +2905,32 @@ class ContentContextProvider: CosmoContextProvider {
         )
     }
 
-    var availableActions: [CosmoWindowAction] { [] }
+    var availableActions: [CosmoWindowAction] {
+        [
+            CosmoWindowAction(
+                id: "content-insert-draft",
+                name: "Insert into Draft",
+                description: "Insert into the current draft editor at the cursor.",
+                modelTier: .balanced
+            ) { prompt in
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return "Nothing inserted." }
+                await EditorCommandBus.shared.insertText(trimmed, at: .cursor, allowInactive: true)
+                return "Inserted into the draft."
+            },
+            CosmoWindowAction(
+                id: "content-append-draft",
+                name: "Append to Draft",
+                description: "Append a new paragraph to the draft.",
+                modelTier: .balanced
+            ) { prompt in
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return "Nothing appended." }
+                await EditorCommandBus.shared.insertText(trimmed, at: .newParagraph, allowInactive: true)
+                return "Appended to the draft."
+            }
+        ]
+    }
 }
 
 // MARK: - Preference Key for draft editor position tracking

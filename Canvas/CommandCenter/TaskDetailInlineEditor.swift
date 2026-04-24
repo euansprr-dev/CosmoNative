@@ -13,7 +13,7 @@ struct TaskDetailInlineEditor: View {
     @State private var editTitle: String
     @State private var editPriority: TaskPriority
     @State private var editDueDate: Date?
-    @State private var editIntent: TaskIntent
+    @State private var editIntentUUID: String?
     @State private var editNotes: String
     @State private var selectedHabitUUID: String?
     @State private var availableHabits: [HabitDefinition]
@@ -30,7 +30,7 @@ struct TaskDetailInlineEditor: View {
         _editTitle = State(initialValue: task.title)
         _editPriority = State(initialValue: task.priority)
         _editDueDate = State(initialValue: task.dueDate)
-        _editIntent = State(initialValue: task.intent)
+        _editIntentUUID = State(initialValue: task.intentUUID)
         _editNotes = State(initialValue: task.body ?? "")
         _selectedHabitUUID = State(initialValue: resolvedHabitUUID)
         _availableHabits = State(initialValue: viewModel.availableHabitDefinitions)
@@ -100,22 +100,29 @@ struct TaskDetailInlineEditor: View {
 
             HStack(spacing: 8) {
                 Spacer()
+                let intentPresentation = viewModel.resolvedIntentPresentation(intentUUID: editIntentUUID, legacyIntent: task.intent)
 
                 Menu {
-                    ForEach(TaskIntent.allCases, id: \.self) { intent in
+                    Button {
+                        editIntentUUID = nil
+                    } label: {
+                        Label("Unassigned", systemImage: "questionmark.circle")
+                    }
+
+                    ForEach(viewModel.availableIntentDefinitions, id: \.id) { intent in
                         Button {
-                            editIntent = intent
+                            editIntentUUID = intent.id
                         } label: {
-                            Label(intent.displayName, systemImage: intent.iconName)
+                            Label(intent.title, systemImage: intent.icon)
                         }
                     }
                 } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: editIntent.iconName)
+                        Image(systemName: intentPresentation.icon)
                             .font(.system(size: 10))
-                            .foregroundColor(editIntent.color)
+                            .foregroundColor(intentPresentation.accent)
 
-                        Text(editIntent.displayName)
+                        Text(intentPresentation.title)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(DS.text)
 
@@ -305,7 +312,7 @@ struct TaskDetailInlineEditor: View {
                 title: editTitle.isEmpty ? nil : editTitle,
                 priority: editPriority != task.priority ? editPriority : nil,
                 dueDate: editDueDate,
-                intent: editIntent != task.intent ? editIntent : nil,
+                intentUUID: editIntentUUID != task.intentUUID ? editIntentUUID : nil,
                 body: editNotes.isEmpty ? nil : editNotes
             )
             if selectedHabitUUID != initialResolvedHabitUUID {

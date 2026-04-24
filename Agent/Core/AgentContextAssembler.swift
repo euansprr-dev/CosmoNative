@@ -323,7 +323,8 @@ class AgentContextAssembler {
         preferences: [AgentPreference],
         tools: [LLMToolDefinition],
         intent: AgentIntent? = nil,
-        activeItemsContext: String? = nil
+        activeItemsContext: String? = nil,
+        systemPromptOverride: String? = nil
     ) async -> SystemPrompt {
         // Increase token budget for strategy/query intents that need swipe library + pipeline data
         if let intent = intent, intent == .strategy || intent == .query {
@@ -340,6 +341,11 @@ class AgentContextAssembler {
         let source = conversation?.source ?? .inApp
         let identity = identityPrompt(source: source, intent: intent)
         cachedSections.append((priority: 0, content: identity))
+
+        if let systemPromptOverride,
+           !systemPromptOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cachedSections.append((priority: 1, content: systemPromptOverride))
+        }
 
         // Layer 3.25: Writing methodology for writing intents
         // For draft/brainstorm: condensed methodology + skill module titles (full context lives in

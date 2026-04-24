@@ -19,7 +19,7 @@ enum ReportTab: String, CaseIterable {
 
 // MARK: - Report Data
 
-struct ReportData {
+struct ReportData: Equatable {
     let timeRange: ReportTimeRange
     let startDate: Date
     let endDate: Date
@@ -28,7 +28,7 @@ struct ReportData {
     let avgFocusScore: Double
     let tasksCompleted: Int
     let totalSessions: Int
-    let intentDistribution: [TaskIntent: Int]
+    let intentDistribution: [IntentSummary]
     let previousPeriodMinutes: Int
 
     var trendPercent: Int {
@@ -47,7 +47,7 @@ struct ReportData {
         endDate: Date(),
         days: [], totalMinutes: 0, avgFocusScore: 0,
         tasksCompleted: 0, totalSessions: 0,
-        intentDistribution: [:], previousPeriodMinutes: 0
+        intentDistribution: [], previousPeriodMinutes: 0
     )
 }
 
@@ -56,14 +56,14 @@ typealias WeeklyReportData = ReportData
 
 // MARK: - Day Entry
 
-struct DayReportEntry: Identifiable {
+struct DayReportEntry: Identifiable, Equatable {
     let id: String
     let date: Date
     let trackedMinutes: Int
     let focusScore: Double
     let tasksCompleted: Int
     let sessionCount: Int
-    let dominantIntent: TaskIntent?
+    let dominantIntent: IntentSummary?
 
     var dayLabel: String {
         let formatter = DateFormatter()
@@ -92,7 +92,7 @@ struct DayReportEntry: Identifiable {
 
 // MARK: - Habit Report Data
 
-struct HabitReportData {
+struct HabitReportData: Equatable {
     let timeRange: ReportTimeRange
     let startDate: Date
     let endDate: Date
@@ -130,7 +130,7 @@ struct HabitReportData {
     )
 }
 
-struct HabitReportEntry: Identifiable {
+struct HabitReportEntry: Identifiable, Equatable {
     var id: String { habitDefinition.id }
     let habitDefinition: HabitDefinition
     let dayResults: [Date: Bool]

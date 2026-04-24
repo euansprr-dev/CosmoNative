@@ -12,6 +12,8 @@ struct TheForgeView: View {
     @Binding var title: String
     @Binding var conceptType: ConceptFrameworkType
     @Binding var state: ConnectionFocusModeState
+    @Binding var activeDraftProposal: ConnectionDraftProposal?
+    @ObservedObject var previewStore: ConnectionCollaboratorPreviewStore
 
     let onAddItem: (RichDocument, String, ConnectionSectionType) -> Void
     let onEditItem: (ConnectionItem, ConnectionSectionType) -> Void
@@ -37,6 +39,10 @@ struct TheForgeView: View {
         [.process, .examples, .beliefsObjections, .references]
     ].flatMap { $0 }
 
+    private var displayDraftProposal: ConnectionDraftProposal? {
+        previewStore.streamingDraft ?? activeDraftProposal
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             headerDeck
@@ -44,6 +50,12 @@ struct TheForgeView: View {
             stationRows
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        .onChange(of: displayDraftProposal?.targetSection) { _, newTarget in
+            guard let newTarget else { return }
+            withAnimation(ProMotionSprings.focusTransition) {
+                expandedStation = newTarget
+            }
+        }
     }
 
     private var headerDeck: some View {
@@ -116,6 +128,7 @@ struct TheForgeView: View {
             onSourceTap: onSourceTap,
             onAcceptGhost: { ghost in onAcceptGhost(ghost, type) },
             onDismissGhost: { id in onDismissGhost(id, type) },
+            collaboratorDraft: displayDraftProposal?.targetSection == type ? displayDraftProposal : nil,
             displayMode: isExpanded ? .expanded : .collapsed,
             isSelected: isExpanded,
             onSelect: {

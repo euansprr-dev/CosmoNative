@@ -122,10 +122,14 @@ struct LibraryView: View {
                 smartCollectionsRow
             }
 
+            if viewModel.isAtHome && searchText.isEmpty && !viewModel.homeStandaloneItems.isEmpty {
+                standaloneSection
+            }
+
             // Main content
             if viewModel.isLoading {
                 loadingView
-            } else if viewModel.displayItems.isEmpty {
+            } else if viewModel.displayItems.isEmpty && viewModel.homeStandaloneItems.isEmpty {
                 emptyState
             } else {
                 switch viewMode {
@@ -139,6 +143,112 @@ struct LibraryView: View {
                     libraryListView
                 }
             }
+        }
+    }
+
+    private var standaloneSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Standalone")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(DS.text)
+                    Text("Unplaced atoms created outside canvases and projects.")
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.textMuted)
+                }
+
+                Spacer()
+
+                Text("\(viewModel.homeStandaloneItems.count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(DS.border)
+                    )
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(viewModel.homeStandaloneItems) { item in
+                        standaloneCard(item)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+    }
+
+    private func standaloneCard(_ item: LibraryItem) -> some View {
+        Button {
+            viewModel.handleItemTap(item)
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(item.color)
+                        .frame(width: 30, height: 30)
+                        .background(item.color.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(DS.text)
+                            .lineLimit(2)
+
+                        Text(item.typeName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(DS.textMuted)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                if let preview = item.preview, !preview.isEmpty {
+                    Text(preview)
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.textSecondary)
+                        .lineLimit(3)
+                }
+
+                HStack {
+                    Text("Standalone")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(item.color.opacity(0.95))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(item.color.opacity(0.12))
+                        .clipShape(Capsule())
+
+                    Spacer()
+
+                    Text(item.relativeDate)
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.textMuted)
+                }
+            }
+            .frame(width: 280, alignment: .leading)
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(DS.borderSubtle)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .strokeBorder(DS.border, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .onTapGesture(count: 2) {
+            viewModel.openInFocusMode(item)
         }
     }
 
@@ -512,6 +622,10 @@ struct LibraryItem: Identifiable {
         kind == .project
     }
 
+    var isStandalone: Bool {
+        kind == .atom && projectUUID == nil && thinkspaceUUIDs.isEmpty
+    }
+
     var provenanceSummary: String? {
         switch kind {
         case .project:
@@ -771,6 +885,7 @@ struct LibraryItem: Identifiable {
 final class LibraryViewModel: ObservableObject {
     @Published var allItems: [LibraryItem] = []
     @Published var displayItems: [LibraryItem] = []
+    @Published private(set) var homeStandaloneItems: [LibraryItem] = []
     @Published var breadcrumbs: [LibraryBreadcrumb] = [
         LibraryBreadcrumb(id: "home", title: "Home", uuid: nil)
     ]
@@ -808,8 +923,8 @@ final class LibraryViewModel: ObservableObject {
         guard !libraryLoaded else { return }
         isLoading = true
         do {
-            // Fetch all user-facing atoms (ideas excluded — they live in the Ideas tab)
-            let userTypes: [AtomType] = [.content, .research, .connection, .project, .image]
+            // Fetch all user-facing library atoms, including standalone Atom Window captures.
+            let userTypes: [AtomType] = [.idea, .note, .task, .content, .research, .connection, .project, .image]
             let atoms = try await AtomRepository.shared.fetchAll(types: userTypes)
             if ThinkspaceManager.shared.thinkspaces.isEmpty {
                 await ThinkspaceManager.shared.loadThinkspaces()
@@ -1043,6 +1158,7 @@ final class LibraryViewModel: ObservableObject {
     // MARK: - Folder Contents
 
     private func loadFolderContents(_ folderUUID: String) async {
+        homeStandaloneItems = []
         let projectThinkspaces = allItems.filter {
             $0.kind == .thinkspace && $0.projectUUID == folderUUID
         }
@@ -1078,6 +1194,7 @@ final class LibraryViewModel: ObservableObject {
         guard currentFolderUUID == nil else { return }
 
         var items = allItems
+        homeStandaloneItems = []
 
         // When searching, show ALL atoms (including project-owned) so search finds them
         if !searchFilter.isEmpty {
@@ -1093,6 +1210,12 @@ final class LibraryViewModel: ObservableObject {
                     return false
                 }
                 return item.isFolder || !projectOwnedAtomUUIDs.contains(item.uuid)
+            }
+
+            let standalone = items.filter(\.isStandalone)
+            if !standalone.isEmpty {
+                homeStandaloneItems = standalone.sorted(by: librarySortComparator)
+                items.removeAll { $0.isStandalone }
             }
         }
 

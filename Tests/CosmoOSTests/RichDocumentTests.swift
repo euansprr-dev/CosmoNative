@@ -265,4 +265,63 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertNotNil(block.metadata[RichDocumentMetadataKeys.bodyDocument])
         XCTAssertNotNil(block.metadata[RichDocumentMetadataKeys.titleDocument])
     }
+
+    func testMentionRankingNormalizesSQLiteTimestamps() {
+        var atom = Atom.new(type: .note, title: "Recent note")
+        atom.updatedAt = "2026-04-22 08:30:15"
+
+        XCTAssertEqual(
+            MentionSearchRanking.recencyKey(for: atom),
+            "2026-04-22T08:30:15.000Z"
+        )
+    }
+
+    func testMentionRankingPrefersThinkspaceLastOpenedMetadata() throws {
+        let metadata = ThinkspaceMetadata(
+            name: "Greenhouse",
+            lastOpened: Date(timeIntervalSince1970: 1_776_787_200)
+        )
+        let metadataString = try XCTUnwrap(
+            String(data: JSONEncoder().encode(metadata), encoding: .utf8)
+        )
+
+        var atom = Atom.new(type: .thinkspace, title: "Workspace", metadata: metadataString)
+        atom.updatedAt = "2026-04-01T10:00:00Z"
+
+        XCTAssertEqual(
+            MentionSearchRanking.recencyKey(for: atom),
+            "2026-04-21T16:00:00.000Z"
+        )
+    }
+
+    func testMentionRankingPrefersMoreRecentMatchOverHigherTextScore() {
+        let newer = MentionSearchResult(
+            atomID: 1,
+            atomUUID: "newer",
+            atomType: .note,
+            entityType: .note,
+            title: "Fresh Note",
+            subtitle: nil,
+            typeLabel: "Note",
+            updatedAt: "2026-04-22T09:00:00Z",
+            recencyKey: "2026-04-22T09:00:00.000Z",
+            score: 50
+        )
+        let older = MentionSearchResult(
+            atomID: 2,
+            atomUUID: "older",
+            atomType: .note,
+            entityType: .note,
+            title: "Older Exact Match",
+            subtitle: nil,
+            typeLabel: "Note",
+            updatedAt: "2026-04-20T09:00:00Z",
+            recencyKey: "2026-04-20T09:00:00.000Z",
+            score: 400
+        )
+
+        let sorted = [older, newer].sorted(by: MentionSearchRanking.compare)
+
+        XCTAssertEqual(sorted.map(\.atomUUID), ["newer", "older"])
+    }
 }

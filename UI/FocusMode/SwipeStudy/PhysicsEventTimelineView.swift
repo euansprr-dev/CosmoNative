@@ -16,10 +16,6 @@ struct PhysicsEventTimelineView: View {
             timelineRuler
             selectedEventDetail
         }
-        .padding(DS.space16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
-        .dsRestingShadow()
         .onAppear { withAnimation(ProMotionSprings.cardEntrance) { hasAppeared = true } }
     }
 
@@ -61,9 +57,8 @@ struct PhysicsEventTimelineView: View {
             HStack(spacing: DS.space6) {
                 Image(systemName: marker.icon)
                     .font(DS.caption)
-                    .foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(marker.color, in: Circle())
+                    .foregroundStyle(marker.color)
+                    .frame(width: 16, height: 16)
                     .accessibilityLabel(marker.label)
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -76,16 +71,12 @@ struct PhysicsEventTimelineView: View {
                         .foregroundStyle(DS.textMuted)
                 }
             }
-            .padding(.horizontal, DS.space10)
-            .padding(.vertical, DS.space6)
-            .background(
-                isSelected ? marker.color.opacity(0.1) : DS.surfaceHover,
-                in: RoundedRectangle(cornerRadius: DS.radiusSmall)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .stroke(isSelected ? marker.color.opacity(0.4) : DS.border, lineWidth: 1)
-            )
+            .padding(.vertical, DS.space4)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(isSelected ? marker.color.opacity(0.55) : DS.sepiaSubtle)
+                    .frame(height: 0.5)
+            }
             .opacity(hasAppeared ? 1 : 0)
             .animation(ProMotionSprings.staggered(index: index), value: hasAppeared)
         }
@@ -150,8 +141,12 @@ struct PhysicsEventTimelineView: View {
             }
             .padding(DS.space12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(marker.color.opacity(0.06), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-            .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(marker.color.opacity(0.15), lineWidth: 1))
+            .padding(.leading, DS.space8)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(marker.color.opacity(0.35))
+                    .frame(width: 1)
+            }
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }

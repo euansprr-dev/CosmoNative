@@ -549,12 +549,13 @@ struct DashboardTaskList: View {
     @ViewBuilder
     private func taskContent(_ task: TaskViewModel, completionState: CommandCenterTaskCompletionState?) -> some View {
         let resolvedHabit = viewModel.resolvedHabit(for: task)
+        let intentPresentation = viewModel.resolvedIntentPresentation(for: task)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: DS.space4) {
-                if task.intent != .general {
-                    Image(systemName: task.intent.iconName)
+                if !intentPresentation.isUnassigned {
+                    Image(systemName: intentPresentation.icon)
                         .font(DS.caption2)
-                        .foregroundStyle(task.intent.color.opacity(0.7))
+                        .foregroundStyle(intentPresentation.accent.opacity(0.7))
                 }
 
                 if !task.titleMentions.isEmpty && completionState == nil && !task.isCompleted {

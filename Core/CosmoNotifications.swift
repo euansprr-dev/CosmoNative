@@ -96,6 +96,7 @@ enum CosmoNotification {
         static let enterInboxFocusMode = Notification.Name("com.cosmo.canvas.enterInboxFocusMode")
         static let updateInboxBlockPosition = Notification.Name("com.cosmo.canvas.updateInboxBlockPosition")
         static let updateInboxBlockSize = Notification.Name("com.cosmo.canvas.updateInboxBlockSize")
+        static let refreshThinkspacePlacements = Notification.Name("com.cosmo.canvas.refreshThinkspacePlacements")
     }
 
     // MARK: - Inbox Notifications
@@ -132,6 +133,7 @@ enum CosmoNotification {
 
         // Panes
         static let openAsPane = Notification.Name("com.cosmo.nav.openAsPane")
+        static let openCollaboratorPane = Notification.Name("com.cosmo.nav.openCollaboratorPane")
 
         // UI
         static let showSettings = Notification.Name("com.cosmo.nav.showSettings")
@@ -177,6 +179,32 @@ enum CosmoNotification {
 
             var userInfo: [AnyHashable: Any] {
                 ["thinkspaceId": thinkspaceId]
+            }
+        }
+
+        struct CollaboratorPanePayload {
+            let atomUUID: String
+            let presetId: String?
+
+            init(atomUUID: String, presetId: String? = nil) {
+                self.atomUUID = atomUUID
+                self.presetId = presetId
+            }
+
+            init?(from notification: Notification) {
+                guard let atomUUID = notification.userInfo?["atomUUID"] as? String else {
+                    return nil
+                }
+                self.atomUUID = atomUUID
+                self.presetId = notification.userInfo?["presetId"] as? String
+            }
+
+            var userInfo: [AnyHashable: Any] {
+                var info: [AnyHashable: Any] = ["atomUUID": atomUUID]
+                if let presetId {
+                    info["presetId"] = presetId
+                }
+                return info
             }
         }
     }

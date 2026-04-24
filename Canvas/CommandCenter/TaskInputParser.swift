@@ -10,6 +10,7 @@ struct ParsedTaskInput {
     var dueDate: Date?
     var scheduledTime: Date?
     var intent: TaskIntent?
+    var intentUUID: String?
     var recurrenceRule: RecurrenceRule?
     var habitUUID: String?
     var habitTitle: String?
@@ -52,6 +53,7 @@ enum TaskInputParser {
 
         // Extract intent keywords
         result.intent = extractIntent(&remaining)
+        result.intentUUID = CommandCenterIntentEngine.shared.seedID(for: result.intent)
 
         // Extract recurrence phrases before weekday/date parsing consumes them
         result.recurrenceRule = extractRecurrence(&remaining)
@@ -83,6 +85,9 @@ enum TaskInputParser {
             result.habitIcon = resolution.definition.icon
             result.habitColorHex = resolution.definition.accentColor
             result.habitAssignmentSource = resolution.source
+            if result.intentUUID == nil {
+                result.intentUUID = resolution.definition.defaultIntentUUID
+            }
         }
 
         return result

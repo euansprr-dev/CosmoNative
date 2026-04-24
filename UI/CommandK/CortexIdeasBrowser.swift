@@ -1,6 +1,5 @@
 // CosmoOS/UI/CommandK/CortexIdeasBrowser.swift
-// "The Ledger" — a manuscript-style, typographic view of ideas grouped by client.
-// Uses AtelierPrimitives to keep the aesthetic in lockstep with Idea Focus Mode.
+// Greenhouse-native ideas ledger for Command-K with per-column expansion.
 
 import SwiftUI
 
@@ -12,18 +11,20 @@ struct CortexIdeasBrowser: View {
     @State private var expandedClients: Set<String> = []
     @FocusState private var focusedClient: String?
 
-    private static let columnsPerRow: Int = 3
-    private static let previewLimit: Int = 5
+    private static let previewLimit = 5
     private static let unassignedKey = "__unassigned__"
+    private static let minimumColumnWidth: CGFloat = 340
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                header
-                ledger
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    header
+                    ledger(availableWidth: geometry.size.width)
+                }
+                .padding(.horizontal, DS.space24)
+                .padding(.vertical, DS.space20)
             }
-            .padding(.horizontal, DS.space24)
-            .padding(.vertical, DS.space20)
         }
         .task {
             await reload()
@@ -39,9 +40,8 @@ struct CortexIdeasBrowser: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             Text(subtitle)
-                .font(DS.dateSerif)
-                .italic()
-                .foregroundStyle(DS.inkFaded)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             hairRule
         }
@@ -58,37 +58,43 @@ struct CortexIdeasBrowser: View {
         return "\(ideaLabel) · \(clientLabel) · \(ready) ready"
     }
 
-    // MARK: - Ledger Grid
+    // MARK: - Ledger
 
     @ViewBuilder
-    private var ledger: some View {
+    private func ledger(availableWidth: CGFloat) -> some View {
         if !hasAppeared && viewModel.ideaGalleryItems.isEmpty {
             loadingState
         } else if clientSections.isEmpty {
             emptyState
         } else {
-            grid
+            columns(availableWidth: availableWidth)
         }
     }
 
-    private var grid: some View {
-        LazyVGrid(
-            columns: Array(
-                repeating: GridItem(.flexible(), spacing: DS.space24, alignment: .top),
-                count: Self.columnsPerRow
-            ),
-            alignment: .leading,
-            spacing: DS.space32
-        ) {
-            ForEach(Array(clientSections.enumerated()), id: \.element.id) { sectionIndex, section in
-                clientColumn(section, sectionIndex: sectionIndex)
+    private func columns(availableWidth: CGFloat) -> some View {
+        let columnWidth = max(
+            Self.minimumColumnWidth,
+            (availableWidth - (DS.space24 * 2) - (DS.space24 * CGFloat(max(clientSections.count - 1, 0)))) / CGFloat(max(clientSections.count, 1))
+        )
+
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: DS.space24) {
+                ForEach(Array(clientSections.enumerated()), id: \.element.id) { sectionIndex, section in
+                    clientColumn(section, sectionIndex: sectionIndex)
+                        .frame(width: columnWidth)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, DS.space8)
         }
     }
 
     private func clientColumn(_ section: IdeasLedgerSection, sectionIndex: Int) -> some View {
-        let expanded = expandedClients.contains(section.id)
-        let visibleItems = expanded ? section.items : Array(section.items.prefix(Self.previewLimit))
+        let visibleItems = CortexIdeasLedgerLayout.visibleItems(
+            from: section.items,
+            isExpanded: expandedClients.contains(section.id),
+            previewLimit: Self.previewLimit
+        )
         let hiddenCount = section.items.count - visibleItems.count
 
         return VStack(alignment: .leading, spacing: DS.space12) {
@@ -103,7 +109,7 @@ struct CortexIdeasBrowser: View {
                         )
                     if index < visibleItems.count - 1 {
                         Rectangle()
-                            .fill(DS.sepiaSubtle)
+                            .fill(DS.borderSubtle)
                             .frame(height: 0.5)
                             .padding(.leading, DS.space12)
                     }
@@ -111,48 +117,66 @@ struct CortexIdeasBrowser: View {
             }
             if hiddenCount > 0 {
                 showMoreButton(section: section, hiddenCount: hiddenCount)
-            } else if expanded && section.items.count > Self.previewLimit {
+            } else if expandedClients.contains(section.id) && section.items.count > Self.previewLimit {
                 showLessButton(section: section)
             }
         }
+        .padding(DS.space16)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
+                .fill(DS.surfaceElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 16, y: 8)
     }
 
     private func columnHeader(_ section: IdeasLedgerSection) -> some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             HStack(spacing: DS.space10) {
-                Rectangle()
-                    .fill(section.color.opacity(0.6))
-                    .frame(width: 2, height: 14)
-                    .accessibilityHidden(true)
-                Text(section.clientName.uppercased())
-                    .font(DS.smallCaps)
-                    .tracking(1.6)
-                    .foregroundStyle(DS.giltMuted)
-                    .fixedSize()
+                HStack(spacing: DS.space8) {
+                    Circle()
+                        .fill(section.color.opacity(0.85))
+                        .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
+                    Text(section.clientName)
+                        .font(DS.headline)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space8)
+                .background(Capsule().fill(section.color.opacity(0.12)))
+
                 Spacer(minLength: DS.space8)
+
                 Text(section.countText)
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
-                    .foregroundStyle(DS.inkFaded)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(DS.textSecondary)
             }
+
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(DS.borderSubtle)
                 .frame(height: 0.5)
         }
     }
 
-    // MARK: - Per-column Capture
+    // MARK: - Capture
 
-    @ViewBuilder
     private func captureRowView(for section: IdeasLedgerSection) -> some View {
         let isActive = focusedClient == section.id
         let draft = captureDrafts[section.id] ?? ""
+        let canSubmit = CortexIdeasCapture.normalizedTitle(from: draft) != nil
 
-        HStack(spacing: DS.space8) {
-            Image(systemName: "plus")
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(DS.gilt.opacity(isActive ? 0.9 : 0.45))
-                .frame(width: 12)
+        return HStack(spacing: DS.space8) {
+            Image(systemName: "plus.circle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(canSubmit ? section.color : DS.textMuted)
+                .frame(width: 16)
                 .accessibilityHidden(true)
+
             TextField(
                 "add idea",
                 text: Binding(
@@ -161,38 +185,68 @@ struct CortexIdeasBrowser: View {
                 )
             )
             .textFieldStyle(.plain)
-            .font(.system(size: 13, weight: .regular, design: .serif))
+            .font(.system(size: 15, weight: .regular, design: .serif))
             .italic(draft.isEmpty)
-            .foregroundStyle(isActive || !draft.isEmpty ? DS.text : DS.inkFaded.opacity(0.7))
+            .foregroundStyle(isActive || !draft.isEmpty ? DS.text : DS.textMuted)
             .focused($focusedClient, equals: section.id)
             .onSubmit { submitCapture(for: section) }
             .accessibilityLabel("Add idea for \(section.clientName)")
-            if isActive && !draft.isEmpty {
-                Text("↵")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundStyle(DS.giltMuted)
+
+            Button("Capture") {
+                submitCapture(for: section)
             }
+            .buttonStyle(.plain)
+            .font(DS.buttonText)
+            .foregroundStyle(canSubmit ? DS.textOnAccent : DS.textMuted)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                    .fill(canSubmit ? section.color : DS.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                    .stroke(canSubmit ? section.color.opacity(0.18) : DS.borderSubtle, lineWidth: 1)
+            )
+            .disabled(!canSubmit)
         }
-        .padding(.vertical, DS.space8)
-        .padding(.leading, DS.space4)
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space10)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(isActive ? section.color.opacity(0.08) : DS.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .stroke(isActive ? section.color.opacity(0.28) : DS.borderSubtle, lineWidth: 1)
+        )
         .contentShape(Rectangle())
         .animation(ProMotionSprings.hover, value: isActive)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(DS.sepiaSubtle.opacity(0.5))
-                .frame(height: 0.5)
+        .onTapGesture {
+            focusedClient = section.id
         }
+        .onKeyPress(.return) {
+            handleCaptureReturn(for: section)
+        }
+    }
+
+    private func handleCaptureReturn(for section: IdeasLedgerSection) -> KeyPress.Result {
+        guard focusedClient == section.id else { return .ignored }
+        guard CortexIdeasCapture.normalizedTitle(from: captureDrafts[section.id] ?? "") != nil else {
+            return .ignored
+        }
+        submitCapture(for: section)
+        return .handled
     }
 
     private func submitCapture(for section: IdeasLedgerSection) {
-        let title = (captureDrafts[section.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return }
+        guard let title = CortexIdeasCapture.normalizedTitle(from: captureDrafts[section.id] ?? "") else { return }
         captureDrafts[section.id] = ""
-        focusedClient = nil
+        focusedClient = section.id
         Task { await viewModel.createIdeaForClient(title: title, clientUUID: section.clientUUID) }
     }
 
-    // MARK: - Show More / Less
+    // MARK: - Expansion
 
     private func showMoreButton(section: IdeasLedgerSection, hiddenCount: Int) -> some View {
         Button {
@@ -201,21 +255,28 @@ struct CortexIdeasBrowser: View {
             }
         } label: {
             HStack(spacing: DS.space6) {
-                Text("show \(hiddenCount) more")
-                    .font(.system(size: 12, weight: .regular, design: .serif))
-                    .italic()
-                    .foregroundStyle(DS.text.opacity(0.75))
+                Text("Show \(hiddenCount) more ideas")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
                 Image(systemName: "arrow.down")
                     .font(.system(size: 10, weight: .regular))
-                    .foregroundStyle(DS.gilt.opacity(0.6))
+                    .foregroundStyle(section.color.opacity(0.8))
                     .accessibilityHidden(true)
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, DS.space8)
-            .padding(.leading, DS.space12)
+            .padding(.vertical, DS.space10)
+            .padding(.horizontal, DS.space12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(section.color.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .stroke(section.color.opacity(0.18), lineWidth: 1)
+        )
         .accessibilityLabel("Show \(hiddenCount) more ideas for \(section.clientName)")
     }
 
@@ -226,29 +287,37 @@ struct CortexIdeasBrowser: View {
             }
         } label: {
             HStack(spacing: DS.space6) {
-                Text("show less")
-                    .font(.system(size: 12, weight: .regular, design: .serif))
-                    .italic()
-                    .foregroundStyle(DS.inkFaded)
+                Text("Collapse preview")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
                 Image(systemName: "arrow.up")
                     .font(.system(size: 10, weight: .regular))
-                    .foregroundStyle(DS.gilt.opacity(0.5))
+                    .foregroundStyle(section.color.opacity(0.8))
                     .accessibilityHidden(true)
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, DS.space8)
-            .padding(.leading, DS.space12)
+            .padding(.vertical, DS.space10)
+            .padding(.horizontal, DS.space12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Show less")
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(DS.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+        .accessibilityLabel("Collapse ideas preview for \(section.clientName)")
     }
 
     private var hairRule: some View {
-        Rectangle().fill(DS.sepiaSubtle).frame(height: 0.5)
+        Rectangle()
+            .fill(DS.borderSubtle)
+            .frame(height: 0.5)
     }
 
-    // Stagger only the first ~12 rows to avoid cascade on large ledgers.
     private func staggerDelay(sectionIndex: Int, rowIndex: Int) -> Double {
         let ordinal = sectionIndex * 4 + rowIndex
         guard ordinal < 12 else { return 0 }
@@ -259,9 +328,8 @@ struct CortexIdeasBrowser: View {
 
     private var loadingState: some View {
         Text("gathering the ledger…")
-            .font(DS.dateSerif)
-            .italic()
-            .foregroundStyle(DS.inkFaded)
+            .font(DS.callout)
+            .foregroundStyle(DS.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, DS.space40)
     }
@@ -269,15 +337,11 @@ struct CortexIdeasBrowser: View {
     private var emptyState: some View {
         VStack(spacing: DS.space12) {
             Text("the ledger is empty —")
-                .font(DS.dateSerif)
-                .italic()
-                .foregroundStyle(DS.inkFaded)
-            Text(clientProfiles.isEmpty
-                 ? "add a client to begin"
-                 : "capture a spark in any column")
-                .font(.system(size: 12, weight: .regular, design: .serif))
-                .italic()
-                .foregroundStyle(DS.inkFaded.opacity(0.7))
+                .font(DS.title3)
+                .foregroundStyle(DS.text)
+            Text(clientProfiles.isEmpty ? "add a client to begin" : "capture a spark in any column")
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DS.space40)
@@ -314,6 +378,7 @@ struct CortexIdeasBrowser: View {
                 items: grouped[client.uuid] ?? []
             ))
         }
+
         if !unassigned.isEmpty {
             sections.append(IdeasLedgerSection(
                 id: Self.unassignedKey,
@@ -323,6 +388,7 @@ struct CortexIdeasBrowser: View {
                 items: unassigned
             ))
         }
+
         return sections
     }
 
@@ -335,7 +401,8 @@ struct CortexIdeasBrowser: View {
         Task { try? await NodeGraphEngine.shared.recordAccess(atomUUID: item.atomUUID, type: .view) }
         NotificationCenter.default.post(
             name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-            object: nil, userInfo: ["atomUUID": item.atomUUID]
+            object: nil,
+            userInfo: ["atomUUID": item.atomUUID]
         )
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
     }
@@ -351,13 +418,13 @@ private struct IdeasLedgerSection: Identifiable {
     let items: [IdeaGalleryItem]
 
     var countText: String {
-        "· \(items.count) idea\(items.count == 1 ? "" : "s")"
+        "\(items.count) idea\(items.count == 1 ? "" : "s")"
     }
 }
 
 // MARK: - Ledger Row
 
-private struct LedgerRow: View {
+struct LedgerRow: View {
     let item: IdeaGalleryItem
     let onTap: () -> Void
     @State private var isHovered = false
@@ -370,8 +437,13 @@ private struct LedgerRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 trailing
             }
-            .padding(.vertical, DS.space10)
-            .frame(minHeight: 44)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space12)
+            .frame(minHeight: 64)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .fill(isHovered ? accentColor.opacity(0.05) : Color.clear)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -398,29 +470,31 @@ private struct LedgerRow: View {
 
     private var accentBar: some View {
         Rectangle()
-            .fill(accentColor.opacity(0.6))
-            .frame(width: 2)
+            .fill(accentColor.opacity(0.85))
+            .frame(width: 3)
             .frame(maxHeight: .infinity)
             .accessibilityHidden(true)
     }
 
     private var titleColumn: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DS.space6) {
             HStack(alignment: .firstTextBaseline, spacing: DS.space4) {
                 if item.isPinned {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 9))
-                        .foregroundStyle(DS.gilt.opacity(0.7))
+                        .foregroundStyle(DS.gilt.opacity(0.8))
                         .accessibilityLabel("Pinned")
                 }
+
                 Text(item.title)
-                    .font(.system(size: 14, weight: .regular, design: .serif))
+                    .font(.system(size: 17, weight: .semibold, design: .serif))
                     .italic(isHovered)
                     .foregroundStyle(DS.text)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
             metaLine
         }
     }
@@ -430,20 +504,21 @@ private struct LedgerRow: View {
             Text(item.status.displayName.uppercased())
                 .font(DS.smallCaps)
                 .tracking(1.4)
-                .foregroundStyle(DS.giltMuted)
+                .foregroundStyle(accentColor.opacity(0.8))
+
             if let format = item.contentFormat {
                 dotSeparator
                 Text(format.displayName.lowercased())
-                    .font(.system(size: 11, weight: .regular, design: .serif))
-                    .italic()
-                    .foregroundStyle(DS.inkFaded)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
             }
+
             if let score = item.insightScore, score > 0 {
                 dotSeparator
                 Text(String(format: "%.0f%%", score * 100))
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundStyle(DS.gilt.opacity(0.8))
+                    .foregroundStyle(DS.textSecondary)
             }
         }
     }
@@ -451,17 +526,17 @@ private struct LedgerRow: View {
     private var dotSeparator: some View {
         Text("·")
             .font(.system(size: 11, weight: .regular))
-            .foregroundStyle(DS.inkFaded.opacity(0.5))
+            .foregroundStyle(DS.textMuted.opacity(0.6))
     }
 
     private var trailing: some View {
         VStack(alignment: .trailing, spacing: 4) {
             Text(relativeTime)
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
-                .foregroundStyle(DS.inkFaded)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(DS.textSecondary)
             Image(systemName: "arrow.right")
                 .font(.system(size: 10, weight: .regular))
-                .foregroundStyle(DS.gilt.opacity(isHovered ? 0.9 : 0.3))
+                .foregroundStyle(accentColor.opacity(isHovered ? 0.9 : 0.35))
                 .offset(x: isHovered ? -2 : 0)
                 .accessibilityHidden(true)
         }
@@ -469,13 +544,17 @@ private struct LedgerRow: View {
     }
 
     private var accentColor: Color {
-        if let uuid = item.clientUUID { return DS.clientColor(for: uuid) }
+        if let uuid = item.clientUUID {
+            return DS.clientColor(for: uuid)
+        }
         return DS.entityIdea
     }
 
     private var accessibilityText: String {
         var parts: [String] = [item.title, item.status.displayName]
-        if let client = item.clientName { parts.append(client) }
+        if let client = item.clientName {
+            parts.append(client)
+        }
         return parts.joined(separator: ", ")
     }
 
@@ -487,6 +566,20 @@ private struct LedgerRow: View {
         if interval < 86400 { return "\(Int(interval / 3600))h" }
         if interval < 604800 { return "\(Int(interval / 86400))d" }
         return "\(Int(interval / 604800))w"
+    }
+}
+
+enum CortexIdeasLedgerLayout {
+    static func visibleItems(from items: [IdeaGalleryItem], isExpanded: Bool, previewLimit: Int) -> [IdeaGalleryItem] {
+        guard !isExpanded else { return items }
+        return Array(items.prefix(previewLimit))
+    }
+}
+
+enum CortexIdeasCapture {
+    static func normalizedTitle(from draft: String) -> String? {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

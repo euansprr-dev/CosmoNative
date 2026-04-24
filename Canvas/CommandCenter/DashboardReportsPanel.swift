@@ -181,7 +181,7 @@ struct DashboardReportsPanel: View {
             }
 
             RoundedRectangle(cornerRadius: 4)
-                .fill(day.dominantIntent?.color ?? DS.accent)
+                .fill(day.dominantIntent?.accent ?? DS.accent)
                 .frame(height: chartAnimated ? targetHeight : 3)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
@@ -557,9 +557,9 @@ struct DashboardReportsPanel: View {
                 GeometryReader { geo in
                     let total = max(report.totalMinutes, 1)
                     HStack(spacing: 1) {
-                        ForEach(sortedIntents(report), id: \.key) { entry in
+                        ForEach(sortedIntents(report), id: \.key.id) { entry in
                             RoundedRectangle(cornerRadius: 3)
-                                .fill(entry.key.color)
+                                .fill(entry.key.accent)
                                 .frame(width: max(CGFloat(entry.value) / CGFloat(total) * geo.size.width - 1, 4))
                         }
                     }
@@ -568,7 +568,7 @@ struct DashboardReportsPanel: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(sortedIntents(report).prefix(5), id: \.key) { entry in
+                    ForEach(sortedIntents(report).prefix(5), id: \.key.id) { entry in
                         intentLegendRow(entry: entry, total: report.totalMinutes)
                     }
                 }
@@ -578,12 +578,12 @@ struct DashboardReportsPanel: View {
         }
     }
 
-    private func intentLegendRow(entry: (key: TaskIntent, value: Int), total: Int) -> some View {
+    private func intentLegendRow(entry: (key: IntentSummary, value: Int), total: Int) -> some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(entry.key.color)
+                .fill(entry.key.accent)
                 .frame(width: 6, height: 6)
-            Text(entry.key.displayName)
+            Text(entry.key.title)
                 .font(.system(size: 9))
                 .foregroundStyle(DS.textSecondary)
             Spacer()
@@ -667,8 +667,8 @@ struct DashboardReportsPanel: View {
         return DS.red
     }
 
-    private func sortedIntents(_ report: ReportData) -> [(key: TaskIntent, value: Int)] {
-        report.intentDistribution.sorted { $0.value > $1.value }
+    private func sortedIntents(_ report: ReportData) -> [(key: IntentSummary, value: Int)] {
+        report.intentDistribution.map { ($0, $0.minutes) }.sorted { $0.value > $1.value }
     }
 
     private func percent(_ value: Int, of total: Int) -> Int {

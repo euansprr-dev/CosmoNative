@@ -305,6 +305,7 @@ class CosmoAgentService: ObservableObject {
         conversationId: String? = nil,
         source: MessageSource = .inApp,
         tierOverride: AgentModelTier? = nil,
+        systemPromptOverride: String? = nil,
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         activeSessionCount += 1
@@ -381,6 +382,7 @@ class CosmoAgentService: ObservableObject {
             conversation: &conversation,
             provider: provider,
             tierOverride: tierOverride,
+            systemPromptOverride: systemPromptOverride,
             onToolActivity: onToolActivity
         )
     }
@@ -393,6 +395,7 @@ class CosmoAgentService: ObservableObject {
         conversation: inout AgentConversation,
         provider: LLMProvider,
         tierOverride: AgentModelTier? = nil,
+        systemPromptOverride: String? = nil,
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         // --- Feedback classification for previous generation (scoped per conversation) ---
@@ -432,7 +435,8 @@ class CosmoAgentService: ObservableObject {
             preferences: preferences,
             tools: tools,
             intent: intent,
-            activeItemsContext: activeItemsContext[conversation.id]
+            activeItemsContext: activeItemsContext[conversation.id],
+            systemPromptOverride: systemPromptOverride
         )
 
         // Build message array for LLM (no system message — passed separately for caching)

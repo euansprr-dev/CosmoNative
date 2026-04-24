@@ -48,4 +48,21 @@ final class CommandCenterComposerTests: XCTestCase {
 
         XCTAssertEqual(draft.keywords, ["write", "draft", "article"])
     }
+
+    func testIntentBehaviorTemplateMapsToLegacyIntent() {
+        XCTAssertEqual(IntentBehaviorTemplate.writeContent.taskIntent, .writeContent)
+        XCTAssertEqual(IntentBehaviorTemplate(.research), .research)
+        XCTAssertNil(IntentBehaviorTemplate(.general))
+    }
+
+    @MainActor
+    func testIntentEngineReturnsExplicitUnassignedPresentation() {
+        let engine = CommandCenterIntentEngine()
+
+        let presentation = engine.resolvedPresentation(intentUUID: nil, legacyIntentRaw: TaskIntent.general.rawValue)
+
+        XCTAssertTrue(presentation.isUnassigned)
+        XCTAssertEqual(presentation.title, "Unassigned")
+        XCTAssertNil(presentation.behaviorTemplate)
+    }
 }

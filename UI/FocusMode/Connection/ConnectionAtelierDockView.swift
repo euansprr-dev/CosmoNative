@@ -1,68 +1,58 @@
 // CosmoOS/UI/FocusMode/Connection/ConnectionAtelierDockView.swift
-// April 2026 — docked Atelier rail for collaborator + live insights
+// April 2026 — docked Atelier rail for the connection-native collaborator
 
 import SwiftUI
 
 struct ConnectionAtelierDockView: View {
 
     @Binding var collaboratorMessages: [CollaboratorMessage]
+    @Binding var activeDraftProposal: ConnectionDraftProposal?
+    @ObservedObject var previewStore: ConnectionCollaboratorPreviewStore
 
     let frameworkTitle: String
     let conceptType: ConceptFrameworkType
     let isCollaboratorThinking: Bool
+    let linkedSourceCount: Int
     let insights: [LiveInsight]
     let isRefreshingInsights: Bool
     let onSendMessage: (String) -> Void
     let onCrystallizeMessage: (CollaboratorMessage) -> Void
+    let onInsertDraft: (ConnectionDraftProposal) -> Void
+    let onReviseDraft: (ConnectionDraftProposal) -> Void
+    let onMoveDraft: (ConnectionDraftProposal, ConnectionSectionType) -> Void
+    let onDismissDraft: (ConnectionDraftProposal) -> Void
+    let onResumeDraft: (ConnectionDraftProposal) -> Void
+    let onUseLinkedSources: () -> Void
     let onRefreshInsights: () -> Void
     let onDismissInsight: (UUID) -> Void
 
+    private var displayDraft: ConnectionDraftProposal? {
+        previewStore.streamingDraft ?? activeDraftProposal
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             MarginaliaLabel("THE ATELIER")
             ConceptCollaboratorPanel(
                 messages: $collaboratorMessages,
                 frameworkTitle: frameworkTitle,
                 conceptType: conceptType,
                 isThinking: isCollaboratorThinking,
+                activeDraft: displayDraft,
+                previewSourceMessageID: previewStore.sourceMessageID,
+                isPreviewPaused: previewStore.isPaused,
+                linkedSourceCount: linkedSourceCount,
                 onSend: onSendMessage,
-                onCrystallize: onCrystallizeMessage
+                onCrystallize: onCrystallizeMessage,
+                onInsertDraft: onInsertDraft,
+                onReviseDraft: onReviseDraft,
+                onMoveDraft: onMoveDraft,
+                onDismissDraft: onDismissDraft,
+                onResumeDraft: onResumeDraft,
+                onUseLinkedSources: onUseLinkedSources
             )
-            .frame(minHeight: 340)
-
-            if isRefreshingInsights || !insights.isEmpty {
-                LiveInsightsPanel(
-                    insights: insights,
-                    isRefreshing: isRefreshingInsights,
-                    onRefresh: onRefreshInsights,
-                    onDismiss: onDismissInsight
-                )
-                .frame(minHeight: insights.isEmpty ? 104 : 180)
-            } else {
-                quietInsightsPanel
-            }
+            .frame(height: 420)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-    }
-
-    private var quietInsightsPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("LIVE INSIGHTS")
-                .font(DS.smallCaps)
-                .tracking(1.8)
-                .foregroundStyle(DS.giltMuted)
-            Text("The room stays quiet until the framework has enough tension to say something useful.")
-                .font(.system(size: 11, weight: .regular, design: .serif))
-                .italic()
-                .foregroundStyle(DS.inkFaded)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(DS.vellumDeep.opacity(0.35), in: .rect(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.sepiaBorder.opacity(0.75), lineWidth: 0.5)
-        )
     }
 }

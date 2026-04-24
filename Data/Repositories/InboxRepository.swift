@@ -102,7 +102,12 @@ class InboxRepository: ObservableObject {
         mergePreview: String? = nil,
         placeThinkspaceId: String? = nil,
         placeThinkspaceName: String? = nil,
-        placeAtomType: String? = nil
+        placeAtomType: String? = nil,
+        recommendations: String? = nil,
+        primaryRouteKind: String? = nil,
+        destinationPath: String? = nil,
+        rationale: String? = nil,
+        placementPlanSummary: String? = nil
     ) async throws {
         try await database.asyncWrite { db in
             guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
@@ -116,6 +121,11 @@ class InboxRepository: ObservableObject {
             item.placeThinkspaceId = placeThinkspaceId
             item.placeThinkspaceName = placeThinkspaceName
             item.placeAtomType = placeAtomType
+            item.recommendations = recommendations
+            item.primaryRouteKind = primaryRouteKind
+            item.destinationPath = destinationPath
+            item.rationale = rationale
+            item.placementPlanSummary = placementPlanSummary
             item.status = .classified
             item.classifiedAt = ISO8601DateFormatter().string(from: Date())
             try item.update(db)
@@ -147,6 +157,25 @@ class InboxRepository: ObservableObject {
             guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
             item.isRead = true
             try item.update(db)
+        }
+    }
+
+    func fetch(uuid: String) async throws -> InboxItem? {
+        try await database.asyncRead { db in
+            try InboxItem
+                .filter(Column("uuid") == uuid)
+                .fetchOne(db)
+        }
+    }
+
+    func restore(_ item: InboxItem) async throws {
+        try await database.asyncWrite { db in
+            if try InboxItem.filter(Column("uuid") == item.uuid).fetchOne(db) != nil {
+                try item.update(db)
+            } else {
+                var mutable = item
+                try mutable.insert(db)
+            }
         }
     }
 

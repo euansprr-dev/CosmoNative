@@ -117,4 +117,89 @@ final class InstagramAutoTranscriberTests: XCTestCase {
         XCTAssertFalse(merged[0].text.contains("[Voiceover:"))
         XCTAssertTrue(merged[1].text.contains("[Voiceover: Details for the second slide.]"))
     }
+
+    func testDetectTranscriptionContentTypePrefersVoiceoverForCaptionedTalkingHead() {
+        let transcriber = InstagramAutoTranscriber.shared
+        let visualSlides = [
+            TranscriptSlide(text: "Let me break it down", slideNumber: 1, timestamp: 0.0, endTimestamp: 1.0, source: .geminiVision),
+            TranscriptSlide(text: "in 60 seconds", slideNumber: 2, timestamp: 1.0, endTimestamp: 2.0, source: .geminiVision),
+            TranscriptSlide(text: "this table", slideNumber: 3, timestamp: 2.0, endTimestamp: 3.0, source: .geminiVision),
+            TranscriptSlide(text: "your body", slideNumber: 4, timestamp: 3.0, endTimestamp: 4.0, source: .geminiVision)
+        ]
+        let speech = [
+            SpeechSegment(text: "Let me break it down for you in sixty seconds okay this table is your body and every part of it matters.", timestamp: 0.1, duration: 3.8)
+        ]
+
+        let contentType = transcriber.detectTranscriptionContentType(
+            visualSlides: visualSlides,
+            speech: speech,
+            duration: 4.0
+        )
+
+        XCTAssertEqual(contentType, .voiceoverOnly)
+    }
+
+    func testDetectTranscriptionContentTypePreservesTrueTextReel() {
+        let transcriber = InstagramAutoTranscriber.shared
+        let visualSlides = [
+            TranscriptSlide(text: "3 reasons your sales page is underperforming", slideNumber: 1, timestamp: 0.0, endTimestamp: 1.5, source: .visionOCR),
+            TranscriptSlide(text: "1. Your hook is vague and makes no promise", slideNumber: 2, timestamp: 1.5, endTimestamp: 3.0, source: .visionOCR),
+            TranscriptSlide(text: "2. You explain features before pain or stakes", slideNumber: 3, timestamp: 3.0, endTimestamp: 4.5, source: .visionOCR),
+            TranscriptSlide(text: "3. Your CTA asks for too much commitment too early", slideNumber: 4, timestamp: 4.5, endTimestamp: 6.0, source: .visionOCR)
+        ]
+
+        let contentType = transcriber.detectTranscriptionContentType(
+            visualSlides: visualSlides,
+            speech: [],
+            duration: 6.0
+        )
+
+        XCTAssertEqual(contentType, .textOnly)
+    }
+
+    func testDetectTranscriptionContentTypeKeepsVoicePlusDistinctSlides() {
+        let transcriber = InstagramAutoTranscriber.shared
+        let visualSlides = [
+            TranscriptSlide(text: "The old way", slideNumber: 1, timestamp: 0.0, endTimestamp: 1.5, source: .geminiVision),
+            TranscriptSlide(text: "Pitch every feature and hope they care", slideNumber: 2, timestamp: 1.5, endTimestamp: 3.0, source: .geminiVision),
+            TranscriptSlide(text: "The better way", slideNumber: 3, timestamp: 3.0, endTimestamp: 4.5, source: .geminiVision),
+            TranscriptSlide(text: "Lead with the expensive problem and one clear outcome", slideNumber: 4, timestamp: 4.5, endTimestamp: 6.0, source: .geminiVision)
+        ]
+        let speech = [
+            SpeechSegment(text: "Most people pitch every feature and overwhelm the buyer.", timestamp: 0.2, duration: 1.6),
+            SpeechSegment(text: "A better approach is to lead with the problem that is already costing them money.", timestamp: 3.2, duration: 2.0)
+        ]
+
+        let contentType = transcriber.detectTranscriptionContentType(
+            visualSlides: visualSlides,
+            speech: speech,
+            duration: 6.0
+        )
+
+        XCTAssertEqual(contentType, .voiceoverPlusText)
+    }
+
+    func testDetectTranscriptionContentTypeDoesNotPromoteLyricStyleSpeechToVoiceover() {
+        let transcriber = InstagramAutoTranscriber.shared
+        let visualSlides = [
+            TranscriptSlide(text: "dancing in the dark", slideNumber: 1, timestamp: 0.0, endTimestamp: 1.0, source: .visionOCR),
+            TranscriptSlide(text: "dancing in the dark", slideNumber: 2, timestamp: 1.0, endTimestamp: 2.0, source: .visionOCR),
+            TranscriptSlide(text: "with you between my arms", slideNumber: 3, timestamp: 2.0, endTimestamp: 3.0, source: .visionOCR),
+            TranscriptSlide(text: "barefoot on the grass", slideNumber: 4, timestamp: 3.0, endTimestamp: 4.0, source: .visionOCR)
+        ]
+        let speech = [
+            SpeechSegment(text: "dancing in the dark", timestamp: 0.1, duration: 0.6),
+            SpeechSegment(text: "dancing in the dark", timestamp: 1.1, duration: 0.6),
+            SpeechSegment(text: "with you between my arms", timestamp: 2.1, duration: 0.7),
+            SpeechSegment(text: "barefoot on the grass", timestamp: 3.1, duration: 0.7)
+        ]
+
+        let contentType = transcriber.detectTranscriptionContentType(
+            visualSlides: visualSlides,
+            speech: speech,
+            duration: 4.0
+        )
+
+        XCTAssertEqual(contentType, .textOnly)
+    }
 }

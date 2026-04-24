@@ -43,6 +43,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     // MARK: - Smart Task Intent (WP1)
 
     public let intent: TaskIntent
+    public let intentUUID: String?
     public let habitUUID: String?
     public let habitAssignmentSource: String?
     public let linkedIdeaUUID: String?
@@ -246,6 +247,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         isCompleted: Bool = false,
         completedAt: Date? = nil,
         intent: TaskIntent = .general,
+        intentUUID: String? = nil,
         habitUUID: String? = nil,
         habitAssignmentSource: String? = nil,
         linkedIdeaUUID: String? = nil,
@@ -289,6 +291,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         self.isCompleted = isCompleted
         self.completedAt = completedAt
         self.intent = intent
+        self.intentUUID = intentUUID
         self.habitUUID = habitUUID
         self.habitAssignmentSource = habitAssignmentSource
         self.linkedIdeaUUID = linkedIdeaUUID
@@ -515,6 +518,7 @@ extension TaskViewModel {
             isCompleted: metadata?.isCompleted ?? false,
             completedAt: completedAt,
             intent: intent,
+            intentUUID: metadata?.intentUUID,
             habitUUID: metadata?.habitUUID,
             habitAssignmentSource: metadata?.habitAssignmentSource,
             linkedIdeaUUID: metadata?.linkedIdeaUUID,

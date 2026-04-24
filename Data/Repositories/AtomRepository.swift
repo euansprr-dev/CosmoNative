@@ -250,7 +250,7 @@ class AtomRepository: ObservableObject {
     /// Returns most recently updated atoms across all user-facing types
     func fetchRecent(limit: Int = 25) async throws -> [Atom] {
         // Only include user-facing atom types (exclude system types)
-        let userTypes: [AtomType] = [.idea, .task, .research, .content, .connection, .project, .journalEntry]
+        let userTypes: [AtomType] = [.idea, .note, .task, .research, .content, .connection, .project, .journalEntry, .image]
         let typeStrings = userTypes.map { $0.rawValue }
 
         return try await database.asyncRead { db in
@@ -265,7 +265,7 @@ class AtomRepository: ObservableObject {
 
     /// Search atoms by title or body content (basic keyword search)
     func search(query: String, limit: Int = 50) async throws -> [Atom] {
-        let userTypes: [AtomType] = [.idea, .task, .research, .content, .connection, .project, .journalEntry]
+        let userTypes: [AtomType] = [.idea, .note, .task, .research, .content, .connection, .project, .journalEntry, .image]
         let typeStrings = userTypes.map { $0.rawValue }
         let searchPattern = "%\(query)%"
 

@@ -25,10 +25,8 @@ struct StructureMapView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Section header
-            Text("Structure")
-                .dsSmallCapsLabel()
+        VStack(alignment: .leading, spacing: DS.space12) {
+            MarginaliaLabel("STRUCTURE")
 
             if validSections.isEmpty {
                 placeholderView
@@ -36,12 +34,6 @@ struct StructureMapView: View {
                 structureContent
             }
         }
-        .padding(16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(DS.border, lineWidth: 1)
-        )
         .onAppear {
             guard !hasAppeared else { return }
             hasAppeared = true
@@ -52,101 +44,76 @@ struct StructureMapView: View {
     // MARK: - Structure Content
 
     private var structureContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Framework type pill
+        VStack(alignment: .leading, spacing: DS.space12) {
             if let fw = frameworkType {
-                HStack(spacing: 6) {
+                HStack(spacing: DS.space6) {
                     Text(fw.displayName)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DS.dateSerif)
+                        .italic()
                     Text(fw.description)
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
                         .lineLimit(1)
                 }
-                .foregroundColor(fw.color)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(fw.color.opacity(0.15), in: Capsule())
+                .foregroundStyle(fw.color.opacity(0.85))
             }
 
-            // Horizontal blocks row — proportional widths within available space
             GeometryReader { geo in
                 let availableWidth = geo.size.width
-                let spacing: CGFloat = 4
+                let spacing: CGFloat = 3
                 let totalSpacing = spacing * CGFloat(max(0, validSections.count - 1))
                 let usableWidth = availableWidth - totalSpacing
 
                 HStack(spacing: spacing) {
                     ForEach(Array(validSections.enumerated()), id: \.element.id) { index, section in
                         let relSize = section.relativeSize(totalLength: totalLength)
-                        let blockWidth = max(50, usableWidth * CGFloat(relSize))
+                        let blockWidth = max(24, usableWidth * CGFloat(relSize))
                         let blockColor = section.emotion?.color ?? defaultColor(for: index)
                         let isHovered = hoveredSection == section.id
 
-                        VStack(spacing: 4) {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(blockColor.opacity(0.25))
-                                .frame(height: 60)
-                                .overlay(
-                                    ZStack {
-                                        VStack(spacing: 2) {
-                                            Text(section.label)
-                                                .font(.system(size: 10, weight: .medium))
-                                                .foregroundColor(DS.text)
-                                                .lineLimit(2)
-                                                .multilineTextAlignment(.center)
-                                        }
-                                        .padding(.horizontal, 4)
-
-                                        // Tap-to-navigate hint icon on hover
-                                        if isHovered && onSectionTap != nil {
-                                            VStack {
-                                                HStack {
-                                                    Spacer()
-                                                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                                        .font(.system(size: 8))
-                                                        .foregroundColor(DS.textMuted)
-                                                }
-                                                Spacer()
-                                            }
-                                            .padding(4)
-                                        }
-                                    }
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(
-                                            isHovered ? DS.borderActive : blockColor.opacity(0.3),
-                                            lineWidth: 1
-                                        )
-                                )
-                                .shadow(
-                                    color: isHovered ? blockColor.opacity(0.2) : .clear,
-                                    radius: isHovered ? 4 : 0
-                                )
-                                .scaleEffect(appeared[section.id] == true ? (isHovered ? 1.02 : 1) : 0)
-                                .animation(ProMotionSprings.hover, value: isHovered)
-                                .onHover { hovering in
-                                    withAnimation(ProMotionSprings.hover) {
-                                        hoveredSection = hovering ? section.id : nil
-                                    }
-                                }
-                                .onTapGesture {
-                                    let position = sectionStartPosition(for: section, in: validSections)
-                                    onSectionTap?(position)
-                                }
-
-                            // Purpose label
-                            Text(section.purpose)
-                                .font(.system(size: 9))
-                                .foregroundColor(DS.textMuted)
-                                .lineLimit(1)
+                        Button {
+                            let position = sectionStartPosition(for: section, in: validSections)
+                            onSectionTap?(position)
+                        } label: {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(blockColor.opacity(isHovered ? 0.82 : 0.48))
+                                .frame(height: isHovered ? 6 : 4)
+                                .scaleEffect(x: appeared[section.id] == true ? 1 : 0.08, anchor: .leading)
                         }
+                        .buttonStyle(.plain)
                         .frame(width: blockWidth)
+                        .disabled(onSectionTap == nil)
+                        .onHover { hovering in
+                            withAnimation(ProMotionSprings.hover) {
+                                hoveredSection = hovering ? section.id : nil
+                            }
+                        }
+                        .animation(ProMotionSprings.hover, value: isHovered)
+                    }
+                }
+                .frame(maxHeight: .infinity, alignment: .center)
+            }
+            .frame(height: 18)
+
+            VStack(alignment: .leading, spacing: DS.space8) {
+                ForEach(Array(validSections.enumerated()), id: \.element.id) { index, section in
+                    let blockColor = section.emotion?.color ?? defaultColor(for: index)
+                    HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                        Circle()
+                            .fill(blockColor.opacity(0.75))
+                            .frame(width: 5, height: 5)
+                        Text(section.label.lowercased())
+                            .font(DS.callout)
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(section.purpose.lowercased())
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.inkFaded)
+                            .lineLimit(1)
                     }
                 }
             }
-            .frame(height: 80)
         }
     }
 
@@ -154,12 +121,12 @@ struct StructureMapView: View {
 
     private func defaultColor(for index: Int) -> Color {
         let colors: [Color] = [
-            Color(hex: "#818CF8"),
-            Color(hex: "#38BDF8"),
-            Color(hex: "#34D399"),
-            Color(hex: "#FBBF24"),
-            Color(hex: "#FB7185"),
-            Color(hex: "#A78BFA"),
+            DS.entitySwipe,
+            DS.entityIdea,
+            DS.entityResearch,
+            DS.entityContent,
+            DS.entityConnection,
+            DS.gilt,
         ]
         return colors[index % colors.count]
     }
@@ -186,33 +153,32 @@ struct StructureMapView: View {
     }
 
     private var placeholderView: some View {
-        Text("Structure analysis pending...")
-            .font(.system(size: 13))
-            .foregroundColor(DS.textMuted)
+        Text("structure analysis pending...")
+            .font(DS.dateSerif)
+            .italic()
+            .foregroundStyle(DS.inkFaded)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 30)
+            .padding(.vertical, DS.space20)
     }
 }
 
 // MARK: - Preview
 
 #if DEBUG
-struct StructureMapView_Previews: PreviewProvider {
-    static var previews: some View {
-        ZStack {
-            DS.bg.ignoresSafeArea()
-            StructureMapView(
-                frameworkType: .aida,
-                sections: [
-                    SwipeSection(label: "Attention", startIndex: 0, endIndex: 50, purpose: "Hook the viewer", emotion: .curiosity),
-                    SwipeSection(label: "Interest", startIndex: 50, endIndex: 150, purpose: "Build intrigue", emotion: .aspiration),
-                    SwipeSection(label: "Desire", startIndex: 150, endIndex: 250, purpose: "Create want", emotion: .desire),
-                    SwipeSection(label: "Action", startIndex: 250, endIndex: 300, purpose: "Drive CTA", emotion: .urgency),
-                ]
-            )
-            .frame(width: 400)
-            .padding()
-        }
+#Preview {
+    ZStack {
+        DS.bg.ignoresSafeArea()
+        StructureMapView(
+            frameworkType: .aida,
+            sections: [
+                SwipeSection(label: "Attention", startIndex: 0, endIndex: 50, purpose: "Hook the viewer", emotion: .curiosity),
+                SwipeSection(label: "Interest", startIndex: 50, endIndex: 150, purpose: "Build intrigue", emotion: .aspiration),
+                SwipeSection(label: "Desire", startIndex: 150, endIndex: 250, purpose: "Create want", emotion: .desire),
+                SwipeSection(label: "Action", startIndex: 250, endIndex: 300, purpose: "Drive CTA", emotion: .urgency),
+            ]
+        )
+        .frame(width: 400)
+        .padding()
     }
 }
 #endif

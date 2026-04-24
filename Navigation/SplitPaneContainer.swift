@@ -77,11 +77,13 @@ struct PaneColumnView: View {
             VStack(spacing: 0) {
                 ForEach(Array(paneManager.panes.enumerated()), id: \.element.id) { index, pane in
                     let isActive = paneManager.activePaneId == pane.id
+                    let isContextOwner = paneManager.contextOwnerPaneId == pane.id
                     let paneHeight = availableHeight * paneManager.paneSizes[safe: index, default: 1.0]
 
                     PaneContentView(
                         content: pane,
                         isActive: isActive,
+                        isContextOwner: isContextOwner,
                         onClose: {
                             withAnimation(ProMotionSprings.snappy) {
                                 paneManager.closePane(at: index)

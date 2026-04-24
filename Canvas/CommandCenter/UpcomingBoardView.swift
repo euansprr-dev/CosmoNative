@@ -298,13 +298,14 @@ struct UpcomingBoardView: View {
 
     @ViewBuilder
     private func boardTaskMetaRow(_ task: TaskViewModel, resolvedHabit: HabitDefinition?) -> some View {
+        let intentPresentation = viewModel.resolvedIntentPresentation(for: task)
         HStack(spacing: 4) {
             if let dueInfo = task.dueInfo {
                 metaBadge(icon: "calendar", text: dueInfo, color: task.isOverdue ? DS.red : DS.textMuted)
             }
 
-            if task.intent != .general {
-                metaBadge(icon: task.intent.iconName, text: task.intent.displayName, color: task.intent.color.opacity(0.8))
+            if !intentPresentation.isUnassigned {
+                metaBadge(icon: intentPresentation.icon, text: intentPresentation.title, color: intentPresentation.accent.opacity(0.8))
             }
 
             if let resolvedHabit {

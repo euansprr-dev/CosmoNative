@@ -9,6 +9,7 @@ import SwiftUI
 /// Protocol that views conform to for providing live context to the Cosmo AI window.
 /// Each view registers its provider with `CosmoWindowViewModel.shared.updateContext(provider:)`.
 /// Implementations should be lightweight -- just return current state, no computation.
+@MainActor
 protocol CosmoContextProvider: AnyObject {
     var contextType: CosmoContextType { get }
     var contextSummary: String { get }

@@ -1,5 +1,5 @@
 // CosmoOS/UI/FocusMode/SwipeStudy/PhysicsSectionCardView.swift
-// Reusable expandable card wrapper for physics section grid
+// Reusable expandable marginalia row for physics sections
 
 import SwiftUI
 
@@ -27,41 +27,45 @@ struct PhysicsSectionCardView<Preview: View, Detail: View>: View {
 
     @ViewBuilder
     private var cardContent: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            headerRow
-            summaryText
-            preview()
-        }
-        .padding(DS.space12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(isExpanded ? iconColor.opacity(0.4) : DS.border, lineWidth: isExpanded ? 1.5 : 1)
-        )
-        .scaleEffect(isHovered ? 1.01 : 1.0)
-        .animation(ProMotionSprings.hover, value: isHovered)
-    }
-
-    @ViewBuilder
-    private var headerRow: some View {
-        HStack(spacing: DS.space6) {
+        HStack(alignment: .center, spacing: DS.space10) {
             Image(systemName: icon)
-                .font(DS.callout)
+                .font(DS.caption)
                 .foregroundStyle(iconColor)
+                .frame(width: 18)
                 .accessibilityHidden(true)
 
-            Text(title)
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
+            VStack(alignment: .leading, spacing: DS.space4) {
+                headerRow
+                summaryText
+            }
 
-            Spacer()
+            Spacer(minLength: DS.space8)
+
+            preview()
 
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
                 .accessibilityHidden(true)
         }
+        .padding(.vertical, DS.space8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(isExpanded ? iconColor.opacity(0.28) : DS.sepiaSubtle)
+                .frame(height: 0.5)
+        }
+        .opacity(isHovered ? 0.82 : 1.0)
+        .animation(ProMotionSprings.hover, value: isHovered)
+    }
+
+    @ViewBuilder
+    private var headerRow: some View {
+        Text(title.lowercased())
+            .font(DS.callout)
+            .foregroundStyle(DS.text)
+            .lineLimit(1)
     }
 
     @ViewBuilder

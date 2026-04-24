@@ -54,8 +54,10 @@ enum CommandCenterComposerRoute: Equatable {
         currentDate: Date?,
         anchor: CommandCenterComposerAnchor
     )
-    case taskIntent(task: TaskViewModel, currentIntent: TaskIntent, anchor: CommandCenterComposerAnchor)
+    case taskIntent(task: TaskViewModel, currentIntentUUID: String?, anchor: CommandCenterComposerAnchor)
     case taskHabit(task: TaskViewModel, currentHabitUUID: String?, anchor: CommandCenterComposerAnchor)
+    case intentEditor(intent: IntentDefinition?, anchor: CommandCenterComposerAnchor)
+    case intentLibrary(anchor: CommandCenterComposerAnchor)
     case habitEditor(habit: HabitDefinition?, anchor: CommandCenterComposerAnchor)
     case habitLibrary(anchor: CommandCenterComposerAnchor)
 
@@ -66,6 +68,8 @@ enum CommandCenterComposerRoute: Equatable {
              .taskDate(_, _, _, let anchor),
              .taskIntent(_, _, let anchor),
              .taskHabit(_, _, let anchor),
+             .intentEditor(_, let anchor),
+             .intentLibrary(let anchor),
              .habitEditor(_, let anchor),
              .habitLibrary(let anchor):
             return anchor
@@ -188,13 +192,52 @@ struct CommandCenterComposerHost: View {
                 },
                 onClose: composer.dismiss
             )
-        case let .taskIntent(task, currentIntent, _):
+        case let .taskIntent(task, currentIntentUUID, _):
             CommandCenterIntentPickerComposer(
+                viewModel: viewModel,
                 taskTitle: task.title,
-                currentIntent: currentIntent,
-                onSelect: { intent in
-                    Task { await viewModel.updateTask(uuid: task.uuid, intent: intent) }
+                currentIntentUUID: currentIntentUUID,
+                onSelect: { intentUUID in
+                    Task { await viewModel.updateTask(uuid: task.uuid, intentUUID: intentUUID) }
                     composer.dismiss()
+                },
+                onOpenLibrary: { anchor in
+                    composer.present(.intentLibrary(anchor: anchor))
+                },
+                onClose: composer.dismiss
+            )
+        case let .intentEditor(intent, anchor):
+            CommandCenterIntentComposer(
+                intent: intent,
+                onSave: { draft in
+                    saveIntentDraft(draft, editing: intent)
+                },
+                onArchive: intent == nil ? nil : {
+                    guard let id = intent?.id else { return }
+                    Task { await viewModel.archiveIntent(id: id) }
+                    composer.dismiss()
+                },
+                onMoveUp: intent == nil ? nil : {
+                    guard let id = intent?.id else { return }
+                    Task { await viewModel.moveIntent(id: id, direction: -1) }
+                },
+                onMoveDown: intent == nil ? nil : {
+                    guard let id = intent?.id else { return }
+                    Task { await viewModel.moveIntent(id: id, direction: 1) }
+                },
+                onOpenLibrary: {
+                    composer.present(.intentLibrary(anchor: anchor))
+                },
+                onDismiss: composer.dismiss
+            )
+        case let .intentLibrary(anchor):
+            CommandCenterIntentLibraryComposer(
+                intents: viewModel.availableIntentDefinitions,
+                onCreate: {
+                    composer.present(.intentEditor(intent: nil, anchor: anchor))
+                },
+                onEdit: { intent in
+                    composer.present(.intentEditor(intent: intent, anchor: anchor))
                 },
                 onClose: composer.dismiss
             )
@@ -236,6 +279,7 @@ struct CommandCenterComposerHost: View {
                 onOpenLibrary: {
                     composer.present(.habitLibrary(anchor: anchor))
                 },
+                availableIntents: viewModel.availableIntentDefinitions,
                 onDismiss: composer.dismiss
             )
         case let .habitLibrary(anchor):
@@ -352,6 +396,7 @@ struct CommandCenterComposerHost: View {
                 existing.dailyTargetCount = draft.dailyTargetCount
                 existing.keywordTriggers = draft.keywords
                 existing.mappedIntents = draft.mappedIntents.map(\.rawValue).sorted()
+                existing.defaultIntentUUID = draft.defaultIntentUUID
                 existing.allowManualCompletion = draft.allowManualCompletion
                 await viewModel.updateHabit(existing)
             } else {
@@ -362,7 +407,32 @@ struct CommandCenterComposerHost: View {
                     dailyTargetCount: draft.dailyTargetCount,
                     keywordTriggers: draft.keywords,
                     mappedIntents: Array(draft.mappedIntents).sorted { $0.displayName < $1.displayName },
+                    defaultIntentUUID: draft.defaultIntentUUID,
                     allowManualCompletion: draft.allowManualCompletion
+                )
+            }
+        }
+
+        composer.dismiss()
+    }
+
+    private func saveIntentDraft(_ draft: CommandCenterIntentEditorDraft, editing intent: IntentDefinition?) {
+        let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+
+        Task {
+            if var existing = intent {
+                existing.title = title
+                existing.icon = draft.icon
+                existing.accentColor = draft.accentColor
+                existing.behaviorTemplate = draft.behaviorTemplate
+                await viewModel.updateIntent(existing)
+            } else {
+                await viewModel.createIntent(
+                    title: title,
+                    icon: draft.icon,
+                    accentColor: draft.accentColor,
+                    behaviorTemplate: draft.behaviorTemplate
                 )
             }
         }
@@ -378,6 +448,12 @@ private struct CommandCenterComposerMetrics {
 
     init(route: CommandCenterComposerRoute, viewport: CGSize) {
         switch route {
+        case .intentEditor:
+            width = 420
+            height = min(viewport.height - 48, 560)
+        case .intentLibrary:
+            width = 380
+            height = min(viewport.height - 48, 500)
         case .habitEditor:
             width = 420
             height = min(viewport.height - 48, 660)
@@ -830,43 +906,62 @@ struct CommandCenterTaskActionComposer: View {
 }
 
 struct CommandCenterIntentPickerComposer: View {
+    @ObservedObject var viewModel: CommandCenterDashboardViewModel
     let taskTitle: String
-    let currentIntent: TaskIntent
-    let onSelect: (TaskIntent) -> Void
+    let currentIntentUUID: String?
+    let onSelect: (String?) -> Void
+    let onOpenLibrary: (CommandCenterComposerAnchor) -> Void
     let onClose: () -> Void
 
-    private let intents: [TaskIntent] = [.general, .writeContent, .research, .studySwipes, .deepThink, .review]
+    @State private var libraryButtonFrame: CGRect = .zero
 
     var body: some View {
         CommandCenterComposerShell(title: "INTENT", subtitle: taskTitle, onClose: onClose) {
             VStack(alignment: .leading, spacing: DS.space10) {
-                Text("Route this task toward the right working mode.")
+                Text("Choose the primary category this time should roll up under.")
                     .font(DS.callout)
                     .foregroundStyle(DS.inkFaded)
 
-                ForEach(intents, id: \.rawValue) { intent in
-                    intentRow(intent)
+                intentRow(nil, presentation: viewModel.resolvedIntentPresentation(intentUUID: nil, legacyIntentRaw: nil))
+
+                ForEach(viewModel.availableIntentDefinitions, id: \.id) { intent in
+                    intentRow(intent.id, presentation: viewModel.resolvedIntentPresentation(intentUUID: intent.id, legacyIntentRaw: nil))
                 }
+
+                Button {
+                    onOpenLibrary(.init(sourceRect: libraryButtonFrame, alignment: .trailing))
+                } label: {
+                    HStack(spacing: DS.space6) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(DS.caption2)
+                        Text("Manage intents")
+                            .font(DS.callout)
+                    }
+                    .foregroundStyle(DS.accent)
+                    .padding(.top, DS.space4)
+                }
+                .buttonStyle(.plain)
+                .background(CommandCenterGlobalFrameReader(frame: $libraryButtonFrame))
             }
         }
     }
 
-    private func intentRow(_ intent: TaskIntent) -> some View {
-        let isSelected = currentIntent == intent
+    private func intentRow(_ intentUUID: String?, presentation: ResolvedIntentPresentation) -> some View {
+        let isSelected = currentIntentUUID == intentUUID || (intentUUID == nil && currentIntentUUID == nil)
         return Button {
-            onSelect(intent)
+            onSelect(intentUUID)
         } label: {
             HStack(spacing: DS.space10) {
-                Image(systemName: intent.iconName)
+                Image(systemName: presentation.icon)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(intent.color)
+                    .foregroundStyle(presentation.accent)
                     .frame(width: 24)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(intent.displayName)
+                    Text(presentation.title)
                         .font(DS.callout)
                         .foregroundStyle(DS.text)
-                    Text(intentHintText(for: intent))
+                    Text(intentHintText(for: presentation))
                         .font(DS.caption2)
                         .foregroundStyle(DS.inkFaded)
                 }
@@ -876,29 +971,273 @@ struct CommandCenterIntentPickerComposer: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(DS.caption2)
-                        .foregroundStyle(intent.color)
+                        .foregroundStyle(presentation.accent)
                 }
             }
             .padding(.vertical, DS.space8)
             .padding(.horizontal, DS.space10)
-            .background(isSelected ? intent.color.opacity(0.08) : Color.clear, in: .rect(cornerRadius: 10))
+            .background(isSelected ? presentation.accent.opacity(0.08) : Color.clear, in: .rect(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(isSelected ? intent.color.opacity(0.25) : Color.clear, lineWidth: 1)
+                    .stroke(isSelected ? presentation.accent.opacity(0.25) : Color.clear, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
     }
 
-    private func intentHintText(for intent: TaskIntent) -> String {
-        switch intent {
+    private func intentHintText(for presentation: ResolvedIntentPresentation) -> String {
+        switch presentation.behaviorTemplate {
         case .writeContent: return "Writing and drafting work"
         case .research: return "Reading, digging, and synthesis"
         case .studySwipes: return "Pattern review and swipe study"
         case .deepThink: return "Thinking, outlining, and shaping"
         case .review: return "Polishing and quality passes"
-        case .general: return "General task flow"
-        case .custom: return "Custom workflow routing"
+        case nil: return presentation.isUnassigned ? "Visible until you assign it." : "Categorization only"
+        }
+    }
+}
+
+struct CommandCenterIntentEditorDraft: Equatable {
+    var title: String = ""
+    var icon: String = "tag.fill"
+    var accentColor: String = "2D6A4F"
+    var behaviorTemplate: IntentBehaviorTemplate?
+
+    init() {}
+
+    init(intent: IntentDefinition) {
+        title = intent.title
+        icon = intent.icon
+        accentColor = intent.accentColor
+        behaviorTemplate = intent.behaviorTemplate
+    }
+}
+
+struct CommandCenterIntentComposer: View {
+    let intent: IntentDefinition?
+    let onSave: (CommandCenterIntentEditorDraft) -> Void
+    let onArchive: (() -> Void)?
+    let onMoveUp: (() -> Void)?
+    let onMoveDown: (() -> Void)?
+    let onOpenLibrary: (() -> Void)?
+    let onDismiss: () -> Void
+
+    @State private var draft: CommandCenterIntentEditorDraft
+
+    init(
+        intent: IntentDefinition?,
+        onSave: @escaping (CommandCenterIntentEditorDraft) -> Void,
+        onArchive: (() -> Void)? = nil,
+        onMoveUp: (() -> Void)? = nil,
+        onMoveDown: (() -> Void)? = nil,
+        onOpenLibrary: (() -> Void)? = nil,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.intent = intent
+        self.onSave = onSave
+        self.onArchive = onArchive
+        self.onMoveUp = onMoveUp
+        self.onMoveDown = onMoveDown
+        self.onOpenLibrary = onOpenLibrary
+        self.onDismiss = onDismiss
+        _draft = State(initialValue: intent.map(CommandCenterIntentEditorDraft.init(intent:)) ?? CommandCenterIntentEditorDraft())
+    }
+
+    var body: some View {
+        CommandCenterComposerShell(
+            title: intent == nil ? "NEW INTENT" : "INTENT",
+            subtitle: draft.title.isEmpty ? "Shape a category for your time" : draft.title,
+            onClose: onDismiss
+        ) {
+            VStack(alignment: .leading, spacing: DS.space20) {
+                composerSectionLabel("Identity")
+
+                TextField("Writing", text: $draft.title)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15, weight: .regular, design: .serif))
+                    .foregroundStyle(DS.text)
+                    .padding(.horizontal, DS.space12)
+                    .padding(.vertical, DS.space10)
+                    .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                    )
+
+                HStack(spacing: DS.space10) {
+                    ForEach(["tag.fill", "pencil.line", "magnifyingglass", "brain.head.profile", "eye", "bolt.fill"], id: \.self) { icon in
+                        Button {
+                            draft.icon = icon
+                        } label: {
+                            Image(systemName: icon)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(draft.icon == icon ? Color(hex: draft.accentColor) : DS.textSecondary)
+                                .frame(width: 34, height: 34)
+                                .background(DS.vellumDeep, in: Circle())
+                                .overlay(Circle().stroke(draft.icon == icon ? Color(hex: draft.accentColor).opacity(0.35) : DS.sepiaBorder, lineWidth: 0.8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                HStack(spacing: DS.space10) {
+                    ForEach(["2D6A4F", "818CF8", "38BDF8", "FFD700", "A855F7", "4ADE80"], id: \.self) { color in
+                        Button {
+                            draft.accentColor = color
+                        } label: {
+                            Circle()
+                                .fill(Color(hex: color))
+                                .frame(width: 22, height: 22)
+                                .overlay(Circle().stroke(.white.opacity(draft.accentColor == color ? 0.9 : 0), lineWidth: 2))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                composerSectionLabel("Behavior")
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    behaviorRow(nil, title: "Categorization only", subtitle: "Use this only for reporting and organization.")
+                    ForEach(IntentBehaviorTemplate.allCases, id: \.rawValue) { template in
+                        behaviorRow(template, title: template.taskIntent.displayName, subtitle: behaviorHint(template))
+                    }
+                }
+
+                HStack(spacing: DS.space10) {
+                    Button(action: { onSave(draft) }) {
+                        Text("Save intent")
+                            .font(DS.callout)
+                            .foregroundStyle(DS.accent)
+                    }
+                    .buttonStyle(.plain)
+
+                    if let onOpenLibrary {
+                        Button("Library", action: onOpenLibrary)
+                            .buttonStyle(.plain)
+                            .font(DS.callout)
+                            .foregroundStyle(DS.textSecondary)
+                    }
+
+                    Spacer()
+
+                    if let onMoveUp {
+                        Button(action: onMoveUp) { Image(systemName: "arrow.up") }
+                            .buttonStyle(.plain)
+                    }
+                    if let onMoveDown {
+                        Button(action: onMoveDown) { Image(systemName: "arrow.down") }
+                            .buttonStyle(.plain)
+                    }
+                    if let onArchive {
+                        Button("Archive", action: onArchive)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(DS.red)
+                    }
+                }
+            }
+        }
+    }
+
+    private func behaviorRow(_ template: IntentBehaviorTemplate?, title: String, subtitle: String) -> some View {
+        let isSelected = draft.behaviorTemplate == template
+        return Button {
+            draft.behaviorTemplate = template
+        } label: {
+            HStack(spacing: DS.space10) {
+                Circle()
+                    .fill(isSelected ? Color(hex: draft.accentColor) : DS.borderSubtle)
+                    .frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                    Text(subtitle)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
+            .background(isSelected ? Color(hex: draft.accentColor).opacity(0.08) : DS.vellumDeep, in: .rect(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(isSelected ? Color(hex: draft.accentColor).opacity(0.3) : DS.sepiaBorder, lineWidth: 0.6))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func behaviorHint(_ template: IntentBehaviorTemplate) -> String {
+        switch template {
+        case .writeContent: return "Launches the writing flow."
+        case .research: return "Routes into research work."
+        case .studySwipes: return "Opens swipe-study mode."
+        case .deepThink: return "Routes to thinking and outlining."
+        case .review: return "Routes to review mode."
+        }
+    }
+}
+
+struct CommandCenterIntentLibraryComposer: View {
+    let intents: [IntentDefinition]
+    let onCreate: () -> Void
+    let onEdit: (IntentDefinition) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        CommandCenterComposerShell(title: "INTENT LIBRARY", subtitle: "Manage your time categories", onClose: onClose) {
+            VStack(alignment: .leading, spacing: DS.space16) {
+                if intents.isEmpty {
+                    Text("No intents yet. Create one so tracked time lands somewhere real instead of a vague bucket.")
+                        .font(DS.callout)
+                        .foregroundStyle(DS.inkFaded)
+                } else {
+                    ForEach(intents, id: \.id) { intent in
+                        Button {
+                            onEdit(intent)
+                        } label: {
+                            HStack(spacing: DS.space10) {
+                                Circle()
+                                    .fill(intent.accent.opacity(0.14))
+                                    .frame(width: 34, height: 34)
+                                    .overlay(
+                                        Image(systemName: intent.icon)
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundStyle(intent.accent)
+                                    )
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(intent.title)
+                                        .font(DS.callout)
+                                        .foregroundStyle(DS.text)
+                                    Text(intent.behaviorTemplate?.taskIntent.displayName ?? "Categorization only")
+                                        .font(DS.caption2)
+                                        .foregroundStyle(DS.inkFaded)
+                                }
+
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(DS.caption2)
+                                    .foregroundStyle(DS.inkFaded)
+                            }
+                            .padding(.horizontal, DS.space10)
+                            .padding(.vertical, DS.space8)
+                            .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.sepiaBorder, lineWidth: 0.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Button(action: onCreate) {
+                    HStack(spacing: DS.space6) {
+                        Image(systemName: "plus")
+                            .font(DS.caption2)
+                        Text("New intent")
+                            .font(.system(size: 15, weight: .regular, design: .serif))
+                    }
+                    .foregroundStyle(DS.accent)
+                    .padding(.vertical, DS.space6)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 }
@@ -1524,6 +1863,7 @@ extension HabitDefinition {
             dailyTargetCount: 3,
             keywordTriggers: ["write", "draft"],
             mappedIntents: [TaskIntent.writeContent.rawValue],
+            defaultIntentUUID: "intent-writing",
             allowManualCompletion: true,
             sortOrder: 0,
             isBuiltIn: false,

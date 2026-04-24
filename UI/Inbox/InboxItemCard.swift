@@ -42,6 +42,8 @@ struct InboxItemCard: View {
             textPreview
             confidenceMeter
             suggestionLine
+            rationaleLine
+            alternativesLine
             insightLine
             staleNudge
             actionRow
@@ -217,13 +219,13 @@ struct InboxItemCard: View {
 
     @ViewBuilder
     private var placeSuggestion: some View {
-        if let tsName = item.placeThinkspaceName {
+        if let destinationPath = item.destinationPath ?? item.placeThinkspaceName {
             HStack(spacing: DS.space4) {
                 Image(systemName: "rectangle.3.group")
                     .font(.system(size: 10))
-                Text("Place in:")
+                Text("Route to:")
                     .font(.system(size: 12))
-                Text(tsName)
+                Text(destinationPath)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
             }
@@ -232,13 +234,13 @@ struct InboxItemCard: View {
     }
 
     private var newSuggestion: some View {
-        let typeName = item.placeAtomType?.capitalized ?? "Note"
+        let label = item.destinationPath ?? item.placeAtomType?.capitalized ?? "Note"
         return HStack(spacing: DS.space4) {
             Image(systemName: "plus.circle")
                 .font(.system(size: 10))
-            Text("Create as:")
+            Text("Create:")
                 .font(.system(size: 12))
-            Text(typeName)
+            Text(label)
                 .font(.system(size: 12, weight: .medium))
         }
         .foregroundStyle(Color(hex: "818CF8"))
@@ -250,6 +252,40 @@ struct InboxItemCard: View {
             progressDot(label: "Matching", filled: false)
             progressDot(label: "Ready", filled: false)
         }
+    }
+
+    @ViewBuilder
+    private var rationaleLine: some View {
+        if let rationale = item.rationale,
+           !rationale.isEmpty,
+           item.classification != nil {
+            Text(rationale)
+                .font(.system(size: 12))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(isExpanded ? 3 : 2)
+        }
+    }
+
+    @ViewBuilder
+    private var alternativesLine: some View {
+        let alternatives = alternativeDestinationPaths
+        if !alternatives.isEmpty {
+            Text("Also considered: " + alternatives.prefix(2).joined(separator: " • "))
+                .font(.system(size: 11))
+                .foregroundStyle(DS.textMuted.opacity(0.9))
+                .lineLimit(1)
+        }
+    }
+
+    private var alternativeDestinationPaths: [String] {
+        guard let json = item.recommendations,
+              let data = json.data(using: .utf8),
+              let bundle = try? JSONDecoder().decode(InboxRecommendationBundlePayload.self, from: data) else {
+            return []
+        }
+        return Array(bundle.recommendations.dropFirst())
+            .map(\.destinationPath)
+            .filter { !$0.isEmpty }
     }
 
     private func progressDot(label: String, filled: Bool) -> some View {
@@ -344,11 +380,7 @@ struct InboxItemCard: View {
     @ViewBuilder
     private var acceptButtonLabel: some View {
         let label: String = {
-            switch item.classification {
-            case .merge: return "Merge"
-            case .place: return "Place"
-            case .new, .none: return "Create"
-            }
+            "Confirm"
         }()
 
         HStack(spacing: DS.space4) {
@@ -444,6 +476,14 @@ struct InboxItemCard: View {
 // MARK: - Background Shape Conformance
 
 extension InboxItemCard {
+    private struct InboxRecommendationBundlePayload: Decodable {
+        let recommendations: [InboxRecommendationPayload]
+    }
+
+    private struct InboxRecommendationPayload: Decodable {
+        let destinationPath: String
+    }
+
     @ViewBuilder
     var styledBackground: some View {
         if isSelected {

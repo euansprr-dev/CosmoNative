@@ -76,9 +76,18 @@ enum InboxCaptureConverter {
                 do {
                     let saved = try await InboxRepository.shared.create(item)
 
+                    try? await CosmoDatabase.shared.asyncWrite { db in
+                        try db.execute(
+                            sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                            arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                        )
+                    }
+
                     let classification = await InboxClassificationEngine.shared.classify(
                         text: rawText,
-                        source: .telegramText
+                        source: .telegramText,
+                        excludedAtomUUIDs: [uuid],
+                        preferredTitle: title
                     )
 
                     try await InboxRepository.shared.updateClassification(
@@ -92,19 +101,17 @@ enum InboxCaptureConverter {
                         mergePreview: classification.mergeTarget?.preview,
                         placeThinkspaceId: classification.placeTarget?.thinkspaceId,
                         placeThinkspaceName: classification.placeTarget?.thinkspaceName,
-                        placeAtomType: classification.placeTarget?.suggestedAtomType
+                        placeAtomType: classification.placeTarget?.suggestedAtomType,
+                        recommendations: classification.recommendationBundle.encodedJSONString,
+                        primaryRouteKind: classification.recommendationBundle.primaryRecommendation?.kind.rawValue,
+                        destinationPath: classification.recommendationBundle.primaryRecommendation?.destinationPath,
+                        rationale: classification.recommendationBundle.primaryRecommendation?.rationale,
+                        placementPlanSummary: classification.recommendationBundle.primaryRecommendation?.placementPlan?.summary
                     )
 
                     print("📥 InboxCaptureConverter: InboxItem created from cloud capture — \(saved.uuid)")
                 } catch {
                     print("⚠️ InboxCaptureConverter: Failed to create InboxItem from cloud capture: \(error)")
-                }
-
-                try? await CosmoDatabase.shared.asyncWrite { db in
-                    try db.execute(
-                        sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                        arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
-                    )
                 }
             }
         }

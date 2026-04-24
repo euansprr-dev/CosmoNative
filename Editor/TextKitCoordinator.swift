@@ -1165,8 +1165,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         @objc private func handleInsertTextInEditor(_ notification: Notification) {
             guard let textView = activeTextView,
-                  textView.window?.firstResponder === textView,
                   let text = notification.userInfo?["text"] as? String else { return }
+
+            let allowInactive = notification.userInfo?["allowInactive"] as? Bool ?? false
+            guard allowInactive || textView.window?.firstResponder === textView else { return }
 
             let positionRaw = notification.userInfo?["position"] as? String ?? EditorCommandBus.InsertPosition.cursor.rawValue
             insertText(text, position: positionRaw, into: textView)

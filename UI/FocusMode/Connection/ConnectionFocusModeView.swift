@@ -9,6 +9,49 @@ import GRDB
 
 // MARK: - Connection Focus Mode View
 
+@MainActor
+final class ConnectionCollaboratorPreviewStore: ObservableObject {
+    @Published private(set) var streamingDraft: ConnectionDraftProposal?
+    @Published private(set) var sourceMessageID: UUID?
+    @Published private(set) var isPaused: Bool = false
+    @Published private(set) var isStreaming: Bool = false
+    @Published private(set) var nextChunkIndex: Int = 0
+
+    func begin(draft: ConnectionDraftProposal, sourceMessageID: UUID?) {
+        streamingDraft = draft
+        self.sourceMessageID = sourceMessageID
+        isPaused = false
+        isStreaming = true
+        nextChunkIndex = 0
+    }
+
+    func updateVisibleText(_ text: String, nextChunkIndex: Int) {
+        guard var draft = streamingDraft else { return }
+        draft.visibleText = text
+        draft.status = .streaming
+        streamingDraft = draft
+        self.nextChunkIndex = nextChunkIndex
+        isStreaming = true
+        isPaused = false
+    }
+
+    func pause() {
+        guard var draft = streamingDraft else { return }
+        draft.status = .pending
+        streamingDraft = draft
+        isStreaming = false
+        isPaused = true
+    }
+
+    func clear() {
+        streamingDraft = nil
+        sourceMessageID = nil
+        isPaused = false
+        isStreaming = false
+        nextChunkIndex = 0
+    }
+}
+
 /// Main view for Connection Focus Mode.
 /// Displays an infinite canvas with an anchored structured concept card,
 /// floating panels from the database, and ghost suggestions from AI.
@@ -49,6 +92,8 @@ struct ConnectionFocusModeView: View {
     @State private var isLoadingSuggestedSources: Bool = false
     @State private var isShowingSuggestedSources: Bool = false
     @State private var isRefreshingInsights: Bool = false
+    @State private var draftStreamingTask: Task<Void, Never>?
+    @StateObject private var collaboratorPreview = ConnectionCollaboratorPreviewStore()
     @State private var commandKIntent: CommandKIntent = .floatingBlock
     // V2 mode overlays — Manuscript (⌘M), Chalkboard (⌘B), Station Mode (double-click station).
     @State private var manuscriptActive: Bool = false
@@ -70,7 +115,7 @@ struct ConnectionFocusModeView: View {
 
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
-    @Environment(\.isPaneActive) private var isPaneActive
+    @Environment(\.isPaneContextOwner) private var isPaneContextOwner
 
     // MARK: - Initialization
 
@@ -190,9 +235,18 @@ struct ConnectionFocusModeView: View {
             if let type = stationModeType, let binding = stationBinding(for: type) {
                 StationModeOverlay(
                     section: binding,
-                    onAddItem: { doc, text in viewModel.addItem(document: doc, plainText: text, toSection: type) },
-                    onEditItem: { item in viewModel.editItem(item, inSection: type) },
-                    onDeleteItem: { id in viewModel.deleteItem(id, fromSection: type) },
+                    onAddItem: { doc, text in
+                        pauseActiveDraftIfNeeded(for: type)
+                        viewModel.addItem(document: doc, plainText: text, toSection: type)
+                    },
+                    onEditItem: { item in
+                        pauseActiveDraftIfNeeded(for: type)
+                        viewModel.editItem(item, inSection: type)
+                    },
+                    onDeleteItem: { id in
+                        pauseActiveDraftIfNeeded(for: type)
+                        viewModel.deleteItem(id, fromSection: type)
+                    },
                     onSourceTap: { uuid in openSourceAsPanel(uuid) },
                     onAcceptGhost: { ghost in viewModel.acceptGhost(ghost, inSection: type) },
                     onDismissGhost: { id in viewModel.dismissGhost(id, inSection: type) },
@@ -206,33 +260,31 @@ struct ConnectionFocusModeView: View {
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             loadState()
+            viewModel.normalizeCollaboratorState()
             listenForAtomPicker()
             setupRightClickMonitor()
             setupSpaceMonitor()
             Task {
                 await viewModel.generateGhostSuggestions()
                 await loadAtelierData()
-                // Kick off an initial insights pass if the framework has enough substance.
-                if viewModel.state.completedSectionCount >= 2 {
-                    await refreshLiveInsights()
-                }
+                await bootstrapCollaboratorIfNeeded()
             }
             // Register context provider for global Cosmo window
             let provider = ConnectionContextProvider(atom: atom, viewModel: viewModel)
-            if !isPaneContext || isPaneActive {
+            if !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
         .onChange(of: viewModel.state.completedSectionCount) { oldValue, newValue in
-            // Threshold-crossed? Refresh insights.
-            let oldBand = thresholdBand(oldValue)
-            let newBand = thresholdBand(newValue)
-            if newBand != oldBand && newValue >= 2 {
-                Task { await refreshLiveInsights() }
+            if oldValue == 0,
+               newValue > 0,
+               viewModel.state.collaboratorMessages.isEmpty,
+               !viewModel.state.collaboratorSession.hasBootstrapped {
+                Task { await bootstrapCollaboratorIfNeeded() }
             }
         }
-        .onChange(of: isPaneActive) { _, isActive in
-            if isActive {
+        .onChange(of: isPaneContextOwner) { _, isOwner in
+            if isOwner {
                 let provider = ConnectionContextProvider(atom: atom, viewModel: viewModel)
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
@@ -240,17 +292,22 @@ struct ConnectionFocusModeView: View {
         .background(
             GeometryReader { geo in
                 Color.clear
-                    .onAppear { viewFrameInWindow = geo.frame(in: .global) }
-                    .onChange(of: geo.frame(in: .global)) { _, newFrame in viewFrameInWindow = newFrame }
+                    .onAppear { updateViewFrameInWindow(geo.frame(in: .global)) }
+                    .onChange(of: geo.frame(in: .global)) { _, newFrame in
+                        updateViewFrameInWindow(newFrame)
+                    }
             }
         )
         .onDisappear {
             print("[FOCUS-CONN] onDisappear — uuid=\(atom.uuid) title=\"\(String(editableTitle.prefix(60)))\" sectionsCount=\(viewModel.state.sections.count)")
+            draftStreamingTask?.cancel()
+            collaboratorPreview.clear()
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             viewModel.flushTitleSave(titleDocument, plainTitle: editableTitle)
             viewModel.saveToAtom()
             saveState()
             floatingBlocksManager.saveImmediately()
+            draftStreamingTask?.cancel()
             removeRightClickMonitor()
             removeSpaceMonitor()
         }
@@ -392,11 +449,17 @@ struct ConnectionFocusModeView: View {
                 get: { viewModel.state.collaboratorMessages },
                 set: { viewModel.state.collaboratorMessages = $0 }
             ),
+            activeDraftProposal: Binding(
+                get: { viewModel.state.activeDraftProposal },
+                set: { viewModel.state.activeDraftProposal = $0 }
+            ),
+            previewStore: collaboratorPreview,
             frameworkTitle: editableTitle,
             isCollaboratorThinking: collaboratorEngine.isThinking,
             insights: viewModel.state.liveInsights,
             isRefreshingInsights: isRefreshingInsights,
             sourceCount: wellSources.count,
+            linkedSourceCount: wellSources.count,
             maturityLabel: maturityThresholdLabel,
             sources: wellSources,
             suggestedSources: suggestedWellSources,
@@ -405,12 +468,15 @@ struct ConnectionFocusModeView: View {
             isShowingSuggestions: isShowingSuggestedSources,
             isLoadingSuggestions: isLoadingSuggestedSources,
             onAddItem: { document, plainText, type in
+                pauseActiveDraftIfNeeded(for: type)
                 viewModel.addItem(document: document, plainText: plainText, toSection: type)
             },
             onEditItem: { item, type in
+                pauseActiveDraftIfNeeded(for: type)
                 viewModel.editItem(item, inSection: type)
             },
             onDeleteItem: { id, type in
+                pauseActiveDraftIfNeeded(for: type)
                 viewModel.deleteItem(id, fromSection: type)
             },
             onSourceTap: { openSourceAsPanel($0) },
@@ -430,7 +496,13 @@ struct ConnectionFocusModeView: View {
             },
             onSendMessage: { text in Task { await handleCollaboratorSend(text) } },
             onCrystallizeMessage: { message in handleCollaboratorCrystallize(message) },
-            onRefreshInsights: { Task { await refreshLiveInsights() } },
+            onInsertDraft: { draft in acceptDraftProposal(draft) },
+            onReviseDraft: { draft in Task { await reviseDraftProposal(draft) } },
+            onMoveDraft: { draft, section in moveDraftProposal(draft, to: section) },
+            onDismissDraft: { draft in dismissDraftProposal(draft) },
+            onResumeDraft: { draft in resumeDraftProposal(draft) },
+            onUseLinkedSources: { Task { await askCollaboratorToUseLinkedSources() } },
+            onRefreshInsights: { },
             onDismissInsight: { id in
                 viewModel.state.liveInsights.removeAll { $0.id == id }
             },
@@ -650,39 +722,59 @@ struct ConnectionFocusModeView: View {
     }
 
     @MainActor
-    private func refreshLiveInsights() async {
-        isRefreshingInsights = true
-        let insights = await coDevEngine.generateLiveInsights(
-            state: viewModel.state,
+    private func bootstrapCollaboratorIfNeeded() async {
+        guard !viewModel.state.collaboratorSession.hasBootstrapped else { return }
+        if !viewModel.state.collaboratorMessages.isEmpty {
+            viewModel.state.collaboratorSession.presetID = "deepen.connection"
+            viewModel.state.collaboratorSession.hasBootstrapped = true
+            viewModel.state.collaboratorSession.lastBootstrapAt = viewModel.state.collaboratorSession.lastBootstrapAt ?? Date()
+            return
+        }
+
+        guard viewModel.state.completedSectionCount > 0 else { return }
+
+        let bootstrapPrompt = """
+        Read what is already written in this connection and the linked sources. Start from that material. Ask one sharp follow-up question or stage one additive draft for the most useful next section.
+        """
+
+        let reply = await collaboratorEngine.ask(
+            prompt: bootstrapPrompt,
+            frameworkTitle: editableTitle,
             conceptType: viewModel.state.conceptType,
-            frameworkTitle: editableTitle
+            state: viewModel.state,
+            linkedSources: wellSources,
+            history: viewModel.state.collaboratorMessages,
+            isBootstrap: true
         )
-        viewModel.state.setLiveInsights(insights)
-        isRefreshingInsights = false
+        viewModel.state.markCollaboratorBootstrapped()
+        appendCollaboratorReply(reply, persistState: false)
     }
 
     @MainActor
     private func handleCollaboratorSend(_ text: String) async {
-        let userMessage = CollaboratorMessage(role: .user, text: text)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        viewModel.state.markCollaboratorBootstrapped()
+        let userMessage = CollaboratorMessage(role: .user, text: trimmed)
         viewModel.state.appendCollaboratorMessage(userMessage)
+        viewModel.saveState()
 
         let reply = await collaboratorEngine.ask(
-            prompt: text,
+            prompt: trimmed,
             frameworkTitle: editableTitle,
             conceptType: viewModel.state.conceptType,
             state: viewModel.state,
+            linkedSources: wellSources,
             history: viewModel.state.collaboratorMessages
         )
-        viewModel.state.appendCollaboratorMessage(reply)
+        appendCollaboratorReply(reply)
     }
 
-    private func thresholdBand(_ count: Int) -> Int {
-        switch count {
-        case 0...2: return 0
-        case 3...4: return 1
-        case 5...7: return 2
-        default: return 3
-        }
+    @MainActor
+    private func askCollaboratorToUseLinkedSources() async {
+        guard !wellSources.isEmpty else { return }
+        await handleCollaboratorSend("Use the linked sources to help me develop this connection.")
     }
 
     /// Binding into a specific section by type — for Station Mode overlay.
@@ -702,10 +794,242 @@ struct ConnectionFocusModeView: View {
     }
 
     private func handleCollaboratorCrystallize(_ message: CollaboratorMessage) {
-        guard let section = message.crystallizeTarget,
-              let content = message.crystallizeContent, !content.isEmpty else { return }
-        let document = RichDocument.migrateLegacy(content)
-        viewModel.addItem(document: document, plainText: content, toSection: section)
+        if let draft = message.draftProposal {
+            acceptDraftProposal(draft)
+        }
+    }
+
+    private func persistedCollaboratorReply(_ reply: CollaboratorMessage) -> CollaboratorMessage {
+        guard reply.draftProposal != nil else { return reply }
+        return CollaboratorMessage(
+            id: reply.id,
+            role: reply.role,
+            text: reply.text,
+            observationKind: reply.observationKind,
+            questionSuggestion: reply.questionSuggestion,
+            recommendedAction: reply.recommendedAction,
+            draftProposal: nil,
+            createdAt: reply.createdAt
+        )
+    }
+
+    private func appendCollaboratorReply(_ reply: CollaboratorMessage, persistState: Bool = true) {
+        let storedReply = persistedCollaboratorReply(reply)
+        viewModel.state.appendCollaboratorMessage(storedReply)
+        guard reply.draftProposal != nil else {
+            if persistState {
+                viewModel.saveState()
+            }
+            return
+        }
+        stageDraftIfNeeded(from: reply, sourceMessageID: storedReply.id, persistState: persistState)
+    }
+
+    private func sourceMessageID(for draft: ConnectionDraftProposal) -> UUID? {
+        if collaboratorPreview.streamingDraft?.id == draft.id {
+            return collaboratorPreview.sourceMessageID
+        }
+        return viewModel.state.collaboratorMessages.first(where: { $0.draftProposal?.id == draft.id })?.id
+    }
+
+    private func persistDraft(
+        _ draft: ConnectionDraftProposal,
+        sourceMessageID: UUID?,
+        setActive: Bool
+    ) {
+        if let sourceMessageID {
+            viewModel.state.setCollaboratorDraft(draft, forMessageID: sourceMessageID)
+        } else {
+            viewModel.state.updateCollaboratorDraft(draft)
+        }
+        viewModel.state.setActiveDraftProposal(setActive ? draft : nil)
+    }
+
+    private func draftChunks(for text: String, wordsPerChunk: Int = 3) -> [String] {
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return [] }
+
+        var chunks: [String] = []
+        var cumulative: [String] = []
+        for start in stride(from: 0, to: words.count, by: wordsPerChunk) {
+            let end = min(start + wordsPerChunk, words.count)
+            cumulative.append(contentsOf: words[start..<end])
+            chunks.append(cumulative.joined(separator: " "))
+        }
+        return chunks
+    }
+
+    private func stageDraftIfNeeded(from message: CollaboratorMessage, sourceMessageID: UUID?, persistState: Bool) {
+        guard let draft = message.draftProposal else {
+            collaboratorPreview.clear()
+            return
+        }
+        draftStreamingTask?.cancel()
+
+        if let existingPreview = collaboratorPreview.streamingDraft,
+           existingPreview.id != draft.id {
+            collaboratorPreview.clear()
+        }
+
+        if let existingDraft = viewModel.state.activeDraftProposal,
+           existingDraft.id != draft.id,
+           existingDraft.status != .accepted,
+           existingDraft.status != .dismissed {
+            var dismissed = existingDraft
+            dismissed.status = .dismissed
+            dismissed.visibleText = dismissed.draftText
+            viewModel.state.updateCollaboratorDraft(dismissed)
+            viewModel.state.setActiveDraftProposal(nil)
+        }
+
+        var previewDraft = draft
+        previewDraft.visibleText = ""
+        previewDraft.status = .streaming
+        collaboratorPreview.begin(draft: previewDraft, sourceMessageID: sourceMessageID)
+        streamDraftPreview(previewDraft, sourceMessageID: sourceMessageID, startingAt: 0, persistState: persistState)
+    }
+
+    private func streamDraftPreview(
+        _ draft: ConnectionDraftProposal,
+        sourceMessageID: UUID?,
+        startingAt startIndex: Int,
+        persistState: Bool
+    ) {
+        let chunks = draftChunks(for: draft.draftText)
+        draftStreamingTask = Task { @MainActor in
+            if chunks.isEmpty {
+                var finalized = draft
+                finalized.visibleText = finalized.draftText
+                finalized.status = .pending
+                collaboratorPreview.clear()
+                persistDraft(finalized, sourceMessageID: sourceMessageID, setActive: true)
+                if persistState {
+                    viewModel.saveState()
+                }
+                return
+            }
+
+            for index in startIndex..<chunks.count {
+                guard !Task.isCancelled else { return }
+                collaboratorPreview.updateVisibleText(chunks[index], nextChunkIndex: index + 1)
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+
+            var finalized = draft
+            finalized.visibleText = finalized.draftText
+            finalized.status = .pending
+            collaboratorPreview.clear()
+            persistDraft(finalized, sourceMessageID: sourceMessageID, setActive: true)
+            if persistState {
+                viewModel.saveState()
+            }
+        }
+    }
+
+    private func acceptDraftProposal(_ draft: ConnectionDraftProposal) {
+        draftStreamingTask?.cancel()
+        let sourceMessageID = sourceMessageID(for: draft)
+        if collaboratorPreview.streamingDraft?.id == draft.id {
+            collaboratorPreview.clear()
+        }
+        var accepted = draft
+        accepted.visibleText = accepted.draftText
+        accepted.status = .accepted
+        accepted.insertedAt = Date()
+        persistDraft(accepted, sourceMessageID: sourceMessageID, setActive: false)
+
+        let document = RichDocument.migrateLegacy(accepted.draftText)
+        viewModel.addItem(document: document, plainText: accepted.draftText, toSection: accepted.targetSection)
+        viewModel.saveState()
+    }
+
+    @MainActor
+    private func reviseDraftProposal(_ draft: ConnectionDraftProposal) async {
+        draftStreamingTask?.cancel()
+        let sourceMessageID = sourceMessageID(for: draft)
+        if collaboratorPreview.streamingDraft?.id == draft.id {
+            collaboratorPreview.clear()
+        }
+        var pending = draft
+        pending.visibleText = pending.draftText
+        pending.status = .pending
+        persistDraft(pending, sourceMessageID: sourceMessageID, setActive: true)
+        viewModel.saveState()
+
+        let prompt = """
+        Revise the current draft for the \(draft.targetSection.displayName) section. Keep the core idea, make it sharper, and stay additive.
+
+        Current draft:
+        \(draft.draftText)
+        """
+
+        let reply = await collaboratorEngine.ask(
+            prompt: prompt,
+            frameworkTitle: editableTitle,
+            conceptType: viewModel.state.conceptType,
+            state: viewModel.state,
+            linkedSources: wellSources,
+            history: viewModel.state.collaboratorMessages
+        )
+        appendCollaboratorReply(reply)
+    }
+
+    private func moveDraftProposal(_ draft: ConnectionDraftProposal, to section: ConnectionSectionType) {
+        draftStreamingTask?.cancel()
+        let sourceMessageID = sourceMessageID(for: draft)
+        if collaboratorPreview.streamingDraft?.id == draft.id {
+            collaboratorPreview.clear()
+        }
+        var moved = draft
+        moved.targetSection = section
+        moved.visibleText = moved.draftText
+        moved.status = .pending
+        persistDraft(moved, sourceMessageID: sourceMessageID, setActive: true)
+        viewModel.saveState()
+    }
+
+    private func dismissDraftProposal(_ draft: ConnectionDraftProposal) {
+        draftStreamingTask?.cancel()
+        let sourceMessageID = sourceMessageID(for: draft)
+        if collaboratorPreview.streamingDraft?.id == draft.id {
+            collaboratorPreview.clear()
+        }
+        var dismissed = draft
+        dismissed.visibleText = dismissed.draftText
+        dismissed.status = .dismissed
+        persistDraft(dismissed, sourceMessageID: sourceMessageID, setActive: false)
+        viewModel.saveState()
+    }
+
+    private func pauseActiveDraftIfNeeded(for section: ConnectionSectionType) {
+        if let previewDraft = collaboratorPreview.streamingDraft,
+           previewDraft.targetSection == section,
+           collaboratorPreview.isStreaming {
+            draftStreamingTask?.cancel()
+            collaboratorPreview.pause()
+            return
+        }
+
+        guard var activeDraft = viewModel.state.activeDraftProposal,
+              activeDraft.targetSection == section,
+              activeDraft.status == .streaming else { return }
+        draftStreamingTask?.cancel()
+        activeDraft.status = .pending
+        activeDraft.visibleText = activeDraft.draftText
+        viewModel.state.updateCollaboratorDraft(activeDraft)
+        viewModel.state.setActiveDraftProposal(activeDraft)
+    }
+
+    private func resumeDraftProposal(_ draft: ConnectionDraftProposal) {
+        guard collaboratorPreview.isPaused,
+              collaboratorPreview.streamingDraft?.id == draft.id else { return }
+        draftStreamingTask?.cancel()
+        streamDraftPreview(
+            draft,
+            sourceMessageID: collaboratorPreview.sourceMessageID,
+            startingAt: collaboratorPreview.nextChunkIndex,
+            persistState: true
+        )
     }
 
     // MARK: - Floating Panels Layer
@@ -754,6 +1078,18 @@ struct ConnectionFocusModeView: View {
     }
 
     // MARK: - Right-Click Monitor
+
+    private func updateViewFrameInWindow(_ newFrame: CGRect) {
+        let oldFrame = viewFrameInWindow
+        let changedEnough = oldFrame == .zero
+            || abs(oldFrame.minX - newFrame.minX) > 0.5
+            || abs(oldFrame.minY - newFrame.minY) > 0.5
+            || abs(oldFrame.width - newFrame.width) > 0.5
+            || abs(oldFrame.height - newFrame.height) > 0.5
+
+        guard changedEnough else { return }
+        viewFrameInWindow = newFrame
+    }
 
     private func setupRightClickMonitor() {
         rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
@@ -936,25 +1272,28 @@ struct ConnectionFocusModeView: View {
             forName: CosmoNotification.FocusMode.addAtomAsFloatingBlock,
             object: nil,
             queue: .main
-        ) { [self] notification in
-            guard !self.isPaneContext || self.isPaneActive else { return }
+        ) { notification in
             guard let userInfo = notification.userInfo,
                   let atomUUID = userInfo["atomUUID"] as? String,
                   let atomTypeRaw = userInfo["atomType"] as? String,
                   let atomType = AtomType(rawValue: atomTypeRaw),
                   let title = userInfo["title"] as? String else { return }
 
-            let position = CGPoint(
-                x: 500 + CGFloat.random(in: -60...60),
-                y: 300 + CGFloat.random(in: -60...60)
-            )
+            Task { @MainActor in
+                guard !isPaneContext || isPaneContextOwner else { return }
 
-            floatingBlocksManager.addBlock(
-                linkedAtomUUID: atomUUID,
-                linkedAtomType: atomType,
-                title: title,
-                position: position
-            )
+                let position = CGPoint(
+                    x: 500 + CGFloat.random(in: -60...60),
+                    y: 300 + CGFloat.random(in: -60...60)
+                )
+
+                floatingBlocksManager.addBlock(
+                    linkedAtomUUID: atomUUID,
+                    linkedAtomType: atomType,
+                    title: title,
+                    position: position
+                )
+            }
         }
     }
 
@@ -1304,7 +1643,9 @@ class ConnectionFocusModeViewModel: ObservableObject {
     }
 
     deinit {
-        terminationCancellable?.cancel()
+        MainActor.assumeIsolated {
+            terminationCancellable?.cancel()
+        }
     }
 
     // MARK: - State Management
@@ -1313,6 +1654,10 @@ class ConnectionFocusModeViewModel: ObservableObject {
         if let savedState = ConnectionFocusModeState.load(atomUUID: atom.uuid) {
             state = savedState
         }
+    }
+
+    func normalizeCollaboratorState() {
+        state.normalizeCollaboratorStateAfterLoad()
     }
 
     func saveState() {
@@ -1721,5 +2066,34 @@ class ConnectionContextProvider: CosmoContextProvider {
         )
     }
 
-    var availableActions: [CosmoWindowAction] { [] }
+    var availableActions: [CosmoWindowAction] {
+        guard let viewModel else { return [] }
+
+        func action(
+            id: String,
+            name: String,
+            section: ConnectionSectionType
+        ) -> CosmoWindowAction {
+            CosmoWindowAction(
+                id: id,
+                name: name,
+                description: "Add a new item to \(section.displayName).",
+                modelTier: .balanced
+            ) { prompt in
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return "Nothing added." }
+                let document = RichDocument.migrateLegacy(trimmed)
+                await MainActor.run {
+                    viewModel.addItem(document: document, plainText: trimmed, toSection: section)
+                }
+                return "Added to \(section.displayName.lowercased())."
+            }
+        }
+
+        return [
+            action(id: "connection-goal", name: "Insert into Goal", section: .goal),
+            action(id: "connection-problems", name: "Insert into Problems", section: .problems),
+            action(id: "connection-process", name: "Insert into Process", section: .process)
+        ]
+    }
 }

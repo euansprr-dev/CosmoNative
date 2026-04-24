@@ -19,6 +19,14 @@ private struct IsPaneActiveKey: EnvironmentKey {
     static let defaultValue: Bool = false
 }
 
+// MARK: - Is Pane Context Owner
+
+/// Whether this pane's entity currently owns global context even if another pane
+/// (such as a collaborator surface) is focused.
+private struct IsPaneContextOwnerKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
 extension EnvironmentValues {
 
     /// True when the view is rendered inside a split pane.
@@ -31,5 +39,11 @@ extension EnvironmentValues {
     var isPaneActive: Bool {
         get { self[IsPaneActiveKey.self] }
         set { self[IsPaneActiveKey.self] = newValue }
+    }
+
+    /// True when this pane's entity is the source of global context updates.
+    var isPaneContextOwner: Bool {
+        get { self[IsPaneContextOwnerKey.self] }
+        set { self[IsPaneContextOwnerKey.self] = newValue }
     }
 }

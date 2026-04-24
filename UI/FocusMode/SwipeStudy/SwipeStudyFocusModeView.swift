@@ -115,6 +115,7 @@ struct SwipeStudyFocusModeView: View {
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var panelPadding: CGFloat { isPaneContext ? 16 : 24 }
 
@@ -126,47 +127,17 @@ struct SwipeStudyFocusModeView: View {
                 VStack(spacing: 0) {
                     topBar(atom: displayAtom)
 
-                    Divider().background(DS.borderActive)
-
                     GeometryReader { geo in
-                        let isCompact = geo.size.width < 900 || isPaneContext
-
-                        if isCompact {
-                            ScrollView {
-                                VStack(spacing: 0) {
-                                    leftPanel(atom: displayAtom)
-                                    Divider().background(DS.borderActive)
-                                    rightPanel
-                                }
-                            }
-                        } else {
-                            HStack(spacing: 0) {
-                                leftPanel(atom: displayAtom)
-                                    .frame(maxWidth: .infinity)
-
-                                Divider().background(DS.borderActive)
-
-                                rightPanel
-                                    .frame(width: geo.size.width * 0.42)
-                                    .clipped()
-                            }
-                        }
+                        teardownWorkspace(atom: displayAtom, size: geo.size)
                     }
                 }
                 .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 8)
+                .scaleEffect(hasAppeared ? 1 : 0.985)
                 .sheet(isPresented: $showEditTranscript) {
                     editTranscriptSheet
                 }
             } else {
-                VStack(spacing: 12) {
-                    ProgressView().tint(DS.textMuted)
-                    if isAnalyzing {
-                        Text("Analyzing swipe file...")
-                            .font(DS.callout)
-                            .foregroundStyle(DS.textSecondary)
-                    }
-                }
+                swipeStudyLoadingState
             }
         }
         .onAppear {
@@ -292,8 +263,7 @@ struct SwipeStudyFocusModeView: View {
     // MARK: - Top Bar
 
     private func topBar(atom: Atom) -> some View {
-        HStack(spacing: 12) {
-            // Main sidebar toggle (standalone only)
+        HStack(spacing: DS.space12) {
             if !isPaneContext {
                 Button {
                     withAnimation(ProMotionSprings.sidebar) {
@@ -301,129 +271,89 @@ struct SwipeStudyFocusModeView: View {
                     }
                 } label: {
                     Image(systemName: "sidebar.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(isSidebarHidden ? DS.inkFaded.opacity(0.55) : DS.inkFaded)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
-            }
 
-            if !isPaneContext {
                 Button {
                     onClose()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DS.space6) {
                         Image(systemName: "chevron.left")
-                            .font(DS.buttonText)
-                        Text("Back")
-                            .font(DS.callout)
+                            .font(.system(size: 11, weight: .medium))
+                        Text("back")
+                            .font(DS.dateSerif)
+                            .italic()
                     }
-                    .foregroundStyle(DS.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(DS.border, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-
-            Text(atom.title ?? "Swipe File")
-                .font(DS.title2)
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-
-            HStack(spacing: 4) {
-                Image(systemName: "bolt.fill")
-                    .font(DS.caption2)
-                Text("Teardown")
-                    .font(DS.caption)
-            }
-            .foregroundStyle(gold)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(gold.opacity(0.15), in: Capsule())
-
-            if analysis?.studiedAt != nil {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(DS.footnote)
-                    Text("Studied")
-                        .font(DS.caption)
-                }
-                .foregroundStyle(DS.green)
-            }
-
-            // Creator link — tappable to open creator profile
-            if let creatorUUID = analysis?.creatorUUID, !creatorUUID.isEmpty {
-                Button {
-                    NotificationCenter.default.post(
-                        name: Notification.Name("openCreatorProfile"),
-                        object: nil,
-                        userInfo: ["creatorUUID": creatorUUID]
-                    )
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "person.crop.rectangle.fill")
-                            .font(DS.caption2)
-                        Text("Creator")
-                            .font(DS.caption)
-                    }
-                    .foregroundStyle(gold.opacity(0.8))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(gold.opacity(0.1), in: Capsule())
-                    .overlay(Capsule().strokeBorder(gold.opacity(0.2), lineWidth: 1))
+                    .foregroundStyle(DS.inkFaded)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
 
             Spacer()
 
-            // Retry button — only visible when transcript/analysis failed
+            HStack(spacing: DS.space8) {
+                Text("swipe file")
+                Text("·")
+                Text(analysis?.studiedAt != nil ? "studied" : "teardown")
+                if analysis?.creatorUUID?.isEmpty == false {
+                    Text("·")
+                    Button("creator") {
+                        openLinkedCreator()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(gold.opacity(0.82))
+                }
+            }
+            .font(DS.dateSerif)
+            .italic()
+            .foregroundStyle(DS.inkFaded)
+
+            Spacer()
+
             if transcriptFetchFailed {
                 Button {
                     retryAnalysis()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DS.space4) {
                         Image(systemName: "arrow.clockwise")
                             .font(DS.caption)
-                        Text("Retry")
+                        Text("retry")
                             .font(DS.buttonText)
                     }
                     .foregroundStyle(DS.orange)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(DS.orange.opacity(0.12), in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
 
-            // Copy swipe + profile
-            Button {
+            SwipeStudyIconControl(
+                systemName: "doc.on.doc",
+                label: "Copy swipe and physics profile",
+                helpText: "Copy swipe + physics profile"
+            ) {
                 copySwipeWithProfile()
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(DS.subheadline)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(8)
-                    .background(DS.border, in: Circle())
             }
-            .buttonStyle(.plain)
-            .help("Copy swipe + physics profile")
 
-            // Delete button
-            Button {
-                showDeleteConfirmation = true
-            } label: {
-                Image(systemName: "trash")
-                    .font(DS.subheadline)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(8)
-                    .background(DS.border, in: Circle())
+            SwipeStudyIconControl(
+                systemName: "tag",
+                label: "Taxonomy management",
+                helpText: "Taxonomy Management"
+            ) {
+                showTaxonomyManagement = true
             }
-            .buttonStyle(.plain)
-            .help("Delete swipe")
+
+            SwipeStudyIconControl(
+                systemName: "trash",
+                label: "Delete swipe",
+                helpText: "Delete swipe"
+            ) {
+                showDeleteConfirmation = true
+            }
             .alert("Delete Swipe?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
@@ -433,44 +363,195 @@ struct SwipeStudyFocusModeView: View {
                 Text("This will permanently remove this swipe file and all its analysis data.")
             }
 
-            // Pane close button
             if isPaneContext {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(DS.buttonText)
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
+                SwipeStudyIconControl(
+                    systemName: "xmark",
+                    label: "Close pane",
+                    helpText: "Close pane",
+                    size: 11
+                ) {
+                    onClose()
+                }
+            }
+        }
+        .padding(.horizontal, DS.space20)
+        .padding(.vertical, DS.space12)
+        .frame(height: 56)
+    }
+
+    @ViewBuilder
+    private func teardownWorkspace(atom: Atom, size: CGSize) -> some View {
+        SwipeStudyTeardownShell(
+            size: size,
+            panelPadding: panelPadding,
+            isPaneContext: isPaneContext,
+            hasAppeared: hasAppeared,
+            reduceMotion: reduceMotion
+        ) {
+            sourceStage(atom: atom)
+        } transcript: {
+            transcriptManuscript(atom: atom)
+        } marginalia: {
+            rightPanel
+        }
+    }
+
+    private var swipeStudyLoadingState: some View {
+        VStack(spacing: DS.space16) {
+            OrnamentalRule(width: 48, color: gold.opacity(0.5))
+            Text(isAnalyzing ? "analyzing swipe file..." : "opening swipe file...")
+                .font(DS.dateSerif)
+                .italic()
+                .foregroundStyle(DS.inkFaded)
+            VStack(alignment: .leading, spacing: DS.space10) {
+                ShimmerLine(width: 0.82, height: 14)
+                ShimmerLine(width: 0.64, height: 14)
+                ShimmerLine(width: 0.74, height: 14)
+            }
+            .frame(width: 280)
+        }
+    }
+
+    private func sourceStage(atom: Atom) -> some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            MarginaliaLabel("SOURCE")
+
+            contentDisplay(atom: atom)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            sourceMetadataLine(atom: atom)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func transcriptManuscript(atom: Atom) -> some View {
+        VStack(alignment: .leading, spacing: DS.space24) {
+            swipeHero(atom: atom)
+
+            if isInstagramSwipe(atom) {
+                slideTranscriptEditor(atom: atom)
+            } else {
+                transcriptSection(atom: atom)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func swipeHero(atom: Atom) -> some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            Text("· · · SWIPE FILE · \(analysis?.studiedAt != nil ? "STUDIED" : "TEARDOWN") · · ·")
+                .font(DS.smallCaps)
+                .tracking(2.0)
+                .foregroundStyle(DS.giltMuted)
+
+            Text(displayHook(for: atom))
+                .font(.system(size: isPaneContext ? 26 : 32, weight: .light, design: .serif))
+                .foregroundStyle(DS.text)
+                .lineSpacing(4)
+                .textSelection(.enabled)
+
+            HStack(spacing: DS.space8) {
+                Text(sourceDescriptor(for: atom))
+                if let score = analysis?.effectiveHookScore, score > 0 {
+                    Text("·")
+                    Text("hook \(String(format: "%.1f", score))")
+                }
+                if let framework = analysis?.frameworkType {
+                    Text("·")
+                    Text(framework.abbreviation.lowercased())
+                }
+            }
+            .font(DS.dateSerif)
+            .italic()
+            .foregroundStyle(DS.inkFaded)
+
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(width: 120, height: 0.5)
+        }
+    }
+
+    private func sourceMetadataLine(atom: Atom) -> some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: sourceIcon(for: atom))
+                .font(DS.footnote)
+                .foregroundStyle(gold.opacity(0.75))
+            Text(sourceDescriptor(for: atom))
+                .font(DS.dateSerif)
+                .italic()
+                .foregroundStyle(DS.inkFaded)
+            Spacer(minLength: DS.space8)
+            if let urlString = atom.url, let url = URL(string: urlString) {
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Image(systemName: "arrow.up.right")
+                        .font(DS.footnote)
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
+                .foregroundStyle(DS.inkFaded)
+                .accessibilityLabel("Open source")
             }
-
-            Button {
-                showTaxonomyManagement = true
-            } label: {
-                Image(systemName: "tag.fill")
-                    .font(DS.subheadline)
-                    .foregroundStyle(DS.textSecondary)
-                    .padding(8)
-                    .background(DS.border, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Taxonomy Management")
-
         }
-        .padding(.horizontal, panelPadding)
-        .padding(.vertical, 10)
-        .frame(height: 56)
-        .background(
-            LinearGradient(
-                colors: [
-                    DS.bg.opacity(0.95),
-                    DS.bg.opacity(0.8),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func displayHook(for atom: Atom) -> String {
+        let candidates = [
+            analysis?.hookText,
+            atom.hook,
+            atom.title,
+            atom.body?.components(separatedBy: .newlines).first
+        ]
+        return candidates
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+            ?? "Untitled swipe"
+    }
+
+    private func isInstagramSwipe(_ atom: Atom) -> Bool {
+        let sourceType = detectSourceType(for: atom)
+        return sourceType == .instagram || sourceType == .instagramReel
+            || sourceType == .instagramPost || sourceType == .instagramCarousel
+    }
+
+    private func sourceDescriptor(for atom: Atom) -> String {
+        switch detectSourceType(for: atom) {
+        case .youtube:
+            return "youtube"
+        case .youtubeShort:
+            return "youtube short"
+        case .instagramReel:
+            return "instagram reel"
+        case .instagramPost:
+            return "instagram post"
+        case .instagramCarousel:
+            return "instagram carousel"
+        case .instagram:
+            return "instagram"
+        default:
+            return "captured source"
+        }
+    }
+
+    private func sourceIcon(for atom: Atom) -> String {
+        switch detectSourceType(for: atom) {
+        case .youtube, .youtubeShort:
+            return "play.rectangle"
+        case .instagram, .instagramReel, .instagramPost, .instagramCarousel:
+            return "camera"
+        default:
+            return "doc.text"
+        }
+    }
+
+    private func openLinkedCreator() {
+        guard let creatorUUID = analysis?.creatorUUID, !creatorUUID.isEmpty else { return }
+        NotificationCenter.default.post(
+            name: Notification.Name("openCreatorProfile"),
+            object: nil,
+            userInfo: ["creatorUUID": creatorUUID]
         )
     }
 
@@ -1544,11 +1625,10 @@ struct SwipeStudyFocusModeView: View {
         let displayedSlides = displayedTranscriptSlides
         let isShowingRaw = transcriptDisplayMode == .raw
 
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("TRANSCRIPT")
-                    .dsSectionLabel()
+        VStack(alignment: .leading, spacing: DS.space16) {
+            AtelierOrnamentalSectionLabel(label: "TRANSCRIPT")
 
+            HStack(spacing: DS.space8) {
                 if let contentType = autoTranscriptionContentType {
                     contentTypeBadge(contentType)
                 }
@@ -1569,15 +1649,14 @@ struct SwipeStudyFocusModeView: View {
                         retranscribeInstagram(atom: atom)
                     } label: {
                         HStack(spacing: 3) {
-                            Image(systemName: "arrow.trianglehead.clockwise")
+                            Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(DS.caption2)
                             Text("Re-transcribe")
                                 .font(DS.caption2)
                         }
                         .foregroundStyle(DS.textMuted)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(DS.border, in: Capsule())
+                        .padding(.horizontal, DS.space6)
+                        .padding(.vertical, DS.space4)
                     }
                     .buttonStyle(.plain)
                 }
@@ -1601,9 +1680,8 @@ struct SwipeStudyFocusModeView: View {
                             .font(DS.caption2)
                     }
                     .foregroundStyle(copiedTranscript ? DS.green : DS.textMuted)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(DS.border, in: Capsule())
+                    .padding(.horizontal, DS.space6)
+                    .padding(.vertical, DS.space4)
                 }
                 .buttonStyle(.plain)
 
@@ -1630,11 +1708,11 @@ struct SwipeStudyFocusModeView: View {
                 ForEach(transcriptSlides) { slide in
                     let index = indexForSlide(withID: slide.id) ?? 0
                     let slideComments = commentsForSlide(index)
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: DS.space8) {
                         HStack {
-                            Text("Slide \(index + 1)")
-                                .font(DS.caption2)
-                                .foregroundStyle(gold.opacity(0.6))
+                            Text("SLIDE \(String(format: "%02d", index + 1))")
+                                .font(DS.smallCaps)
+                                .foregroundStyle(DS.giltMuted)
 
                             if let source = slide.source {
                                 slideSourceBadge(source)
@@ -1700,11 +1778,11 @@ struct SwipeStudyFocusModeView: View {
                             slideCommentThread(comments: slideComments)
                         }
                     }
-                    .padding(10)
-                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                    .padding(DS.space12)
+                    .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                     .overlay(
                         RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .stroke(activeCommentSlideIndex == index ? gold.opacity(0.3) : DS.border, lineWidth: 1)
+                            .stroke(activeCommentSlideIndex == index ? gold.opacity(0.35) : DS.sepiaBorder, lineWidth: 0.5)
                     )
                 }
 
@@ -1720,7 +1798,8 @@ struct SwipeStudyFocusModeView: View {
                         Image(systemName: "plus.circle.fill")
                             .font(DS.footnote)
                         Text("Add Slide")
-                            .font(DS.caption)
+                            .font(DS.dateSerif)
+                            .italic()
                     }
                     .foregroundStyle(gold.opacity(0.7))
                     .padding(.vertical, 6)
@@ -1734,42 +1813,29 @@ struct SwipeStudyFocusModeView: View {
 
             // Caption section — check live extraction first, then persisted data
             if let caption = igMediaData?.caption ?? atom.richContent?.instagramData?.caption, !caption.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("CAPTION")
-                        .dsSectionLabel()
+                VStack(alignment: .leading, spacing: DS.space10) {
+                    AtelierOrnamentalSectionLabel(label: "CAPTION")
 
                     Text(caption)
                         .font(DS.callout)
                         .foregroundStyle(DS.textSecondary)
                         .textSelection(.enabled)
-                        .padding(10)
+                        .padding(DS.space12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                        .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                         .overlay(
                             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                                .stroke(DS.border, lineWidth: 1)
+                                .stroke(DS.sepiaBorder, lineWidth: 0.5)
                         )
                 }
             }
 
             // Analyze button
             if !slidesTranscriptText.isEmpty {
-                Button {
+                GiltBracketedCTA(title: analysis == nil ? "analyze" : "re-analyze", disabled: false) {
                     saveSlideTranscript()
                     triggerManualAnalysis()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(DS.subheadline)
-                        Text(analysis == nil ? "Analyze" : "Re-analyze")
-                            .font(DS.buttonText)
-                    }
-                    .foregroundStyle(DS.textOnAccent)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(gold, in: Capsule())
                 }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -2568,21 +2634,9 @@ struct SwipeStudyFocusModeView: View {
     private var analyzeButton: some View {
         let hasDeepAnalysis = (analysis?.analysisVersion ?? 0) >= 2
         if !isDeepAnalyzing && !hasDeepAnalysis {
-            Button {
+            GiltBracketedCTA(title: "analyze with claude", disabled: false) {
                 triggerManualAnalysis()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "bolt.fill")
-                        .font(DS.footnote)
-                    Text("Analyze with Claude")
-                        .font(DS.buttonText)
-                }
-                .foregroundStyle(DS.textOnAccent)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(gold, in: Capsule())
             }
-            .buttonStyle(.plain)
         } else if isDeepAnalyzing {
             HStack(spacing: 6) {
                 ProgressView()
@@ -2688,10 +2742,17 @@ struct SwipeStudyFocusModeView: View {
 
     @ViewBuilder
     private func transcriptSection(atom: Atom) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Transcript")
-                    .dsSmallCapsLabel()
+        VStack(alignment: .leading, spacing: DS.space16) {
+            HStack(spacing: DS.space8) {
+                Text("TRANSCRIPT")
+                    .font(DS.smallCaps)
+                    .tracking(1.6)
+                    .foregroundStyle(DS.giltMuted)
+                    .fixedSize()
+
+                Rectangle()
+                    .fill(DS.sepiaSubtle)
+                    .frame(height: 0.5)
 
                 if isFetchingTranscript {
                     ProgressView()
@@ -2711,10 +2772,11 @@ struct SwipeStudyFocusModeView: View {
 
             if !transcriptText.isEmpty {
                 Text(transcriptText)
-                    .font(DS.navTitle)
+                    .font(.system(size: 16, weight: .regular, design: .serif))
                     .foregroundStyle(DS.text)
-                    .lineSpacing(6)
+                    .lineSpacing(8)
                     .textSelection(.enabled)
+                    .padding(.vertical, DS.space4)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Analyze button for non-Instagram content with transcript
@@ -2728,8 +2790,9 @@ struct SwipeStudyFocusModeView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "pencil")
                             .font(DS.caption2)
-                        Text("Edit Transcript")
-                            .font(DS.caption)
+                        Text("edit transcript")
+                            .font(DS.dateSerif)
+                            .italic()
                     }
                     .foregroundStyle(DS.textMuted)
                 }
@@ -2743,159 +2806,168 @@ struct SwipeStudyFocusModeView: View {
                 }
                 .padding(.vertical, 4)
             } else {
-                Text("No transcript available")
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(.vertical, 12)
+                quietEmptyState(
+                    icon: "text.quote",
+                    title: "Transcript not available",
+                    subtitle: "Add or fetch text before running a teardown."
+                )
             }
 
             // Caption section — check live extraction first, then persisted data
             if let caption = igMediaData?.caption ?? atom.richContent?.instagramData?.caption, !caption.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("CAPTION")
-                        .dsSectionLabel()
+                VStack(alignment: .leading, spacing: DS.space10) {
+                    AtelierOrnamentalSectionLabel(label: "CAPTION")
 
                     Text(caption)
                         .font(DS.callout)
                         .foregroundStyle(DS.textSecondary)
                         .textSelection(.enabled)
-                        .padding(10)
+                        .padding(DS.space12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                        .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                         .overlay(
                             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                                .stroke(DS.border, lineWidth: 1)
+                                .stroke(DS.sepiaBorder, lineWidth: 0.5)
                         )
                 }
             }
         }
     }
 
+    private func quietEmptyState(icon: String, title: String, subtitle: String) -> some View {
+        VStack(spacing: DS.space8) {
+            Image(systemName: icon)
+                .font(.system(size: 28, weight: .regular))
+                .foregroundStyle(DS.inkFaded.opacity(0.55))
+            Text(title)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+            Text(subtitle)
+                .font(DS.callout)
+                .foregroundStyle(DS.inkFaded)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.space32)
+    }
+
     // MARK: - Right Panel
 
     private var rightPanel: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                if isAnalyzing {
-                    analysisShimmer
-                } else if let analysis = analysis {
-                    HookAnalysisCard(analysis: analysis)
+        VStack(alignment: .leading, spacing: DS.space24) {
+            MarginaliaLabel("TEARDOWN")
 
-                    // Key Insight from Claude deep analysis
-                    if let insight = analysis.keyInsight, !insight.isEmpty {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "lightbulb.fill")
-                                .font(DS.subheadline)
-                                .foregroundStyle(gold)
-                            Text(insight)
-                                .font(DS.callout)
-                                .foregroundStyle(DS.text)
-                                .lineLimit(3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(gold.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(gold.opacity(0.2), lineWidth: 1)
-                        )
-                    } else if isDeepAnalyzing {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                                .tint(gold)
-                            Text("Claude is analyzing structure...")
-                                .font(DS.subheadline)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
-                    }
+            if isAnalyzing {
+                analysisShimmer
+            } else if let analysis = analysis {
+                HookAnalysisCard(analysis: analysis)
 
-                    // Structure Map — always visible, placeholder when empty
-                    if let sections = analysis.sections, !sections.isEmpty {
-                        StructureMapView(
-                            frameworkType: analysis.frameworkType,
-                            sections: sections,
-                            onSectionTap: { position in
-                                let timestamp = position * videoDuration
-                                currentTimestamp = timestamp
-                                if !isPlayerActive { isPlayerActive = true }
-                            }
-                        )
-                    } else {
-                        emptyAnalysisCard(
-                            title: "STRUCTURE",
-                            icon: "rectangle.3.group",
-                            message: "Transcript required for structural breakdown"
-                        )
-                    }
-
-                    // Content Physics Profile (replaces legacy Emotional Arc + Persuasion Stack)
-                    if let physicsProfile = currentAtom?.bestPhysicsProfile {
-                        ContentPhysicsSection(profile: physicsProfile)
-                            .environment(\.codexLookup, codexLookup)
-
-                        // Walkthrough section (only for Codex-language profiles)
-                        if let walkthrough = currentAtom?.blueprintWalkthrough {
-                            walkthroughCard(walkthrough)
-                        }
-
-                        reExtractProfileButton
-                    } else {
-                        generateCodexProfileCard
-                    }
-
-                    // Taxonomy Classification
-                    TaxonomySection(
-                        analysis: Binding(
-                            get: { self.analysis },
-                            set: { self.analysis = $0 }
-                        ),
-                        currentAtom: Binding(
-                            get: { self.currentAtom },
-                            set: { self.currentAtom = $0 }
-                        ),
-                        isReclassifying: $isReclassifying,
-                        reclassifySuggestion: $reclassifySuggestion,
-                        onReclassify: { reclassifySwipe() },
-                        onAcceptReclassification: { acceptReclassification() },
-                        onRejectReclassification: { rejectReclassification() },
-                        onSaveTaxonomyChange: { saveTaxonomyOverride() },
-                        onOpenCreatorProfile: { creatorUUID in
-                            NotificationCenter.default.post(
-                                name: Notification.Name("openCreatorProfile"),
-                                object: nil,
-                                userInfo: ["creatorUUID": creatorUUID]
-                            )
-                        },
-                        onLinkCreator: { uuid, name in
-                            // Update the swipe's creator link in the analysis
-                            saveTaxonomyOverride()
-                        }
-                    )
-
-                    SimilarSwipesSection(
-                        currentHookType: analysis.hookType,
-                        currentFingerprint: analysis.fingerprint,
-                        currentEntityId: atom.id ?? -1,
-                        onSwipeTap: { newEntityId in
-                            reloadWithEntity(newEntityId)
-                        }
-                    )
-
-                    // Instagram Analysis placeholder
-                    if isInstagramSource {
-                        instagramAnalysisPlaceholder
-                    }
-                } else {
-                    noAnalysisPlaceholder
+                if let insight = analysis.keyInsight, !insight.isEmpty {
+                    marginaliaInsight(insight)
+                } else if isDeepAnalyzing {
+                    marginaliaAnalyzingState
                 }
+
+                if let sections = analysis.sections, !sections.isEmpty {
+                    StructureMapView(
+                        frameworkType: analysis.frameworkType,
+                        sections: sections,
+                        onSectionTap: { position in
+                            let timestamp = position * videoDuration
+                            currentTimestamp = timestamp
+                            if !isPlayerActive { isPlayerActive = true }
+                        }
+                    )
+                } else {
+                    emptyAnalysisCard(
+                        title: "STRUCTURE",
+                        icon: "rectangle.3.group",
+                        message: "Transcript required for structural breakdown"
+                    )
+                }
+
+                if let physicsProfile = currentAtom?.bestPhysicsProfile {
+                    ContentPhysicsSection(profile: physicsProfile)
+                        .environment(\.codexLookup, codexLookup)
+
+                    if let walkthrough = currentAtom?.blueprintWalkthrough {
+                        walkthroughCard(walkthrough)
+                    }
+
+                    reExtractProfileButton
+                } else {
+                    generateCodexProfileCard
+                }
+
+                TaxonomySection(
+                    analysis: Binding(
+                        get: { self.analysis },
+                        set: { self.analysis = $0 }
+                    ),
+                    currentAtom: Binding(
+                        get: { self.currentAtom },
+                        set: { self.currentAtom = $0 }
+                    ),
+                    isReclassifying: $isReclassifying,
+                    reclassifySuggestion: $reclassifySuggestion,
+                    onReclassify: { reclassifySwipe() },
+                    onAcceptReclassification: { acceptReclassification() },
+                    onRejectReclassification: { rejectReclassification() },
+                    onSaveTaxonomyChange: { saveTaxonomyOverride() },
+                    onOpenCreatorProfile: { creatorUUID in
+                        NotificationCenter.default.post(
+                            name: Notification.Name("openCreatorProfile"),
+                            object: nil,
+                            userInfo: ["creatorUUID": creatorUUID]
+                        )
+                    },
+                    onLinkCreator: { _, _ in
+                        saveTaxonomyOverride()
+                    }
+                )
+
+                SimilarSwipesSection(
+                    currentHookType: analysis.hookType,
+                    currentFingerprint: analysis.fingerprint,
+                    currentEntityId: atom.id ?? -1,
+                    onSwipeTap: { newEntityId in
+                        reloadWithEntity(newEntityId)
+                    }
+                )
+
+                if isInstagramSource {
+                    instagramAnalysisPlaceholder
+                }
+            } else {
+                noAnalysisPlaceholder
             }
-            .padding(panelPadding)
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func marginaliaInsight(_ insight: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            MarginaliaLabel("KEY INSIGHT")
+            Text(insight)
+                .font(.system(size: 14, weight: .regular, design: .serif))
+                .foregroundStyle(DS.text)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var marginaliaAnalyzingState: some View {
+        HStack(spacing: DS.space8) {
+            ProgressView()
+                .scaleEffect(0.5)
+                .tint(gold)
+            Text("Claude is analyzing structure...")
+                .font(DS.dateSerif)
+                .italic()
+                .foregroundStyle(DS.inkFaded)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Styled placeholder for analysis cards that need more data
@@ -2931,12 +3003,8 @@ struct SwipeStudyFocusModeView: View {
 
     @ViewBuilder
     private var generateCodexProfileCard: some View {
-        VStack(spacing: DS.space12) {
-            HStack {
-                Text("Content Physics")
-                    .dsSmallCapsLabel()
-                Spacer()
-            }
+        VStack(alignment: .leading, spacing: DS.space12) {
+            MarginaliaLabel("PHYSICS")
 
             if isGeneratingProfile {
                 VStack(spacing: DS.space10) {
@@ -2956,9 +3024,6 @@ struct SwipeStudyFocusModeView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(DS.space16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -2966,7 +3031,7 @@ struct SwipeStudyFocusModeView: View {
         VStack(spacing: DS.space10) {
             Image(systemName: "book.and.wrench")
                 .font(.system(size: 28))
-                .foregroundStyle(DS.entitySwipe)
+                .foregroundStyle(DS.inkFaded.opacity(0.55))
 
             Text("No physics profile yet")
                 .font(DS.callout)
@@ -2988,12 +3053,10 @@ struct SwipeStudyFocusModeView: View {
             Button {
                 Task { await generateCodexProfile() }
             } label: {
-                Label("Generate Codex Profile", systemImage: "book.and.wrench")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, DS.space16)
-                    .padding(.vertical, DS.space8)
-                    .background(DS.entitySwipe, in: Capsule())
+                Text("generate codex profile")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(DS.entitySwipe)
             }
             .buttonStyle(.plain)
         }
@@ -3004,17 +3067,22 @@ struct SwipeStudyFocusModeView: View {
 
     @ViewBuilder
     private func walkthroughCard(_ walkthrough: String) -> some View {
-        VStack(spacing: DS.space12) {
-            HStack {
-                Image(systemName: "text.book.closed")
-                    .foregroundStyle(DS.entitySwipe)
-                Text("Walkthrough")
-                    .dsSmallCapsLabel()
-                Spacer()
+        VStack(alignment: .leading, spacing: DS.space12) {
+            HStack(spacing: DS.space8) {
+                Text("WALKTHROUGH")
+                    .font(DS.smallCaps)
+                    .tracking(1.6)
+                    .foregroundStyle(DS.giltMuted)
+                    .fixedSize()
+
+                Rectangle()
+                    .fill(DS.sepiaSubtle)
+                    .frame(height: 0.5)
+
                 Button {
                     showWalkthroughSheet = true
                 } label: {
-                    Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
+                    Label("expand", systemImage: "arrow.up.left.and.arrow.down.right")
                         .font(DS.caption2)
                         .foregroundStyle(DS.entitySwipe)
                 }
@@ -3029,9 +3097,6 @@ struct SwipeStudyFocusModeView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity)
-        .padding(DS.space16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
         .sheet(isPresented: $showWalkthroughSheet) {
             walkthroughFullSheet(walkthrough)
         }
@@ -3502,27 +3567,20 @@ struct SwipeStudyFocusModeView: View {
     }
 
     private func emptyAnalysisCard(title: String, icon: String, message: String) -> some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text(title)
-                    .dsSectionLabel()
-                Spacer()
-            }
+        VStack(alignment: .leading, spacing: DS.space12) {
+            MarginaliaLabel(title)
 
             VStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(DS.title1)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.inkFaded.opacity(0.55))
                 Text(message)
                     .font(DS.subheadline)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.inkFaded)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
+            .padding(.vertical, DS.space12)
         }
-        .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .dsGradientBorder(cornerRadius: DS.radiusMedium)
     }
 
     // MARK: - Instagram Source Check
@@ -3536,38 +3594,31 @@ struct SwipeStudyFocusModeView: View {
     // MARK: - Instagram Analysis Placeholder
 
     private var instagramAnalysisPlaceholder: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text("INSTAGRAM ANALYSIS")
-                    .dsSectionLabel()
-                Spacer()
-            }
+        VStack(alignment: .leading, spacing: DS.space12) {
+            MarginaliaLabel("INSTAGRAM")
 
             VStack(spacing: 8) {
                 Image(systemName: "camera.fill")
                     .font(DS.title1)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.inkFaded.opacity(0.55))
                 Text("Instagram Analysis")
                     .font(DS.callout)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.inkFaded)
                 Text("Coming Soon")
                     .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.inkFaded)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
         }
-        .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .dsGradientBorder(cornerRadius: DS.radiusMedium)
     }
 
     // MARK: - Analysis Shimmer Skeleton
 
     private var analysisShimmer: some View {
-        VStack(spacing: 16) {
-            // Hook analysis skeleton
+        VStack(spacing: DS.space24) {
             VStack(alignment: .leading, spacing: 12) {
+                MarginaliaLabel("HOOK")
                 ShimmerLine(width: 0.75, height: 18)
                 HStack(spacing: 8) {
                     ShimmerPill(width: 90)
@@ -3581,13 +3632,9 @@ struct SwipeStudyFocusModeView: View {
                     }
                 }
             }
-            .padding(16)
-            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-            .dsGradientBorder(cornerRadius: DS.radiusMedium)
 
-            // Structure map skeleton
             VStack(alignment: .leading, spacing: 12) {
-                ShimmerLine(width: 0.35, height: 12)
+                MarginaliaLabel("STRUCTURE")
                 ForEach(0..<3, id: \.self) { _ in
                     HStack(spacing: 8) {
                         ShimmerCircle(size: 8)
@@ -3595,38 +3642,29 @@ struct SwipeStudyFocusModeView: View {
                     }
                 }
             }
-            .padding(16)
-            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-            .dsGradientBorder(cornerRadius: DS.radiusMedium)
 
-            // Emotional arc skeleton
             VStack(alignment: .leading, spacing: 12) {
-                ShimmerLine(width: 0.3, height: 12)
+                MarginaliaLabel("PHYSICS")
                 ShimmerLine(width: 1.0, height: 80)
             }
-            .padding(16)
-            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-            .dsGradientBorder(cornerRadius: DS.radiusMedium)
         }
     }
 
     private var noAnalysisPlaceholder: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DS.space12) {
             Image(systemName: "wand.and.stars")
-                .font(DS.pageTitle)
-                .foregroundStyle(gold.opacity(0.4))
+                .font(.system(size: 40, weight: .regular))
+                .foregroundStyle(DS.inkFaded.opacity(0.5))
             Text("No analysis available")
                 .font(DS.navTitle)
-                .foregroundStyle(DS.textSecondary)
+                .foregroundStyle(DS.text)
             Text("Analysis will run automatically when content is available")
                 .font(DS.subheadline)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.inkFaded)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .dsGradientBorder(cornerRadius: DS.radiusMedium)
     }
 
     // MARK: - Notes Section (Removed — replaced by per-slide inline commenting)
@@ -4191,7 +4229,125 @@ struct SwipeStudyFocusModeView: View {
     }
 }
 
+// MARK: - Atelier Shell Components
+
+private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Marginalia: View>: View {
+    let size: CGSize
+    let panelPadding: CGFloat
+    let isPaneContext: Bool
+    let hasAppeared: Bool
+    let reduceMotion: Bool
+
+    private let source: Source
+    private let transcript: Transcript
+    private let marginalia: Marginalia
+
+    init(
+        size: CGSize,
+        panelPadding: CGFloat,
+        isPaneContext: Bool,
+        hasAppeared: Bool,
+        reduceMotion: Bool,
+        @ViewBuilder source: () -> Source,
+        @ViewBuilder transcript: () -> Transcript,
+        @ViewBuilder marginalia: () -> Marginalia
+    ) {
+        self.size = size
+        self.panelPadding = panelPadding
+        self.isPaneContext = isPaneContext
+        self.hasAppeared = hasAppeared
+        self.reduceMotion = reduceMotion
+        self.source = source()
+        self.transcript = transcript()
+        self.marginalia = marginalia()
+    }
+
+    var body: some View {
+        ScrollView {
+            if isCompact {
+                compactStack
+            } else {
+                wideTable
+            }
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var isCompact: Bool {
+        size.width < 980 || isPaneContext
+    }
+
+    private var compactStack: some View {
+        VStack(alignment: .leading, spacing: DS.space32) {
+            source
+                .swipeStudyStagger(index: 0, appeared: hasAppeared, reduceMotion: reduceMotion)
+            transcript
+                .swipeStudyStagger(index: 1, appeared: hasAppeared, reduceMotion: reduceMotion)
+            marginalia
+                .swipeStudyStagger(index: 2, appeared: hasAppeared, reduceMotion: reduceMotion)
+        }
+        .padding(.horizontal, panelPadding)
+        .padding(.top, DS.space12)
+        .padding(.bottom, DS.space40)
+    }
+
+    private var wideTable: some View {
+        HStack(alignment: .top, spacing: DS.space32) {
+            source
+                .frame(width: min(340, max(280, size.width * 0.24)), alignment: .top)
+                .swipeStudyStagger(index: 0, appeared: hasAppeared, reduceMotion: reduceMotion)
+
+            transcript
+                .frame(maxWidth: 660, alignment: .topLeading)
+                .swipeStudyStagger(index: 1, appeared: hasAppeared, reduceMotion: reduceMotion)
+
+            marginalia
+                .frame(width: min(320, max(280, size.width * 0.24)), alignment: .top)
+                .swipeStudyStagger(index: 2, appeared: hasAppeared, reduceMotion: reduceMotion)
+        }
+        .frame(maxWidth: 1340, alignment: .top)
+        .padding(.horizontal, DS.space32)
+        .padding(.top, DS.space24)
+        .padding(.bottom, DS.space48)
+        .frame(maxWidth: .infinity, alignment: .top)
+    }
+}
+
+private struct SwipeStudyIconControl: View {
+    let systemName: String
+    let label: String
+    let helpText: String
+    var size: CGFloat = 14
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: size, weight: .medium))
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(DS.inkFaded)
+        .help(helpText)
+        .accessibilityLabel(label)
+    }
+}
+
 // MARK: - Shimmer Components
+
+private extension View {
+    func swipeStudyStagger(index: Int, appeared: Bool, reduceMotion: Bool) -> some View {
+        self
+            .opacity(appeared ? 1 : 0)
+            .scaleEffect(reduceMotion || appeared ? 1 : 0.985)
+            .offset(y: reduceMotion || appeared ? 0 : 8)
+            .animation(
+                reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.cardEntrance.delay(Double(index) * 0.06),
+                value: appeared
+            )
+    }
+}
 
 /// Animated shimmer line for skeleton loading states
 private struct ShimmerLine: View {
@@ -4296,26 +4452,28 @@ private struct TaxonomySection: View {
     private let gold = DS.entitySwipe
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            HStack(spacing: DS.space8) {
                 Text("TAXONOMY")
-                    .dsSectionLabel()
+                    .font(DS.smallCaps)
+                    .tracking(1.6)
+                    .foregroundStyle(DS.giltMuted)
+                    .fixedSize()
 
-                Spacer()
+                Rectangle()
+                    .fill(DS.sepiaSubtle)
+                    .frame(height: 0.5)
 
                 classificationSourceBadge
 
                 reclassifyButton
             }
 
-            // Reclassification suggestion banner
             if let suggestion = reclassifySuggestion {
                 reclassifySuggestionBanner(suggestion)
             }
 
-            // Dimension rows
-            VStack(spacing: 10) {
+            VStack(spacing: DS.space10) {
                 narrativeRow
                 secondaryNarrativeRow
                 contentFormatRow
@@ -4323,9 +4481,6 @@ private struct TaxonomySection: View {
                 creatorRow
             }
         }
-        .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .dsGradientBorder(cornerRadius: DS.radiusMedium)
     }
 
     // MARK: - Classification Source Badge
@@ -4954,30 +5109,28 @@ private struct TaxonomySection: View {
 // MARK: - Preview
 
 #if DEBUG
-struct SwipeStudyFocusModeView_Previews: PreviewProvider {
-    static var previews: some View {
-        let previewAtom = Atom(
-            id: 1,
-            uuid: UUID().uuidString,
-            type: .research,
-            title: "Preview Swipe",
-            body: nil,
-            structured: nil,
-            metadata: nil,
-            links: nil,
-            createdAt: ISO8601DateFormatter().string(from: Date()),
-            updatedAt: ISO8601DateFormatter().string(from: Date()),
-            isDeleted: false,
-            localVersion: 0,
-            serverVersion: 0,
-            syncVersion: 0
-        )
-        SwipeStudyFocusModeView(
-            atom: previewAtom,
-            onClose: {}
-        )
-        .frame(width: 1200, height: 800)
-    }
+#Preview {
+    let previewAtom = Atom(
+        id: 1,
+        uuid: UUID().uuidString,
+        type: .research,
+        title: "Preview Swipe",
+        body: nil,
+        structured: nil,
+        metadata: nil,
+        links: nil,
+        createdAt: ISO8601DateFormatter().string(from: Date()),
+        updatedAt: ISO8601DateFormatter().string(from: Date()),
+        isDeleted: false,
+        localVersion: 0,
+        serverVersion: 0,
+        syncVersion: 0
+    )
+    SwipeStudyFocusModeView(
+        atom: previewAtom,
+        onClose: {}
+    )
+    .frame(width: 1200, height: 800)
 }
 #endif
 

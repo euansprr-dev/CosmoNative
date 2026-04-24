@@ -27,6 +27,7 @@ struct StationCardView: View {
     let onSourceTap: (String) -> Void
     let onAcceptGhost: (GhostSuggestion) -> Void
     let onDismissGhost: (UUID) -> Void
+    var collaboratorDraft: ConnectionDraftProposal? = nil
 
     var displayMode: DisplayMode = .collapsed
     var isSelected: Bool = false
@@ -77,9 +78,9 @@ struct StationCardView: View {
         ZStack {
             Rectangle().fill(DS.vellum)
             Rectangle().stroke(DS.sepiaBorder, lineWidth: 0.5)
-            if isSelected || isHovered {
+            if isSelected || isHovered || collaboratorDraft != nil {
                 Rectangle()
-                    .stroke(accent.opacity(isSelected ? 0.55 : 0.28), lineWidth: isSelected ? 1.0 : 0.6)
+                    .stroke(accent.opacity(isSelected || collaboratorDraft != nil ? 0.55 : 0.28), lineWidth: (isSelected || collaboratorDraft != nil) ? 1.0 : 0.6)
             }
         }
     }
@@ -94,7 +95,7 @@ struct StationCardView: View {
 
     private var selectionHandle: some View {
         Rectangle()
-            .fill(accent.opacity(isSelected ? 0.72 : 0))
+            .fill(accent.opacity((isSelected || collaboratorDraft != nil) ? 0.72 : 0))
             .frame(width: 40, height: 2)
             .padding(.top, 4)
             .allowsHitTesting(false)
@@ -118,6 +119,13 @@ struct StationCardView: View {
                 Text("\(section.itemCount)")
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
                     .foregroundStyle(DS.inkFaded)
+            }
+
+            if let collaboratorDraft {
+                Text(collaboratorDraft.status == .streaming ? "AI" : "DRAFT")
+                    .font(DS.smallCaps)
+                    .tracking(1.2)
+                    .foregroundStyle(accent.opacity(0.9))
             }
 
             if showsFocusButton {
@@ -165,7 +173,9 @@ struct StationCardView: View {
 
     @ViewBuilder
     private var collapsedContent: some View {
-        if previewItems.isEmpty && section.ghostSuggestions.isEmpty {
+        if let collaboratorDraft {
+            pendingDraftRow(collaboratorDraft)
+        } else if previewItems.isEmpty && section.ghostSuggestions.isEmpty {
             Text("Ready for the first sharp insight.")
                 .font(.system(size: 12, weight: .regular, design: .serif))
                 .italic()
@@ -204,12 +214,22 @@ struct StationCardView: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let collaboratorDraft {
+                pendingDraftRow(collaboratorDraft)
+            }
             if !section.items.isEmpty {
                 itemsList
             }
             whisperList
             captureRow
         }
+    }
+
+    private func pendingDraftRow(_ draft: ConnectionDraftProposal) -> some View {
+        StationPendingDraftRow(
+            draft: draft,
+            accent: accent
+        )
     }
 
     private var itemsList: some View {
@@ -341,6 +361,48 @@ struct StationCardView: View {
             newItemText = ""
             newItemFocused = false
         }
+    }
+}
+
+private struct StationPendingDraftRow: View {
+    let draft: ConnectionDraftProposal
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: draft.status == .streaming ? "sparkle" : "diamond")
+                    .font(.system(size: 8))
+                    .foregroundStyle(accent.opacity(0.85))
+                Text(draft.status == .streaming ? "Cosmo is drafting here" : "Pending collaborator draft")
+                    .font(.system(size: 10, weight: .regular, design: .serif))
+                    .italic()
+                    .foregroundStyle(DS.giltMuted)
+            }
+
+            Text(draft.renderedText.isEmpty ? "Preparing the draft…" : draft.renderedText)
+                .font(.system(size: 12, weight: .regular, design: .serif))
+                .foregroundStyle(DS.inkWash)
+                .lineLimit(5)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if !draft.rationale.isEmpty {
+                Text(draft.rationale)
+                    .font(.system(size: 10, weight: .regular, design: .serif))
+                    .italic()
+                    .foregroundStyle(DS.inkFaded)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(DS.vellumDeep.opacity(0.62), in: .rect(cornerRadius: 4))
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(accent.opacity(0.24), lineWidth: 0.6)
+        )
     }
 }
 
@@ -488,11 +550,7 @@ private struct StationWhisperRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isHovered)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let breath = 0.5 + 0.08 * sin(2 * .pi * 0.08 * t)
-            content(opacity: isHovered ? 0.9 : breath)
-        }
+        content(opacity: isHovered ? 0.9 : 0.58)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) {
                 isHovered = hovering

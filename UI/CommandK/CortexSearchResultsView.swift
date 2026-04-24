@@ -7,6 +7,9 @@ struct CortexSearchResultsView: View {
     @ObservedObject var viewModel: CommandKViewModel
 
     var body: some View {
+        let swipeItemsByUUID = Dictionary(uniqueKeysWithValues: viewModel.swipeGalleryItems.map { ($0.atomUUID, $0) })
+        let ideaItemsByUUID = Dictionary(uniqueKeysWithValues: viewModel.ideaGalleryItems.map { ($0.atomUUID, $0) })
+
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: DS.space20) {
@@ -17,6 +20,8 @@ struct CortexSearchResultsView: View {
                                 results: group.results,
                                 selectedId: viewModel.selectedNodeId,
                                 libraryItemsByID: viewModel.unifiedLibraryItemsByID,
+                                swipeItemsByUUID: swipeItemsByUUID,
+                                ideaItemsByUUID: ideaItemsByUUID,
                                 onSeeAll: { seeAll(group.source) },
                                 onSelect: { selectResult($0) }
                             )
@@ -95,8 +100,13 @@ private struct CortexSearchSection: View {
     let results: [UnifiedSearchResult]
     let selectedId: String?
     let libraryItemsByID: [String: LibraryItem]
+    let swipeItemsByUUID: [String: SwipeGalleryItem]
+    let ideaItemsByUUID: [String: IdeaGalleryItem]
     let onSeeAll: () -> Void
     let onSelect: (UnifiedSearchResult) -> Void
+
+    private let databaseCardWidth: CGFloat = 126
+    private let swipeCardWidth: CGFloat = 148
 
     /// Max items to show per section
     private var maxItems: Int {
@@ -105,6 +115,30 @@ private struct CortexSearchSection: View {
         case .swipes: return 4
         case .ideas: return 3
         case .readwise: return 3
+        }
+    }
+
+    private var visibleAtomResults: [(result: UnifiedSearchResult, item: LibraryItem)] {
+        results.prefix(maxItems).compactMap { result in
+            guard let key = result.libraryLookupKey,
+                  let item = libraryItemsByID[key] else { return nil }
+            return (result, item)
+        }
+    }
+
+    private var visibleSwipeResults: [(result: UnifiedSearchResult, item: SwipeGalleryItem)] {
+        results.prefix(maxItems).compactMap { result in
+            guard let atomUUID = result.atomUUID,
+                  let item = swipeItemsByUUID[atomUUID] else { return nil }
+            return (result, item)
+        }
+    }
+
+    private var visibleIdeaResults: [(result: UnifiedSearchResult, item: IdeaGalleryItem)] {
+        results.prefix(maxItems).compactMap { result in
+            guard let atomUUID = result.atomUUID,
+                  let item = ideaItemsByUUID[atomUUID] else { return nil }
+            return (result, item)
         }
     }
 
@@ -153,25 +187,29 @@ private struct CortexSearchSection: View {
     private var sectionContent: some View {
         switch source {
         case .atoms:
-            atomHorizontalCards
-        case .swipes, .readwise:
-            horizontalCards
+            atomPreviewStrip
+        case .swipes:
+            swipePreviewStrip
         case .ideas:
-            listRows
+            ideaPreviewList
+        case .readwise:
+            readwisePreviewStrip
         }
     }
 
-    private var atomHorizontalCards: some View {
+    private var atomPreviewStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: DS.space12) {
-                ForEach(results.prefix(maxItems)) { result in
-                    if let key = result.libraryLookupKey, let item = libraryItemsByID[key] {
-                        LibraryCardView(item: item, cardWidth: 220, isSelected: selectedId == result.selectionID)
-                            .frame(width: 220)
-                            .id(result.selectionID)
-                            .onTapGesture { onSelect(result) }
-                            .commandKSearchResultContextMenu(result: result)
-                    }
+                ForEach(visibleAtomResults, id: \.result.id) { entry in
+                    SpotlightDocCard(
+                        item: entry.item,
+                        onTap: { onSelect(entry.result) },
+                        onDelete: {
+                            Task { try? await AtomRepository.shared.delete(uuid: entry.item.uuid) }
+                        }
+                    )
+                    .frame(width: databaseCardWidth)
+                    .id(entry.result.selectionID)
                 }
             }
             .padding(.horizontal, 2)
@@ -179,25 +217,48 @@ private struct CortexSearchSection: View {
         }
     }
 
-    private var listRows: some View {
-        VStack(spacing: 0) {
-            ForEach(results.prefix(maxItems)) { result in
-                CortexSearchRow(
-                    result: result,
-                    isSelected: selectedId == result.selectionID,
-                    onSelect: { onSelect(result) }
-                )
-                .id(result.selectionID)
+    private var swipePreviewStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: DS.space12) {
+                ForEach(visibleSwipeResults, id: \.result.id) { entry in
+                    CortexSwipeThumb(item: entry.item) {
+                        onSelect(entry.result)
+                    }
+                    .frame(width: swipeCardWidth, alignment: .top)
+                    .id(entry.result.selectionID)
+                }
             }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
         }
-        .background(DS.glassCardFill.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DS.border.opacity(0.2), lineWidth: 0.5)
-        )
     }
 
-    private var horizontalCards: some View {
+    private var ideaPreviewList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(visibleIdeaResults.enumerated()), id: \.element.result.id) { index, entry in
+                LedgerRow(item: entry.item) {
+                    onSelect(entry.result)
+                }
+                .id(entry.result.selectionID)
+
+                if index < visibleIdeaResults.count - 1 {
+                    Rectangle()
+                        .fill(DS.borderSubtle)
+                        .frame(height: 0.5)
+                        .padding(.leading, DS.space12)
+                }
+            }
+        }
+        .padding(DS.space12)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 16, y: 8)
+    }
+
+    private var readwisePreviewStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: DS.space12) {
                 ForEach(results.prefix(maxItems)) { result in
@@ -209,73 +270,6 @@ private struct CortexSearchSection: View {
                     .id(result.selectionID)
                 }
             }
-        }
-    }
-}
-
-// MARK: - Search Row (for Database/Ideas)
-
-private struct CortexSearchRow: View {
-    let result: UnifiedSearchResult
-    let isSelected: Bool
-    let onSelect: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: DS.space12) {
-                Image(systemName: result.icon)
-                    .font(DS.callout)
-                    .foregroundStyle(result.accentColor)
-                    .frame(width: 20)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(result.title)
-                        .font(DS.callout)
-                        .fontWeight(.medium)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-
-                    if let subtitle = result.subtitle ?? result.snippet {
-                        Text(subtitle)
-                            .font(DS.caption)
-                            .foregroundStyle(DS.textMuted)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer()
-
-                if let atomType = result.atomType {
-                    Text(atomType.displayName)
-                        .font(DS.caption2)
-                        .foregroundStyle(result.accentColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(result.accentColor.opacity(0.10), in: Capsule())
-                }
-            }
-            .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space10)
-            .background(rowBackground)
-        }
-        .buttonStyle(.plain)
-        .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
-        .animation(ProMotionSprings.hover, value: isHovered)
-        .accessibilityLabel(result.title)
-        .commandKSearchResultContextMenu(result: result)
-    }
-
-    @ViewBuilder
-    private var rowBackground: some View {
-        if isSelected {
-            DS.accent.opacity(0.12)
-        } else if isHovered {
-            DS.glassCardFill.opacity(0.5)
-        } else {
-            Color.clear
         }
     }
 }

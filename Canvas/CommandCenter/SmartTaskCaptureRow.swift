@@ -265,11 +265,15 @@ struct SmartTaskCaptureRow: View {
                     )
                 }
 
-                if let intent = parsedInput.intent {
+                if parsedInput.intent != nil || parsedInput.intentUUID != nil {
+                    let intentPresentation = CommandCenterIntentEngine.shared.resolvedPresentation(
+                        intentUUID: parsedInput.intentUUID,
+                        legacyIntentRaw: parsedInput.intent?.rawValue
+                    )
                     metadataChip(
-                        icon: intent.iconName,
-                        label: intent.displayName,
-                        color: intent.color
+                        icon: intentPresentation.icon,
+                        label: intentPresentation.title,
+                        color: intentPresentation.accent
                     )
                 }
 

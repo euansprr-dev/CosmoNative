@@ -53,6 +53,32 @@ final class InstagramExtractorTests: XCTestCase {
         XCTAssertEqual(selected.carouselItems?.first?.mediaURL.absoluteString, "https://cdn.example.com/fresh/0.jpg")
     }
 
+    func testBetterPartialResultPrefersRealCarouselItemsForPostURL() {
+        let extractor = InstagramExtractor.shared
+        let originalURL = URL(string: "https://www.instagram.com/p/ABC123/")!
+
+        let thumbnailOnly = InstagramMediaData(
+            originalURL: originalURL,
+            contentType: .image,
+            thumbnailURL: URL(string: "https://cdn.example.com/thumb.jpg"),
+            authorUsername: "creator",
+            caption: "partial metadata",
+            extractedAt: Date()
+        )
+        let carousel = InstagramMediaData(
+            originalURL: originalURL,
+            contentType: .carousel,
+            thumbnailURL: URL(string: "https://cdn.example.com/thumb.jpg"),
+            carouselItems: makeCarouselItems(count: 2, prefix: "https://cdn.example.com/full"),
+            extractedAt: Date()
+        )
+
+        let selected = extractor.betterPartialResult(current: thumbnailOnly, candidate: carousel)
+
+        XCTAssertEqual(selected.carouselItems?.count, 2)
+        XCTAssertEqual(selected.contentType, .carousel)
+    }
+
     func testCarouselCacheDoesNotForceRefreshWhenFreshSlidesExist() {
         let cache = InstagramMediaCache.shared
         let postURL = URL(string: "https://www.instagram.com/p/ABC123/")!

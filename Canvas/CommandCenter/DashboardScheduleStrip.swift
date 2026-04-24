@@ -151,14 +151,28 @@ struct DashboardScheduleStrip: View {
         let height = max(blockHeight(from: session.startTime, to: session.endTime), 20)
 
         HStack(spacing: 6) {
-            Image(systemName: session.intent.iconName)
+            Image(systemName: session.intent.icon)
                 .font(.system(size: 8))
                 .foregroundStyle(DS.textOnAccent)
 
-            Text(session.title)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(DS.textOnAccent)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.intent.title)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(DS.textOnAccent)
+                    .lineLimit(1)
+
+                if let habitTitle = session.habitTitle {
+                    Text(habitTitle)
+                        .font(.system(size: 8))
+                        .foregroundStyle(DS.textOnAccent.opacity(0.85))
+                        .lineLimit(1)
+                } else {
+                    Text(session.title)
+                        .font(.system(size: 8))
+                        .foregroundStyle(DS.textOnAccent.opacity(0.85))
+                        .lineLimit(1)
+                }
+            }
 
             Spacer(minLength: 2)
 
@@ -177,7 +191,7 @@ struct DashboardScheduleStrip: View {
         .frame(height: height, alignment: .center)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(session.intent.color.opacity(0.85))
+                .fill(session.intent.accent.opacity(0.85))
         )
         .offset(x: 40, y: yOffset)
         .frame(maxWidth: .infinity, alignment: .leading)

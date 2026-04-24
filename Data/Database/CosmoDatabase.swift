@@ -1497,6 +1497,11 @@ class CosmoDatabase: ObservableObject {
                     placeThinkspaceId TEXT,
                     placeThinkspaceName TEXT,
                     placeAtomType TEXT,
+                    recommendations TEXT,
+                    primaryRouteKind TEXT,
+                    destinationPath TEXT,
+                    rationale TEXT,
+                    placementPlanSummary TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
                     isRead INTEGER DEFAULT 0,
                     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -1514,6 +1519,26 @@ class CosmoDatabase: ObservableObject {
                     ON inbox_items(createdAt DESC)
             """)
             print("✅ inbox_items table created")
+        }
+
+        migrator.registerMigration("add_routing_columns_to_inbox_items") { db in
+            print("🔨 Adding routing columns to inbox_items...")
+            let statements = [
+                "ALTER TABLE inbox_items ADD COLUMN recommendations TEXT",
+                "ALTER TABLE inbox_items ADD COLUMN primaryRouteKind TEXT",
+                "ALTER TABLE inbox_items ADD COLUMN destinationPath TEXT",
+                "ALTER TABLE inbox_items ADD COLUMN rationale TEXT",
+                "ALTER TABLE inbox_items ADD COLUMN placementPlanSummary TEXT"
+            ]
+
+            for statement in statements {
+                do {
+                    try db.execute(sql: statement)
+                } catch {
+                    print("  ⚠️ inbox_items routing column may already exist: \(error.localizedDescription)")
+                }
+            }
+            print("✅ inbox_items routing migration complete")
         }
 
         // Clean up duplicate canvas_blocks rows that accumulated due to

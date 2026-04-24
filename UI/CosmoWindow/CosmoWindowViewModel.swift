@@ -15,9 +15,16 @@ final class CosmoWindowViewModel: ObservableObject {
     @Published var messages: [CosmoWindowMessage] = []
     @Published var isProcessing: Bool = false
     @Published var activeContext: CosmoActiveContext = .none
-    @Published var inputText: String = ""
+    @Published var inputText: String = "" {
+        didSet {
+            collaboratorSessions.saveDraft(inputText, for: collaboratorSessionKey)
+        }
+    }
     @Published var error: String? = nil
     @Published var processingStartedAt: Date?
+    @Published private(set) var collaboratorSessionKey: CollaboratorSessionKey?
+    @Published private(set) var collaboratorTarget: CollaborationTarget?
+    @Published private(set) var collaboratorPreset: CollaboratorPreset?
 
     // MARK: - Live Tool Activity (WP5)
 
@@ -44,6 +51,7 @@ final class CosmoWindowViewModel: ObservableObject {
     private let contextAssembler = AgentContextAssembler.shared
     private let conversationMemory = ConversationMemoryService.shared
     private let toolRegistry = AgentToolRegistry.shared
+    private let collaboratorSessions = CollaboratorSessionStore.shared
 
     // MARK: - Chat History State
 
@@ -53,6 +61,8 @@ final class CosmoWindowViewModel: ObservableObject {
 
     // MARK: - Conversation Persistence
 
+    private let globalConversationDefaultsKey = "cosmoWindow.lastConversationId"
+    private var globalConversationId: String = UserDefaults.standard.string(forKey: "cosmoWindow.lastConversationId") ?? "cosmo-global-window"
     private var conversationId: String = UserDefaults.standard.string(forKey: "cosmoWindow.lastConversationId") ?? "cosmo-global-window"
     private var linkedAtomUUIDs: Set<String> = []
     private let messageArchiveKeyPrefix = "cosmoWindow.messageArchive."
@@ -75,6 +85,7 @@ final class CosmoWindowViewModel: ObservableObject {
     // MARK: - Init
 
     private init() {
+        conversationId = globalConversationId
         setupNotificationObservers()
     }
 
@@ -396,6 +407,115 @@ final class CosmoWindowViewModel: ObservableObject {
         )
     }
 
+    var isCollaboratorActive: Bool {
+        collaboratorSessionKey != nil && collaboratorTarget != nil && collaboratorPreset != nil
+    }
+
+    var currentPromptSuggestions: [String] {
+        if let collaboratorPreset {
+            return collaboratorPreset.seedPrompts
+        }
+        return defaultPromptSuggestions
+    }
+
+    var currentHeaderSubtitle: String {
+        if let collaboratorTarget {
+            return "\(collaboratorTarget.displayTypeLabel) · \(collaboratorTarget.title)"
+        }
+        if activeContext.type == .none {
+            return "Global assistant"
+        }
+        return activeContext.type.displayName
+    }
+
+    var isCurrentContextDockable: Bool {
+        guard let currentAtomUUID = activeContext.data.currentAtomUUID else { return false }
+        guard !currentAtomUUID.isEmpty else { return false }
+        return dockableEntityType != nil
+    }
+
+    var dockableContextAtomUUID: String? {
+        guard isCurrentContextDockable else { return nil }
+        return activeContext.data.currentAtomUUID
+    }
+
+    var currentCollaboratorPresetID: String? {
+        collaboratorPreset?.id
+    }
+
+    private var dockableEntityType: EntityType? {
+        switch activeContext.type {
+        case .connectionFocusMode:
+            return .connection
+        case .ideaFocusMode:
+            return .idea
+        case .noteFocusMode:
+            return .note
+        case .contentFocusMode:
+            return .content
+        default:
+            return nil
+        }
+    }
+
+    func activateCollaborator(target: CollaborationTarget, presetID: String? = nil) async {
+        let preset = presetForID(presetID)
+        let key = collaboratorSessions.activate(target: target, preset: preset)
+
+        if conversationId != key.conversationID {
+            await persistConversation()
+            conversationId = key.conversationID
+        }
+
+        collaboratorSessionKey = key
+        collaboratorTarget = target
+        collaboratorPreset = preset
+        inputText = collaboratorSessions.draft(for: key)
+        linkedAtomUUIDs.insert(target.atomUUID)
+        await loadConversation()
+    }
+
+    func deactivateCollaborator() async {
+        guard collaboratorSessionKey != nil else { return }
+
+        await persistConversation()
+
+        collaboratorSessions.clearActive()
+        collaboratorSessionKey = nil
+        collaboratorTarget = nil
+        collaboratorPreset = nil
+        mentionedAtoms.removeAll()
+        showMentionOverlay = false
+        mentionSearchText = ""
+        inputText = ""
+
+        if conversationId != globalConversationId {
+            conversationId = globalConversationId
+        }
+
+        await loadConversation()
+    }
+
+    func performAction(_ action: CosmoWindowAction, prompt: String = "") async {
+        do {
+            let response = try await action.handler(prompt)
+            messages.append(.system(response))
+            refreshContext()
+            await persistConversation()
+        } catch {
+            messages.append(.system(error.localizedDescription))
+        }
+    }
+
+    private func presetForID(_ presetID: String?) -> CollaboratorPreset {
+        switch presetID {
+        case nil, "deepen":
+            return .deepen
+        default:
+            return .deepen
+        }
+    }
+
     // MARK: - Conversation Lifecycle
 
     /// Loads the persisted global conversation on app launch.
@@ -501,18 +621,81 @@ final class CosmoWindowViewModel: ObservableObject {
         }
     }
 
+    private var defaultPromptSuggestions: [String] {
+        let title = activeContext.data.currentAtomTitle ?? "what I’m looking at"
+
+        switch activeContext.type {
+        case .commandCenter:
+            return [
+                "What deserves attention in Command Center?",
+                "Summarize what changed recently",
+                "What should I tackle next?"
+            ]
+        case .contentFocusMode:
+            return [
+                "Help me think through \(title)",
+                "What problem does this solve?",
+                "What would the better version look like?"
+            ]
+        case .ideaFocusMode, .connectionFocusMode, .noteFocusMode:
+            return CollaboratorPromptLibrary.seedPrompts
+        case .swipeGallery, .swipeStudy:
+            return [
+                "What pattern is showing up here?",
+                "Find the strongest hook angle",
+                "How would I adapt this swipe?"
+            ]
+        case .researchFocusMode:
+            return [
+                "Summarize the important takeaways",
+                "What contradictions should I examine?",
+                "Turn this into actionable notes"
+            ]
+        case .thinkspaceCanvas:
+            return [
+                "Summarize what I’m looking at",
+                "What should I focus on next?",
+                "Turn this into a plan"
+            ]
+        case .sanctuary:
+            return [
+                "What deserves attention today?",
+                "Summarize my current state",
+                "What should I improve first?"
+            ]
+        case .none:
+            return [
+                "What should I focus on next?",
+                "Help me turn a thought into a plan",
+                "Summarize what I’m working on"
+            ]
+        default:
+            return [
+                "Help me think through \(title)",
+                "What matters most here?",
+                "Give me the next best move"
+            ]
+        }
+    }
+
     // MARK: - Session Management
 
     /// Starts a new chat session, preserving the current conversation in history.
     func startNewChat() async {
+        if isCollaboratorActive {
+            await clearConversation()
+            return
+        }
+
         // Persist current conversation if it has messages
         if !messages.isEmpty {
             await persistConversation()
         }
 
         // Generate a new conversation ID
-        conversationId = "cosmo-window-\(UUID().uuidString.prefix(8).lowercased())"
-        UserDefaults.standard.set(conversationId, forKey: "cosmoWindow.lastConversationId")
+        globalConversationId = "cosmo-window-\(UUID().uuidString.prefix(8).lowercased())"
+        conversationId = globalConversationId
+        UserDefaults.standard.set(globalConversationId, forKey: globalConversationDefaultsKey)
 
         // Clear all state
         messages.removeAll()
@@ -561,6 +744,8 @@ final class CosmoWindowViewModel: ObservableObject {
 
     /// Switches to a different chat session from history.
     func switchToChat(id: String) async {
+        guard !isCollaboratorActive else { return }
+
         // Persist current conversation first
         if !messages.isEmpty {
             await persistConversation()
@@ -568,7 +753,8 @@ final class CosmoWindowViewModel: ObservableObject {
 
         // Switch to the selected conversation
         conversationId = id
-        UserDefaults.standard.set(conversationId, forKey: "cosmoWindow.lastConversationId")
+        globalConversationId = id
+        UserDefaults.standard.set(globalConversationId, forKey: globalConversationDefaultsKey)
         await loadConversation()
         await loadChatHistory()
     }
@@ -612,6 +798,7 @@ final class CosmoWindowViewModel: ObservableObject {
             conversationId: conversationId,
             source: .inApp,
             tierOverride: modelOverride,
+            systemPromptOverride: collaboratorPreset?.runtimePrompt,
             onToolActivity: { [weak self] event in
                 Task { @MainActor in
                     self?.handleToolActivity(event)

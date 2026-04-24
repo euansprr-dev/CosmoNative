@@ -101,9 +101,11 @@ final class HybridSearchEngine: ObservableObject {
         context: VoiceContextSnapshot? = nil,
         limit: Int = 10,
         hybridWeight: Double? = nil,
-        entityTypes: [EntityType]? = nil
+        entityTypes: [EntityType]? = nil,
+        excludedEntityUUIDs: [String] = []
     ) async throws -> [SearchResult] {
         let weight = hybridWeight ?? defaultHybridWeight
+        let excludedUUIDs = Set(excludedEntityUUIDs)
 
         print("🔍 Hybrid search: \"\(query)\" (weight: \(Int(weight * 100))% vector)")
 
@@ -111,7 +113,8 @@ final class HybridSearchEngine: ObservableObject {
         let bm25Candidates = try await bm25Search(
             query: query,
             limit: maxBM25Candidates,
-            entityTypes: entityTypes
+            entityTypes: entityTypes,
+            excludedEntityUUIDs: excludedUUIDs
         )
 
         print("  📋 BM25 candidates: \(bm25Candidates.count)")
@@ -121,7 +124,8 @@ final class HybridSearchEngine: ObservableObject {
             return try await pureVectorSearch(
                 query: query,
                 limit: limit,
-                entityTypes: entityTypes
+                entityTypes: entityTypes,
+                excludedEntityUUIDs: excludedUUIDs
             )
         }
 
@@ -138,6 +142,9 @@ final class HybridSearchEngine: ObservableObject {
             print("  ⚠️ Embedding failed, using BM25 only: \(error.localizedDescription)")
             var fallbackResults: [SearchResult] = []
             for candidate in bm25Candidates.prefix(limit) {
+                if excludedUUIDs.contains(candidate.uuid) {
+                    continue
+                }
                 let entityType = mapAtomTypeToEntityType(candidate.entityType)
                 fallbackResults.append(SearchResult(
                     entityType: entityType,
@@ -158,6 +165,9 @@ final class HybridSearchEngine: ObservableObject {
         var scoredResults: [SearchResult] = []
 
         for candidate in bm25Candidates {
+            if excludedUUIDs.contains(candidate.uuid) {
+                continue
+            }
             // Get vector similarity using atom UUID (from atoms_fts)
             let vectorSimilarity = await getVectorSimilarity(
                 entityUUID: candidate.uuid,
@@ -207,7 +217,10 @@ final class HybridSearchEngine: ObservableObject {
 
         print("  ✅ Returning \(min(limit, scoredResults.count)) results")
 
-        return Array(scoredResults.prefix(limit))
+        return Array(scoredResults.prefix(limit)).filter { result in
+            guard let entityUUID = result.entityUUID else { return true }
+            return !excludedUUIDs.contains(entityUUID)
+        }
     }
 
     // MARK: - Context-Aware Search
@@ -255,7 +268,8 @@ final class HybridSearchEngine: ObservableObject {
             queryVector: contextVector,
             limit: limit,
             entityTypes: entityTypes,
-            excludeEntity: (excludeType, excludeId)
+            excludeEntity: (excludeType, excludeId),
+            excludedEntityUUIDs: []
         )
     }
 
@@ -265,7 +279,8 @@ final class HybridSearchEngine: ObservableObject {
     private func bm25Search(
         query: String,
         limit: Int,
-        entityTypes: [EntityType]?
+        entityTypes: [EntityType]?,
+        excludedEntityUUIDs: Set<String>
     ) async throws -> [BM25Candidate] {
         // Escape special FTS5 characters and prepare query
         let escapedQuery = prepareFTS5Query(query)
@@ -274,10 +289,12 @@ final class HybridSearchEngine: ObservableObject {
             // Query atoms_fts (unified atom index) instead of legacy semantic_fts
             // BM25 weights: uuid=0, type=0, title=10, body=5, metadata=1
             var sql = """
-                SELECT uuid, type, title, body,
+                SELECT atoms.uuid, atoms.type, atoms.title, atoms.body,
                        bm25(atoms_fts, 0, 0, 10, 5, 1) AS score
                 FROM atoms_fts
+                JOIN atoms ON atoms.uuid = atoms_fts.uuid
                 WHERE atoms_fts MATCH ?
+                  AND atoms.is_deleted = 0
             """
 
             var arguments: [DatabaseValueConvertible] = [escapedQuery]
@@ -285,7 +302,7 @@ final class HybridSearchEngine: ObservableObject {
             // Filter by entity types if specified
             if let types = entityTypes, !types.isEmpty {
                 let placeholders = types.map { _ in "?" }.joined(separator: ", ")
-                sql += " AND type IN (\(placeholders))"
+                sql += " AND atoms.type IN (\(placeholders))"
                 // Map EntityType to AtomType raw values stored in atoms_fts
                 for t in types {
                     switch t {
@@ -293,6 +310,12 @@ final class HybridSearchEngine: ObservableObject {
                     default: arguments.append(t.rawValue)
                     }
                 }
+            }
+
+            if !excludedEntityUUIDs.isEmpty {
+                let placeholders = excludedEntityUUIDs.map { _ in "?" }.joined(separator: ", ")
+                sql += " AND atoms.uuid NOT IN (\(placeholders))"
+                arguments.append(contentsOf: Array(excludedEntityUUIDs))
             }
 
             sql += " ORDER BY score LIMIT ?"
@@ -335,7 +358,8 @@ final class HybridSearchEngine: ObservableObject {
     private func pureVectorSearch(
         query: String,
         limit: Int,
-        entityTypes: [EntityType]?
+        entityTypes: [EntityType]?,
+        excludedEntityUUIDs: Set<String>
     ) async throws -> [SearchResult] {
         let fullVector = try await DaemonXPCClient.shared.embed(text: query)
         // Truncate 768d → 256d Matryoshka to match stored vectors
@@ -344,7 +368,8 @@ final class HybridSearchEngine: ObservableObject {
             queryVector: queryVector,
             limit: limit,
             entityTypes: entityTypes,
-            excludeEntity: (nil, nil)
+            excludeEntity: (nil, nil),
+            excludedEntityUUIDs: excludedEntityUUIDs
         )
     }
 
@@ -353,7 +378,8 @@ final class HybridSearchEngine: ObservableObject {
         queryVector: [Float],
         limit: Int,
         entityTypes: [EntityType]?,
-        excludeEntity: (EntityType?, Int64?)
+        excludeEntity: (EntityType?, Int64?),
+        excludedEntityUUIDs: Set<String> = []
     ) async throws -> [SearchResult] {
         // Fetch all semantic chunks
         let chunks = try await database.asyncRead { db in
@@ -425,6 +451,9 @@ final class HybridSearchEngine: ObservableObject {
         var enrichedResults: [SearchResult] = []
         for result in deduplicated.prefix(limit) {
             let uuid = await resolveUUID(entityType: result.entityType, entityId: result.entityId)
+            if let uuid, excludedEntityUUIDs.contains(uuid) {
+                continue
+            }
             enrichedResults.append(SearchResult(
                 entityType: EntityType(rawValue: result.entityType) ?? .idea,
                 entityId: result.entityId,

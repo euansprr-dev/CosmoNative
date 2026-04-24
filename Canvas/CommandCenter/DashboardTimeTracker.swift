@@ -34,15 +34,33 @@ struct DashboardTimeTracker: View {
 
     @ViewBuilder
     private func activeTimerCard(_ session: ActiveDeepWorkSession) -> some View {
+        let intentPresentation = viewModel.resolvedIntentPresentation(
+            intentUUID: session.intentUUID,
+            legacyIntentRaw: session.intent.rawValue
+        )
         VStack(spacing: 8) {
             HStack {
-                Image(systemName: session.intent.iconName)
+                Image(systemName: intentPresentation.icon)
                     .font(.system(size: 10))
-                    .foregroundColor(session.intent.color)
+                    .foregroundColor(intentPresentation.accent)
 
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(intentPresentation.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.text)
+                        .lineLimit(1)
+
+                    if let habitTitle = session.habitTitleSnapshot {
+                        Text(habitTitle)
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+                
                 Text(session.taskTitle)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(1)
 
                 Spacer()
@@ -117,7 +135,7 @@ struct DashboardTimeTracker: View {
                 Spacer()
             }
 
-            if !viewModel.todaySessionsByIntent.isEmpty {
+            if !viewModel.todayIntentSummaries.isEmpty {
                 intentBreakdownBar
                     .padding(2)
                     .overlay(
@@ -139,9 +157,9 @@ struct DashboardTimeTracker: View {
         GeometryReader { geo in
             let total = max(viewModel.todayTrackedMinutes, 1)
             HStack(spacing: 1) {
-                ForEach(sortedIntentEntries, id: \.key) { entry in
+                ForEach(sortedIntentEntries, id: \.key.id) { entry in
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(entry.key.color)
+                        .fill(entry.key.accent)
                         .frame(width: max(CGFloat(entry.value) / CGFloat(total) * geo.size.width - 1, 4))
                 }
             }
@@ -152,13 +170,13 @@ struct DashboardTimeTracker: View {
 
     private var intentLegend: some View {
         HStack(spacing: 8) {
-            ForEach(sortedIntentEntries.prefix(4), id: \.key) { entry in
+            ForEach(sortedIntentEntries.prefix(4), id: \.key.id) { entry in
                 HStack(spacing: 3) {
                     Circle()
-                        .fill(entry.key.color)
+                        .fill(entry.key.accent)
                         .frame(width: 6, height: 6)
 
-                    Text(entry.key.displayName)
+                    Text(entry.key.title)
                         .font(.system(size: 9))
                         .foregroundColor(DS.textMuted)
 
@@ -170,8 +188,9 @@ struct DashboardTimeTracker: View {
         }
     }
 
-    private var sortedIntentEntries: [(key: TaskIntent, value: Int)] {
-        viewModel.todaySessionsByIntent
+    private var sortedIntentEntries: [(key: IntentSummary, value: Int)] {
+        viewModel.todayIntentSummaries
+            .map { (key: $0, value: $0.minutes) }
             .sorted { $0.value > $1.value }
     }
 

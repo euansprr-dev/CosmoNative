@@ -70,7 +70,7 @@ struct NoteFocusModeView: View {
     private let titleStyle = SharedTitleSurfaceStyle.noteFocus
 
     @Environment(\.isPaneContext) private var isPaneContext
-    @Environment(\.isPaneActive) private var isPaneActive
+    @Environment(\.isPaneContextOwner) private var isPaneContextOwner
 
     enum SaveState: Equatable {
         case idle
@@ -163,7 +163,7 @@ struct NoteFocusModeView: View {
             }
             // Register context provider for global Cosmo window
             let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.titlePlainText }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
-            if !isPaneContext || isPaneActive {
+            if !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
             // Safety fallback: ensure isInitialLoad clears even if GRDB observation
@@ -174,8 +174,8 @@ struct NoteFocusModeView: View {
                 }
             }
         }
-        .onChange(of: isPaneActive) { _, isActive in
-            if isActive {
+        .onChange(of: isPaneContextOwner) { _, isOwner in
+            if isOwner {
                 let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.titlePlainText }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
@@ -1073,7 +1073,7 @@ struct NoteFocusModeView: View {
             object: nil,
             queue: .main
         ) { [self] notification in
-            guard !self.isPaneContext || self.isPaneActive else { return }
+            guard !self.isPaneContext || self.isPaneContextOwner else { return }
             guard let userInfo = notification.userInfo,
                   let atomUUID = userInfo["atomUUID"] as? String,
                   let atomTypeRaw = userInfo["atomType"] as? String,
@@ -1825,5 +1825,30 @@ class NoteContextProvider: CosmoContextProvider {
         )
     }
 
-    var availableActions: [CosmoWindowAction] { [] }
+    var availableActions: [CosmoWindowAction] {
+        [
+            CosmoWindowAction(
+                id: "note-insert-selection",
+                name: "Insert at Cursor",
+                description: "Insert into the active note editor at the current cursor.",
+                modelTier: .balanced
+            ) { prompt in
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return "Nothing inserted." }
+                await EditorCommandBus.shared.insertText(trimmed, at: .cursor, allowInactive: true)
+                return "Inserted into the note."
+            },
+            CosmoWindowAction(
+                id: "note-append-end",
+                name: "Append to Note",
+                description: "Append a new paragraph to the end of the note.",
+                modelTier: .balanced
+            ) { prompt in
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return "Nothing appended." }
+                await EditorCommandBus.shared.insertText(trimmed, at: .newParagraph, allowInactive: true)
+                return "Appended to the note."
+            }
+        ]
+    }
 }

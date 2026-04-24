@@ -17,20 +17,22 @@ struct SimilarSwipesSection: View {
     @State private var patternFormula: PatternFormula?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Section header
-            Text("SIMILAR IN COLLECTION")
-                .dsSectionLabel()
+        VStack(alignment: .leading, spacing: DS.space12) {
+            MarginaliaLabel("PATTERNS")
 
             if !hasLoaded {
-                ProgressView()
-                    .tint(DS.textMuted)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(DS.sepiaSubtle)
+                        .frame(width: 180, height: 12)
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(DS.sepiaSubtle.opacity(0.7))
+                        .frame(width: 124, height: 12)
+                }
+                .padding(.vertical, DS.space8)
             } else if similarSwipes.isEmpty {
                 placeholderView
             } else {
-                // Pattern formula callout
                 if let formula = patternFormula {
                     patternFormulaCard(formula)
                 }
@@ -38,12 +40,6 @@ struct SimilarSwipesSection: View {
                 scrollContent
             }
         }
-        .padding(16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(DS.border, lineWidth: 1)
-        )
         .onAppear { loadSimilarSwipes() }
     }
 
@@ -53,10 +49,12 @@ struct SimilarSwipesSection: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 ForEach(similarSwipes) { match in
-                    similarCard(match)
-                        .onTapGesture {
-                            onSwipeTap(match.item.entityId)
-                        }
+                    Button {
+                        onSwipeTap(match.item.entityId)
+                    } label: {
+                        similarCard(match)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -90,7 +88,7 @@ struct SimilarSwipesSection: View {
             // Title
             Text(item.title)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
                 .frame(width: 140, alignment: .leading)
 
@@ -99,10 +97,7 @@ struct SimilarSwipesSection: View {
                 if let hookType = item.hookType {
                     Text(hookType.displayName)
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(hookType.color)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(hookType.color.opacity(0.15), in: Capsule())
+                        .foregroundStyle(hookType.color)
                 }
 
                 Spacer()
@@ -110,31 +105,26 @@ struct SimilarSwipesSection: View {
                 if let similarity = match.similarity {
                     Text("\(Int(similarity * 100))%")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(similarityColor(similarity))
+                        .foregroundStyle(similarityColor(similarity))
                 } else if let score = item.hookScore {
                     Text(String(format: "%.1f", score))
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(item.scoreColor)
+                        .foregroundStyle(item.scoreColor)
                 }
             }
             .frame(width: 140)
         }
-        .padding(8)
+        .padding(.vertical, DS.space4)
         .frame(width: 156, height: 110)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.border, lineWidth: 1)
-        )
     }
 
     private var cardPlaceholder: some View {
         Rectangle()
-            .fill(DS.surface)
+            .fill(DS.vellumDeep)
             .overlay(
                 Image(systemName: "doc.fill")
                     .font(.system(size: 14))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.inkFaded)
             )
     }
 
@@ -152,7 +142,7 @@ struct SimilarSwipesSection: View {
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.entitySwipe)
+                    .foregroundStyle(DS.entitySwipe)
                 Text("Your Winning Formula")
                     .font(DS.smallCaps)
                     .foregroundStyle(DS.entitySwipe)
@@ -163,40 +153,31 @@ struct SimilarSwipesSection: View {
                 if let hookType = formula.hookType {
                     Text(hookType.displayName)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(hookType.color)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(hookType.color.opacity(0.15), in: Capsule())
+                        .foregroundStyle(hookType.color)
                 }
 
                 if formula.hookType != nil && formula.frameworkType != nil {
                     Text("+")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.inkFaded)
                 }
 
                 if let frameworkType = formula.frameworkType {
                     Text(frameworkType.abbreviation)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(frameworkType.color)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(frameworkType.color.opacity(0.15), in: Capsule())
+                        .foregroundStyle(frameworkType.color)
                 }
 
                 if formula.topTechnique != nil && (formula.hookType != nil || formula.frameworkType != nil) {
                     Text("+")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.inkFaded)
                 }
 
                 if let technique = formula.topTechnique {
                     Text(technique.displayName)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(technique.color)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(technique.color.opacity(0.15), in: Capsule())
+                        .foregroundStyle(technique.color)
                 }
             }
 
@@ -204,25 +185,20 @@ struct SimilarSwipesSection: View {
             HStack(spacing: 4) {
                 Text("Found in \(formula.matchCount) swipes")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
 
                 if formula.avgScore > 0 {
                     Text("·")
                         .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                     Text("Avg score \(String(format: "%.1f", formula.avgScore))")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
         }
-        .padding(12)
+        .padding(.vertical, DS.space6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.entitySwipe.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.entitySwipe.opacity(0.15), lineWidth: 1)
-        )
     }
 
     // MARK: - Data Loading
@@ -316,10 +292,10 @@ struct SimilarSwipesSection: View {
         VStack(spacing: 8) {
             Image(systemName: "square.stack.3d.up")
                 .font(.system(size: 20))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.inkFaded)
             Text("Save more swipes to see patterns")
                 .font(.system(size: 12))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.inkFaded)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -356,19 +332,17 @@ struct SimilarSwipeMatch: Identifiable {
 // MARK: - Preview
 
 #if DEBUG
-struct SimilarSwipesSection_Previews: PreviewProvider {
-    static var previews: some View {
-        ZStack {
-            DS.bg.ignoresSafeArea()
-            SimilarSwipesSection(
-                currentHookType: .curiosityGap,
-                currentFingerprint: nil,
-                currentEntityId: 1,
-                onSwipeTap: { id in print("Tap swipe: \(id)") }
-            )
-            .frame(width: 400)
-            .padding()
-        }
+#Preview {
+    ZStack {
+        DS.bg.ignoresSafeArea()
+        SimilarSwipesSection(
+            currentHookType: .curiosityGap,
+            currentFingerprint: nil,
+            currentEntityId: 1,
+            onSwipeTap: { id in print("Tap swipe: \(id)") }
+        )
+        .frame(width: 400)
+        .padding()
     }
 }
 #endif

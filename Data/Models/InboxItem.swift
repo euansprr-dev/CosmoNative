@@ -32,6 +32,11 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
     var placeThinkspaceId: String?
     var placeThinkspaceName: String?
     var placeAtomType: String?
+    var recommendations: String?
+    var primaryRouteKind: String?
+    var destinationPath: String?
+    var rationale: String?
+    var placementPlanSummary: String?
 
     // State
     var status: InboxItemStatus
@@ -68,6 +73,11 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
             placeThinkspaceId: nil,
             placeThinkspaceName: nil,
             placeAtomType: nil,
+            recommendations: nil,
+            primaryRouteKind: nil,
+            destinationPath: nil,
+            rationale: nil,
+            placementPlanSummary: nil,
             status: .pending,
             isRead: false,
             createdAt: ISO8601DateFormatter().string(from: Date()),

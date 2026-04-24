@@ -219,6 +219,7 @@ final class SwipeClassificationEngine: ObservableObject {
         if duration > 0 { mediaContext += "Duration: \(duration) seconds\n" }
         if slideCount > 0 { mediaContext += "Carousel/Slide Count: \(slideCount)\n" }
         if hasVideo { mediaContext += "Has Video: yes\n" }
+        mediaContext += transcriptionContext(from: atom)
 
         return """
         You are a content intelligence analyst. Analyze this content and return a single JSON object that covers BOTH taxonomy classification AND structural analysis.
@@ -245,11 +246,16 @@ final class SwipeClassificationEngine: ObservableObject {
         Content Formats: \(formatValues)
         - voiceoverReel: A single continuous video with voiceover narration (talking head, B-roll with VO)
         - oneSliderReel: A reel with ONE static or slow-motion background image/clip and text overlay
-        - multiSliderReel: A reel with MULTIPLE slides/frames shown in sequence (timed text cards, image transitions). If the transcript has numbered slides (Slide 1, Slide 2...) and there's video, this is almost certainly a multiSliderReel, NOT a post or carousel.
+        - multiSliderReel: A reel with MULTIPLE distinct visual slides/cards shown in sequence (timed text cards, image transitions). Use this ONLY when the video clearly contains unique visual cards carrying the content. Do NOT infer multiSliderReel from subtitle fragments, burned captions, or talking-head captions that mirror speech.
         - carousel: Static multi-image swipeable post (NO video, NO audio)
         - post: A single static image post (NO video). Only use this for truly static single-image content.
         - reel: Generic short-form video (use a more specific reel type if possible)
         IMPORTANT: If the content has VIDEO (duration > 0 seconds) and is from Instagram, it is a REEL format (voiceoverReel, oneSliderReel, or multiSliderReel), NEVER "post". "post" is ONLY for static images with no video.
+        IMPORTANT TRANSCRIPTION GUIDANCE:
+        - If inferred transcription modality is voiceoverOnly, strongly prefer voiceoverReel.
+        - If inferred transcription modality is voiceoverPlusText, prefer voiceoverReel or oneSliderReel unless there is clear evidence of distinct visual cards.
+        - If speech segments exist but on-screen text largely mirrors the speech, treat that as captions/subtitles, not multi-slider structure.
+        - Music lyrics, chant-like repetition, or sparse repeated speech should NOT by themselves force voiceoverReel.
         Niche: A short label for the content vertical (e.g., "Real Estate Wholesaling", "Fitness", "SaaS Marketing")
         Creator: Extract the creator's @username handle and display name. IMPORTANT: The Creator/Author field above may contain a numeric ID (e.g. "63181063998") — do NOT use this. Instead, look for the actual @username in the transcript text, captions, or any visible mentions. If no real username is found, return null for creatorHandle.
 
@@ -637,5 +643,49 @@ final class SwipeClassificationEngine: ObservableObject {
             return joined.isEmpty ? nil : joined
         }
         return nil
+    }
+
+    private func transcriptionContext(from atom: Atom) -> String {
+        guard let analysis = atom.swipeAnalysis else { return "" }
+
+        let rawSlides = analysis.rawTranscriptSlides ?? analysis.transcriptSlides ?? []
+        let speechSegments = analysis.transcriptSpeechSegments ?? []
+        let inferredContentType = inferredTranscriptionContentType(rawSlides: rawSlides, speechSegments: speechSegments)
+
+        var lines: [String] = []
+        if let inferredContentType {
+            lines.append("Inferred Transcription Modality: \(inferredContentType.rawValue)")
+        }
+        if !rawSlides.isEmpty {
+            let visualSlides = rawSlides.filter { ($0.source ?? .manual) != .speechAudio }
+            lines.append("Transcript Slide Count: \(rawSlides.count)")
+            lines.append("Visual Slide Count: \(visualSlides.count)")
+        }
+        if !speechSegments.isEmpty {
+            lines.append("Speech Segment Count: \(speechSegments.count)")
+        }
+        if let quality = analysis.transcriptionQuality {
+            lines.append("Transcription Quality: \(quality.rawValue)")
+        }
+        if let warnings = analysis.transcriptionWarnings, !warnings.isEmpty {
+            lines.append("Transcription Warnings: \(warnings.joined(separator: " | "))")
+        }
+
+        return lines.isEmpty ? "" : lines.joined(separator: "\n") + "\n"
+    }
+
+    private func inferredTranscriptionContentType(
+        rawSlides: [TranscriptSlide],
+        speechSegments: [TranscriptSegment]
+    ) -> TranscriptionContentType? {
+        let nonEmptySlides = rawSlides.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let hasSpeech = !speechSegments.isEmpty
+
+        guard !nonEmptySlides.isEmpty || hasSpeech else { return nil }
+        if !hasSpeech { return .textOnly }
+
+        let hasVisualSlides = nonEmptySlides.contains { ($0.source ?? .manual) != .speechAudio }
+        if !hasVisualSlides { return .voiceoverOnly }
+        return .voiceoverPlusText
     }
 }

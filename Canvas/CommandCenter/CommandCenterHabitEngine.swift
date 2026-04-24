@@ -12,6 +12,47 @@ enum HabitCompletionSource: String, Codable, Sendable {
     case manual
 }
 
+struct IntentDefinition: Identifiable, Codable, Equatable, Sendable {
+    let id: String
+    var title: String
+    var icon: String
+    var accentColor: String
+    var sortOrder: Int
+    var isArchived: Bool
+    var isBuiltInSeed: Bool
+    var behaviorTemplate: IntentBehaviorTemplate?
+
+    var accent: Color {
+        Color(hex: accentColor)
+    }
+}
+
+struct ResolvedIntentPresentation: Identifiable, Equatable {
+    let id: String
+    let definitionID: String?
+    let title: String
+    let icon: String
+    let accentColorHex: String
+    let behaviorTemplate: IntentBehaviorTemplate?
+    let isUnassigned: Bool
+
+    var accent: Color {
+        Color(hex: accentColorHex)
+    }
+}
+
+struct IntentSummary: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let icon: String
+    let accentColorHex: String
+    var minutes: Int
+
+    var accent: Color {
+        Color(hex: accentColorHex)
+    }
+}
+
 struct HabitDefinition: Identifiable, Codable, Equatable, Sendable {
     let id: String
     var title: String
@@ -20,6 +61,7 @@ struct HabitDefinition: Identifiable, Codable, Equatable, Sendable {
     var dailyTargetCount: Int
     var keywordTriggers: [String]
     var mappedIntents: [String]
+    var defaultIntentUUID: String?
     var allowManualCompletion: Bool
     var sortOrder: Int
     var isBuiltIn: Bool
@@ -94,6 +136,207 @@ struct HabitResolution: Equatable, Sendable {
 }
 
 @MainActor
+final class CommandCenterIntentEngine: ObservableObject {
+    static let shared = CommandCenterIntentEngine()
+
+    @Published private(set) var definitions: [IntentDefinition] = []
+
+    private let atomRepository: AtomRepository
+    private let scope = "command_center.intent_definitions"
+
+    init(atomRepository: AtomRepository = .shared) {
+        self.atomRepository = atomRepository
+        self.definitions = Self.seedDefinitions
+    }
+
+    var activeDefinitions: [IntentDefinition] {
+        definitions
+            .filter { !$0.isArchived }
+            .sorted {
+                if $0.sortOrder == $1.sortOrder {
+                    return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+                }
+                return $0.sortOrder < $1.sortOrder
+            }
+    }
+
+    func refreshDefinitions() async {
+        do {
+            let prefs = try await atomRepository.fetchAll(type: .userPreference)
+            let stored = prefs.first { atom in
+                guard let dict = atom.metadataDict else { return false }
+                return (dict["scope"] as? String) == scope
+            }?.structuredData(as: [IntentDefinition].self) ?? []
+
+            definitions = mergeWithSeeds(stored)
+            if stored != definitions {
+                await persistDefinitions()
+            }
+        } catch {
+            print("❌ IntentEngine: Failed to refresh definitions: \(error)")
+            definitions = Self.seedDefinitions
+        }
+    }
+
+    func definition(for id: String?) -> IntentDefinition? {
+        guard let id else { return nil }
+        return activeDefinitions.first(where: { $0.id == id })
+    }
+
+    func resolvedDefinition(intentUUID: String?, legacyIntentRaw: String?) -> IntentDefinition? {
+        if let direct = definition(for: intentUUID) {
+            return direct
+        }
+
+        guard let legacyIntent = legacyIntentRaw.flatMap(TaskIntent.init(rawValue:)),
+              let template = IntentBehaviorTemplate(legacyIntent) else {
+            return nil
+        }
+        return activeDefinitions.first(where: { $0.behaviorTemplate == template })
+    }
+
+    func resolvedPresentation(intentUUID: String?, legacyIntentRaw: String?) -> ResolvedIntentPresentation {
+        if let definition = resolvedDefinition(intentUUID: intentUUID, legacyIntentRaw: legacyIntentRaw) {
+            return ResolvedIntentPresentation(
+                id: definition.id,
+                definitionID: definition.id,
+                title: definition.title,
+                icon: definition.icon,
+                accentColorHex: definition.accentColor,
+                behaviorTemplate: definition.behaviorTemplate,
+                isUnassigned: false
+            )
+        }
+
+        return ResolvedIntentPresentation(
+            id: "unassigned",
+            definitionID: nil,
+            title: "Unassigned",
+            icon: "questionmark.circle",
+            accentColorHex: "94A3B8",
+            behaviorTemplate: nil,
+            isUnassigned: true
+        )
+    }
+
+    func behaviorTemplate(intentUUID: String?, legacyIntentRaw: String?) -> IntentBehaviorTemplate? {
+        resolvedDefinition(intentUUID: intentUUID, legacyIntentRaw: legacyIntentRaw)?.behaviorTemplate
+    }
+
+    func createIntent(
+        title: String,
+        icon: String,
+        accentColor: String,
+        behaviorTemplate: IntentBehaviorTemplate?
+    ) async {
+        let definition = IntentDefinition(
+            id: UUID().uuidString,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            icon: icon.isEmpty ? "tag.fill" : icon,
+            accentColor: accentColor.replacingOccurrences(of: "#", with: ""),
+            sortOrder: nextSortOrder(),
+            isArchived: false,
+            isBuiltInSeed: false,
+            behaviorTemplate: behaviorTemplate
+        )
+        definitions = mergeWithSeeds(definitions + [definition])
+        await persistDefinitions()
+    }
+
+    func updateIntent(_ definition: IntentDefinition) async {
+        definitions = mergeWithSeeds(
+            definitions.map { $0.id == definition.id ? normalized(definition) : $0 }
+        )
+        await persistDefinitions()
+    }
+
+    func archiveIntent(id: String) async {
+        guard let definition = definitions.first(where: { $0.id == id }) else { return }
+        var updated = definition
+        updated.isArchived = true
+        await updateIntent(updated)
+    }
+
+    func moveIntent(id: String, direction: Int) async {
+        let intents = activeDefinitions
+        guard let index = intents.firstIndex(where: { $0.id == id }) else { return }
+        let targetIndex = index + direction
+        guard intents.indices.contains(targetIndex) else { return }
+
+        var reordered = intents
+        reordered.swapAt(index, targetIndex)
+        for (offset, intent) in reordered.enumerated() {
+            var updated = intent
+            updated.sortOrder = offset
+            definitions = definitions.map { $0.id == updated.id ? updated : $0 }
+        }
+        definitions = mergeWithSeeds(definitions)
+        await persistDefinitions()
+    }
+
+    func seedID(for behavior: TaskIntent?) -> String? {
+        guard let behavior, let template = IntentBehaviorTemplate(behavior) else { return nil }
+        return activeDefinitions.first(where: { $0.behaviorTemplate == template })?.id
+    }
+
+    private func nextSortOrder() -> Int {
+        (definitions.map(\.sortOrder).max() ?? -1) + 1
+    }
+
+    private func normalized(_ definition: IntentDefinition) -> IntentDefinition {
+        IntentDefinition(
+            id: definition.id,
+            title: definition.title.trimmingCharacters(in: .whitespacesAndNewlines),
+            icon: definition.icon.isEmpty ? "tag.fill" : definition.icon,
+            accentColor: definition.accentColor.isEmpty ? "2D6A4F" : definition.accentColor.replacingOccurrences(of: "#", with: ""),
+            sortOrder: definition.sortOrder,
+            isArchived: definition.isArchived,
+            isBuiltInSeed: definition.isBuiltInSeed,
+            behaviorTemplate: definition.behaviorTemplate
+        )
+    }
+
+    private func mergeWithSeeds(_ stored: [IntentDefinition]) -> [IntentDefinition] {
+        var merged: [IntentDefinition] = stored.map(normalized)
+        for seed in Self.seedDefinitions {
+            guard !merged.contains(where: { $0.id == seed.id }) else { continue }
+            merged.append(seed)
+        }
+        return merged
+    }
+
+    private func persistDefinitions() async {
+        do {
+            let prefs = try await atomRepository.fetchAll(type: .userPreference)
+            let existing = prefs.first { atom in
+                guard let dict = atom.metadataDict else { return false }
+                return (dict["scope"] as? String) == scope
+            }
+
+            if var atom = existing {
+                atom = atom.withStructured(definitions)
+                try await atomRepository.update(atom)
+            } else {
+                let metadataJSON = "{\"scope\":\"\(scope)\"}"
+                var newAtom = Atom.new(type: .userPreference, title: "Intent Definitions", metadata: metadataJSON)
+                newAtom = newAtom.withStructured(definitions)
+                try await atomRepository.create(newAtom)
+            }
+        } catch {
+            print("❌ IntentEngine: Failed to persist definitions: \(error)")
+        }
+    }
+
+    static let seedDefinitions: [IntentDefinition] = [
+        IntentDefinition(id: "intent-writing", title: "Writing", icon: "pencil.line", accentColor: "818CF8", sortOrder: 0, isArchived: false, isBuiltInSeed: true, behaviorTemplate: .writeContent),
+        IntentDefinition(id: "intent-research", title: "Research", icon: "magnifyingglass", accentColor: "38BDF8", sortOrder: 1, isArchived: false, isBuiltInSeed: true, behaviorTemplate: .research),
+        IntentDefinition(id: "intent-swipe-study", title: "Swipe Study", icon: "bolt.fill", accentColor: "FFD700", sortOrder: 2, isArchived: false, isBuiltInSeed: true, behaviorTemplate: .studySwipes),
+        IntentDefinition(id: "intent-thinking", title: "Thinking", icon: "brain.head.profile", accentColor: "A855F7", sortOrder: 3, isArchived: false, isBuiltInSeed: true, behaviorTemplate: .deepThink),
+        IntentDefinition(id: "intent-review", title: "Review", icon: "eye", accentColor: "4ADE80", sortOrder: 4, isArchived: false, isBuiltInSeed: true, behaviorTemplate: .review),
+    ]
+}
+
+@MainActor
 final class CommandCenterHabitEngine: ObservableObject {
     static let shared = CommandCenterHabitEngine()
 
@@ -160,6 +403,7 @@ final class CommandCenterHabitEngine: ObservableObject {
         dailyTargetCount: Int,
         keywordTriggers: [String],
         mappedIntents: [TaskIntent],
+        defaultIntentUUID: String?,
         allowManualCompletion: Bool
     ) async {
         let atom = Atom.new(
@@ -178,6 +422,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             dailyTargetCount: max(1, dailyTargetCount),
             keywordTriggers: normalizedKeywords(keywordTriggers),
             mappedIntents: mappedIntents.map(\.rawValue),
+            defaultIntentUUID: defaultIntentUUID,
             allowManualCompletion: allowManualCompletion,
             sortOrder: nextSortOrder(),
             isBuiltIn: false,
@@ -238,6 +483,15 @@ final class CommandCenterHabitEngine: ObservableObject {
                 var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
                 metadata.habitUUID = habitUUID
                 metadata.habitAssignmentSource = source?.rawValue
+                if metadata.intentUUID == nil,
+                   let habit = definition(for: habitUUID),
+                   let defaultIntentUUID = habit.defaultIntentUUID {
+                    metadata.intentUUID = defaultIntentUUID
+                    metadata.intent = CommandCenterIntentEngine.shared
+                        .behaviorTemplate(intentUUID: defaultIntentUUID, legacyIntentRaw: metadata.intent)?
+                        .taskIntent
+                        .rawValue
+                }
                 atom = atom.withMetadata(metadata)
             }
         } catch {
@@ -602,6 +856,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             dailyTargetCount: max(1, definition.dailyTargetCount),
             keywordTriggers: normalizedKeywords(definition.keywordTriggers),
             mappedIntents: definition.taskIntents.map(\.rawValue),
+            defaultIntentUUID: definition.defaultIntentUUID,
             allowManualCompletion: definition.allowManualCompletion,
             sortOrder: definition.sortOrder,
             isBuiltIn: definition.isBuiltIn,
@@ -878,6 +1133,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             dailyTargetCount: 1,
             keywordTriggers: [],
             mappedIntents: [],
+            defaultIntentUUID: nil,
             allowManualCompletion: false,
             sortOrder: 0,
             isBuiltIn: true,
@@ -891,6 +1147,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             dailyTargetCount: 1,
             keywordTriggers: [],
             mappedIntents: [],
+            defaultIntentUUID: nil,
             allowManualCompletion: false,
             sortOrder: 1,
             isBuiltIn: true,
@@ -904,6 +1161,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             dailyTargetCount: 3,
             keywordTriggers: [],
             mappedIntents: [],
+            defaultIntentUUID: nil,
             allowManualCompletion: false,
             sortOrder: 2,
             isBuiltIn: true,
@@ -917,6 +1175,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             dailyTargetCount: 1,
             keywordTriggers: [],
             mappedIntents: [],
+            defaultIntentUUID: nil,
             allowManualCompletion: false,
             sortOrder: 3,
             isBuiltIn: true,
@@ -930,6 +1189,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             dailyTargetCount: 1,
             keywordTriggers: [],
             mappedIntents: [],
+            defaultIntentUUID: nil,
             allowManualCompletion: true,
             sortOrder: 4,
             isBuiltIn: true,

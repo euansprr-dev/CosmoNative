@@ -10,6 +10,7 @@ struct MentionSearchResult: Identifiable, Equatable, Sendable {
     let subtitle: String?
     let typeLabel: String
     let updatedAt: String
+    let recencyKey: String
     let score: Double
 
     var id: String { atomUUID }
@@ -137,6 +138,8 @@ actor MentionSearchProvider {
             score += max(0, 10 - Date().timeIntervalSince(updated) / 86_400.0)
         }
 
+        let recencyKey = MentionSearchRanking.recencyKey(for: atom)
+
         return MentionSearchResult(
             atomID: atom.id,
             atomUUID: atom.uuid,
@@ -146,6 +149,7 @@ actor MentionSearchProvider {
             subtitle: subtitle,
             typeLabel: typeLabel,
             updatedAt: atom.updatedAt,
+            recencyKey: recencyKey,
             score: score
         )
     }
@@ -158,11 +162,91 @@ actor MentionSearchProvider {
     }
 
     private func compareResults(lhs: MentionSearchResult, rhs: MentionSearchResult) -> Bool {
+        MentionSearchRanking.compare(lhs, rhs)
+    }
+}
+
+enum MentionSearchRanking {
+    static func compare(_ lhs: MentionSearchResult, _ rhs: MentionSearchResult) -> Bool {
+        if lhs.recencyKey != rhs.recencyKey {
+            return lhs.recencyKey > rhs.recencyKey
+        }
         if lhs.score != rhs.score {
             return lhs.score > rhs.score
         }
-        return lhs.updatedAt > rhs.updatedAt
+        if lhs.updatedAt != rhs.updatedAt {
+            return lhs.updatedAt > rhs.updatedAt
+        }
+        return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
     }
+
+    static func recencyKey(for atom: Atom) -> String {
+        if atom.type == .thinkspace,
+           let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) {
+            return sortableTimestamp(from: metadata.lastOpened) ?? atom.updatedAt
+        }
+
+        if let lastOpenedAt = atom.lastOpenedAt,
+           let normalized = sortableTimestamp(from: lastOpenedAt) {
+            return normalized
+        }
+
+        if let normalized = sortableTimestamp(from: atom.updatedAt) {
+            return normalized
+        }
+
+        if let normalized = sortableTimestamp(from: atom.createdAt) {
+            return normalized
+        }
+
+        return atom.updatedAt
+    }
+
+    static func sortableTimestamp(from date: Date) -> String? {
+        sortableTimestampFormatter.string(from: date)
+    }
+
+    static func sortableTimestamp(from rawValue: String) -> String? {
+        guard !rawValue.isEmpty else { return nil }
+
+        for formatter in parsers {
+            if let date = formatter.date(from: rawValue) {
+                return sortableTimestampFormatter.string(from: date)
+            }
+        }
+
+        return normalizedSQLiteTimestamp(rawValue)
+    }
+
+    private static func normalizedSQLiteTimestamp(_ rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 19 else { return nil }
+
+        let prefix = String(trimmed.prefix(19))
+        let allowedCharacters = CharacterSet(charactersIn: "0123456789-: ")
+        guard prefix.unicodeScalars.allSatisfy(allowedCharacters.contains) else { return nil }
+
+        return prefix.replacingOccurrences(of: " ", with: "T") + ".000Z"
+    }
+
+    private static let sortableTimestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+
+    private static let parsers: [ISO8601DateFormatter] = {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        fractional.timeZone = TimeZone(secondsFromGMT: 0)
+
+        let standard = ISO8601DateFormatter()
+        standard.formatOptions = [.withInternetDateTime]
+        standard.timeZone = TimeZone(secondsFromGMT: 0)
+
+        return [fractional, standard]
+    }()
 }
 
 private extension AtomType {

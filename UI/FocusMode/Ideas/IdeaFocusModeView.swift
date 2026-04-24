@@ -47,7 +47,7 @@ struct IdeaFocusModeView: View {
 
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
-    @Environment(\.isPaneActive) private var isPaneActive
+    @Environment(\.isPaneContextOwner) private var isPaneContextOwner
 
     // MARK: - Initialization
 
@@ -91,15 +91,15 @@ struct IdeaFocusModeView: View {
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
-            if !isPaneContext || isPaneActive {
+            if !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
             withAnimation(.easeOut(duration: 0.45).delay(0.05)) {
                 hasAppeared = true
             }
         }
-        .onChange(of: isPaneActive) { _, isActive in
-            if isActive {
+        .onChange(of: isPaneContextOwner) { _, isOwner in
+            if isOwner {
                 let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
@@ -1704,5 +1704,42 @@ class IdeaContextProvider: CosmoContextProvider {
         )
     }
 
-    var availableActions: [CosmoWindowAction] { [] }
+    var availableActions: [CosmoWindowAction] {
+        guard let viewModel else { return [] }
+
+        return [
+            CosmoWindowAction(
+                id: "idea-append-body",
+                name: "Insert into Body",
+                description: "Append text to the current idea body.",
+                modelTier: .balanced
+            ) { prompt in
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return "Nothing inserted." }
+                await MainActor.run {
+                    if viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        viewModel.editableBody = trimmed
+                    } else {
+                        viewModel.editableBody += "\n\n" + trimmed
+                    }
+                }
+                await viewModel.save()
+                return "Inserted into the idea body."
+            },
+            CosmoWindowAction(
+                id: "idea-add-hook",
+                name: "Add Hook",
+                description: "Add a hook line without overwriting existing hooks.",
+                modelTier: .balanced
+            ) { prompt in
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return "Nothing added." }
+                await MainActor.run {
+                    viewModel.editableHooks.append(trimmed)
+                }
+                await viewModel.save()
+                return "Added a hook."
+            }
+        ]
+    }
 }

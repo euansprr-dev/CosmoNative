@@ -107,14 +107,86 @@ struct LiveInsight: Identifiable, Codable, Equatable {
 // MARK: - Collaborator Message (V2)
 
 /// A single message in the Concept Collaborator conversation.
+enum CollaboratorObservationKind: String, Codable, Equatable, CaseIterable {
+    case pattern
+    case paradox
+    case name
+    case contrast
+    case sourceLink
+
+    var label: String {
+        switch self {
+        case .pattern: return "pattern"
+        case .paradox: return "paradox"
+        case .name: return "name"
+        case .contrast: return "contrast"
+        case .sourceLink: return "source"
+        }
+    }
+}
+
+enum ConnectionDraftProposalStatus: String, Codable, Equatable {
+    case streaming
+    case pending
+    case accepted
+    case dismissed
+}
+
+struct ConnectionDraftProposal: Identifiable, Codable, Equatable {
+    let id: UUID
+    var targetSection: ConnectionSectionType
+    var draftText: String
+    var visibleText: String
+    var rationale: String
+    var sourceIDs: [String]
+    var status: ConnectionDraftProposalStatus
+    let createdAt: Date
+    var insertedAt: Date?
+
+    init(
+        id: UUID = UUID(),
+        targetSection: ConnectionSectionType,
+        draftText: String,
+        visibleText: String? = nil,
+        rationale: String = "",
+        sourceIDs: [String] = [],
+        status: ConnectionDraftProposalStatus = .pending,
+        createdAt: Date = Date(),
+        insertedAt: Date? = nil
+    ) {
+        self.id = id
+        self.targetSection = targetSection
+        self.draftText = draftText
+        self.visibleText = visibleText ?? draftText
+        self.rationale = rationale
+        self.sourceIDs = sourceIDs
+        self.status = status
+        self.createdAt = createdAt
+        self.insertedAt = insertedAt
+    }
+
+    var renderedText: String {
+        if status == .streaming {
+            return visibleText
+        }
+        return visibleText.isEmpty ? draftText : visibleText
+    }
+}
+
+struct ConnectionCollaboratorSession: Codable, Equatable {
+    var presetID: String = "deepen.connection"
+    var hasBootstrapped: Bool = false
+    var lastBootstrapAt: Date?
+}
+
 struct CollaboratorMessage: Identifiable, Codable, Equatable {
     let id: UUID
     let role: Role
     let text: String
-    /// If present, the assistant is suggesting content for a specific section.
-    let crystallizeTarget: ConnectionSectionType?
-    /// The text that would be inserted if the user taps "Crystallize into [SECTION]".
-    let crystallizeContent: String?
+    let observationKind: CollaboratorObservationKind?
+    let questionSuggestion: String?
+    let recommendedAction: String?
+    var draftProposal: ConnectionDraftProposal?
     let createdAt: Date
 
     enum Role: String, Codable {
@@ -126,16 +198,64 @@ struct CollaboratorMessage: Identifiable, Codable, Equatable {
         id: UUID = UUID(),
         role: Role,
         text: String,
-        crystallizeTarget: ConnectionSectionType? = nil,
-        crystallizeContent: String? = nil,
+        observationKind: CollaboratorObservationKind? = nil,
+        questionSuggestion: String? = nil,
+        recommendedAction: String? = nil,
+        draftProposal: ConnectionDraftProposal? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
         self.role = role
         self.text = text
-        self.crystallizeTarget = crystallizeTarget
-        self.crystallizeContent = crystallizeContent
+        self.observationKind = observationKind
+        self.questionSuggestion = questionSuggestion
+        self.recommendedAction = recommendedAction
+        self.draftProposal = draftProposal
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, role, text, observationKind, questionSuggestion, recommendedAction, draftProposal, createdAt
+        case crystallizeTarget, crystallizeContent
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.role = try c.decode(Role.self, forKey: .role)
+        self.text = try c.decode(String.self, forKey: .text)
+        self.observationKind = try c.decodeIfPresent(CollaboratorObservationKind.self, forKey: .observationKind)
+        self.questionSuggestion = try c.decodeIfPresent(String.self, forKey: .questionSuggestion)
+        self.recommendedAction = try c.decodeIfPresent(String.self, forKey: .recommendedAction)
+        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+
+        if let draft = try c.decodeIfPresent(ConnectionDraftProposal.self, forKey: .draftProposal) {
+            self.draftProposal = draft
+        } else if let legacyTarget = try c.decodeIfPresent(ConnectionSectionType.self, forKey: .crystallizeTarget),
+                  let legacyContent = try c.decodeIfPresent(String.self, forKey: .crystallizeContent),
+                  !legacyContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self.draftProposal = ConnectionDraftProposal(
+                targetSection: legacyTarget,
+                draftText: legacyContent,
+                visibleText: legacyContent,
+                rationale: text,
+                status: .pending
+            )
+        } else {
+            self.draftProposal = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(role, forKey: .role)
+        try c.encode(text, forKey: .text)
+        try c.encodeIfPresent(observationKind, forKey: .observationKind)
+        try c.encodeIfPresent(questionSuggestion, forKey: .questionSuggestion)
+        try c.encodeIfPresent(recommendedAction, forKey: .recommendedAction)
+        try c.encodeIfPresent(draftProposal, forKey: .draftProposal)
+        try c.encode(createdAt, forKey: .createdAt)
     }
 }
 
@@ -487,6 +607,12 @@ struct ConnectionFocusModeState: Codable {
     /// Concept Collaborator conversation history. Capped at 50 most recent.
     var collaboratorMessages: [CollaboratorMessage] = []
 
+    /// One active staged draft at a time for the Forge preview.
+    var activeDraftProposal: ConnectionDraftProposal?
+
+    /// Per-connection collaborator bootstrap / preset state.
+    var collaboratorSession: ConnectionCollaboratorSession = .init()
+
     init(atomUUID: String) {
         self.atomUUID = atomUUID
         // Initialize with all 8 sections
@@ -506,6 +632,8 @@ struct ConnectionFocusModeState: Codable {
         self.forgeMode = .forge
         self.liveInsights = []
         self.collaboratorMessages = []
+        self.activeDraftProposal = nil
+        self.collaboratorSession = .init()
     }
 
     // MARK: - V2 accessors
@@ -642,6 +770,47 @@ struct ConnectionFocusModeState: Codable {
         lastModified = Date()
     }
 
+    mutating func updateCollaboratorDraft(_ draft: ConnectionDraftProposal) {
+        if activeDraftProposal?.id == draft.id {
+            activeDraftProposal = draft
+        }
+        if let messageIndex = collaboratorMessages.firstIndex(where: { $0.draftProposal?.id == draft.id }) {
+            collaboratorMessages[messageIndex].draftProposal = draft
+        }
+        lastModified = Date()
+    }
+
+    mutating func setCollaboratorDraft(_ draft: ConnectionDraftProposal?, forMessageID messageID: UUID) {
+        if let messageIndex = collaboratorMessages.firstIndex(where: { $0.id == messageID }) {
+            collaboratorMessages[messageIndex].draftProposal = draft
+            lastModified = Date()
+        }
+    }
+
+    mutating func setActiveDraftProposal(_ draft: ConnectionDraftProposal?) {
+        activeDraftProposal = draft
+        lastModified = Date()
+    }
+
+    mutating func markCollaboratorBootstrapped(presetID: String = "deepen.connection") {
+        collaboratorSession.presetID = presetID
+        collaboratorSession.hasBootstrapped = true
+        collaboratorSession.lastBootstrapAt = Date()
+        lastModified = Date()
+    }
+
+    mutating func normalizeCollaboratorStateAfterLoad() {
+        if !collaboratorMessages.isEmpty {
+            collaboratorSession.hasBootstrapped = true
+        }
+        guard var draft = activeDraftProposal else { return }
+        if draft.status == .streaming {
+            draft.status = .pending
+            draft.visibleText = draft.draftText
+            updateCollaboratorDraft(draft)
+        }
+    }
+
     mutating func setLiveInsights(_ insights: [LiveInsight]) {
         liveInsights = Array(insights.prefix(20))
         lastModified = Date()
@@ -652,6 +821,7 @@ struct ConnectionFocusModeState: Codable {
     private enum CodingKeys: String, CodingKey {
         case atomUUID, sections, viewportState, floatingPanelIDs, isGeneratingGhosts, lastModified
         case conceptType, stationPositionsRaw, forgeMode, liveInsights, collaboratorMessages
+        case activeDraftProposal, collaboratorSession
         case canvasPositionsRaw, canvasSizesRaw, hiddenPanelsRaw, layoutVersion
     }
 
@@ -669,6 +839,8 @@ struct ConnectionFocusModeState: Codable {
         self.forgeMode = try c.decodeIfPresent(ForgeMode.self, forKey: .forgeMode) ?? .forge
         self.liveInsights = try c.decodeIfPresent([LiveInsight].self, forKey: .liveInsights) ?? []
         self.collaboratorMessages = try c.decodeIfPresent([CollaboratorMessage].self, forKey: .collaboratorMessages) ?? []
+        self.activeDraftProposal = try c.decodeIfPresent(ConnectionDraftProposal.self, forKey: .activeDraftProposal)
+        self.collaboratorSession = try c.decodeIfPresent(ConnectionCollaboratorSession.self, forKey: .collaboratorSession) ?? .init()
         self.layoutVersion = try c.decodeIfPresent(Int.self, forKey: .layoutVersion) ?? 0
         // V3 fields — migrate from V2 stationPositionsRaw when canvasPositionsRaw is empty.
         let decodedCanvasPositions = try c.decodeIfPresent([String: CodablePoint].self, forKey: .canvasPositionsRaw) ?? [:]
@@ -705,6 +877,8 @@ struct ConnectionFocusModeState: Codable {
         try c.encode(forgeMode, forKey: .forgeMode)
         try c.encode(liveInsights, forKey: .liveInsights)
         try c.encode(collaboratorMessages, forKey: .collaboratorMessages)
+        try c.encodeIfPresent(activeDraftProposal, forKey: .activeDraftProposal)
+        try c.encode(collaboratorSession, forKey: .collaboratorSession)
         try c.encode(canvasPositionsRaw, forKey: .canvasPositionsRaw)
         try c.encode(canvasSizesRaw, forKey: .canvasSizesRaw)
         try c.encode(hiddenPanelsRaw, forKey: .hiddenPanelsRaw)
@@ -812,6 +986,14 @@ struct ConnectionFocusModeState: Codable {
 
     var completedSectionCount: Int {
         sections.filter { !$0.items.isEmpty }.count
+    }
+
+    var collaboratorObservationCount: Int {
+        collaboratorMessages.reduce(into: 0) { partial, message in
+            if message.observationKind != nil {
+                partial += 1
+            }
+        }
     }
 
     var flattenedBodyText: String {

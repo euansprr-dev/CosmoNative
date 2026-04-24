@@ -11,7 +11,6 @@ struct CosmoWindowView: View {
     @Environment(\.cosmoWindowIsFloating) private var isFloating
     @State private var isComposerFocused = false
 
-    @State private var inputText = ""
     @State private var bottomAnchorID = "bottom"
     @State private var pendingScrollWorkItem: DispatchWorkItem?
 
@@ -58,10 +57,10 @@ struct CosmoWindowView: View {
                         searchText: $viewModel.mentionSearchText,
                         onSelect: { atom in
                             viewModel.addMention(atom)
-                            if let atIndex = inputText.lastIndex(of: "@") {
-                                let beforeAt = String(inputText[inputText.startIndex..<atIndex])
+                            if let atIndex = viewModel.inputText.lastIndex(of: "@") {
+                                let beforeAt = String(viewModel.inputText[viewModel.inputText.startIndex..<atIndex])
                                 let title = atom.title ?? "Untitled"
-                                inputText = beforeAt + "@\(title) "
+                                viewModel.inputText = beforeAt + "@\(title) "
                             }
                         },
                         onDismiss: {
@@ -119,17 +118,34 @@ struct CosmoWindowView: View {
             }
 
             HStack(spacing: 6) {
-                headerControlButton("plus.message") {
-                    Task { await viewModel.startNewChat() }
-                }
-                .help("New Chat")
+                if !viewModel.isCollaboratorActive {
+                    headerControlButton("plus.message") {
+                        Task { await viewModel.startNewChat() }
+                    }
+                    .help("New Chat")
 
-                headerControlButton("clock.arrow.circlepath") {
-                    viewModel.showChatHistory.toggle()
+                    headerControlButton("clock.arrow.circlepath") {
+                        viewModel.showChatHistory.toggle()
+                    }
+                    .help("Chat History")
+                    .popover(isPresented: $viewModel.showChatHistory) {
+                        chatHistoryPopover
+                    }
                 }
-                .help("Chat History")
-                .popover(isPresented: $viewModel.showChatHistory) {
-                    chatHistoryPopover
+
+                if viewModel.isCurrentContextDockable {
+                    headerControlButton("rectangle.split.2x1") {
+                        guard let atomUUID = viewModel.dockableContextAtomUUID else { return }
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.Navigation.openCollaboratorPane,
+                            object: nil,
+                            userInfo: CosmoNotification.Navigation.CollaboratorPanePayload(
+                                atomUUID: atomUUID,
+                                presetId: viewModel.currentCollaboratorPresetID ?? "deepen"
+                            ).userInfo
+                        )
+                    }
+                    .help("Dock Collaborator")
                 }
 
                 headerControlButton("xmark") {
@@ -157,6 +173,7 @@ struct CosmoWindowView: View {
                     if viewModel.messages.isEmpty {
                         CosmoEmptyStateCard(
                             context: viewModel.activeContext,
+                            isCollaboratorMode: viewModel.isCollaboratorActive,
                             suggestions: promptSuggestions,
                             onSelectSuggestion: queuePrompt
                         )
@@ -166,7 +183,6 @@ struct CosmoWindowView: View {
                                 message: message,
                                 onEdit: message.type == .user ? { msg in
                                     viewModel.editAndResend(messageId: msg.id)
-                                    inputText = msg.content
                                     focusComposer()
                                 } : nil
                             )
@@ -220,7 +236,7 @@ struct CosmoWindowView: View {
 
                     Button("Cancel") {
                         viewModel.pendingEditIndex = nil
-                        inputText = ""
+                        viewModel.inputText = ""
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .semibold))
@@ -253,7 +269,7 @@ struct CosmoWindowView: View {
                 .buttonStyle(.plain)
 
                 MentionComposerTextView(
-                    text: $inputText,
+                    text: $viewModel.inputText,
                     mentionedAtoms: viewModel.mentionedAtoms,
                     placeholder: "Ask Cosmo anything...",
                     isFocused: $isComposerFocused,
@@ -262,7 +278,7 @@ struct CosmoWindowView: View {
                 )
                 .frame(maxWidth: .infinity)
                 .fixedSize(horizontal: false, vertical: true)
-                .onChange(of: inputText) { syncMentionSearch() }
+                .onChange(of: viewModel.inputText) { syncMentionSearch() }
 
                 modelSelector
 
@@ -457,69 +473,15 @@ struct CosmoWindowView: View {
     }
 
     private var headerSubtitle: String {
-        if viewModel.activeContext.type == .none {
-            return "Global assistant"
-        }
-        return viewModel.activeContext.type.displayName
+        viewModel.currentHeaderSubtitle
     }
 
     private var promptSuggestions: [String] {
-        let title = viewModel.activeContext.data.currentAtomTitle ?? "what I’m looking at"
-
-        switch viewModel.activeContext.type {
-        case .commandCenter:
-            return [
-                "What deserves attention in Command Center?",
-                "Summarize what changed recently",
-                "What should I tackle next?"
-            ]
-        case .contentFocusMode:
-            return [
-                "Tighten the angle for \(title)",
-                "Give me 3 stronger hooks",
-                "What should I rewrite first?"
-            ]
-        case .swipeGallery, .swipeStudy:
-            return [
-                "What pattern is showing up here?",
-                "Find the strongest hook angle",
-                "How would I adapt this swipe?"
-            ]
-        case .researchFocusMode:
-            return [
-                "Summarize the important takeaways",
-                "What contradictions should I examine?",
-                "Turn this into actionable notes"
-            ]
-        case .thinkspaceCanvas:
-            return [
-                "Summarize what I’m looking at",
-                "What should I focus on next?",
-                "Turn this into a plan"
-            ]
-        case .sanctuary:
-            return [
-                "What deserves attention today?",
-                "Summarize my current state",
-                "What should I improve first?"
-            ]
-        case .none:
-            return [
-                "What should I focus on next?",
-                "Help me turn a thought into a plan",
-                "Summarize what I’m working on"
-            ]
-        default:
-            return [
-                "Help me think through \(title)",
-                "What matters most here?",
-                "Give me the next best move"
-            ]
-        }
+        viewModel.currentPromptSuggestions
     }
 
     private var canSend: Bool {
-        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.isProcessing
+        !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.isProcessing
     }
 
     private var sendButtonBackground: Color {
@@ -542,15 +504,15 @@ struct CosmoWindowView: View {
     }
 
     private func queuePrompt(_ prompt: String) {
-        inputText = prompt
+        viewModel.inputText = prompt
         focusComposer()
     }
 
     private func sendCurrentMessage() {
-        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        inputText = ""
+        viewModel.inputText = ""
 
         if viewModel.showMentionOverlay {
             viewModel.showMentionOverlay = false
@@ -587,17 +549,16 @@ struct CosmoWindowView: View {
     }
 
     private func handleAppear() {
-        inputText = viewModel.inputText
         Task { await viewModel.loadConversation() }
         DispatchQueue.main.async { focusComposer() }
     }
 
     private func openMentionOverlayFromComposer() {
-        if inputText.lastIndex(of: "@") == nil {
-            if !inputText.isEmpty && !inputText.hasSuffix(" ") {
-                inputText += " "
+        if viewModel.inputText.lastIndex(of: "@") == nil {
+            if !viewModel.inputText.isEmpty && !viewModel.inputText.hasSuffix(" ") {
+                viewModel.inputText += " "
             }
-            inputText += "@"
+            viewModel.inputText += "@"
         }
         viewModel.mentionSearchText = ""
         viewModel.showMentionOverlay = true
@@ -605,15 +566,15 @@ struct CosmoWindowView: View {
     }
 
     private func dismissMentionOverlay(trimMentionQuery: Bool) {
-        if trimMentionQuery, let atIndex = inputText.lastIndex(of: "@") {
-            inputText = String(inputText[..<atIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimMentionQuery, let atIndex = viewModel.inputText.lastIndex(of: "@") {
+            viewModel.inputText = String(viewModel.inputText[..<atIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         viewModel.showMentionOverlay = false
         viewModel.mentionSearchText = ""
     }
 
     private func syncMentionSearch() {
-        if inputText.hasSuffix("@") && !viewModel.showMentionOverlay {
+        if viewModel.inputText.hasSuffix("@") && !viewModel.showMentionOverlay {
             withAnimation(ProMotionSprings.snappy) {
                 viewModel.showMentionOverlay = true
                 viewModel.mentionSearchText = ""
@@ -622,12 +583,12 @@ struct CosmoWindowView: View {
 
         guard viewModel.showMentionOverlay else { return }
 
-        guard let atIndex = inputText.lastIndex(of: "@") else {
+        guard let atIndex = viewModel.inputText.lastIndex(of: "@") else {
             dismissMentionOverlay(trimMentionQuery: false)
             return
         }
 
-        let afterAt = String(inputText[inputText.index(after: atIndex)...])
+        let afterAt = String(viewModel.inputText[viewModel.inputText.index(after: atIndex)...])
         viewModel.mentionSearchText = afterAt
     }
 
@@ -880,6 +841,7 @@ private struct CosmoContextBar: View {
 
 private struct CosmoEmptyStateCard: View {
     let context: CosmoActiveContext
+    let isCollaboratorMode: Bool
     let suggestions: [String]
     let onSelectSuggestion: (String) -> Void
 
@@ -887,7 +849,7 @@ private struct CosmoEmptyStateCard: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(context.type == .none ? "Ask Cosmo anything" : "Ready with your current context")
+                    Text(headlineText)
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundColor(DS.text)
 
@@ -912,17 +874,19 @@ private struct CosmoEmptyStateCard: View {
 
             FlowSuggestionsView(items: suggestions, onSelect: onSelectSuggestion)
 
-            HStack(spacing: 10) {
-                Text("Option+A")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(DS.accent)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .cosmoWindowChip(isActive: true)
+            if !isCollaboratorMode {
+                HStack(spacing: 10) {
+                    Text("Option+A")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(DS.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .cosmoWindowChip(isActive: true)
 
-                Text("Opens Cosmo from anywhere")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    Text("Opens Cosmo from anywhere")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                }
             }
         }
         .padding(18)
@@ -930,7 +894,18 @@ private struct CosmoEmptyStateCard: View {
         .cosmoWindowSectionChrome(cornerRadius: 18)
     }
 
+    private var headlineText: String {
+        if isCollaboratorMode {
+            return "Whenever you have a thought"
+        }
+        return context.type == .none ? "Ask Cosmo anything" : "Ready with your current context"
+    }
+
     private var descriptionText: String {
+        if isCollaboratorMode {
+            return "It can be messy. One sentence, a link, a half-formed question. Doesn't matter."
+        }
+
         if context.type == .none {
             return "Cosmo can help you think, summarize, plan, and write. Add @ references or just start typing."
         }

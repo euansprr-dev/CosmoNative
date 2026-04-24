@@ -23,13 +23,14 @@ final class EditorCommandBus: ObservableObject {
     }
 
     /// Insert plain text at the current cursor position
-    func insertText(_ text: String, at position: InsertPosition = .cursor) {
+    func insertText(_ text: String, at position: InsertPosition = .cursor, allowInactive: Bool = false) {
         NotificationCenter.default.post(
             name: .insertTextInEditor,
             object: nil,
             userInfo: [
                 "text": text,
-                "position": position.rawValue
+                "position": position.rawValue,
+                "allowInactive": allowInactive
             ]
         )
     }

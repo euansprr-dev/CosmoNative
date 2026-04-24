@@ -87,6 +87,44 @@ struct HabitState: Identifiable, Equatable {
     var linkedIntentSummary: String?
 }
 
+private enum DashboardRefreshDomain: Hashable {
+    case tasks
+    case habits
+    case timeData
+    case sessions
+    case weeklyReport
+}
+
+private struct DashboardAtomSubsetSignature: Equatable {
+    let count: Int
+    let fingerprint: Int
+
+    init(atoms: [Atom], matching types: Set<AtomType>) {
+        var count = 0
+        var hasher = Hasher()
+
+        for atom in atoms where types.contains(atom.type) {
+            count += 1
+            hasher.combine(atom.uuid)
+            hasher.combine(atom.localVersion)
+            hasher.combine(atom.updatedAt)
+        }
+
+        self.count = count
+        self.fingerprint = hasher.finalize()
+    }
+}
+
+private struct DashboardAtomRefreshSignature: Equatable {
+    let tasks: DashboardAtomSubsetSignature
+    let deepWork: DashboardAtomSubsetSignature
+
+    init(atoms: [Atom]) {
+        self.tasks = DashboardAtomSubsetSignature(atoms: atoms, matching: [.task])
+        self.deepWork = DashboardAtomSubsetSignature(atoms: atoms, matching: [.deepWorkBlock])
+    }
+}
+
 // MARK: - ViewModel
 
 @MainActor
@@ -171,7 +209,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Time Tracking
 
     @Published var todayTrackedMinutes: Int = 0
-    @Published var todaySessionsByIntent: [TaskIntent: Int] = [:]
+    @Published var todayIntentSummaries: [IntentSummary] = []
     @Published var completedArrivalToken: Int = 0
 
     // MARK: - Task Add
@@ -186,7 +224,11 @@ class CommandCenterDashboardViewModel: ObservableObject {
     private let objectiveEngine = ObjectiveEngine()
     private let calendarService = CalendarSyncService.shared
     private let habitEngine = CommandCenterHabitEngine.shared
+    private let intentEngine = CommandCenterIntentEngine.shared
     private var cancellables = Set<AnyCancellable>()
+    private var inFlightRefreshes: [DashboardRefreshDomain: Task<Void, Never>] = [:]
+    private var queuedRefreshDomains = Set<DashboardRefreshDomain>()
+    private var lastAtomRefreshSignature: DashboardAtomRefreshSignature?
 
     // MARK: - Computed
 
@@ -282,37 +324,45 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
         // React to plannerum task changes (debounced to prevent cascading fetches)
         plannerum.$todayTasks
+            .removeDuplicates()
             .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
-                Task { [weak self] in
-                    await self?.refreshTasks()
-                    if self?.viewMode == .logbook {
-                        await self?.loadCompletedTasks()
-                    }
-                }
+                self?.scheduleRefresh(.tasks, delayNanoseconds: 150_000_000)
             }
             .store(in: &cancellables)
 
         AtomRepository.shared.$atoms
-            .debounce(for: .milliseconds(600), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { [weak self] in
-                    await self?.loadHabits()
-                    await self?.loadWeeklyReport()
-                    await self?.loadTodaySessions()
-                    await self?.loadTodayTimeData()
-                }
+            .map(DashboardAtomRefreshSignature.init)
+            .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
+            .sink { [weak self] signature in
+                self?.handleAtomRefreshSignature(signature)
             }
             .store(in: &cancellables)
 
         habitEngine.$definitions
+            .removeDuplicates()
             .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
-                Task { [weak self] in
-                    await self?.loadHabits()
-                }
+                self?.scheduleRefresh(.habits, delayNanoseconds: 100_000_000)
             }
             .store(in: &cancellables)
+
+        Publishers.MergeMany([
+            NotificationCenter.default.publisher(for: .deepWorkSessionStarted).map { _ in Notification.Name.deepWorkSessionStarted },
+            NotificationCenter.default.publisher(for: .deepWorkSessionPaused).map { _ in Notification.Name.deepWorkSessionPaused },
+            NotificationCenter.default.publisher(for: .deepWorkSessionResumed).map { _ in Notification.Name.deepWorkSessionResumed },
+            NotificationCenter.default.publisher(for: .deepWorkSessionExtended).map { _ in Notification.Name.deepWorkSessionExtended },
+            NotificationCenter.default.publisher(for: .deepWorkSessionEnded).map { _ in Notification.Name.deepWorkSessionEnded }
+        ])
+        .sink { [weak self] name in
+            self?.scheduleRefresh(.timeData, delayNanoseconds: 100_000_000)
+            self?.scheduleRefresh(.sessions, delayNanoseconds: 100_000_000)
+            if name == .deepWorkSessionEnded {
+                self?.scheduleRefresh(.weeklyReport, delayNanoseconds: 150_000_000)
+                self?.scheduleRefresh(.habits, delayNanoseconds: 150_000_000)
+            }
+        }
+        .store(in: &cancellables)
 
         // React to objective changes
         objectiveEngine.$objectives
@@ -340,6 +390,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Refresh
 
     func refreshAll() async {
+        await intentEngine.refreshDefinitions()
         await habitEngine.refreshDefinitions()
         await refreshTasks()
         refreshCalendarEvents()
@@ -350,6 +401,95 @@ class CommandCenterDashboardViewModel: ObservableObject {
         objectiveEngine.startTracking()
         xpProgress = plannerum.xpProgress
         currentStreak = plannerum.liveQuestEngine.streaks.values.max() ?? 0
+    }
+
+    private func scheduleRefresh(_ domain: DashboardRefreshDomain, delayNanoseconds: UInt64 = 0) {
+        if inFlightRefreshes[domain] != nil {
+            queuedRefreshDomains.insert(domain)
+            return
+        }
+
+        inFlightRefreshes[domain] = Task { [weak self] in
+            if delayNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
+            }
+            guard let self else { return }
+            await self.performRefresh(domain)
+            await self.finishRefresh(domain)
+        }
+    }
+
+    private func performRefresh(_ domain: DashboardRefreshDomain) async {
+        switch domain {
+        case .tasks:
+            await refreshTasks()
+        case .habits:
+            await loadHabits()
+        case .timeData:
+            await loadTodayTimeData()
+        case .sessions:
+            await loadTodaySessions()
+        case .weeklyReport:
+            switch selectedReportTab {
+            case .week:
+                await loadWeeklyReport()
+            case .month:
+                await loadMonthReport()
+            case .habits:
+                await loadHabitReport()
+            }
+        }
+    }
+
+    private func finishRefresh(_ domain: DashboardRefreshDomain) {
+        inFlightRefreshes[domain] = nil
+        if queuedRefreshDomains.remove(domain) != nil {
+            scheduleRefresh(domain)
+        }
+    }
+
+    private func handleAtomRefreshSignature(_ signature: DashboardAtomRefreshSignature) {
+        guard let previous = lastAtomRefreshSignature else {
+            lastAtomRefreshSignature = signature
+            return
+        }
+
+        if previous.tasks != signature.tasks {
+            scheduleRefresh(.tasks, delayNanoseconds: 200_000_000)
+            scheduleRefresh(.habits, delayNanoseconds: 200_000_000)
+            scheduleRefresh(.weeklyReport, delayNanoseconds: 250_000_000)
+        }
+
+        if previous.deepWork != signature.deepWork {
+            scheduleRefresh(.timeData, delayNanoseconds: 150_000_000)
+            scheduleRefresh(.sessions, delayNanoseconds: 150_000_000)
+            scheduleRefresh(.habits, delayNanoseconds: 200_000_000)
+            scheduleRefresh(.weeklyReport, delayNanoseconds: 250_000_000)
+        }
+
+        lastAtomRefreshSignature = signature
+    }
+
+    private func assignIfChanged<T: Equatable>(
+        _ keyPath: ReferenceWritableKeyPath<CommandCenterDashboardViewModel, T>,
+        to newValue: T
+    ) {
+        guard self[keyPath: keyPath] != newValue else { return }
+        self[keyPath: keyPath] = newValue
+    }
+
+    private func assignCompletedTasksIfChanged(_ groupedTasks: [(date: Date, tasks: [TaskViewModel])]) {
+        guard completedTasksByDay.count == groupedTasks.count else {
+            completedTasksByDay = groupedTasks
+            return
+        }
+
+        for (lhs, rhs) in zip(completedTasksByDay, groupedTasks) {
+            if lhs.date != rhs.date || lhs.tasks != rhs.tasks {
+                completedTasksByDay = groupedTasks
+                return
+            }
+        }
     }
 
     // MARK: - Task Loading (Today view — sectioned)
@@ -386,7 +526,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         // Partition into sections
         let active = allTasks.filter { !$0.isCompleted }
 
-        overdueTasks = active
+        let nextOverdue = active
             .filter { $0.isOverdue }
             .sorted { lhs, rhs in
                 if let lo = lhs.manualSortOrder, let ro = rhs.manualSortOrder { return lo < ro }
@@ -395,7 +535,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 return lhs.priority.sortOrder < rhs.priority.sortOrder
             }
 
-        scheduledTasks = active
+        let nextScheduled = active
             .filter { !$0.isOverdue && $0.hasSpecificTime }
             .sorted { lhs, rhs in
                 if let lo = lhs.manualSortOrder, let ro = rhs.manualSortOrder { return lo < ro }
@@ -404,7 +544,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 return (lhs.scheduledTime ?? .distantFuture) < (rhs.scheduledTime ?? .distantFuture)
             }
 
-        unscheduledTasks = active
+        let nextUnscheduled = active
             .filter { !$0.isOverdue && !$0.hasSpecificTime }
             .sorted { lhs, rhs in
                 if let lo = lhs.manualSortOrder, let ro = rhs.manualSortOrder { return lo < ro }
@@ -412,6 +552,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 if rhs.manualSortOrder != nil { return false }
                 return lhs.priority.sortOrder < rhs.priority.sortOrder
             }
+
+        assignIfChanged(\.overdueTasks, to: nextOverdue)
+        assignIfChanged(\.scheduledTasks, to: nextScheduled)
+        assignIfChanged(\.unscheduledTasks, to: nextUnscheduled)
 
         // Load completed tasks independently (todayTasks excludes completed)
         await loadCompletedTasks()
@@ -468,12 +612,12 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 }
                 .sorted { $0.priority.sortOrder < $1.priority.sortOrder }
 
-                overdueTasks = overdue
+                assignIfChanged(\.overdueTasks, to: overdue)
             } else {
-                overdueTasks = []
+                assignIfChanged(\.overdueTasks, to: [])
             }
 
-            upcomingDayGroups = dayGroups
+            assignIfChanged(\.upcomingDayGroups, to: dayGroups)
             loadUpcomingCalendarEvents()
         } catch {
             print("❌ Dashboard: Failed to load upcoming tasks: \(error)")
@@ -497,7 +641,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         for key in grouped.keys {
             grouped[key]?.sort { $0.startDate < $1.startDate }
         }
-        upcomingCalendarEvents = grouped
+        assignIfChanged(\.upcomingCalendarEvents, to: grouped)
     }
 
     func moveTask(uuid: String, toDate: Date) async {
@@ -626,7 +770,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
 
             // Today's completed (for badge count)
-            completedTodayTasks = allCompleted
+            let nextCompletedToday = allCompleted
                 .filter { ($0.completedAt ?? .distantPast) >= todayStart }
                 .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
 
@@ -639,9 +783,12 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
 
             // Sort each day's tasks by completedAt descending, then sort days descending
-            completedTasksByDay = grouped
+            let groupedByDay = grouped
                 .map { (date: $0.key, tasks: $0.value.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }) }
                 .sorted { $0.date > $1.date }
+
+            assignIfChanged(\.completedTodayTasks, to: nextCompletedToday)
+            assignCompletedTasksIfChanged(groupedByDay)
         } catch {
             print("❌ Dashboard: Failed to load completed tasks: \(error)")
         }
@@ -652,7 +799,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     func loadAnytimeTasks() async {
         do {
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
-            anytimeTasks = atoms.compactMap { atom -> TaskViewModel? in
+            let nextAnytimeTasks = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 guard !vm.isCompleted else { return nil }
                 // Anytime: schedulingState == "anytime" OR (no whenDate and no schedulingState)
@@ -665,6 +812,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 return nil
             }
             .sorted { ($0.manualSortOrder ?? Int.max) < ($1.manualSortOrder ?? Int.max) }
+            assignIfChanged(\.anytimeTasks, to: nextAnytimeTasks)
         } catch {
             print("❌ Dashboard: Failed to load anytime tasks: \(error)")
         }
@@ -675,7 +823,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     func loadSomedayTasks() async {
         do {
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
-            somedayTasks = atoms.compactMap { atom -> TaskViewModel? in
+            let nextSomedayTasks = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 guard !vm.isCompleted else { return nil }
                 let meta = atom.metadataValue(as: TaskMetadata.self)
@@ -683,6 +831,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 return vm
             }
             .sorted { ($0.manualSortOrder ?? Int.max) < ($1.manualSortOrder ?? Int.max) }
+            assignIfChanged(\.somedayTasks, to: nextSomedayTasks)
         } catch {
             print("❌ Dashboard: Failed to load someday tasks: \(error)")
         }
@@ -706,7 +855,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
 
             // Filter tasks linked to this project
-            projectTasks = atoms.compactMap { atom -> TaskViewModel? in
+            let nextProjectTasks = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 // Check if task is linked to this project via AtomLinks
                 let links = atom.linksList
@@ -715,6 +864,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 return vm
             }
             .sorted { ($0.manualSortOrder ?? Int.max) < ($1.manualSortOrder ?? Int.max) }
+            assignIfChanged(\.projectTasks, to: nextProjectTasks)
         } catch {
             print("❌ Dashboard: Failed to load project tasks: \(error)")
         }
@@ -724,13 +874,14 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func loadAreas() async {
         do {
-            areas = try await AtomRepository.shared.fetchAll(type: .area)
+            let nextAreas = try await AtomRepository.shared.fetchAll(type: .area)
                 .filter { !$0.isDeleted }
                 .sorted {
                     let a = $0.metadataValue(as: AreaMetadata.self)?.sortOrder ?? Int.max
                     let b = $1.metadataValue(as: AreaMetadata.self)?.sortOrder ?? Int.max
                     return a < b
                 }
+            assignIfChanged(\.areas, to: nextAreas)
         } catch {
             print("❌ Dashboard: Failed to load areas: \(error)")
         }
@@ -738,9 +889,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func loadProjects() async {
         do {
-            projects = try await AtomRepository.shared.fetchAll(type: .project)
+            let nextProjects = try await AtomRepository.shared.fetchAll(type: .project)
                 .filter { !$0.isDeleted }
                 .filter { ($0.metadataValue(as: ProjectMetadata.self)?.isCompleted ?? false) == false }
+            assignIfChanged(\.projects, to: nextProjects)
         } catch {
             print("❌ Dashboard: Failed to load projects: \(error)")
         }
@@ -947,16 +1099,17 @@ class CommandCenterDashboardViewModel: ObservableObject {
         let dayStart = Calendar.current.startOfDay(for: selectedDate)
         let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
 
-        todayEvents = calendarService.externalEvents
+        let nextEvents = calendarService.externalEvents
             .filter { $0.startDate >= dayStart && $0.startDate < dayEnd }
             .sorted { $0.startDate < $1.startDate }
+        assignIfChanged(\.todayEvents, to: nextEvents)
     }
 
     // MARK: - Habits
 
     func loadHabits() async {
         let progressStates = await habitEngine.loadProgressStates()
-        habits = progressStates.map { state in
+        let nextHabits = progressStates.map { state in
             HabitState(
                 id: state.definition.id,
                 title: state.definition.title,
@@ -976,11 +1129,47 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 linkedIntentSummary: state.linkedIntentSummary
             )
         }
-        currentStreak = plannerum.liveQuestEngine.streaks.values.max() ?? 0
+        assignIfChanged(\.habits, to: nextHabits)
+        assignIfChanged(\.currentStreak, to: plannerum.liveQuestEngine.streaks.values.max() ?? 0)
     }
 
     var availableHabitDefinitions: [HabitDefinition] {
         habitEngine.activeDefinitions
+    }
+
+    var availableIntentDefinitions: [IntentDefinition] {
+        intentEngine.activeDefinitions
+    }
+
+    func resolvedIntentPresentation(intentUUID: String?, legacyIntent: TaskIntent) -> ResolvedIntentPresentation {
+        intentEngine.resolvedPresentation(intentUUID: intentUUID, legacyIntentRaw: legacyIntent.rawValue)
+    }
+
+    func resolvedIntentPresentation(for task: TaskViewModel) -> ResolvedIntentPresentation {
+        resolvedIntentPresentation(intentUUID: task.intentUUID, legacyIntent: task.intent)
+    }
+
+    func resolvedIntentPresentation(intentUUID: String?, legacyIntentRaw: String?) -> ResolvedIntentPresentation {
+        intentEngine.resolvedPresentation(intentUUID: intentUUID, legacyIntentRaw: legacyIntentRaw)
+    }
+
+    func behaviorIntent(for task: TaskViewModel) -> TaskIntent {
+        intentEngine.behaviorTemplate(intentUUID: task.intentUUID, legacyIntentRaw: task.intent.rawValue)?.taskIntent ?? .general
+    }
+
+    func intentDefinition(for id: String?) -> IntentDefinition? {
+        intentEngine.definition(for: id)
+    }
+
+    private func intentSummary(intentUUID: String?, legacyIntentRaw: String?, minutes: Int = 0) -> IntentSummary {
+        let presentation = resolvedIntentPresentation(intentUUID: intentUUID, legacyIntentRaw: legacyIntentRaw)
+        return IntentSummary(
+            id: presentation.id,
+            title: presentation.title,
+            icon: presentation.icon,
+            accentColorHex: presentation.accentColorHex,
+            minutes: minutes
+        )
     }
 
     func habitDefinition(for id: String?) -> HabitDefinition? {
@@ -998,6 +1187,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         dailyTargetCount: Int,
         keywordTriggers: [String],
         mappedIntents: [TaskIntent],
+        defaultIntentUUID: String?,
         allowManualCompletion: Bool
     ) async {
         await habitEngine.createHabit(
@@ -1007,9 +1197,36 @@ class CommandCenterDashboardViewModel: ObservableObject {
             dailyTargetCount: dailyTargetCount,
             keywordTriggers: keywordTriggers,
             mappedIntents: mappedIntents,
+            defaultIntentUUID: defaultIntentUUID,
             allowManualCompletion: allowManualCompletion
         )
         await loadHabits()
+    }
+
+    func createIntent(title: String, icon: String, accentColor: String, behaviorTemplate: IntentBehaviorTemplate?) async {
+        await intentEngine.createIntent(title: title, icon: icon, accentColor: accentColor, behaviorTemplate: behaviorTemplate)
+        await refreshTasks()
+        await loadTodayTimeData()
+        await loadTodaySessions()
+    }
+
+    func updateIntent(_ definition: IntentDefinition) async {
+        await intentEngine.updateIntent(definition)
+        await refreshTasks()
+        await loadTodayTimeData()
+        await loadTodaySessions()
+    }
+
+    func archiveIntent(id: String) async {
+        await intentEngine.archiveIntent(id: id)
+        await refreshTasks()
+        await loadTodayTimeData()
+        await loadTodaySessions()
+    }
+
+    func moveIntent(id: String, direction: Int) async {
+        await intentEngine.moveIntent(id: id, direction: direction)
+        await refreshTasks()
     }
 
     func updateHabit(_ definition: HabitDefinition) async {
@@ -1129,6 +1346,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             instanceMetadata.recurrenceParentUUID = templateUUID
             instanceMetadata.description = metadata.description
             instanceMetadata.intent = metadata.intent
+            instanceMetadata.intentUUID = metadata.intentUUID
             instanceMetadata.habitUUID = metadata.habitUUID
             instanceMetadata.habitAssignmentSource = metadata.habitAssignmentSource
             instanceMetadata.linkedAtomUUID = metadata.linkedAtomUUID
@@ -1252,12 +1470,18 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     if let intent = parsed.intent {
                         metadata.intent = intent.rawValue
                     }
+                    if let intentUUID = parsed.intentUUID {
+                        metadata.intentUUID = intentUUID
+                    }
                     if let habitUUID = parsed.habitUUID {
                         metadata.habitUUID = habitUUID
                         metadata.habitAssignmentSource = parsed.habitAssignmentSource?.rawValue
                     } else if let derived = habitEngine.resolveHabit(title: title, intent: parsed.intent) {
                         metadata.habitUUID = derived.definition.id
                         metadata.habitAssignmentSource = derived.source.rawValue
+                        if metadata.intentUUID == nil {
+                            metadata.intentUUID = derived.definition.defaultIntentUUID
+                        }
                     }
 
                     // Things 3 scheduling fields
@@ -1336,6 +1560,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         dueDate: Date? = nil,
         scheduledTime: Date? = nil,
         intent: TaskIntent? = nil,
+        intentUUID: String? = nil,
         body: String? = nil
     ) async {
         do {
@@ -1357,6 +1582,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 if let intent = intent {
                     metadata.intent = intent.rawValue
                 }
+                if let intentUUID {
+                    metadata.intentUUID = intentUUID
+                    metadata.intent = intentEngine.behaviorTemplate(intentUUID: intentUUID, legacyIntentRaw: metadata.intent)?.taskIntent.rawValue
+                }
 
                 if previousAssignmentSource != .manual {
                     let resolvedTitle = title ?? atom.title ?? ""
@@ -1364,6 +1593,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     if let derived = habitEngine.resolveHabit(title: resolvedTitle, intent: resolvedIntent) {
                         metadata.habitUUID = derived.definition.id
                         metadata.habitAssignmentSource = derived.source.rawValue
+                        if metadata.intentUUID == nil {
+                            metadata.intentUUID = derived.definition.defaultIntentUUID
+                        }
                     } else {
                         metadata.habitUUID = nil
                         metadata.habitAssignmentSource = nil
@@ -1502,10 +1734,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func startFocusSession(for task: TaskViewModel) {
         let habit = resolvedHabit(for: task)
+        let intentPresentation = resolvedIntentPresentation(for: task)
         sessionEngine.startSession(
             taskUUID: task.uuid,
             taskTitle: task.title,
-            intent: task.intent,
+            intent: behaviorIntent(for: task),
+            intentUUID: intentPresentation.definitionID,
+            intentTitleSnapshot: intentPresentation.isUnassigned ? nil : intentPresentation.title,
             habitUUID: habit?.id,
             habitTitleSnapshot: habit?.title,
             plannedMinutes: task.estimatedMinutes
@@ -1524,7 +1759,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     userInfo: [
                         "uuid": primary.atomUUID,
                         "atomType": primary.atomType,
-                        "intent": task.intent.rawValue,
+                        "intent": behaviorIntent(for: task).rawValue,
                         "paneAtomUUIDs": panes.map(\.atomUUID),
                         "paneAtomTypes": panes.map(\.atomType)
                     ] as [String: Any]
@@ -1532,7 +1767,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
         } else {
             // Legacy fallback — use old single-UUID fields
-            switch task.intent {
+            switch behaviorIntent(for: task) {
             case .writeContent:
                 if let uuid = task.linkedContentUUID ?? task.linkedIdeaUUID {
                     NotificationCenter.default.post(
@@ -1584,7 +1819,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             let todayStart = Calendar.current.startOfDay(for: Date())
 
             var totalMinutes = 0
-            var intentMinutes: [TaskIntent: Int] = [:]
+            var intentMinutes: [String: IntentSummary] = [:]
 
             for atom in atoms {
                 guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
@@ -1595,12 +1830,14 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
                 totalMinutes += minutes
 
-                let intent = metadata.intent.flatMap { TaskIntent(rawValue: $0) } ?? .general
-                intentMinutes[intent, default: 0] += minutes
+                let summary = intentSummary(intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent, minutes: 0)
+                var updated = intentMinutes[summary.id] ?? summary
+                updated.minutes += minutes
+                intentMinutes[summary.id] = updated
             }
 
-            todayTrackedMinutes = totalMinutes
-            todaySessionsByIntent = intentMinutes
+            assignIfChanged(\.todayTrackedMinutes, to: totalMinutes)
+            assignIfChanged(\.todayIntentSummaries, to: intentMinutes.values.sorted { $0.minutes > $1.minutes })
         } catch {
             print("❌ Dashboard: Failed to load time data: \(error)")
         }
@@ -1611,7 +1848,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             let atoms = try await AtomRepository.shared.fetchAll(type: .deepWorkBlock)
             let todayStart = Calendar.current.startOfDay(for: Date())
 
-            todaySessions = atoms.compactMap { atom -> SessionTimelineEntry? in
+            let nextSessions = atoms.compactMap { atom -> SessionTimelineEntry? in
                 guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
                       let startedDate = PlannerumFormatters.iso8601.date(from: metadata.startedAt),
                       startedDate >= todayStart else { return nil }
@@ -1620,12 +1857,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 let endDate = metadata.endedAt.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
                     ?? startedDate.addingTimeInterval(TimeInterval(actualMinutes * 60))
 
-                let intent = metadata.intent.flatMap { TaskIntent(rawValue: $0) } ?? .general
+                let intent = resolvedIntentPresentation(intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
 
                 return SessionTimelineEntry(
                     id: atom.uuid,
                     title: atom.title ?? "Focus Session",
                     intent: intent,
+                    habitTitle: metadata.habitTitleSnapshot,
                     startTime: startedDate,
                     endTime: endDate,
                     focusScore: metadata.focusScore ?? 100,
@@ -1633,6 +1871,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 )
             }
             .sorted { $0.startTime < $1.startTime }
+            assignIfChanged(\.todaySessions, to: nextSessions)
         } catch {
             print("❌ Dashboard: Failed to load today sessions: \(error)")
         }
@@ -1656,7 +1895,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             // Collect sessions for this week and previous week
             var thisWeekMinutes = 0
             var previousWeekMinutes = 0
-            var dayBuckets: [Date: (minutes: Int, focusScores: [Double], tasks: Int, sessions: Int, intents: [TaskIntent: Int])] = [:]
+            var dayBuckets: [Date: (minutes: Int, focusScores: [Double], tasks: Int, sessions: Int, intents: [String: IntentSummary])] = [:]
 
             // Initialize buckets for each of the 7 days
             for offset in 0..<7 {
@@ -1679,8 +1918,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         bucket.minutes += minutes
                         if let score = metadata.focusScore { bucket.focusScores.append(Double(score)) }
                         bucket.sessions += 1
-                        let intent = metadata.intent.flatMap { TaskIntent(rawValue: $0) } ?? .general
-                        bucket.intents[intent, default: 0] += minutes
+                        let summary = intentSummary(intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
+                        var updated = bucket.intents[summary.id] ?? summary
+                        updated.minutes += minutes
+                        bucket.intents[summary.id] = updated
                         dayBuckets[dayStart] = bucket
                     }
                 } else if startedDate >= previousWeekStart {
@@ -1706,7 +1947,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             var totalFocusScores: [Double] = []
             var totalTasksCompleted = 0
             var totalSessions = 0
-            var intentDistribution: [TaskIntent: Int] = [:]
+            var intentDistribution: [String: IntentSummary] = [:]
 
             for offset in 0..<7 {
                 let day = calendar.date(byAdding: .day, value: offset, to: weekStart)!
@@ -1714,7 +1955,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 let bucket = dayBuckets[dayStart] ?? (0, [], 0, 0, [:])
 
                 let avgFocus = bucket.focusScores.isEmpty ? 0.0 : bucket.focusScores.reduce(0, +) / Double(bucket.focusScores.count)
-                let dominantIntent = bucket.intents.max(by: { $0.value < $1.value })?.key
+                let dominantIntent = bucket.intents.values.max(by: { $0.minutes < $1.minutes })
 
                 days.append(DayReportEntry(
                     id: "\(offset)",
@@ -1729,14 +1970,19 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 totalFocusScores.append(contentsOf: bucket.focusScores)
                 totalTasksCompleted += bucket.tasks
                 totalSessions += bucket.sessions
-                for (intent, mins) in bucket.intents {
-                    intentDistribution[intent, default: 0] += mins
+                for summary in bucket.intents.values {
+                    var updated = intentDistribution[summary.id] ?? intentSummary(intentUUID: summary.id == "unassigned" ? nil : summary.id, legacyIntentRaw: nil)
+                    updated = summary
+                    if let existing = intentDistribution[summary.id] {
+                        updated.minutes = existing.minutes + summary.minutes
+                    }
+                    intentDistribution[summary.id] = updated
                 }
             }
 
             let avgFocus = totalFocusScores.isEmpty ? 0.0 : totalFocusScores.reduce(0, +) / Double(totalFocusScores.count)
 
-            weeklyReportData = ReportData(
+            let nextReport = ReportData(
                 timeRange: .week,
                 startDate: weekStart,
                 endDate: weekEnd,
@@ -1745,9 +1991,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 avgFocusScore: avgFocus,
                 tasksCompleted: totalTasksCompleted,
                 totalSessions: totalSessions,
-                intentDistribution: intentDistribution,
+                intentDistribution: intentDistribution.values.sorted { $0.minutes > $1.minutes },
                 previousPeriodMinutes: previousWeekMinutes
             )
+            assignIfChanged(\.weeklyReportData, to: nextReport)
         } catch {
             print("❌ Dashboard: Failed to load weekly report: \(error)")
         }
@@ -1778,7 +2025,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
             var thisMonthMinutes = 0
             var prevMonthMinutes = 0
-            var dayBuckets: [Date: (minutes: Int, focusScores: [Double], tasks: Int, sessions: Int, intents: [TaskIntent: Int])] = [:]
+            var dayBuckets: [Date: (minutes: Int, focusScores: [Double], tasks: Int, sessions: Int, intents: [String: IntentSummary])] = [:]
 
             for offset in 0..<monthRange.count {
                 guard let day = calendar.date(byAdding: .day, value: offset, to: monthStart) else { continue }
@@ -1798,8 +2045,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         bucket.minutes += minutes
                         if let score = metadata.focusScore { bucket.focusScores.append(Double(score)) }
                         bucket.sessions += 1
-                        let intent = metadata.intent.flatMap { TaskIntent(rawValue: $0) } ?? .general
-                        bucket.intents[intent, default: 0] += minutes
+                        let summary = intentSummary(intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
+                        var updated = bucket.intents[summary.id] ?? summary
+                        updated.minutes += minutes
+                        bucket.intents[summary.id] = updated
                         dayBuckets[dayStart] = bucket
                     }
                 } else if startedDate >= prevMonthStart && startedDate < monthStart {
@@ -1822,14 +2071,14 @@ class CommandCenterDashboardViewModel: ObservableObject {
             var totalFocusScores: [Double] = []
             var totalTasksCompleted = 0
             var totalSessions = 0
-            var intentDistribution: [TaskIntent: Int] = [:]
+            var intentDistribution: [String: IntentSummary] = [:]
 
             for offset in 0..<monthRange.count {
                 guard let day = calendar.date(byAdding: .day, value: offset, to: monthStart) else { continue }
                 let dayStart = calendar.startOfDay(for: day)
                 let bucket = dayBuckets[dayStart] ?? (0, [], 0, 0, [:])
                 let avgFocus = bucket.focusScores.isEmpty ? 0.0 : bucket.focusScores.reduce(0, +) / Double(bucket.focusScores.count)
-                let dominantIntent = bucket.intents.max(by: { $0.value < $1.value })?.key
+                let dominantIntent = bucket.intents.values.max(by: { $0.minutes < $1.minutes })
 
                 days.append(DayReportEntry(
                     id: "\(offset)",
@@ -1844,14 +2093,19 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 totalFocusScores.append(contentsOf: bucket.focusScores)
                 totalTasksCompleted += bucket.tasks
                 totalSessions += bucket.sessions
-                for (intent, mins) in bucket.intents {
-                    intentDistribution[intent, default: 0] += mins
+                for summary in bucket.intents.values {
+                    var updated = intentDistribution[summary.id] ?? intentSummary(intentUUID: summary.id == "unassigned" ? nil : summary.id, legacyIntentRaw: nil)
+                    updated = summary
+                    if let existing = intentDistribution[summary.id] {
+                        updated.minutes = existing.minutes + summary.minutes
+                    }
+                    intentDistribution[summary.id] = updated
                 }
             }
 
             let avgFocus = totalFocusScores.isEmpty ? 0.0 : totalFocusScores.reduce(0, +) / Double(totalFocusScores.count)
 
-            weeklyReportData = ReportData(
+            let nextReport = ReportData(
                 timeRange: .month,
                 startDate: monthStart,
                 endDate: monthEnd,
@@ -1860,9 +2114,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 avgFocusScore: avgFocus,
                 tasksCompleted: totalTasksCompleted,
                 totalSessions: totalSessions,
-                intentDistribution: intentDistribution,
+                intentDistribution: intentDistribution.values.sorted { $0.minutes > $1.minutes },
                 previousPeriodMinutes: prevMonthMinutes
             )
+            assignIfChanged(\.weeklyReportData, to: nextReport)
         } catch {
             print("❌ Dashboard: Failed to load month report: \(error)")
         }
@@ -1897,7 +2152,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         let totalPossible = entries.reduce(0) { $0 + $1.totalDays }
         let rate = totalPossible > 0 ? Double(totalCompletions) / Double(totalPossible) : 0
 
-        habitReportData = HabitReportData(
+        let nextReport = HabitReportData(
             timeRange: selectedReportTab == .month ? .month : .week,
             startDate: startDate,
             endDate: endDate,
@@ -1906,6 +2161,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             totalCompletions: totalCompletions,
             totalPossible: totalPossible
         )
+        assignIfChanged(\.habitReportData, to: nextReport)
     }
 
     // MARK: - Report Navigation

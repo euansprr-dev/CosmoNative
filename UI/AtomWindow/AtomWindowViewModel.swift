@@ -5,6 +5,7 @@ import SwiftUI
 
 @Observable @MainActor
 final class AtomWindowViewModel {
+    private let database = CosmoDatabase.shared
 
     // MARK: - Current Atom
 
@@ -78,6 +79,7 @@ final class AtomWindowViewModel {
 
         do {
             if let atom = try await AtomRepository.shared.fetch(uuid: uuid) {
+                guard !Task.isCancelled else { return }
                 currentAtom = atom
                 AtomRepository.shared.acquireEditingLock(uuid: uuid)
                 saveSession()
@@ -207,28 +209,52 @@ final class AtomWindowViewModel {
     // MARK: - Create
 
     func createNewAtom(type: AtomType) async {
+        if !database.isReady {
+            print("[AtomWindow] createNewAtom requested before database reported ready — type=\(type.rawValue)")
+        }
+
         let atom = Atom.new(type: type, title: "New \(type.displayName)")
 
         do {
             let created = try await AtomRepository.shared.create(atom)
-            await navigate(to: created.uuid)
+            guard let persisted = try await AtomRepository.shared.fetch(uuid: created.uuid) else {
+                print("[AtomWindow] Created atom missing on immediate fetch — uuid=\(created.uuid) type=\(created.type.rawValue)")
+                currentAtom = created
+                saveSession()
+                await refreshRecentAtoms()
+                return
+            }
+
+            await navigate(to: persisted.uuid)
+            await refreshRecentAtoms()
         } catch {
-            print("[AtomWindow] Failed to create atom: \(error)")
+            print("[AtomWindow] Failed to create atom — type=\(type.rawValue) error=\(error)")
         }
     }
 
     // MARK: - Session Persistence
 
     func restoreLastSession() async {
+        if !database.isReady {
+            print("[AtomWindow] restoreLastSession started before database reported ready")
+        }
+
+        guard currentAtom == nil else {
+            return
+        }
+
         // Load recent atoms for empty state
         do {
             recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 8)
+            guard !Task.isCancelled else { return }
         } catch {
-            print("[AtomWindow] Failed to fetch recent atoms: \(error)")
+            print("[AtomWindow] Failed to fetch recent atoms during restore: \(error)")
         }
 
         // Restore last open atom
         if let uuid = UserDefaults.standard.string(forKey: lastAtomKey) {
+            guard !Task.isCancelled else { return }
+            print("[AtomWindow] Restoring last session atom uuid=\(uuid)")
             await navigate(to: uuid)
         }
     }
@@ -241,6 +267,21 @@ final class AtomWindowViewModel {
         if let uuid = currentAtom?.uuid {
             AtomRepository.shared.releaseEditingLock(uuid: uuid)
         }
+    }
+
+    func unloadCurrentSession() {
+        releaseCurrentLock()
+        currentAtom = nil
+        isLoading = false
+        isSearchVisible = false
+        searchQuery = ""
+        searchResults = []
+        selectedSearchIndex = 0
+        selectedTypeFilter = nil
+        backStack.removeAll()
+        forwardStack.removeAll()
+        searchTask?.cancel()
+        searchTask = nil
     }
 
     // MARK: - Recent Atoms Refresh

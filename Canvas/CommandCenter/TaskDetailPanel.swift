@@ -18,7 +18,7 @@ struct TaskDetailPanel: View {
     @State private var editedSchedulingState: String?
     @State private var editedChecklist: [ChecklistItem] = []
     @State private var editedPriority: TaskPriority = .medium
-    @State private var editedIntent: TaskIntent = .general
+    @State private var editedIntentUUID: String? = nil
     @State private var editedHabitUUID: String? = nil
     @State private var editedLinkedAtoms: [TaskLinkedAtom] = []
     @State private var editedTitleMentions: [RichMention] = []
@@ -96,7 +96,7 @@ struct TaskDetailPanel: View {
         editedSchedulingState = task.schedulingState
         editedChecklist = task.checklist
         editedPriority = task.priority
-        editedIntent = task.intent
+        editedIntentUUID = task.intentUUID
         editedHabitUUID = task.habitUUID
         editedLinkedAtoms = task.linkedAtoms
         editedTitleMentions = task.titleMentions
@@ -335,22 +335,23 @@ struct TaskDetailPanel: View {
     // MARK: - Intent (interactive picker)
 
     private var intentSection: some View {
-        detailRow(label: "Intent", icon: "sparkles") {
+        let intentPresentation = viewModel.resolvedIntentPresentation(intentUUID: editedIntentUUID, legacyIntent: task.intent)
+        return detailRow(label: "Intent", icon: "sparkles") {
             CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
-                .taskIntent(task: task, currentIntent: editedIntent, anchor: anchor)
+                .taskIntent(task: task, currentIntentUUID: editedIntentUUID, anchor: anchor)
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: editedIntent.iconName)
+                    Image(systemName: intentPresentation.icon)
                         .font(DS.caption2)
-                    Text(editedIntent.displayName)
+                    Text(intentPresentation.title)
                         .font(DS.caption)
                     Image(systemName: "chevron.down")
                         .font(DS.caption2)
                 }
-                .foregroundStyle(editedIntent.color)
+                .foregroundStyle(intentPresentation.accent)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(editedIntent.color.opacity(0.08), in: Capsule())
+                .background(intentPresentation.accent.opacity(0.08), in: Capsule())
             }
         }
     }

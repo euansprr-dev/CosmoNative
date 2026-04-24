@@ -1,5 +1,5 @@
 // CosmoOS/UI/FocusMode/SwipeStudy/PhysicsHeroHeaderView.swift
-// Dashboard header with key metric boxes for Content Physics
+// Quiet marginalia header for Content Physics
 
 import SwiftUI
 
@@ -8,17 +8,10 @@ struct PhysicsHeroHeaderView: View {
     @State private var hasAppeared = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space16) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             titleRow
-            metricsRow
+            metricsLedger
         }
-        .padding(DS.space20)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .dsRestingShadow()
         .onAppear { withAnimation(ProMotionSprings.cardEntrance) { hasAppeared = true } }
     }
 
@@ -26,15 +19,18 @@ struct PhysicsHeroHeaderView: View {
     private var titleRow: some View {
         HStack(spacing: DS.space8) {
             Image(systemName: "atom")
-                .font(DS.title2)
+                .font(DS.callout)
                 .foregroundStyle(DS.entitySwipe)
                 .accessibilityHidden(true)
 
-            Text("Content Physics")
+            Text("CONTENT PHYSICS")
                 .font(DS.smallCaps)
+                .tracking(1.6)
                 .foregroundStyle(DS.entitySwipe)
 
-            Spacer()
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(height: 0.5)
 
             extractedBadge
         }
@@ -46,59 +42,54 @@ struct PhysicsHeroHeaderView: View {
             Text("Extracted")
                 .font(DS.caption2)
                 .foregroundStyle(DS.green)
-                .padding(.horizontal, DS.space8)
-                .padding(.vertical, 3)
-                .background(DS.greenSoft, in: Capsule())
         }
     }
 
     @ViewBuilder
-    private var metricsRow: some View {
-        HStack(spacing: DS.space8) {
-            metricBox(value: "\(profile.slideQuarks?.count ?? 0)", label: "slides", index: 0)
-            metricBox(value: "\(profile.transitions?.count ?? 0)", label: "transitions", index: 1)
-            metricBox(value: "\(physicsEventCount)", label: "events", index: 2)
-            energyMetricBox(index: 3)
+    private var metricsLedger: some View {
+        VStack(spacing: DS.space8) {
+            metricLine(value: "\(profile.slideQuarks?.count ?? 0)", label: "slides decoded", index: 0)
+            metricLine(value: "\(profile.transitions?.count ?? 0)", label: "causal transitions", index: 1)
+            metricLine(value: "\(physicsEventCount)", label: "physics events", index: 2)
+            energyMetricLine(index: 3)
         }
     }
 
     @ViewBuilder
-    private func metricBox(value: String, label: String, index: Int) -> some View {
-        VStack(spacing: DS.space4) {
+    private func metricLine(value: String, label: String, index: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
             Text(value)
-                .font(DS.title1)
+                .font(.system(size: 22, weight: .light, design: .serif))
                 .foregroundStyle(DS.text)
+                .monospacedDigit()
+                .frame(width: 34, alignment: .leading)
             Text(label)
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
+            Spacer(minLength: DS.space8)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, DS.space10)
-        .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 8)
+        .offset(y: hasAppeared ? 0 : 4)
         .animation(ProMotionSprings.staggered(index: index), value: hasAppeared)
     }
 
     @ViewBuilder
-    private func energyMetricBox(index: Int) -> some View {
+    private func energyMetricLine(index: Int) -> some View {
         let isProportional = profile.physicsEvents?.energyResolution?.proportional == true
         let hasEnergy = profile.physicsEvents?.energyResolution != nil
 
-        VStack(spacing: DS.space4) {
+        HStack(alignment: .center, spacing: DS.space8) {
             Image(systemName: hasEnergy ? (isProportional ? "checkmark.circle.fill" : "xmark.circle.fill") : "minus.circle")
-                .font(DS.title1)
+                .font(DS.callout)
                 .foregroundStyle(hasEnergy ? (isProportional ? DS.green : DS.red) : DS.textMuted)
                 .accessibilityLabel(hasEnergy ? (isProportional ? "Proportional energy" : "Disproportional energy") : "No energy data")
             Text("energy")
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
+            Spacer(minLength: DS.space8)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, DS.space10)
-        .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 8)
+        .offset(y: hasAppeared ? 0 : 4)
         .animation(ProMotionSprings.staggered(index: index), value: hasAppeared)
     }
 

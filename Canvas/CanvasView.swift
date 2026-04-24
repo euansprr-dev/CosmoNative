@@ -1001,6 +1001,16 @@ struct CanvasView: View {
                     handleCreateInboxBlock(notification: notification)
                 }
 
+                addCanvasObserver(
+                    forName: CosmoNotification.Canvas.refreshThinkspacePlacements,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    handleRefreshThinkspacePlacements(notification: notification)
+                }
+
                 // Listen for inbox block closure
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.closeInboxBlock,
@@ -2850,6 +2860,19 @@ struct CanvasView: View {
         saveInboxBlockPositions()
 
         print("📪 Closed inbox block: \(blockId)")
+    }
+
+    private func handleRefreshThinkspacePlacements(notification: Notification) {
+        let requestedThinkspaceId = notification.userInfo?["thinkspaceId"] as? String
+        guard requestedThinkspaceId == thinkspaceId else { return }
+
+        Task { @MainActor in
+            await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+            await clusterEngine.loadUserClusters(
+                thinkspaceId: thinkspaceId,
+                blocks: spatialEngine.blocks
+            )
+        }
     }
 
     private func handleUpdateInboxBlockPosition(notification: Notification) {

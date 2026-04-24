@@ -365,7 +365,7 @@ public struct CommandKView: View {
         case .searchResults:
             return min(CommandKMetrics.searchWidth, availableWidth)
         case .expandedDomain(let tab):
-            let targetWidth: CGFloat = tab == .ideas ? 1180 : 900
+            let targetWidth: CGFloat = tab == .ideas ? 1320 : 900
             return min(targetWidth, availableWidth)
         }
     }

@@ -6,11 +6,17 @@ import SwiftUI
 
 // MARK: - Pane Content
 
+enum PaneChromeStyle: Equatable {
+    case standard
+    case minimal
+}
+
 /// What a single pane displays — either a focus mode for an atom or a thinkspace canvas
 enum PaneContent: Identifiable, Equatable {
     case entity(EntitySelection)
     case thinkspace(thinkspaceId: String)
     case commandCenter
+    case collaborator(target: CollaborationTarget, presetId: String?)
 
     var id: String {
         switch self {
@@ -20,6 +26,8 @@ enum PaneContent: Identifiable, Equatable {
             return "thinkspace_\(thinkspaceId)"
         case .commandCenter:
             return "commandCenter"
+        case .collaborator:
+            return "collaborator"
         }
     }
 
@@ -27,7 +35,7 @@ enum PaneContent: Identifiable, Equatable {
     var entityId: Int64? {
         switch self {
         case .entity(let entity): return entity.id
-        case .thinkspace, .commandCenter: return nil
+        case .thinkspace, .commandCenter, .collaborator: return nil
         }
     }
 
@@ -35,15 +43,29 @@ enum PaneContent: Identifiable, Equatable {
     var entitySelection: EntitySelection? {
         switch self {
         case .entity(let entity): return entity
-        case .thinkspace, .commandCenter: return nil
+        case .thinkspace, .commandCenter, .collaborator: return nil
         }
     }
 
     /// The thinkspace ID if this is a thinkspace pane
     var thinkspaceId: String? {
         switch self {
-        case .entity, .commandCenter: return nil
+        case .entity, .commandCenter, .collaborator: return nil
         case .thinkspace(let id): return id
+        }
+    }
+
+    var collaborationTarget: CollaborationTarget? {
+        guard case .collaborator(let target, _) = self else { return nil }
+        return target
+    }
+
+    var chromeStyle: PaneChromeStyle {
+        switch self {
+        case .collaborator:
+            return .minimal
+        case .entity, .thinkspace, .commandCenter:
+            return .standard
         }
     }
 
@@ -73,6 +95,10 @@ class PaneManager: ObservableObject {
     /// ID of the pane the user last interacted with (tap/focus).
     /// Used to determine which pane's context the CosmoWindow and voice system see.
     @Published var activePaneId: String? = nil
+
+    /// ID of the pane whose entity currently owns global context while another pane
+    /// (such as the collaborator) may be focused.
+    @Published var contextOwnerPaneId: String? = nil
 
     // MARK: - Constants
 
@@ -143,6 +169,7 @@ class PaneManager: ObservableObject {
 
         // Auto-activate the newly opened pane
         activePaneId = content.id
+        contextOwnerPaneId = content.entitySelection != nil ? content.id : contextOwnerPaneId
 
         // Animate split ratio when first pane opens
         if isFirst {
@@ -155,13 +182,32 @@ class PaneManager: ObservableObject {
     /// Close a pane at a specific index.
     func closePane(at index: Int) {
         guard panes.indices.contains(index) else { return }
-        let closedId = panes[index].id
+        let closedPane = panes[index]
+        let closedId = closedPane.id
         panes.remove(at: index)
         redistributeSizes()
+
+        if closedId == "collaborator" {
+            Task { @MainActor in
+                await CosmoWindowViewModel.shared.deactivateCollaborator()
+            }
+        }
 
         // If the closed pane was active, activate the last remaining pane
         if activePaneId == closedId {
             activePaneId = panes.last?.id
+        }
+
+        if contextOwnerPaneId == closedId {
+            if let collaborator = panes.first(where: { $0.id == "collaborator" }),
+               let targetPaneID = collaborator.collaborationTarget?.paneID,
+               panes.contains(where: { $0.id == targetPaneID }) {
+                contextOwnerPaneId = targetPaneID
+            } else {
+                contextOwnerPaneId = panes.reversed().first(where: { $0.entitySelection != nil })?.id
+            }
+        } else if closedPane.id == "collaborator" {
+            contextOwnerPaneId = panes.reversed().first(where: { $0.entitySelection != nil })?.id
         }
 
         // Animate split ratio back to full width when all panes are closed
@@ -170,6 +216,7 @@ class PaneManager: ObservableObject {
                 mainSplitRatio = 1.0
             }
             activePaneId = nil
+            contextOwnerPaneId = nil
         }
     }
 
@@ -193,6 +240,7 @@ class PaneManager: ObservableObject {
             mainSplitRatio = 1.0
         }
         activePaneId = nil
+        contextOwnerPaneId = nil
     }
 
     // MARK: - Active Pane Management
@@ -202,9 +250,72 @@ class PaneManager: ObservableObject {
         guard activePaneId != id else { return }
         activePaneId = id
 
-        // Push active pane's entity to VoiceContextStore
-        if let pane = panes.first(where: { $0.id == id }),
-           let entity = pane.entitySelection {
+        if let pane = panes.first(where: { $0.id == id }) {
+            if let entity = pane.entitySelection {
+                contextOwnerPaneId = id
+                VoiceContextStore.shared.focusedEntity = entity
+            } else if let targetPaneID = pane.collaborationTarget?.paneID,
+                      panes.contains(where: { $0.id == targetPaneID }) {
+                contextOwnerPaneId = targetPaneID
+            }
+        }
+    }
+
+    func openOrActivateCollaborator(target: CollaborationTarget, presetId: String?) {
+        let collaborator = PaneContent.collaborator(target: target, presetId: presetId)
+
+        if let existingIndex = panes.firstIndex(where: { $0.id == collaborator.id }) {
+            panes[existingIndex] = collaborator
+            activePaneId = collaborator.id
+        } else {
+            guard panes.count < maxPanes else { return }
+            let isFirst = panes.isEmpty
+
+            if let targetPaneID = target.paneID,
+               let targetIndex = panes.firstIndex(where: { $0.id == targetPaneID }) {
+                panes.insert(collaborator, at: min(targetIndex + 1, panes.count))
+            } else {
+                panes.append(collaborator)
+            }
+            redistributeSizes()
+            activePaneId = collaborator.id
+
+            if isFirst {
+                withAnimation(ProMotionSprings.snappy) {
+                    mainSplitRatio = 0.5
+                }
+            }
+        }
+
+        contextOwnerPaneId = target.paneID
+    }
+
+    func closeCollaborator() {
+        guard let index = panes.firstIndex(where: { $0.id == "collaborator" }) else { return }
+        closePane(at: index)
+    }
+
+    func updateCollaboratorTarget(_ target: CollaborationTarget, presetId: String?) {
+        guard let index = panes.firstIndex(where: { $0.id == "collaborator" }) else { return }
+        panes[index] = .collaborator(target: target, presetId: presetId)
+        contextOwnerPaneId = target.paneID
+    }
+
+    var collaboratorTarget: CollaborationTarget? {
+        panes.first(where: { $0.id == "collaborator" })?.collaborationTarget
+    }
+
+    func entitySelection(forPaneID id: String?) -> EntitySelection? {
+        guard let id else { return nil }
+        return panes.first(where: { $0.id == id })?.entitySelection
+    }
+
+    func paneID(for selection: EntitySelection) -> String? {
+        panes.first(where: { $0.entitySelection == selection })?.id
+    }
+
+    func pushContextOwnerToVoiceStore() {
+        if let entity = entitySelection(forPaneID: contextOwnerPaneId) {
             VoiceContextStore.shared.focusedEntity = entity
         }
     }

@@ -554,7 +554,7 @@ public final class CommandKViewModel: ObservableObject {
     @Published public var swipeGrouping: SwipeGrouping = .narrativeStyle
 
     /// Current sort mode for swipe gallery
-    @Published public var swipeSortMode: SwipeSortMode = .score
+    @Published public var swipeSortMode: SwipeSortMode = .recent
 
     /// Platform filter for swipe gallery (nil = all)
     @Published public var swipePlatformFilter: String?
@@ -1568,12 +1568,18 @@ public final class CommandKViewModel: ObservableObject {
             }
 
             switch sortMode {
-            case .score:
-                items.sort { ($0.hookScore ?? 0) > ($1.hookScore ?? 0) }
             case .recent:
                 items.sort { $0.createdAt > $1.createdAt }
             case .oldest:
                 items.sort { $0.createdAt < $1.createdAt }
+            case .alphabetical:
+                items.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            case .creator:
+                items.sort {
+                    let a = $0.creatorName ?? $0.author ?? ""
+                    let b = $1.creatorName ?? $1.author ?? ""
+                    return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+                }
             }
 
             let sections = buildClusteredSections(from: items)
@@ -1771,7 +1777,21 @@ public final class CommandKViewModel: ObservableObject {
             atom = atom.addingLink(.ideaToClient(clientUUID))
         }
 
-        let _ = try? await AtomRepository.shared.create(atom)
+        do {
+            let created = try await AtomRepository.shared.create(atom)
+
+            if let clientName = await clientName(for: clientUUID),
+               let galleryItem = created.toIdeaGalleryItem(clientName: clientName) {
+                ideaGalleryItems.insert(galleryItem, at: 0)
+            } else if let galleryItem = created.toIdeaGalleryItem() {
+                ideaGalleryItems.insert(galleryItem, at: 0)
+            }
+            ideaGalleryItems.sort { $0.updatedAt > $1.updatedAt }
+            ideaGalleryLoaded = true
+        } catch {
+            errorMessage = "Failed to capture idea: \(error.localizedDescription)"
+            return
+        }
 
         // Add reciprocal link on client
         if let clientUUID,
@@ -1783,6 +1803,12 @@ public final class CommandKViewModel: ObservableObject {
         }
 
         await loadIdeaGallery(forceReload: true)
+    }
+
+    private func clientName(for clientUUID: String?) async -> String? {
+        guard let clientUUID else { return nil }
+        guard let client = try? await AtomRepository.shared.fetch(uuid: clientUUID) else { return nil }
+        return client.title
     }
 
     // MARK: - Unified Search
@@ -2040,7 +2066,7 @@ public final class CommandKViewModel: ObservableObject {
         swipeContentFormatFilters = []
         swipeNicheFilter = nil
         swipeCreatorFilter = nil
-        swipeSortMode = .score
+        swipeSortMode = .recent
         selectedUUIDs.removeAll()
         ideaGalleryItems = []
         ideaGalleryLoaded = false
@@ -2085,15 +2111,17 @@ public enum SwipeGrouping: String, CaseIterable {
 
 /// Sort mode for the swipe gallery
 public enum SwipeSortMode: String, CaseIterable {
-    case score
     case recent
     case oldest
+    case alphabetical
+    case creator
 
     public var displayName: String {
         switch self {
-        case .score: return "Score \u{25BC}"
-        case .recent: return "Recent"
-        case .oldest: return "Oldest"
+        case .recent: return "Most Recent"
+        case .oldest: return "Oldest First"
+        case .alphabetical: return "A–Z"
+        case .creator: return "By Creator"
         }
     }
 }

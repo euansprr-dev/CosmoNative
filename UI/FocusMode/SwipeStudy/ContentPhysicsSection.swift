@@ -11,7 +11,7 @@ struct ContentPhysicsSection: View {
     @State private var hasAppeared = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space24) {
+        VStack(alignment: .leading, spacing: DS.space18) {
             PhysicsHeroHeaderView(profile: profile)
             eventTimelineSection
             arcVisualizationSection
@@ -52,7 +52,7 @@ struct ContentPhysicsSection: View {
 
     @ViewBuilder
     private var sectionGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.space12) {
+        VStack(alignment: .leading, spacing: DS.space8) {
             ForEach(PhysicsDetailSection.allCases) { section in
                 if sectionHasData(section) {
                     sectionCard(for: section)
@@ -320,10 +320,13 @@ private struct AntimatterFooterView: View {
             headerRow
             itemsList
         }
-        .padding(DS.space16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.redSoft, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.red.opacity(0.2), lineWidth: 1))
+        .padding(.leading, DS.space10)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(DS.red.opacity(0.32))
+                .frame(width: 1)
+        }
     }
 
     @ViewBuilder

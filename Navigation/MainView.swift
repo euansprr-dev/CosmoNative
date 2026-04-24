@@ -452,6 +452,10 @@ struct MainView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openCollaboratorPane)) { notification in
+            guard let payload = CosmoNotification.Navigation.CollaboratorPanePayload(from: notification) else { return }
+            handleOpenCollaboratorPane(atomUUID: payload.atomUUID, presetId: payload.presetId)
+        }
         .onChange(of: appState.focusedEntity) { _, newValue in
             // Dismiss peek sidebar when entering focus mode
             if newValue != nil {
@@ -1036,6 +1040,52 @@ struct MainView: View {
                 withAnimation(.easeOut(duration: 0.2)) {
                     showActivationLoading = false
                 }
+            }
+        }
+    }
+
+    private func handleOpenCollaboratorPane(atomUUID: String, presetId: String?) {
+        Task { @MainActor in
+            do {
+                guard let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) else { return }
+                let entityType = mapAtomTypeToEntityType(atom.type)
+                guard CollaboratorPreset.deepen.compatibleSurfaces.contains(entityType) else { return }
+
+                let entityId = atom.id ?? 0
+                let selection = EntitySelection(id: entityId, type: entityType)
+
+                let source: CollaborationTargetSource
+                if appState.focusedEntity == selection {
+                    source = .focusMode
+                } else if let activePaneId = paneManager.activePaneId,
+                          paneManager.entitySelection(forPaneID: activePaneId) == selection {
+                    source = .pane(paneID: activePaneId)
+                } else if let ownerPaneId = paneManager.contextOwnerPaneId,
+                          paneManager.entitySelection(forPaneID: ownerPaneId) == selection {
+                    source = .pane(paneID: ownerPaneId)
+                } else if let paneID = paneManager.paneID(for: selection) {
+                    source = .pane(paneID: paneID)
+                } else {
+                    source = .focusMode
+                }
+
+                let target = CollaborationTarget(
+                    source: source,
+                    entityID: entityId,
+                    entityType: entityType,
+                    atomUUID: atom.uuid,
+                    title: atom.title ?? "Untitled"
+                )
+
+                withAnimation(ProMotionSprings.snappy) {
+                    paneManager.openOrActivateCollaborator(target: target, presetId: presetId)
+                }
+                paneManager.pushContextOwnerToVoiceStore()
+
+                await CosmoWindowViewModel.shared.activateCollaborator(target: target, presetID: presetId)
+                CosmoWindowPanelController.shared.hide()
+            } catch {
+                print("MainView: handleOpenCollaboratorPane failed: \(error)")
             }
         }
     }

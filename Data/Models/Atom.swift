@@ -2148,6 +2148,35 @@ public enum TaskIntent: String, Codable, CaseIterable, Sendable {
     }
 }
 
+public enum IntentBehaviorTemplate: String, Codable, CaseIterable, Sendable {
+    case writeContent
+    case research
+    case studySwipes
+    case deepThink
+    case review
+
+    var taskIntent: TaskIntent {
+        switch self {
+        case .writeContent: return .writeContent
+        case .research: return .research
+        case .studySwipes: return .studySwipes
+        case .deepThink: return .deepThink
+        case .review: return .review
+        }
+    }
+
+    init?(_ taskIntent: TaskIntent) {
+        switch taskIntent {
+        case .writeContent: self = .writeContent
+        case .research: self = .research
+        case .studySwipes: self = .studySwipes
+        case .deepThink: self = .deepThink
+        case .review: self = .review
+        case .general, .custom: return nil
+        }
+    }
+}
+
 /// Metadata for task atoms
 struct TaskMetadata: Codable, Sendable {
     var status: String?
@@ -2169,6 +2198,9 @@ struct TaskMetadata: Codable, Sendable {
 
     /// Task intent determining what opens on session start
     var intent: String?
+
+    /// Primary user-facing custom intent definition UUID.
+    var intentUUID: String?
 
     /// Pre-linked idea UUID for .writeContent tasks
     var linkedIdeaUUID: String?
@@ -2352,6 +2384,8 @@ struct DeepWorkSessionMetadata: Codable, Sendable {
     var focusScore: Double?             // 0-100
     var distractionCount: Int?
     var intent: String?                 // TaskIntent raw value
+    var intentUUID: String?
+    var intentTitleSnapshot: String?
     var habitUUID: String?
     var habitTitleSnapshot: String?
     var outputAtomUUIDs: [String]?      // Atoms created during session

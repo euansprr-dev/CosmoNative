@@ -187,7 +187,7 @@ final class InstagramExtractor: Sendable {
         }
     }
 
-    private func betterPartialResult(
+    func betterPartialResult(
         current: InstagramMediaData?,
         candidate: InstagramMediaData
     ) -> InstagramMediaData {
@@ -204,12 +204,23 @@ final class InstagramExtractor: Sendable {
     }
 
     private func partialScore(_ mediaData: InstagramMediaData) -> Int {
+        let isPostURL = isLikelyCarouselPostURL(mediaData.originalURL)
+        let itemCount = mediaData.carouselItems?.count ?? 0
         var score = 0
         if mediaData.videoURL != nil { score += 100 }
         if mediaData.thumbnailURL != nil { score += 20 }
         if !(mediaData.caption?.isEmpty ?? true) { score += 10 }
         if !(mediaData.authorUsername?.isEmpty ?? true) { score += 5 }
-        score += (mediaData.carouselItems?.count ?? 0) * 3
+        score += itemCount * 3
+
+        if isPostURL {
+            if itemCount > 0 {
+                score += 500 + (itemCount * 25)
+            } else if mediaData.videoURL == nil {
+                score -= 200
+            }
+        }
+
         return score
     }
 
@@ -225,6 +236,11 @@ final class InstagramExtractor: Sendable {
         }
 
         return score
+    }
+
+    private func isLikelyCarouselPostURL(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        return path.contains("/p/") || path.contains("/share/p/")
     }
 
     private func mediaData(

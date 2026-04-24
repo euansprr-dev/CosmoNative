@@ -8,13 +8,14 @@ import SwiftUI
 struct DashboardFocusTimer: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
 
     private var session: ActiveDeepWorkSession? {
-        viewModel.sessionEngine.activeSession
+        sessionEngine.activeSession
     }
 
     private var isRunning: Bool {
-        viewModel.sessionEngine.isTimerRunning
+        sessionEngine.isTimerRunning
     }
 
     var body: some View {
@@ -103,14 +104,14 @@ struct DashboardFocusTimer: View {
                 .fill(focusScoreColor)
                 .frame(width: 8, height: 8)
 
-            Text("\(Int(viewModel.sessionEngine.focusScore))%")
+            Text("\(Int(sessionEngine.focusScore))%")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(DS.textSecondary)
         }
     }
 
     private var focusScoreColor: Color {
-        let score = viewModel.sessionEngine.focusScore
+        let score = sessionEngine.focusScore
         if score >= 80 { return DS.green }
         if score >= 50 { return DS.orange }
         return DS.red
@@ -121,7 +122,7 @@ struct DashboardFocusTimer: View {
             if isRunning {
                 // Pause button
                 Button {
-                    viewModel.sessionEngine.pauseSession()
+                    sessionEngine.pauseSession()
                 } label: {
                     Image(systemName: "pause.fill")
                         .font(.system(size: 12))
@@ -133,7 +134,7 @@ struct DashboardFocusTimer: View {
             } else if session != nil {
                 // Resume button
                 Button {
-                    viewModel.sessionEngine.resumeSession()
+                    sessionEngine.resumeSession()
                 } label: {
                     Image(systemName: "play.fill")
                         .font(.system(size: 12))
@@ -147,7 +148,7 @@ struct DashboardFocusTimer: View {
             // Stop button
             Button {
                 Task {
-                    await viewModel.sessionEngine.endSession()
+                    await sessionEngine.endSession()
                 }
             } label: {
                 Image(systemName: "stop.fill")
@@ -163,7 +164,7 @@ struct DashboardFocusTimer: View {
     // MARK: - Helpers
 
     private var formattedTime: String {
-        let seconds = viewModel.sessionEngine.elapsedSeconds
+        let seconds = sessionEngine.elapsedSeconds
         let mins = seconds / 60
         let secs = seconds % 60
         return String(format: "%02d:%02d", mins, secs)

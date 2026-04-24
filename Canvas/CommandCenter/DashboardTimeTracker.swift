@@ -1,5 +1,5 @@
 // Canvas/CommandCenter/DashboardTimeTracker.swift
-// Timery-style time tracking panel: active timer and today's summary
+// Compact macOS command strip for time tracking
 // March 2026
 
 import SwiftUI
@@ -7,28 +7,79 @@ import SwiftUI
 struct DashboardTimeTracker: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeader
+        VStack(alignment: .leading, spacing: DS.space8) {
+            compactCommandStrip
 
-            if let session = viewModel.sessionEngine.activeSession {
+            if let session = sessionEngine.activeSession {
                 activeTimerCard(session)
             }
-
-            todayTimeSummary
         }
     }
 
-    private var sectionHeader: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "timer")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.giltMuted)
+    private var compactCommandStrip: some View {
+        HStack(spacing: DS.space12) {
+            HStack(spacing: DS.space8) {
+                Image(systemName: "timer")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.giltMuted)
 
-            Text("Time Tracking")
-                .font(DS.smallCaps)
-                .foregroundStyle(DS.giltMuted)
+                Text("Time Tracking")
+                    .font(DS.smallCaps)
+                    .foregroundStyle(DS.giltMuted)
+
+                Text(formattedTodayTotal)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(DS.inkWash)
+
+                Text("today")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.inkFaded)
+            }
+
+            if !viewModel.todayIntentSummaries.isEmpty {
+                intentBreakdownBar
+                    .frame(width: 140)
+            }
+
+            Spacer(minLength: DS.space16)
+
+            primaryAction
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space8)
+        .background(DS.vellum.opacity(0.35), in: .rect(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DS.sepiaSubtle, lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private var primaryAction: some View {
+        if sessionEngine.activeSession != nil {
+            if sessionEngine.isTimerRunning {
+                commandButton(title: "Pause", icon: "pause.fill", isProminent: false) {
+                    sessionEngine.pauseSession()
+                }
+            } else {
+                commandButton(title: "Resume", icon: "play.fill", isProminent: true) {
+                    sessionEngine.resumeSession()
+                }
+            }
+        } else {
+            commandButton(
+                title: focusCandidate == nil ? "Select a task" : "Start focus",
+                icon: "play.fill",
+                isProminent: focusCandidate != nil
+            ) {
+                guard let task = focusCandidate else { return }
+                viewModel.startFocusSession(for: task)
+            }
+            .disabled(focusCandidate == nil)
+            .opacity(focusCandidate == nil ? 0.55 : 1)
         }
     }
 
@@ -38,119 +89,109 @@ struct DashboardTimeTracker: View {
             intentUUID: session.intentUUID,
             legacyIntentRaw: session.intent.rawValue
         )
-        VStack(spacing: 8) {
-            HStack {
-                Image(systemName: intentPresentation.icon)
-                    .font(.system(size: 10))
-                    .foregroundColor(intentPresentation.accent)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(intentPresentation.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+        VStack(alignment: .leading, spacing: DS.space10) {
+            HStack(spacing: DS.space8) {
+                Image(systemName: intentPresentation.icon)
+                    .font(DS.caption)
+                    .foregroundStyle(intentPresentation.accent)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(session.taskTitle)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
 
-                    if let habitTitle = session.habitTitleSnapshot {
-                        Text(habitTitle)
-                            .font(.system(size: 10))
-                            .foregroundColor(DS.textSecondary)
-                            .lineLimit(1)
+                    HStack(spacing: DS.space6) {
+                        Text(intentPresentation.title)
+                            .font(DS.caption2)
+                            .foregroundStyle(intentPresentation.accent)
+
+                        if let habitTitle = session.habitTitleSnapshot {
+                            Text(habitTitle)
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.textMuted)
+                        }
                     }
                 }
-                
-                Text(session.taskTitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-                    .lineLimit(1)
 
                 Spacer()
 
-                HStack(spacing: 4) {
+                HStack(spacing: DS.space6) {
                     Circle()
                         .fill(focusScoreColor)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 6, height: 6)
 
-                    Text("\(Int(viewModel.sessionEngine.focusScore))%")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                    Text("\(Int(sessionEngine.focusScore))%")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: DS.space12) {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Text(formattedElapsedTime)
-                        .font(.system(size: 28, weight: .light, design: .monospaced))
-                        .foregroundColor(DS.text)
+                        .font(.system(size: 24, weight: .light, design: .monospaced))
+                        .foregroundStyle(DS.inkWash)
                 }
 
                 Spacer()
 
-                HStack(spacing: 8) {
-                    if viewModel.sessionEngine.isTimerRunning {
-                        controlButton(icon: "pause.fill", color: DS.text, bg: DS.surfaceElevated) {
-                            viewModel.sessionEngine.pauseSession()
+                HStack(spacing: DS.space8) {
+                    if sessionEngine.isTimerRunning {
+                        iconControlButton(icon: "pause.fill", color: DS.text, bg: DS.vellumDeep) {
+                            sessionEngine.pauseSession()
                         }
                     } else {
-                        controlButton(icon: "play.fill", color: .white, bg: DS.accent) {
-                            viewModel.sessionEngine.resumeSession()
+                        iconControlButton(icon: "play.fill", color: DS.textOnAccent, bg: DS.accent) {
+                            sessionEngine.resumeSession()
                         }
                     }
 
-                    controlButton(icon: "stop.fill", color: DS.red, bg: DS.red.opacity(0.1)) {
-                        Task { await viewModel.sessionEngine.endSession() }
+                    iconControlButton(icon: "stop.fill", color: DS.red, bg: DS.redSoft.opacity(0.7)) {
+                        Task { await sessionEngine.endSession() }
                     }
                 }
             }
         }
-        .padding(12)
-        .background(DS.vellum, in: RoundedRectangle(cornerRadius: 14))
+        .padding(DS.space12)
+        .background(DS.vellum.opacity(0.5), in: .rect(cornerRadius: 10))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(DS.gilt.opacity(0.4), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(DS.sepiaBorder.opacity(0.65), lineWidth: 0.5)
         )
     }
 
-    private func controlButton(icon: String, color: Color, bg: Color, action: @escaping () -> Void) -> some View {
+    private func commandButton(title: String, icon: String, isProminent: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundColor(color)
-                .frame(width: 32, height: 32)
-                .background(bg, in: Circle())
+            HStack(spacing: DS.space6) {
+                Image(systemName: icon)
+                    .font(DS.caption2)
+                Text(title)
+                    .font(DS.caption)
+            }
+            .foregroundStyle(isProminent ? DS.textOnAccent : DS.inkFaded)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space6)
+            .background(isProminent ? DS.accent : DS.vellumDeep.opacity(0.65), in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(isProminent ? DS.accent.opacity(0.25) : DS.sepiaSubtle, lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
     }
 
-    private var todayTimeSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(formattedTodayTotal)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.inkWash)
-
-                Text("tracked today")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.inkFaded)
-
-                Spacer()
-            }
-
-            if !viewModel.todayIntentSummaries.isEmpty {
-                intentBreakdownBar
-                    .padding(2)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(DS.sepiaBorder, lineWidth: 0.5)
-                    )
-                intentLegend
-            }
+    private func iconControlButton(icon: String, color: Color, bg: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(DS.caption)
+                .foregroundStyle(color)
+                .frame(width: 28, height: 28)
+                .background(bg, in: Circle())
         }
-        .padding(10)
-        .background(DS.vellum, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.sepiaBorder, lineWidth: 0.5)
-        )
+        .buttonStyle(.plain)
     }
 
     private var intentBreakdownBar: some View {
@@ -158,34 +199,14 @@ struct DashboardTimeTracker: View {
             let total = max(viewModel.todayTrackedMinutes, 1)
             HStack(spacing: 1) {
                 ForEach(sortedIntentEntries, id: \.key.id) { entry in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(entry.key.accent)
-                        .frame(width: max(CGFloat(entry.value) / CGFloat(total) * geo.size.width - 1, 4))
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(entry.key.accent.opacity(0.75))
+                        .frame(width: max(CGFloat(entry.value) / CGFloat(total) * geo.size.width - 1, 3))
                 }
             }
         }
-        .frame(height: 8)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
-
-    private var intentLegend: some View {
-        HStack(spacing: 8) {
-            ForEach(sortedIntentEntries.prefix(4), id: \.key.id) { entry in
-                HStack(spacing: 3) {
-                    Circle()
-                        .fill(entry.key.accent)
-                        .frame(width: 6, height: 6)
-
-                    Text(entry.key.title)
-                        .font(.system(size: 9))
-                        .foregroundColor(DS.textMuted)
-
-                    Text("\(entry.value)m")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
-                }
-            }
-        }
+        .frame(height: 5)
+        .clipShape(.rect(cornerRadius: 2.5))
     }
 
     private var sortedIntentEntries: [(key: IntentSummary, value: Int)] {
@@ -194,8 +215,20 @@ struct DashboardTimeTracker: View {
             .sorted { $0.value > $1.value }
     }
 
+    private var focusCandidate: TaskViewModel? {
+        if let index = viewModel.selectedTaskIndex,
+           viewModel.currentVisibleTasks.indices.contains(index) {
+            let selected = viewModel.currentVisibleTasks[index]
+            if !selected.isCompleted {
+                return selected
+            }
+        }
+
+        return viewModel.currentVisibleTasks.first { !$0.isCompleted }
+    }
+
     private var focusScoreColor: Color {
-        let score = viewModel.sessionEngine.focusScore
+        let score = sessionEngine.focusScore
         if score >= 80 { return DS.green }
         if score >= 50 { return DS.orange }
         return DS.red
@@ -203,7 +236,7 @@ struct DashboardTimeTracker: View {
 
     private var formattedElapsedTime: String {
         let totalSeconds: Int
-        if let session = viewModel.sessionEngine.activeSession {
+        if let session = sessionEngine.activeSession {
             totalSeconds = Int(session.elapsedActiveSeconds)
         } else {
             totalSeconds = 0

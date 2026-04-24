@@ -52,7 +52,7 @@ struct WellSourcesBlock: View {
 
     private var linkedSourcesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("LINKED SOURCES")
+            linkedSourcesHeader
 
             if sources.isEmpty {
                 Text("Nothing is attached yet.")
@@ -86,6 +86,20 @@ struct WellSourcesBlock: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(DS.sepiaBorder.opacity(0.8), lineWidth: 0.5)
+                )
+            }
+        }
+    }
+
+    private var linkedSourcesHeader: some View {
+        HStack(spacing: 8) {
+            sectionLabel("LINKED SOURCES")
+            Spacer(minLength: 8)
+            if !sources.isEmpty {
+                iconActionButton(
+                    label: "Add source",
+                    systemImage: "plus",
+                    action: onAddSource
                 )
             }
         }
@@ -188,6 +202,23 @@ struct WellSourcesBlock: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func iconActionButton(label: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DS.giltMuted)
+                .frame(width: 24, height: 24)
+                .background(DS.vellumDeep.opacity(0.45), in: Circle())
+                .overlay(
+                    Circle()
+                        .stroke(DS.sepiaBorder.opacity(0.8), lineWidth: 0.5)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private func toggleExpand(_ uuid: String) {

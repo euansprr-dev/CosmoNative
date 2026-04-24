@@ -11,14 +11,19 @@ struct DashboardObjectivesBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.space8) {
             if !viewModel.objectives.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: DS.space8) {
                     sectionHeader
                     objectivesList
                 }
-                .padding(14)
-                .dsVellumInset(cornerRadius: 10)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space10)
+                .background(DS.vellum.opacity(0.34), in: .rect(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(DS.sepiaSubtle, lineWidth: 0.5)
+                )
             }
         }
     }
@@ -29,7 +34,7 @@ struct DashboardObjectivesBar: View {
         HStack(spacing: 6) {
             Image(systemName: "target")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.giltMuted)
+                .foregroundStyle(DS.giltMuted)
 
             Text("Objectives")
                 .font(DS.smallCaps)
@@ -38,14 +43,14 @@ struct DashboardObjectivesBar: View {
             Spacer()
 
             Text("Q\(currentQuarter)")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.gilt)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(DS.giltSoft, in: .rect(cornerRadius: 4))
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(DS.gilt)
+                .padding(.horizontal, DS.space6)
+                .padding(.vertical, 2)
+                .background(DS.giltSoft.opacity(0.7), in: .rect(cornerRadius: 4))
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(DS.giltMuted, lineWidth: 0.5)
+                        .stroke(DS.giltMuted.opacity(0.55), lineWidth: 0.5)
                 )
         }
     }
@@ -78,14 +83,14 @@ struct DashboardObjectivesBar: View {
             HStack {
                 Text(objective.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.inkWash)
+                    .foregroundStyle(DS.inkWash)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text("\(Int(objective.progress * 100))%")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(objective.paceStatus.color)
+                    .foregroundStyle(objective.paceStatus.color)
             }
 
             // Track-and-bead — replaces flat progress bar

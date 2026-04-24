@@ -354,16 +354,24 @@ struct SidebarThinkspaceSection: View {
         let isExpandable = thinkspaceIsExpandable(thinkspace)
 
         if isCollapsed {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isActive ? DS.accentSoft : Color.clear)
-                .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                .overlay(
-                    Text(String(thinkspace.name.prefix(1)).uppercased())
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isActive ? DS.accent : color)
-                )
-                .frame(maxWidth: .infinity)
-                .help(thinkspace.name)
+            Button {
+                selectThinkspace(thinkspace)
+            } label: {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isActive ? DS.accentSoft : Color.clear)
+                    .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
+                    .overlay(
+                        Text(String(thinkspace.name.prefix(1)).uppercased())
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(isActive ? DS.accent : color)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .help(thinkspace.name)
+            .accessibilityLabel(thinkspace.name)
+            .accessibilityAddTraits(isActive ? .isSelected : [])
         } else {
             HStack(spacing: 8) {
                 thinkspaceAvatarButton(
@@ -834,6 +842,11 @@ struct SidebarThinkspaceSection: View {
     }
 
     private func handleKeyReturn() {
+        if let thinkspace = activeRenamingThinkspace() {
+            commitRename(thinkspace)
+            return
+        }
+
         let items = allNavigableItems
         guard selectedIndex < items.count else { return }
         switch items[selectedIndex] {
@@ -846,6 +859,19 @@ struct SidebarThinkspaceSection: View {
                 userInfo: ["type": doc.entityType, "id": doc.entityId]
             )
         }
+    }
+
+    private func activeRenamingThinkspace() -> Thinkspace? {
+        guard let renamingThinkspaceId else { return nil }
+        return manager.thinkspaces.first { $0.id == renamingThinkspaceId } ??
+            allNavigableItems.compactMap { item in
+                if case .thinkspace(let thinkspace, _) = item,
+                   thinkspace.id == renamingThinkspaceId {
+                    return thinkspace
+                }
+                return nil
+            }
+            .first
     }
 
     private func handleKeyEscape() {

@@ -29,7 +29,7 @@ struct DashboardHabitPanel: View {
             HStack(spacing: 6) {
                 Image(systemName: "repeat")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.giltMuted)
+                    .foregroundStyle(DS.giltMuted)
                 Text("Habits")
                     .font(DS.smallCaps)
                     .foregroundStyle(DS.giltMuted)
@@ -43,20 +43,19 @@ struct DashboardHabitPanel: View {
                 Image(systemName: "gearshape")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(DS.inkFaded)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
             }
+            .accessibilityLabel("Manage habits")
 
             CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
                 .habitEditor(habit: nil, anchor: anchor)
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("Habit")
-                        .font(.system(size: 11, weight: .medium))
-                }
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 26, height: 26)
                 .foregroundStyle(DS.accent)
             }
+            .accessibilityLabel("Add habit")
         }
     }
 
@@ -118,16 +117,16 @@ struct DashboardHabitPanel: View {
                 .overlay(
                     Image(systemName: "repeat")
                         .font(.system(size: 18, weight: .light))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 )
 
             Text("No habits yet")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Text("Create a custom habit, map it to task intents or keywords, and let completed tasks feed it automatically.")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
                 .lineLimit(3)
         }
@@ -155,7 +154,7 @@ private struct DashboardHabitOrbitCard: View {
     var body: some View {
         let isComplete = habit.isTodayComplete
 
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: DS.space10) {
             habitRing
 
             VStack(alignment: .leading, spacing: 4) {
@@ -169,24 +168,20 @@ private struct DashboardHabitOrbitCard: View {
                 manualButton
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space8)
         .background {
             if isComplete {
-                RadialGradient(
-                    colors: [habit.accentColor.opacity(0.08), Color.clear],
-                    center: .bottomTrailing,
-                    startRadius: 0,
-                    endRadius: 160
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(habit.accentColor.opacity(0.045))
             }
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isComplete ? DS.gilt.opacity(0.35) : DS.sepiaBorder.opacity(0.5), lineWidth: 0.7)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(DS.sepiaSubtle.opacity(0.75))
+                .frame(height: 0.5)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .background(CommandCenterGlobalFrameReader(frame: $frame))
         .onTapGesture {
             guard let definition else { return }
@@ -202,23 +197,23 @@ private struct DashboardHabitOrbitCard: View {
 
         return ZStack {
             Circle()
-                .stroke(accent.opacity(0.10), lineWidth: 2.5)
-                .frame(width: 44, height: 44)
+                .stroke(accent.opacity(0.12), lineWidth: 2)
+                .frame(width: 36, height: 36)
 
             Circle()
                 .trim(from: 0, to: progress)
-                .stroke(accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .stroke(accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .frame(width: 44, height: 44)
+                .frame(width: 36, height: 36)
                 .animation(
                     reduceMotion ? .none : .spring(response: 0.6, dampingFraction: 0.7),
                     value: progress
                 )
 
             Image(systemName: habit.iconName)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(accent)
-                .frame(width: 38, height: 38)
+                .frame(width: 30, height: 30)
                 .background(accent.opacity(isComplete ? 0.14 : 0.06), in: Circle())
 
             if isComplete {
@@ -236,17 +231,17 @@ private struct DashboardHabitOrbitCard: View {
         Image(systemName: "checkmark")
             .font(.system(size: 7, weight: .black))
             .foregroundStyle(.white)
-            .frame(width: 14, height: 14)
+            .frame(width: 12, height: 12)
             .background(accent, in: Circle())
             .overlay(Circle().stroke(DS.surface, lineWidth: 1.5))
-            .offset(x: 15, y: 15)
+            .offset(x: 13, y: 13)
             .transition(.scale.combined(with: .opacity))
     }
 
     private var titleRow: some View {
         HStack(spacing: 6) {
             Text(habit.title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(habit.isTodayComplete ? habit.accentColor : DS.text)
                 .lineLimit(1)
 
@@ -263,7 +258,7 @@ private struct DashboardHabitOrbitCard: View {
                 let isToday = index == 6
                 RoundedRectangle(cornerRadius: 2)
                     .fill(completed ? accent : (isToday ? Color.clear : DS.sepiaSubtle))
-                    .frame(width: 7, height: 7)
+                    .frame(width: 6, height: 6)
                     .overlay {
                         if isToday && !completed {
                             RoundedRectangle(cornerRadius: 2)

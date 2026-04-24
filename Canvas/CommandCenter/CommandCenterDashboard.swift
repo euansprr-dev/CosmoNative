@@ -9,7 +9,6 @@ struct CommandCenterDashboard: View {
 
     @StateObject private var viewModel = CommandCenterDashboardViewModel()
     @State private var composer = CommandCenterComposerController()
-    @State private var isEditing = false
     @State private var selectedTaskForDetail: TaskViewModel?
 
     var body: some View {
@@ -43,30 +42,17 @@ struct CommandCenterDashboard: View {
     // MARK: - Center Column — Timer + Content (Smart List or Project)
 
     private var centerColumn: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            // Greeting
-            greetingSection
-
-            // Time tracking panel (timer + summary + presets)
-            DashboardTimeTracker(viewModel: viewModel)
-
-            gradientDivider
-
+        VStack(alignment: .leading, spacing: DS.space16) {
             // Content switches between smart list task view and project detail view
             if viewModel.viewMode == .project, let projectUUID = viewModel.selectedProjectUUID,
                let project = viewModel.projects.first(where: { $0.uuid == projectUUID }) {
                 ProjectDetailView(project: project, viewModel: viewModel)
             } else {
-                // View mode tabs (for smart lists)
-                DashboardViewModeBar(
-                    selectedMode: $viewModel.viewMode,
-                    todayCount: viewModel.todayActiveCount,
-                    upcomingCount: viewModel.upcomingTotalCount,
-                    anytimeCount: viewModel.anytimeTasks.count,
-                    somedayCount: viewModel.somedayTasks.count,
-                    completedCount: viewModel.completedTodayTasks.count,
-                    completedArrivalToken: viewModel.completedArrivalToken
-                )
+                CommandCenterMasthead(viewModel: viewModel)
+
+                DashboardTimeTracker(viewModel: viewModel)
+
+                gradientDivider
 
                 // Task list (scrollable)
                 DashboardTaskList(viewModel: viewModel, composer: composer) { task in
@@ -81,13 +67,6 @@ struct CommandCenterDashboard: View {
 
             // Objectives bar (pinned at bottom)
             DashboardObjectivesBar(viewModel: viewModel)
-
-            // Keyboard shortcut hints
-            DashboardShortcutBar(
-                viewModel: viewModel,
-                isEditing: isEditing,
-                isTimerRunning: viewModel.sessionEngine.isTimerRunning
-            )
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, DS.space16)
@@ -210,10 +189,10 @@ struct CommandCenterDashboard: View {
         }
     }
 
-    // MARK: - Right Column (280px) — Context-Sensitive Panel
+    // MARK: - Right Column (280px) — Context-Sensitive Inspector
 
     private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
+        VStack(alignment: .leading, spacing: DS.space16) {
             // Context-sensitive tab bar — no container, bottom indicator
             HStack(spacing: 0) {
                 if selectedTaskForDetail != nil {
@@ -234,17 +213,20 @@ struct CommandCenterDashboard: View {
                 ScrollView(.vertical) {
                     DashboardReportsPanel(viewModel: viewModel)
                 }
-                .scrollIndicators(.hidden)
+                .scrollIndicators(.never)
             case .habits:
                 DashboardHabitPanel(viewModel: viewModel, composer: composer)
             }
 
             Spacer(minLength: 0)
-
-            quickStats
         }
         .frame(width: 280)
-        .padding(.leading, DS.space24)
+        .padding(.leading, DS.space20)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(DS.sepiaSubtle.opacity(0.7))
+                .frame(width: 0.5)
+        }
     }
 
     private enum RightColumnTab {
@@ -289,18 +271,18 @@ struct CommandCenterDashboard: View {
                     Image(systemName: icon)
                         .font(DS.caption2)
                     Text(title)
-                        .font(DS.caption)
+                        .font(.system(size: 12, weight: isActive ? .semibold : .medium))
                 }
                 .foregroundStyle(isActive ? DS.accent : DS.inkFaded)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, DS.space6)
+                .padding(.vertical, DS.space8)
 
                 // Bottom indicator line
                 Rectangle()
                     .fill(isActive ? DS.accent : Color.clear)
                     .frame(height: 2)
                     .frame(maxWidth: .infinity)
-                    .scaleEffect(x: isActive ? 0.6 : 0, anchor: .center)
+                    .scaleEffect(x: isActive ? 0.48 : 0, anchor: .center)
                     .clipShape(.rect(cornerRadius: 1))
             }
         }
@@ -314,109 +296,4 @@ struct CommandCenterDashboard: View {
             .padding(.horizontal, -16) // edge-to-edge in center column
     }
 
-    // MARK: - Greeting
-
-    @State private var isEditingName = false
-    @State private var editingNameText = ""
-    @FocusState private var nameFieldFocused: Bool
-
-    private var greetingSection: some View {
-        VStack(alignment: .leading, spacing: DS.space6) {
-            greetingTextView
-
-            OrnamentalRule(color: DS.gilt)
-                .padding(.vertical, 2)
-
-            Text(viewModel.dateText)
-                .font(DS.dateSerif)
-                .foregroundStyle(DS.inkFaded)
-        }
-    }
-
-    @ViewBuilder
-    private var greetingTextView: some View {
-        if isEditingName {
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text("\(viewModel.greetingPrefix), ")
-                    .font(DS.displaySerif)
-                    .tracking(-0.5)
-                    .foregroundStyle(DS.inkWash)
-
-                TextField("your name", text: $editingNameText)
-                    .textFieldStyle(.plain)
-                    .font(DS.displaySerif)
-                    .tracking(-0.5)
-                    .foregroundStyle(DS.accent)
-                    .frame(maxWidth: 200)
-                    .focused($nameFieldFocused)
-                    .onSubmit { saveName() }
-            }
-        } else {
-            Text(viewModel.greetingText)
-                .font(DS.displaySerif)
-                .tracking(-0.5)
-                .foregroundStyle(DS.inkWash)
-                .onTapGesture {
-                    let current = UserDefaults.standard.string(forKey: "userName") ?? ""
-                    editingNameText = current == "there" ? "" : current
-                    isEditingName = true
-                    nameFieldFocused = true
-                }
-        }
-    }
-
-    private func saveName() {
-        let trimmed = editingNameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            UserDefaults.standard.set(trimmed, forKey: "userName")
-        }
-        isEditingName = false
-    }
-
-    // MARK: - Quick Stats
-
-    private var quickStats: some View {
-        HStack(spacing: DS.space16) {
-            statPill(
-                icon: "star.fill",
-                value: "Lv.\(viewModel.xpProgress.level)",
-                detail: "\(viewModel.xpProgress.currentXP) XP",
-                color: DS.gilt
-            )
-
-            if viewModel.currentStreak > 0 {
-                statPill(
-                    icon: "flame.fill",
-                    value: "\(viewModel.currentStreak)d",
-                    detail: "streak",
-                    color: DS.orange
-                )
-            }
-        }
-        .padding(.top, DS.space4)
-    }
-
-    @ViewBuilder
-    private func statPill(icon: String, value: String, detail: String, color: Color) -> some View {
-        HStack(spacing: DS.space6) {
-            Image(systemName: icon)
-                .font(DS.footnote)
-                .foregroundStyle(color)
-
-            Text(value)
-                .font(DS.smallCaps)
-                .foregroundStyle(DS.inkWash)
-
-            Text(detail)
-                .font(DS.smallCaps)
-                .foregroundStyle(DS.inkFaded)
-        }
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space4)
-        .background(DS.vellum, in: .rect(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(DS.sepiaBorder, lineWidth: 0.5)
-        )
-    }
 }

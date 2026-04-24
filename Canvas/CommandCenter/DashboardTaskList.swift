@@ -7,6 +7,7 @@ import SwiftUI
 struct DashboardTaskList: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
     let composer: CommandCenterComposerController
     var onSelectTask: ((TaskViewModel) -> Void)?
     // expandedTaskId removed — task detail is now right-panel only
@@ -37,8 +38,9 @@ struct DashboardTaskList: View {
                     EmptyView()
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .scrollIndicators(.hidden)
+        .scrollIndicators(.never)
     }
 
     // MARK: - Today View
@@ -339,13 +341,13 @@ struct DashboardTaskList: View {
     ) -> some View {
         HStack(spacing: 6) {
             Text(title)
-                .font(DS.smallCaps)
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(color)
 
             if let trailing {
-                Text("(\(trailing))")
-                    .font(DS.smallCaps)
-                    .foregroundStyle(color.opacity(0.6))
+                Text(trailing)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(color.opacity(0.62))
             }
 
             // Anchoring line — extends to right edge like a ledger rule
@@ -370,17 +372,9 @@ struct DashboardTaskList: View {
                         Text("Reschedule")
                             .font(DS.caption)
                     }
-                    .foregroundStyle(DS.red)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(DS.red.opacity(0.08))
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(DS.red.opacity(0.2), lineWidth: 1)
-                    )
+                    .foregroundStyle(DS.red.opacity(0.85))
+                    .padding(.horizontal, DS.space6)
+                    .padding(.vertical, DS.space4)
                 }
             }
         }
@@ -396,7 +390,7 @@ struct DashboardTaskList: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text(upcomingDayLabel(day))
-                    .font(DS.smallCaps)
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(day.isToday ? DS.accent : DS.textSecondary)
 
                 Text("\(day.taskCount)")
@@ -418,19 +412,19 @@ struct DashboardTaskList: View {
     }
 
     private func upcomingDayLabel(_ day: UpcomingDayViewModel) -> String {
-        if day.isToday { return "TODAY" }
-        if day.isTomorrow { return "TOMORROW" }
+        if day.isToday { return "Today" }
+        if day.isTomorrow { return "Tomorrow" }
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE, MMM d"
-        return formatter.string(from: day.date).uppercased()
+        return formatter.string(from: day.date)
     }
 
     // MARK: - Single Task Row
 
     @ViewBuilder
     private func taskRow(_ task: TaskViewModel) -> some View {
-        let isActiveSession = viewModel.sessionEngine.activeSession?.taskUUID == task.uuid
-            && viewModel.sessionEngine.isTimerRunning
+        let isActiveSession = sessionEngine.activeSession?.taskUUID == task.uuid
+            && sessionEngine.isTimerRunning
         let isKeyboardSelected: Bool = {
             guard let idx = viewModel.selectedTaskIndex,
                   viewModel.currentVisibleTasks.indices.contains(idx) else { return false }
@@ -442,11 +436,18 @@ struct DashboardTaskList: View {
 
         let isHovered = hoveredTaskUUID == task.uuid && !isAnimatingCompletion
 
-        rowBase(task, completionState: completionState, isActiveSession: isActiveSession, isAnimatingCompletion: isAnimatingCompletion)
+        rowBase(
+            task,
+            completionState: completionState,
+            isActiveSession: isActiveSession,
+            isAnimatingCompletion: isAnimatingCompletion,
+            showsInlineActions: isHovered || isKeyboardSelected || isActiveSession || composer.isShowingTaskAction(for: task.uuid)
+        )
         .background(rowBackground(isActiveSession: isActiveSession, isMultiSelected: isMultiSelected, isKeyboardSelected: isKeyboardSelected, isHovered: isHovered))
         .overlay(alignment: .bottom) { rowPriorityWash(task, isAnimatingCompletion: isAnimatingCompletion) }
         .overlay(rowBorder(isActiveSession: isActiveSession, isMultiSelected: isMultiSelected, isKeyboardSelected: isKeyboardSelected))
         .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isKeyboardSelected)
         .scaleEffect(completionState?.rowScale ?? 1)
         .opacity(completionState?.rowOpacity ?? 1)
         .offset(y: completionState?.rowOffsetY ?? 0)
@@ -630,6 +631,7 @@ struct DashboardTaskList: View {
                 .font(DS.caption2)
                 .foregroundStyle(isOverdue ? DS.red : DS.inkFaded)
         }
+        .frame(width: 76, alignment: .trailing)
     }
 
     // MARK: - Play Button
@@ -638,7 +640,7 @@ struct DashboardTaskList: View {
     private func playButton(_ task: TaskViewModel, isActive: Bool) -> some View {
         Button {
             if isActive {
-                viewModel.sessionEngine.pauseSession()
+                sessionEngine.pauseSession()
             } else {
                 viewModel.startFocusSession(for: task)
             }
@@ -646,10 +648,10 @@ struct DashboardTaskList: View {
             Image(systemName: isActive ? "pause.fill" : "play.fill")
                 .font(DS.caption2)
                 .foregroundStyle(isActive ? DS.accent : DS.inkFaded)
-                .frame(width: 22, height: 22)
+                .frame(width: 24, height: 24)
                 .background(
                     Circle()
-                        .fill(isActive ? DS.accentSoft : Color.clear)
+                        .fill(isActive ? DS.accentSoft.opacity(0.85) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -660,22 +662,29 @@ struct DashboardTaskList: View {
         _ task: TaskViewModel,
         completionState: CommandCenterTaskCompletionState?,
         isActiveSession: Bool,
-        isAnimatingCompletion: Bool
+        isAnimatingCompletion: Bool,
+        showsInlineActions: Bool
     ) -> some View {
         HStack(spacing: 0) {
             rowPriorityLead(task)
-            rowContent(task, completionState: completionState, isActiveSession: isActiveSession, isAnimatingCompletion: isAnimatingCompletion)
-                .padding(.trailing, 10)
+            rowContent(
+                task,
+                completionState: completionState,
+                isActiveSession: isActiveSession,
+                isAnimatingCompletion: isAnimatingCompletion,
+                showsInlineActions: showsInlineActions
+            )
+            .padding(.trailing, DS.space8)
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, DS.space6)
     }
 
     @ViewBuilder
     private func rowPriorityLead(_ task: TaskViewModel) -> some View {
         if task.priority == .high || task.priority == .critical {
             Rectangle()
-                .fill(task.priority.color.opacity(0.30))
-                .frame(width: 4, height: 4)
+                .fill(task.priority.color.opacity(0.36))
+                .frame(width: 3.5, height: 3.5)
                 .rotationEffect(.degrees(45))
                 .padding(.leading, 6)
                 .padding(.trailing, 2)
@@ -686,10 +695,10 @@ struct DashboardTaskList: View {
 
     private func rowBackground(isActiveSession: Bool, isMultiSelected: Bool, isKeyboardSelected: Bool, isHovered: Bool) -> some View {
         let fill: Color = {
-            if isActiveSession { return DS.accentSoft.opacity(0.5) }
-            if isMultiSelected { return DS.accent.opacity(0.06) }
-            if isKeyboardSelected { return DS.accentSoft }
-            if isHovered { return DS.vellum.opacity(0.5) }
+            if isActiveSession { return DS.accentSoft.opacity(0.38) }
+            if isMultiSelected { return DS.accent.opacity(0.05) }
+            if isKeyboardSelected { return DS.accentSoft.opacity(0.42) }
+            if isHovered { return DS.vellum.opacity(0.32) }
             return Color.clear
         }()
         return RoundedRectangle(cornerRadius: 6).fill(fill)
@@ -699,7 +708,7 @@ struct DashboardTaskList: View {
     private func rowPriorityWash(_ task: TaskViewModel, isAnimatingCompletion: Bool) -> some View {
         if !task.isCompleted && !isAnimatingCompletion {
             LinearGradient(
-                colors: [task.priority.color.opacity(0.06), Color.clear],
+                colors: [task.priority.color.opacity(0.035), Color.clear],
                 startPoint: .leading,
                 endPoint: UnitPoint(x: 0.4, y: 0.5)
             )
@@ -710,9 +719,9 @@ struct DashboardTaskList: View {
 
     private func rowBorder(isActiveSession: Bool, isMultiSelected: Bool, isKeyboardSelected: Bool) -> some View {
         let stroke: Color = {
-            if isActiveSession { return DS.accent.opacity(0.3) }
-            if isMultiSelected { return DS.accent.opacity(0.4) }
-            if isKeyboardSelected { return DS.accent.opacity(0.2) }
+            if isActiveSession { return DS.accent.opacity(0.26) }
+            if isMultiSelected { return DS.accent.opacity(0.34) }
+            if isKeyboardSelected { return DS.accent.opacity(0.18) }
             return Color.clear
         }()
         return RoundedRectangle(cornerRadius: 6)
@@ -724,22 +733,29 @@ struct DashboardTaskList: View {
         _ task: TaskViewModel,
         completionState: CommandCenterTaskCompletionState?,
         isActiveSession: Bool,
-        isAnimatingCompletion: Bool
+        isAnimatingCompletion: Bool,
+        showsInlineActions: Bool
     ) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.space10) {
             checkboxButton(task, completionState: completionState)
 
             taskContent(task, completionState: completionState)
 
-            Spacer(minLength: 4)
+            Spacer(minLength: DS.space8)
 
             if let dueInfo = task.dueInfo, !task.isCompleted {
                 dueDateChip(dueInfo, isOverdue: task.isOverdue)
+            } else {
+                Color.clear
+                    .frame(width: 76, height: 1)
             }
 
             if !task.isCompleted && !isAnimatingCompletion {
-                playButton(task, isActive: isActiveSession)
-                taskActionButton(task)
+                HStack(spacing: DS.space4) {
+                    playButton(task, isActive: isActiveSession)
+                    taskActionButton(task)
+                }
+                .opacity(showsInlineActions ? 1 : 0)
             }
         }
     }
@@ -754,13 +770,13 @@ struct DashboardTaskList: View {
                 .frame(width: 24, height: 24)
                 .background(
                     Circle()
-                        .fill(composer.isShowingTaskAction(for: task.uuid) ? DS.accentSoft : DS.surface)
+                        .fill(composer.isShowingTaskAction(for: task.uuid) ? DS.accentSoft : Color.clear)
                 )
                 .overlay(
                     Circle()
                         .stroke(
-                            composer.isShowingTaskAction(for: task.uuid) ? DS.accent.opacity(0.22) : DS.borderSubtle,
-                            lineWidth: 1
+                            composer.isShowingTaskAction(for: task.uuid) ? DS.accent.opacity(0.22) : Color.clear,
+                            lineWidth: 0.8
                         )
                 )
         }

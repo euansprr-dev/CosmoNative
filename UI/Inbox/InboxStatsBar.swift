@@ -33,7 +33,7 @@ struct InboxStatsBar: View {
             statBadge(
                 count: viewModel.stats.newCount,
                 label: "new",
-                color: Color(hex: "818CF8")
+                color: DS.classNew
             )
 
             if viewModel.stats.pendingCount > 0 {
@@ -85,7 +85,7 @@ struct InboxStatsBar: View {
             // Classification filters
             classificationFilterChip("Merge", classification: .merge, color: DS.orange)
             classificationFilterChip("Place", classification: .place, color: DS.accent)
-            classificationFilterChip("New", classification: .new, color: Color(hex: "818CF8"))
+            classificationFilterChip("New", classification: .new, color: DS.classNew)
 
             Spacer()
 

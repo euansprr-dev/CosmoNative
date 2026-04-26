@@ -229,6 +229,7 @@ extension View {
         entityId: Int64,
         atomType: AtomType,
         isThinkspace: Bool = false,
+        allowsSpatialGoToObject: Bool = false,
         onDelete: (() -> Void)? = nil
     ) -> some View {
         self.contextMenu {
@@ -267,7 +268,18 @@ extension View {
                 Label("Open as Pane", systemImage: "rectangle.split.2x1")
             }
 
-            if !isThinkspace {
+            if !isThinkspace && allowsSpatialGoToObject {
+                Button {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.NodeGraph.goToObjectFromCommandK,
+                        object: nil,
+                        userInfo: ["atomUUID": atomUUID]
+                    )
+                    NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+                } label: {
+                    Label("Go to Object", systemImage: "scope")
+                }
+
                 Button {
                     NotificationCenter.default.post(
                         name: CosmoNotification.NodeGraph.addToCanvas,

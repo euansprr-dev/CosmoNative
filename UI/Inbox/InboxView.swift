@@ -31,6 +31,8 @@ struct InboxView: View {
                 .keyboardShortcut("a", modifiers: .command)
                 .hidden()
         }
+        .onAppear { viewModel.isInboxVisible = true }
+        .onDisappear { viewModel.isInboxVisible = false }
     }
 
     // MARK: - Main Content
@@ -56,17 +58,50 @@ struct InboxView: View {
                     .font(DS.pageTitle)
                     .foregroundStyle(DS.text)
 
-                if !viewModel.items.isEmpty {
-                    Text("\(viewModel.items.count) item\(viewModel.items.count == 1 ? "" : "s") awaiting triage")
+                if visibleItemCount > 0 {
+                    Text("\(visibleItemCount) thought\(visibleItemCount == 1 ? "" : "s") waiting for a home")
                         .font(DS.callout)
                         .foregroundStyle(DS.textMuted)
                         .contentTransition(.numericText())
                 }
             }
             Spacer()
+            viewToggle
         }
         .padding(.horizontal, DS.space24)
         .padding(.vertical, DS.space16)
+    }
+
+    private var visibleItemCount: Int {
+        viewModel.items.count + viewModel.unplacedDatabaseItems.count
+    }
+
+    private var viewToggle: some View {
+        HStack(spacing: 3) {
+            ForEach(InboxViewMode.allCases, id: \.rawValue) { mode in
+                Button {
+                    viewModel.setViewMode(mode)
+                } label: {
+                    Label(mode.title, systemImage: mode.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(viewModel.viewMode == mode ? DS.textOnAccent : DS.textSecondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            viewModel.viewMode == mode ? DS.accent : Color.clear,
+                            in: .rect(cornerRadius: 8)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(DS.surface, in: .rect(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DS.border, lineWidth: 1)
+        )
     }
 
     // MARK: - Capture Bar
@@ -87,8 +122,10 @@ struct InboxView: View {
 
     @ViewBuilder
     private var itemsOrEmptyState: some View {
-        if viewModel.items.isEmpty {
+        if visibleItemCount == 0 {
             emptyState
+        } else if viewModel.viewMode == .canvas || viewModel.items.isEmpty {
+            InboxSpatialCanvasView(viewModel: viewModel)
         } else {
             itemsList
         }

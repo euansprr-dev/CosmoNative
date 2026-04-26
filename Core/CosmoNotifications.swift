@@ -104,6 +104,8 @@ enum CosmoNotification {
         static let itemAdded = Notification.Name("com.cosmo.inbox.itemAdded")
         static let itemClassified = Notification.Name("com.cosmo.inbox.itemClassified")
         static let itemActioned = Notification.Name("com.cosmo.inbox.itemActioned")
+        static let focusInboxItem = Notification.Name("com.cosmo.inbox.focusInboxItem")
+        static let focusDatabaseItem = Notification.Name("com.cosmo.inbox.focusDatabaseItem")
     }
 
     // MARK: - Navigation Notifications
@@ -371,6 +373,7 @@ enum CosmoNotification {
         static let closeCommandK = Notification.Name("com.cosmo.nodegraph.closeCommandK")
         static let hideCommandK = Notification.Name("com.cosmo.nodegraph.hideCommandK")
         static let openAtomFromCommandK = Notification.Name("com.cosmo.nodegraph.openAtomFromCommandK")
+        static let goToObjectFromCommandK = Notification.Name("com.cosmo.nodegraph.goToObjectFromCommandK")
 
         /// Canvas item management
         static let addToCanvas = Notification.Name("com.cosmo.nodegraph.addToCanvas")

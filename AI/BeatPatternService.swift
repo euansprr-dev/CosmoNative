@@ -470,9 +470,10 @@ class BeatPatternService: ObservableObject {
                             analysis.normalizedBeats = normalized
                             analysis.beatFingerprint = fp
                             atom = atom.withSwipeAnalysis(analysis)
+                            let updatedAtom = atom
 
                             try await database.asyncWrite { db in
-                                try atom.update(db)
+                                try updatedAtom.update(db)
                             }
                         }
                     }

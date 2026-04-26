@@ -178,6 +178,10 @@ enum DS {
     /// Sticky notes — warm yellow
     static let entityStickyNote = Color(hex: "D4C36A")
 
+    /// Classification color for the "new" Inbox triage state (cool indigo,
+    /// matches the visual feel of a freshly captured thought)
+    static let classNew = Color(hex: "818CF8")
+
     // ═══════════════════════════════════════════════════════════════
     // CLIENT COLORS — Deterministic palette for content profiles
     // ═══════════════════════════════════════════════════════════════

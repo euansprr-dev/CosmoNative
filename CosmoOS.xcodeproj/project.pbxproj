@@ -39,6 +39,10 @@
 		0D46A31C96EA789A37F458F6 /* FloatingPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FE27E490EE7490B0BA3B17F /* FloatingPanelView.swift */; };
 		0D5E86A25E93B8B51C9B8C99 /* InboxGroupSuggestionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D7C728299A8D4B2404305D /* InboxGroupSuggestionCard.swift */; };
 		0DA1B24A8AB116FF7EF20992 /* ConceptCollaboratorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E96BE30A6DA389BA6761E428 /* ConceptCollaboratorEngine.swift */; };
+		0DB10A1B2C3D4E5F60718293 /* InboxSpatialModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB20A1B2C3D4E5F60718293 /* InboxSpatialModels.swift */; };
+		0DB30A1B2C3D4E5F60718293 /* InboxSpatialCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB40A1B2C3D4E5F60718293 /* InboxSpatialCanvasView.swift */; };
+		0DB50A1B2C3D4E5F60718293 /* InboxSpatialCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB60A1B2C3D4E5F60718293 /* InboxSpatialCardView.swift */; };
+		0DB70A1B2C3D4E5F60718293 /* InboxSpatialInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB80A1B2C3D4E5F60718293 /* InboxSpatialInspector.swift */; };
 		0E0EA70756B8E7721B53F162 /* FocusFloatingBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2657F08320084D15D87CC03D /* FocusFloatingBlockView.swift */; };
 		0E55BB1F687B0266A542876D /* DailySummaryGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBD53F9E86D2EFA98A70AFDA /* DailySummaryGenerator.swift */; };
 		0EF51AD19C8D6F4E2B7A5CAD /* LibraryGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE40FC08B7C5E3D1A6F4B9C /* LibraryGridView.swift */; };
@@ -720,6 +724,10 @@
 		03CA6F6EA2EE5CE983D8F5B3 /* RichDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichDocument.swift; sourceTree = "<group>"; };
 		0400AC472D1C00D89D203B62 /* MidnightStudyPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MidnightStudyPalette.swift; sourceTree = "<group>"; };
 		0444C0936EF6D5637367F726 /* InboxViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InboxViewModel.swift; path = UI/Inbox/InboxViewModel.swift; sourceTree = SOURCE_ROOT; };
+		0DB20A1B2C3D4E5F60718293 /* InboxSpatialModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InboxSpatialModels.swift; path = UI/Inbox/InboxSpatialModels.swift; sourceTree = SOURCE_ROOT; };
+		0DB40A1B2C3D4E5F60718293 /* InboxSpatialCanvasView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InboxSpatialCanvasView.swift; path = UI/Inbox/InboxSpatialCanvasView.swift; sourceTree = SOURCE_ROOT; };
+		0DB60A1B2C3D4E5F60718293 /* InboxSpatialCardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InboxSpatialCardView.swift; path = UI/Inbox/InboxSpatialCardView.swift; sourceTree = SOURCE_ROOT; };
+		0DB80A1B2C3D4E5F60718293 /* InboxSpatialInspector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InboxSpatialInspector.swift; path = UI/Inbox/InboxSpatialInspector.swift; sourceTree = SOURCE_ROOT; };
 		0511EB4BC0334568DE6667FF /* LLMProviderAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMProviderAdapter.swift; sourceTree = "<group>"; };
 		052955334452704736230383 /* InstagramDataProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstagramDataProvider.swift; sourceTree = "<group>"; };
 		0563C900EC3BBB795954CA46 /* CosmoAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAction.swift; sourceTree = "<group>"; };
@@ -1718,6 +1726,10 @@
 			children = (
 				D271CC0449791899624C8C2C /* InboxView.swift */,
 				0444C0936EF6D5637367F726 /* InboxViewModel.swift */,
+				0DB20A1B2C3D4E5F60718293 /* InboxSpatialModels.swift */,
+				0DB40A1B2C3D4E5F60718293 /* InboxSpatialCanvasView.swift */,
+				0DB60A1B2C3D4E5F60718293 /* InboxSpatialCardView.swift */,
+				0DB80A1B2C3D4E5F60718293 /* InboxSpatialInspector.swift */,
 				5A9D001B782C135F2925EC35 /* InboxItemCard.swift */,
 				C32E22285BD5CC4E453C0926 /* InboxOverrideSheet.swift */,
 				6780BD5D60B0B094388B6626 /* InboxTypes.swift */,
@@ -3510,6 +3522,10 @@
 				A1C2E3F4B5D60718293A4B62 /* SpatialPlacementPlanner.swift in Sources */,
 				1BF03AA844DE1AD08F14645C /* InboxActionExecutor.swift in Sources */,
 				5CF631D041CE1998DC45C9EF /* InboxView.swift in Sources */,
+				0DB10A1B2C3D4E5F60718293 /* InboxSpatialModels.swift in Sources */,
+				0DB30A1B2C3D4E5F60718293 /* InboxSpatialCanvasView.swift in Sources */,
+				0DB50A1B2C3D4E5F60718293 /* InboxSpatialCardView.swift in Sources */,
+				0DB70A1B2C3D4E5F60718293 /* InboxSpatialInspector.swift in Sources */,
 				CX01BF7A3D8E4C5609213A4B /* CodexNavigationView.swift in Sources */,
 				2B3C4D5E6F0718293041526E /* CodexElementDetailView.swift in Sources */,
 				3C4D5E6F071829304152637F /* CodexWalkthroughDetailView.swift in Sources */,

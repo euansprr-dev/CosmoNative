@@ -10,7 +10,19 @@ final class InboxIntelligenceEngine {
     static let shared = InboxIntelligenceEngine()
 
     private var cachedGroupHash: Int = 0
-    private var cachedInsightUUIDs: Set<String> = []
+    // Maps inbox item uuid → fingerprint of the body it was analyzed against.
+    // We re-analyze only when an item's body actually changes, not just on
+    // every Combine emission of the items array.
+    private var cachedInsightFingerprints: [String: Int] = [:]
+
+    private static func fingerprint(for item: InboxItem) -> Int {
+        var hasher = Hasher()
+        hasher.combine(item.rawText)
+        hasher.combine(item.classification?.rawValue ?? "")
+        hasher.combine(item.mergeTargetUuid ?? "")
+        hasher.combine(item.placeThinkspaceId ?? "")
+        return hasher.finalize()
+    }
 
     // MARK: - Auto-Grouping
 
@@ -80,10 +92,10 @@ final class InboxIntelligenceEngine {
     /// Uses Gemini Flash-Lite for speed. Batches up to 10 items per call.
     /// Returns only NEW insights (skips previously generated ones).
     func generateInsights(items: [InboxItem]) async -> [String: String] {
-        let candidates = items.filter {
-            $0.confidence > 0.5 &&
-            $0.classification != nil &&
-            !cachedInsightUUIDs.contains($0.uuid)
+        let candidates = items.filter { item in
+            guard item.confidence > 0.5, item.classification != nil else { return false }
+            let fp = Self.fingerprint(for: item)
+            return cachedInsightFingerprints[item.uuid] != fp
         }
 
         guard !candidates.isEmpty else { return [:] }
@@ -127,7 +139,9 @@ final class InboxIntelligenceEngine {
                 for entry in insights {
                     if let uuid = entry["uuid"], let insight = entry["insight"] {
                         results[uuid] = insight
-                        cachedInsightUUIDs.insert(uuid)
+                        if let item = batch.first(where: { $0.uuid == uuid }) {
+                            cachedInsightFingerprints[uuid] = Self.fingerprint(for: item)
+                        }
                     }
                 }
             }
@@ -141,6 +155,6 @@ final class InboxIntelligenceEngine {
     /// Clear caches when items change significantly
     func invalidateCache() {
         cachedGroupHash = 0
-        cachedInsightUUIDs.removeAll()
+        cachedInsightFingerprints.removeAll()
     }
 }

@@ -94,7 +94,7 @@ struct InboxItemCard: View {
         case .place:
             return ("Place", DS.accentSoft, DS.accent)
         case .new:
-            return ("New", Color(hex: "818CF8").opacity(0.12), Color(hex: "818CF8"))
+            return ("New", DS.classNew.opacity(0.12), DS.classNew)
         case .none:
             return ("Classifying...", DS.surface, DS.textMuted)
         }
@@ -243,7 +243,7 @@ struct InboxItemCard: View {
             Text(label)
                 .font(.system(size: 12, weight: .medium))
         }
-        .foregroundStyle(Color(hex: "818CF8"))
+        .foregroundStyle(DS.classNew)
     }
 
     private var classificationProgress: some View {

@@ -367,6 +367,10 @@ struct MainView: View {
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
             handleOpenAtomFromCommandK(atomUUID: atomUUID)
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.goToObjectFromCommandK)) { notification in
+            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
+            handleGoToObjectFromCommandK(atomUUID: atomUUID)
+        }
         // Command-K close handler (from background tap or escape in CommandKView)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.closeCommandK)) { _ in
             withAnimation(.spring(response: 0.2)) {
@@ -1653,6 +1657,39 @@ struct MainView: View {
                 }
             } catch {
                 print("⚠️ Failed to open atom from Command-K: \(error)")
+            }
+        }
+    }
+
+    /// Routes Command-K "Go to Object" to the atom's spatial home.
+    /// Placed atoms open on their primary thinkspace canvas; unplaced atoms open in Inbox.
+    private func handleGoToObjectFromCommandK(atomUUID: String) {
+        withAnimation(.spring(response: 0.2)) {
+            showCommandK = false
+            commandKBehindFocusMode = true
+            appState.isCommandKVisible = false
+        }
+
+        Task { @MainActor in
+            let memberships = (try? await AtomRepository.shared.fetchThinkspaceMembership(for: atomUUID)) ?? []
+            if let targetThinkspaceId = memberships.first {
+                currentDestination = .thinkspace(id: targetThinkspaceId)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.openEntityOnCanvas,
+                        object: nil,
+                        userInfo: ["atomUUID": atomUUID]
+                    )
+                }
+            } else {
+                currentDestination = .inbox
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Inbox.focusDatabaseItem,
+                        object: nil,
+                        userInfo: ["uuid": atomUUID]
+                    )
+                }
             }
         }
     }

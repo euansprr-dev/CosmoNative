@@ -93,30 +93,22 @@ extension InboxItem {
 
     static func entityColor(for type: AtomType) -> Color {
         switch type {
-        case .idea: return Color(hex: "6B6EA8")
-        case .research: return Color(hex: "4A8B72")
-        case .content: return Color(hex: "5B84B0")
-        case .note: return Color(hex: "9B8A6E")
-        case .connection: return Color(hex: "8B6BAB")
-        case .task: return Color(hex: "B06B6B")
-        default: return Color(hex: "8B6BAB")
+        case .idea: return DS.entityIdea
+        case .research: return DS.entityResearch
+        case .content: return DS.entityContent
+        case .note: return DS.entityNote
+        case .connection: return DS.entityConnection
+        case .task: return DS.entityTask
+        default: return DS.entityConnection
         }
     }
 
     static func entitySoftColor(for type: AtomType) -> Color {
-        switch type {
-        case .idea: return Color(hex: "EDEDF5")
-        case .research: return Color(hex: "E5F0EB")
-        case .content: return Color(hex: "E8EFF5")
-        case .note: return Color(hex: "F2EDE5")
-        case .connection: return Color(hex: "EDE8F2")
-        case .task: return Color(hex: "F5E8E8")
-        default: return Color(hex: "EDE8F2")
-        }
+        entityColor(for: type).opacity(0.12)
     }
 
-    private var connectionEntityColor: Color { Color(hex: "8B6BAB") }
-    private var connectionEntitySoftColor: Color { Color(hex: "EDE8F2") }
+    private var connectionEntityColor: Color { DS.entityConnection }
+    private var connectionEntitySoftColor: Color { DS.entityConnection.opacity(0.12) }
 
     /// Priority score (0-100) computed locally
     var priorityScore: Int {

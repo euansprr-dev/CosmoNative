@@ -29,9 +29,7 @@ final class ResearchService {
             throw ResearchError.noAPIKey
         }
 
-        print("🔬 Research: Calling Perplexity via OpenRouter...")
-        print("   Query: \(query)")
-        print("   Type: \(searchType)")
+        ConsoleLog.verbose("Calling Perplexity via OpenRouter — query: \(query), type: \(searchType)", subsystem: .llm)
 
         // Build the research prompt
         let prompt = buildResearchPrompt(query: query, searchType: searchType, maxResults: maxResults)
@@ -42,7 +40,7 @@ final class ResearchService {
         // Parse response into structured findings
         let result = parseResearchResponse(response, query: query)
 
-        print("✅ Research complete: \(result.findings.count) findings")
+        ConsoleLog.verbose("Research complete: \(result.findings.count) findings", subsystem: .llm)
 
         return result
     }
@@ -281,7 +279,7 @@ final class ResearchService {
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        print("🌐 [ResearchService.generateWithCaching] Request body size: \(request.httpBody?.count ?? 0) bytes")
+        ConsoleLog.verbose("generateWithCaching body=\(request.httpBody?.count ?? 0)b", subsystem: .llm)
 
         if useStreaming, let tokenHandler = onToken {
             return try await streamOpenRouter(request: request, onToken: tokenHandler)
@@ -364,8 +362,7 @@ final class ResearchService {
             "max_tokens": maxTokens
         ]
 
-        print("🌐 [ResearchService.generateWithTools] Sending request to \(model)")
-        print("🌐 [ResearchService.generateWithTools] System blocks: \(systemBlocks.count), messages: \(messages.count), tools: \(tools.count)")
+        ConsoleLog.verbose("generateWithTools → \(model) systemBlocks=\(systemBlocks.count) messages=\(messages.count) tools=\(tools.count)", subsystem: .llm)
 
         // === EVERYTHING below runs OFF the main actor ===
         // JSON body serialization, network call, AND response parsing all happen in a
@@ -378,21 +375,21 @@ final class ResearchService {
             // 1. Serialize JSON body (can be large with full conversation history)
             var req = capturedRequest
             req.httpBody = try JSONSerialization.data(withJSONObject: capturedBody)
-            print("🌐 [ResearchService.generateWithTools] Request body size: \(req.httpBody?.count ?? 0) bytes")
+            ConsoleLog.verbose("generateWithTools body=\(req.httpBody?.count ?? 0)b", subsystem: .llm)
 
             // 2. Network call
             let (data, response) = try await URLSession.shared.data(for: req)
             let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
-            print("🌐 [ResearchService.generateWithTools] HTTP status: \(httpStatus)")
+            ConsoleLog.verbose("generateWithTools status=\(httpStatus)", subsystem: .llm)
 
             if httpStatus != 200 {
                 let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-                print("❌ [ResearchService.generateWithTools] API error \(httpStatus): \(errorText.prefix(500))")
+                ConsoleLog.error("generateWithTools API error \(httpStatus): \(errorText.prefix(500))", subsystem: .llm)
                 throw ResearchError.apiError(statusCode: httpStatus, message: errorText)
             }
 
             if let rawStr = String(data: data, encoding: .utf8) {
-                print("🌐 [ResearchService.generateWithTools] Raw response (\(data.count) bytes): \(rawStr.prefix(500))...")
+                ConsoleLog.verbose("generateWithTools raw (\(data.count)b): \(rawStr.prefix(500))…", subsystem: .llm)
             }
 
             // 3. Parse response JSON
@@ -402,7 +399,7 @@ final class ResearchService {
             let message = firstChoice?["message"] as? [String: Any]
             let finishReason = firstChoice?["finish_reason"] as? String
 
-            print("🌐 [ResearchService.generateWithTools] finish_reason: \(finishReason ?? "nil"), message keys: \(message?.keys.sorted() ?? [])")
+            ConsoleLog.verbose("generateWithTools finish=\(finishReason ?? "nil") keys=\(message?.keys.sorted() ?? [])", subsystem: .llm)
 
             if let usage = json?["usage"] as? [String: Any] {
                 Self.logUsage(prefix: "ResearchService (tools)", usage: usage)
@@ -432,7 +429,7 @@ final class ResearchService {
 
             // 3b. OpenAI-format tool calls
             if let openAIToolCalls = message?["tool_calls"] as? [[String: Any]] {
-                print("🌐 [ResearchService.generateWithTools] Found \(openAIToolCalls.count) OpenAI-format tool_calls")
+                ConsoleLog.verbose("generateWithTools OpenAI tool_calls=\(openAIToolCalls.count)", subsystem: .llm)
                 for tc in openAIToolCalls {
                     let tcId = tc["id"] as? String ?? UUID().uuidString
                     if let function = tc["function"] as? [String: Any] {
@@ -440,14 +437,14 @@ final class ResearchService {
                         let argsStr = function["arguments"] as? String ?? "{}"
                         let input = (try? JSONSerialization.jsonObject(with: Data(argsStr.utf8))) as? [String: Any] ?? [:]
                         toolCalls.append(ClaudeToolUseResponse.ClaudeToolCall(id: tcId, name: name, input: input))
-                        print("🌐 [ResearchService.generateWithTools]   tool: \(name), id: \(tcId)")
+                        ConsoleLog.verbose("generateWithTools tool=\(name) id=\(tcId)", subsystem: .llm)
                     }
                 }
             }
 
-            print("🌐 [ResearchService.generateWithTools] Parsed: textContent=\(textContent.count) chars, toolCalls=\(toolCalls.count)")
+            ConsoleLog.verbose("generateWithTools parsed text=\(textContent.count)c tools=\(toolCalls.count)", subsystem: .llm)
             if textContent.isEmpty && toolCalls.isEmpty {
-                print("⚠️ [ResearchService.generateWithTools] WARNING: Both textContent and toolCalls are empty!")
+                ConsoleLog.warning("generateWithTools empty response: no text and no tool_calls", subsystem: .llm)
             }
 
             return ClaudeToolUseResponse(
@@ -536,8 +533,9 @@ final class ResearchService {
         let uncachedPromptTokens = max(promptTokens - cachedTokens, 0)
         let cacheHitRate = promptTokens > 0 ? (Double(cachedTokens) / Double(promptTokens)) * 100 : 0
 
-        print(
-            "🌐 [\(prefix)] Usage: prompt=\(promptTokens), uncached=\(uncachedPromptTokens), cached=\(cachedTokens), completion=\(completionTokens), cache_hit_rate=\(String(format: "%.1f", cacheHitRate))%"
+        ConsoleLog.verbose(
+            "[\(prefix)] usage prompt=\(promptTokens) uncached=\(uncachedPromptTokens) cached=\(cachedTokens) completion=\(completionTokens) hit=\(String(format: "%.1f", cacheHitRate))%",
+            subsystem: .llm
         )
     }
 
@@ -620,7 +618,7 @@ final class ResearchService {
 
         if httpResponse.statusCode != 200 {
             let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("OpenRouter error \(httpResponse.statusCode): \(errorText)")
+            ConsoleLog.error("OpenRouter error \(httpResponse.statusCode): \(errorText)", subsystem: .llm)
             throw ResearchError.apiError(statusCode: httpResponse.statusCode, message: errorText)
         }
 

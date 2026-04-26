@@ -172,6 +172,7 @@ struct SpotlightDocCard: View {
             entityId: item.entityId,
             atomType: item.atomType,
             isThinkspace: item.kind == .thinkspace,
+            allowsSpatialGoToObject: item.kind != .thinkspace,
             onDelete: onDelete
         )
     }

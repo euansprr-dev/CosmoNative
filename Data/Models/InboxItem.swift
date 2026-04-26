@@ -52,6 +52,13 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
 
     // MARK: - Factory
 
+    /// True when the item's predicted destination is a task atom.
+    /// Tasks live in the Command Center, not in any thinkspace canvas, so the
+    /// triage UI excludes them from the "unclear" cluster.
+    var routesToTask: Bool {
+        placeAtomType?.lowercased() == "task"
+    }
+
     static func new(
         source: InboxSource,
         rawText: String,

@@ -412,8 +412,12 @@ final class InboxRoutingEngine {
         recommendations: [InboxRecommendation]
     ) async -> [InboxRecommendation] {
         let sorted = recommendations.sorted { $0.confidence > $1.confidence }
-        guard sorted.count > 1 else { return sorted }
-        guard abs(sorted[0].confidence - sorted[1].confidence) < 0.08 else { return sorted }
+        // Only re-rank when there's a *genuinely* ambiguous top, with at least three
+        // viable options. The previous threshold (gap < 0.08, count > 1) fired on
+        // nearly every classification, multiplying LLM cost by 88× during a
+        // bulk inbox load.
+        guard sorted.count >= 3 else { return sorted }
+        guard abs(sorted[0].confidence - sorted[1].confidence) < 0.05 else { return sorted }
 
         let topCandidates = Array(sorted.prefix(3))
         let options = topCandidates.enumerated().map { index, recommendation in
@@ -567,10 +571,16 @@ final class InboxRoutingEngine {
             return preferredTitle
         }
 
+        // Cheap path first: if the text has a usable opening sentence, use it.
+        // Only fall through to an LLM title extraction for long, run-on captures
+        // with no natural sentence break in the first 80 chars.
         let words = text.split(whereSeparator: \.isWhitespace)
-        if words.count < 28 {
-            let firstSentence = text.components(separatedBy: CharacterSet(charactersIn: ".!?\n")).first ?? text
-            return String(firstSentence.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstSentence = text.components(separatedBy: CharacterSet(charactersIn: ".!?\n"))
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if words.count < 60 || (!firstSentence.isEmpty && firstSentence.count <= 80) {
+            let candidate = firstSentence.isEmpty ? text : firstSentence
+            return String(candidate.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         do {

@@ -43,7 +43,7 @@ struct FocusCanvasView: View {
 
     /// Whether this entity type uses a full-canvas focus mode (no wrapper needed)
     private var isFullCanvasMode: Bool {
-        entity.type == .connection || entity.type == .research || entity.type == .idea || entity.type == .content || entity.type == .note || entity.type == .cosmoAI || entity.type == .template
+        entity.type == .connection || entity.type == .research || entity.type == .idea || entity.type == .content || entity.type == .note || entity.type == .cosmoAI || entity.type == .template || entity.type == .deepDive || entity.type == .inquirySession
     }
 
     var body: some View {
@@ -268,6 +268,28 @@ struct FocusCanvasView: View {
                     CosmoColors.thinkspaceVoid.ignoresSafeArea()
                     ProgressView("Loading...")
                         .tint(.white)
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        case .deepDive:
+            if let atom = loadedAtom {
+                DeepDiveOverviewView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            } else {
+                ZStack {
+                    DS.bg.ignoresSafeArea()
+                    ProgressView("Loading Deep Dive…")
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        case .inquirySession:
+            if let atom = loadedAtom {
+                InquiryWorkspaceView(sessionAtom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            } else {
+                ZStack {
+                    DS.bg.ignoresSafeArea()
+                    ProgressView("Loading Inquiry Workspace…")
                 }
                 .onAppear { loadAtomForFocusMode() }
             }

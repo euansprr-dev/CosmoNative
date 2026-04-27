@@ -660,6 +660,13 @@ struct ResearchFocusModeView: View {
                 }
             }
 
+        case .createDeepDive:
+            Task {
+                if let deepDiveAtom = try? await InquiryRepository.shared.createDeepDive(title: "New Deep Dive") {
+                    addPanelForAtom(deepDiveAtom, at: position)
+                }
+            }
+
         case .researchAgent:
             showResearchAgentSheet = true
 

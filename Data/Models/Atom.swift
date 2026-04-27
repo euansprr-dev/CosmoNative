@@ -119,6 +119,13 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     case codexElement = "codex_element"
     case codexWalkthrough = "codex_walkthrough"
 
+    // MARK: - Inquiry Workspace (Mastery Engine)
+    case deepDive = "deep_dive"                         // Long-term topic mastery home
+    case inquirySession = "inquiry_session"             // Episode of focused exploration
+    case question                                       // Branchable learning driver
+    case extract                                        // Captured unit of meaning with provenance
+    case lexiconEntry = "lexicon_entry"                 // Lightweight term/concept (matures into Connection/Deep Dive)
+
     // MARK: - Category Classification
 
     /// Category for grouping atom types
@@ -126,7 +133,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .idea, .task, .project, .content, .research, .connection,
              .journalEntry, .calendarEvent, .scheduleBlock, .uncommittedItem,
-             .note, .stickyNote, .objective, .creator, .taxonomyValue, .image, .area:
+             .note, .stickyNote, .objective, .creator, .taxonomyValue, .image, .area,
+             .deepDive, .inquirySession, .question, .extract, .lexiconEntry:
             return .core
         case .xpEvent, .levelUpdate, .streakEvent, .badgeUnlocked, .badge, .dimensionSnapshot:
             return .leveling
@@ -283,6 +291,12 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         // Codex
         case .codexElement: return "Codex Element"
         case .codexWalkthrough: return "Walkthrough"
+        // Inquiry Workspace
+        case .deepDive: return "Deep Dive"
+        case .inquirySession: return "Inquiry Session"
+        case .question: return "Question"
+        case .extract: return "Extract"
+        case .lexiconEntry: return "Lexicon Entry"
         }
     }
 
@@ -379,6 +393,12 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         // Codex
         case .codexElement: return "Codex Elements"
         case .codexWalkthrough: return "Walkthroughs"
+        // Inquiry Workspace
+        case .deepDive: return "Deep Dives"
+        case .inquirySession: return "Inquiry Sessions"
+        case .question: return "Questions"
+        case .extract: return "Extracts"
+        case .lexiconEntry: return "Lexicon Entries"
         }
     }
 
@@ -475,6 +495,12 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         // Codex
         case .codexElement: return "atom"
         case .codexWalkthrough: return "text.book.closed"
+        // Inquiry Workspace
+        case .deepDive: return "circle.hexagongrid.circle.fill"
+        case .inquirySession: return "rectangle.split.3x1.fill"
+        case .question: return "questionmark.bubble.fill"
+        case .extract: return "highlighter"
+        case .lexiconEntry: return "character.book.closed.fill"
         }
     }
 }
@@ -653,13 +679,58 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     case computationResult = "computation_result"          // Computation -> resulting insights
     case snapshotData = "snapshot_data"                    // Snapshot -> included data atoms
 
+    // MARK: - Inquiry Workspace Links
+    // Deep Dive ↔ children
+    case deepDiveParent = "deep_dive_parent"               // Deep Dive -> parent Thinkspace UUID(s)
+    case deepDiveQuestion = "deep_dive_question"           // Deep Dive -> owned Question
+    case deepDiveLexicon = "deep_dive_lexicon"             // Deep Dive -> owned Lexicon Entry
+    case deepDiveConnection = "deep_dive_connection"       // Deep Dive -> Connection crystallized within
+    case deepDiveSource = "deep_dive_source"               // Deep Dive -> Source used (denormalized)
+    case deepDiveExtract = "deep_dive_extract"             // Deep Dive -> Extract captured (denormalized)
+    case deepDiveSession = "deep_dive_session"             // Deep Dive -> Inquiry Session
+    case relatedDeepDive = "related_deep_dive"             // Deep Dive ↔ Deep Dive (bidirectional)
+    case contentFromDeepDive = "content_from_deep_dive"    // Deep Dive -> Content/Idea atom produced
+    // Inquiry Session ↔ artifacts
+    case inquiryParentDeepDive = "inquiry_parent_deep_dive"     // Inquiry Session -> Deep Dive (single)
+    case inquiryParentObject = "inquiry_parent_object"           // Inquiry Session -> Connection/cluster/etc.
+    case inquiryRootQuestion = "inquiry_root_question"           // Inquiry Session -> root Question (single)
+    case sessionExtract = "session_extract"                       // Inquiry Session -> Extract captured
+    case sessionCreatedQuestion = "session_created_question"      // Inquiry Session -> Question birthed
+    case sessionCreatedLexicon = "session_created_lexicon"        // Inquiry Session -> Lexicon birthed
+    case sessionUsedSource = "session_used_source"                // Inquiry Session -> Source used
+    case sessionSplitFrom = "session_split_from"                  // Inquiry Session -> origin Inquiry Session (split)
+    // Question
+    case questionParentDeepDive = "question_parent_deep_dive"     // Question -> Deep Dive (single)
+    case questionBranch = "question_branch"                        // Parent Question -> child branch Question
+    case questionExtract = "question_extract"                      // Question -> Extract attached
+    case questionSource = "question_source"                        // Question -> Source answering it
+    case questionLinkedConnection = "question_linked_connection"   // Question -> related Connection
+    // Extract
+    case extractFromSource = "extract_from_source"                // Extract -> origin Source (single)
+    case extractInQuestion = "extract_in_question"                // Extract -> Question (single)
+    case extractInSession = "extract_in_session"                  // Extract -> Inquiry Session (single)
+    case extractPromotedTo = "extract_promoted_to"                // Extract -> destination atom (single)
+    // Lexicon
+    case lexiconParentDeepDive = "lexicon_parent_deep_dive"       // Lexicon -> Deep Dive (single)
+    case lexiconRelatedQuestion = "lexicon_related_question"      // Lexicon -> Question
+    case lexiconPromotedTo = "lexicon_promoted_to"                // Lexicon -> Connection/Deep Dive (single)
+    case lexiconRelated = "lexicon_related"                       // Lexicon ↔ Lexicon (bidirectional)
+    // Output integration
+    case outputFromInquiry = "output_from_inquiry"                // Idea/Content -> Inquiry Session
+    case outputFromDeepDive = "output_from_deep_dive"             // Idea/Content -> Deep Dive
+
     /// Whether this is a single-value relationship (only one link of this type allowed)
     var isSingleValue: Bool {
         switch self {
         case .project, .parentIdea, .originIdea, .connection, .recurrenceParent,
              .draftToContent, .publishSource, .clarityOf, .journalSource,
              .sleepToReadiness, .deepWorkProject, .routineInstance,
-             .templateDefinition:
+             .templateDefinition,
+             // Inquiry Workspace single-value links
+             .inquiryParentDeepDive, .inquiryRootQuestion,
+             .questionParentDeepDive,
+             .extractFromSource, .extractInQuestion, .extractInSession, .extractPromotedTo,
+             .lexiconParentDeepDive, .lexiconPromotedTo:
             return true
         default:
             return false
@@ -693,6 +764,9 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .blueprintToIdea: return .ideaToBlueprint
         case .templateDefinition: return .templateInstance
         case .templateInstance: return .templateDefinition
+        // Inquiry Workspace bidirectional pairs
+        case .relatedDeepDive: return .relatedDeepDive
+        case .lexiconRelated: return .lexiconRelated
         default: return nil
         }
     }
@@ -774,6 +848,39 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .walkthroughToCodexElement: return "Walkthrough to Element"
         case .ideaToBlueprint: return "Idea to Blueprint"
         case .blueprintToIdea: return "Blueprint to Idea"
+        // Inquiry Workspace
+        case .deepDiveParent: return "Deep Dive Parent"
+        case .deepDiveQuestion: return "Deep Dive Question"
+        case .deepDiveLexicon: return "Deep Dive Lexicon"
+        case .deepDiveConnection: return "Deep Dive Connection"
+        case .deepDiveSource: return "Deep Dive Source"
+        case .deepDiveExtract: return "Deep Dive Extract"
+        case .deepDiveSession: return "Deep Dive Session"
+        case .relatedDeepDive: return "Related Deep Dive"
+        case .contentFromDeepDive: return "Content from Deep Dive"
+        case .inquiryParentDeepDive: return "Inquiry Parent Deep Dive"
+        case .inquiryParentObject: return "Inquiry Parent Object"
+        case .inquiryRootQuestion: return "Inquiry Root Question"
+        case .sessionExtract: return "Session Extract"
+        case .sessionCreatedQuestion: return "Session Created Question"
+        case .sessionCreatedLexicon: return "Session Created Lexicon"
+        case .sessionUsedSource: return "Session Used Source"
+        case .sessionSplitFrom: return "Session Split From"
+        case .questionParentDeepDive: return "Question Parent Deep Dive"
+        case .questionBranch: return "Question Branch"
+        case .questionExtract: return "Question Extract"
+        case .questionSource: return "Question Source"
+        case .questionLinkedConnection: return "Question Linked Connection"
+        case .extractFromSource: return "Extract from Source"
+        case .extractInQuestion: return "Extract in Question"
+        case .extractInSession: return "Extract in Session"
+        case .extractPromotedTo: return "Extract Promoted To"
+        case .lexiconParentDeepDive: return "Lexicon Parent Deep Dive"
+        case .lexiconRelatedQuestion: return "Lexicon Related Question"
+        case .lexiconPromotedTo: return "Lexicon Promoted To"
+        case .lexiconRelated: return "Lexicon Related"
+        case .outputFromInquiry: return "Output from Inquiry"
+        case .outputFromDeepDive: return "Output from Deep Dive"
         }
     }
 }

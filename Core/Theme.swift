@@ -251,6 +251,9 @@ struct CosmoMentionColors {
         case .project: return project
         case .swipeFile: return swipeFile
         case .stickyNote: return stickyNote
+        // Inquiry Workspace — portals lean indigo/purple, sessions accent
+        case .deepDive: return Color(hex: "8B6BAB")
+        case .inquirySession: return DS.accent
         default: return defaultColor
         }
     }

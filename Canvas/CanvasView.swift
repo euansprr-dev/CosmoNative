@@ -2252,6 +2252,9 @@ struct CanvasView: View {
             // Connection requires async database creation - handled separately
             createConnectionBlock(at: position)
             return
+        case .deepDive:
+            createDeepDiveBlock(at: position, prefillTitle: prefillTitle)
+            return
         case .note:
             block = CanvasBlock.noteBlock(position: position)
         case .stickyNote:
@@ -3363,6 +3366,31 @@ struct CanvasView: View {
         }
     }
 
+    private func createDeepDiveBlock(at position: CGPoint, prefillTitle: String? = nil) {
+        Task { @MainActor in
+            do {
+                let title = prefillTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let parentThinkspaceUUIDs = [thinkspaceId ?? spatialEngine.currentThinkspaceId].compactMap { $0 }
+                let deepDive = try await InquiryRepository.shared.createDeepDive(
+                    title: (title?.isEmpty == false) ? (title ?? "New Deep Dive") : "New Deep Dive",
+                    parentThinkspaceUUIDs: parentThinkspaceUUIDs
+                )
+                await DeepDiveAliasRegistry.shared.refresh()
+
+                let block = CanvasBlock.fromAtom(deepDive, position: position)
+                await spatialEngine.addBlock(block, persist: true)
+
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Inquiry.openDeepDive,
+                    object: nil,
+                    userInfo: ["uuid": deepDive.uuid]
+                )
+            } catch {
+                print("❌ Failed to create Deep Dive: \(error)")
+            }
+        }
+    }
+
     // MARK: - Open Entity On Canvas (from Cmd+K)
 
     /// Opens an existing entity as a floating block on the canvas,
@@ -4108,6 +4136,8 @@ struct CanvasBlockStaticView: View {
             IdeaBoardBlockView(block: block)
         case .template:
             TemplateBlockView(block: block)
+        case .deepDive:
+            DeepDivePortalBlockView(block: block)
         default:
             FloatingBlockView(block: block)
         }

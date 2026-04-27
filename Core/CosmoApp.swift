@@ -189,6 +189,39 @@ struct CosmoApp: App {
             }
         }
 
+        // Inquiry Workspace: open Deep Dive Overview by UUID
+        NotificationCenter.default.addObserver(
+            forName: CosmoNotification.Inquiry.openDeepDive,
+            object: nil,
+            queue: .main
+        ) { [weak appState] notification in
+            guard let uuid = notification.userInfo?["uuid"] as? String else { return }
+            Task { @MainActor in
+                guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
+                      let id = atom.id else { return }
+                appState?.focusedEntity = EntitySelection(id: id, type: .deepDive)
+            }
+        }
+
+        // Inquiry Workspace: start (or resume) an Inquiry Session
+        NotificationCenter.default.addObserver(
+            forName: CosmoNotification.Inquiry.startInquiry,
+            object: nil,
+            queue: .main
+        ) { [weak appState] notification in
+            guard let anchorUUID = notification.userInfo?["anchorUUID"] as? String,
+                  let anchorTypeRaw = notification.userInfo?["anchorType"] as? String else { return }
+            let resumeSessionUUID = notification.userInfo?["resumeSessionUUID"] as? String
+            Task { @MainActor in
+                await InquirySessionLauncher.shared.launch(
+                    anchorUUID: anchorUUID,
+                    anchorType: anchorTypeRaw,
+                    resumeSessionUUID: resumeSessionUUID,
+                    appState: appState
+                )
+            }
+        }
+
         // Listen for undo/redo commands (from menu bar Cmd+Z / Cmd+Shift+Z)
         NotificationCenter.default.addObserver(
             forName: .performUndo,
@@ -485,6 +518,8 @@ public enum EntityType: String, Codable, Sendable {
     case liveQuery = "live_query"   // Live query block that auto-updates with matching atoms
     case ideaBoard = "idea_board"   // Client idea board — live-updating idea list from Command-K
     case template                   // Smart templatable block (user-defined structured blocks)
+    case deepDive = "deep_dive"     // Inquiry Workspace: Deep Dive portal block (mastery topic home)
+    case inquirySession = "inquiry_session"  // Inquiry Workspace: live inquiry session (focus mode)
 
     public var icon: String {
         switch self {
@@ -505,6 +540,8 @@ public enum EntityType: String, Codable, Sendable {
         case .liveQuery: return "bolt.horizontal.fill"
         case .ideaBoard: return "list.bullet.rectangle.portrait.fill"
         case .template: return "rectangle.3.group.fill"
+        case .deepDive: return "circle.hexagongrid.circle.fill"
+        case .inquirySession: return "rectangle.split.3x1.fill"
         }
     }
 
@@ -528,6 +565,8 @@ public enum EntityType: String, Codable, Sendable {
         case .liveQuery: return DS.accent
         case .ideaBoard: return DS.entityIdea
         case .template: return DS.accent
+        case .deepDive: return DS.accent
+        case .inquirySession: return DS.accent
         }
     }
 }

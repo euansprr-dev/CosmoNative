@@ -478,6 +478,33 @@ enum CosmoNotification {
         /// Open a specific atom in the floating viewer — userInfo: ["uuid": String]
         static let openAtom = Notification.Name("com.cosmo.atomWindow.openAtom")
     }
+
+    // MARK: - Inquiry Workspace Notifications
+    /// Mastery engine: Deep Dive + Inquiry Session lifecycle, captures, branches, crystallization.
+    enum Inquiry {
+        /// Open a Deep Dive Overview for the given atom UUID — userInfo: ["uuid": String]
+        static let openDeepDive = Notification.Name("com.cosmo.inquiry.openDeepDive")
+        /// Start an Inquiry Session anchored to an object — userInfo: ["anchorUUID": String, "anchorType": String]
+        static let startInquiry = Notification.Name("com.cosmo.inquiry.startInquiry")
+        /// Inquiry Session became active — userInfo: ["sessionUUID": String, "deepDiveUUID": String?]
+        static let sessionStarted = Notification.Name("com.cosmo.inquiry.sessionStarted")
+        /// Inquiry Session paused/closed — userInfo: ["sessionUUID": String]
+        static let sessionEnded = Notification.Name("com.cosmo.inquiry.sessionEnded")
+        /// Inquiry Session was crystallized — userInfo: ["sessionUUID": String]
+        static let sessionCrystallized = Notification.Name("com.cosmo.inquiry.sessionCrystallized")
+        /// A Telegram/voice capture was routed to an active inquiry — userInfo: ["sessionUUID": String, "captureId": String]
+        static let captureRoutedToSession = Notification.Name("com.cosmo.inquiry.captureRoutedToSession")
+        /// Background cartographer detected a breakthrough — userInfo: ["sessionUUID": String, "summary": String]
+        static let breakthroughDetected = Notification.Name("com.cosmo.inquiry.breakthroughDetected")
+        /// Background cartographer detected a candidate term — userInfo: ["sessionUUID": String, "term": String]
+        static let extractedQuestion = Notification.Name("com.cosmo.inquiry.extractedQuestion")
+        /// Add an extract to the active Inquiry Workspace — userInfo: ["extractUUID": String]
+        static let addExtractToInquiry = Notification.Name("com.cosmo.inquiry.addExtractToInquiry")
+        /// Lexicon entry maturity changed — userInfo: ["lexiconUUID": String, "newMaturity": String]
+        static let maturityProgressed = Notification.Name("com.cosmo.inquiry.maturityProgressed")
+        /// Crystallize the active session — no payload
+        static let crystallizeActive = Notification.Name("com.cosmo.inquiry.crystallizeActive")
+    }
 }
 
 // MARK: - Type-Safe Payloads

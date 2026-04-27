@@ -89,6 +89,8 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .liveQuery:  return CGSize(width: 280, height: 360)
         case .ideaBoard:  return CGSize(width: 280, height: 400)
         case .template:   return CGSize(width: 260, height: 380)
+        case .deepDive:   return CGSize(width: 320, height: 280)
+        case .inquirySession: return CGSize(width: 280, height: 200)
         default:          return CGSize(width: 220, height: 310)
         }
     }
@@ -146,6 +148,10 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             size = CGSize(width: 220, height: 310)
         case .connection:
             size = CGSize(width: 220, height: 310)
+        case .deepDive:
+            size = CGSize(width: 320, height: 280)
+        case .inquirySession:
+            size = CGSize(width: 280, height: 200)
         case .image:
             // Use stored dimensions to compute aspect-ratio-correct size
             if let meta = atom.imageMetadata,

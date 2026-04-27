@@ -29,7 +29,9 @@ targets:
     platform: macOS
     deploymentTarget: "26.0"
     sources:
+      - Agent
       - AI
+      - Automation
       - Canvas
       - Components
       - config

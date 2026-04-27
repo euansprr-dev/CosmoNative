@@ -292,6 +292,8 @@ struct PaneCanvasView: View {
             createEntityBlock(type: .research, at: canvasPosition)
         case .createTask:
             createEntityBlock(type: .task, at: canvasPosition)
+        case .createDeepDive:
+            createEntityBlock(type: .deepDive, at: canvasPosition)
         default:
             break
         }
@@ -325,6 +327,13 @@ struct PaneCanvasView: View {
     private func createEntityBlock(type: EntityType, at position: CGPoint) {
         Task { @MainActor in
             do {
+                if type == .deepDive {
+                    let deepDive = try await InquiryRepository.shared.createDeepDive(title: "New Deep Dive")
+                    let block = CanvasBlock.fromAtom(deepDive, position: position)
+                    await spatialEngine.addBlock(block, persist: true)
+                    return
+                }
+
                 let atomType: AtomType = {
                     switch type {
                     case .idea: return .idea
@@ -343,16 +352,9 @@ struct PaneCanvasView: View {
                     return db.lastInsertedRowID
                 }
 
-                let block = CanvasBlock(
-                    position: position,
-                    size: CGSize(width: 280, height: 200),
-                    entityType: type,
-                    entityId: atomId,
-                    entityUuid: newAtom.uuid,
-                    title: "New \(type)",
-                    subtitle: nil,
-                    metadata: ["created": ISO8601DateFormatter().string(from: Date())]
-                )
+                var createdAtom = newAtom
+                createdAtom.id = atomId
+                let block = CanvasBlock.fromAtom(createdAtom, position: position)
                 await spatialEngine.addBlock(block, persist: true)
             } catch {
                 print("❌ PaneCanvasView: Failed to create \(type) block: \(error)")

@@ -1518,6 +1518,8 @@ struct MainView: View {
             createNewEntity(type: .connection, at: radialMenuPosition)
         case .createStickyNote:
             createNewEntity(type: .stickyNote, at: radialMenuPosition)
+        case .createDeepDive:
+            createNewEntity(type: .deepDive, at: radialMenuPosition)
         case .researchAgent:
             createCosmoAIBlock(at: radialMenuPosition)
         case .fromDatabase:

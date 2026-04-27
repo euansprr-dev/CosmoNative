@@ -709,6 +709,27 @@ class TelegramBridgeService: ObservableObject {
             return
         }
 
+        // Inquiry Workspace: alias-prefixed captures (`breathwork:` / `bw/q:` etc.)
+        // bypass FlashLiteRouter and route directly to Topic Inbox / Question / Source / Lexicon / Extract.
+        if let topicCapture = TelegramTopicAliasParser.parse(text) {
+            let outcome = await TelegramTopicRouter.route(topicCapture)
+            switch outcome {
+            case .routed(let destination, _):
+                await sendMessage(chatId: chatIdStr, text: "✓ Saved to \(destination).")
+                return
+            case .unknownAlias(let alias, let suggestion):
+                if let s = suggestion {
+                    await sendMessage(chatId: chatIdStr, text: "? No alias '\(alias)' — did you mean '\(s)'? I'll save to Inbox for now.")
+                } else {
+                    await sendMessage(chatId: chatIdStr, text: "? No Deep Dive alias '\(alias)'. Saving to Inbox.")
+                }
+                // Fall through to normal inbox flow below
+            case .failed(let reason):
+                await sendMessage(chatId: chatIdStr, text: "✗ Couldn't route: \(reason)")
+                return
+            }
+        }
+
         // Fast-path URL capture bypasses debounce for instant swipe saves
         if text.range(of: "https?://[^\\s]+", options: .regularExpression) != nil {
             if let fastCaptureResult = await tryFastCapture(text: text, chatId: chatIdStr) {

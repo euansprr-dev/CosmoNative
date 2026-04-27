@@ -34,7 +34,7 @@ struct RadialMenuView: View {
         RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
         RadialAction(icon: "square.and.pencil", label: "Sticky", color: DS.entityStickyNote, type: .createStickyNote),
         RadialAction(icon: "point.3.connected.trianglepath.dotted", label: "Connection", color: DS.entityConnection, type: .createConnection),
-        RadialAction(icon: "tray.full.fill", label: "Database", color: DS.textSecondary, type: .fromDatabase),
+        RadialAction(icon: "circle.hexagongrid.circle.fill", label: "Deep Dive", color: CosmoMentionColors.color(for: .deepDive), type: .createDeepDive),
         RadialAction(icon: "rectangle.3.group.fill", label: "Template", color: DS.accent, type: .createTemplate),
     ]
 
@@ -268,6 +268,7 @@ enum RadialActionType {
     case createResearch
     case createConnection
     case createStickyNote   // Creates a sticky note block
+    case createDeepDive     // Creates a Deep Dive portal block
     case researchAgent      // Opens Research Agent panel (Perplexity AI)
     case fromDatabase       // Opens database picker overlay
     case createTemplate     // Opens template gallery to spawn a template block

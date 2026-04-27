@@ -301,6 +301,8 @@ public struct CommandKView: View {
                 CortexIdeasBrowser(viewModel: viewModel)
             case .readwise:
                 CortexReadwiseBrowser(viewModel: viewModel)
+            case .inquiry:
+                CortexInquiryBrowser(viewModel: viewModel)
             }
         }
     }

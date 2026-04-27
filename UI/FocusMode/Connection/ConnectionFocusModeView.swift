@@ -1213,6 +1213,14 @@ struct ConnectionFocusModeView: View {
                 }
             }
 
+        case .createDeepDive:
+            Task {
+                if let deepDiveAtom = try? await InquiryRepository.shared.createDeepDive(title: "New Deep Dive") {
+                    canvasCreatedAtomUUIDs.insert(deepDiveAtom.uuid)
+                    addPanelForAtom(deepDiveAtom, at: viewModel.lastTapPosition)
+                }
+            }
+
         case .researchAgent:
             break
 

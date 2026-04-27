@@ -8,12 +8,13 @@ import Combine
 
 // MARK: - CommandKTab
 
-/// The four domain tabs available in Command-K
+/// The domain tabs available in Command-K
 public enum CommandKTab: String, CaseIterable, Equatable {
     case database
     case swipeGallery
     case ideas
     case readwise
+    case inquiry
 
     var title: String {
         switch self {
@@ -21,6 +22,7 @@ public enum CommandKTab: String, CaseIterable, Equatable {
         case .swipeGallery: return "Swipe Gallery"
         case .ideas: return "Ideas"
         case .readwise: return "Readwise"
+        case .inquiry: return "Inquiry"
         }
     }
 
@@ -30,6 +32,7 @@ public enum CommandKTab: String, CaseIterable, Equatable {
         case .swipeGallery: return "bolt.fill"
         case .ideas: return "lightbulb.fill"
         case .readwise: return "books.vertical.fill"
+        case .inquiry: return "circle.hexagongrid.circle.fill"
         }
     }
 
@@ -39,6 +42,7 @@ public enum CommandKTab: String, CaseIterable, Equatable {
         case .swipeGallery: return DS.entitySwipe
         case .ideas: return DS.entityIdea
         case .readwise: return DS.entityReadwise
+        case .inquiry: return CosmoMentionColors.color(for: .deepDive)
         }
     }
 
@@ -48,6 +52,7 @@ public enum CommandKTab: String, CaseIterable, Equatable {
         case .swipeGallery: return "Search swipes..."
         case .ideas: return "Search ideas..."
         case .readwise: return "Search books..."
+        case .inquiry: return "Search Deep Dives, questions, lexicon..."
         }
     }
 }
@@ -1313,17 +1318,22 @@ public final class CommandKViewModel: ObservableObject {
             .database: databaseTotalCount,
             .swipeGallery: swipeGalleryItems.count,
             .ideas: ideaGalleryItems.count,
-            .readwise: ReadwiseBookStore.shared.books.count
+            .readwise: ReadwiseBookStore.shared.books.count,
+            .inquiry: deepDiveTotalCount
         ]
     }
+
+    @Published public var deepDiveTotalCount: Int = 0
 
     /// Load the total database atom count for bubble display
     private func loadDatabaseCount() async {
         do {
             let atoms = try await AtomRepository.shared.fetchRecent(limit: 500)
             databaseTotalCount = atoms.count
+            deepDiveTotalCount = (try? await InquiryRepository.shared.fetchAllDeepDives().count) ?? 0
         } catch {
             databaseTotalCount = 0
+            deepDiveTotalCount = 0
         }
     }
 

@@ -14,6 +14,10 @@ struct DeepDiveOverviewView: View {
     @State private var selectedTab: DeepDiveOverviewTab = .overview
     @State private var showingRootQuestionComposer = false
     @State private var rootQuestionDraft = ""
+    @State private var showArchivedSessions = false
+    @State private var renamingSessionUUID: String?
+    @State private var sessionRenameDraft = ""
+    @State private var deletingSessionUUID: String?
 
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
@@ -58,6 +62,22 @@ struct DeepDiveOverviewView: View {
                     launchInquiry(mainQuestionTitle: question.title, rootQuestionUUID: question.uuid)
                 }
             )
+        }
+        .sheet(isPresented: sessionRenameSheetBinding) {
+            if let sessionUUID = renamingSessionUUID {
+                sessionRenameSheet(sessionUUID)
+            }
+        }
+        .confirmationDialog("Delete session?", isPresented: deleteSessionDialogBinding, titleVisibility: .visible) {
+            Button("Delete Session", role: .destructive) {
+                Task { await viewModel.deleteSession(deletingSessionUUID ?? "") }
+                deletingSessionUUID = nil
+            }
+            Button("Cancel", role: .cancel) {
+                deletingSessionUUID = nil
+            }
+        } message: {
+            Text("The session atom will move to Recently Deleted. Questions and extracts remain as atoms.")
         }
     }
 
@@ -361,8 +381,8 @@ struct DeepDiveOverviewView: View {
 
     @ViewBuilder
     private var sessionsBlock: some View {
-        sectionContainer(title: "RESEARCH SESSIONS (\(viewModel.sessions.count))") {
-            ForEach(viewModel.sessions.prefix(8), id: \.uuid) { session in
+        sectionContainer(title: "RESEARCH SESSIONS (\(visibleSessions.count))") {
+            ForEach(visibleSessions.prefix(8), id: \.uuid) { session in
                 sessionRow(session)
             }
         }
@@ -388,6 +408,9 @@ struct DeepDiveOverviewView: View {
         .onTapGesture {
             resumeSession(session)
         }
+        .contextMenu {
+            sessionContextMenu(session)
+        }
     }
 
     // MARK: - Research Tab (placeholder grid of sessions)
@@ -398,12 +421,16 @@ struct DeepDiveOverviewView: View {
                 Text("Inquiry Sessions")
                     .font(.system(size: 22, weight: .semibold, design: .serif))
                     .foregroundStyle(CosmoColors.textPrimary)
-                if viewModel.sessions.isEmpty {
+                Toggle("Show archived", isOn: $showArchivedSessions)
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textSecondary)
+                    .toggleStyle(.checkbox)
+                if visibleSessions.isEmpty {
                     Text("No sessions yet. Click Start Inquiry to open the workspace.")
                         .font(CosmoTypography.body)
                         .foregroundStyle(CosmoColors.textSecondary)
                 } else {
-                    ForEach(viewModel.sessions, id: \.uuid) { session in
+                    ForEach(visibleSessions, id: \.uuid) { session in
                         sessionCard(session)
                     }
                 }
@@ -448,6 +475,9 @@ struct DeepDiveOverviewView: View {
                 .stroke(DS.borderSubtle, lineWidth: 1)
         )
         .onTapGesture { resumeSession(session) }
+        .contextMenu {
+            sessionContextMenu(session)
+        }
     }
 
     // MARK: - Map Tab (placeholder)
@@ -482,6 +512,11 @@ struct DeepDiveOverviewView: View {
     private var shouldShowConnections: Bool { !viewModel.connections.isEmpty }
     private var shouldShowOutputs: Bool { !viewModel.outputAngles.isEmpty }
     private var shouldShowSessions: Bool { !viewModel.sessions.isEmpty }
+    private var visibleSessions: [Atom] {
+        viewModel.sessions.filter { session in
+            showArchivedSessions || session.inquirySessionMetadata?.status != .archived
+        }
+    }
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
@@ -551,6 +586,66 @@ struct DeepDiveOverviewView: View {
                 "resumeSessionUUID": session.uuid
             ]
         )
+    }
+
+    @ViewBuilder
+    private func sessionContextMenu(_ session: Atom) -> some View {
+        Button("Resume") { resumeSession(session) }
+        Button("Rename") {
+            renamingSessionUUID = session.uuid
+            sessionRenameDraft = session.title ?? "Untitled session"
+        }
+        Button("Archive") {
+            Task { await viewModel.archiveSession(session.uuid) }
+        }
+        Button("Delete", role: .destructive) {
+            deletingSessionUUID = session.uuid
+        }
+    }
+
+    private var sessionRenameSheetBinding: Binding<Bool> {
+        Binding(
+            get: { renamingSessionUUID != nil },
+            set: { if !$0 { renamingSessionUUID = nil } }
+        )
+    }
+
+    private var deleteSessionDialogBinding: Binding<Bool> {
+        Binding(
+            get: { deletingSessionUUID != nil },
+            set: { if !$0 { deletingSessionUUID = nil } }
+        )
+    }
+
+    private func sessionRenameSheet(_ sessionUUID: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.space16) {
+            Text("Rename Session")
+                .font(CosmoTypography.titleSmall)
+                .foregroundStyle(CosmoColors.textPrimary)
+            TextField("Session title", text: $sessionRenameDraft)
+                .textFieldStyle(.plain)
+                .font(CosmoTypography.body)
+                .padding(DS.space12)
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderActive, lineWidth: 1))
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    renamingSessionUUID = nil
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CosmoColors.textSecondary)
+                Button("Save") {
+                    Task { await viewModel.renameSession(sessionUUID, title: sessionRenameDraft) }
+                    renamingSessionUUID = nil
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.accent)
+            }
+        }
+        .padding(DS.space20)
+        .frame(width: 420)
+        .background(DS.bg)
     }
 }
 

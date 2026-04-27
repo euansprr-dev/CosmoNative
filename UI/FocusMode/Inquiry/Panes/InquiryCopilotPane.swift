@@ -142,6 +142,9 @@ struct InquiryCopilotPane: View {
                     .foregroundStyle(CosmoColors.textTertiary)
                     .lineLimit(3)
             }
+            if let placement = card.placement {
+                placementLine(placement)
+            }
             if let extract = card.proposedExtractText {
                 Text(extract)
                     .font(CosmoTypography.caption)
@@ -162,16 +165,54 @@ struct InquiryCopilotPane: View {
                 .font(CosmoTypography.caption)
                 .foregroundStyle(CosmoColors.textTertiary)
             }
+            if let alternates = card.alternatePlacements, !alternates.isEmpty {
+                HStack(spacing: DS.space6) {
+                    ForEach(alternates.prefix(3), id: \.id) { alternate in
+                        Button(alternateActionTitle(alternate)) {
+                            Task { await viewModel.acceptRoutingCard(card, overridePlacement: alternate) }
+                        }
+                        .buttonStyle(.plain)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textSecondary)
+                    }
+                }
+            }
         }
         .padding(DS.space10)
         .background(DS.accentSoft.opacity(0.72), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.accent.opacity(0.35), lineWidth: 1))
     }
 
+    private func placementLine(_ placement: InquiryPlacementDecision) -> some View {
+        HStack(spacing: 6) {
+            Text(placement.nodeType.displayName)
+                .font(CosmoTypography.labelSmall)
+                .foregroundStyle(DS.accent)
+            Text("·")
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
+            Text(placement.relationshipType.displayName)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textSecondary)
+            Spacer(minLength: 4)
+            Text(placement.confidence.displayName)
+                .font(CosmoTypography.labelSmall)
+                .foregroundStyle(confidenceColor(placement.confidence))
+        }
+    }
+
     private func routingIcon(for kind: InquiryRoutingCard.Kind) -> String {
         switch kind {
-        case .branchProposal, .childBranchProposal, .sourceFinding:
+        case .branchProposal, .childBranchProposal, .placementPreview:
             return "arrow.triangle.branch"
+        case .sourceFinding, .sourceSearchTask:
+            return "doc.text.magnifyingglass"
+        case .evidenceAudit:
+            return "shield.lefthalf.filled"
+        case .termCandidate:
+            return "character.book.closed"
+        case .deepDiveCandidate:
+            return "circle.hexagongrid.circle"
         case .claimProposal:
             return "exclamationmark.bubble"
         case .evidenceProposal:
@@ -193,7 +234,11 @@ struct InquiryCopilotPane: View {
         switch kind {
         case .branchProposal: return "Create branch"
         case .childBranchProposal: return "Create child branch"
-        case .sourceFinding: return "Create branch"
+        case .placementPreview: return "Create"
+        case .sourceFinding, .sourceSearchTask: return "Create source task"
+        case .evidenceAudit: return "Create evidence task"
+        case .termCandidate: return "Save term"
+        case .deepDiveCandidate: return "Save candidate"
         case .claimProposal: return "Save claim"
         case .evidenceProposal: return "Save evidence"
         case .counterevidenceProposal: return "Save counterevidence"
@@ -202,6 +247,26 @@ struct InquiryCopilotPane: View {
         case .sourceQualityWarning: return "Save warning"
         case .noteRoute: return "Apply"
         case .modelUpdate: return "Apply"
+        }
+    }
+
+    private func alternateActionTitle(_ placement: InquiryPlacementDecision) -> String {
+        switch placement.nodeType {
+        case .rootQuestion: return "Move to root"
+        case .branchQuestion: return "Make child"
+        case .evidenceQualityInvestigation: return "Evidence task"
+        case .sourceSearchTask: return "Source task"
+        case .lexiconTerm: return "Save term"
+        case .deepDiveCandidate: return "Deep Dive candidate"
+        default: return placement.nodeType.displayName
+        }
+    }
+
+    private func confidenceColor(_ confidence: InquiryPlacementConfidence) -> Color {
+        switch confidence {
+        case .high: return DS.green
+        case .medium: return DS.orange
+        case .low: return CosmoColors.textTertiary
         }
     }
 
@@ -273,9 +338,10 @@ struct InquiryCopilotPane: View {
         let claims = viewModel.claims(for: viewModel.activeQuestionUUID)
         let evidence = viewModel.evidence(for: viewModel.activeQuestionUUID)
         let mechanisms = viewModel.mechanisms(for: viewModel.activeQuestionUUID)
+        let tasks = viewModel.operationalTasks(for: viewModel.activeQuestionUUID)
         return VStack(alignment: .leading, spacing: DS.space8) {
             sectionLabel("ANSWER FORMING")
-            if claims.isEmpty && evidence.isEmpty && mechanisms.isEmpty {
+            if claims.isEmpty && evidence.isEmpty && mechanisms.isEmpty && tasks.isEmpty {
                 Text("Claims, evidence, counterevidence, mechanisms, assumptions, and source quality notes will collect here.")
                     .font(CosmoTypography.caption)
                     .foregroundStyle(CosmoColors.textTertiary)
@@ -288,6 +354,9 @@ struct InquiryCopilotPane: View {
                 }
                 if !mechanisms.isEmpty {
                     answerGroup("MECHANISMS / ASSUMPTIONS / QUALITY", items: mechanisms)
+                }
+                if !tasks.isEmpty {
+                    taskGroup(tasks)
                 }
             }
         }
@@ -322,6 +391,31 @@ struct InquiryCopilotPane: View {
                     .font(CosmoTypography.caption)
                     .foregroundStyle(CosmoColors.textSecondary)
                     .lineLimit(3)
+            }
+        }
+    }
+
+    private func taskGroup(_ tasks: [InquiryOperationalTask]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("TASKS")
+                .font(CosmoTypography.labelSmall)
+                .foregroundStyle(CosmoColors.textTertiary)
+            ForEach(tasks.prefix(4), id: \.id) { task in
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: task.type == .evidenceAudit ? "shield.lefthalf.filled" : "doc.text.magnifyingglass")
+                        .font(.system(size: 10))
+                        .foregroundStyle(task.type == .evidenceAudit ? DS.orange : DS.accent)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(task.type == .evidenceAudit ? "Evidence Audit" : "Source Search")
+                            .font(CosmoTypography.labelSmall)
+                            .foregroundStyle(CosmoColors.textTertiary)
+                        Text(task.title)
+                            .font(CosmoTypography.caption)
+                            .foregroundStyle(CosmoColors.textSecondary)
+                            .lineLimit(3)
+                    }
+                }
             }
         }
     }

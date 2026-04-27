@@ -179,6 +179,158 @@ enum ExtractStatus: String, Codable, CaseIterable, Sendable {
     case promoted
 }
 
+enum InquiryNodeType: String, Codable, CaseIterable, Sendable {
+    case topic
+    case rootQuestion
+    case branchQuestion
+    case claim
+    case evidenceQualityInvestigation
+    case sourceSearchTask
+    case evidence
+    case counterevidence
+    case lexiconTerm
+    case deepDiveCandidate
+
+    var displayName: String {
+        switch self {
+        case .topic: return "Topic"
+        case .rootQuestion: return "Root Question"
+        case .branchQuestion: return "Branch Question"
+        case .claim: return "Claim"
+        case .evidenceQualityInvestigation: return "Evidence Audit"
+        case .sourceSearchTask: return "Source Search"
+        case .evidence: return "Evidence"
+        case .counterevidence: return "Counterevidence"
+        case .lexiconTerm: return "Term"
+        case .deepDiveCandidate: return "Deep Dive Candidate"
+        }
+    }
+}
+
+enum InquiryRelationshipType: String, Codable, CaseIterable, Sendable {
+    case childOf = "child_of"
+    case siblingOf = "sibling_of"
+    case rootUnderTopic = "root_under_topic"
+    case evidenceAuditForClaim = "evidence_audit_for_claim"
+    case sourceSearchForQuestion = "source_search_for_question"
+    case sourceSearchForClaim = "source_search_for_claim"
+    case consequenceOf = "consequence_of"
+    case prerequisiteFor = "prerequisite_for"
+    case mechanismFor = "mechanism_for"
+    case definitionOfTerm = "definition_of_term"
+    case crossLinkedTo = "cross_linked_to"
+    case promotedToDeepDive = "promoted_to_deep_dive"
+    case relatedTo = "related_to"
+
+    var displayName: String {
+        rawValue.replacingOccurrences(of: "_", with: " ")
+    }
+}
+
+enum InquiryOperationalTaskType: String, Codable, CaseIterable, Sendable {
+    case evidenceAudit
+    case sourceSearch
+}
+
+enum InquiryPlacementConfidence: String, Codable, CaseIterable, Sendable {
+    case high
+    case medium
+    case low
+
+    var displayName: String { rawValue.capitalized }
+}
+
+enum InquiryTreeNodeVisibility: String, Codable, CaseIterable, Sendable {
+    case solidNode
+    case satellite
+    case inspectorOnly
+    case hidden
+}
+
+struct InquiryPlacementDecision: Codable, Sendable, Identifiable, Hashable {
+    var id: String
+    var nodeType: InquiryNodeType
+    var parentQuestionUUID: String?
+    var parentBranchNodeId: String?
+    var relationshipType: InquiryRelationshipType
+    var confidence: InquiryPlacementConfidence
+    var explanation: String
+    var requiresApproval: Bool
+    var appearsInBranchMap: Bool
+
+    init(
+        id: String = UUID().uuidString,
+        nodeType: InquiryNodeType,
+        parentQuestionUUID: String? = nil,
+        parentBranchNodeId: String? = nil,
+        relationshipType: InquiryRelationshipType,
+        confidence: InquiryPlacementConfidence,
+        explanation: String,
+        requiresApproval: Bool = true,
+        appearsInBranchMap: Bool
+    ) {
+        self.id = id
+        self.nodeType = nodeType
+        self.parentQuestionUUID = parentQuestionUUID
+        self.parentBranchNodeId = parentBranchNodeId
+        self.relationshipType = relationshipType
+        self.confidence = confidence
+        self.explanation = explanation
+        self.requiresApproval = requiresApproval
+        self.appearsInBranchMap = appearsInBranchMap
+    }
+}
+
+struct InquiryOperationalTask: Codable, Sendable, Identifiable, Hashable {
+    enum Status: String, Codable, Sendable {
+        case open
+        case inProgress
+        case completed
+        case archived
+    }
+
+    var id: String
+    var type: InquiryOperationalTaskType
+    var title: String
+    var detail: String?
+    var attachedQuestionUUID: String?
+    var attachedClaimExtractUUID: String?
+    var sourceUUID: String?
+    var sourceTabId: String?
+    var relationshipType: InquiryRelationshipType
+    var originExtractUUID: String?
+    var createdAt: String
+    var status: Status
+
+    init(
+        id: String = UUID().uuidString,
+        type: InquiryOperationalTaskType,
+        title: String,
+        detail: String? = nil,
+        attachedQuestionUUID: String? = nil,
+        attachedClaimExtractUUID: String? = nil,
+        sourceUUID: String? = nil,
+        sourceTabId: String? = nil,
+        relationshipType: InquiryRelationshipType,
+        originExtractUUID: String? = nil,
+        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        status: Status = .open
+    ) {
+        self.id = id
+        self.type = type
+        self.title = title
+        self.detail = detail
+        self.attachedQuestionUUID = attachedQuestionUUID
+        self.attachedClaimExtractUUID = attachedClaimExtractUUID
+        self.sourceUUID = sourceUUID
+        self.sourceTabId = sourceTabId
+        self.relationshipType = relationshipType
+        self.originExtractUUID = originExtractUUID
+        self.createdAt = createdAt
+        self.status = status
+    }
+}
+
 /// Maturity ladder for a Lexicon Entry.
 enum LexiconMaturity: String, Codable, CaseIterable, Sendable {
     case mention
@@ -525,13 +677,25 @@ struct ResearchTreeNode: Codable, Sendable, Identifiable {
         var selectionRangeEnd: Int?
         var aiSuggested: Bool
         var accepted: Bool
+        var nodeType: InquiryNodeType?
+        var relationshipType: InquiryRelationshipType?
+        var visibility: InquiryTreeNodeVisibility?
+        var isPlaceholder: Bool?
+        var placementDecisionId: String?
+        var linkedExtractUUIDs: [String]?
         init(
             label: String? = nil,
             sourceTabId: String? = nil,
             selectionRangeStart: Int? = nil,
             selectionRangeEnd: Int? = nil,
             aiSuggested: Bool = false,
-            accepted: Bool = true
+            accepted: Bool = true,
+            nodeType: InquiryNodeType? = nil,
+            relationshipType: InquiryRelationshipType? = nil,
+            visibility: InquiryTreeNodeVisibility? = nil,
+            isPlaceholder: Bool? = nil,
+            placementDecisionId: String? = nil,
+            linkedExtractUUIDs: [String]? = nil
         ) {
             self.label = label
             self.sourceTabId = sourceTabId
@@ -539,6 +703,12 @@ struct ResearchTreeNode: Codable, Sendable, Identifiable {
             self.selectionRangeEnd = selectionRangeEnd
             self.aiSuggested = aiSuggested
             self.accepted = accepted
+            self.nodeType = nodeType
+            self.relationshipType = relationshipType
+            self.visibility = visibility
+            self.isPlaceholder = isPlaceholder
+            self.placementDecisionId = placementDecisionId
+            self.linkedExtractUUIDs = linkedExtractUUIDs
         }
     }
 
@@ -592,14 +762,67 @@ struct ResearchTreeDocument: Codable, Sendable {
             parentNodeId: nil,
             childNodeIds: [],
             branchOrder: 0,
-            meta: ResearchTreeNode.Meta(label: rootQuestionAtomUUID == nil ? "What are you trying to understand?" : "Main question", aiSuggested: false, accepted: true)
+            meta: ResearchTreeNode.Meta(
+                label: rootQuestionAtomUUID == nil ? "What are you trying to understand?" : "Main question",
+                aiSuggested: false,
+                accepted: true,
+                nodeType: .rootQuestion,
+                relationshipType: .rootUnderTopic,
+                visibility: .solidNode,
+                isPlaceholder: rootQuestionAtomUUID == nil
+            )
         )
         return ResearchTreeDocument(rootNodeId: rootId, nodes: [rootId: root])
     }
 
+    var rootQuestionNodeIds: [String] {
+        nodes.values
+            .filter { $0.kind == .question && $0.parentNodeId == nil && $0.meta.visibility != .hidden }
+            .sorted { $0.branchOrder < $1.branchOrder }
+            .map(\.id)
+    }
+
+    /// Append a root-level question under the Deep Dive topic. Returns the new node id.
+    @discardableResult
+    mutating func appendRootQuestion(atomUUID: String? = nil, label: String? = nil, aiSuggested: Bool = false, accepted: Bool = true, sourceTabId: String? = nil, placementDecisionId: String? = nil) -> String {
+        let newNode = ResearchTreeNode(
+            kind: .question,
+            atomUUID: atomUUID,
+            parentNodeId: nil,
+            childNodeIds: [],
+            branchOrder: rootQuestionNodeIds.count,
+            meta: ResearchTreeNode.Meta(
+                label: label,
+                sourceTabId: sourceTabId,
+                aiSuggested: aiSuggested,
+                accepted: accepted,
+                nodeType: .rootQuestion,
+                relationshipType: .rootUnderTopic,
+                visibility: .solidNode,
+                isPlaceholder: false,
+                placementDecisionId: placementDecisionId
+            )
+        )
+        nodes[newNode.id] = newNode
+        return newNode.id
+    }
+
     /// Append a child node under the given parent. Returns the new node id.
     @discardableResult
-    mutating func appendChild(parentId: String, kind: ResearchTreeNode.Kind, atomUUID: String? = nil, label: String? = nil, aiSuggested: Bool = false, accepted: Bool = true, sourceTabId: String? = nil) -> String? {
+    mutating func appendChild(
+        parentId: String,
+        kind: ResearchTreeNode.Kind,
+        atomUUID: String? = nil,
+        label: String? = nil,
+        aiSuggested: Bool = false,
+        accepted: Bool = true,
+        sourceTabId: String? = nil,
+        nodeType: InquiryNodeType? = nil,
+        relationshipType: InquiryRelationshipType? = nil,
+        visibility: InquiryTreeNodeVisibility? = nil,
+        placementDecisionId: String? = nil,
+        linkedExtractUUIDs: [String]? = nil
+    ) -> String? {
         guard var parent = nodes[parentId] else { return nil }
         let newNode = ResearchTreeNode(
             kind: kind,
@@ -607,12 +830,107 @@ struct ResearchTreeDocument: Codable, Sendable {
             parentNodeId: parentId,
             childNodeIds: [],
             branchOrder: parent.childNodeIds.count,
-            meta: ResearchTreeNode.Meta(label: label, sourceTabId: sourceTabId, aiSuggested: aiSuggested, accepted: accepted)
+            meta: ResearchTreeNode.Meta(
+                label: label,
+                sourceTabId: sourceTabId,
+                aiSuggested: aiSuggested,
+                accepted: accepted,
+                nodeType: nodeType,
+                relationshipType: relationshipType,
+                visibility: visibility,
+                isPlaceholder: false,
+                placementDecisionId: placementDecisionId,
+                linkedExtractUUIDs: linkedExtractUUIDs
+            )
         )
         parent.childNodeIds.append(newNode.id)
         nodes[parentId] = parent
         nodes[newNode.id] = newNode
         return newNode.id
+    }
+
+    mutating func removeNode(_ nodeId: String, promoteChildrenTo parentId: String?) {
+        guard let node = nodes[nodeId] else { return }
+        if let oldParentId = node.parentNodeId, var oldParent = nodes[oldParentId] {
+            oldParent.childNodeIds.removeAll { $0 == nodeId }
+            nodes[oldParentId] = oldParent
+        }
+        if let parentId, var newParent = nodes[parentId] {
+            for childId in node.childNodeIds {
+                if var child = nodes[childId] {
+                    child.parentNodeId = parentId
+                    child.branchOrder = newParent.childNodeIds.count
+                    nodes[childId] = child
+                    newParent.childNodeIds.append(childId)
+                }
+            }
+            nodes[parentId] = newParent
+        } else {
+            for childId in node.childNodeIds {
+                if var child = nodes[childId] {
+                    child.parentNodeId = nil
+                    child.branchOrder = rootQuestionNodeIds.count
+                    child.meta.nodeType = .rootQuestion
+                    child.meta.relationshipType = .rootUnderTopic
+                    nodes[childId] = child
+                }
+            }
+        }
+        nodes.removeValue(forKey: nodeId)
+        normalizeBranchOrders()
+    }
+
+    mutating func reparentNode(_ nodeId: String, to newParentId: String?, relationshipType: InquiryRelationshipType) -> Bool {
+        guard var node = nodes[nodeId], node.id != newParentId else { return false }
+        if let newParentId, isDescendant(newParentId, of: nodeId) { return false }
+        if let oldParentId = node.parentNodeId, var oldParent = nodes[oldParentId] {
+            oldParent.childNodeIds.removeAll { $0 == nodeId }
+            nodes[oldParentId] = oldParent
+        }
+        node.parentNodeId = newParentId
+        node.meta.relationshipType = relationshipType
+        if let newParentId, var newParent = nodes[newParentId] {
+            node.branchOrder = newParent.childNodeIds.count
+            node.meta.nodeType = .branchQuestion
+            newParent.childNodeIds.append(nodeId)
+            nodes[newParentId] = newParent
+        } else {
+            node.branchOrder = rootQuestionNodeIds.count
+            node.meta.nodeType = .rootQuestion
+            node.meta.relationshipType = .rootUnderTopic
+        }
+        nodes[nodeId] = node
+        normalizeBranchOrders()
+        return true
+    }
+
+    func isDescendant(_ possibleChildId: String, of ancestorId: String) -> Bool {
+        var cursor = nodes[possibleChildId]?.parentNodeId
+        while let id = cursor {
+            if id == ancestorId { return true }
+            cursor = nodes[id]?.parentNodeId
+        }
+        return false
+    }
+
+    mutating func normalizeBranchOrders() {
+        for parentId in nodes.keys {
+            guard var parent = nodes[parentId] else { continue }
+            parent.childNodeIds = parent.childNodeIds.enumerated().map { index, childId in
+                if var child = nodes[childId] {
+                    child.branchOrder = index
+                    nodes[childId] = child
+                }
+                return childId
+            }
+            nodes[parentId] = parent
+        }
+        for (index, nodeId) in rootQuestionNodeIds.enumerated() {
+            if var node = nodes[nodeId] {
+                node.branchOrder = index
+                nodes[nodeId] = node
+            }
+        }
     }
 }
 
@@ -648,6 +966,11 @@ struct InquiryRoutingCard: Codable, Sendable, Identifiable {
         case assumptionProposal
         case sourceQualityWarning
         case sourceFinding
+        case placementPreview
+        case evidenceAudit
+        case sourceSearchTask
+        case termCandidate
+        case deepDiveCandidate
         case noteRoute
         case modelUpdate
     }
@@ -670,6 +993,9 @@ struct InquiryRoutingCard: Codable, Sendable, Identifiable {
     var parentBranchNodeId: String?
     var originExtractUUID: String?
     var sourceTabId: String?
+    var placement: InquiryPlacementDecision?
+    var alternatePlacements: [InquiryPlacementDecision]?
+    var linkedClaimExtractUUID: String?
     var createdAt: String
     var status: Status
 
@@ -686,6 +1012,9 @@ struct InquiryRoutingCard: Codable, Sendable, Identifiable {
         parentBranchNodeId: String? = nil,
         originExtractUUID: String? = nil,
         sourceTabId: String? = nil,
+        placement: InquiryPlacementDecision? = nil,
+        alternatePlacements: [InquiryPlacementDecision] = [],
+        linkedClaimExtractUUID: String? = nil,
         createdAt: String = ISO8601DateFormatter().string(from: Date()),
         status: Status = .pending
     ) {
@@ -701,6 +1030,9 @@ struct InquiryRoutingCard: Codable, Sendable, Identifiable {
         self.parentBranchNodeId = parentBranchNodeId
         self.originExtractUUID = originExtractUUID
         self.sourceTabId = sourceTabId
+        self.placement = placement
+        self.alternatePlacements = alternatePlacements
+        self.linkedClaimExtractUUID = linkedClaimExtractUUID
         self.createdAt = createdAt
         self.status = status
     }
@@ -1218,6 +1550,7 @@ struct InquirySessionStructured: Codable, Sendable {
     var mapForming: MapFormingState
     var uiState: InquiryWorkspaceUIState
     var routingCards: [InquiryRoutingCard]
+    var operationalTasks: [InquiryOperationalTask]
     var crystallizationResult: CrystallizationOutput?
 
     enum CodingKeys: String, CodingKey {
@@ -1230,6 +1563,7 @@ struct InquirySessionStructured: Codable, Sendable {
         case mapForming
         case uiState
         case routingCards
+        case operationalTasks
         case crystallizationResult
     }
 
@@ -1243,6 +1577,7 @@ struct InquirySessionStructured: Codable, Sendable {
         mapForming: MapFormingState = MapFormingState(),
         uiState: InquiryWorkspaceUIState = InquiryWorkspaceUIState(),
         routingCards: [InquiryRoutingCard] = [],
+        operationalTasks: [InquiryOperationalTask] = [],
         crystallizationResult: CrystallizationOutput? = nil
     ) {
         self.researchTree = researchTree
@@ -1254,6 +1589,7 @@ struct InquirySessionStructured: Codable, Sendable {
         self.mapForming = mapForming
         self.uiState = uiState
         self.routingCards = routingCards
+        self.operationalTasks = operationalTasks
         self.crystallizationResult = crystallizationResult
     }
 
@@ -1268,6 +1604,7 @@ struct InquirySessionStructured: Codable, Sendable {
         mapForming = try container.decodeIfPresent(MapFormingState.self, forKey: .mapForming) ?? MapFormingState()
         uiState = try container.decodeIfPresent(InquiryWorkspaceUIState.self, forKey: .uiState) ?? InquiryWorkspaceUIState()
         routingCards = try container.decodeIfPresent([InquiryRoutingCard].self, forKey: .routingCards) ?? []
+        operationalTasks = try container.decodeIfPresent([InquiryOperationalTask].self, forKey: .operationalTasks) ?? []
         crystallizationResult = try container.decodeIfPresent(CrystallizationOutput.self, forKey: .crystallizationResult)
     }
 }
@@ -1304,6 +1641,13 @@ struct QuestionMetadata: Codable, Sendable {
     var status: QuestionStatus
     var priority: Int?
     var confidence: QuestionConfidence?
+    var questionRole: InquiryNodeType?
+    var relationshipToParent: InquiryRelationshipType?
+    var placementOrigin: String?
+    var placementConfidence: InquiryPlacementConfidence?
+    var placementExplanation: String?
+    var sourceQuestionUUID: String?
+    var sourceExtractUUID: String?
 
     init(
         parentDeepDiveUUID: String? = nil,
@@ -1312,7 +1656,14 @@ struct QuestionMetadata: Codable, Sendable {
         originExtractUUID: String? = nil,
         status: QuestionStatus = .open,
         priority: Int? = nil,
-        confidence: QuestionConfidence? = nil
+        confidence: QuestionConfidence? = nil,
+        questionRole: InquiryNodeType? = nil,
+        relationshipToParent: InquiryRelationshipType? = nil,
+        placementOrigin: String? = nil,
+        placementConfidence: InquiryPlacementConfidence? = nil,
+        placementExplanation: String? = nil,
+        sourceQuestionUUID: String? = nil,
+        sourceExtractUUID: String? = nil
     ) {
         self.parentDeepDiveUUID = parentDeepDiveUUID
         self.parentQuestionUUID = parentQuestionUUID
@@ -1321,6 +1672,13 @@ struct QuestionMetadata: Codable, Sendable {
         self.status = status
         self.priority = priority
         self.confidence = confidence
+        self.questionRole = questionRole
+        self.relationshipToParent = relationshipToParent
+        self.placementOrigin = placementOrigin
+        self.placementConfidence = placementConfidence
+        self.placementExplanation = placementExplanation
+        self.sourceQuestionUUID = sourceQuestionUUID
+        self.sourceExtractUUID = sourceExtractUUID
     }
 }
 

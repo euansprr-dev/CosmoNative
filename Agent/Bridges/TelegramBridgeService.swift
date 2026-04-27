@@ -634,19 +634,49 @@ class TelegramBridgeService: ObservableObject {
         activeChatId = chatIdStr
         messageCount += 1
 
-        // Voice messages bypass debounce entirely
-        if let voice = message["voice"] as? [String: Any],
-           let fileId = voice["file_id"] as? String {
-            await handleVoiceMessage(fileId: fileId, chatId: chatIdStr)
-            return
-        }
-        if let audio = message["audio"] as? [String: Any],
-           let fileId = audio["file_id"] as? String {
-            await handleVoiceMessage(fileId: fileId, chatId: chatIdStr)
-            return
+        let media = extractCapturedMedia(from: message)
+        let caption = message["caption"] as? String
+        let messageId = (message["message_id"] as? Int).map(String.init)
+        let mediaGroupId = message["media_group_id"] as? String
+        let sender = (message["from"] as? [String: Any]).flatMap { from -> String? in
+            if let username = from["username"] as? String { return username }
+            if let first = from["first_name"] as? String { return first }
+            return nil
         }
 
-        guard let rawText = message["text"] as? String else { return }
+        // Voice/audio messages without explicit capture captions preserve the existing
+        // transcription route. Captioned voice can use custom lanes: `current inquiry:`.
+        if media.contains(where: { $0.kind == .audio }),
+           (caption?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
+            if let voice = message["voice"] as? [String: Any],
+               let fileId = voice["file_id"] as? String {
+                await handleVoiceMessage(fileId: fileId, chatId: chatIdStr)
+                return
+            }
+            if let audio = message["audio"] as? [String: Any],
+               let fileId = audio["file_id"] as? String {
+                await handleVoiceMessage(fileId: fileId, chatId: chatIdStr)
+                return
+            }
+        }
+
+        guard let rawText = (message["text"] as? String) ?? caption else {
+            if !media.isEmpty {
+                let outcome = await TelegramCaptureRouter.shared.routeTelegramCapture(
+                    text: nil,
+                    media: media,
+                    chatId: chatIdStr,
+                    messageId: messageId,
+                    mediaGroupId: mediaGroupId,
+                    sender: sender
+                )
+                if case .handled(let reply, let capturedItemId) = outcome {
+                    await sendMessage(chatId: chatIdStr, text: reply)
+                    await scheduleMediaDownloads(capturedItemId: capturedItemId)
+                }
+            }
+            return
+        }
 
         // In groups/supergroups, only respond to @mentions or replies to the bot.
         // In channels, process all messages (the bot must be an admin to see them).
@@ -665,6 +695,34 @@ class TelegramBridgeService: ObservableObject {
         let text = (chatType == "group" || chatType == "supergroup")
             ? stripBotMention(from: rawText)
             : rawText
+
+        if !media.isEmpty {
+            let outcome = await TelegramCaptureRouter.shared.routeTelegramCapture(
+                text: text,
+                media: media,
+                chatId: chatIdStr,
+                messageId: messageId,
+                mediaGroupId: mediaGroupId,
+                sender: sender
+            )
+            if case .handled(let reply, let capturedItemId) = outcome {
+                await sendMessage(chatId: chatIdStr, text: reply)
+                await scheduleMediaDownloads(capturedItemId: capturedItemId)
+                return
+            }
+        } else if TelegramCaptureCommandParser.parse(text, allowsEmptyBody: false) != nil {
+            let outcome = await TelegramCaptureRouter.shared.routeTelegramCapture(
+                text: text,
+                chatId: chatIdStr,
+                messageId: messageId,
+                mediaGroupId: mediaGroupId,
+                sender: sender
+            )
+            if case .handled(let reply, _) = outcome {
+                await sendMessage(chatId: chatIdStr, text: reply)
+                return
+            }
+        }
 
         // /start command bypasses debounce
         if text == "/start" {
@@ -1296,6 +1354,153 @@ class TelegramBridgeService: ObservableObject {
                 msg += "\n⚠️ \(failCount) \(failCount == 1 ? "link" : "links") couldn't be processed."
             }
             return msg
+        }
+    }
+
+    private func extractCapturedMedia(from message: [String: Any]) -> [TelegramCapturedMedia] {
+        let caption = message["caption"] as? String
+
+        if let photos = message["photo"] as? [[String: Any]],
+           let largest = photos.max(by: { ($0["file_size"] as? Int ?? 0) < ($1["file_size"] as? Int ?? 0) }),
+           let fileId = largest["file_id"] as? String {
+            return [
+                TelegramCapturedMedia(
+                    kind: .image,
+                    fileId: fileId,
+                    fileUniqueId: largest["file_unique_id"] as? String,
+                    filename: nil,
+                    mimeType: "image/jpeg",
+                    fileSize: (largest["file_size"] as? Int).map(Int64.init),
+                    caption: caption
+                )
+            ]
+        }
+
+        if let document = message["document"] as? [String: Any],
+           let fileId = document["file_id"] as? String {
+            let filename = document["file_name"] as? String
+            let mime = document["mime_type"] as? String
+            return [
+                TelegramCapturedMedia(
+                    kind: mediaKind(filename: filename, mimeType: mime),
+                    fileId: fileId,
+                    fileUniqueId: document["file_unique_id"] as? String,
+                    filename: filename,
+                    mimeType: mime,
+                    fileSize: (document["file_size"] as? Int).map(Int64.init),
+                    caption: caption
+                )
+            ]
+        }
+
+        if let voice = message["voice"] as? [String: Any],
+           let fileId = voice["file_id"] as? String {
+            return [
+                TelegramCapturedMedia(
+                    kind: .audio,
+                    fileId: fileId,
+                    fileUniqueId: voice["file_unique_id"] as? String,
+                    filename: "telegram-voice.ogg",
+                    mimeType: voice["mime_type"] as? String ?? "audio/ogg",
+                    fileSize: (voice["file_size"] as? Int).map(Int64.init),
+                    caption: caption
+                )
+            ]
+        }
+
+        if let audio = message["audio"] as? [String: Any],
+           let fileId = audio["file_id"] as? String {
+            return [
+                TelegramCapturedMedia(
+                    kind: .audio,
+                    fileId: fileId,
+                    fileUniqueId: audio["file_unique_id"] as? String,
+                    filename: audio["file_name"] as? String ?? "telegram-audio",
+                    mimeType: audio["mime_type"] as? String,
+                    fileSize: (audio["file_size"] as? Int).map(Int64.init),
+                    caption: caption
+                )
+            ]
+        }
+
+        if let video = message["video"] as? [String: Any],
+           let fileId = video["file_id"] as? String {
+            return [
+                TelegramCapturedMedia(
+                    kind: .video,
+                    fileId: fileId,
+                    fileUniqueId: video["file_unique_id"] as? String,
+                    filename: video["file_name"] as? String ?? "telegram-video.mp4",
+                    mimeType: video["mime_type"] as? String ?? "video/mp4",
+                    fileSize: (video["file_size"] as? Int).map(Int64.init),
+                    caption: caption
+                )
+            ]
+        }
+
+        return []
+    }
+
+    private func mediaKind(filename: String?, mimeType: String?) -> MediaAttachmentKind {
+        let lowerName = filename?.lowercased() ?? ""
+        let lowerMime = mimeType?.lowercased() ?? ""
+        if lowerMime == "application/pdf" || lowerName.hasSuffix(".pdf") { return .pdf }
+        if lowerName.hasSuffix(".md") || lowerName.hasSuffix(".markdown") || lowerMime == "text/markdown" { return .markdown }
+        if lowerMime.hasPrefix("text/") || lowerName.hasSuffix(".txt") { return .textFile }
+        if lowerMime.hasPrefix("image/") { return .image }
+        if lowerMime.hasPrefix("audio/") { return .audio }
+        if lowerMime.hasPrefix("video/") { return .video }
+        if lowerName.hasSuffix(".epub") { return .epub }
+        return .document
+    }
+
+    private func scheduleMediaDownloads(capturedItemId: String) async {
+        guard !capturedItemId.isEmpty else { return }
+        let attachments = (try? await MediaAttachmentRepository.shared.fetch(capturedItemId: capturedItemId)) ?? []
+        for attachment in attachments {
+            Task { [weak self] in
+                await self?.downloadAndStoreCapturedMedia(attachment)
+            }
+        }
+    }
+
+    private func downloadAndStoreCapturedMedia(_ attachment: MediaAttachment) async {
+        guard let fileId = attachment.telegramFileId else { return }
+        do {
+            let filePath = try await getFilePath(fileId: fileId)
+            let data = try await downloadFile(filePath: filePath)
+            let stored = try CaptureMediaStorage.shared.store(
+                data: data,
+                capturedItemId: attachment.capturedItemId,
+                attachmentId: attachment.uuid,
+                originalFilename: attachment.originalFilename,
+                mimeType: attachment.mimeType,
+                telegramFilePath: filePath,
+                kind: attachment.kind
+            )
+            let status: MediaProcessingStatus = stored.thumbnailPath == nil ? .downloaded : .thumbnailGenerated
+            try await MediaAttachmentRepository.shared.updateDownload(
+                uuid: attachment.uuid,
+                localStoragePath: stored.originalPath,
+                thumbnailPath: stored.thumbnailPath,
+                status: status
+            )
+
+            if attachment.kind == .audio {
+                let transcript = try await WhisperTranscriptionService.shared.transcribe(audioData: data, format: .ogg)
+                try await MediaAttachmentRepository.shared.updateTranscript(
+                    uuid: attachment.uuid,
+                    transcript: transcript,
+                    status: .transcribed
+                )
+            }
+        } catch {
+            print("[Telegram] Captured media download failed: \(error)")
+            try? await MediaAttachmentRepository.shared.updateDownload(
+                uuid: attachment.uuid,
+                localStoragePath: nil,
+                status: .failed
+            )
         }
     }
 

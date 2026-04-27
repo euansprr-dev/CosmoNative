@@ -22,7 +22,7 @@ struct InquiryThoughtRouter {
             cards.append(
                 card(
                     kind: .branchProposal,
-                    title: "New branch question",
+                    title: "Question candidate",
                     detail: "Detected inside the saved thought.",
                     proposedQuestion: normalizeQuestion(question),
                     activeQuestionUUID: activeQuestionUUID,
@@ -37,7 +37,7 @@ struct InquiryThoughtRouter {
             cards.append(
                 card(
                     kind: .branchProposal,
-                    title: "New branch question",
+                    title: "Question candidate",
                     detail: "This looks like a path worth separating from the current question.",
                     proposedQuestion: inferred,
                     activeQuestionUUID: activeQuestionUUID,
@@ -119,7 +119,7 @@ struct InquiryThoughtRouter {
                     title: "Find stronger sources",
                     detail: "Search for direct support, replication, and counterevidence before relying on this.",
                     proposedQuestion: "What stronger sources support or challenge this claim?",
-                    actionTitle: "Create evidence-quality branch",
+                    actionTitle: "Create evidence task",
                     activeQuestionUUID: activeQuestionUUID,
                     activeBranchNodeId: activeBranchNodeId,
                     originExtractUUID: originExtractUUID,

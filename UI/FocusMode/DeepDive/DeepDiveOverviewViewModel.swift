@@ -113,4 +113,41 @@ final class DeepDiveOverviewViewModel {
         }
         isEditingUnderstanding = false
     }
+
+    func renameSession(_ sessionUUID: String, title: String) async {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idx = sessions.firstIndex(where: { $0.uuid == sessionUUID }) else { return }
+        var copy = sessions[idx]
+        copy.title = trimmed
+        do {
+            copy = try await AtomRepository.shared.update(copy)
+            sessions[idx] = copy
+        } catch {
+            print("[DeepDiveOverviewVM] renameSession failed: \(error)")
+        }
+    }
+
+    func archiveSession(_ sessionUUID: String) async {
+        guard let idx = sessions.firstIndex(where: { $0.uuid == sessionUUID }),
+              var meta = sessions[idx].inquirySessionMetadata else { return }
+        meta.status = .archived
+        meta.lastActiveAt = ISO8601DateFormatter().string(from: Date())
+        var copy = sessions[idx].withMetadata(meta)
+        do {
+            copy = try await AtomRepository.shared.update(copy)
+            sessions[idx] = copy
+        } catch {
+            print("[DeepDiveOverviewVM] archiveSession failed: \(error)")
+        }
+    }
+
+    func deleteSession(_ sessionUUID: String) async {
+        do {
+            try await AtomRepository.shared.delete(uuid: sessionUUID)
+            sessions.removeAll { $0.uuid == sessionUUID }
+        } catch {
+            print("[DeepDiveOverviewVM] deleteSession failed: \(error)")
+        }
+    }
 }

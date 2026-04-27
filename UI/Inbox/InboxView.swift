@@ -7,6 +7,7 @@ import SwiftUI
 
 struct InboxView: View {
     @State private var viewModel = InboxViewModel()
+    @State private var showCaptureLanes = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -40,12 +41,16 @@ struct InboxView: View {
     private var mainContent: some View {
         VStack(spacing: 0) {
             inboxHeader
-            captureBar
-            if !viewModel.items.isEmpty {
-                statsAndFilters
+            if showCaptureLanes {
+                CaptureLanesView()
+            } else {
+                captureBar
+                if !viewModel.items.isEmpty {
+                    statsAndFilters
+                }
+                Divider().foregroundStyle(DS.border)
+                itemsOrEmptyState
             }
-            Divider().foregroundStyle(DS.border)
-            itemsOrEmptyState
         }
     }
 
@@ -66,6 +71,7 @@ struct InboxView: View {
                 }
             }
             Spacer()
+            captureLanesToggle
             viewToggle
         }
         .padding(.horizontal, DS.space24)
@@ -74,6 +80,26 @@ struct InboxView: View {
 
     private var visibleItemCount: Int {
         viewModel.items.count + viewModel.unplacedDatabaseItems.count
+    }
+
+    private var captureLanesToggle: some View {
+        Button {
+            withAnimation(ProMotionSprings.snappy) {
+                showCaptureLanes.toggle()
+            }
+        } label: {
+            Label("Lanes", systemImage: "tray.2")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(showCaptureLanes ? DS.textOnAccent : DS.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(showCaptureLanes ? DS.accent : DS.surface, in: .rect(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(showCaptureLanes ? DS.borderActive : DS.border, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private var viewToggle: some View {

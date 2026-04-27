@@ -303,14 +303,28 @@ final class InquiryRepository {
         parentDeepDiveUUID: String?,
         originSessionUUID: String?,
         parentQuestionUUID: String?,
-        originExtractUUID: String?
+        originExtractUUID: String?,
+        questionRole: InquiryNodeType? = nil,
+        relationshipToParent: InquiryRelationshipType? = nil,
+        placementOrigin: String? = nil,
+        placementConfidence: InquiryPlacementConfidence? = nil,
+        placementExplanation: String? = nil,
+        sourceQuestionUUID: String? = nil,
+        sourceExtractUUID: String? = nil
     ) async throws -> Atom {
         let metadata = QuestionMetadata(
             parentDeepDiveUUID: parentDeepDiveUUID,
             parentQuestionUUID: parentQuestionUUID,
             originSessionUUID: originSessionUUID,
             originExtractUUID: originExtractUUID,
-            status: .open
+            status: .open,
+            questionRole: questionRole ?? (parentQuestionUUID == nil ? .rootQuestion : .branchQuestion),
+            relationshipToParent: relationshipToParent ?? (parentQuestionUUID == nil ? .rootUnderTopic : .childOf),
+            placementOrigin: placementOrigin,
+            placementConfidence: placementConfidence,
+            placementExplanation: placementExplanation,
+            sourceQuestionUUID: sourceQuestionUUID,
+            sourceExtractUUID: sourceExtractUUID ?? originExtractUUID
         )
         let structured = QuestionStructured()
         var links: [AtomLink] = []

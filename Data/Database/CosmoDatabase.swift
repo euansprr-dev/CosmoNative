@@ -1541,6 +1541,113 @@ class CosmoDatabase: ObservableObject {
             print("✅ inbox_items routing migration complete")
         }
 
+        // MARK: - Custom Capture Lanes
+        migrator.registerMigration("create_custom_capture_lanes") { db in
+            print("🔨 Creating custom capture lane tables...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS capture_destinations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL,
+                    destinationDescription TEXT,
+                    type TEXT NOT NULL,
+                    aliasesJSON TEXT NOT NULL DEFAULT '[]',
+                    icon TEXT NOT NULL,
+                    colorAccentToken TEXT,
+                    defaultObjectType TEXT NOT NULL,
+                    defaultParentTarget TEXT,
+                    defaultReviewBehavior TEXT NOT NULL,
+                    telegramCommandPatternsJSON TEXT,
+                    acceptedMediaTypesJSON TEXT,
+                    processingRulesJSON TEXT,
+                    routingRulesJSON TEXT,
+                    isArchived INTEGER NOT NULL DEFAULT 0,
+                    isEnabled INTEGER NOT NULL DEFAULT 1,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL,
+                    lastUsedAt TEXT,
+                    itemCount INTEGER NOT NULL DEFAULT 0,
+                    conflictStatus TEXT NOT NULL DEFAULT 'clear'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_capture_destinations_uuid
+                    ON capture_destinations(uuid);
+                CREATE INDEX IF NOT EXISTS idx_capture_destinations_enabled
+                    ON capture_destinations(isEnabled, isArchived);
+                CREATE INDEX IF NOT EXISTS idx_capture_destinations_last_used
+                    ON capture_destinations(lastUsedAt DESC);
+
+                CREATE TABLE IF NOT EXISTS captured_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT UNIQUE NOT NULL,
+                    rawText TEXT,
+                    caption TEXT,
+                    cleanText TEXT,
+                    source TEXT NOT NULL,
+                    telegramMessageId TEXT,
+                    telegramMediaGroupId TEXT,
+                    telegramChatId TEXT,
+                    sender TEXT,
+                    timestamp TEXT NOT NULL,
+                    captureDestinationId TEXT,
+                    parsedCommand TEXT,
+                    parsedIntent TEXT,
+                    mediaAttachmentIdsJSON TEXT,
+                    createdObjectIdsJSON TEXT,
+                    routingConfidence REAL NOT NULL DEFAULT 0.0,
+                    status TEXT NOT NULL,
+                    parentDeepDiveId TEXT,
+                    parentInquirySessionId TEXT,
+                    parentQuestionId TEXT,
+                    parentProjectId TEXT,
+                    provenanceMetadata TEXT,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_captured_items_uuid
+                    ON captured_items(uuid);
+                CREATE INDEX IF NOT EXISTS idx_captured_items_destination
+                    ON captured_items(captureDestinationId, createdAt DESC);
+                CREATE INDEX IF NOT EXISTS idx_captured_items_status
+                    ON captured_items(status, createdAt DESC);
+                CREATE INDEX IF NOT EXISTS idx_captured_items_telegram_message
+                    ON captured_items(telegramChatId, telegramMessageId);
+
+                CREATE TABLE IF NOT EXISTS media_attachments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT UNIQUE NOT NULL,
+                    capturedItemId TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    originalFilename TEXT,
+                    mimeType TEXT,
+                    fileSize INTEGER,
+                    telegramFileId TEXT,
+                    telegramFileUniqueId TEXT,
+                    localStoragePath TEXT,
+                    blobReference TEXT,
+                    thumbnailPath TEXT,
+                    extractedText TEXT,
+                    transcriptText TEXT,
+                    metadata TEXT,
+                    processingStatus TEXT NOT NULL,
+                    sourceObjectId TEXT,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_media_attachments_uuid
+                    ON media_attachments(uuid);
+                CREATE INDEX IF NOT EXISTS idx_media_attachments_captured_item
+                    ON media_attachments(capturedItemId);
+                CREATE INDEX IF NOT EXISTS idx_media_attachments_status
+                    ON media_attachments(processingStatus);
+                CREATE INDEX IF NOT EXISTS idx_media_attachments_telegram_file
+                    ON media_attachments(telegramFileUniqueId);
+            """)
+            print("✅ custom capture lane tables created")
+        }
+
         // Clean up duplicate canvas_blocks rows that accumulated due to
         // saveBlock() generating new IDs instead of updating existing rows
         migrator.registerMigration("deduplicate_canvas_blocks") { db in

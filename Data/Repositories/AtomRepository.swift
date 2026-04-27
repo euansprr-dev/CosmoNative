@@ -2,7 +2,7 @@
 // Unified repository for all Atom operations
 // Replaces individual repositories (IdeasRepository, TasksRepository, etc.)
 
-import GRDB
+@preconcurrency import GRDB
 import Foundation
 import Combine
 

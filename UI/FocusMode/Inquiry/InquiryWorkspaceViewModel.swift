@@ -181,7 +181,7 @@ final class InquiryWorkspaceViewModel {
     func orderedQuestionNodes() -> [ResearchTreeNode] {
         func walk(_ id: String, into output: inout [ResearchTreeNode]) {
             guard let node = structured.researchTree.nodes[id] else { return }
-            if node.kind == .question {
+            if shouldShowQuestionNode(node) {
                 output.append(node)
             }
             for child in node.childNodeIds.sorted(by: {
@@ -191,13 +191,37 @@ final class InquiryWorkspaceViewModel {
             }
         }
         var output: [ResearchTreeNode] = []
-        walk(structured.researchTree.rootNodeId, into: &output)
+        for rootId in rootQuestionNodeIds() {
+            walk(rootId, into: &output)
+        }
         return output
+    }
+
+    func rootQuestionNodeIds() -> [String] {
+        let explicitRoots = structured.researchTree.rootQuestionNodeIds
+        if !explicitRoots.isEmpty {
+            return explicitRoots.filter { id in
+                guard let node = structured.researchTree.nodes[id] else { return false }
+                return shouldShowQuestionNode(node)
+            }
+        }
+        return [structured.researchTree.rootNodeId].filter { id in
+            guard let node = structured.researchTree.nodes[id] else { return false }
+            return shouldShowQuestionNode(node)
+        }
     }
 
     func childQuestionNodes(for nodeId: String) -> [ResearchTreeNode] {
         guard let node = structured.researchTree.nodes[nodeId] else { return [] }
-        return node.childNodeIds.compactMap { structured.researchTree.nodes[$0] }.filter { $0.kind == .question }
+        return node.childNodeIds.compactMap { structured.researchTree.nodes[$0] }.filter { shouldShowQuestionNode($0) }
+    }
+
+    func shouldShowQuestionNode(_ node: ResearchTreeNode) -> Bool {
+        guard node.kind == .question else { return false }
+        if node.meta.visibility == .hidden || node.meta.isPlaceholder == true { return false }
+        if (node.meta.label ?? "").localizedCaseInsensitiveCompare("New branch question") == .orderedSame && node.atomUUID == nil { return false }
+        guard let uuid = node.atomUUID else { return node.id == structured.researchTree.rootNodeId && rootQuestion == nil }
+        return questionStatus(for: uuid) != .archived
     }
 
     func questionAncestors(for question: Atom) -> [Atom] {
@@ -221,7 +245,10 @@ final class InquiryWorkspaceViewModel {
             return kind != .note && !kind.isEpistemic
         }.count
         let childCount = questions.filter { $0.questionMetadata?.parentQuestionUUID == questionUUID }.count
-        return InquiryQuestionCounts(sources: sourceCount, extracts: extractCount, notes: noteCount, claims: claimCount, evidence: evidenceCount, children: childCount)
+        let taskCount = structured.operationalTasks.filter { task in
+            task.status != .archived && task.attachedQuestionUUID == questionUUID
+        }.count
+        return InquiryQuestionCounts(sources: sourceCount, extracts: extractCount, notes: noteCount, claims: claimCount, evidence: evidenceCount, tasks: taskCount, children: childCount)
     }
 
     func extracts(for questionUUID: String?, kinds: Set<ExtractKind>) -> [Atom] {
@@ -246,6 +273,12 @@ final class InquiryWorkspaceViewModel {
 
     func mechanisms(for questionUUID: String?) -> [Atom] {
         extracts(for: questionUUID, kinds: [.mechanism, .assumption, .sourceQualityNote])
+    }
+
+    func operationalTasks(for questionUUID: String?) -> [InquiryOperationalTask] {
+        structured.operationalTasks
+            .filter { $0.status != .archived && $0.attachedQuestionUUID == questionUUID }
+            .sorted { $0.createdAt > $1.createdAt }
     }
 
     func registerSavedExtract(_ extract: Atom, sourceTabId: String?) {
@@ -308,7 +341,10 @@ final class InquiryWorkspaceViewModel {
                 parentDeepDiveUUID: deepDive.uuid,
                 originSessionUUID: session.uuid,
                 parentQuestionUUID: nil,
-                originExtractUUID: nil
+                originExtractUUID: nil,
+                questionRole: .rootQuestion,
+                relationshipToParent: .rootUnderTopic,
+                placementOrigin: "manual"
             )
             metadata.mainQuestionUUID = question.uuid
             rootQuestion = question
@@ -335,7 +371,11 @@ final class InquiryWorkspaceViewModel {
                 parentDeepDiveUUID: deepDive?.uuid,
                 originSessionUUID: session.uuid,
                 parentQuestionUUID: parentQuestionUUID,
-                originExtractUUID: originExtractUUID
+                originExtractUUID: originExtractUUID,
+                questionRole: .branchQuestion,
+                relationshipToParent: .childOf,
+                placementOrigin: originExtractUUID == nil ? "manual" : "deepen",
+                sourceExtractUUID: originExtractUUID
             )
             questions.append(question)
             let newNodeId = structured.researchTree.appendChild(
@@ -345,7 +385,11 @@ final class InquiryWorkspaceViewModel {
                 label: trimmed,
                 aiSuggested: originExtractUUID != nil,
                 accepted: true,
-                sourceTabId: sourceTabId
+                sourceTabId: sourceTabId,
+                nodeType: .branchQuestion,
+                relationshipType: .childOf,
+                visibility: .solidNode,
+                linkedExtractUUIDs: originExtractUUID.map { [$0] }
             )
             if makeActive {
                 setActiveQuestion(question.uuid, branchNodeId: newNodeId)
@@ -355,6 +399,108 @@ final class InquiryWorkspaceViewModel {
             return question
         } catch {
             print("[InquiryWorkspaceVM] createChildQuestion failed: \(error)")
+            return nil
+        }
+    }
+
+    @discardableResult
+    func createPlacedQuestion(title: String, placement: InquiryPlacementDecision, originExtractUUID: String? = nil, sourceTabId: String? = nil, makeActive: Bool = true) async -> Atom? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let isRoot = placement.nodeType == .rootQuestion || placement.relationshipType == .rootUnderTopic
+        let parentQuestionUUID = isRoot ? nil : (placement.parentQuestionUUID ?? activeQuestionUUID ?? metadata.mainQuestionUUID)
+        let parentNodeId = isRoot ? nil : (placement.parentBranchNodeId ?? parentQuestionUUID.flatMap { questionNodeId(for: $0) } ?? activeBranchNodeId)
+
+        if questions.contains(where: { InquiryPlacementEngine.normalized($0.title ?? "") == InquiryPlacementEngine.normalized(trimmed) }) {
+            showToast("Question already exists", detail: "Jumping to the existing question.")
+            if let existing = questions.first(where: { InquiryPlacementEngine.normalized($0.title ?? "") == InquiryPlacementEngine.normalized(trimmed) }) {
+                setActiveQuestion(existing.uuid)
+            }
+            return nil
+        }
+
+        do {
+            let question = try await InquiryRepository.shared.createQuestion(
+                title: trimmed,
+                parentDeepDiveUUID: deepDive?.uuid,
+                originSessionUUID: session.uuid,
+                parentQuestionUUID: parentQuestionUUID,
+                originExtractUUID: originExtractUUID,
+                questionRole: isRoot ? .rootQuestion : .branchQuestion,
+                relationshipToParent: placement.relationshipType,
+                placementOrigin: "placement_engine",
+                placementConfidence: placement.confidence,
+                placementExplanation: placement.explanation,
+                sourceQuestionUUID: activeQuestionUUID,
+                sourceExtractUUID: originExtractUUID
+            )
+            questions.append(question)
+
+            let newNodeId: String?
+            if isRoot {
+                if rootQuestion == nil || metadata.mainQuestionUUID == nil {
+                    metadata.mainQuestionUUID = question.uuid
+                    rootQuestion = question
+                    syncRootNodeLabel(with: question)
+                    if var root = structured.researchTree.nodes[structured.researchTree.rootNodeId] {
+                        root.meta.nodeType = .rootQuestion
+                        root.meta.relationshipType = .rootUnderTopic
+                        root.meta.visibility = .solidNode
+                        root.meta.isPlaceholder = false
+                        root.meta.placementDecisionId = placement.id
+                        structured.researchTree.nodes[root.id] = root
+                    }
+                    newNodeId = structured.researchTree.rootNodeId
+                } else {
+                    newNodeId = structured.researchTree.appendRootQuestion(
+                        atomUUID: question.uuid,
+                        label: trimmed,
+                        aiSuggested: originExtractUUID != nil,
+                        accepted: true,
+                        sourceTabId: sourceTabId,
+                        placementDecisionId: placement.id
+                    )
+                }
+            } else if let parentNodeId {
+                newNodeId = structured.researchTree.appendChild(
+                    parentId: parentNodeId,
+                    kind: .question,
+                    atomUUID: question.uuid,
+                    label: trimmed,
+                    aiSuggested: originExtractUUID != nil,
+                    accepted: true,
+                    sourceTabId: sourceTabId,
+                    nodeType: .branchQuestion,
+                    relationshipType: placement.relationshipType,
+                    visibility: .solidNode,
+                    placementDecisionId: placement.id,
+                    linkedExtractUUIDs: originExtractUUID.map { [$0] }
+                )
+            } else {
+                newNodeId = structured.researchTree.appendRootQuestion(
+                    atomUUID: question.uuid,
+                    label: trimmed,
+                    aiSuggested: originExtractUUID != nil,
+                    accepted: true,
+                    sourceTabId: sourceTabId,
+                    placementDecisionId: placement.id
+                )
+            }
+
+            if let sourceTabId,
+               let tabIdx = structured.sourceTabs.firstIndex(where: { $0.id == sourceTabId }) {
+                structured.sourceTabs[tabIdx].attachedQuestionUUID = question.uuid
+                structured.sourceTabs[tabIdx].attachedNodeId = newNodeId
+            }
+
+            if makeActive {
+                setActiveQuestion(question.uuid, branchNodeId: newNodeId)
+            } else {
+                scheduleSave()
+            }
+            return question
+        } catch {
+            print("[InquiryWorkspaceVM] createPlacedQuestion failed: \(error)")
             return nil
         }
     }
@@ -396,6 +542,90 @@ final class InquiryWorkspaceViewModel {
             scheduleSave()
         } catch {
             print("[InquiryWorkspaceVM] renameQuestion failed: \(error)")
+        }
+    }
+
+    func archiveQuestion(_ questionUUID: String?) async {
+        await updateQuestionStatus(questionUUID, status: .archived)
+        if activeQuestionUUID == questionUUID {
+            let next = orderedQuestionNodes().first
+            setActiveQuestion(next?.atomUUID, branchNodeId: next?.id)
+        }
+        scheduleSave()
+    }
+
+    func deleteQuestion(_ questionUUID: String?) async {
+        guard let questionUUID,
+              let nodeId = questionNodeId(for: questionUUID),
+              let node = structured.researchTree.nodes[nodeId] else { return }
+        let promoteParentId = node.parentNodeId
+        let promoteParentQuestionUUID = promoteParentId.flatMap { structured.researchTree.nodes[$0]?.atomUUID }
+        let childQuestionUUIDs = node.childNodeIds.compactMap { structured.researchTree.nodes[$0]?.atomUUID }
+        do {
+            try await AtomRepository.shared.delete(uuid: questionUUID)
+            questions.removeAll { $0.uuid == questionUUID }
+            structured.researchTree.removeNode(nodeId, promoteChildrenTo: promoteParentId)
+            for childUUID in childQuestionUUIDs {
+                await updateQuestionParent(childUUID, newParentQuestionUUID: promoteParentQuestionUUID, relationship: promoteParentQuestionUUID == nil ? .rootUnderTopic : .childOf)
+            }
+            if rootQuestion?.uuid == questionUUID {
+                rootQuestion = questions.first { $0.questionMetadata?.parentQuestionUUID == nil }
+                metadata.mainQuestionUUID = rootQuestion?.uuid
+            }
+            if activeQuestionUUID == questionUUID {
+                let next = orderedQuestionNodes().first
+                setActiveQuestion(next?.atomUUID, branchNodeId: next?.id)
+            }
+            showToast("Question deleted", detail: "Children were kept in the map.")
+            scheduleSave()
+        } catch {
+            print("[InquiryWorkspaceVM] deleteQuestion failed: \(error)")
+        }
+    }
+
+    func reparentQuestion(_ questionUUID: String?, to newParentQuestionUUID: String?, relationship: InquiryRelationshipType? = nil) async {
+        guard let questionUUID,
+              let nodeId = questionNodeId(for: questionUUID) else { return }
+        let newParentNodeId = newParentQuestionUUID.flatMap { questionNodeId(for: $0) }
+        let rel = relationship ?? (newParentQuestionUUID == nil ? .rootUnderTopic : .childOf)
+        guard structured.researchTree.reparentNode(nodeId, to: newParentNodeId, relationshipType: rel) else {
+            showToast("Cannot move question", detail: "That would create a loop.")
+            return
+        }
+        await updateQuestionParent(questionUUID, newParentQuestionUUID: newParentQuestionUUID, relationship: rel)
+        if newParentQuestionUUID == nil {
+            metadata.mainQuestionUUID = rootQuestion?.uuid ?? questionUUID
+        }
+        setActiveQuestion(questionUUID, branchNodeId: nodeId)
+        showToast("Question moved", detail: newParentQuestionUUID == nil ? "Now a root question." : "Reparented under \(questionTitle(for: newParentQuestionUUID)).")
+        scheduleSave()
+    }
+
+    func makeQuestionSibling(_ questionUUID: String?) async {
+        guard let questionUUID,
+              let current = questions.first(where: { $0.uuid == questionUUID }) else { return }
+        let parentUUID = current.questionMetadata?.parentQuestionUUID
+        let grandparentUUID = parentUUID.flatMap { parent in
+            questions.first { $0.uuid == parent }?.questionMetadata?.parentQuestionUUID
+        }
+        await reparentQuestion(questionUUID, to: grandparentUUID, relationship: grandparentUUID == nil ? .rootUnderTopic : .siblingOf)
+    }
+
+    private func updateQuestionParent(_ questionUUID: String, newParentQuestionUUID: String?, relationship: InquiryRelationshipType) async {
+        guard let idx = questions.firstIndex(where: { $0.uuid == questionUUID }),
+              var meta = questions[idx].questionMetadata else { return }
+        meta.parentQuestionUUID = newParentQuestionUUID
+        meta.questionRole = newParentQuestionUUID == nil ? .rootQuestion : .branchQuestion
+        meta.relationshipToParent = relationship
+        var copy = questions[idx].withMetadata(meta)
+        do {
+            copy = try await AtomRepository.shared.update(copy)
+            questions[idx] = copy
+            if rootQuestion?.uuid == copy.uuid {
+                rootQuestion = copy
+            }
+        } catch {
+            print("[InquiryWorkspaceVM] updateQuestionParent failed: \(error)")
         }
     }
 
@@ -685,16 +915,24 @@ final class InquiryWorkspaceViewModel {
     }
 
     private func routeThought(_ text: String, originExtractUUID: String?, sourceTabId: String?, questionUUID: String? = nil, branchNodeId: String? = nil) {
-        let cards = InquiryThoughtRouter.route(
+        let scopedQuestionUUID = questionUUID ?? activeQuestionUUID
+        let cards = InquiryPlacementEngine.route(
             text: text,
-            activeQuestionUUID: questionUUID ?? activeQuestionUUID,
-            activeBranchNodeId: branchNodeId ?? activeBranchNodeId,
-            originExtractUUID: originExtractUUID,
-            sourceTabId: sourceTabId
+            context: InquiryPlacementEngine.Context(
+                deepDiveTitle: deepDive?.title,
+                activeQuestion: scopedQuestionUUID.flatMap { uuid in questions.first { $0.uuid == uuid } } ?? activeQuestion,
+                activeQuestionUUID: scopedQuestionUUID,
+                activeBranchNodeId: branchNodeId ?? activeBranchNodeId,
+                sourceTabId: sourceTabId,
+                originExtractUUID: originExtractUUID,
+                originAction: .saveNote,
+                questions: questions,
+                claims: claims(for: scopedQuestionUUID)
+            )
         )
         let filtered = cards.filter { card in
             guard let proposed = card.proposedQuestion else { return true }
-            return !questions.contains { ($0.title ?? "").localizedCaseInsensitiveCompare(proposed) == .orderedSame }
+            return !questions.contains { InquiryPlacementEngine.normalized($0.title ?? "") == InquiryPlacementEngine.normalized(proposed) }
         }
         guard !filtered.isEmpty else { return }
         structured.routingCards.append(contentsOf: filtered)
@@ -762,15 +1000,32 @@ final class InquiryWorkspaceViewModel {
 
     func proposeBranchFromSelection(_ selection: String, originExtractUUID: String?, sourceTabId: String?) {
         let title = branchQuestionTitle(from: selection)
+        let placement = InquiryPlacementEngine.placement(
+            for: title,
+            fullText: selection,
+            context: InquiryPlacementEngine.Context(
+                deepDiveTitle: deepDive?.title,
+                activeQuestion: activeQuestion,
+                activeQuestionUUID: activeQuestionUUID,
+                activeBranchNodeId: activeBranchNodeId,
+                sourceTabId: sourceTabId,
+                originExtractUUID: originExtractUUID,
+                originAction: .deepen,
+                questions: questions,
+                claims: claims(for: activeQuestionUUID)
+            )
+        )
         let card = InquiryRoutingCard(
-            kind: .branchProposal,
-            title: "This deserves its own branch",
+            kind: .placementPreview,
+            title: "Child question candidate",
             detail: selection.prefix(180).description,
             proposedQuestion: title,
+            actionTitle: "Create here",
             parentQuestionUUID: activeQuestionUUID,
             parentBranchNodeId: activeBranchNodeId,
             originExtractUUID: originExtractUUID,
-            sourceTabId: sourceTabId
+            sourceTabId: sourceTabId,
+            placement: placement
         )
         structured.routingCards.append(card)
         recordAIInteraction(
@@ -782,32 +1037,48 @@ final class InquiryWorkspaceViewModel {
     }
 
     func acceptRoutingCard(_ card: InquiryRoutingCard) async {
+        await acceptRoutingCard(card, overridePlacement: nil)
+    }
+
+    func acceptRoutingCard(_ card: InquiryRoutingCard, overridePlacement: InquiryPlacementDecision?) async {
         guard let idx = structured.routingCards.firstIndex(where: { $0.id == card.id }) else { return }
+        let placement = overridePlacement ?? card.placement
         switch card.kind {
-        case .branchProposal, .childBranchProposal, .sourceFinding:
+        case .placementPreview, .branchProposal, .childBranchProposal:
+            if let placement, placement.nodeType == .evidenceQualityInvestigation {
+                createOperationalTask(from: card, placement: placement, type: .evidenceAudit)
+                break
+            }
+            if let placement, placement.nodeType == .sourceSearchTask {
+                createOperationalTask(from: card, placement: placement, type: .sourceSearch)
+                break
+            }
+            if let placement, placement.nodeType == .lexiconTerm || placement.nodeType == .deepDiveCandidate {
+                await saveExtract(from: card)
+                break
+            }
             let previousQuestion = activeQuestionUUID
-            let previousNode = activeBranchNodeId
-            activeQuestionUUID = card.parentQuestionUUID
-            activeBranchNodeId = card.parentBranchNodeId ?? activeBranchNodeId
-            let newQuestion = await createChildQuestion(
+            let newQuestion = await createPlacedQuestion(
                 title: card.proposedQuestion ?? card.title,
+                placement: placement ?? InquiryPlacementDecision(
+                    nodeType: .branchQuestion,
+                    parentQuestionUUID: card.parentQuestionUUID,
+                    parentBranchNodeId: card.parentBranchNodeId,
+                    relationshipType: .childOf,
+                    confidence: .medium,
+                    explanation: "Legacy branch proposal accepted as a child of the selected question.",
+                    appearsInBranchMap: true
+                ),
                 originExtractUUID: card.originExtractUUID,
                 sourceTabId: card.sourceTabId,
                 makeActive: true
             )
-            if let sourceTabId = card.sourceTabId,
-               let idx = structured.sourceTabs.firstIndex(where: { $0.id == sourceTabId }) {
-                structured.sourceTabs[idx].attachedQuestionUUID = newQuestion?.uuid ?? activeQuestionUUID
-                structured.sourceTabs[idx].attachedNodeId = activeBranchNodeId
-            }
             if let previousQuestion, previousQuestion != activeQuestionUUID {
                 if !structured.uiState.pinnedQuestionUUIDs.contains(previousQuestion) {
                     structured.uiState.pinnedQuestionUUIDs.append(previousQuestion)
                 }
             }
-            if previousNode != activeBranchNodeId {
-                structured.uiState.selectedInspectorQuestionUUID = activeQuestionUUID
-            }
+            structured.uiState.selectedInspectorQuestionUUID = activeQuestionUUID
             appendActivity(
                 .init(
                     kind: .branchCreated,
@@ -818,6 +1089,12 @@ final class InquiryWorkspaceViewModel {
                     routingCardId: card.id
                 )
             )
+        case .evidenceAudit:
+            createOperationalTask(from: card, placement: placement, type: .evidenceAudit)
+        case .sourceSearchTask, .sourceFinding:
+            createOperationalTask(from: card, placement: placement, type: .sourceSearch)
+        case .termCandidate, .deepDiveCandidate:
+            await saveExtract(from: card)
         case .claimProposal, .evidenceProposal, .counterevidenceProposal, .mechanismProposal, .assumptionProposal, .sourceQualityWarning:
             await saveExtract(from: card)
         case .noteRoute, .modelUpdate:
@@ -825,6 +1102,34 @@ final class InquiryWorkspaceViewModel {
         }
         structured.routingCards[idx].status = .accepted
         scheduleSave()
+    }
+
+    private func createOperationalTask(from card: InquiryRoutingCard, placement: InquiryPlacementDecision?, type: InquiryOperationalTaskType) {
+        let relationship: InquiryRelationshipType = placement?.relationshipType ?? (type == .evidenceAudit ? .evidenceAuditForClaim : .sourceSearchForQuestion)
+        let tab = card.sourceTabId.flatMap { id in structured.sourceTabs.first { $0.id == id } } ?? activeSourceTab
+        let task = InquiryOperationalTask(
+            type: type,
+            title: card.proposedQuestion ?? card.title,
+            detail: card.detail,
+            attachedQuestionUUID: placement?.parentQuestionUUID ?? card.parentQuestionUUID ?? activeQuestionUUID,
+            attachedClaimExtractUUID: card.linkedClaimExtractUUID,
+            sourceUUID: tab?.sourceUUID,
+            sourceTabId: tab?.id,
+            relationshipType: relationship,
+            originExtractUUID: card.originExtractUUID
+        )
+        structured.operationalTasks.append(task)
+        appendActivity(
+            .init(
+                kind: .routingSuggested,
+                title: type == .evidenceAudit ? "Evidence task created" : "Source task created",
+                detail: task.title,
+                questionUUID: task.attachedQuestionUUID,
+                sourceUUID: task.sourceUUID,
+                routingCardId: card.id
+            )
+        )
+        showToast(type == .evidenceAudit ? "Evidence task created" : "Source task created", detail: "Attached outside the Branch Map.")
     }
 
     func ignoreRoutingCard(_ card: InquiryRoutingCard) {
@@ -1025,9 +1330,10 @@ struct InquiryQuestionCounts: Equatable {
     var notes: Int
     var claims: Int
     var evidence: Int
+    var tasks: Int
     var children: Int
 
     var compactLabel: String {
-        "S\(sources) · E\(extracts) · N\(notes) · C\(claims) · Ev\(evidence) · Q\(children)"
+        "S\(sources) · N\(notes) · C\(claims) · Ev\(evidence) · T\(tasks) · Q\(children)"
     }
 }

@@ -30,6 +30,11 @@ final class InquiryAICopilot {
             - Never invent citations or pretend a source says something not provided.
             - Detect when the user is creating a question, branch, note, objection, principle, source critique, lexicon term, contradiction, or model update.
             - Treat one user thought as potentially containing multiple units: claim, speculative claim, evidence, counterevidence, mechanism, assumption, source-quality note, question, or open loop.
+            - Classify routed thoughts as conceptual question, operational task, claim, evidence, term, source search, or Deep Dive candidate.
+            - Not every question is a child; not every investigation is a question; not every routed thought belongs in the Branch Map.
+            - Explain placement in structural language: broader than current, narrows current, audits this claim, defines a term, or finds sources.
+            - Evidence audits and source searches should stay attached as tasks unless the user explicitly promotes them to questions.
+            - If placement confidence is medium or low, offer alternatives instead of silently choosing.
             - Claims are not facts until supported; label weak/speculative material clearly.
             - Evidence can support, weaken, merely relate, or raise a quality warning.
             - Keep suggestions concise and actionable.

@@ -171,6 +171,7 @@ struct InquiryReviewView: View {
     private func outputView(_ out: CrystallizationOutput) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space24) {
+                answerFormingReviewSection
                 if !out.summary.isEmpty {
                     summarySection(out.summary)
                 }
@@ -211,6 +212,48 @@ struct InquiryReviewView: View {
                 .font(.system(size: 17, weight: .regular, design: .serif))
                 .foregroundStyle(CosmoColors.textPrimary)
                 .lineSpacing(6)
+        }
+    }
+
+    private var answerFormingReviewSection: some View {
+        let claims = viewModel.claims(for: viewModel.activeQuestionUUID)
+        let evidence = viewModel.evidence(for: viewModel.activeQuestionUUID)
+        let mechanisms = viewModel.mechanisms(for: viewModel.activeQuestionUUID)
+        return sectionFrame(title: "ANSWER FORMING") {
+            if claims.isEmpty && evidence.isEmpty && mechanisms.isEmpty {
+                Text("No claim/evidence extracts have been saved for the active question yet.")
+                    .font(CosmoTypography.body)
+                    .foregroundStyle(CosmoColors.textSecondary)
+            } else {
+                reviewAnswerGroup("Claims", items: claims)
+                reviewAnswerGroup("Evidence / Counterevidence", items: evidence)
+                reviewAnswerGroup("Mechanisms / Assumptions / Quality", items: mechanisms)
+            }
+        }
+    }
+
+    private func reviewAnswerGroup(_ title: String, items: [Atom]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !items.isEmpty {
+                Text(title.uppercased())
+                    .font(CosmoTypography.labelSmall)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                ForEach(items.prefix(5), id: \.uuid) { item in
+                    let kind = item.extractMetadata?.kind ?? .aiInsight
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: kind.iconName)
+                            .font(.system(size: 11))
+                            .foregroundStyle(kind == .speculativeClaim ? DS.orange : DS.accent)
+                            .padding(.top, 3)
+                        Text(item.body ?? item.title ?? "")
+                            .font(CosmoTypography.body)
+                            .foregroundStyle(CosmoColors.textPrimary)
+                            .lineLimit(3)
+                    }
+                    .padding(DS.space10)
+                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                }
+            }
         }
     }
 

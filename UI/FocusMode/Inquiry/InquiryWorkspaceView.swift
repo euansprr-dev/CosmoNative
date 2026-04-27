@@ -26,7 +26,15 @@ struct InquiryWorkspaceView: View {
                 Divider().background(DS.borderSubtle)
                 paneRow
             }
+            if let toast = viewModel.toast {
+                toastView(toast)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(.top, 54)
+                    .padding(.trailing, DS.space20)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: viewModel.toast)
         .task { await viewModel.loadDeepDiveAndRoot() }
         .onDisappear {
             Task { await viewModel.pauseAndPersist() }
@@ -52,7 +60,7 @@ struct InquiryWorkspaceView: View {
             .buttonStyle(.plain)
             .keyboardShortcut(.escape)
 
-            breadcrumb
+            activeQuestionHeader
 
             Spacer()
 
@@ -64,21 +72,65 @@ struct InquiryWorkspaceView: View {
         .padding(.vertical, DS.space12)
     }
 
-    private var breadcrumb: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "rectangle.split.3x1.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(DS.accent)
-            if let dd = viewModel.deepDive {
-                Text(dd.title ?? "Deep Dive")
-                    .font(CosmoTypography.label)
-                    .foregroundStyle(CosmoColors.textPrimary)
-                Text("›")
-                    .foregroundStyle(CosmoColors.textTertiary)
+    private var activeQuestionHeader: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: "questionmark.bubble.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.accent)
+                Menu {
+                    questionMenuContent
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(viewModel.activeQuestionTitle)
+                            .font(CosmoTypography.label)
+                            .foregroundStyle(CosmoColors.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(CosmoColors.textTertiary)
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
+
+                Button {
+                    viewModel.aiPromptDraft = "Suggest one crisp child question for: \(viewModel.activeQuestionTitle)"
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(CosmoColors.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Create child question")
             }
-            Text(sessionAtom.title ?? "Inquiry")
-                .font(CosmoTypography.label)
-                .foregroundStyle(CosmoColors.textSecondary)
+            Text(viewModel.activeQuestionBreadcrumb)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: 460, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var questionMenuContent: some View {
+        ForEach(viewModel.orderedQuestionNodes(), id: \.id) { node in
+            Button {
+                viewModel.setActiveQuestion(node.atomUUID, branchNodeId: node.id)
+            } label: {
+                let counts = viewModel.counts(for: node.atomUUID)
+                Text("\(viewModel.questionTitle(for: node.atomUUID))  \(counts.compactLabel)")
+            }
+        }
+        Divider()
+        Button("Pin active question") {
+            viewModel.togglePinActiveQuestion()
+        }
+        Button("Mark researching") {
+            Task { await viewModel.updateQuestionStatus(viewModel.activeQuestionUUID, status: .researching) }
+        }
+        Button("Mark answered") {
+            Task { await viewModel.updateQuestionStatus(viewModel.activeQuestionUUID, status: .answered) }
         }
     }
 
@@ -126,6 +178,30 @@ struct InquiryWorkspaceView: View {
         }
         .buttonStyle(.plain)
         .keyboardShortcut(.return, modifiers: [.command])
+    }
+
+    private func toastView(_ toast: InquiryToast) -> some View {
+        HStack(alignment: .top, spacing: DS.space8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(toast.message)
+                    .font(CosmoTypography.label)
+                    .foregroundStyle(CosmoColors.textPrimary)
+                if let detail = toast.detail {
+                    Text(detail)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                }
+            }
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space10)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.12), radius: 16, y: 8)
     }
 
     // MARK: - Pane row
@@ -204,6 +280,10 @@ struct InquiryWorkspaceView: View {
                 .keyboardShortcut("4", modifiers: [.command])
             Button("") { viewModel.setLayout(.review) }
                 .keyboardShortcut("5", modifiers: [.command])
+            Button("") { viewModel.goToParentQuestion() }
+                .keyboardShortcut("[", modifiers: [.command])
+            Button("") { viewModel.cycleQuestion(offset: 1) }
+                .keyboardShortcut("]", modifiers: [.command])
         }
         .frame(width: 0, height: 0)
         .opacity(0)

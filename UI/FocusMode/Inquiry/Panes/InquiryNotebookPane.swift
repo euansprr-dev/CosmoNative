@@ -63,43 +63,23 @@ struct InquiryNotebookPane: View {
     // MARK: - Notes
 
     private var notesView: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            if let q = activeQuestionTitle {
-                Text("Q: \(q)")
-                    .font(.system(size: 16, weight: .regular, design: .serif).italic())
-                    .foregroundStyle(CosmoColors.textPrimary)
-                    .padding(.horizontal, DS.space16)
-                    .padding(.top, DS.space12)
-            }
-
+        VStack(alignment: .leading, spacing: 0) {
+            notesHeader
+            Divider().background(DS.borderSubtle)
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.space12) {
-                    TextEditor(text: $viewModel.noteDraft)
-                        .scrollContentBackground(.hidden)
-                        .font(CosmoTypography.body)
-                        .frame(minHeight: 240)
-                        .padding(DS.space12)
-                        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                                .stroke(DS.borderSubtle, lineWidth: 1)
-                        )
-                        .overlay(alignment: .topLeading) {
-                            if viewModel.noteDraft.isEmpty {
-                                Text("Write a note. Use Q:, Principle:, Idea:, Practice:, Source: prefixes for inferred kind. ⌘↩ to save.")
-                                    .font(CosmoTypography.body)
-                                    .foregroundStyle(CosmoColors.textTertiary)
-                                    .padding(.horizontal, DS.space16)
-                                    .padding(.top, DS.space16)
-                                    .allowsHitTesting(false)
-                            }
-                        }
+                    noteEditor(
+                        text: $viewModel.noteDraft,
+                        minHeight: 230,
+                        placeholder: "Write under \(viewModel.activeQuestionTitle). Use Q:, Principle:, Idea:, Objection:, Practice:, Source:, Output:."
+                    )
                     HStack {
+                        provenanceLine
                         Spacer()
                         Button {
                             Task { await viewModel.saveNoteDraft() }
                         } label: {
-                            Text("Save note")
+                            Text(viewModel.noteSaveState ? "Saved" : "Save note")
                                 .font(CosmoTypography.label)
                                 .padding(.horizontal, DS.space12)
                                 .padding(.vertical, 6)
@@ -109,6 +89,8 @@ struct InquiryNotebookPane: View {
                         .buttonStyle(.plain)
                         .keyboardShortcut(.return, modifiers: [])
                     }
+
+                    pinnedNotesSection
                 }
                 .padding(.horizontal, DS.space16)
                 .padding(.vertical, DS.space12)
@@ -116,64 +98,298 @@ struct InquiryNotebookPane: View {
         }
     }
 
-    private var activeQuestionTitle: String? {
-        viewModel.rootQuestion?.title
+    private var notesHeader: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text("WRITING UNDER")
+                .font(CosmoTypography.labelSmall)
+                .tracking(1.6)
+                .foregroundStyle(CosmoColors.textTertiary)
+            HStack(spacing: DS.space8) {
+                Menu {
+                    ForEach(viewModel.orderedQuestionNodes(), id: \.id) { node in
+                        Button {
+                            viewModel.setActiveQuestion(node.atomUUID, branchNodeId: node.id)
+                        } label: {
+                            Text("\(viewModel.questionTitle(for: node.atomUUID))  \(viewModel.counts(for: node.atomUUID).compactLabel)")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        statusGlyph(viewModel.questionStatus(for: viewModel.activeQuestionUUID))
+                        Text(viewModel.activeQuestionTitle)
+                            .font(CosmoTypography.label)
+                            .foregroundStyle(CosmoColors.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(CosmoColors.textTertiary)
+                    }
+                    .padding(.horizontal, DS.space10)
+                    .padding(.vertical, 6)
+                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                    .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    viewModel.aiPromptDraft = "Suggest one branch question under: \(viewModel.activeQuestionTitle)"
+                } label: {
+                    Label("Branch", systemImage: "arrow.triangle.branch")
+                        .font(CosmoTypography.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CosmoColors.textSecondary)
+
+                Button {
+                    viewModel.togglePinActiveQuestion()
+                } label: {
+                    Image(systemName: viewModel.structured.uiState.pinnedQuestionUUIDs.contains(viewModel.activeQuestionUUID ?? "") ? "pin.fill" : "pin")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CosmoColors.textSecondary)
+                .help("Pin question notes")
+            }
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
+    }
+
+    private var provenanceLine: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "link")
+                .font(.system(size: 9))
+            Text(provenanceText)
+                .font(CosmoTypography.caption)
+                .lineLimit(1)
+        }
+        .foregroundStyle(CosmoColors.textTertiary)
+    }
+
+    private var provenanceText: String {
+        var parts = ["Session", viewModel.activeQuestionTitle]
+        if let source = viewModel.activeSourceTab?.title {
+            parts.append(source)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var pinnedNotesSection: some View {
+        let pinned = viewModel.pinnedQuestions().filter { $0.uuid != viewModel.activeQuestionUUID }
+        if !pinned.isEmpty {
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text("PINNED QUESTIONS")
+                    .font(CosmoTypography.labelSmall)
+                    .tracking(1.6)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                    .padding(.top, DS.space12)
+                ForEach(pinned.prefix(3), id: \.uuid) { question in
+                    pinnedQuestionEditor(question)
+                }
+                if pinned.count > 3 {
+                    Text("+ \(pinned.count - 3) pinned")
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                }
+            }
+        }
+    }
+
+    private func pinnedQuestionEditor(_ question: Atom) -> some View {
+        let counts = viewModel.counts(for: question.uuid)
+        let binding = Binding(
+            get: { viewModel.structured.uiState.pinnedNoteDraftsByQuestionUUID[question.uuid] ?? "" },
+            set: {
+                viewModel.structured.uiState.pinnedNoteDraftsByQuestionUUID[question.uuid] = $0
+                viewModel.scheduleSave()
+            }
+        )
+        return VStack(alignment: .leading, spacing: DS.space8) {
+            HStack(spacing: DS.space8) {
+                statusGlyph(question.questionMetadata?.status ?? .open)
+                Text(question.title ?? "Untitled question")
+                    .font(CosmoTypography.label)
+                    .foregroundStyle(CosmoColors.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+                Text(counts.compactLabel)
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                Button {
+                    viewModel.setActiveQuestion(question.uuid)
+                } label: {
+                    Image(systemName: "scope")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CosmoColors.textSecondary)
+                Button {
+                    viewModel.togglePinnedQuestion(question.uuid)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CosmoColors.textTertiary)
+            }
+            noteEditor(
+                text: binding,
+                minHeight: 92,
+                placeholder: "Add a note under this question."
+            )
+            HStack {
+                Spacer()
+                Button("Save") {
+                    Task { await viewModel.savePinnedNoteDraft(for: question.uuid) }
+                }
+                .font(CosmoTypography.caption)
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.accent)
+            }
+        }
+        .padding(DS.space10)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+    }
+
+    private func noteEditor(text: Binding<String>, minHeight: CGFloat, placeholder: String) -> some View {
+        TextEditor(text: text)
+            .scrollContentBackground(.hidden)
+            .font(CosmoTypography.body)
+            .frame(minHeight: minHeight)
+            .padding(DS.space12)
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                    .stroke(DS.borderSubtle, lineWidth: 1)
+            )
+            .overlay(alignment: .topLeading) {
+                if text.wrappedValue.isEmpty {
+                    Text(placeholder)
+                        .font(CosmoTypography.body)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                        .padding(.horizontal, DS.space16)
+                        .padding(.top, DS.space16)
+                        .allowsHitTesting(false)
+                }
+            }
     }
 
     // MARK: - Tree
 
     private var treeView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                treeNode(viewModel.structured.researchTree.rootNodeId, depth: 0)
+            VStack(alignment: .leading, spacing: DS.space12) {
+                HStack(spacing: DS.space10) {
+                    topicNode
+                    Rectangle()
+                        .fill(DS.borderSubtle)
+                        .frame(width: 28, height: 1)
+                    branchMapNode(viewModel.structured.researchTree.rootNodeId, depth: 0)
+                }
             }
             .padding(.horizontal, DS.space16)
-            .padding(.vertical, DS.space12)
+            .padding(.vertical, DS.space16)
         }
     }
 
-    private func treeNode(_ nodeId: String, depth: Int) -> AnyView {
+    private var topicNode: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(viewModel.deepDive?.title ?? "Deep Dive")
+                .font(CosmoTypography.label)
+                .foregroundStyle(CosmoColors.textPrimary)
+                .lineLimit(2)
+            Text("topic home")
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space8)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+    }
+
+    private func branchMapNode(_ nodeId: String, depth: Int) -> AnyView {
         guard let node = viewModel.structured.researchTree.nodes[nodeId] else {
             return AnyView(EmptyView())
         }
-        let row = HStack(alignment: .top, spacing: 6) {
-            Image(systemName: nodeIcon(for: node.kind))
-                .font(.system(size: 11))
-                .foregroundStyle(CosmoColors.textTertiary)
-                .frame(width: 14)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(node.meta.label ?? node.kind.rawValue.capitalized)
+        let isActive = viewModel.activeBranchNodeId == nodeId
+        let counts = viewModel.counts(for: node.atomUUID)
+        let children = viewModel.childQuestionNodes(for: nodeId)
+        let nodeView = VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                statusGlyph(viewModel.questionStatus(for: node.atomUUID))
+                Text(node.meta.label ?? viewModel.questionTitle(for: node.atomUUID))
                     .font(CosmoTypography.bodySmall)
-                    .foregroundStyle(node.meta.aiSuggested && !node.meta.accepted ? CosmoColors.textSecondary : CosmoColors.textPrimary)
+                    .foregroundStyle(CosmoColors.textPrimary)
                     .lineLimit(2)
-                if node.meta.aiSuggested && !node.meta.accepted {
-                    Text("AI suggested · tap to accept")
-                        .font(CosmoTypography.caption)
-                        .foregroundStyle(CosmoColors.textTertiary)
+                Spacer(minLength: 4)
+                Button {
+                    viewModel.setActiveQuestion(node.atomUUID, branchNodeId: node.id)
+                    viewModel.aiPromptDraft = "Suggest one branch question under: \(viewModel.questionTitle(for: node.atomUUID))"
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .semibold))
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(CosmoColors.textTertiary)
             }
-            Spacer()
+            Text(counts.compactLabel)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
         }
-        .padding(.leading, CGFloat(depth) * 16)
-        .padding(.vertical, 4)
+        .padding(DS.space10)
+        .frame(width: max(174, 194 - CGFloat(depth * 12)), alignment: .leading)
+        .background(isActive ? DS.accentSoft : DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(isActive ? DS.accent.opacity(0.65) : DS.borderSubtle, lineWidth: 1))
+        .shadow(color: isActive ? DS.accentGlow.opacity(0.28) : .clear, radius: 10, y: 0)
         .contentShape(Rectangle())
         .onTapGesture {
-            viewModel.activeBranchNodeId = nodeId
-            if node.kind == .question, let atomUUID = node.atomUUID {
-                viewModel.activeQuestionUUID = atomUUID
-            }
+            viewModel.setActiveQuestion(node.atomUUID, branchNodeId: nodeId)
         }
-        .background(viewModel.activeBranchNodeId == nodeId ? DS.accentSoft : Color.clear)
 
-        let children = node.childNodeIds
         return AnyView(
-            VStack(alignment: .leading, spacing: 0) {
-                row
-                ForEach(children, id: \.self) { childId in
-                    treeNode(childId, depth: depth + 1)
+            VStack(alignment: .leading, spacing: DS.space8) {
+                nodeView
+                if !children.isEmpty {
+                    VStack(alignment: .leading, spacing: DS.space8) {
+                        ForEach(children, id: \.id) { child in
+                            HStack(alignment: .top, spacing: DS.space8) {
+                                VStack(spacing: 0) {
+                                    Rectangle()
+                                        .fill(DS.borderSubtle)
+                                        .frame(width: 1, height: 18)
+                                    Rectangle()
+                                        .fill(DS.borderSubtle)
+                                        .frame(width: 20, height: 1)
+                                }
+                                branchMapNode(child.id, depth: depth + 1)
+                            }
+                        }
+                    }
+                    .padding(.leading, DS.space16)
                 }
             }
         )
+    }
+
+    @ViewBuilder
+    private func statusGlyph(_ status: QuestionStatus) -> some View {
+        switch status {
+        case .open:
+            Circle().stroke(CosmoColors.textTertiary, lineWidth: 1).frame(width: 8, height: 8)
+        case .researching:
+            Circle().fill(DS.accent).frame(width: 8, height: 8)
+        case .partiallyAnswered:
+            Image(systemName: "circle.lefthalf.filled").font(.system(size: 8)).foregroundStyle(DS.orange)
+        case .answered:
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(DS.green)
+        case .promoted:
+            Image(systemName: "arrow.up.circle.fill").font(.system(size: 9)).foregroundStyle(DS.info)
+        case .archived:
+            Circle().fill(CosmoColors.textTertiary.opacity(0.45)).frame(width: 8, height: 8)
+        }
     }
 
     private func nodeIcon(for kind: ResearchTreeNode.Kind) -> String {

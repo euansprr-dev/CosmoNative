@@ -212,11 +212,15 @@ struct CosmoApp: App {
             guard let anchorUUID = notification.userInfo?["anchorUUID"] as? String,
                   let anchorTypeRaw = notification.userInfo?["anchorType"] as? String else { return }
             let resumeSessionUUID = notification.userInfo?["resumeSessionUUID"] as? String
+            let mainQuestionTitle = notification.userInfo?["mainQuestionTitle"] as? String
+            let rootQuestionUUID = notification.userInfo?["rootQuestionUUID"] as? String
             Task { @MainActor in
                 await InquirySessionLauncher.shared.launch(
                     anchorUUID: anchorUUID,
                     anchorType: anchorTypeRaw,
                     resumeSessionUUID: resumeSessionUUID,
+                    mainQuestionTitle: mainQuestionTitle,
+                    rootQuestionUUID: rootQuestionUUID,
                     appState: appState
                 )
             }

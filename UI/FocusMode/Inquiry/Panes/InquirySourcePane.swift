@@ -20,6 +20,14 @@ struct InquirySourcePane: View {
         VStack(alignment: .leading, spacing: 0) {
             tabBar
             Divider().background(DS.borderSubtle)
+            if let activeTab {
+                sourceAttachmentBar(activeTab)
+                Divider().background(DS.borderSubtle)
+            }
+            if !viewModel.structured.sourceRefs.isEmpty {
+                sourceLibrary
+                Divider().background(DS.borderSubtle)
+            }
             if showingURLEntry || viewModel.structured.sourceTabs.isEmpty {
                 urlEntryRow
                     .padding(.horizontal, DS.space16)
@@ -109,8 +117,15 @@ struct InquirySourcePane: View {
                         .padding(.horizontal, 4)
                         .background(DS.accentSoft, in: Capsule())
                 }
+                if let q = tab.attachedQuestionUUID {
+                    Text(String(viewModel.questionTitle(for: q).prefix(18)))
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                        .padding(.horizontal, 5)
+                        .background(DS.surface, in: Capsule())
+                }
                 Button {
-                    closeTab(tab.id)
+                    viewModel.closeSourceTab(tab.id)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 8))
@@ -125,6 +140,49 @@ struct InquirySourcePane: View {
             .overlay(Capsule().stroke(isActive ? DS.borderActive : DS.borderSubtle, lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+
+    private func sourceAttachmentBar(_ tab: SourceTab) -> some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "link.badge.plus")
+                .font(.system(size: 11))
+                .foregroundStyle(CosmoColors.textTertiary)
+            Text("Attached to")
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
+            Menu {
+                ForEach(viewModel.orderedQuestionNodes(), id: \.id) { node in
+                    Button {
+                        attach(tab: tab, toQuestionUUID: node.atomUUID, nodeId: node.id)
+                    } label: {
+                        Text(viewModel.questionTitle(for: node.atomUUID))
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(viewModel.questionTitle(for: tab.attachedQuestionUUID ?? viewModel.activeQuestionUUID))
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textSecondary)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(CosmoColors.textTertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            if tab.highlightCount > 0 {
+                Text("\(tab.highlightCount) extracts")
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textTertiary)
+            }
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, 7)
+    }
+
+    private func attach(tab: SourceTab, toQuestionUUID questionUUID: String?, nodeId: String) {
+        viewModel.attachSourceTab(tab, toQuestionUUID: questionUUID, nodeId: nodeId)
     }
 
     private func tabIcon(for kind: SourceTab.Kind) -> String {
@@ -142,6 +200,59 @@ struct InquirySourcePane: View {
         return viewModel.structured.sourceTabs.first { $0.id == id } ?? viewModel.structured.sourceTabs.first
     }
 
+    private var sourceLibrary: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            HStack {
+                Text("SESSION SOURCES")
+                    .font(CosmoTypography.labelSmall)
+                    .tracking(1.6)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                Spacer()
+                Text("\(viewModel.structured.sourceRefs.count)")
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textTertiary)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DS.space8) {
+                    ForEach(viewModel.structured.sourceRefs.filter { $0.status != .archived && $0.status != .deleted }, id: \.sourceUUID) { ref in
+                        sourceLibraryChip(ref)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space10)
+    }
+
+    private func sourceLibraryChip(_ ref: InquirySourceRef) -> some View {
+        let isOpen = ref.tabId.flatMap { id in viewModel.structured.sourceTabs.contains { $0.id == id } } ?? false
+        return Button {
+            viewModel.reopenSource(ref)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isOpen ? "doc.text.fill" : "clock.arrow.circlepath")
+                    .font(.system(size: 10))
+                    .foregroundStyle(isOpen ? DS.accent : CosmoColors.textTertiary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(ref.title)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textSecondary)
+                        .lineLimit(1)
+                    Text("\(viewModel.questionTitle(for: ref.primaryQuestionUUID)) · \(ref.status.displayName)")
+                        .font(CosmoTypography.labelSmall)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: 188, alignment: .leading)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, 6)
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - URL entry
 
     private var urlEntryRow: some View {
@@ -151,8 +262,8 @@ struct InquirySourcePane: View {
             TextField("Paste URL or search…", text: $urlEntry)
                 .textFieldStyle(.plain)
                 .font(CosmoTypography.body)
-                .onSubmit { openURLEntry() }
-            Button("Open") { openURLEntry() }
+                .onSubmit { Task { await openURLEntry() } }
+            Button("Open") { Task { await openURLEntry() } }
                 .buttonStyle(.plain)
                 .font(CosmoTypography.label)
                 .padding(.horizontal, DS.space10)
@@ -164,41 +275,12 @@ struct InquirySourcePane: View {
         }
     }
 
-    private func openURLEntry() {
+    private func openURLEntry() async {
         let trimmed = urlEntry.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let normalized = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
-        guard let url = URL(string: normalized) else { return }
-        let title = url.host ?? trimmed
-        let tab = SourceTab(
-            kind: .web,
-            url: normalized,
-            title: title,
-            attachedQuestionUUID: viewModel.activeQuestionUUID,
-            attachedNodeId: viewModel.activeBranchNodeId
-        )
-        viewModel.structured.sourceTabs.append(tab)
-        viewModel.activeSourceTabId = tab.id
-
-        // Append a source node to the research tree
-        viewModel.structured.researchTree.appendChild(
-            parentId: viewModel.activeBranchNodeId,
-            kind: .source,
-            atomUUID: nil,
-            label: title,
-            sourceTabId: tab.id
-        )
-        viewModel.scheduleSave()
+        await viewModel.openURLSource(trimmed)
         urlEntry = ""
         showingURLEntry = false
-    }
-
-    private func closeTab(_ id: String) {
-        viewModel.structured.sourceTabs.removeAll { $0.id == id }
-        if viewModel.activeSourceTabId == id {
-            viewModel.activeSourceTabId = viewModel.structured.sourceTabs.first?.id
-        }
-        viewModel.scheduleSave()
     }
 
     // MARK: - Tab content
@@ -274,7 +356,7 @@ struct InquirySourcePane: View {
 
             Button {
                 Task {
-                    await viewModel.runAIPrompt("About this selection: \(lastSelectedText)\n\nExplain what this means and how it connects to my current model.")
+                    await viewModel.runAIPrompt("About this selection from \(tab.title): \(lastSelectedText)\n\nExplain what this means in relation to the active question: \(viewModel.activeQuestionTitle). If it should become a branch or objection, say so briefly.")
                     lastSelectedText = ""
                 }
             } label: {
@@ -334,18 +416,7 @@ struct InquirySourcePane: View {
                 originType: "highlight",
                 citation: tab.url ?? tab.title
             )
-            // Update tab highlight count
-            if let idx = viewModel.structured.sourceTabs.firstIndex(where: { $0.id == tab.id }) {
-                viewModel.structured.sourceTabs[idx].highlightCount += 1
-            }
-            // Append to research tree
-            viewModel.structured.researchTree.appendChild(
-                parentId: viewModel.activeBranchNodeId,
-                kind: .extract,
-                atomUUID: extract.uuid,
-                label: body.prefix(60).description,
-                sourceTabId: tab.id
-            )
+            viewModel.registerSavedExtract(extract, sourceTabId: tab.id)
             viewModel.scheduleSave()
             lastSelectedText = ""
         } catch {
@@ -377,33 +448,13 @@ struct InquirySourcePane: View {
             print("[InquirySourcePane] deepen extract failed: \(error)")
             extractAtom = nil
         }
+        if let extractAtom {
+            viewModel.registerSavedExtract(extractAtom, sourceTabId: tab.id)
+        }
 
         // 2. Auto-title the branch question (V1: just use selection prefix)
-        let questionTitle = "What does this mean: \"\(body.prefix(80))\(body.count > 80 ? "…" : "")\""
-        do {
-            let question = try await InquiryRepository.shared.createQuestion(
-                title: questionTitle,
-                parentDeepDiveUUID: viewModel.deepDive?.uuid,
-                originSessionUUID: viewModel.session.uuid,
-                parentQuestionUUID: viewModel.activeQuestionUUID,
-                originExtractUUID: extractAtom?.uuid
-            )
-            // 3. Insert branch node in tree under active branch
-            if let newNodeId = viewModel.structured.researchTree.appendChild(
-                parentId: viewModel.activeBranchNodeId,
-                kind: .question,
-                atomUUID: question.uuid,
-                label: questionTitle,
-                sourceTabId: tab.id
-            ) {
-                viewModel.activeBranchNodeId = newNodeId
-            }
-            viewModel.activeQuestionUUID = question.uuid
-            viewModel.scheduleSave()
-            lastSelectedText = ""
-        } catch {
-            print("[InquirySourcePane] deepen createQuestion failed: \(error)")
-        }
+        viewModel.proposeBranchFromSelection(body, originExtractUUID: extractAtom?.uuid, sourceTabId: tab.id)
+        lastSelectedText = ""
     }
 
     // MARK: - Empty state

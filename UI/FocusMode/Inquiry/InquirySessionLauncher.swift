@@ -17,6 +17,8 @@ final class InquirySessionLauncher {
         anchorUUID: String,
         anchorType: String,
         resumeSessionUUID: String?,
+        mainQuestionTitle: String? = nil,
+        rootQuestionUUID: String? = nil,
         appState: AppState?
     ) async {
         // Resume path
@@ -53,11 +55,19 @@ final class InquirySessionLauncher {
             return
         }
 
+        let existingRootQuestion: Atom?
+        if let rootQuestionUUID {
+            existingRootQuestion = try? await AtomRepository.shared.fetch(uuid: rootQuestionUUID)
+        } else {
+            existingRootQuestion = nil
+        }
+
         do {
             let result = try await InquiryRepository.shared.startSession(
                 deepDive: deepDive,
                 title: nil,
-                mainQuestionTitle: anchorAtom.type == .question ? anchorAtom.title : nil,
+                mainQuestionTitle: mainQuestionTitle ?? (anchorAtom.type == .question ? anchorAtom.title : nil),
+                existingRootQuestion: existingRootQuestion,
                 anchorObjectUUID: anchorAtom.uuid == deepDive.uuid ? nil : anchorAtom.uuid,
                 anchorObjectType: anchorAtom.uuid == deepDive.uuid ? nil : anchorAtom.type.rawValue
             )

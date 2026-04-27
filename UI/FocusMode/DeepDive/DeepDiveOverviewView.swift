@@ -12,6 +12,8 @@ struct DeepDiveOverviewView: View {
 
     @State private var viewModel: DeepDiveOverviewViewModel
     @State private var selectedTab: DeepDiveOverviewTab = .overview
+    @State private var showingRootQuestionComposer = false
+    @State private var rootQuestionDraft = ""
 
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
@@ -37,6 +39,25 @@ struct DeepDiveOverviewView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.sessionCrystallized)) { _ in
             Task { await viewModel.load() }
+        }
+        .sheet(isPresented: $showingRootQuestionComposer) {
+            RootQuestionComposerSheet(
+                deepDive: atom,
+                questions: viewModel.questions,
+                draft: $rootQuestionDraft,
+                onStart: { question in
+                    showingRootQuestionComposer = false
+                    launchInquiry(mainQuestionTitle: question)
+                },
+                onStartWithoutQuestion: {
+                    showingRootQuestionComposer = false
+                    launchInquiry(mainQuestionTitle: nil)
+                },
+                onContinueQuestion: { question in
+                    showingRootQuestionComposer = false
+                    launchInquiry(mainQuestionTitle: question.title, rootQuestionUUID: question.uuid)
+                }
+            )
         }
     }
 
@@ -498,13 +519,25 @@ struct DeepDiveOverviewView: View {
     }
 
     private func startInquiry() {
+        rootQuestionDraft = ""
+        showingRootQuestionComposer = true
+    }
+
+    private func launchInquiry(mainQuestionTitle: String?, rootQuestionUUID: String? = nil) {
+        var userInfo: [String: Any] = [
+            "anchorUUID": atom.uuid,
+            "anchorType": AtomType.deepDive.rawValue
+        ]
+        if let mainQuestionTitle, !mainQuestionTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            userInfo["mainQuestionTitle"] = mainQuestionTitle
+        }
+        if let rootQuestionUUID {
+            userInfo["rootQuestionUUID"] = rootQuestionUUID
+        }
         NotificationCenter.default.post(
             name: CosmoNotification.Inquiry.startInquiry,
             object: nil,
-            userInfo: [
-                "anchorUUID": atom.uuid,
-                "anchorType": AtomType.deepDive.rawValue
-            ]
+            userInfo: userInfo
         )
     }
 
@@ -518,6 +551,133 @@ struct DeepDiveOverviewView: View {
                 "resumeSessionUUID": session.uuid
             ]
         )
+    }
+}
+
+private struct RootQuestionComposerSheet: View {
+    let deepDive: Atom
+    let questions: [Atom]
+    @Binding var draft: String
+    let onStart: (String) -> Void
+    let onStartWithoutQuestion: () -> Void
+    let onContinueQuestion: (Atom) -> Void
+
+    private var suggestions: [String] {
+        let topic = deepDive.title ?? "this"
+        return [
+            "What am I trying to understand about \(topic) today?",
+            "What is the actual mechanism behind this?",
+            "What evidence would change my mind?",
+            "Is this source credible?"
+        ]
+    }
+
+    private var unresolvedQuestions: [Atom] {
+        questions.filter { question in
+            let status = question.questionMetadata?.status ?? .open
+            return status == .open || status == .researching || status == .partiallyAnswered
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Deep Dive: \(deepDive.title ?? "Untitled")")
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                Text("What are you trying to understand?")
+                    .font(CosmoTypography.titleSmall)
+                    .foregroundStyle(CosmoColors.textPrimary)
+            }
+
+            TextField("How does breathwork affect HRV?", text: $draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(CosmoTypography.body)
+                .padding(DS.space12)
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
+                .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.borderActive, lineWidth: 1))
+                .onSubmit { startWithDraft() }
+
+            VStack(alignment: .leading, spacing: DS.space8) {
+                sectionLabel("SUGGESTED PATHS")
+                ForEach(suggestions, id: \.self) { suggestion in
+                    composerRow(suggestion, icon: "sparkles") {
+                        onStart(suggestion)
+                    }
+                }
+            }
+
+            if !unresolvedQuestions.isEmpty {
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    sectionLabel("CONTINUE")
+                    ForEach(unresolvedQuestions.prefix(3), id: \.uuid) { question in
+                        composerRow(question.title ?? "Untitled question", icon: "arrow.clockwise") {
+                            onContinueQuestion(question)
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Button("Begin with placeholder") {
+                    onStartWithoutQuestion()
+                }
+                .buttonStyle(.plain)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
+
+                Spacer()
+
+                Button("Start Inquiry") {
+                    startWithDraft()
+                }
+                .buttonStyle(.plain)
+                .font(CosmoTypography.label)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, 8)
+                .background(DS.accent, in: Capsule())
+                .foregroundStyle(DS.textOnAccent)
+            }
+        }
+        .padding(DS.space24)
+        .frame(width: 520)
+        .background(DS.bg)
+    }
+
+    private func startWithDraft() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            onStartWithoutQuestion()
+        } else {
+            onStart(trimmed)
+        }
+    }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(CosmoTypography.labelSmall)
+            .tracking(1.6)
+            .foregroundStyle(CosmoColors.textTertiary)
+    }
+
+    private func composerRow(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: DS.space8) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.accent)
+                Text(title)
+                    .font(CosmoTypography.body)
+                    .foregroundStyle(CosmoColors.textPrimary)
+                    .lineLimit(2)
+                Spacer()
+            }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, 8)
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 

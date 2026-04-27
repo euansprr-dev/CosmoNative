@@ -81,10 +81,16 @@ enum QuestionConfidence: String, Codable, CaseIterable, Sendable {
 }
 
 /// Kind of an Extract — the unit of meaning.
-enum ExtractKind: String, Codable, CaseIterable, Sendable {
+enum ExtractKind: String, Codable, CaseIterable, Sendable, Hashable {
     case quote
     case highlight
     case claim
+    case speculativeClaim
+    case evidence
+    case counterevidence
+    case mechanism
+    case assumption
+    case sourceQualityNote
     case principle
     case example
     case objection
@@ -102,6 +108,12 @@ enum ExtractKind: String, Codable, CaseIterable, Sendable {
         case .quote: return "Quote"
         case .highlight: return "Highlight"
         case .claim: return "Claim"
+        case .speculativeClaim: return "Speculative Claim"
+        case .evidence: return "Evidence"
+        case .counterevidence: return "Counterevidence"
+        case .mechanism: return "Mechanism"
+        case .assumption: return "Assumption"
+        case .sourceQualityNote: return "Source Quality Note"
         case .principle: return "Principle"
         case .example: return "Example"
         case .objection: return "Objection"
@@ -121,6 +133,12 @@ enum ExtractKind: String, Codable, CaseIterable, Sendable {
         case .quote: return "quote.opening"
         case .highlight: return "highlighter"
         case .claim: return "exclamationmark.bubble"
+        case .speculativeClaim: return "exclamationmark.bubble"
+        case .evidence: return "checkmark.seal"
+        case .counterevidence: return "exclamationmark.triangle"
+        case .mechanism: return "gearshape.2"
+        case .assumption: return "building.columns"
+        case .sourceQualityNote: return "shield.lefthalf.filled"
         case .principle: return "scope"
         case .example: return "lightbulb"
         case .objection: return "questionmark.diamond"
@@ -132,6 +150,23 @@ enum ExtractKind: String, Codable, CaseIterable, Sendable {
         case .note: return "note.text"
         case .sourceSnippet: return "doc.plaintext"
         case .aiInsight: return "sparkles"
+        }
+    }
+
+    var isClaimLike: Bool {
+        self == .claim || self == .speculativeClaim
+    }
+
+    var isEvidenceLike: Bool {
+        self == .evidence || self == .counterevidence
+    }
+
+    var isEpistemic: Bool {
+        switch self {
+        case .claim, .speculativeClaim, .evidence, .counterevidence, .mechanism, .assumption, .sourceQualityNote:
+            return true
+        default:
+            return false
         }
     }
 }
@@ -557,7 +592,7 @@ struct ResearchTreeDocument: Codable, Sendable {
             parentNodeId: nil,
             childNodeIds: [],
             branchOrder: 0,
-            meta: ResearchTreeNode.Meta(label: "Main question", aiSuggested: false, accepted: true)
+            meta: ResearchTreeNode.Meta(label: rootQuestionAtomUUID == nil ? "What are you trying to understand?" : "Main question", aiSuggested: false, accepted: true)
         )
         return ResearchTreeDocument(rootNodeId: rootId, nodes: [rootId: root])
     }
@@ -579,6 +614,206 @@ struct ResearchTreeDocument: Codable, Sendable {
         nodes[newNode.id] = newNode
         return newNode.id
     }
+}
+
+/// Lightweight persisted UI state for the active Inquiry Workspace.
+struct InquiryWorkspaceUIState: Codable, Sendable {
+    var pinnedQuestionUUIDs: [String]
+    var collapsedBranchNodeIds: [String]
+    var pinnedNoteDraftsByQuestionUUID: [String: String]
+    var selectedInspectorQuestionUUID: String?
+
+    init(
+        pinnedQuestionUUIDs: [String] = [],
+        collapsedBranchNodeIds: [String] = [],
+        pinnedNoteDraftsByQuestionUUID: [String: String] = [:],
+        selectedInspectorQuestionUUID: String? = nil
+    ) {
+        self.pinnedQuestionUUIDs = pinnedQuestionUUIDs
+        self.collapsedBranchNodeIds = collapsedBranchNodeIds
+        self.pinnedNoteDraftsByQuestionUUID = pinnedNoteDraftsByQuestionUUID
+        self.selectedInspectorQuestionUUID = selectedInspectorQuestionUUID
+    }
+}
+
+/// Chat-native durable action waiting for user approval.
+struct InquiryRoutingCard: Codable, Sendable, Identifiable {
+    enum Kind: String, Codable, Sendable {
+        case branchProposal
+        case childBranchProposal
+        case claimProposal
+        case evidenceProposal
+        case counterevidenceProposal
+        case mechanismProposal
+        case assumptionProposal
+        case sourceQualityWarning
+        case sourceFinding
+        case noteRoute
+        case modelUpdate
+    }
+
+    enum Status: String, Codable, Sendable {
+        case pending
+        case accepted
+        case ignored
+    }
+
+    var id: String
+    var kind: Kind
+    var title: String
+    var detail: String?
+    var proposedQuestion: String?
+    var proposedExtractText: String?
+    var proposedExtractKind: ExtractKind?
+    var actionTitle: String?
+    var parentQuestionUUID: String?
+    var parentBranchNodeId: String?
+    var originExtractUUID: String?
+    var sourceTabId: String?
+    var createdAt: String
+    var status: Status
+
+    init(
+        id: String = UUID().uuidString,
+        kind: Kind,
+        title: String,
+        detail: String? = nil,
+        proposedQuestion: String? = nil,
+        proposedExtractText: String? = nil,
+        proposedExtractKind: ExtractKind? = nil,
+        actionTitle: String? = nil,
+        parentQuestionUUID: String? = nil,
+        parentBranchNodeId: String? = nil,
+        originExtractUUID: String? = nil,
+        sourceTabId: String? = nil,
+        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        status: Status = .pending
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+        self.proposedQuestion = proposedQuestion
+        self.proposedExtractText = proposedExtractText
+        self.proposedExtractKind = proposedExtractKind
+        self.actionTitle = actionTitle
+        self.parentQuestionUUID = parentQuestionUUID
+        self.parentBranchNodeId = parentBranchNodeId
+        self.originExtractUUID = originExtractUUID
+        self.sourceTabId = sourceTabId
+        self.createdAt = createdAt
+        self.status = status
+    }
+}
+
+enum InquirySourceStatus: String, Codable, CaseIterable, Sendable {
+    case viewed
+    case saved
+    case extracted
+    case archived
+    case deleted
+
+    var displayName: String { rawValue.capitalized }
+}
+
+/// Durable source record for a session. Tabs are only views over these source atoms.
+struct InquirySourceRef: Codable, Sendable, Identifiable {
+    var id: String { sourceUUID }
+    var sourceUUID: String
+    var tabId: String?
+    var url: String?
+    var title: String
+    var domain: String?
+    var sourceType: String
+    var status: InquirySourceStatus
+    var primaryQuestionUUID: String?
+    var primaryNodeId: String?
+    var openedAt: String
+    var lastOpenedAt: String
+    var extractCount: Int
+    var noteCount: Int
+
+    init(
+        sourceUUID: String,
+        tabId: String? = nil,
+        url: String? = nil,
+        title: String,
+        domain: String? = nil,
+        sourceType: String = "webpage",
+        status: InquirySourceStatus = .viewed,
+        primaryQuestionUUID: String? = nil,
+        primaryNodeId: String? = nil,
+        openedAt: String = ISO8601DateFormatter().string(from: Date()),
+        lastOpenedAt: String = ISO8601DateFormatter().string(from: Date()),
+        extractCount: Int = 0,
+        noteCount: Int = 0
+    ) {
+        self.sourceUUID = sourceUUID
+        self.tabId = tabId
+        self.url = url
+        self.title = title
+        self.domain = domain
+        self.sourceType = sourceType
+        self.status = status
+        self.primaryQuestionUUID = primaryQuestionUUID
+        self.primaryNodeId = primaryNodeId
+        self.openedAt = openedAt
+        self.lastOpenedAt = lastOpenedAt
+        self.extractCount = extractCount
+        self.noteCount = noteCount
+    }
+}
+
+struct InquiryActivityEvent: Codable, Sendable, Identifiable {
+    enum Kind: String, Codable, Sendable {
+        case noteSaved
+        case sourceOpened
+        case sourceClosed
+        case branchCreated
+        case claimSaved
+        case evidenceSaved
+        case routingSuggested
+        case routingIgnored
+        case aiReply
+        case extractSaved
+    }
+
+    var id: String
+    var kind: Kind
+    var title: String
+    var detail: String?
+    var questionUUID: String?
+    var sourceUUID: String?
+    var extractUUID: String?
+    var routingCardId: String?
+    var createdAt: String
+
+    init(
+        id: String = UUID().uuidString,
+        kind: Kind,
+        title: String,
+        detail: String? = nil,
+        questionUUID: String? = nil,
+        sourceUUID: String? = nil,
+        extractUUID: String? = nil,
+        routingCardId: String? = nil,
+        createdAt: String = ISO8601DateFormatter().string(from: Date())
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+        self.questionUUID = questionUUID
+        self.sourceUUID = sourceUUID
+        self.extractUUID = extractUUID
+        self.routingCardId = routingCardId
+        self.createdAt = createdAt
+    }
+}
+
+struct InquiryToast: Equatable {
+    var message: String
+    var detail: String?
 }
 
 /// A source tab within an Inquiry Session's Source Pane.
@@ -976,25 +1211,64 @@ struct CrystallizationOutput: Codable, Sendable {
 struct InquirySessionStructured: Codable, Sendable {
     var researchTree: ResearchTreeDocument
     var sourceTabs: [SourceTab]
+    var sourceRefs: [InquirySourceRef]
     var sessionCaptures: [SessionCapture]
     var aiInteractions: [AIInteractionRef]
+    var activityEvents: [InquiryActivityEvent]
     var mapForming: MapFormingState
+    var uiState: InquiryWorkspaceUIState
+    var routingCards: [InquiryRoutingCard]
     var crystallizationResult: CrystallizationOutput?
+
+    enum CodingKeys: String, CodingKey {
+        case researchTree
+        case sourceTabs
+        case sourceRefs
+        case sessionCaptures
+        case aiInteractions
+        case activityEvents
+        case mapForming
+        case uiState
+        case routingCards
+        case crystallizationResult
+    }
 
     init(
         researchTree: ResearchTreeDocument,
         sourceTabs: [SourceTab] = [],
+        sourceRefs: [InquirySourceRef] = [],
         sessionCaptures: [SessionCapture] = [],
         aiInteractions: [AIInteractionRef] = [],
+        activityEvents: [InquiryActivityEvent] = [],
         mapForming: MapFormingState = MapFormingState(),
+        uiState: InquiryWorkspaceUIState = InquiryWorkspaceUIState(),
+        routingCards: [InquiryRoutingCard] = [],
         crystallizationResult: CrystallizationOutput? = nil
     ) {
         self.researchTree = researchTree
         self.sourceTabs = sourceTabs
+        self.sourceRefs = sourceRefs
         self.sessionCaptures = sessionCaptures
         self.aiInteractions = aiInteractions
+        self.activityEvents = activityEvents
         self.mapForming = mapForming
+        self.uiState = uiState
+        self.routingCards = routingCards
         self.crystallizationResult = crystallizationResult
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        researchTree = try container.decode(ResearchTreeDocument.self, forKey: .researchTree)
+        sourceTabs = try container.decodeIfPresent([SourceTab].self, forKey: .sourceTabs) ?? []
+        sourceRefs = try container.decodeIfPresent([InquirySourceRef].self, forKey: .sourceRefs) ?? []
+        sessionCaptures = try container.decodeIfPresent([SessionCapture].self, forKey: .sessionCaptures) ?? []
+        aiInteractions = try container.decodeIfPresent([AIInteractionRef].self, forKey: .aiInteractions) ?? []
+        activityEvents = try container.decodeIfPresent([InquiryActivityEvent].self, forKey: .activityEvents) ?? []
+        mapForming = try container.decodeIfPresent(MapFormingState.self, forKey: .mapForming) ?? MapFormingState()
+        uiState = try container.decodeIfPresent(InquiryWorkspaceUIState.self, forKey: .uiState) ?? InquiryWorkspaceUIState()
+        routingCards = try container.decodeIfPresent([InquiryRoutingCard].self, forKey: .routingCards) ?? []
+        crystallizationResult = try container.decodeIfPresent(CrystallizationOutput.self, forKey: .crystallizationResult)
     }
 }
 

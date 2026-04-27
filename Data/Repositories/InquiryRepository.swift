@@ -113,6 +113,58 @@ final class InquiryRepository {
         return atomsLoaded
     }
 
+    /// Create or find a durable research atom for a URL. Source tabs are views; this atom is the source object.
+    @discardableResult
+    func createOrFindURLSource(urlString: String, title: String, sourceType: String = "webpage") async throws -> Atom {
+        let canonical = canonicalURL(urlString)
+        if let existing = try await fetchSource(canonicalURL: canonical) {
+            var copy = existing
+            if (copy.title ?? "").isEmpty {
+                copy.title = title
+            }
+            var meta = copy.researchMetadata ?? ResearchMetadata()
+            meta.url = canonical
+            meta.researchType = meta.researchType ?? sourceType
+            meta.processingStatus = InquirySourceStatus.viewed.rawValue
+            meta.tags = Array(Set((meta.tags ?? []) + ["inquiry-source"]))
+            copy.metadata = try jsonString(meta)
+            return try await atoms.update(copy)
+        }
+
+        var metadata = ResearchMetadata()
+        metadata.url = canonical
+        metadata.researchType = sourceType
+        metadata.processingStatus = InquirySourceStatus.viewed.rawValue
+        metadata.tags = ["inquiry-source"]
+
+        return try await atoms.create(
+            type: .research,
+            title: title,
+            body: nil,
+            structured: nil,
+            metadata: try jsonString(metadata),
+            links: nil
+        )
+    }
+
+    func fetchSource(canonicalURL: String) async throws -> Atom? {
+        let all = try await atoms.fetchAll(type: .research)
+        return all.first { atom in
+            guard let url = atom.researchMetadata?.url else { return false }
+            return self.canonicalURL(url) == canonicalURL
+        }
+    }
+
+    func canonicalURL(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard var components = URLComponents(string: withScheme) else { return withScheme }
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+        if components.path == "/" { components.path = "" }
+        return components.string ?? withScheme
+    }
+
     /// Connections crystallized within this Deep Dive.
     func fetchConnections(forDeepDive deepDive: Atom) async throws -> [Atom] {
         let uuids = deepDive.linksOfType(.deepDiveConnection).compactMap { $0.uuid }
@@ -135,12 +187,13 @@ final class InquiryRepository {
         deepDive: Atom,
         title: String? = nil,
         mainQuestionTitle: String? = nil,
+        existingRootQuestion: Atom? = nil,
         anchorObjectUUID: String? = nil,
         anchorObjectType: String? = nil
     ) async throws -> (session: Atom, rootQuestion: Atom?) {
         // 1. Create root question (optional)
-        var rootQuestionAtom: Atom? = nil
-        if let qTitle = mainQuestionTitle, !qTitle.isEmpty {
+        var rootQuestionAtom: Atom? = existingRootQuestion
+        if rootQuestionAtom == nil, let qTitle = mainQuestionTitle, !qTitle.isEmpty {
             rootQuestionAtom = try await createQuestion(
                 title: qTitle,
                 parentDeepDiveUUID: deepDive.uuid,
@@ -151,7 +204,7 @@ final class InquiryRepository {
         }
 
         // 2. Build session metadata + structured (with research tree seeded)
-        let sessionTitle = title ?? mainQuestionTitle ?? "\(deepDive.title ?? "Inquiry") · \(shortDateLabel())"
+        let sessionTitle = title ?? rootQuestionAtom?.title ?? mainQuestionTitle ?? "\(deepDive.title ?? "Inquiry") · \(shortDateLabel())"
         let metadata = InquirySessionMetadata(
             parentDeepDiveUUID: deepDive.uuid,
             parentObjectUUID: anchorObjectUUID,
@@ -161,7 +214,12 @@ final class InquiryRepository {
             lastActiveAt: ISO8601DateFormatter().string(from: Date()),
             layoutMode: .research
         )
-        let tree = ResearchTreeDocument.bootstrap(rootQuestionAtomUUID: rootQuestionAtom?.uuid)
+        var tree = ResearchTreeDocument.bootstrap(rootQuestionAtomUUID: rootQuestionAtom?.uuid)
+        if let rootTitle = rootQuestionAtom?.title ?? mainQuestionTitle,
+           var root = tree.nodes[tree.rootNodeId] {
+            root.meta.label = rootTitle
+            tree.nodes[root.id] = root
+        }
         let structured = InquirySessionStructured(researchTree: tree)
 
         // 3. Build links

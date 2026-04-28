@@ -166,6 +166,9 @@ final class CosmoWindowPanelController: NSWindowController {
                !event.modifierFlags.contains(.shift),
                !event.modifierFlags.contains(.control) {
                 Task { @MainActor in
+                    if ContentFocusWritingAIScope.shared.tryOpen() {
+                        return
+                    }
                     self?.toggle()
                 }
                 return nil // Consume the event

@@ -42,12 +42,13 @@ struct MainView: View {
 
     // Navigation destination (Command Center is home)
     @State private var currentDestination: SidebarDestination = .commandCenter
-    // Sidebar state (3-state: hidden / peek / expanded)
+    @State private var inboxRoute: SidebarInboxRoute = .global
+    @StateObject private var commandCenterViewModel = CommandCenterDashboardViewModel()
+    // Simple sidebar state: closed/open. Open sidebar reserves layout space.
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
-    @State private var isPeeking: Bool = false
-    @State private var peekTimer: Timer?
-    @State private var peekDismissTimer: Timer?
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @AppStorage("unifiedSidebarContext") private var activeSidebarContext: SidebarContext = .thinkspaces
+    @State private var sidebarPanelWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
+    @State private var sidebarInteractionWidth: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
@@ -461,14 +462,6 @@ struct MainView: View {
             handleOpenCollaboratorPane(atomUUID: payload.atomUUID, presetId: payload.presetId)
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
-            // Dismiss peek sidebar when entering focus mode
-            if newValue != nil {
-                isPeeking = false
-                peekTimer?.invalidate()
-                peekTimer = nil
-                peekDismissTimer?.invalidate()
-                peekDismissTimer = nil
-            }
             // When focus mode closes, reveal Command-K if it was kept alive behind focus mode
             if newValue == nil, commandKBehindFocusMode {
                 // CMD+K view is still in the tree — just reveal it (no delay, no recreation)
@@ -516,6 +509,7 @@ struct MainView: View {
             case .codex:
                 break
             }
+            syncSidebarContext(with: newDest)
             // Update Cosmo Window context (panel is now system-wide, always update)
             let vm = CosmoWindowViewModel.shared
             switch newDest {
@@ -698,47 +692,28 @@ struct MainView: View {
     @ViewBuilder
     private var mainContentLayout: some View {
         ZStack(alignment: .leading) {
-            // Content fills full width — extends behind sidebar
-            SplitPaneContainer(paneManager: paneManager) {
-                ZStack {
-                    destinationContent
-                    focusModeOverlay
+            HStack(spacing: 0) {
+                if !isSidebarHidden {
+                    sidebarPanel
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .zIndex(20)
                 }
-            }
-            .zIndex(appState.focusedEntity != nil ? 195 : 10)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
 
-            // Full sidebar (when expanded)
-            if !isSidebarHidden {
-                UnifiedSidebar(
-                    currentDestination: $currentDestination,
-                    thinkspaceManager: thinkspaceManager
-                )
-                .environmentObject(crossDragManager)
-                .transition(.move(edge: .leading).combined(with: .opacity))
-                .zIndex(200)
+                SplitPaneContainer(paneManager: paneManager) {
+                    ZStack {
+                        destinationContent
+                        focusModeOverlay
+                    }
+                }
+                .zIndex(appState.focusedEntity != nil ? 195 : 10)
+                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
             }
 
-            // Toggle button (when hidden and not in focus mode)
-            if isSidebarHidden && !isPeeking && appState.focusedEntity == nil {
+            if isSidebarHidden && appState.focusedEntity == nil {
                 sidebarToggleButton
                     .zIndex(201)
             }
 
-            // Peek rail overlay (when hovering left edge, not in focus mode)
-            if isPeeking && isSidebarHidden && appState.focusedEntity == nil {
-                peekSidebarRail
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                    .zIndex(202)
-            }
-
-            // Left-edge hover trigger (when hidden and not peeking, not in focus mode)
-            if isSidebarHidden && !isPeeking && appState.focusedEntity == nil {
-                sidebarEdgeTrigger
-                    .zIndex(199)
-            }
-
-            // Cross-thinkspace floating drag preview
             if crossDragManager.isOverSidebar || crossDragManager.hasThinkspaceSwitched,
                let block = crossDragManager.draggedBlock {
                 CrossThinkspaceDragPreview(block: block)
@@ -749,22 +724,38 @@ struct MainView: View {
             }
         }
         .background(DS.canvas)
+        .animation(sidebarAnimation, value: isSidebarHidden)
+        .animation(sidebarAnimation, value: sidebarPanelWidth)
         .onAppear {
+            syncSidebarContext(with: currentDestination)
+            restoreSidebarState()
             setupCrossThinkspaceDragCallbacks()
+            updateSidebarInteractionWidth()
         }
-        .onChange(of: isSidebarHidden) { _, hidden in
-            if hidden {
-                crossDragManager.sidebarWidth = 0
-            }
-            // When shown, UnifiedSidebar.onAppear sets the actual width
+        .onChange(of: isSidebarHidden) { _, _ in
+            updateSidebarInteractionWidth()
+        }
+        .onChange(of: sidebarPanelWidth) { _, _ in
+            updateSidebarInteractionWidth()
         }
     }
 
-    // MARK: - Sidebar Toggle Button
+    private var sidebarPanel: some View {
+        UnifiedSidebar(
+            currentDestination: $currentDestination,
+            inboxRoute: $inboxRoute,
+            activeContext: $activeSidebarContext,
+            panelWidth: $sidebarPanelWidth,
+            thinkspaceManager: thinkspaceManager,
+            commandCenterViewModel: commandCenterViewModel,
+            onClose: { closeSidebar() }
+        )
+        .environmentObject(crossDragManager)
+    }
 
     private var sidebarToggleButton: some View {
         Button("Show sidebar", systemImage: "sidebar.left") {
-            withAnimation(ProMotionSprings.sidebar) {
+            withAnimation(sidebarAnimation) {
                 isSidebarHidden = false
             }
         }
@@ -778,86 +769,46 @@ struct MainView: View {
         .padding(.leading, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .help("Show sidebar (Cmd+\\)")
+        .accessibilityLabel("Show sidebar")
     }
 
-    // MARK: - Sidebar Edge Trigger
-
-    private var sidebarEdgeTrigger: some View {
-        Color.clear
-            .frame(width: 3)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering {
-                    peekTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
-                        DispatchQueue.main.async {
-                            withAnimation(ProMotionSprings.snappy) {
-                                isPeeking = true
-                            }
-                        }
-                    }
-                } else {
-                    peekTimer?.invalidate()
-                    peekTimer = nil
-                }
-            }
+    private var sidebarAnimation: Animation? {
+        reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.sidebar
     }
 
-    // MARK: - Peek Sidebar Rail
-
-    private var peekSidebarRail: some View {
-        VStack(spacing: 0) {
-            PeekSidebarContent(
-                currentDestination: $currentDestination,
-                thinkspaceManager: thinkspaceManager,
-                onExpandSidebar: {
-                    withAnimation(ProMotionSprings.sidebar) {
-                        isPeeking = false
-                        isSidebarHidden = false
-                    }
-                }
-            )
-        }
-        .frame(width: UnifiedSidebarMetrics.collapsedWidth)
-        .frame(maxHeight: .infinity)
-        .background {
-            if reduceTransparency {
-                RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous).fill(DS.surface)
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous).fill(.ultraThinMaterial)
-                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous).fill(DS.surface.opacity(DS.palette.isDark ? 0.55 : 0.35))
-                }
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous)
-                .stroke(DS.glassBorder, lineWidth: 0.5)
+    private func restoreSidebarState() {
+        sidebarPanelWidth = UnifiedSidebarMetrics.clampedExpandedWidth(
+            StatePersistence.shared.getSidebarWidth()
         )
-        .shadow(color: .black.opacity(DS.palette.isDark ? 0.35 : 0.08), radius: 12, y: 4)
-        .padding(.top, UnifiedSidebarMetrics.floatingMargin)
-        .padding(.bottom, UnifiedSidebarMetrics.floatingMargin)
-        .padding(.trailing, UnifiedSidebarMetrics.floatingMargin)
-        // No leading padding — hug the left window edge so there's no gap
-        .contentShape(Rectangle())
-        .environmentObject(crossDragManager)
-        .onHover { hovering in
-            if hovering {
-                // Cancel any pending dismiss
-                peekDismissTimer?.invalidate()
-                peekDismissTimer = nil
-            } else {
-                // Delay dismiss to avoid flicker from brief hover gaps
-                peekDismissTimer?.invalidate()
-                peekDismissTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
-                    DispatchQueue.main.async {
-                        withAnimation(ProMotionSprings.snappy) {
-                            isPeeking = false
-                        }
-                    }
-                }
-            }
+    }
+
+    private func closeSidebar() {
+        withAnimation(sidebarAnimation) {
+            isSidebarHidden = true
+        }
+    }
+
+    private func updateSidebarInteractionWidth() {
+        sidebarInteractionWidth = isSidebarHidden ? 0 : sidebarPanelWidth
+        crossDragManager.sidebarWidth = sidebarInteractionWidth
+    }
+
+    private func toggleSidebarFromKeyboard() {
+        withAnimation(sidebarAnimation) {
+            isSidebarHidden.toggle()
+        }
+    }
+
+    private func syncSidebarContext(with destination: SidebarDestination) {
+        switch destination {
+        case .commandCenter:
+            activeSidebarContext = .commandCenter
+        case .inbox:
+            activeSidebarContext = .inbox
+        case .thinkspace:
+            activeSidebarContext = .thinkspaces
+        case .codex:
+            break
         }
     }
 
@@ -953,12 +904,15 @@ struct MainView: View {
 
             // Non-canvas destinations rendered on top when active
             if case .inbox = currentDestination {
-                InboxView()
+                InboxView(route: $inboxRoute)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .transition(.opacity)
             } else if case .commandCenter = currentDestination {
-                CommandCenterDashboard()
+                CommandCenterDashboard(
+                    viewModel: commandCenterViewModel,
+                    showsInternalSidebar: false
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .transition(.opacity)
@@ -1199,7 +1153,7 @@ struct MainView: View {
                     return nil
                 }
 
-                // 13. On Command Center — no action (home state)
+                // 12. On Command Center — no action (home state)
             }
 
             // P key — navigate to Command Center (from anywhere)
@@ -1225,10 +1179,7 @@ struct MainView: View {
                event.keyCode == 42,  // \ key
                event.modifierFlags.contains(.command),
                !isFirstResponderTextField() {
-                withAnimation(ProMotionSprings.sidebar) {
-                    isSidebarHidden.toggle()
-                    if isSidebarHidden { isPeeking = false }
-                }
+                toggleSidebarFromKeyboard()
                 return nil
             }
 
@@ -1449,11 +1400,8 @@ struct MainView: View {
             )
 
             // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
-            if !isSidebarHidden {
-                let sidebarTotalWidth = crossDragManager.sidebarTotalWidth
-                if windowPoint.x < sidebarTotalWidth + 20 {
-                    return event
-                }
+            if !isSidebarHidden, windowPoint.x < sidebarInteractionWidth + 20 {
+                return event
             }
 
             // Don't intercept right-clicks in the pane column — let the pane's own monitor handle them
@@ -1684,6 +1632,7 @@ struct MainView: View {
                     )
                 }
             } else {
+                inboxRoute = .global
                 currentDestination = .inbox
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     NotificationCenter.default.post(

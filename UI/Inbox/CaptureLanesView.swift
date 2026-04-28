@@ -35,6 +35,11 @@ final class CaptureLanesViewModel {
         Task { await loadItems() }
     }
 
+    func selectDestination(id: String?) {
+        selectedDestinationId = id
+        Task { await loadItems() }
+    }
+
     func createLane() async {
         let name = newLaneName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
@@ -63,15 +68,41 @@ final class CaptureLanesViewModel {
 
 struct CaptureLanesView: View {
     @State private var viewModel = CaptureLanesViewModel()
+    let showsLaneSidebar: Bool
+    let selectedDestinationId: String?
+    let showsCommandRegistryOnly: Bool
+
+    init(
+        showsLaneSidebar: Bool = true,
+        selectedDestinationId: String? = nil,
+        showsCommandRegistryOnly: Bool = false
+    ) {
+        self.showsLaneSidebar = showsLaneSidebar
+        self.selectedDestinationId = selectedDestinationId
+        self.showsCommandRegistryOnly = showsCommandRegistryOnly
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
-            laneSidebar
-            Divider().foregroundStyle(DS.borderSubtle)
-            laneDetail
+        Group {
+            if showsCommandRegistryOnly {
+                commandRegistryDetail
+            } else {
+                HStack(spacing: 0) {
+                    if showsLaneSidebar {
+                        laneSidebar
+                        Divider().foregroundStyle(DS.borderSubtle)
+                    }
+                    laneDetail
+                }
+            }
         }
         .background(DS.bg)
-        .task { await viewModel.refresh() }
+        .task(id: selectedDestinationId) {
+            if let selectedDestinationId {
+                viewModel.selectedDestinationId = selectedDestinationId
+            }
+            await viewModel.refresh()
+        }
     }
 
     private var laneSidebar: some View {
@@ -164,6 +195,44 @@ struct CaptureLanesView: View {
         .overlay(alignment: .top) {
             Divider().foregroundStyle(DS.borderSubtle)
         }
+    }
+
+    private var commandRegistryDetail: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 34, height: 34)
+                    .background(DS.accentSoft, in: .rect(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Telegram Commands")
+                        .font(DS.title1)
+                        .foregroundStyle(DS.text)
+                    Text("Capture aliases mapped to durable lanes")
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textMuted)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, DS.space24)
+            .padding(.vertical, DS.space16)
+
+            Divider().foregroundStyle(DS.borderSubtle)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.destinations) { destination in
+                        CaptureCommandRegistryRow(destination: destination)
+                    }
+                }
+                .padding(DS.space24)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.bg)
     }
 
     private var laneDetail: some View {
@@ -298,6 +367,50 @@ private struct CaptureLaneSidebarRow: View {
             .background(isSelected ? DS.accent : DS.surfaceHover.opacity(0.001), in: .rect(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct CaptureCommandRegistryRow: View {
+    let destination: CaptureDestination
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: destination.icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 28, height: 28)
+                .background(DS.accentSoft, in: .rect(cornerRadius: 7))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(destination.name)
+                    .font(DS.headline)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    ForEach(destination.aliases.prefix(4), id: \.self) { alias in
+                        Text("\(alias):")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(DS.accent)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(DS.accentSoft, in: .rect(cornerRadius: 6))
+                    }
+                }
+            }
+
+            Spacer()
+
+            Text(destination.type.displayName)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+        }
+        .padding(12)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
     }
 }
 

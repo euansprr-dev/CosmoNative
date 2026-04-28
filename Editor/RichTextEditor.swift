@@ -42,6 +42,8 @@ struct RichTextEditor: View {
     var onContentHeightChange: ((CGFloat) -> Void)? = nil
     var onAIAction: ((AIWritingAction) -> Void)? = nil
     var onCustomPrompt: ((String) -> Void)? = nil
+    var onWritingAIRequest: (() -> Void)? = nil
+    var focusBandRange: NSRange? = nil
     var onActivate: (() -> Void)? = nil
     var onDeactivate: (() -> Void)? = nil
     var onCommit: (() -> Void)? = nil
@@ -90,6 +92,8 @@ struct RichTextEditor: View {
         onContentHeightChange: ((CGFloat) -> Void)? = nil,
         onAIAction: ((AIWritingAction) -> Void)? = nil,
         onCustomPrompt: ((String) -> Void)? = nil,
+        onWritingAIRequest: (() -> Void)? = nil,
+        focusBandRange: NSRange? = nil,
         onActivate: (() -> Void)? = nil,
         onDeactivate: (() -> Void)? = nil,
         onCommit: (() -> Void)? = nil,
@@ -121,6 +125,8 @@ struct RichTextEditor: View {
         self.onContentHeightChange = onContentHeightChange
         self.onAIAction = onAIAction
         self.onCustomPrompt = onCustomPrompt
+        self.onWritingAIRequest = onWritingAIRequest
+        self.focusBandRange = focusBandRange
         self.onActivate = onActivate
         self.onDeactivate = onDeactivate
         self.onCommit = onCommit
@@ -150,6 +156,7 @@ struct RichTextEditor: View {
                 titleConfiguration: titleConfiguration,
                 baseFontWeight: baseFontWeight,
                 polishHighlights: polishHighlights,
+                focusBandRange: focusBandRange,
                 textAlignment: textAlignment,
                 typewriterMode: typewriterMode,
                 isEditable: isEditable,
@@ -291,7 +298,11 @@ struct RichTextEditor: View {
                     compact: compact,
                     onDismiss: { showSelectionMenu = false },
                     onAIAction: onAIAction,
-                    onCustomPrompt: onCustomPrompt
+                    onCustomPrompt: onCustomPrompt,
+                    onWritingAIRequest: {
+                        dismissAllOverlays()
+                        onWritingAIRequest?()
+                    }
                 )
                 .zIndex(900)
                 .transition(.opacity)
@@ -489,6 +500,7 @@ struct SlashCommand: Identifiable {
     let shortcut: String?
 
     static let all: [SlashCommand] = [
+        SlashCommand(type: .writingAI, title: "Writing AI", subtitle: "Ask, rewrite, search, or critique", icon: "sparkles", shortcut: "⌥A"),
         SlashCommand(type: .image, title: "Image", subtitle: "Insert an inline image", icon: "photo", shortcut: nil),
         SlashCommand(type: .heading1, title: "Heading 1", subtitle: "Large section heading", icon: "textformat.size.larger", shortcut: nil),
         SlashCommand(type: .heading2, title: "Heading 2", subtitle: "Medium section heading", icon: "textformat.size", shortcut: nil),
@@ -502,6 +514,7 @@ struct SlashCommand: Identifiable {
 }
 
 enum SlashCommandType {
+    case writingAI
     case image
     case heading1, heading2, heading3
     case bulletList, numberedList, checkbox

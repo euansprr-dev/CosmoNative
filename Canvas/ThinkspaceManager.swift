@@ -25,9 +25,13 @@ struct ThinkspaceMetadata: Codable, Sendable {
     // Cluster zones (user-created, persistent)
     var clusters: [CodableCluster] = []
 
+    // Inquiry/mastery profile attached one-to-one to this Thinkspace.
+    // Older Thinkspaces decode nil and resolve lazily on open.
+    var deepDiveProfileUUID: String?
+
     enum CodingKeys: String, CodingKey {
         case name, lastOpened, zoomLevel, panOffsetX, panOffsetY, blockIds
-        case projectUuid, parentThinkspaceId, isRootThinkspace, clusters
+        case projectUuid, parentThinkspaceId, isRootThinkspace, clusters, deepDiveProfileUUID
     }
 
     init(from decoder: Decoder) throws {
@@ -42,6 +46,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
         parentThinkspaceId = try container.decodeIfPresent(String.self, forKey: .parentThinkspaceId)
         isRootThinkspace = try container.decode(Bool.self, forKey: .isRootThinkspace)
         clusters = try container.decodeIfPresent([CodableCluster].self, forKey: .clusters) ?? []
+        deepDiveProfileUUID = try container.decodeIfPresent(String.self, forKey: .deepDiveProfileUUID)
     }
 
     init(
@@ -54,7 +59,8 @@ struct ThinkspaceMetadata: Codable, Sendable {
         projectUuid: String? = nil,
         parentThinkspaceId: String? = nil,
         isRootThinkspace: Bool = false,
-        clusters: [CodableCluster] = []
+        clusters: [CodableCluster] = [],
+        deepDiveProfileUUID: String? = nil
     ) {
         self.name = name
         self.lastOpened = lastOpened
@@ -66,6 +72,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
         self.parentThinkspaceId = parentThinkspaceId
         self.isRootThinkspace = isRootThinkspace
         self.clusters = clusters
+        self.deepDiveProfileUUID = deepDiveProfileUUID
     }
 }
 
@@ -84,6 +91,7 @@ struct Thinkspace: Identifiable, Equatable {
     var projectUuid: String?
     var parentThinkspaceId: String?
     var isRootThinkspace: Bool
+    var deepDiveProfileUUID: String?
 
     /// Whether this Thinkspace is assigned to a project
     var isAssigned: Bool { projectUuid != nil }
@@ -104,6 +112,7 @@ struct Thinkspace: Identifiable, Equatable {
             self.projectUuid = metadata.projectUuid
             self.parentThinkspaceId = metadata.parentThinkspaceId
             self.isRootThinkspace = metadata.isRootThinkspace
+            self.deepDiveProfileUUID = metadata.deepDiveProfileUUID
         } else {
             self.name = atom.title ?? "Untitled"
             self.lastOpened = ISO8601DateFormatter().date(from: atom.updatedAt) ?? Date()
@@ -113,6 +122,7 @@ struct Thinkspace: Identifiable, Equatable {
             self.projectUuid = nil
             self.parentThinkspaceId = nil
             self.isRootThinkspace = false
+            self.deepDiveProfileUUID = nil
         }
     }
 
@@ -121,7 +131,8 @@ struct Thinkspace: Identifiable, Equatable {
         lhs.name == rhs.name &&
         lhs.projectUuid == rhs.projectUuid &&
         lhs.parentThinkspaceId == rhs.parentThinkspaceId &&
-        lhs.blockCount == rhs.blockCount
+        lhs.blockCount == rhs.blockCount &&
+        lhs.deepDiveProfileUUID == rhs.deepDiveProfileUUID
     }
 }
 
@@ -399,22 +410,35 @@ class ThinkspaceManager: ObservableObject {
 
     /// Switch to a Thinkspace
     func switchTo(_ thinkspace: Thinkspace) async {
-        // Update last opened time
-        await updateLastOpened(thinkspace)
+        var resolvedThinkspace = thinkspace
+        if thinkspace.id != Self.commandCenterUUID {
+            do {
+                let profile = try await InquiryRepository.shared.resolveDeepDiveProfile(
+                    forThinkspace: thinkspace.id,
+                    title: thinkspace.name
+                )
+                resolvedThinkspace.deepDiveProfileUUID = profile.uuid
+            } catch {
+                print("⚠️ Failed to resolve DeepDiveProfile for Thinkspace \(thinkspace.name): \(error)")
+            }
+        }
 
-        currentThinkspace = thinkspace
+        // Update last opened time
+        await updateLastOpened(resolvedThinkspace)
+
+        currentThinkspace = resolvedThinkspace
 
         // Save as last opened
-        UserDefaults.standard.set(thinkspace.id, forKey: lastThinkspaceKey)
+        UserDefaults.standard.set(resolvedThinkspace.id, forKey: lastThinkspaceKey)
 
         // Post notification for CanvasView to load blocks
         NotificationCenter.default.post(
             name: CosmoNotification.Canvas.thinkspaceChanged,
             object: nil,
-            userInfo: ["thinkspaceId": thinkspace.id]
+            userInfo: ["thinkspaceId": resolvedThinkspace.id]
         )
 
-        print("🔄 Switched to Thinkspace: \(thinkspace.name)")
+        print("🔄 Switched to Thinkspace: \(resolvedThinkspace.name)")
     }
 
     /// Switch to default/global canvas (no Thinkspace)
@@ -453,6 +477,7 @@ class ThinkspaceManager: ObservableObject {
             atom.updatedAt = ISO8601DateFormatter().string(from: Date())
 
             try await repository.update(atom)
+            try? await InquiryRepository.shared.handleThinkspaceDeleted(thinkspace.id)
             await loadThinkspaces()
 
             // Update current if it's the one being renamed
@@ -478,6 +503,7 @@ class ThinkspaceManager: ObservableObject {
             atom.updatedAt = ISO8601DateFormatter().string(from: Date())
 
             try await repository.update(atom)
+            try? await InquiryRepository.shared.handleThinkspaceDeleted(thinkspace.id)
             await loadThinkspaces()
 
             // Switch to default if deleted current

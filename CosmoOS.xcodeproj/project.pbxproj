@@ -87,6 +87,10 @@
 		17CA16EA817068FE489CC9EB /* CosmoWindowPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A2BDE9831B159E27367592 /* CosmoWindowPanelController.swift */; };
 		1831376CE3D8C647D9BBA746 /* GhostSuggestionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59ADD9F65D4D991271CC8169 /* GhostSuggestionEngine.swift */; };
 		18499A8A7D39AD94AF721093 /* CortexCompactView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B9B997719BD82C477919E18 /* CortexCompactView.swift */; };
+		18A0C0DE0000000000000101 /* ContentWritingAssistant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A0C0DE0000000000000001 /* ContentWritingAssistant.swift */; };
+		18A0C0DE0000000000000102 /* WritingAIContextBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A0C0DE0000000000000002 /* WritingAIContextBuilder.swift */; };
+		18A0C0DE0000000000000103 /* WritingAIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A0C0DE0000000000000003 /* WritingAIModels.swift */; };
+		18A0C0DE0000000000000104 /* WritingAICardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A0C0DE0000000000000004 /* WritingAICardView.swift */; };
 		18D44BDAEAAB62B035A07227 /* PhysicsHeroHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A4FC48F7BC89BD426909DE1 /* PhysicsHeroHeaderView.swift */; };
 		191498C32B2A921D64E5009E /* RedTeamEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A406E62C07B4FA05DD3D32 /* RedTeamEngine.swift */; };
 		197B18980BAB9E49EE93D627 /* CosmoMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = D973F56DCE6429EE02014640 /* CosmoMessageBubble.swift */; };
@@ -115,6 +119,15 @@
 		255BD68A3BA4559997B3F7A6 /* SwipeURLClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 524F3BAAB06A19C91E38D6A4 /* SwipeURLClassifier.swift */; };
 		257E1D0853CA208AB057EB37 /* CommandCenterHabitEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 759FB3D9330E3F6B6524FCFD /* CommandCenterHabitEngine.swift */; };
 		25A578B3606903AEB3357158 /* TelegramTopicAliasParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF5BF68A86620605649E2E2F /* TelegramTopicAliasParser.swift */; };
+		25E4A8C1F0B947D8A3C61E02 /* CapturedItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E4A8C0F0B947D8A3C61E02 /* CapturedItem.swift */; };
+		310D517B5A4E49E88A6A0F03 /* TelegramCaptureCommandParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 310D517A5A4E49E88A6A0F03 /* TelegramCaptureCommandParser.swift */; };
+		3E4C96A7B2814E33B6B1D504 /* CaptureDestinationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4C96A6B2814E33B6B1D504 /* CaptureDestinationRepository.swift */; };
+		443A61F87C1D4A05AF2B5D06 /* MediaAttachmentRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 443A61F77C1D4A05AF2B5D06 /* MediaAttachmentRepository.swift */; };
+		4B7F2C1D0E9A4B8EA7D13E08 /* MediaAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B7F2C1C0E9A4B8EA7D13E08 /* MediaAttachment.swift */; };
+		516AC79E42E94B1AA1C5C409 /* CaptureMediaStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 516AC79D42E94B1AA1C5C409 /* CaptureMediaStorage.swift */; };
+		A1B2C3D4E5F60718293A4B50 /* CaptureDestination.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B4F /* CaptureDestination.swift */; };
+		AD4E6F8A1B2C43D59E70F10A /* CapturedItemRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4E6F891B2C43D59E70F10A /* CapturedItemRepository.swift */; };
+		BA91D37C6E524F10B8C2A30B /* TelegramCaptureRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA91D37B6E524F10B8C2A30B /* TelegramCaptureRouter.swift */; };
 		25C86241C77E36FE057B4339 /* CanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC015AD19E281A8886EA2EF9 /* CanvasView.swift */; };
 		26B318B36FC190FC63AEF491 /* LevelUpCelebrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 229A581FC01C4C1886C9D2FA /* LevelUpCelebrationView.swift */; };
 		2726845FEF41335478D3E06B /* ProvocationMarkerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D90EB9F9711C69828C18E59 /* ProvocationMarkerView.swift */; };
@@ -279,6 +292,7 @@
 		65A844AB902904122139A2E8 /* CommandCenterTaskMenus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31816A8994B6F3E31F00139 /* CommandCenterTaskMenus.swift */; };
 		65BE5BCFC137118C40C7F04D /* ProjectSidebarRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0026BBD3C76F26E7404D03D3 /* ProjectSidebarRow.swift */; };
 		6612DD8016B9DA017C013D2D /* InquiryCrystallizationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E04FC691494409CB049383 /* InquiryCrystallizationEngine.swift */; };
+		8C7D6E5F4A3B291817161514 /* CanvasProjectionApplyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D8C7B6A5F4E3D2C1B0A1918 /* CanvasProjectionApplyService.swift */; };
 		667025CD1CCB8473BCD2DB15 /* InboxIntelligenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F1A911ABD8C31CB2CD7AE91 /* InboxIntelligenceEngine.swift */; };
 		6699BC429B9CE2DE8637A0A7 /* CosmoWindowMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8C3D039948DC0478F81DFB /* CosmoWindowMessage.swift */; };
 		67361953FE23390591D96BB6 /* CanvasDrawingToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87EBD6DB98444548D84126CD /* CanvasDrawingToolbar.swift */; };
@@ -491,6 +505,7 @@
 		AEE689FC6028CCD4D59559C2 /* PerplexityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD23AEE8E88A0C9D6448F6C6 /* PerplexityService.swift */; };
 		AEF77FE7ADDA8A94355E3290 /* TaxonomyManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39AD8BE8C1D368782B09088C /* TaxonomyManagementView.swift */; };
 		B00F3A5DF73E7D8C7A1D8DD0 /* InboxCaptureBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C82281972414C82A86F84FA /* InboxCaptureBar.swift */; };
+		A7B8C9D0E1F2031425364758 /* CaptureLanesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F708192A3B4C /* CaptureLanesView.swift */; };
 		B03A17A466A9BBCE51AE7BF6 /* SpatialEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65EA20D935FAA8FA76B3D6A /* SpatialEngine.swift */; };
 		B085C3C9D549D7C256C70381 /* DragToConnectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 386BCA6E024FF58E5466CC3C /* DragToConnectManager.swift */; };
 		B0900C0DF07DCE9ACCFAF20D /* PhysiologyMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04BE8FF7BE68963314D7DBA /* PhysiologyMetadata.swift */; };
@@ -993,6 +1008,10 @@
 		5E8B6D2EA422D93E1B4026AD /* EditorCommandBus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorCommandBus.swift; sourceTree = "<group>"; };
 		5EC801BDF4A5DDE9BFB3FA9A /* BlueprintDisplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlueprintDisplayView.swift; sourceTree = "<group>"; };
 		5F160615FEE69B5CACE0CECD /* AgentBriefGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentBriefGenerator.swift; sourceTree = "<group>"; };
+		18A0C0DE0000000000000001 /* ContentWritingAssistant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentWritingAssistant.swift; sourceTree = "<group>"; };
+		18A0C0DE0000000000000002 /* WritingAIContextBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingAIContextBuilder.swift; sourceTree = "<group>"; };
+		18A0C0DE0000000000000003 /* WritingAIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingAIModels.swift; sourceTree = "<group>"; };
+		18A0C0DE0000000000000004 /* WritingAICardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingAICardView.swift; sourceTree = "<group>"; };
 		5F742593B09ABB38A759F44B /* BadgeDefinitionSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadgeDefinitionSystem.swift; sourceTree = "<group>"; };
 		607BC00E208893D7211E2510 /* MetalCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalCanvas.swift; sourceTree = "<group>"; };
 		607C3F1751C635F836C649EF /* PersuasionStackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersuasionStackView.swift; sourceTree = "<group>"; };
@@ -1027,6 +1046,7 @@
 		6C1E35D08C5E6BB511CFCA3C /* CanvasDrawingsLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingsLayer.swift; sourceTree = "<group>"; };
 		6C5BDD24CC00BC11D0E850D0 /* FocusBlockInspectorOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusBlockInspectorOverlay.swift; sourceTree = "<group>"; };
 		6C82281972414C82A86F84FA /* InboxCaptureBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxCaptureBar.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E6F708192A3B4C /* CaptureLanesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureLanesView.swift; sourceTree = "<group>"; };
 		6CE426AAA80BF292754575D2 /* ContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextAssembler.swift; sourceTree = "<group>"; };
 		6D5DC0FA1F86CFA767324EA4 /* FocusBlockContextMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusBlockContextMenu.swift; sourceTree = "<group>"; };
 		6D9836D3CC9950C2A9DDFB7C /* WellSourcesBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WellSourcesBlock.swift; sourceTree = "<group>"; };
@@ -1211,6 +1231,7 @@
 		B04BE8FF7BE68963314D7DBA /* PhysiologyMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysiologyMetadata.swift; sourceTree = "<group>"; };
 		B06DB4F4005762084CD7BA68 /* AutomationContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationContext.swift; sourceTree = "<group>"; };
 		B1E04FC691494409CB049383 /* InquiryCrystallizationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryCrystallizationEngine.swift; sourceTree = "<group>"; };
+		9D8C7B6A5F4E3D2C1B0A1918 /* CanvasProjectionApplyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasProjectionApplyService.swift; sourceTree = "<group>"; };
 		B1EE8041AF5A4795F4DA9BCE /* ConnectionFocusModeState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionFocusModeState.swift; sourceTree = "<group>"; };
 		B24D66A57D16A99DFA50ECC0 /* CodexElementHeroSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexElementHeroSection.swift; sourceTree = "<group>"; };
 		B25898A72ADD2874C6B76830 /* IdeaFocusModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaFocusModeView.swift; sourceTree = "<group>"; };
@@ -1301,6 +1322,15 @@
 		CE6FF2A40BD15ABD5D8B0AAA /* SynthesisWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisWorkspaceView.swift; sourceTree = "<group>"; };
 		CF1545D21D99A06C84545A87 /* InboxRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxRepository.swift; sourceTree = "<group>"; };
 		CF5BF68A86620605649E2E2F /* TelegramTopicAliasParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelegramTopicAliasParser.swift; sourceTree = "<group>"; };
+		25E4A8C0F0B947D8A3C61E02 /* CapturedItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturedItem.swift; sourceTree = "<group>"; };
+		310D517A5A4E49E88A6A0F03 /* TelegramCaptureCommandParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelegramCaptureCommandParser.swift; sourceTree = "<group>"; };
+		3E4C96A6B2814E33B6B1D504 /* CaptureDestinationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureDestinationRepository.swift; sourceTree = "<group>"; };
+		443A61F77C1D4A05AF2B5D06 /* MediaAttachmentRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaAttachmentRepository.swift; sourceTree = "<group>"; };
+		4B7F2C1C0E9A4B8EA7D13E08 /* MediaAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaAttachment.swift; sourceTree = "<group>"; };
+		516AC79D42E94B1AA1C5C409 /* CaptureMediaStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureMediaStorage.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B4F /* CaptureDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureDestination.swift; sourceTree = "<group>"; };
+		AD4E6F891B2C43D59E70F10A /* CapturedItemRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturedItemRepository.swift; sourceTree = "<group>"; };
+		BA91D37B6E524F10B8C2A30B /* TelegramCaptureRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelegramCaptureRouter.swift; sourceTree = "<group>"; };
 		CF64E7C1AEBBB6B0C280E6B6 /* ResearchBlockDropdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchBlockDropdownView.swift; sourceTree = "<group>"; };
 		CFAB25466CF0EF875E260E6A /* CodexImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexImporter.swift; sourceTree = "<group>"; };
 		CFDC66AE021F28034F077822 /* DeepDiveOverviewViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepDiveOverviewViewModel.swift; sourceTree = "<group>"; };
@@ -1678,9 +1708,12 @@
 			isa = PBXGroup;
 			children = (
 				2D2D24A09A17F5FC94002436 /* AtomRepository.swift */,
+				3E4C96A6B2814E33B6B1D504 /* CaptureDestinationRepository.swift */,
+				AD4E6F891B2C43D59E70F10A /* CapturedItemRepository.swift */,
 				3325E8AFCB5AAB831455E453 /* CodexRepository.swift */,
 				CF1545D21D99A06C84545A87 /* InboxRepository.swift */,
 				854D5FAA13FDE9AD27090E78 /* InquiryRepository.swift */,
+				443A61F77C1D4A05AF2B5D06 /* MediaAttachmentRepository.swift */,
 			);
 			path = Repositories;
 			sourceTree = "<group>";
@@ -1839,6 +1872,7 @@
 			children = (
 				4958A8BDE0464A896D923881 /* InboxBatchBar.swift */,
 				6C82281972414C82A86F84FA /* InboxCaptureBar.swift */,
+				F1A2B3C4D5E6F708192A3B4C /* CaptureLanesView.swift */,
 				167040F4633485C71E1DBCCF /* InboxGroupSuggestionCard.swift */,
 				58244418A6B8FFECC0365F7D /* InboxItemCard.swift */,
 				5A693766772ACAB90D2713AB /* InboxOverrideSheet.swift */,
@@ -1887,6 +1921,7 @@
 				1CB6206D50890526B9D47355 /* PostCreationPhaseView.swift */,
 				9C36033B71DC7A9A377A52F4 /* ProfileDetailView.swift */,
 				BEA7B81575B5546116806834 /* ProfileTranscriptionManager.swift */,
+				18A0C0DE0000000000000004 /* WritingAICardView.swift */,
 			);
 			path = Content;
 			sourceTree = "<group>";
@@ -2045,6 +2080,7 @@
 			isa = PBXGroup;
 			children = (
 				53DFB61342AA81E5841C62E0 /* CalendarSyncService.swift */,
+				516AC79D42E94B1AA1C5C409 /* CaptureMediaStorage.swift */,
 				7639113517B3741A6C44F664 /* CloudWritingClient.swift */,
 				696615220B224367647BA958 /* ContextCaptureClient.swift */,
 				4E1562073D0F5F4576BEC578 /* ContextDetectionEngine.swift */,
@@ -2280,6 +2316,8 @@
 			children = (
 				44A9709BE3228A04932BDD1D /* MessagingBridgeProtocol.swift */,
 				2C8A5A5CF650AB8E4ECA4E6E /* TelegramBridgeService.swift */,
+				310D517A5A4E49E88A6A0F03 /* TelegramCaptureCommandParser.swift */,
+				BA91D37B6E524F10B8C2A30B /* TelegramCaptureRouter.swift */,
 				67FC4B4FE3DF65CAA22CC80D /* TelegramRichMessages.swift */,
 				CF5BF68A86620605649E2E2F /* TelegramTopicAliasParser.swift */,
 				A2550F1D8304F236D09E7EC7 /* TelegramWritingSessionManager.swift */,
@@ -2376,6 +2414,7 @@
 				D5E6DB72A4C7415944B3A18A /* ConnectionCoDevEngine.swift */,
 				325348C45A3821A0F6CE5F30 /* ConnectionCoDevEngine+LiveInsights.swift */,
 				24A516D094886BD8E3F17209 /* ContentScorecardEngine.swift */,
+				18A0C0DE0000000000000001 /* ContentWritingAssistant.swift */,
 				6CE426AAA80BF292754575D2 /* ContextAssembler.swift */,
 				69BA3C5BD926BCC30BB86132 /* CrossReferenceEngine.swift */,
 				A17BD6B13CF7B16D73CE5B89 /* CrystallizationEngine.swift */,
@@ -2394,6 +2433,7 @@
 				88D4E13921F64F1CB2B7F2A0 /* InquiryPlacementEngine.swift */,
 				C6B9A09A5D0B4E51B74B92F0 /* InquiryThoughtRouter.swift */,
 				B1E04FC691494409CB049383 /* InquiryCrystallizationEngine.swift */,
+				9D8C7B6A5F4E3D2C1B0A1918 /* CanvasProjectionApplyService.swift */,
 				4EC3E9D6EF949A62B0C585AA /* InsightExtractionEngine.swift */,
 				B90AB75E00232C7891DA8E55 /* IntentClassifier.swift */,
 				8DE16022D03AC9F103B3C927 /* KnowledgeContextAssembler.swift */,
@@ -2423,6 +2463,8 @@
 				817A1CDFD7735D812AD670B6 /* VectorDatabase.swift */,
 				CC940647E8FAC7AC75826D6C /* WeeklyBriefEngine.swift */,
 				1E1A0C2E608A5B99A9427951 /* WritingAnalyzer.swift */,
+				18A0C0DE0000000000000002 /* WritingAIContextBuilder.swift */,
+				18A0C0DE0000000000000003 /* WritingAIModels.swift */,
 				8D895661BE634C6D075004C6 /* WritingContextAssembler.swift */,
 				8DDD28CA4030B0ABD3AB6B00 /* Agents */,
 				5012998108D55B7B75660727 /* BigBrain */,
@@ -2502,12 +2544,15 @@
 				2E4C77E9B327B0945155C95E /* AtomExtensions.swift */,
 				1A4DBA9A1957BB24CEAD7C1B /* CanvasBlockRecord.swift */,
 				227559B36BA19282F06B89BA /* CanvasDrawingRecord.swift */,
+				A1B2C3D4E5F60718293A4B4F /* CaptureDestination.swift */,
+				25E4A8C0F0B947D8A3C61E02 /* CapturedItem.swift */,
 				C2F3CA4080CDA2E4AACC6847 /* ContentPhysicsProfile.swift */,
 				DCB85AC924AE37E836256AAC /* InboxItem.swift */,
 				E90DD461B7D55B6C980EF1A8 /* InboxRouting.swift */,
 				E313F96541049E1FC4EC7FDC /* InboxViewBlock.swift */,
 				CD6362AB9EF9C2694B0305E4 /* InquiryWorkspaceModels.swift */,
 				F255870EB2A86BB42CC9EB95 /* LegacyTypeStubs.swift */,
+				4B7F2C1C0E9A4B8EA7D13E08 /* MediaAttachment.swift */,
 				FAEA53963BA8C880633F9796 /* ReadwiseLibraryModels.swift */,
 				77AF1111163C2F2F0372E53C /* RecurrenceRule.swift */,
 				8855E54AE8982D7328DF4898 /* Codex */,
@@ -3463,6 +3508,7 @@
 				178C1C723D9685193F2000BC /* InboxActionExecutor.swift in Sources */,
 				DA0716D69FBB5D64B2870F99 /* InboxBatchBar.swift in Sources */,
 				B00F3A5DF73E7D8C7A1D8DD0 /* InboxCaptureBar.swift in Sources */,
+				A7B8C9D0E1F2031425364758 /* CaptureLanesView.swift in Sources */,
 				C48C6B38A8B379A931A39334 /* InboxCaptureConverter.swift in Sources */,
 				DB7FA6233A630AE77BD26C64 /* InboxClassificationEngine.swift in Sources */,
 				DAECE24A97B7E9EA183AA683 /* InboxGroupSuggestionCard.swift in Sources */,
@@ -3491,6 +3537,7 @@
 				9EC046D4CD39997854260557 /* InquiryCopilotPane.swift in Sources */,
 				C6B9A09A5D0B4E51B74B92F1 /* InquiryThoughtRouter.swift in Sources */,
 				6612DD8016B9DA017C013D2D /* InquiryCrystallizationEngine.swift in Sources */,
+				8C7D6E5F4A3B291817161514 /* CanvasProjectionApplyService.swift in Sources */,
 				2E1ABD10EAEACD5AF2E35DDA /* InquiryNotebookPane.swift in Sources */,
 				F12E13A4C787720F4DC5C816 /* InquiryRepository.swift in Sources */,
 				FC4974A77998484170C9CB70 /* InquiryReviewView.swift in Sources */,
@@ -3714,7 +3761,16 @@
 				625FA9EE32A4BE7B735B7805 /* TaskViewModel.swift in Sources */,
 				AA03C636AF9E21DA5293FA70 /* TasteProfileBuilder.swift in Sources */,
 				AEF77FE7ADDA8A94355E3290 /* TaxonomyManagementView.swift in Sources */,
+				A1B2C3D4E5F60718293A4B50 /* CaptureDestination.swift in Sources */,
+				3E4C96A7B2814E33B6B1D504 /* CaptureDestinationRepository.swift in Sources */,
+				25E4A8C1F0B947D8A3C61E02 /* CapturedItem.swift in Sources */,
+				AD4E6F8A1B2C43D59E70F10A /* CapturedItemRepository.swift in Sources */,
+				4B7F2C1D0E9A4B8EA7D13E08 /* MediaAttachment.swift in Sources */,
+				443A61F87C1D4A05AF2B5D06 /* MediaAttachmentRepository.swift in Sources */,
+				516AC79E42E94B1AA1C5C409 /* CaptureMediaStorage.swift in Sources */,
 				4AB1B9114A43B16FB9BA9F93 /* TelegramBridgeService.swift in Sources */,
+				310D517B5A4E49E88A6A0F03 /* TelegramCaptureCommandParser.swift in Sources */,
+				BA91D37C6E524F10B8C2A30B /* TelegramCaptureRouter.swift in Sources */,
 				BEA089A8D45B77D7AF604B5A /* TelegramRichMessages.swift in Sources */,
 				25A578B3606903AEB3357158 /* TelegramTopicAliasParser.swift in Sources */,
 				AE59A8D13292FDCC2AC805D7 /* TelegramWritingSessionManager.swift in Sources */,
@@ -3770,7 +3826,11 @@
 				C0E46552A124674D3324DB0B /* WhisperTranscriptionService.swift in Sources */,
 				13B6E19AB6F68F10E55F66E2 /* WindowChromeView.swift in Sources */,
 				F011D1586E84A2E0D2D5647B /* WritingAnalyzer.swift in Sources */,
+				18A0C0DE0000000000000104 /* WritingAICardView.swift in Sources */,
+				18A0C0DE0000000000000102 /* WritingAIContextBuilder.swift in Sources */,
+				18A0C0DE0000000000000103 /* WritingAIModels.swift in Sources */,
 				305DF91AD403F90C5E352A06 /* WritingContextAssembler.swift in Sources */,
+				18A0C0DE0000000000000101 /* ContentWritingAssistant.swift in Sources */,
 				809EC44FC1A2C0006BF1712B /* WritingContextExporter.swift in Sources */,
 				A554AFCE21843493BA9E0543 /* WritingEngineSettingsTab.swift in Sources */,
 				E68F3F7116AD6909333E4F65 /* XEmbedFetcher.swift in Sources */,

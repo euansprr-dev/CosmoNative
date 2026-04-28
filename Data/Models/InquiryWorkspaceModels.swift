@@ -356,6 +356,7 @@ enum LexiconMaturity: String, Codable, CaseIterable, Sendable {
 struct DeepDiveMetadata: Codable, Sendable {
     var aliases: [String]?                   // Telegram routing shortcuts (["bw", "breath"])
     var parentThinkspaceUUIDs: [String]?     // Primary first
+    var primaryThinkspaceUUID: String?       // One-to-one Thinkspace profile home (migration-safe)
     var topicAliases: [String]?              // Alternate phrasings (semantic match)
     var maturity: DeepDiveMaturity?
     var lastInquiryAt: String?               // ISO8601
@@ -366,6 +367,7 @@ struct DeepDiveMetadata: Codable, Sendable {
     init(
         aliases: [String]? = nil,
         parentThinkspaceUUIDs: [String]? = nil,
+        primaryThinkspaceUUID: String? = nil,
         topicAliases: [String]? = nil,
         maturity: DeepDiveMaturity? = .spark,
         lastInquiryAt: String? = nil,
@@ -375,6 +377,7 @@ struct DeepDiveMetadata: Codable, Sendable {
     ) {
         self.aliases = aliases
         self.parentThinkspaceUUIDs = parentThinkspaceUUIDs
+        self.primaryThinkspaceUUID = primaryThinkspaceUUID
         self.topicAliases = topicAliases
         self.maturity = maturity
         self.lastInquiryAt = lastInquiryAt
@@ -1339,6 +1342,355 @@ struct MapFormingState: Codable, Sendable {
     }
 }
 
+// MARK: - Canvas Projection
+
+enum CanvasProjectionStatus: String, Codable, CaseIterable, Sendable {
+    case draft
+    case pendingReview
+    case partiallyApplied
+    case applied
+    case rejected
+    case rolledBack
+}
+
+enum CanvasProjectionAutoApplyPolicy: String, Codable, CaseIterable, Sendable {
+    case never
+    case lowRiskOnly
+}
+
+enum CanvasOperationType: String, Codable, CaseIterable, Sendable {
+    case createCluster = "CREATE_CLUSTER"
+    case updateCluster = "UPDATE_CLUSTER"
+    case createObject = "CREATE_OBJECT"
+    case appendToObject = "APPEND_TO_OBJECT"
+    case createSourceCard = "CREATE_SOURCE_CARD"
+    case createConceptCard = "CREATE_CONCEPT_CARD"
+    case createNoteCard = "CREATE_NOTE_CARD"
+    case createSticky = "CREATE_STICKY"
+    case createClaimCard = "CREATE_CLAIM_CARD"
+    case linkObjects = "LINK_OBJECTS"
+    case placeObject = "PLACE_OBJECT"
+    case moveObject = "MOVE_OBJECT"
+    case hideArtifact = "HIDE_ARTIFACT"
+    case promoteToConnection = "PROMOTE_TO_CONNECTION"
+    case promoteToDeepDiveProfile = "PROMOTE_TO_DEEP_DIVE_PROFILE"
+    case promoteToChildThinkspace = "PROMOTE_TO_CHILD_THINKSPACE"
+    case updateCurrentUnderstanding = "UPDATE_CURRENT_UNDERSTANDING"
+    case ignore = "IGNORE"
+
+    var displayName: String {
+        rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .lowercased()
+            .capitalized
+    }
+}
+
+enum CanvasOperationStatus: String, Codable, CaseIterable, Sendable {
+    case pending
+    case accepted
+    case rejected
+    case edited
+    case applied
+    case deferred
+    case blocked
+}
+
+enum CanvasObjectVisualMaturity: String, Codable, CaseIterable, Sendable {
+    case rawCapture
+    case noteOrExtract
+    case sourceCard
+    case claimQuestionOrTerm
+    case conceptCardOrConnection
+    case outputCard
+    case openLoop
+    case deepDiveProfile
+    case childThinkspace
+}
+
+struct CanvasPlacementProposal: Codable, Sendable, Hashable {
+    var x: Double
+    var y: Double
+    var width: Double?
+    var height: Double?
+    var clusterUUID: String?
+    var placementRationale: String?
+
+    init(
+        x: Double,
+        y: Double,
+        width: Double? = nil,
+        height: Double? = nil,
+        clusterUUID: String? = nil,
+        placementRationale: String? = nil
+    ) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.clusterUUID = clusterUUID
+        self.placementRationale = placementRationale
+    }
+}
+
+struct CanvasOperationAlternative: Codable, Sendable, Identifiable, Hashable {
+    var id: String
+    var label: String
+    var operationType: CanvasOperationType?
+    var targetObjectUUID: String?
+    var targetClusterUUID: String?
+    var rationale: String?
+
+    init(
+        id: String = UUID().uuidString,
+        label: String,
+        operationType: CanvasOperationType? = nil,
+        targetObjectUUID: String? = nil,
+        targetClusterUUID: String? = nil,
+        rationale: String? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.operationType = operationType
+        self.targetObjectUUID = targetObjectUUID
+        self.targetClusterUUID = targetClusterUUID
+        self.rationale = rationale
+    }
+}
+
+struct CanvasDuplicateCheckResult: Codable, Sendable, Hashable {
+    enum Verdict: String, Codable, Sendable {
+        case noneFound
+        case likelyDuplicate
+        case exactMatch
+        case existingAppearance
+        case needsReview
+    }
+
+    var verdict: Verdict
+    var matchedObjectUUID: String?
+    var matchedClusterUUID: String?
+    var matchedSourceURL: String?
+    var explanation: String
+
+    init(
+        verdict: Verdict = .noneFound,
+        matchedObjectUUID: String? = nil,
+        matchedClusterUUID: String? = nil,
+        matchedSourceURL: String? = nil,
+        explanation: String = "No duplicate found."
+    ) {
+        self.verdict = verdict
+        self.matchedObjectUUID = matchedObjectUUID
+        self.matchedClusterUUID = matchedClusterUUID
+        self.matchedSourceURL = matchedSourceURL
+        self.explanation = explanation
+    }
+}
+
+enum CanvasAppendCreateRecommendation: String, Codable, CaseIterable, Sendable {
+    case append
+    case create
+    case link
+    case keepInternal
+    case promote
+    case review
+
+    var displayName: String {
+        rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+    }
+}
+
+struct CanvasRollbackMetadata: Codable, Sendable, Hashable {
+    var affectedAtomUUIDs: [String]
+    var affectedCanvasBlockUUIDs: [String]
+    var affectedClusterUUIDs: [String]
+    var snapshotSummary: String?
+
+    init(
+        affectedAtomUUIDs: [String] = [],
+        affectedCanvasBlockUUIDs: [String] = [],
+        affectedClusterUUIDs: [String] = [],
+        snapshotSummary: String? = nil
+    ) {
+        self.affectedAtomUUIDs = affectedAtomUUIDs
+        self.affectedCanvasBlockUUIDs = affectedCanvasBlockUUIDs
+        self.affectedClusterUUIDs = affectedClusterUUIDs
+        self.snapshotSummary = snapshotSummary
+    }
+}
+
+struct CanvasOperation: Codable, Sendable, Identifiable, Hashable {
+    var id: String
+    var type: CanvasOperationType
+    var sourceArtifactID: String
+    var targetThinkspaceUUID: String
+    var targetObjectUUID: String?
+    var targetClusterUUID: String?
+    var proposedObjectType: String?
+    var proposedTitle: String?
+    var proposedBody: String?
+    var proposedPlacement: CanvasPlacementProposal?
+    var relationshipType: String?
+    var rationale: String
+    var confidence: Double
+    var alternatives: [CanvasOperationAlternative]
+    var duplicateCheckResult: CanvasDuplicateCheckResult
+    var appendCreateRecommendation: CanvasAppendCreateRecommendation
+    var status: CanvasOperationStatus
+    var rollbackMetadata: CanvasRollbackMetadata
+    var visualMaturity: CanvasObjectVisualMaturity
+    var requiresReview: Bool
+
+    init(
+        id: String = UUID().uuidString,
+        type: CanvasOperationType,
+        sourceArtifactID: String,
+        targetThinkspaceUUID: String,
+        targetObjectUUID: String? = nil,
+        targetClusterUUID: String? = nil,
+        proposedObjectType: String? = nil,
+        proposedTitle: String? = nil,
+        proposedBody: String? = nil,
+        proposedPlacement: CanvasPlacementProposal? = nil,
+        relationshipType: String? = nil,
+        rationale: String,
+        confidence: Double,
+        alternatives: [CanvasOperationAlternative] = [],
+        duplicateCheckResult: CanvasDuplicateCheckResult = CanvasDuplicateCheckResult(),
+        appendCreateRecommendation: CanvasAppendCreateRecommendation,
+        status: CanvasOperationStatus = .pending,
+        rollbackMetadata: CanvasRollbackMetadata = CanvasRollbackMetadata(),
+        visualMaturity: CanvasObjectVisualMaturity,
+        requiresReview: Bool = true
+    ) {
+        self.id = id
+        self.type = type
+        self.sourceArtifactID = sourceArtifactID
+        self.targetThinkspaceUUID = targetThinkspaceUUID
+        self.targetObjectUUID = targetObjectUUID
+        self.targetClusterUUID = targetClusterUUID
+        self.proposedObjectType = proposedObjectType
+        self.proposedTitle = proposedTitle
+        self.proposedBody = proposedBody
+        self.proposedPlacement = proposedPlacement
+        self.relationshipType = relationshipType
+        self.rationale = rationale
+        self.confidence = confidence
+        self.alternatives = alternatives
+        self.duplicateCheckResult = duplicateCheckResult
+        self.appendCreateRecommendation = appendCreateRecommendation
+        self.status = status
+        self.rollbackMetadata = rollbackMetadata
+        self.visualMaturity = visualMaturity
+        self.requiresReview = requiresReview
+    }
+}
+
+struct CanvasProjectionVerificationReport: Codable, Sendable {
+    var duplicateChecksPassed: Bool
+    var existingObjectChecksPassed: Bool
+    var existingClusterChecksPassed: Bool
+    var sourceChecksPassed: Bool
+    var appendCreateChecksPassed: Bool
+    var linkValidationPassed: Bool
+    var collisionWarnings: [String]
+    var ambiguityWarnings: [String]
+    var blockedOperationIds: [String]
+
+    init(
+        duplicateChecksPassed: Bool = true,
+        existingObjectChecksPassed: Bool = true,
+        existingClusterChecksPassed: Bool = true,
+        sourceChecksPassed: Bool = true,
+        appendCreateChecksPassed: Bool = true,
+        linkValidationPassed: Bool = true,
+        collisionWarnings: [String] = [],
+        ambiguityWarnings: [String] = [],
+        blockedOperationIds: [String] = []
+    ) {
+        self.duplicateChecksPassed = duplicateChecksPassed
+        self.existingObjectChecksPassed = existingObjectChecksPassed
+        self.existingClusterChecksPassed = existingClusterChecksPassed
+        self.sourceChecksPassed = sourceChecksPassed
+        self.appendCreateChecksPassed = appendCreateChecksPassed
+        self.linkValidationPassed = linkValidationPassed
+        self.collisionWarnings = collisionWarnings
+        self.ambiguityWarnings = ambiguityWarnings
+        self.blockedOperationIds = blockedOperationIds
+    }
+}
+
+struct CanvasProjectionRollbackSnapshot: Codable, Sendable {
+    var capturedAt: String
+    var canvasBlockUUIDs: [String]
+    var clusterUUIDs: [String]
+    var atomUUIDs: [String]
+    var summary: String
+
+    init(
+        capturedAt: String = ISO8601DateFormatter().string(from: Date()),
+        canvasBlockUUIDs: [String] = [],
+        clusterUUIDs: [String] = [],
+        atomUUIDs: [String] = [],
+        summary: String = ""
+    ) {
+        self.capturedAt = capturedAt
+        self.canvasBlockUUIDs = canvasBlockUUIDs
+        self.clusterUUIDs = clusterUUIDs
+        self.atomUUIDs = atomUUIDs
+        self.summary = summary
+    }
+}
+
+struct CanvasProjection: Codable, Sendable, Identifiable {
+    var id: String
+    var sessionUUID: String
+    var deepDiveProfileUUID: String
+    var thinkspaceUUID: String
+    var generatedAt: String
+    var status: CanvasProjectionStatus
+    var summary: String
+    var operations: [CanvasOperation]
+    var verificationReport: CanvasProjectionVerificationReport
+    var rollbackSnapshot: CanvasProjectionRollbackSnapshot
+    var autoApplyPolicy: CanvasProjectionAutoApplyPolicy
+    var appliedAt: String?
+    var appliedBy: String?
+
+    init(
+        id: String = UUID().uuidString,
+        sessionUUID: String,
+        deepDiveProfileUUID: String,
+        thinkspaceUUID: String,
+        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        status: CanvasProjectionStatus = .pendingReview,
+        summary: String,
+        operations: [CanvasOperation] = [],
+        verificationReport: CanvasProjectionVerificationReport = CanvasProjectionVerificationReport(),
+        rollbackSnapshot: CanvasProjectionRollbackSnapshot = CanvasProjectionRollbackSnapshot(),
+        autoApplyPolicy: CanvasProjectionAutoApplyPolicy = .never,
+        appliedAt: String? = nil,
+        appliedBy: String? = nil
+    ) {
+        self.id = id
+        self.sessionUUID = sessionUUID
+        self.deepDiveProfileUUID = deepDiveProfileUUID
+        self.thinkspaceUUID = thinkspaceUUID
+        self.generatedAt = generatedAt
+        self.status = status
+        self.summary = summary
+        self.operations = operations
+        self.verificationReport = verificationReport
+        self.rollbackSnapshot = rollbackSnapshot
+        self.autoApplyPolicy = autoApplyPolicy
+        self.appliedAt = appliedAt
+        self.appliedBy = appliedBy
+    }
+}
+
 /// Crystallization output (Phase 5). Persisted in InquirySession.structured.crystallizationResult.
 struct CrystallizationOutput: Codable, Sendable {
     struct LexiconCandidate: Codable, Sendable, Identifiable {
@@ -1506,6 +1858,7 @@ struct CrystallizationOutput: Codable, Sendable {
     var openLoops: [OpenLoop]
     var outputCandidates: [OutputCandidate]
     var thinkspaceMapProposals: [ThinkspaceMapProposal]
+    var canvasProjection: CanvasProjection?
     var promotionSuggestions: [PromotionSuggestion]
     var rejected: [RejectedItem]
     var generatedAt: String
@@ -1520,6 +1873,7 @@ struct CrystallizationOutput: Codable, Sendable {
         openLoops: [OpenLoop] = [],
         outputCandidates: [OutputCandidate] = [],
         thinkspaceMapProposals: [ThinkspaceMapProposal] = [],
+        canvasProjection: CanvasProjection? = nil,
         promotionSuggestions: [PromotionSuggestion] = [],
         rejected: [RejectedItem] = [],
         generatedAt: String = ISO8601DateFormatter().string(from: Date())
@@ -1533,6 +1887,7 @@ struct CrystallizationOutput: Codable, Sendable {
         self.openLoops = openLoops
         self.outputCandidates = outputCandidates
         self.thinkspaceMapProposals = thinkspaceMapProposals
+        self.canvasProjection = canvasProjection
         self.promotionSuggestions = promotionSuggestions
         self.rejected = rejected
         self.generatedAt = generatedAt

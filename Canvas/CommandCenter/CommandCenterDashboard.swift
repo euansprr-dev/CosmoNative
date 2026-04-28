@@ -7,14 +7,25 @@ import SwiftUI
 
 struct CommandCenterDashboard: View {
 
-    @StateObject private var viewModel = CommandCenterDashboardViewModel()
+    @StateObject private var viewModel: CommandCenterDashboardViewModel
     @State private var composer = CommandCenterComposerController()
     @State private var selectedTaskForDetail: TaskViewModel?
+    private let showsInternalSidebar: Bool
+
+    init(
+        viewModel: CommandCenterDashboardViewModel? = nil,
+        showsInternalSidebar: Bool = true
+    ) {
+        _viewModel = StateObject(wrappedValue: viewModel ?? CommandCenterDashboardViewModel())
+        self.showsInternalSidebar = showsInternalSidebar
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             HStack(alignment: .top, spacing: 0) {
-                leftColumn
+                if showsInternalSidebar {
+                    leftColumn
+                }
                 centerColumn
                 rightColumn
             }

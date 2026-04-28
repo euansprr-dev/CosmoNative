@@ -28,6 +28,7 @@ struct ContentFocusModeView: View {
     @State private var titleDocument: RichDocument = .empty
     @State private var draftDocument: RichDocument = .empty
     @StateObject private var writingEngine = UnifiedWritingEngine()
+    @StateObject private var writingAIAssistant = ContentWritingAssistant()
 
     /// Local draft content — decoupled from @Published viewModel to avoid full view re-renders on every keystroke
     @State private var localDraftContent: String = ""
@@ -57,6 +58,11 @@ struct ContentFocusModeView: View {
     @State private var textContentHeight: CGFloat = 400
     @State private var draftEditorOrigin: CGPoint = .zero
     @State private var selectedRephraseIndex: Int = 0
+    @State private var showWritingAICard = false
+    @State private var focusBandRange: NSRange?
+    @State private var manuscriptScrollView: NSScrollView?
+    @State private var isActivelyTyping = false
+    @State private var typingActivityTask: Task<Void, Never>?
 
     // Auto-save state
     @State private var autoSaveTask: Task<Void, Never>?
@@ -74,8 +80,6 @@ struct ContentFocusModeView: View {
     @State private var zenMode: Bool = false
     @State private var hasAppeared: Bool = false
     @State private var isContinuation: Bool = false
-    @State private var cosmoExpanded: Bool = false
-    @StateObject private var cosmoSession: FocusCosmoSession
 
     // Inherited context for the right marginalia (source / swipes / framework / brand / hooks)
     @State private var sourceIdeaAtom: Atom?
@@ -91,6 +95,51 @@ struct ContentFocusModeView: View {
 
     enum ContentLayoutMode { case compact, regular, full }
 
+    enum WritingWidthMode: String, CaseIterable, Identifiable {
+        case narrow
+        case comfort
+        case wide
+        case immersive
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .narrow: return "Narrow"
+            case .comfort: return "Comfort"
+            case .wide: return "Wide"
+            case .immersive: return "Immersive"
+            }
+        }
+
+        var width: CGFloat {
+            switch self {
+            case .narrow: return 680
+            case .comfort: return 860
+            case .wide: return 980
+            case .immersive: return 1_120
+            }
+        }
+    }
+
+    enum WritingFocusBandMode: String, CaseIterable, Identifiable {
+        case off
+        case paragraph
+        case sentence
+        case block
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .off: return "Off"
+            case .paragraph: return "Paragraph"
+            case .sentence: return "Sentence"
+            case .block: return "Block"
+            }
+        }
+    }
+
     // Feature flag: when true, the embedded AI Collaborator is hidden (replaced by global Cosmo window)
     @AppStorage("cosmoWindowEnabled") private var cosmoWindowEnabled = true
 
@@ -99,13 +148,24 @@ struct ContentFocusModeView: View {
 
     // Responsive layout
     @State private var layoutMode: ContentLayoutMode = .full
+    @AppStorage("contentFocusWritingWidthMode") private var writingWidthModeRaw = WritingWidthMode.comfort.rawValue
+    @AppStorage("contentFocusBandMode") private var focusBandModeRaw = WritingFocusBandMode.off.rawValue
 
     private var editorMaxWidth: CGFloat {
-        switch layoutMode {
-        case .compact: return .infinity
-        case .regular: return 640
-        case .full: return 780
-        }
+        writingWidthMode.width
+    }
+
+    private var writingWidthMode: WritingWidthMode {
+        WritingWidthMode(rawValue: writingWidthModeRaw) ?? .comfort
+    }
+
+    private var focusBandMode: WritingFocusBandMode {
+        WritingFocusBandMode(rawValue: focusBandModeRaw) ?? .off
+    }
+
+    private var sideRailOpacity: Double {
+        if zenMode { return 0 }
+        return isActivelyTyping ? 0.34 : 1
     }
 
     private var editorHorizontalPadding: CGFloat {
@@ -164,6 +224,16 @@ struct ContentFocusModeView: View {
         if layoutMode != newMode { layoutMode = newMode }
     }
 
+    private func manuscriptWidth(availableWidth: CGFloat) -> CGFloat {
+        if layoutMode == .compact {
+            return max(320, availableWidth - DS.space40)
+        }
+
+        let sideAllowance: CGFloat = zenMode ? DS.space48 : 520
+        let available = max(360, availableWidth - sideAllowance)
+        return min(writingWidthMode.width, available)
+    }
+
     // MARK: - Initialization
 
     init(atom: Atom, onClose: @escaping () -> Void) {
@@ -171,11 +241,6 @@ struct ContentFocusModeView: View {
         self.onClose = onClose
         self._editableTitle = State(initialValue: atom.title ?? "Untitled Content")
         self._viewModel = StateObject(wrappedValue: ContentFocusModeViewModel(atom: atom))
-        self._cosmoSession = StateObject(wrappedValue: FocusCosmoSession(
-            atomUUID: atom.uuid,
-            atomTitle: atom.title,
-            contextKind: .content
-        ))
     }
 
     // MARK: - Body — The Scriptorium
@@ -183,6 +248,10 @@ struct ContentFocusModeView: View {
     var body: some View {
         ZStack {
             DS.bg.ignoresSafeArea()
+            DS.inkWash
+                .opacity(zenMode ? 0.16 : 0)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
 
             if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
                 scriptoriumBody
@@ -262,6 +331,9 @@ struct ContentFocusModeView: View {
             if !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
+            ContentFocusWritingAIScope.shared.activate(atomUUID: atom.uuid) {
+                openWritingAI()
+            }
         }
         .onChange(of: isPaneContextOwner) { _, isOwner in
             if isOwner {
@@ -281,6 +353,8 @@ struct ContentFocusModeView: View {
         .onDisappear {
             print("[FOCUS-CONTENT] onDisappear — uuid=\(atom.uuid) localDraftLen=\(localDraftContent.count) vmDraftLen=\(viewModel.state.draftContent.count) draftDocPlainLen=\(draftDocument.plainText.count) draftPreview=\"\(String(localDraftContent.prefix(80)))\"")
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
+            ContentFocusWritingAIScope.shared.deactivate(atomUUID: atom.uuid)
+            typingActivityTask?.cancel()
             // Snapshot current state — CosmoDocumentEditor's flushPendingSync may not have
             // propagated yet (child onDisappear order is not guaranteed). Save immediately
             // with what we have, then the deferred onDocumentChange from flushPendingSync
@@ -306,6 +380,9 @@ struct ContentFocusModeView: View {
             if let content = notification.userInfo?["content"] as? String, !content.isEmpty {
                 lastAIGeneratedDraft = content
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .contentFocusOpenWritingAI)) { _ in
+            openWritingAI()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
             // Flush View-local state to ViewModel before the ViewModel's termination
@@ -352,6 +429,10 @@ struct ContentFocusModeView: View {
             }
         }
         .onKeyPress(.escape) {
+            if showWritingAICard {
+                showWritingAICard = false
+                return .handled
+            }
             if !cosmoWindowEnabled && showAICollaborator {
                 showAICollaborator = false
                 return .handled
@@ -473,27 +554,32 @@ struct ContentFocusModeView: View {
                         Spacer(minLength: DS.space24)
 
                         HStack(alignment: .top, spacing: DS.space24) {
-                            scriptoriumLeftMargin
-                                .frame(width: 200, alignment: .leading)
-                                .padding(.top, DS.space12)
-                                .opacity(zenMode ? 0 : 1)
-                                .allowsHitTesting(!zenMode)
-                                .atelierStaggerIn(delay: continuationStagger(0.28), appeared: hasAppeared)
+                            if !zenMode {
+                                scriptoriumLeftMargin
+                                    .frame(width: 200, alignment: .leading)
+                                    .padding(.top, DS.space12)
+                                    .opacity(sideRailOpacity)
+                                    .atelierStaggerIn(delay: continuationStagger(0.28), appeared: hasAppeared)
+                            }
 
                             ScrollView {
-                                scriptoriumManuscript(height: geo.size.height)
+                                scriptoriumManuscript(height: geo.size.height, availableWidth: geo.size.width)
                                     .atelierStaggerIn(delay: continuationStagger(0.36), appeared: hasAppeared)
                                     .padding(.top, DS.space4)
                                     .padding(.bottom, DS.space20)
+                                    .background(ScrollViewIntrospector { scrollView in
+                                        manuscriptScrollView = scrollView
+                                    })
                             }
                             .scrollIndicators(.hidden)
 
-                            scriptoriumRightMargin
-                                .frame(width: 220, alignment: .leading)
-                                .padding(.top, DS.space12)
-                                .opacity(zenMode ? 0 : 1)
-                                .allowsHitTesting(!zenMode)
-                                .atelierStaggerIn(delay: continuationStagger(0.44), appeared: hasAppeared)
+                            if !zenMode {
+                                scriptoriumRightMargin
+                                    .frame(width: 220, alignment: .leading)
+                                    .padding(.top, DS.space12)
+                                    .opacity(sideRailOpacity)
+                                    .atelierStaggerIn(delay: continuationStagger(0.44), appeared: hasAppeared)
+                            }
                         }
                         .frame(maxWidth: 1244)
 
@@ -520,6 +606,11 @@ struct ContentFocusModeView: View {
 
                     // Word & character counter — bottom left, updates on text selection
                     wordCharCounter
+
+                    if showWritingAICard {
+                        writingAICardOverlay(in: geo.size)
+                            .zIndex(150)
+                    }
                 }
                 .coordinateSpace(name: "editorOverlay")
                 .onPreferenceChange(DraftEditorFrameKey.self) { frame in
@@ -536,7 +627,7 @@ struct ContentFocusModeView: View {
 
     // MARK: - Scriptorium manuscript (title hero + step ledger + rich editor)
 
-    private func scriptoriumManuscript(height: CGFloat) -> some View {
+    private func scriptoriumManuscript(height: CGFloat, availableWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: DS.space20) {
             // Title editor — serif display, chromeless (matches Atelier)
             TextField("untitled content", text: $editableTitle, axis: .vertical)
@@ -597,12 +688,17 @@ struct ContentFocusModeView: View {
                 },
                 onAIAction: { action in triggerInlineAction(action) },
                 onCustomPrompt: { prompt in triggerCustomPrompt(prompt) },
+                onWritingAIRequest: { openWritingAI() },
+                focusBandRange: focusBandRange,
                 onDocumentChange: { document, plainText in
                     let changed = plainText != localDraftContent
                     print("[FOCUS-CONTENT] onDocumentChange(draft) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
                     localDraftContent = plainText
                     draftDocument = document
                     draftEditedLocally = true
+                    markTypingActive()
+                    updateFocusBand()
+                    scheduleTypewriterScroll()
                     triggerAutoSave()
                     if isPolishModeActive { debouncedPolishUpdate() }
                 }
@@ -620,7 +716,7 @@ struct ContentFocusModeView: View {
                 .padding(.top, DS.space24)
                 .atelierStaggerIn(delay: continuationStagger(0.52), appeared: hasAppeared)
         }
-        .frame(width: 760, alignment: .leading)
+        .frame(width: manuscriptWidth(availableWidth: availableWidth), alignment: .leading)
     }
 
     // MARK: - Scriptorium header (quiet nav + zen ornament)
@@ -662,6 +758,7 @@ struct ContentFocusModeView: View {
                 .allowsHitTesting(!zenMode)
             }
             Spacer()
+            writingSurfaceControls
             // Zen ornament is always visible — it's the only way to exit zen mode
             ZenOrnament(isOn: $zenMode)
             if isPaneContext {
@@ -681,6 +778,77 @@ struct ContentFocusModeView: View {
         }
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space12)
+    }
+
+    private var writingSurfaceControls: some View {
+        HStack(spacing: DS.space6) {
+            Button {
+                openWritingAI()
+            } label: {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(showWritingAICard ? DS.gilt : DS.inkFaded)
+                    .frame(width: 28, height: 28)
+                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(showWritingAICard ? DS.gilt.opacity(0.35) : DS.glassBorder, lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Writing AI (Option+A)")
+            .accessibilityLabel("Open Writing AI")
+
+            Menu {
+                ForEach(WritingWidthMode.allCases) { mode in
+                    Button {
+                        writingWidthModeRaw = mode.rawValue
+                    } label: {
+                        Label(mode.label, systemImage: writingWidthMode == mode ? "checkmark" : "text.alignleft")
+                    }
+                }
+            } label: {
+                Image(systemName: "textformat.size")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DS.inkFaded)
+                    .frame(width: 28, height: 28)
+                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.glassBorder, lineWidth: 0.5))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Writing width")
+
+            Menu {
+                ForEach(WritingFocusBandMode.allCases) { mode in
+                    Button {
+                        focusBandModeRaw = mode.rawValue
+                        updateFocusBand()
+                    } label: {
+                        Label(mode.label, systemImage: focusBandMode == mode ? "checkmark" : "scope")
+                    }
+                }
+                Divider()
+                Button {
+                    typewriterMode.toggle()
+                } label: {
+                    Label(typewriterMode || zenMode ? "Typewriter on" : "Typewriter off", systemImage: typewriterMode || zenMode ? "checkmark" : "arrow.down.to.line.compact")
+                }
+            } label: {
+                Image(systemName: focusBandMode == .off ? "scope" : "scope")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(focusBandMode == .off ? DS.inkFaded : DS.gilt)
+                    .frame(width: 28, height: 28)
+                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.glassBorder, lineWidth: 0.5))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Focus band")
+        }
+        .opacity(zenMode ? 0.82 : 1)
     }
 
     private func toggleSidebar() {
@@ -871,8 +1039,40 @@ struct ContentFocusModeView: View {
             if clientProfileAtom != nil || !availableClientProfiles.isEmpty {
                 brandMarginaliaSection
             }
-            FocusCosmoPanel(session: cosmoSession, isExpanded: $cosmoExpanded)
-                .task { await cosmoSession.load() }
+            cosmoWritingMarginaliaSection
+        }
+    }
+
+    private var cosmoWritingMarginaliaSection: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            MarginaliaLabel("COSMO WRITING")
+            Button {
+                openWritingAI()
+            } label: {
+                HStack(spacing: DS.space6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("open assistant →")
+                        .font(DS.dateSerif)
+                        .italic()
+                }
+                .foregroundStyle(DS.gilt.opacity(0.78))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open Cosmo Writing assistant")
+
+            if !selectedText.isEmpty {
+                Button {
+                    submitWritingAI(action: .tighten)
+                } label: {
+                    Text("improve selected text")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.inkFaded)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -1234,6 +1434,42 @@ struct ContentFocusModeView: View {
         .animation(ProMotionSprings.snappy, value: isSelection)
     }
 
+    private func writingAICardOverlay(in size: CGSize) -> some View {
+        WritingAICardView(
+            isPresented: $showWritingAICard,
+            assistant: writingAIAssistant,
+            contextTitle: writingAIContextTitle,
+            baseContextChips: writingAIBaseChips,
+            hasSelection: !selectedText.isEmpty,
+            isPolishMode: isPolishModeActive,
+            onSubmitPrompt: { prompt in submitWritingAI(prompt: prompt, action: nil) },
+            onQuickAction: { action in submitWritingAI(action: action) },
+            onReplaceSelection: { replacement in applyWritingAIReplacement(replacement) },
+            onInsertBelow: { text in insertWritingAITextBelow(text) },
+            onOpenReference: { reference in openWritingAIReference(reference) }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .padding(.top, DS.space8)
+        .padding(.trailing, zenMode ? DS.space24 : max(DS.space24, (size.width - 1_244) / 2 + DS.space24))
+    }
+
+    private var writingAIContextTitle: String {
+        let client = clientProfileAtom?.metadataValue(as: ClientProfileMetadata.self)?.clientName
+            ?? clientProfileAtom?.title
+            ?? "No client"
+        return "\(client) · \(WritingContentFormat.detect(from: atom).displayName) · \(viewModel.state.currentStep.label)"
+    }
+
+    private var writingAIBaseChips: [WritingAIReferenceSource] {
+        var chips: [WritingAIReferenceSource] = [.currentDraft]
+        if !selectedText.isEmpty { chips.append(.currentDraft) }
+        if clientProfileAtom != nil { chips.append(.clientProfile) }
+        if !matchedSwipeAtoms.isEmpty { chips.append(.bestPosts) }
+        if sourceIdeaAtom != nil { chips.append(.source) }
+        if inheritedFramework != nil { chips.append(.blueprint) }
+        return chips
+    }
+
     // MARK: - CTA
 
     private var scriptoriumCTA: some View {
@@ -1558,6 +1794,201 @@ struct ContentFocusModeView: View {
     private func handleSelectionChange(_ info: DraftSelectionInfo) {
         selectionInfo = info
         selectedText = info.text
+        updateFocusBand()
+        scheduleTypewriterScroll()
+    }
+
+    private func openWritingAI() {
+        withAnimation(ProMotionSprings.snappy) {
+            showWritingAICard = true
+        }
+    }
+
+    private func submitWritingAI(action: WritingAIQuickAction) {
+        submitWritingAI(prompt: action.prompt, action: action)
+    }
+
+    private func submitWritingAI(prompt: String, action: WritingAIQuickAction?) {
+        openWritingAI()
+        let request = makeWritingAIRequest(prompt: prompt, action: action)
+        Task {
+            await writingAIAssistant.submit(request)
+        }
+    }
+
+    private func makeWritingAIRequest(prompt: String, action: WritingAIQuickAction?) -> WritingAIRequest {
+        WritingAIRequest(
+            prompt: prompt,
+            action: action,
+            selectedText: selectedText,
+            selectionContext: surroundingContext() ?? "",
+            draftText: localDraftContent,
+            contentTitle: editableTitle,
+            contentDescription: viewModel.state.contentDescription,
+            contentFormat: WritingContentFormat.detect(from: atom),
+            currentStep: viewModel.state.currentStep,
+            clientProfileAtom: clientProfileAtom,
+            sourceIdeaAtom: sourceIdeaAtom,
+            matchedSwipeAtoms: matchedSwipeAtoms,
+            framework: inheritedFramework,
+            outline: viewModel.state.outline,
+            hooks: viewModel.state.hooks
+        )
+    }
+
+    private func applyWritingAIReplacement(_ replacement: String) {
+        guard !replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        draftDocument = draftDocumentByReplacingSelection(with: replacement, originalText: selectedText)
+        localDraftContent = draftDocument.plainText
+        viewModel.state.richDraftDocument = draftDocument
+        draftEditedLocally = true
+        triggerAutoSave()
+        withAnimation(ProMotionSprings.snappy) {
+            writingAIAssistant.reset()
+        }
+    }
+
+    private func insertWritingAITextBelow(_ text: String) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        draftDocument = draftDocumentByInsertingTextBelowSelection(text)
+        localDraftContent = draftDocument.plainText
+        viewModel.state.richDraftDocument = draftDocument
+        draftEditedLocally = true
+        triggerAutoSave()
+    }
+
+    private func openWritingAIReference(_ reference: WritingAIReference) {
+        if let atomUUID = reference.atomUUID {
+            openAtomInPane(atomUUID)
+            return
+        }
+        if let urlString = reference.url, let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func markTypingActive() {
+        guard !zenMode else { return }
+        isActivelyTyping = true
+        typingActivityTask?.cancel()
+        typingActivityTask = Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(ProMotionSprings.gentle) {
+                    isActivelyTyping = false
+                }
+            }
+        }
+    }
+
+    private func updateFocusBand() {
+        guard focusBandMode != .off else {
+            focusBandRange = nil
+            return
+        }
+        let range = selectionInfo.range
+        guard range.location != NSNotFound else {
+            focusBandRange = nil
+            return
+        }
+        focusBandRange = focusBandRange(for: range, mode: focusBandMode, in: localDraftContent)
+    }
+
+    private func focusBandRange(for range: NSRange, mode: WritingFocusBandMode, in text: String) -> NSRange? {
+        let nsString = text as NSString
+        guard nsString.length > 0 else { return nil }
+        let safeLocation = min(max(0, range.location), max(0, nsString.length - 1))
+        let safeLength = min(max(0, range.length), nsString.length - safeLocation)
+        let safeRange = NSRange(location: safeLocation, length: safeLength)
+
+        switch mode {
+        case .off:
+            return nil
+        case .paragraph:
+            return nsString.paragraphRange(for: safeRange)
+        case .sentence:
+            return sentenceRange(containing: safeLocation, in: nsString)
+        case .block:
+            return blockRange(containing: safeLocation, in: nsString)
+        }
+    }
+
+    private func sentenceRange(containing location: Int, in text: NSString) -> NSRange {
+        let paragraph = text.paragraphRange(for: NSRange(location: location, length: 0))
+        var start = paragraph.location
+        var end = paragraph.location + paragraph.length
+
+        if location > paragraph.location {
+            for idx in stride(from: location - 1, through: paragraph.location, by: -1) {
+                let char = text.substring(with: NSRange(location: idx, length: 1))
+                if ".!?\n".contains(char) {
+                    start = min(idx + 1, text.length)
+                    break
+                }
+            }
+        }
+
+        if location < text.length {
+            for idx in location..<min(text.length, paragraph.location + paragraph.length) {
+                let char = text.substring(with: NSRange(location: idx, length: 1))
+                if ".!?\n".contains(char) {
+                    end = min(idx + 1, text.length)
+                    break
+                }
+            }
+        }
+
+        while start < end,
+              let scalar = UnicodeScalar(UInt32(text.character(at: start))),
+              CharacterSet.whitespacesAndNewlines.contains(scalar) {
+            start += 1
+        }
+        return NSRange(location: start, length: max(1, end - start))
+    }
+
+    private func blockRange(containing location: Int, in text: NSString) -> NSRange {
+        let full = text as String
+        let stringIndex = String.Index(utf16Offset: min(location, full.utf16.count), in: full)
+
+        let before = full[..<stringIndex]
+        let after = full[stringIndex...]
+        let blockStart = before.range(of: "\n\n", options: .backwards)?.upperBound ?? full.startIndex
+        let blockEnd = after.range(of: "\n\n")?.lowerBound ?? full.endIndex
+        let start = blockStart.utf16Offset(in: full)
+        let end = blockEnd.utf16Offset(in: full)
+        return NSRange(location: start, length: max(1, end - start))
+    }
+
+    private func scheduleTypewriterScroll() {
+        guard zenMode || typewriterMode else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+            scrollCursorToTypewriterBand()
+        }
+    }
+
+    private func scrollCursorToTypewriterBand() {
+        guard let scrollView = manuscriptScrollView else { return }
+        let rect = selectionInfo.rectInEditor
+        guard rect != .zero else { return }
+
+        let visibleHeight = scrollView.contentView.bounds.height
+        let currentY = scrollView.contentView.bounds.origin.y
+        let cursorYInViewport = draftEditorOrigin.y + rect.midY
+        let targetYInViewport = visibleHeight * 0.44
+        let delta = cursorYInViewport - targetYInViewport
+        guard abs(delta) > 10 else { return }
+
+        let documentHeight = scrollView.documentView?.bounds.height ?? visibleHeight
+        let maxY = max(0, documentHeight - visibleHeight)
+        let targetY = min(max(0, currentY + delta), maxY)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: targetY))
+        }
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     private func triggerInlineAction(_ action: AIWritingAction) {
@@ -1704,6 +2135,35 @@ struct ContentFocusModeView: View {
         return RichDocumentSerializer.document(from: attributed)
     }
 
+    private func draftDocumentByInsertingTextBelowSelection(_ text: String) -> RichDocument {
+        let currentPlainText = localDraftContent as NSString
+        let selectedRange = selectionInfo.range
+        let insertionLocation: Int
+        if selectedRange.location != NSNotFound,
+           selectedRange.location + selectedRange.length <= currentPlainText.length {
+            insertionLocation = selectedRange.location + selectedRange.length
+        } else {
+            insertionLocation = currentPlainText.length
+        }
+
+        let insertion = (insertionLocation == 0 ? "" : "\n\n") + text
+        let attributed = NSMutableAttributedString(
+            attributedString: RichDocumentSerializer.attributedString(from: draftDocument, fontSize: 16, darkMode: false)
+        )
+        let safeLocation = min(insertionLocation, attributed.length)
+        attributed.replaceCharacters(
+            in: NSRange(location: safeLocation, length: 0),
+            with: NSAttributedString(
+                string: insertion,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 16),
+                    .foregroundColor: NSColor(CosmoColors.textPrimary)
+                ]
+            )
+        )
+        return RichDocumentSerializer.document(from: attributed)
+    }
+
     private func dismissInlineAI() {
         withAnimation(ProMotionSprings.snappy) {
             inlineAIState = .idle
@@ -1794,6 +2254,28 @@ struct ContentFocusModeView: View {
         }
     }
 
+}
+
+private struct ScrollViewIntrospector: NSViewRepresentable {
+    var onResolve: (NSScrollView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let scrollView = view.enclosingScrollView {
+                onResolve(scrollView)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let scrollView = nsView.enclosingScrollView {
+                onResolve(scrollView)
+            }
+        }
+    }
 }
 
 // MARK: - Zen Ornament (concentric circles → toggles zen mode)
@@ -2633,7 +3115,7 @@ struct ContentSwipeAttachmentEditor: View {
             let lhsIndex = currentSwipeUUIDs.firstIndex(of: lhs.uuid) ?? Int.max
             let rhsIndex = currentSwipeUUIDs.firstIndex(of: rhs.uuid) ?? Int.max
             if lhsIndex != rhsIndex { return lhsIndex < rhsIndex }
-            return (lhs.updatedAt ?? "") > (rhs.updatedAt ?? "")
+            return lhs.updatedAt > rhs.updatedAt
         }
     }
 
@@ -2936,7 +3418,7 @@ class ContentContextProvider: CosmoContextProvider {
 // MARK: - Preference Key for draft editor position tracking
 
 private struct DraftEditorFrameKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
+    static let defaultValue: CGRect = .zero
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
         value = nextValue()
     }

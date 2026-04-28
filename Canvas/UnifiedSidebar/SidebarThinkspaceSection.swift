@@ -7,10 +7,31 @@ import SwiftUI
 
 // MARK: - Sidebar Thinkspace Section
 
+private struct ThinkspaceInquirySidebarSummary: Equatable {
+    var activeSessionCount: Int = 0
+    var questionCount: Int = 0
+    var sourceCount: Int = 0
+    var claimCount: Int = 0
+    var conceptCount: Int = 0
+    var outputCount: Int = 0
+    var unmappedCount: Int = 0
+
+    var hasVisibleSignal: Bool {
+        activeSessionCount + questionCount + sourceCount + claimCount + conceptCount + outputCount + unmappedCount > 0
+    }
+
+    var compactLabel: String {
+        if unmappedCount > 0 { return "\(unmappedCount)" }
+        if activeSessionCount > 0 { return "\(activeSessionCount)" }
+        return "\(questionCount + sourceCount + claimCount)"
+    }
+}
+
 struct SidebarThinkspaceSection: View {
     @ObservedObject var manager: ThinkspaceManager
     @Binding var currentDestination: SidebarDestination
     let isCollapsed: Bool
+    var onNavigate: () -> Void = {}
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -20,6 +41,7 @@ struct SidebarThinkspaceSection: View {
 
     // Creation
     @State private var isCreatingThinkspace = false
+    @State private var creatingChildOfThinkspace: Thinkspace?
     @State private var newName = ""
     @FocusState private var isNameFieldFocused: Bool
 
@@ -34,7 +56,9 @@ struct SidebarThinkspaceSection: View {
 
     // Child docs expand
     @State private var expandedThinkspaces: Set<String> = []
+    @State private var expandedCanvasItemGroups: Set<String> = []
     @State private var childDocsLoading: Set<String> = []
+    @State private var inquirySummaries: [String: ThinkspaceInquirySidebarSummary] = [:]
 
     // Keyboard
     @State private var selectedIndex: Int = 0
@@ -99,7 +123,7 @@ struct SidebarThinkspaceSection: View {
                     filterChipsRow
                 }
 
-                if isCreatingThinkspace {
+                if isCreatingThinkspace && creatingChildOfThinkspace == nil {
                     newThinkspaceRow
                 }
 
@@ -123,7 +147,16 @@ struct SidebarThinkspaceSection: View {
         .onReceive(NotificationCenter.default.publisher(for: .atomsDidChange)) { _ in
             Task {
                 await loadProjects()
-                await manager.refreshChildDocs(for: expandedThinkspaces)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sidebarCreateThinkspace)) { _ in
+            withAnimation(actionAnimation) {
+                isCreatingThinkspace = true
+                creatingChildOfThinkspace = nil
+                newName = ""
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isNameFieldFocused = true
             }
         }
         .onPreferenceChange(ThinkspaceRowFrameKey.self) { frames in
@@ -235,9 +268,7 @@ struct SidebarThinkspaceSection: View {
                 .onSubmit { createThinkspace() }
 
             Button("Cancel", systemImage: "xmark") {
-                withAnimation(actionAnimation) {
-                    isCreatingThinkspace = false
-                }
+                cancelCreateThinkspace()
             }
             .labelStyle(.iconOnly)
             .font(.system(size: 11, weight: .medium))
@@ -352,6 +383,9 @@ struct SidebarThinkspaceSection: View {
         let project = projectFor(thinkspace)
         let color = project.map { projectColor(for: $0) } ?? DS.accent
         let isExpandable = thinkspaceIsExpandable(thinkspace)
+        let rowHeight = level > 0 ? CGFloat(34) : UnifiedSidebarMetrics.thinkspaceRowHeight
+        let textSize = level > 0 ? CGFloat(12) : CGFloat(13)
+        let rowLeadingPadding = level > 0 ? CGFloat(0) : CGFloat(8)
 
         if isCollapsed {
             Button {
@@ -361,8 +395,8 @@ struct SidebarThinkspaceSection: View {
                     .fill(isActive ? DS.accentSoft : Color.clear)
                     .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
                     .overlay(
-                        Text(String(thinkspace.name.prefix(1)).uppercased())
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        Image(systemName: isActive ? "folder.fill" : "folder")
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(isActive ? DS.accent : color)
                     )
                     .contentShape(Rectangle())
@@ -374,13 +408,20 @@ struct SidebarThinkspaceSection: View {
             .accessibilityAddTraits(isActive ? .isSelected : [])
         } else {
             HStack(spacing: 8) {
+                if level > 0 {
+                    Rectangle()
+                        .fill(DS.borderSubtle.opacity(isActive ? 0.78 : 0.56))
+                        .frame(width: 10, height: 1)
+                }
+
                 thinkspaceAvatarButton(
                     thinkspace,
                     color: color,
                     isActive: isActive,
                     isHovered: isHovered,
                     isExpanded: isExpanded,
-                    isExpandable: isExpandable
+                    isExpandable: isExpandable,
+                    level: level
                 )
 
                 Button {
@@ -388,18 +429,9 @@ struct SidebarThinkspaceSection: View {
                 } label: {
                     HStack(spacing: 8) {
                         Text(thinkspace.name)
-                            .font(.system(size: 13, weight: isActive ? .semibold : .medium))
+                            .font(.system(size: textSize, weight: isActive ? .semibold : .medium))
                             .foregroundStyle(isActive ? DS.text : DS.textSecondary)
                             .lineLimit(1)
-
-                        if level > 0 {
-                            Text("Nested")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(DS.textMuted)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(DS.bg, in: Capsule())
-                        }
 
                         Spacer()
 
@@ -417,14 +449,14 @@ struct SidebarThinkspaceSection: View {
                                 .frame(minWidth: 22, alignment: .trailing)
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.leading, 8 + CGFloat(level) * 18)
+            .padding(.leading, rowLeadingPadding)
             .padding(.trailing, 8)
-            .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
         }
     }
 
@@ -435,23 +467,26 @@ struct SidebarThinkspaceSection: View {
         isActive: Bool,
         isHovered: Bool,
         isExpanded: Bool,
-        isExpandable: Bool
+        isExpandable: Bool,
+        level: Int
     ) -> some View {
         let avatarFill = isActive ? DS.accent.opacity(0.14) : color.opacity(0.14)
         let avatarForeground = isActive ? DS.accent : color
         let showsDisclosure = isExpandable && isHovered
+        let avatarSize = level > 0 ? CGFloat(22) : CGFloat(24)
+        let avatarRadius = level > 0 ? CGFloat(7) : CGFloat(8)
 
         Button {
             guard isExpandable else { return }
             toggleExpand(thinkspace)
         } label: {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: avatarRadius, style: .continuous)
                 .fill(avatarFill)
-                .frame(width: 24, height: 24)
+                .frame(width: avatarSize, height: avatarSize)
                 .overlay {
                     ZStack {
-                        Text(String(thinkspace.name.prefix(1)).uppercased())
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        Image(systemName: isExpanded ? "folder.fill" : "folder")
+                            .font(.system(size: level > 0 ? 11 : 12, weight: .semibold))
                             .foregroundStyle(avatarForeground)
                             .opacity(showsDisclosure ? 0 : 1)
                             .scaleEffect(showsDisclosure ? 0.84 : 1)
@@ -491,8 +526,8 @@ struct SidebarThinkspaceSection: View {
                 .fill(color.opacity(0.14))
                 .frame(width: 24, height: 24)
                 .overlay(
-                    Text(String(thinkspace.name.prefix(1)).uppercased())
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    Image(systemName: "folder")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(color)
                 )
 
@@ -520,10 +555,9 @@ struct SidebarThinkspaceSection: View {
 
     @ViewBuilder
     private func childDocsSection(for thinkspace: Thinkspace, level: Int) -> some View {
-        let navigation = manager.navigationCache[thinkspace.id]
-        let docs = navigation?.blockInventory ?? []
-        let childThinkspaces = level == 0 ? (navigation?.childThinkspaces ?? []) : []
-        let isLoading = childDocsLoading.contains(thinkspace.id)
+        let childThinkspaces = manager.childThinkspaces(of: thinkspace.id)
+        let isCreatingChild = creatingChildOfThinkspace?.id == thinkspace.id
+        let hasChildBranch = isCreatingChild || !childThinkspaces.isEmpty
 
         HStack(alignment: .top, spacing: 10) {
             Rectangle()
@@ -531,33 +565,207 @@ struct SidebarThinkspaceSection: View {
                 .frame(width: 1)
 
             VStack(alignment: .leading, spacing: 4) {
-                if isLoading {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: DS.accent))
-                            .scaleEffect(0.5)
-                        Text("Loading...")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(DS.textMuted)
-                    }
-                } else if docs.isEmpty && childThinkspaces.isEmpty {
-                    Text("No blocks")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
-                } else {
-                    ForEach(childThinkspaces) { childThinkspace in
-                        AnyView(thinkspaceRow(childThinkspace, level: level + 1))
-                    }
-
-                    ForEach(docs) { doc in
-                        sidebarChildDocRow(doc, level: level + 1)
-                    }
+                if hasChildBranch {
+                    childThinkspaceRows(
+                        childThinkspaces,
+                        parent: thinkspace,
+                        level: level
+                    )
                 }
             }
         }
         .padding(.leading, level == 0 ? 30 : 48)
         .padding(.top, 4)
         .padding(.bottom, 6)
+    }
+
+    @ViewBuilder
+    private func childThinkspaceRows(_ childThinkspaces: [Thinkspace], parent: Thinkspace, level: Int) -> some View {
+        if creatingChildOfThinkspace?.id == parent.id {
+            childThinkspaceCreationRow(parent: parent, level: level + 1)
+        }
+
+        ForEach(childThinkspaces) { childThinkspace in
+            AnyView(thinkspaceRow(childThinkspace, level: level + 1))
+        }
+    }
+
+    @ViewBuilder
+    private func parentCanvasItemsGroup(_ docs: [ChildDoc], thinkspace: Thinkspace, level: Int, shouldCollapse: Bool) -> some View {
+        if !docs.isEmpty {
+            if shouldCollapse {
+                canvasItemsDisclosureRow(thinkspace: thinkspace, count: docs.count)
+
+                if expandedCanvasItemGroups.contains(thinkspace.id) {
+                    ForEach(docs) { doc in
+                        sidebarChildDocRow(doc, level: level + 2)
+                    }
+                }
+            } else {
+                ForEach(docs) { doc in
+                    sidebarChildDocRow(doc, level: level + 1)
+                }
+            }
+        }
+    }
+
+    private var emptyChildState: some View {
+        Text("No blocks")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(DS.textMuted)
+    }
+
+    private func branchGroupLabel(_ title: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 9, weight: .semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(DS.textMuted)
+
+            Text("\(count)")
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .foregroundStyle(DS.textMuted.opacity(0.82))
+
+            Spacer()
+        }
+        .padding(.leading, 2)
+        .padding(.top, 2)
+        .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+    }
+
+    private func canvasItemsDisclosureRow(thinkspace: Thinkspace, count: Int) -> some View {
+        let isExpanded = expandedCanvasItemGroups.contains(thinkspace.id)
+
+        return Button {
+            withAnimation(actionAnimation) {
+                if isExpanded {
+                    expandedCanvasItemGroups.remove(thinkspace.id)
+                } else {
+                    expandedCanvasItemGroups.insert(thinkspace.id)
+                }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 10)
+
+                Image(systemName: "square.stack.3d.down.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 14)
+
+                Text("\(thinkspace.name) Items")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(.leading, 2)
+            .padding(.trailing, 8)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") canvas items in \(thinkspace.name)")
+    }
+
+    private func childThinkspaceCreationRow(parent: Thinkspace, level: Int) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(DS.accent.opacity(0.14))
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Image(systemName: "rectangle.stack.badge.plus")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(DS.accent)
+                )
+
+            TextField("Child thinkspace name", text: $newName, prompt: Text("Name").foregroundStyle(DS.textMuted))
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.text)
+                .focused($isNameFieldFocused)
+                .onSubmit { createThinkspace() }
+                .onExitCommand { cancelCreateThinkspace() }
+
+            Button("Cancel", systemImage: "xmark") {
+                cancelCreateThinkspace()
+            }
+            .labelStyle(.iconOnly)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(DS.textMuted)
+            .frame(width: 22, height: 22)
+            .background(DS.bg, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 8 + CGFloat(max(level - 1, 0)) * 18)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(DS.bg)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(DS.accent.opacity(0.22), lineWidth: 1)
+                )
+        )
+        .transition(.asymmetric(
+            insertion: .scale(scale: 0.96).combined(with: .opacity),
+            removal: .opacity
+        ))
+        .accessibilityLabel("Create child Thinkspace under \(parent.name)")
+    }
+
+    private func inquiryBadge(_ summary: ThinkspaceInquirySidebarSummary) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 9, weight: .semibold))
+            Text(summary.compactLabel)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+        }
+        .foregroundStyle(summary.unmappedCount > 0 ? DS.orange : DS.accent)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background((summary.unmappedCount > 0 ? DS.orange : DS.accent).opacity(0.12), in: Capsule())
+    }
+
+    private func inquirySections(_ summary: ThinkspaceInquirySidebarSummary) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            sidebarInquiryRow(icon: "rectangle.split.3x1", title: "Active Inquiry", count: summary.activeSessionCount)
+            sidebarInquiryRow(icon: "questionmark.bubble", title: "Questions", count: summary.questionCount)
+            sidebarInquiryRow(icon: "doc.text.magnifyingglass", title: "Sources", count: summary.sourceCount)
+            sidebarInquiryRow(icon: "exclamationmark.bubble", title: "Claims", count: summary.claimCount)
+            sidebarInquiryRow(icon: "point.3.connected.trianglepath.dotted", title: "Concepts", count: summary.conceptCount)
+            sidebarInquiryRow(icon: "paperplane", title: "Outputs", count: summary.outputCount)
+            sidebarInquiryRow(icon: "tray.and.arrow.down", title: "Unmapped", count: summary.unmappedCount, tint: summary.unmappedCount > 0 ? DS.orange : DS.textMuted)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func sidebarInquiryRow(icon: String, title: String, count: Int, tint: Color = DS.textMuted) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 14)
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+            Spacer()
+            Text("\(count)")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(tint)
+        }
+        .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+        .padding(.leading, 8)
+        .padding(.trailing, 8)
     }
 
     private func sidebarChildDocRow(_ doc: ChildDoc, level: Int) -> some View {
@@ -569,6 +777,7 @@ struct SidebarThinkspaceSection: View {
                 object: nil,
                 userInfo: ["type": doc.entityType, "id": doc.entityId]
             )
+            onNavigate()
         } label: {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -606,6 +815,60 @@ struct SidebarThinkspaceSection: View {
         .onHover { hoveredChildDocId = $0 ? doc.id : nil }
     }
 
+    // MARK: - Inquiry Summaries
+
+    private func refreshInquirySummaries() async {
+        let ids = Set(filteredThinkspaces.map(\.id) + expandedThinkspaces)
+        for id in ids {
+            await loadInquirySummary(for: id, force: true)
+        }
+    }
+
+    private func loadInquirySummary(for thinkspaceId: String, force: Bool = false) async {
+        if !force, inquirySummaries[thinkspaceId] != nil { return }
+        do {
+            let profiles = try await InquiryRepository.shared.fetchDeepDives(in: thinkspaceId)
+            guard let profile = profiles.first else {
+                inquirySummaries[thinkspaceId] = ThinkspaceInquirySidebarSummary()
+                return
+            }
+
+            let questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: profile.uuid)) ?? []
+            let extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: profile.uuid)) ?? []
+            let lexicon = (try? await InquiryRepository.shared.fetchLexicon(forDeepDive: profile.uuid)) ?? []
+            let sessions = (try? await InquiryRepository.shared.fetchSessions(forDeepDive: profile.uuid)) ?? []
+            let deepDiveSources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: profile)) ?? []
+            let connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: profile)) ?? []
+
+            var sessionSourceUUIDs = Set<String>()
+            var unmappedCount = 0
+            for session in sessions {
+                if let sourceRefs = session.inquirySessionStructured?.sourceRefs {
+                    sessionSourceUUIDs.formUnion(sourceRefs.map(\.sourceUUID))
+                }
+                if let operations = session.inquirySessionStructured?.crystallizationResult?.canvasProjection?.operations {
+                    unmappedCount += operations.filter { op in
+                        op.status == .pending || op.status == .edited || op.status == .deferred
+                    }.count
+                }
+            }
+
+            let summary = ThinkspaceInquirySidebarSummary(
+                activeSessionCount: sessions.filter { $0.inquirySessionMetadata?.status == .active }.count,
+                questionCount: questions.filter { ($0.questionMetadata?.status ?? .open) != .archived }.count,
+                sourceCount: Set(deepDiveSources.map(\.uuid)).union(sessionSourceUUIDs).count,
+                claimCount: extracts.filter { $0.extractMetadata?.kind.isClaimLike == true }.count,
+                conceptCount: connections.count + lexicon.filter { $0.lexiconMetadata?.maturity == .promotedToConnection || $0.lexiconMetadata?.maturity == .entry }.count,
+                outputCount: profile.deepDiveStructured?.outputAngles.count ?? 0,
+                unmappedCount: unmappedCount
+            )
+
+            inquirySummaries[thinkspaceId] = summary
+        } catch {
+            inquirySummaries[thinkspaceId] = ThinkspaceInquirySidebarSummary()
+        }
+    }
+
     // MARK: - Context Menu
 
     @ViewBuilder
@@ -636,6 +899,12 @@ struct SidebarThinkspaceSection: View {
             }
         } label: {
             Label("Rename", systemImage: "pencil")
+        }
+
+        Button {
+            startCreatingChildThinkspace(parent: thinkspace)
+        } label: {
+            Label("New Child Thinkspace", systemImage: "rectangle.stack.badge.plus")
         }
 
         if !projects.isEmpty {
@@ -698,6 +967,7 @@ struct SidebarThinkspaceSection: View {
         Button("New thinkspace", systemImage: "plus") {
             withAnimation(actionAnimation) {
                 isCreatingThinkspace = true
+                creatingChildOfThinkspace = nil
                 newName = ""
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -737,6 +1007,7 @@ struct SidebarThinkspaceSection: View {
         withAnimation(actionAnimation) {
             currentDestination = .thinkspace(id: thinkspace.id)
         }
+        onNavigate()
     }
 
     private func commitRename(_ thinkspace: Thinkspace) {
@@ -766,35 +1037,64 @@ struct SidebarThinkspaceSection: View {
                 expandedThinkspaces.remove(thinkspace.id)
             } else {
                 expandedThinkspaces.insert(thinkspace.id)
-                if manager.navigationCache[thinkspace.id] == nil {
-                    childDocsLoading.insert(thinkspace.id)
-                    Task {
-                        await manager.fetchNavigationData(for: thinkspace.id)
-                        childDocsLoading.remove(thinkspace.id)
-                    }
-                }
             }
         }
     }
 
     private func createThinkspace() {
-        guard !newName.isEmpty else {
-            isCreatingThinkspace = false
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            withAnimation(actionAnimation) {
+                isCreatingThinkspace = false
+                creatingChildOfThinkspace = nil
+            }
             return
         }
         Task {
-            if let thinkspace = await manager.createThinkspace(
-                name: newName,
-                projectUuid: selectedProjectFilter
-            ) {
+            let createdThinkspace: Thinkspace?
+            if let parent = creatingChildOfThinkspace {
+                createdThinkspace = await manager.createSubThinkspace(name: trimmedName, parent: parent)
+            } else {
+                createdThinkspace = await manager.createThinkspace(
+                    name: trimmedName,
+                    projectUuid: selectedProjectFilter
+                )
+            }
+
+            if let thinkspace = createdThinkspace {
                 await manager.switchTo(thinkspace)
                 withAnimation(actionAnimation) {
                     currentDestination = .thinkspace(id: thinkspace.id)
+                    if let parent = creatingChildOfThinkspace {
+                        expandedThinkspaces.insert(parent.id)
+                    }
                 }
+                onNavigate()
             }
             withAnimation(actionAnimation) {
                 isCreatingThinkspace = false
+                creatingChildOfThinkspace = nil
             }
+        }
+    }
+
+    private func startCreatingChildThinkspace(parent: Thinkspace) {
+        withAnimation(actionAnimation) {
+            creatingChildOfThinkspace = parent
+            isCreatingThinkspace = true
+            newName = ""
+            expandedThinkspaces.insert(parent.id)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            isNameFieldFocused = true
+        }
+    }
+
+    private func cancelCreateThinkspace() {
+        withAnimation(actionAnimation) {
+            isCreatingThinkspace = false
+            creatingChildOfThinkspace = nil
+            newName = ""
         }
     }
 
@@ -858,6 +1158,7 @@ struct SidebarThinkspaceSection: View {
                 object: nil,
                 userInfo: ["type": doc.entityType, "id": doc.entityId]
             )
+            onNavigate()
         }
     }
 
@@ -897,7 +1198,7 @@ struct SidebarThinkspaceSection: View {
         guard selectedIndex < items.count else { return }
         if case .thinkspace(let thinkspace, _) = items[selectedIndex] {
             withAnimation(actionAnimation) {
-                expandedThinkspaces.remove(thinkspace.id)
+                _ = expandedThinkspaces.remove(thinkspace.id)
             }
         }
     }
@@ -931,7 +1232,9 @@ struct SidebarThinkspaceSection: View {
     }
 
     private func thinkspaceIsExpandable(_ thinkspace: Thinkspace) -> Bool {
-        thinkspace.hasChildren || thinkspace.blockCount > 0
+        thinkspace.hasChildren ||
+            !manager.childThinkspaces(of: thinkspace.id).isEmpty ||
+            creatingChildOfThinkspace?.id == thinkspace.id
     }
 
     private func appendNavigationItems(
@@ -943,15 +1246,8 @@ struct SidebarThinkspaceSection: View {
 
         guard expandedThinkspaces.contains(thinkspace.id) else { return }
 
-        let navigation = manager.navigationCache[thinkspace.id]
-        if level == 0 {
-            for childThinkspace in navigation?.childThinkspaces ?? [] {
-                appendNavigationItems(from: childThinkspace, level: level + 1, into: &items)
-            }
-        }
-
-        for doc in navigation?.blockInventory ?? [] {
-            items.append(.block(doc, thinkspaceId: thinkspace.id, level: level + 1))
+        for childThinkspace in manager.childThinkspaces(of: thinkspace.id) {
+            appendNavigationItems(from: childThinkspace, level: level + 1, into: &items)
         }
     }
 }

@@ -11,6 +11,7 @@ struct SelectionFormattingMenu: View {
     let onDismiss: () -> Void
     var onAIAction: ((AIWritingAction) -> Void)? = nil
     var onCustomPrompt: ((String) -> Void)? = nil
+    var onWritingAIRequest: (() -> Void)? = nil
 
     @State private var mode: MenuMode = .formatting
     @State private var showCustomPrompt = false
@@ -93,14 +94,18 @@ struct SelectionFormattingMenu: View {
             FormattingButton(icon: "checklist", type: .checklist)
         }
 
-        // AI sparkle button — gateway to AI mode
-        if onAIAction != nil {
+        // AI sparkle button — opens the writing assistant when available, otherwise legacy inline AI.
+        if onWritingAIRequest != nil || onAIAction != nil {
             Divider()
                 .frame(height: 20)
                 .background(CosmoColors.glassGrey.opacity(0.5))
 
             BarIconButton(icon: "sparkles", tint: DS.accent) {
-                mode = .ai
+                if let onWritingAIRequest {
+                    onWritingAIRequest()
+                } else {
+                    mode = .ai
+                }
             }
         }
     }

@@ -35,6 +35,18 @@ final class EditorCommandBus: ObservableObject {
         )
     }
 
+    /// Replace the current editor selection with plain text.
+    func replaceSelection(with text: String, allowInactive: Bool = false) {
+        NotificationCenter.default.post(
+            name: .replaceSelectionInEditor,
+            object: nil,
+            userInfo: [
+                "text": text,
+                "allowInactive": allowInactive
+            ]
+        )
+    }
+
     /// Insert research findings as formatted text
     func insertResearchFindings(title: String, summary: String, findings: [(title: String, snippet: String?, source: String)]) {
         var text = "## Research: \(title)\n\n"
@@ -85,6 +97,7 @@ enum FormattingType: String {
 // MARK: - Notification Names
 extension Notification.Name {
     static let insertTextInEditor = Notification.Name("com.cosmo.insertTextInEditor")
+    static let replaceSelectionInEditor = Notification.Name("com.cosmo.replaceSelectionInEditor")
     static let toggleEditorFormatting = Notification.Name("com.cosmo.toggleEditorFormatting")
     // Re-declare internal ones here if needed, or rely on TextKitCoordinator's own
     static let insertMentionInEditor = Notification.Name("insertMentionInEditor") 

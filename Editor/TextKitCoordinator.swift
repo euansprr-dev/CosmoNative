@@ -273,6 +273,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var titleConfiguration: TitleEditorConfiguration? = nil
     var baseFontWeight: NSFont.Weight = .regular
     var polishHighlights: WritingAnalysis? = nil
+    var focusBandRange: NSRange? = nil
     var textAlignment: NSTextAlignment = .natural
 
     var typewriterMode: Bool = false
@@ -304,6 +305,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         textView.textStorage?.setAttributedString(attributedText)
         applyStorageOverrides(textView.textStorage)
         context.coordinator.applyPolishHighlights(to: textView)
+        context.coordinator.applyFocusBand(to: textView)
         context.coordinator.textViewReference = textView
         context.coordinator.installScrollDismissObserver(for: scrollView)
         context.coordinator.installFrameChangeObserver(for: scrollView)
@@ -332,6 +334,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         let isFirstResponder = textView.window?.firstResponder == textView
         guard !context.coordinator.isUpdatingFromTextView, !isFirstResponder else {
             context.coordinator.applyPolishHighlights(to: textView)
+            context.coordinator.applyFocusBand(to: textView)
             if shouldRefocus {
                 DispatchQueue.main.async {
                     textView.window?.makeFirstResponder(textView)
@@ -353,6 +356,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         context.coordinator.applyPolishHighlights(to: textView)
+        context.coordinator.applyFocusBand(to: textView)
         context.coordinator.normalizeSingleLineViewport(for: textView)
 
         if shouldRefocus {
@@ -592,6 +596,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             )
             NotificationCenter.default.addObserver(
                 self,
+                selector: #selector(handleReplaceSelectionInEditor(_:)),
+                name: .replaceSelectionInEditor,
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
                 selector: #selector(handleSetTypingAttributes(_:)),
                 name: .setEditorTypingAttributes,
                 object: nil
@@ -680,6 +690,30 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             storage.endEditing()
             hasAppliedHighlights = true
+        }
+
+        func applyFocusBand(to textView: NSTextView) {
+            guard let layoutManager = textView.layoutManager else { return }
+            let fullRange = NSRange(location: 0, length: textView.string.utf16.count)
+            guard fullRange.length > 0 else { return }
+
+            layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
+
+            guard let requestedRange = parent.focusBandRange,
+                  requestedRange.location != NSNotFound else {
+                return
+            }
+
+            let activeLocation = min(max(0, requestedRange.location), fullRange.length)
+            let activeLength = min(max(0, requestedRange.length), fullRange.length - activeLocation)
+            let activeRange = NSRange(location: activeLocation, length: max(activeLength, 1))
+            guard activeRange.location < fullRange.length else { return }
+
+            let mutedColor = NSColor(DS.textMuted).withAlphaComponent(0.48)
+            let activeColor = parent.overrideTextColor ?? NSColor(DS.text)
+
+            layoutManager.addTemporaryAttribute(.foregroundColor, value: mutedColor, forCharacterRange: fullRange)
+            layoutManager.addTemporaryAttribute(.foregroundColor, value: activeColor, forCharacterRange: activeRange)
         }
 
         // MARK: - Shortcut Delegate
@@ -819,7 +853,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             // No selection — dispatch empty immediately (cheap)
             guard selectedRange.length > 0 else {
                 selectionChangeWorkItem?.cancel()
-                parent.onSelectionChange?(.empty)
+                parent.onSelectionChange?(cursorSnapshot(in: textView, selectedRange: selectedRange))
                 return
             }
 
@@ -854,6 +888,37 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
             selectionChangeWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
+        }
+
+        private func cursorSnapshot(in textView: NSTextView, selectedRange: NSRange) -> EditorSelectionSnapshot {
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else {
+                return EditorSelectionSnapshot(range: selectedRange, text: "", rectInEditor: .zero)
+            }
+
+            let safeLocation = min(selectedRange.location, max(textView.string.utf16.count, 0))
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: NSRange(location: safeLocation, length: 0),
+                actualCharacterRange: nil
+            )
+            var cursorRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            if cursorRect.isEmpty {
+                cursorRect = CGRect(x: 0, y: 0, width: 1, height: textView.font?.pointSize ?? 17)
+            }
+            let tcOrigin = textView.textContainerOrigin
+            let textViewRect = CGRect(
+                x: cursorRect.origin.x + tcOrigin.x,
+                y: cursorRect.origin.y + tcOrigin.y,
+                width: max(cursorRect.width, 1),
+                height: max(cursorRect.height, textView.font?.pointSize ?? 17)
+            )
+            let localRect: CGRect
+            if let scrollView = textView.enclosingScrollView {
+                localRect = textView.convert(textViewRect, to: scrollView)
+            } else {
+                localRect = textViewRect
+            }
+            return EditorSelectionSnapshot(range: selectedRange, text: "", rectInEditor: localRect)
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -1174,6 +1239,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             insertText(text, position: positionRaw, into: textView)
         }
 
+        @objc private func handleReplaceSelectionInEditor(_ notification: Notification) {
+            guard let textView = activeTextView,
+                  let text = notification.userInfo?["text"] as? String else { return }
+
+            let allowInactive = notification.userInfo?["allowInactive"] as? Bool ?? false
+            guard allowInactive || textView.window?.firstResponder === textView else { return }
+            insertText(text, position: EditorCommandBus.InsertPosition.cursor.rawValue, into: textView)
+        }
+
         @objc private func handleSetTypingAttributes(_ notification: Notification) {
             guard let textView = activeTextView,
                   textView.window?.firstResponder === textView,
@@ -1225,6 +1299,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             switch command.type {
+            case .writingAI:
+                NotificationCenter.default.post(name: .contentFocusOpenWritingAI, object: nil)
             case .image:
                 guard parent.allowImages else { return }
                 presentImagePicker(for: textView)

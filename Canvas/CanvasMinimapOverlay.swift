@@ -12,6 +12,19 @@ struct CanvasMinimapOverlay: View {
 
     @State private var appeared = false
     @State private var hoveredCluster: UUID?
+    @State private var enabledLayers: Set<MinimapSemanticLayer> = Set(MinimapSemanticLayer.allCases)
+
+    private enum MinimapSemanticLayer: String, CaseIterable, Hashable, Identifiable {
+        case questions = "Questions"
+        case sources = "Sources"
+        case claims = "Claims"
+        case concepts = "Concepts"
+        case outputs = "Outputs"
+        case openLoops = "Open Loops"
+        case links = "Links"
+
+        var id: String { rawValue }
+    }
 
     // Entity type colors for block dots — Greenhouse bespoke palette
     private static let typeColors: [EntityType: Color] = [
@@ -58,7 +71,7 @@ struct CanvasMinimapOverlay: View {
                         }
 
                         // Block dots
-                        ForEach(blocks) { block in
+                        ForEach(blocks.filter(shouldShowBlock)) { block in
                             blockDot(block: block, layout: layout)
                         }
 
@@ -120,10 +133,12 @@ struct CanvasMinimapOverlay: View {
             // Legend
             HStack(spacing: 12) {
                 legendItem(color: DS.accent.opacity(0.5), label: "Viewport")
-                legendItem(color: DS.entityIdea, label: "Ideas")
-                legendItem(color: DS.entityResearch, label: "Research")
-                legendItem(color: DS.entityContent, label: "Content")
-                legendItem(color: DS.entityStickyNote, label: "Notes")
+                layerToggle(.questions, color: DS.entityIdea)
+                layerToggle(.sources, color: DS.entityResearch)
+                layerToggle(.claims, color: DS.orange)
+                layerToggle(.concepts, color: DS.entityConnection)
+                layerToggle(.outputs, color: DS.entityContent)
+                layerToggle(.openLoops, color: DS.entityStickyNote)
             }
 
             Spacer()
@@ -153,6 +168,26 @@ struct CanvasMinimapOverlay: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(DS.textMuted)
         }
+    }
+
+    private func layerToggle(_ layer: MinimapSemanticLayer, color: Color) -> some View {
+        Button {
+            if enabledLayers.contains(layer) {
+                enabledLayers.remove(layer)
+            } else {
+                enabledLayers.insert(layer)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(enabledLayers.contains(layer) ? color : DS.textMuted.opacity(0.35))
+                    .frame(width: 6, height: 6)
+                Text(layer.rawValue)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(enabledLayers.contains(layer) ? DS.textMuted : DS.textMuted.opacity(0.45))
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Cluster Zone
@@ -223,7 +258,7 @@ struct CanvasMinimapOverlay: View {
     @ViewBuilder
     private func blockDot(block: CanvasBlock, layout: MinimapLayout) -> some View {
         let pos = canvasPointToMinimap(block.position, layout: layout)
-        let color = Self.typeColors[block.entityType] ?? DS.textMuted
+        let color = semanticColor(for: block)
         let isInCluster = clusters.contains { $0.blockUUIDs.contains(block.entityUuid) }
 
         Circle()
@@ -234,6 +269,43 @@ struct CanvasMinimapOverlay: View {
             .onTapGesture {
                 onNavigate(block.position, true)
             }
+    }
+
+    private func shouldShowBlock(_ block: CanvasBlock) -> Bool {
+        switch semanticLayer(for: block) {
+        case .some(let layer):
+            return enabledLayers.contains(layer)
+        case .none:
+            return true
+        }
+    }
+
+    private func semanticLayer(for block: CanvasBlock) -> MinimapSemanticLayer? {
+        if block.entityType == .research { return .sources }
+        if block.entityType == .connection { return .concepts }
+        if block.entityType == .content { return .outputs }
+        if block.entityType == .note || block.entityType == .stickyNote {
+            let kind = block.metadata["kind"] ?? block.metadata["canvasObjectKind"] ?? block.metadata["visualMaturity"] ?? ""
+            if kind.localizedCaseInsensitiveContains("claim") { return .claims }
+            if kind.localizedCaseInsensitiveContains("open") { return .openLoops }
+            return .openLoops
+        }
+        if block.entityType == .idea { return .questions }
+        if block.entityType == .deepDive || block.entityType == .thinkspace { return .concepts }
+        return nil
+    }
+
+    private func semanticColor(for block: CanvasBlock) -> Color {
+        switch semanticLayer(for: block) {
+        case .questions: return DS.entityIdea
+        case .sources: return DS.entityResearch
+        case .claims: return DS.orange
+        case .concepts: return DS.entityConnection
+        case .outputs: return DS.entityContent
+        case .openLoops: return DS.entityStickyNote
+        case .links: return DS.textMuted
+        case .none: return Self.typeColors[block.entityType] ?? DS.textMuted
+        }
     }
 
     // MARK: - Viewport Rect

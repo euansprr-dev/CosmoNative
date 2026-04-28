@@ -37,6 +37,7 @@ final class InquiryCrystallizationEngine {
         Be precise, specific, and ground every claim in the session content. Empty arrays are fine.
         Do not invent extracts. Do not include any prose outside the JSON.
         """
+        let output: CrystallizationOutput
         do {
             let raw = try await ResearchService.shared.analyze(
                 prompt: prompt,
@@ -44,13 +45,14 @@ final class InquiryCrystallizationEngine {
                 tier: .strategist
             )
             if let output = parse(raw: raw) {
-                return output
+                return await attachCanvasProjection(to: output, session: session, deepDive: deepDive, extracts: allExtracts)
             }
-            return heuristicFallback(session: session, deepDive: deepDive, extracts: allExtracts)
+            output = heuristicFallback(session: session, deepDive: deepDive, extracts: allExtracts)
         } catch {
             print("[InquiryCrystallizationEngine] LLM failed: \(error) — falling back to heuristic")
-            return heuristicFallback(session: session, deepDive: deepDive, extracts: allExtracts)
+            output = heuristicFallback(session: session, deepDive: deepDive, extracts: allExtracts)
         }
+        return await attachCanvasProjection(to: output, session: session, deepDive: deepDive, extracts: allExtracts)
     }
 
     // MARK: - Prompt building
@@ -206,6 +208,403 @@ final class InquiryCrystallizationEngine {
         return output
     }
 
+    // MARK: - Canvas mapping proposal
+
+    private func attachCanvasProjection(
+        to output: CrystallizationOutput,
+        session: Atom,
+        deepDive: Atom?,
+        extracts: [Atom]
+    ) async -> CrystallizationOutput {
+        guard let deepDive,
+              let thinkspaceUUID = deepDive.deepDiveMetadata?.primaryThinkspaceUUID
+                ?? deepDive.deepDiveMetadata?.parentThinkspaceUUIDs?.first else {
+            return output
+        }
+
+        var copy = output
+        let questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: deepDive.uuid)) ?? []
+        let sources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: deepDive)) ?? []
+        let connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive)) ?? []
+        let sourceRefs = session.inquirySessionStructured?.sourceRefs ?? []
+
+        let operations = buildCanvasOperations(
+            output: output,
+            session: session,
+            deepDive: deepDive,
+            thinkspaceUUID: thinkspaceUUID,
+            extracts: extracts,
+            questions: questions,
+            sources: sources,
+            connections: connections,
+            sourceRefs: sourceRefs
+        )
+
+        let projection = CanvasProjection(
+            sessionUUID: session.uuid,
+            deepDiveProfileUUID: deepDive.uuid,
+            thinkspaceUUID: thinkspaceUUID,
+            summary: "Map this inquiry session into \(deepDive.title ?? "this Thinkspace") with append-first, non-destructive operations.",
+            operations: operations,
+            verificationReport: verificationReport(for: operations),
+            rollbackSnapshot: CanvasProjectionRollbackSnapshot(
+                canvasBlockUUIDs: [],
+                clusterUUIDs: operations.compactMap(\.targetClusterUUID),
+                atomUUIDs: Array(Set(operations.compactMap(\.targetObjectUUID) + [deepDive.uuid, session.uuid])),
+                summary: "Snapshot before applying \(operations.count) proposed canvas operations."
+            )
+        )
+        copy.canvasProjection = projection
+        return copy
+    }
+
+    private func buildCanvasOperations(
+        output: CrystallizationOutput,
+        session: Atom,
+        deepDive: Atom,
+        thinkspaceUUID: String,
+        extracts: [Atom],
+        questions: [Atom],
+        sources: [Atom],
+        connections: [Atom],
+        sourceRefs: [InquirySourceRef]
+    ) -> [CanvasOperation] {
+        var operations: [CanvasOperation] = []
+        let clusterName = proposedClusterName(output: output, session: session)
+        let existingCluster = existingClusterMatch(named: clusterName, thinkspaceUUID: thinkspaceUUID)
+        let clusterOperationId = UUID().uuidString
+        let proposedClusterUUID = existingCluster ?? clusterOperationId
+
+        if existingCluster == nil, shouldCreateCluster(named: clusterName, output: output, extracts: extracts, sourceRefs: sourceRefs) {
+            operations.append(CanvasOperation(
+                id: clusterOperationId,
+                type: .createCluster,
+                sourceArtifactID: session.uuid,
+                targetThinkspaceUUID: thinkspaceUUID,
+                targetClusterUUID: proposedClusterUUID,
+                proposedObjectType: "cluster",
+                proposedTitle: clusterName,
+                proposedPlacement: CanvasPlacementProposal(x: 0, y: 0, width: 760, height: 520, placementRationale: "Create a broad field for the session's main theme."),
+                rationale: "Several session artifacts share the theme \(clusterName). A cluster groups them without scattering small notes.",
+                confidence: 0.76,
+                appendCreateRecommendation: .create,
+                rollbackMetadata: CanvasRollbackMetadata(affectedClusterUUIDs: [proposedClusterUUID]),
+                visualMaturity: .conceptCardOrConnection
+            ))
+        }
+
+        let uniqueSourceRefs = uniqueSources(from: sourceRefs, extracts: extracts, sources: sources)
+        for (index, source) in uniqueSourceRefs.enumerated() {
+            operations.append(sourceCardOperation(
+                source: source,
+                index: index,
+                thinkspaceUUID: thinkspaceUUID,
+                clusterUUID: proposedClusterUUID,
+                existingSources: sources
+            ))
+        }
+
+        for (index, question) in output.newQuestions.enumerated() where !question.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let duplicate = duplicateQuestionCheck(question.text, questions: questions)
+            let isDuplicate = duplicate.verdict == .likelyDuplicate || duplicate.verdict == .exactMatch
+            operations.append(CanvasOperation(
+                type: isDuplicate ? .appendToObject : .createObject,
+                sourceArtifactID: question.id,
+                targetThinkspaceUUID: thinkspaceUUID,
+                targetObjectUUID: duplicate.matchedObjectUUID,
+                targetClusterUUID: proposedClusterUUID,
+                proposedObjectType: AtomType.question.rawValue,
+                proposedTitle: question.text,
+                proposedBody: question.rationale,
+                proposedPlacement: CanvasPlacementProposal(x: -260 + Double(index * 260), y: -40, width: 280, height: 180, clusterUUID: proposedClusterUUID),
+                rationale: question.rationale ?? "Promote this question because it opens a durable inquiry path for the Thinkspace.",
+                confidence: isDuplicate ? 0.68 : 0.72,
+                alternatives: [
+                    CanvasOperationAlternative(label: "Keep internal under session", operationType: .hideArtifact, rationale: "Use this if the question is not yet important enough for the canvas.")
+                ],
+                duplicateCheckResult: duplicate,
+                appendCreateRecommendation: isDuplicate ? .append : .create,
+                rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [duplicate.matchedObjectUUID].compactMap { $0 }),
+                visualMaturity: .claimQuestionOrTerm
+            ))
+        }
+
+        let claims = extracts.filter { $0.extractMetadata?.kind.isClaimLike == true }
+        for (index, claim) in claims.prefix(4).enumerated() {
+            let title = makeCardTitle(from: claim.body ?? claim.title ?? "Claim")
+            operations.append(CanvasOperation(
+                type: .createClaimCard,
+                sourceArtifactID: claim.uuid,
+                targetThinkspaceUUID: thinkspaceUUID,
+                targetClusterUUID: proposedClusterUUID,
+                proposedObjectType: "claim",
+                proposedTitle: title,
+                proposedBody: claim.body ?? claim.title,
+                proposedPlacement: CanvasPlacementProposal(x: 20 + Double(index * 260), y: 190, width: 300, height: 180, clusterUUID: proposedClusterUUID),
+                relationshipType: claim.extractMetadata?.kind == .speculativeClaim ? "speculative_claim" : "claim",
+                rationale: claim.extractMetadata?.kind == .speculativeClaim
+                    ? "This claim is important enough to review visually, but it must remain marked speculative."
+                    : "This claim is a reasoning object that should be visible and linked to its evidence.",
+                confidence: claim.extractMetadata?.kind == .speculativeClaim ? 0.58 : 0.7,
+                alternatives: [
+                    CanvasOperationAlternative(label: "Append under active question", operationType: .appendToObject, targetObjectUUID: claim.extractMetadata?.parentQuestionUUID)
+                ],
+                duplicateCheckResult: duplicateClaimCheck(claim, extracts: extracts),
+                appendCreateRecommendation: .create,
+                rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [claim.uuid]),
+                visualMaturity: .claimQuestionOrTerm
+            ))
+        }
+
+        for update in output.modelUpdates {
+            operations.append(CanvasOperation(
+                type: .updateCurrentUnderstanding,
+                sourceArtifactID: update.id,
+                targetThinkspaceUUID: thinkspaceUUID,
+                targetObjectUUID: deepDive.uuid,
+                proposedObjectType: "current_understanding",
+                proposedTitle: "Current Understanding",
+                proposedBody: update.after,
+                rationale: update.rationale ?? "Append this as a reviewed update to the Thinkspace's living model.",
+                confidence: 0.74,
+                alternatives: [
+                    CanvasOperationAlternative(label: "Append as alternate", operationType: .appendToObject, targetObjectUUID: deepDive.uuid),
+                    CanvasOperationAlternative(label: "Reject model update", operationType: .ignore)
+                ],
+                appendCreateRecommendation: .append,
+                rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [deepDive.uuid]),
+                visualMaturity: .deepDiveProfile
+            ))
+        }
+
+        let lowSignalExtracts = extracts.filter { extract in
+            guard let kind = extract.extractMetadata?.kind else { return false }
+            let body = extract.body ?? extract.title ?? ""
+            return [.quote, .highlight, .sourceSnippet, .note].contains(kind) && body.count < 240
+        }
+        for extract in lowSignalExtracts.prefix(6) {
+            operations.append(CanvasOperation(
+                type: .hideArtifact,
+                sourceArtifactID: extract.uuid,
+                targetThinkspaceUUID: thinkspaceUUID,
+                targetObjectUUID: extract.uuid,
+                proposedObjectType: AtomType.extract.rawValue,
+                proposedTitle: makeCardTitle(from: extract.body ?? extract.title ?? "Extract"),
+                rationale: "Keep this extract internal because it supports the session but does not yet earn standalone visual space.",
+                confidence: 0.82,
+                duplicateCheckResult: CanvasDuplicateCheckResult(verdict: .noneFound, explanation: "Internal artifacts do not require visual duplicate creation."),
+                appendCreateRecommendation: .keepInternal,
+                status: .accepted,
+                rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [extract.uuid]),
+                visualMaturity: .rawCapture,
+                requiresReview: false
+            ))
+        }
+
+        for (index, loop) in output.openLoops.prefix(3).enumerated() {
+            operations.append(CanvasOperation(
+                type: .createNoteCard,
+                sourceArtifactID: loop.id,
+                targetThinkspaceUUID: thinkspaceUUID,
+                targetClusterUUID: proposedClusterUUID,
+                proposedObjectType: "open_loop",
+                proposedTitle: loop.description,
+                proposedBody: loop.suggestedNextStep,
+                proposedPlacement: CanvasPlacementProposal(x: -240 + Double(index * 240), y: 390, width: 260, height: 140, clusterUUID: proposedClusterUUID),
+                relationshipType: "raises_question",
+                rationale: "This unresolved loop should remain visible if it guides the next inquiry session.",
+                confidence: 0.66,
+                alternatives: [
+                    CanvasOperationAlternative(label: "Keep internal under active question", operationType: .hideArtifact)
+                ],
+                appendCreateRecommendation: .create,
+                visualMaturity: .openLoop
+            ))
+        }
+
+        if let source = uniqueSourceRefs.first, let claim = claims.first {
+            operations.append(CanvasOperation(
+                type: .linkObjects,
+                sourceArtifactID: claim.uuid,
+                targetThinkspaceUUID: thinkspaceUUID,
+                targetObjectUUID: claim.uuid,
+                proposedObjectType: "relationship",
+                relationshipType: claim.extractMetadata?.kind == .speculativeClaim ? "weak_support" : "supports",
+                rationale: "Link the source to the claim as evidence provenance. Speculative claims use a weak support relationship.",
+                confidence: claim.extractMetadata?.kind == .speculativeClaim ? 0.52 : 0.68,
+                alternatives: [
+                    CanvasOperationAlternative(label: "Leave evidence attached internally", operationType: .hideArtifact)
+                ],
+                duplicateCheckResult: CanvasDuplicateCheckResult(verdict: .needsReview, matchedObjectUUID: source.sourceUUID, explanation: "Relationship links need validation against existing canvas lines before apply."),
+                appendCreateRecommendation: .link,
+                rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [source.sourceUUID, claim.uuid]),
+                visualMaturity: .claimQuestionOrTerm
+            ))
+        }
+
+        if shouldSuggestChildThinkspace(output: output, extracts: extracts, sourceRefs: sourceRefs, questions: questions) {
+            operations.append(CanvasOperation(
+                type: .promoteToChildThinkspace,
+                sourceArtifactID: session.uuid,
+                targetThinkspaceUUID: thinkspaceUUID,
+                proposedObjectType: AtomType.thinkspace.rawValue,
+                proposedTitle: clusterName,
+                rationale: "\(clusterName) is becoming a large subtopic. Suggest a child Thinkspace while preserving this parent as a portal/summary.",
+                confidence: 0.55,
+                appendCreateRecommendation: .promote,
+                visualMaturity: .childThinkspace
+            ))
+        }
+
+        return operations
+    }
+
+    private func verificationReport(for operations: [CanvasOperation]) -> CanvasProjectionVerificationReport {
+        CanvasProjectionVerificationReport(
+            duplicateChecksPassed: !operations.contains { $0.duplicateCheckResult.verdict == .exactMatch && $0.appendCreateRecommendation == .create },
+            appendCreateChecksPassed: !operations.contains { $0.appendCreateRecommendation == .review },
+            ambiguityWarnings: operations.filter { $0.confidence < 0.6 }.map { "\($0.type.displayName): \($0.rationale)" },
+            blockedOperationIds: operations.filter { $0.status == .blocked }.map(\.id)
+        )
+    }
+
+    private func uniqueSources(from refs: [InquirySourceRef], extracts: [Atom], sources: [Atom]) -> [InquirySourceRef] {
+        var seen = Set<String>()
+        var result: [InquirySourceRef] = []
+        for ref in refs where !seen.contains(ref.sourceUUID) {
+            seen.insert(ref.sourceUUID)
+            result.append(ref)
+        }
+        for source in sources where !seen.contains(source.uuid) {
+            seen.insert(source.uuid)
+            result.append(InquirySourceRef(
+                sourceUUID: source.uuid,
+                url: source.researchMetadata?.url,
+                title: source.title ?? "Untitled Source",
+                domain: URL(string: source.researchMetadata?.url ?? "")?.host,
+                sourceType: source.researchMetadata?.researchType ?? "research",
+                status: InquirySourceStatus(rawValue: source.researchMetadata?.processingStatus ?? "") ?? .saved,
+                extractCount: extracts.filter { $0.extractMetadata?.sourceUUID == source.uuid }.count,
+                noteCount: extracts.filter { $0.extractMetadata?.sourceUUID == source.uuid && $0.extractMetadata?.kind == .note }.count
+            ))
+        }
+        return result
+    }
+
+    private func sourceCardOperation(
+        source: InquirySourceRef,
+        index: Int,
+        thinkspaceUUID: String,
+        clusterUUID: String,
+        existingSources: [Atom]
+    ) -> CanvasOperation {
+        let duplicate = existingSourceCheck(source, existingSources: existingSources)
+        return CanvasOperation(
+            type: .createSourceCard,
+            sourceArtifactID: source.sourceUUID,
+            targetThinkspaceUUID: thinkspaceUUID,
+            targetObjectUUID: source.sourceUUID,
+            targetClusterUUID: clusterUUID,
+            proposedObjectType: AtomType.research.rawValue,
+            proposedTitle: source.title,
+            proposedBody: [source.domain, source.sourceType, "\(source.extractCount) extracts"].compactMap { $0 }.joined(separator: " · "),
+            proposedPlacement: CanvasPlacementProposal(x: -320 + Double(index * 260), y: 160, width: 320, height: 220, clusterUUID: clusterUUID),
+            rationale: "Create a source card as the durable visual handle for this material; extracts remain attached internally.",
+            confidence: 0.78,
+            alternatives: [
+                CanvasOperationAlternative(label: "Keep source in library only", operationType: .hideArtifact, targetObjectUUID: source.sourceUUID)
+            ],
+            duplicateCheckResult: duplicate,
+            appendCreateRecommendation: duplicate.verdict == .existingAppearance ? .link : .create,
+            rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [source.sourceUUID]),
+            visualMaturity: .sourceCard
+        )
+    }
+
+    private func proposedClusterName(output: CrystallizationOutput, session: Atom) -> String {
+        let haystack = [
+            session.title ?? "",
+            output.summary,
+            output.newQuestions.map(\.text).joined(separator: " ")
+        ].joined(separator: " ").lowercased()
+
+        if haystack.contains("ancient") || haystack.contains("tradition") {
+            return "Ancient Traditions"
+        }
+        if haystack.contains("physiology") || haystack.contains("nervous system") || haystack.contains("co2") {
+            return "Physiology"
+        }
+        if haystack.contains("evidence") || haystack.contains("replication") || haystack.contains("counterevidence") {
+            return "Evidence Quality"
+        }
+        if let concept = output.possibleConnections.first?.name, !concept.isEmpty {
+            return concept
+        }
+        return "Session Crystallization"
+    }
+
+    private func shouldCreateCluster(named name: String, output: CrystallizationOutput, extracts: [Atom], sourceRefs: [InquirySourceRef]) -> Bool {
+        name != "Session Crystallization" || output.newQuestions.count + output.openLoops.count + extracts.count + sourceRefs.count >= 3
+    }
+
+    private func shouldSuggestChildThinkspace(output: CrystallizationOutput, extracts: [Atom], sourceRefs: [InquirySourceRef], questions: [Atom]) -> Bool {
+        extracts.count >= 18 || sourceRefs.count >= 8 || questions.count >= 12 || output.possibleConnections.count >= 8
+    }
+
+    private func existingClusterMatch(named name: String, thinkspaceUUID: String) -> String? {
+        // The actual canvas cluster list lives on ThinkspaceMetadata. This first slice
+        // keeps mapping generation deterministic and lets the apply pass resolve IDs.
+        nil
+    }
+
+    private func duplicateQuestionCheck(_ text: String, questions: [Atom]) -> CanvasDuplicateCheckResult {
+        if let exact = questions.first(where: { normalized($0.title ?? "") == normalized(text) }) {
+            return CanvasDuplicateCheckResult(verdict: .exactMatch, matchedObjectUUID: exact.uuid, explanation: "A question with the same title already exists; append or link instead of creating another.")
+        }
+        let normalizedText = normalized(text)
+        if let likely = questions.first(where: {
+            let candidate = normalized($0.title ?? "")
+            return !candidate.isEmpty && !normalizedText.isEmpty && (normalizedText.contains(candidate) || candidate.contains(normalizedText))
+        }) {
+            return CanvasDuplicateCheckResult(verdict: .likelyDuplicate, matchedObjectUUID: likely.uuid, explanation: "A similar question already exists and should be reviewed before creating a new card.")
+        }
+        return CanvasDuplicateCheckResult()
+    }
+
+    private func duplicateClaimCheck(_ claim: Atom, extracts: [Atom]) -> CanvasDuplicateCheckResult {
+        let text = normalized(claim.body ?? claim.title ?? "")
+        if let exact = extracts.first(where: { $0.uuid != claim.uuid && normalized($0.body ?? $0.title ?? "") == text }) {
+            return CanvasDuplicateCheckResult(verdict: .exactMatch, matchedObjectUUID: exact.uuid, explanation: "A matching claim/extract already exists; append provenance rather than duplicating.")
+        }
+        return CanvasDuplicateCheckResult()
+    }
+
+    private func existingSourceCheck(_ source: InquirySourceRef, existingSources: [Atom]) -> CanvasDuplicateCheckResult {
+        if let url = source.url?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty,
+           let existing = existingSources.first(where: { existing in
+               guard let existingURL = existing.researchMetadata?.url else { return false }
+               return InquiryRepository.shared.canonicalURL(existingURL) == InquiryRepository.shared.canonicalURL(url)
+           }) {
+            return CanvasDuplicateCheckResult(verdict: .exactMatch, matchedObjectUUID: existing.uuid, matchedSourceURL: url, explanation: "This source URL already exists as a durable source; create an appearance/card, not a duplicate source atom.")
+        }
+        return CanvasDuplicateCheckResult()
+    }
+
+    private func normalized(_ value: String) -> String {
+        value
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private func makeCardTitle(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Untitled" }
+        if trimmed.count <= 72 { return trimmed }
+        return String(trimmed.prefix(72)) + "..."
+    }
+
     // MARK: - Apply accepted output to atoms
 
     /// Commits the accepted items in `output` to atoms + Deep Dive structure. Returns counts of each.
@@ -310,5 +709,11 @@ final class InquiryCrystallizationEngine {
         var questionsCreated: Int = 0
         var modelUpdatesApplied: Int = 0
         var outputAnglesAdded: Int = 0
+        var canvasOperationsApplied: Int = 0
+        var canvasBlocksCreated: Int = 0
+        var canvasClustersCreated: Int = 0
+        var canvasLinksCreated: Int = 0
+        var canvasArtifactsHidden: Int = 0
+        var childThinkspacesCreated: Int = 0
     }
 }

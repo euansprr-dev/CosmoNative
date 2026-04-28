@@ -145,12 +145,25 @@ struct InquiryReviewView: View {
                 if summary.questionsCreated > 0 { line("\(summary.questionsCreated) new questions") }
                 if summary.modelUpdatesApplied > 0 { line("\(summary.modelUpdatesApplied) model updates") }
                 if summary.outputAnglesAdded > 0 { line("\(summary.outputAnglesAdded) output angles") }
+                if summary.canvasClustersCreated > 0 { line("\(summary.canvasClustersCreated) canvas clusters") }
+                if summary.canvasBlocksCreated > 0 { line("\(summary.canvasBlocksCreated) canvas cards") }
+                if summary.canvasLinksCreated > 0 { line("\(summary.canvasLinksCreated) canvas links") }
+                if summary.canvasArtifactsHidden > 0 { line("\(summary.canvasArtifactsHidden) internal artifacts") }
+                if summary.childThinkspacesCreated > 0 { line("\(summary.childThinkspacesCreated) child Thinkspaces") }
             }
             .padding(DS.space16)
             .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-            Text("Session marked crystallized. The Deep Dive Overview reflects the changes.")
+            Text("Session marked crystallized. The Thinkspace canvas now reflects the accepted mapping.")
                 .font(CosmoTypography.body)
                 .foregroundStyle(CosmoColors.textSecondary)
+            if output?.canvasProjection?.status == .applied || output?.canvasProjection?.status == .partiallyApplied {
+                Button("Rollback canvas mapping") {
+                    Task { await rollbackCanvasMapping() }
+                }
+                .buttonStyle(.plain)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(DS.red)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -186,6 +199,9 @@ struct InquiryReviewView: View {
                 }
                 if !out.modelUpdates.isEmpty {
                     modelUpdatesSection
+                }
+                if let projection = out.canvasProjection {
+                    canvasMappingSection(projection)
                 }
                 if !out.contradictions.isEmpty {
                     contradictionsSection(out.contradictions)
@@ -396,6 +412,202 @@ struct InquiryReviewView: View {
         }
     }
 
+    private func canvasMappingSection(_ projection: CanvasProjection) -> some View {
+        sectionFrame(title: "CANVAS MAPPING (\(projection.operations.count))") {
+            HStack(alignment: .top, spacing: DS.space12) {
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    mappingSummary(projection)
+                    ForEach(projection.operations, id: \.id) { operation in
+                        canvasOperationRow(operation)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                canvasPreviewPanel(projection)
+                    .frame(width: 260, alignment: .topLeading)
+            }
+        }
+    }
+
+    private func mappingSummary(_ projection: CanvasProjection) -> some View {
+        let accepted = projection.operations.filter { $0.status == .accepted || $0.status == .applied }.count
+        let needsReview = projection.operations.filter { $0.requiresReview && $0.status == .pending }.count
+        return HStack(spacing: DS.space8) {
+            Label("\(accepted) accepted", systemImage: "checkmark.circle")
+            Label("\(needsReview) review", systemImage: "exclamationmark.circle")
+            Label(projection.autoApplyPolicy.rawValue, systemImage: "lock")
+            Spacer()
+            Button("Accept safe") {
+                acceptSafeCanvasOperations()
+            }
+            .buttonStyle(.plain)
+            .font(CosmoTypography.caption)
+            .foregroundStyle(DS.accent)
+        }
+        .font(CosmoTypography.caption)
+        .foregroundStyle(CosmoColors.textSecondary)
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, 7)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+    }
+
+    private func canvasOperationRow(_ operation: CanvasOperation) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            HStack(alignment: .top, spacing: DS.space8) {
+                statusGlyph(operation.status)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: DS.space6) {
+                        Text(operation.type.displayName)
+                            .font(CosmoTypography.label)
+                            .foregroundStyle(CosmoColors.textPrimary)
+                        Text(confidenceLabel(operation.confidence))
+                            .font(CosmoTypography.labelSmall)
+                            .foregroundStyle(confidenceColor(operation.confidence))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(confidenceColor(operation.confidence).opacity(0.12), in: Capsule())
+                    }
+                    Text(operation.proposedTitle ?? operation.proposedObjectType ?? operation.targetObjectUUID ?? "Untitled target")
+                        .font(CosmoTypography.body)
+                        .foregroundStyle(CosmoColors.textPrimary)
+                        .lineLimit(2)
+                    Text(operation.rationale)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textSecondary)
+                        .lineLimit(3)
+                }
+                Spacer()
+                operationMenu(operation)
+            }
+
+            HStack(spacing: DS.space8) {
+                operationChip(operation.appendCreateRecommendation.displayName)
+                operationChip(operation.duplicateCheckResult.verdict.rawValue)
+                if let relation = operation.relationshipType {
+                    operationChip(relation)
+                }
+            }
+        }
+        .padding(DS.space10)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(operation.status == .accepted ? DS.accent.opacity(0.35) : DS.borderSubtle, lineWidth: 1)
+        )
+    }
+
+    private func canvasPreviewPanel(_ projection: CanvasProjection) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            HStack(spacing: 6) {
+                Image(systemName: "rectangle.dashed")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.accent)
+                Text("VISUAL PREVIEW")
+                    .font(CosmoTypography.labelSmall)
+                    .tracking(1.6)
+                    .foregroundStyle(CosmoColors.textTertiary)
+            }
+            ForEach(projection.operations.filter { $0.type != .hideArtifact }.prefix(8), id: \.id) { op in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(previewColor(for: op))
+                        .frame(width: 7, height: 7)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(op.proposedTitle ?? op.type.displayName)
+                            .font(CosmoTypography.caption)
+                            .foregroundStyle(CosmoColors.textPrimary)
+                            .lineLimit(1)
+                        if let placement = op.proposedPlacement {
+                            Text("x \(Int(placement.x)) · y \(Int(placement.y))")
+                                .font(CosmoTypography.labelSmall)
+                                .foregroundStyle(CosmoColors.textTertiary)
+                        }
+                    }
+                }
+            }
+            if !projection.verificationReport.ambiguityWarnings.isEmpty {
+                Divider().background(DS.borderSubtle)
+                Text("\(projection.verificationReport.ambiguityWarnings.count) low-confidence item\(projection.verificationReport.ambiguityWarnings.count == 1 ? "" : "s")")
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(DS.orange)
+            }
+        }
+        .padding(DS.space12)
+        .background(DS.surfaceElevated.opacity(0.72), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+    }
+
+    private func operationMenu(_ operation: CanvasOperation) -> some View {
+        Menu {
+            Button("Accept") { setCanvasOperation(operation.id, status: .accepted) }
+            Button("Reject") { setCanvasOperation(operation.id, status: .rejected) }
+            Button("Defer") { setCanvasOperation(operation.id, status: .deferred) }
+            Divider()
+            Button("Append instead") { setCanvasOperationRecommendation(operation.id, recommendation: .append) }
+            Button("Create instead") { setCanvasOperationRecommendation(operation.id, recommendation: .create) }
+            Button("Keep internal") { setCanvasOperationRecommendation(operation.id, recommendation: .keepInternal) }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 14))
+                .foregroundStyle(CosmoColors.textSecondary)
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+    }
+
+    private func statusGlyph(_ status: CanvasOperationStatus) -> some View {
+        let icon: String
+        let color: Color
+        switch status {
+        case .accepted, .applied:
+            icon = "checkmark.circle.fill"; color = DS.accent
+        case .rejected:
+            icon = "xmark.circle.fill"; color = DS.red
+        case .deferred:
+            icon = "clock"; color = CosmoColors.textTertiary
+        case .edited:
+            icon = "pencil.circle.fill"; color = DS.orange
+        case .blocked:
+            icon = "exclamationmark.triangle.fill"; color = DS.orange
+        case .pending:
+            icon = "circle"; color = CosmoColors.textTertiary
+        }
+        return Image(systemName: icon)
+            .font(.system(size: 13))
+            .foregroundStyle(color)
+    }
+
+    private func operationChip(_ text: String) -> some View {
+        Text(text)
+            .font(CosmoTypography.labelSmall)
+            .foregroundStyle(CosmoColors.textTertiary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(DS.surface, in: Capsule())
+    }
+
+    private func confidenceLabel(_ confidence: Double) -> String {
+        "\(Int((confidence * 100).rounded()))%"
+    }
+
+    private func confidenceColor(_ confidence: Double) -> Color {
+        if confidence >= 0.75 { return DS.accent }
+        if confidence >= 0.6 { return DS.orange }
+        return DS.red
+    }
+
+    private func previewColor(for operation: CanvasOperation) -> Color {
+        switch operation.type {
+        case .createCluster, .updateCluster: return DS.accent.opacity(0.65)
+        case .createSourceCard: return DS.entityResearch
+        case .createClaimCard: return DS.orange
+        case .createObject: return DS.entityConnection
+        case .createNoteCard, .createSticky: return DS.entityStickyNote
+        default: return CosmoColors.textTertiary
+        }
+    }
+
     // MARK: - Row helpers
 
     private func acceptableRow(title: String, detail: String, meta: String?, accepted: Bool, onToggle: @escaping () -> Void) -> some View {
@@ -485,6 +697,35 @@ struct InquiryReviewView: View {
         output = out
     }
 
+    private func acceptSafeCanvasOperations() {
+        guard var out = output, var projection = out.canvasProjection else { return }
+        for idx in projection.operations.indices {
+            let op = projection.operations[idx]
+            if !op.requiresReview || op.type == .hideArtifact || (op.confidence >= 0.78 && op.appendCreateRecommendation != .create) {
+                projection.operations[idx].status = .accepted
+            }
+        }
+        out.canvasProjection = projection
+        output = out
+    }
+
+    private func setCanvasOperation(_ id: String, status: CanvasOperationStatus) {
+        guard var out = output, var projection = out.canvasProjection,
+              let idx = projection.operations.firstIndex(where: { $0.id == id }) else { return }
+        projection.operations[idx].status = status
+        out.canvasProjection = projection
+        output = out
+    }
+
+    private func setCanvasOperationRecommendation(_ id: String, recommendation: CanvasAppendCreateRecommendation) {
+        guard var out = output, var projection = out.canvasProjection,
+              let idx = projection.operations.firstIndex(where: { $0.id == id }) else { return }
+        projection.operations[idx].appendCreateRecommendation = recommendation
+        projection.operations[idx].status = .edited
+        out.canvasProjection = projection
+        output = out
+    }
+
     // MARK: - Run / Apply
 
     private func runCrystallization() async {
@@ -517,13 +758,34 @@ struct InquiryReviewView: View {
     }
 
     private func acceptAll() async {
-        guard let out = output else { return }
+        guard var out = output else { return }
+        if var projection = out.canvasProjection {
+            for idx in projection.operations.indices where projection.operations[idx].status == .pending {
+                projection.operations[idx].status = .accepted
+            }
+            out.canvasProjection = projection
+            output = out
+        }
         do {
-            let summary = try await InquiryCrystallizationEngine.shared.applyAcceptedOutput(
+            var summary = try await InquiryCrystallizationEngine.shared.applyAcceptedOutput(
                 out,
                 toSession: viewModel.session,
                 deepDive: viewModel.deepDive
             )
+            if let canvasResult = try await CanvasProjectionApplyService.shared.applyAcceptedOperations(
+                in: out,
+                session: viewModel.session,
+                deepDive: viewModel.deepDive
+            ) {
+                out.canvasProjection = canvasResult.projection
+                output = out
+                summary.canvasOperationsApplied = canvasResult.operationsApplied
+                summary.canvasBlocksCreated = canvasResult.blocksCreated
+                summary.canvasClustersCreated = canvasResult.clustersCreated
+                summary.canvasLinksCreated = canvasResult.linksCreated
+                summary.canvasArtifactsHidden = canvasResult.artifactsHidden
+                summary.childThinkspacesCreated = canvasResult.childThinkspacesCreated
+            }
             // Persist crystallization result on session
             let summaryText = out.summary
             _ = try await InquiryRepository.shared.completeCrystallization(viewModel.session, output: out, summary: summaryText)
@@ -536,6 +798,19 @@ struct InquiryReviewView: View {
         } catch {
             statusMessage = error.localizedDescription
             status = .failed
+        }
+    }
+
+    private func rollbackCanvasMapping() async {
+        guard var out = output, let projection = out.canvasProjection else { return }
+        do {
+            let rolledBack = try await CanvasProjectionApplyService.shared.rollback(projection)
+            out.canvasProjection = rolledBack
+            output = out
+            _ = try await InquiryRepository.shared.completeCrystallization(viewModel.session, output: out, summary: out.summary)
+            statusMessage = "Canvas mapping rolled back."
+        } catch {
+            statusMessage = error.localizedDescription
         }
     }
 

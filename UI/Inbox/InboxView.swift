@@ -7,7 +7,11 @@ import SwiftUI
 
 struct InboxView: View {
     @State private var viewModel = InboxViewModel()
-    @State private var showCaptureLanes = false
+    @Binding private var route: SidebarInboxRoute
+
+    init(route: Binding<SidebarInboxRoute> = .constant(.global)) {
+        _route = route
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -41,15 +45,20 @@ struct InboxView: View {
     private var mainContent: some View {
         VStack(spacing: 0) {
             inboxHeader
-            if showCaptureLanes {
-                CaptureLanesView()
-            } else {
+            switch route {
+            case .global:
                 captureBar
                 if !viewModel.items.isEmpty {
                     statsAndFilters
                 }
                 Divider().foregroundStyle(DS.border)
                 itemsOrEmptyState
+            case .captureLanes:
+                CaptureLanesView(showsLaneSidebar: false)
+            case .captureLane(let id):
+                CaptureLanesView(showsLaneSidebar: false, selectedDestinationId: id)
+            case .manageCommands:
+                CaptureLanesView(showsLaneSidebar: false, showsCommandRegistryOnly: true)
             }
         }
     }
@@ -85,21 +94,25 @@ struct InboxView: View {
     private var captureLanesToggle: some View {
         Button {
             withAnimation(ProMotionSprings.snappy) {
-                showCaptureLanes.toggle()
+                route = isShowingCaptureLanes ? .global : .captureLanes
             }
         } label: {
             Label("Lanes", systemImage: "tray.2")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(showCaptureLanes ? DS.textOnAccent : DS.textSecondary)
+                .foregroundStyle(isShowingCaptureLanes ? DS.textOnAccent : DS.textSecondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .background(showCaptureLanes ? DS.accent : DS.surface, in: .rect(cornerRadius: 8))
+                .background(isShowingCaptureLanes ? DS.accent : DS.surface, in: .rect(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(showCaptureLanes ? DS.borderActive : DS.border, lineWidth: 1)
+                        .stroke(isShowingCaptureLanes ? DS.borderActive : DS.border, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    private var isShowingCaptureLanes: Bool {
+        route != .global
     }
 
     private var viewToggle: some View {

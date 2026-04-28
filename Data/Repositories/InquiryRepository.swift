@@ -4,6 +4,17 @@
 
 import Foundation
 
+enum InquiryRepositoryError: Error, LocalizedError {
+    case thinkspaceNotFound(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .thinkspaceNotFound(let uuid):
+            return "Thinkspace not found: \(uuid)"
+        }
+    }
+}
+
 @MainActor
 final class InquiryRepository {
     static let shared = InquiryRepository()
@@ -25,6 +36,7 @@ final class InquiryRepository {
         let metadata = DeepDiveMetadata(
             aliases: aliases.isEmpty ? nil : aliases,
             parentThinkspaceUUIDs: parentThinkspaceUUIDs.isEmpty ? nil : parentThinkspaceUUIDs,
+            primaryThinkspaceUUID: parentThinkspaceUUIDs.first,
             maturity: .spark,
             lastInquiryAt: nil
         )
@@ -59,7 +71,9 @@ final class InquiryRepository {
 
     /// All Deep Dives. Sorted by lastInquiryAt (recent first), then updated.
     func fetchAllDeepDives() async throws -> [Atom] {
+        let liveThinkspaceUUIDs = Set((try await atoms.fetchAll(type: .thinkspace)).map(\.uuid))
         let list = try await atoms.fetchAll(type: .deepDive)
+            .filter { deepDiveIsVisible($0, liveThinkspaceUUIDs: liveThinkspaceUUIDs) }
         return list.sorted { lhs, rhs in
             let lhsTime = lhs.deepDiveMetadata?.lastInquiryAt ?? lhs.updatedAt
             let rhsTime = rhs.deepDiveMetadata?.lastInquiryAt ?? rhs.updatedAt
@@ -70,7 +84,139 @@ final class InquiryRepository {
     /// Deep Dives parented to a particular Thinkspace.
     func fetchDeepDives(in thinkspaceUUID: String) async throws -> [Atom] {
         let all = try await fetchAllDeepDives()
-        return all.filter { $0.deepDiveMetadata?.parentThinkspaceUUIDs?.contains(thinkspaceUUID) == true }
+        return all.filter { atom in
+            let metadata = atom.deepDiveMetadata
+            return metadata?.primaryThinkspaceUUID == thinkspaceUUID
+                || metadata?.parentThinkspaceUUIDs?.contains(thinkspaceUUID) == true
+        }
+    }
+
+    /// Resolve the one-to-one DeepDiveProfile backing a Thinkspace.
+    /// This preserves old Deep Dive atoms by selecting an existing parented Deep Dive
+    /// before creating a new profile.
+    @discardableResult
+    func resolveDeepDiveProfile(forThinkspace thinkspaceUUID: String, title: String) async throws -> Atom {
+        guard var thinkspaceAtom = try await atoms.fetch(uuid: thinkspaceUUID) else {
+            throw InquiryRepositoryError.thinkspaceNotFound(thinkspaceUUID)
+        }
+
+        var thinkspaceMetadata = thinkspaceAtom.metadataValue(as: ThinkspaceMetadata.self)
+            ?? ThinkspaceMetadata(name: title)
+
+        if let profileUUID = thinkspaceMetadata.deepDiveProfileUUID,
+           var existing = try await atoms.fetch(uuid: profileUUID),
+           existing.type == .deepDive,
+           !existing.isDeleted {
+            existing = try await ensureProfile(existing, isPrimaryFor: thinkspaceUUID)
+            return existing
+        }
+
+        let candidates = try await fetchDeepDives(in: thinkspaceUUID)
+            .filter { !$0.isDeleted }
+            .sorted { lhs, rhs in
+                let lhsTime = lhs.deepDiveMetadata?.lastInquiryAt ?? lhs.updatedAt
+                let rhsTime = rhs.deepDiveMetadata?.lastInquiryAt ?? rhs.updatedAt
+                return lhsTime > rhsTime
+            }
+
+        let profile: Atom
+        if let selected = candidates.first {
+            profile = try await ensureProfile(selected, isPrimaryFor: thinkspaceUUID, relatedProfiles: Array(candidates.dropFirst()))
+        } else {
+            let created = try await createDeepDive(
+                title: title,
+                about: "",
+                parentThinkspaceUUIDs: [thinkspaceUUID],
+                aliases: []
+            )
+            profile = try await ensureProfile(created, isPrimaryFor: thinkspaceUUID)
+        }
+
+        thinkspaceMetadata.name = title
+        thinkspaceMetadata.deepDiveProfileUUID = profile.uuid
+        thinkspaceAtom = thinkspaceAtom.withMetadata(thinkspaceMetadata)
+        if thinkspaceAtom.title == nil || thinkspaceAtom.title?.isEmpty == true {
+            thinkspaceAtom.title = title
+        }
+        _ = try await atoms.update(thinkspaceAtom)
+        return profile
+    }
+
+    private func ensureProfile(_ atom: Atom, isPrimaryFor thinkspaceUUID: String, relatedProfiles: [Atom] = []) async throws -> Atom {
+        var copy = atom
+        var metadata = copy.deepDiveMetadata ?? DeepDiveMetadata()
+        metadata.primaryThinkspaceUUID = thinkspaceUUID
+        var parents = metadata.parentThinkspaceUUIDs ?? []
+        if !parents.contains(thinkspaceUUID) {
+            parents.insert(thinkspaceUUID, at: 0)
+        } else if parents.first != thinkspaceUUID {
+            parents.removeAll { $0 == thinkspaceUUID }
+            parents.insert(thinkspaceUUID, at: 0)
+        }
+        metadata.parentThinkspaceUUIDs = parents
+
+        let related = relatedProfiles.map(\.uuid)
+        if !related.isEmpty {
+            metadata.relatedDeepDiveUUIDs = Array(Set((metadata.relatedDeepDiveUUIDs ?? []) + related))
+        }
+
+        copy = copy.withMetadata(metadata)
+        let hasParentLink = copy.linksOfType(.deepDiveParent).contains { $0.uuid == thinkspaceUUID }
+        if !hasParentLink {
+            copy = copy.appendingLink(
+                AtomLink(type: AtomLinkType.deepDiveParent.rawValue, uuid: thinkspaceUUID, entityType: AtomType.thinkspace.rawValue)
+            )
+        }
+        return try await atoms.update(copy)
+    }
+
+    /// Hide or detach DeepDiveProfiles whose Thinkspace home was deleted.
+    /// Research child atoms are preserved; only the profile atom/link is updated so
+    /// deleted Thinkspaces do not keep appearing as selectable Deep Dives.
+    func handleThinkspaceDeleted(_ thinkspaceUUID: String) async throws {
+        let deepDives = try await atoms.fetchAll(type: .deepDive)
+
+        for deepDive in deepDives {
+            guard var metadata = deepDive.deepDiveMetadata else { continue }
+            let parentUUIDs = metadata.parentThinkspaceUUIDs ?? []
+            let isPrimary = metadata.primaryThinkspaceUUID == thinkspaceUUID
+            let isParented = parentUUIDs.contains(thinkspaceUUID)
+            let hasParentLink = deepDive.linksOfType(.deepDiveParent).contains { $0.uuid == thinkspaceUUID }
+            guard isPrimary || isParented || hasParentLink else { continue }
+
+            var copy = deepDive.removingLink(ofType: .deepDiveParent, toUUID: thinkspaceUUID)
+            let remainingParents = parentUUIDs.filter { $0 != thinkspaceUUID }
+            metadata.parentThinkspaceUUIDs = remainingParents.isEmpty ? nil : remainingParents
+
+            if isPrimary {
+                metadata.primaryThinkspaceUUID = remainingParents.first
+            }
+
+            copy = copy.withMetadata(metadata)
+            copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+
+            if metadata.primaryThinkspaceUUID == nil && remainingParents.isEmpty {
+                copy.isDeleted = true
+            }
+
+            _ = try await atoms.update(copy)
+        }
+    }
+
+    private func deepDiveIsVisible(_ deepDive: Atom, liveThinkspaceUUIDs: Set<String>) -> Bool {
+        let metadata = deepDive.deepDiveMetadata
+        let parentUUIDs = metadata?.parentThinkspaceUUIDs ?? []
+
+        if let primary = metadata?.primaryThinkspaceUUID {
+            return liveThinkspaceUUIDs.contains(primary)
+                || parentUUIDs.contains { liveThinkspaceUUIDs.contains($0) }
+        }
+
+        if !parentUUIDs.isEmpty {
+            return parentUUIDs.contains { liveThinkspaceUUIDs.contains($0) }
+        }
+
+        return true
     }
 
     // MARK: - Linked atoms (Topic Inbox / Questions / Sources / Lexicon / Connections / Sessions)

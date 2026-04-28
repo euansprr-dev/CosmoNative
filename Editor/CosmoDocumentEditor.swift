@@ -46,6 +46,8 @@ struct CosmoDocumentEditor: View {
     var onContentHeightChange: ((CGFloat) -> Void)? = nil
     var onAIAction: ((AIWritingAction) -> Void)? = nil
     var onCustomPrompt: ((String) -> Void)? = nil
+    var onWritingAIRequest: (() -> Void)? = nil
+    var focusBandRange: NSRange? = nil
     var onPlainTextChange: ((String) -> Void)? = nil
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
     var onDocumentChange: ((RichDocument, String) -> Void)? = nil
@@ -80,6 +82,8 @@ struct CosmoDocumentEditor: View {
             onContentHeightChange: onContentHeightChange,
             onAIAction: onAIAction,
             onCustomPrompt: onCustomPrompt,
+            onWritingAIRequest: onWritingAIRequest,
+            focusBandRange: focusBandRange,
             onActivate: onActivate,
             onDeactivate: onDeactivate,
             onCommit: onCommit,

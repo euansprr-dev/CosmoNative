@@ -112,6 +112,65 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertGreaterThan(cluster.boundingRect.height, block.size.height)
     }
 
+    func testSetViewModeGridComputesInitialFixedManualSize() {
+        let clusterId = UUID()
+        let blocks = [
+            makeBlock(uuid: "b-1", type: .note, position: CGPoint(x: 120, y: 120), size: CGSize(width: 180, height: 120)),
+            makeBlock(uuid: "b-2", type: .research, position: CGPoint(x: 360, y: 120), size: CGSize(width: 320, height: 230))
+        ]
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: clusterId,
+                blockUUIDs: blocks.map(\.entityUuid),
+                rect: CGRect(x: 0, y: 0, width: 420, height: 260),
+                viewMode: .canvas
+            )
+        ]
+
+        engine.setViewMode(for: clusterId, mode: .grid, blocks: blocks)
+
+        guard let cluster = engine.userClusters.first(where: { $0.id == clusterId }) else {
+            XCTFail("Expected cluster to exist")
+            return
+        }
+
+        XCTAssertEqual(cluster.viewMode, .grid)
+        XCTAssertGreaterThanOrEqual(cluster.boundingRect.width, 600)
+        XCTAssertGreaterThanOrEqual(cluster.boundingRect.height, 400)
+        XCTAssertEqual(cluster.manualSizeOverride, cluster.boundingRect.size)
+    }
+
+    func testSettingGridModeAgainDoesNotRefitExistingGridRect() {
+        let clusterId = UUID()
+        let blocks = (0..<12).map { index in
+            makeBlock(
+                uuid: "b-\(index)",
+                type: .note,
+                position: CGPoint(x: CGFloat(index * 220), y: 120),
+                size: CGSize(width: 180, height: 120)
+            )
+        }
+        let rect = CGRect(x: 40, y: 80, width: 620, height: 420)
+        let manual = CGSize(width: 620, height: 420)
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: clusterId,
+                blockUUIDs: blocks.map(\.entityUuid),
+                rect: rect,
+                viewMode: .grid,
+                manual: manual
+            )
+        ]
+
+        engine.setViewMode(for: clusterId, mode: .grid, blocks: blocks)
+
+        let cluster = engine.userClusters.first(where: { $0.id == clusterId })
+        XCTAssertEqual(cluster?.boundingRect, rect)
+        XCTAssertEqual(cluster?.manualSizeOverride, manual)
+    }
+
     func testFitClusterRectClampsToViewportMargins() {
         let clusterId = UUID()
         let engine = CanvasClusterEngine()
@@ -284,6 +343,125 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(rect?.height, 248, accuracy: 0.001)
     }
 
+    func testAddBlockToGridClusterAppendsWithoutResizingContainer() {
+        let clusterId = UUID()
+        let firstBlock = makeBlock(uuid: "b-1", type: .note, position: CGPoint(x: 100, y: 100), size: CGSize(width: 180, height: 120))
+        let newBlock = makeBlock(uuid: "b-2", type: .research, position: CGPoint(x: 500, y: 100), size: CGSize(width: 320, height: 230))
+        let rect = CGRect(x: 20, y: 40, width: 640, height: 420)
+        let manual = CGSize(width: 640, height: 420)
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: clusterId,
+                blockUUIDs: [firstBlock.entityUuid],
+                rect: rect,
+                viewMode: .grid,
+                manual: manual
+            )
+        ]
+
+        engine.addBlockToCluster(
+            blockUUID: newBlock.entityUuid,
+            clusterId: clusterId,
+            blocks: [newBlock, firstBlock]
+        )
+
+        let cluster = engine.userClusters.first(where: { $0.id == clusterId })
+        XCTAssertEqual(cluster?.blockUUIDs, [firstBlock.entityUuid, newBlock.entityUuid])
+        XCTAssertEqual(cluster?.boundingRect, rect)
+        XCTAssertEqual(cluster?.manualSizeOverride, manual)
+    }
+
+    func testRemoveBlockFromGridClusterDoesNotResizeContainer() {
+        let clusterId = UUID()
+        let firstBlock = makeBlock(uuid: "b-1", type: .note, position: CGPoint(x: 100, y: 100), size: CGSize(width: 180, height: 120))
+        let secondBlock = makeBlock(uuid: "b-2", type: .note, position: CGPoint(x: 500, y: 100), size: CGSize(width: 180, height: 120))
+        let rect = CGRect(x: 20, y: 40, width: 640, height: 420)
+        let manual = CGSize(width: 640, height: 420)
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: clusterId,
+                blockUUIDs: [firstBlock.entityUuid, secondBlock.entityUuid],
+                rect: rect,
+                viewMode: .grid,
+                manual: manual
+            )
+        ]
+
+        engine.removeBlockFromCluster(
+            blockUUID: firstBlock.entityUuid,
+            clusterId: clusterId,
+            blocks: [firstBlock, secondBlock]
+        )
+
+        let cluster = engine.userClusters.first(where: { $0.id == clusterId })
+        XCTAssertEqual(cluster?.blockUUIDs, [secondBlock.entityUuid])
+        XCTAssertEqual(cluster?.boundingRect, rect)
+        XCTAssertEqual(cluster?.manualSizeOverride, manual)
+    }
+
+    func testTransferBlockBetweenGridClustersAppendsWithoutResizingEitherContainer() {
+        let sourceId = UUID()
+        let targetId = UUID()
+        let remainingBlock = makeBlock(uuid: "source-remaining", type: .note, position: CGPoint(x: 100, y: 100), size: CGSize(width: 180, height: 120))
+        let movingBlock = makeBlock(uuid: "moving", type: .note, position: CGPoint(x: 320, y: 100), size: CGSize(width: 180, height: 120))
+        let targetBlock = makeBlock(uuid: "target-existing", type: .task, position: CGPoint(x: 700, y: 100), size: CGSize(width: 180, height: 120))
+        let sourceRect = CGRect(x: 20, y: 40, width: 640, height: 420)
+        let targetRect = CGRect(x: 800, y: 40, width: 700, height: 460)
+        let sourceManual = sourceRect.size
+        let targetManual = targetRect.size
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: sourceId,
+                blockUUIDs: [remainingBlock.entityUuid, movingBlock.entityUuid],
+                rect: sourceRect,
+                viewMode: .grid,
+                manual: sourceManual
+            ),
+            makeCluster(
+                id: targetId,
+                blockUUIDs: [targetBlock.entityUuid],
+                rect: targetRect,
+                viewMode: .grid,
+                manual: targetManual
+            )
+        ]
+
+        engine.transferBlock(
+            blockUUID: movingBlock.entityUuid,
+            from: sourceId,
+            to: targetId,
+            blocks: [targetBlock, movingBlock, remainingBlock]
+        )
+
+        let source = engine.userClusters.first(where: { $0.id == sourceId })
+        let target = engine.userClusters.first(where: { $0.id == targetId })
+        XCTAssertEqual(source?.blockUUIDs, [remainingBlock.entityUuid])
+        XCTAssertEqual(source?.boundingRect, sourceRect)
+        XCTAssertEqual(source?.manualSizeOverride, sourceManual)
+        XCTAssertEqual(target?.blockUUIDs, [targetBlock.entityUuid, movingBlock.entityUuid])
+        XCTAssertEqual(target?.boundingRect, targetRect)
+        XCTAssertEqual(target?.manualSizeOverride, targetManual)
+    }
+
+    func testGridContentOrdersMembersByClusterMembershipOrder() {
+        let a = makeBlock(uuid: "a", type: .note, position: .zero, size: CGSize(width: 180, height: 120))
+        let b = makeBlock(uuid: "b", type: .task, position: .zero, size: CGSize(width: 180, height: 120))
+        let c = makeBlock(uuid: "c", type: .research, position: .zero, size: CGSize(width: 320, height: 230))
+        let cluster = makeCluster(
+            id: UUID(),
+            blockUUIDs: [a.entityUuid, c.entityUuid, b.entityUuid],
+            rect: CGRect(x: 0, y: 0, width: 640, height: 420),
+            viewMode: .grid
+        )
+
+        let ordered = ClusterGridContent.orderedMemberBlocks(for: cluster, blocks: [b, a, c])
+
+        XCTAssertEqual(ordered.map(\.entityUuid), [a.entityUuid, c.entityUuid, b.entityUuid])
+    }
+
     func testPersistedCanvasClusterRectRemainsAuthoritativeWhenMembersFitInside() {
         let block = makeBlock(
             uuid: "b-1",
@@ -336,6 +514,35 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(cluster.boundingRect.origin.y, 0, accuracy: 0.001)
         XCTAssertEqual(cluster.boundingRect.width, 450, accuracy: 0.001)
         XCTAssertEqual(cluster.boundingRect.height, 280, accuracy: 0.001)
+    }
+
+    func testPersistedGridClusterRectRemainsAuthoritativeRegardlessOfMemberPositions() {
+        let block = makeBlock(
+            uuid: "b-1",
+            type: .note,
+            position: CGPoint(x: 2_400, y: 1_800),
+            size: CGSize(width: 180, height: 120)
+        )
+        let manual = CGSize(width: 620, height: 420)
+
+        let codable = CodableCluster(
+            id: UUID().uuidString,
+            name: "Grid Cluster",
+            blockUUIDs: [block.entityUuid],
+            colorIndex: 0,
+            originX: 40,
+            originY: 80,
+            rectWidth: Double(manual.width),
+            rectHeight: Double(manual.height),
+            manualWidth: Double(manual.width),
+            manualHeight: Double(manual.height),
+            viewMode: ClusterViewMode.grid.rawValue
+        )
+
+        let cluster = codable.toCanvasCluster(blocks: [block], thinkspaceId: nil)
+
+        XCTAssertEqual(cluster.boundingRect, CGRect(origin: CGPoint(x: 40, y: 80), size: manual))
+        XCTAssertEqual(cluster.manualSizeOverride, manual)
     }
 
     func testCanvasClusterResizeMapperScalesHorizontalEdgeFromOppositeAnchor() {

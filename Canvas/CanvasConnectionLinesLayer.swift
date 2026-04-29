@@ -67,19 +67,11 @@ struct CanvasConnectionLinesLayer: View {
         }
     }
 
-    /// Affine transform from inner-ZStack space → screen space.
-    /// Matches the `.scaleEffect(effectiveScale, anchor: .center)` on the blocks container.
-    /// Points in the inner ZStack are `block.position + contentOffset + dragOffset`.
-    /// The scaleEffect scales around `screenCenter = viewportSize / 2`.
-    ///
-    /// NOTE: Does NOT use `canvasToScreenAffineTransform()` which has a bug
-    /// (wrong operation order produces incorrect positions at non-100% zoom).
+    /// Affine transform from inner-ZStack content space to screen space.
+    /// Points here already include `contentOffset`; raw canvas-space drawing uses
+    /// `canvasToScreenAffineTransform()` instead.
     private var screenTransform: CGAffineTransform {
-        let s = transform.effectiveScale
-        let cx = transform.screenCenter.x
-        let cy = transform.screenCenter.y
-        // Scale around (cx, cy): x' = s*x + cx*(1-s), y' = s*y + cy*(1-s)
-        return CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: cx * (1 - s), ty: cy * (1 - s))
+        transform.contentToScreenAffineTransform()
     }
 
     // MARK: - Body

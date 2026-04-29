@@ -4032,8 +4032,8 @@ struct GridPatternView: View {
         Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
             let resolved = context.resolve(Image(nsImage: tileImage))
             let gridOrigin = transform.canvasToScreen(.zero)
-            let offsetX = gridOrigin.x.truncatingRemainder(dividingBy: tileSize)
-            let offsetY = gridOrigin.y.truncatingRemainder(dividingBy: tileSize)
+            let offsetX = normalizedTileOffset(gridOrigin.x, tileSize: tileSize)
+            let offsetY = normalizedTileOffset(gridOrigin.y, tileSize: tileSize)
             let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("grid-pattern")
 
             for x in stride(from: offsetX - tileSize, through: size.width + tileSize, by: tileSize) {
@@ -4047,6 +4047,11 @@ struct GridPatternView: View {
 
             CanvasPerformanceInstrumentation.signposter.endInterval("grid-pattern", signpost)
         }
+    }
+
+    private func normalizedTileOffset(_ value: CGFloat, tileSize: CGFloat) -> CGFloat {
+        let remainder = value.truncatingRemainder(dividingBy: tileSize)
+        return remainder >= 0 ? remainder : remainder + tileSize
     }
 }
 

@@ -406,7 +406,7 @@ struct CodableCluster: Codable, Sendable {
             }
             // Non-canvas modes (board/list/grid): keep persisted rect as-is.
             // Block canvas positions are irrelevant — these modes use internal layouts.
-            // fitClusterRectForMode() in loadUserClusters() handles adaptive sizing.
+            // loadUserClusters() only refits adaptive modes; grid keeps its fixed scroll container.
         }
         return cluster
     }

@@ -82,10 +82,28 @@ struct CanvasViewportTransform: Equatable {
 
     /// Affine transform that maps canvas-space paths into screen space.
     func canvasToScreenAffineTransform() -> CGAffineTransform {
-        var transform = CGAffineTransform.identity
-        transform = transform.translatedBy(x: screenCenter.x, y: screenCenter.y)
-        transform = transform.scaledBy(x: effectiveScale, y: effectiveScale)
-        transform = transform.translatedBy(x: -screenCenter.x, y: -screenCenter.y)
-        return transform.translatedBy(x: contentOffset.width, y: contentOffset.height)
+        let scale = effectiveScale
+        return CGAffineTransform(
+            a: scale,
+            b: 0,
+            c: 0,
+            d: scale,
+            tx: screenCenter.x * (1 - scale) + contentOffset.width * scale,
+            ty: screenCenter.y * (1 - scale) + contentOffset.height * scale
+        )
+    }
+
+    /// Affine transform for points already expressed in content space
+    /// (`canvas point + contentOffset`). This matches the scaled canvas container.
+    func contentToScreenAffineTransform() -> CGAffineTransform {
+        let scale = effectiveScale
+        return CGAffineTransform(
+            a: scale,
+            b: 0,
+            c: 0,
+            d: scale,
+            tx: screenCenter.x * (1 - scale),
+            ty: screenCenter.y * (1 - scale)
+        )
     }
 }

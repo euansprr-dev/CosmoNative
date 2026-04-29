@@ -386,7 +386,12 @@ class CanvasClusterEngine: ObservableObject {
         userClusters[index].blockUUIDs.append(blockUUID)
 
         withAnimation(ProMotionSprings.gentle) {
-            if userClusters[index].viewMode != .canvas {
+            switch userClusters[index].viewMode {
+            case .canvas:
+                userClusters[index].expandBoundsToContainMembers(blocks: blocks)
+            case .grid:
+                break
+            case .list, .board:
                 if let fitted = fitClusterRectForMode(
                     clusterId: clusterId,
                     mode: userClusters[index].viewMode,
@@ -395,8 +400,6 @@ class CanvasClusterEngine: ObservableObject {
                 ) {
                     userClusters[index].boundingRect = fitted
                 }
-            } else {
-                userClusters[index].expandBoundsToContainMembers(blocks: blocks)
             }
         }
     }
@@ -413,7 +416,12 @@ class CanvasClusterEngine: ObservableObject {
             return thinkspaceId
         } else {
             withAnimation(ProMotionSprings.gentle) {
-                if userClusters[index].viewMode != .canvas {
+                switch userClusters[index].viewMode {
+                case .canvas:
+                    userClusters[index].shrinkToFitMembers(blocks: blocks)
+                case .grid:
+                    break
+                case .list, .board:
                     if let fitted = fitClusterRectForMode(
                         clusterId: clusterId,
                         mode: userClusters[index].viewMode,
@@ -422,8 +430,6 @@ class CanvasClusterEngine: ObservableObject {
                     ) {
                         userClusters[index].boundingRect = fitted
                     }
-                } else {
-                    userClusters[index].shrinkToFitMembers(blocks: blocks)
                 }
             }
             return userClusters[index].thinkspaceId
@@ -479,6 +485,7 @@ class CanvasClusterEngine: ObservableObject {
     /// Switch cluster view mode. Auto-sizes for list/board if needed.
     func setViewMode(for clusterId: UUID, mode: ClusterViewMode, blocks: [CanvasBlock]) {
         guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
+        guard !(userClusters[index].viewMode == .grid && mode == .grid) else { return }
 
         withAnimation(ProMotionSprings.gentle) {
             userClusters[index].viewMode = mode
@@ -542,7 +549,7 @@ class CanvasClusterEngine: ObservableObject {
             }
         }()
 
-        let memberBlocks = blocks.filter { cluster.blockUUIDs.contains($0.entityUuid) }
+        let memberBlocks = ClusterGridContent.orderedMemberBlocks(for: cluster, blocks: blocks)
         let memberCount = memberBlocks.count
         let adaptiveHeight: CGFloat
         switch mode {
@@ -955,7 +962,7 @@ class CanvasClusterEngine: ObservableObject {
             }
 
             userClusters = metadata.clusters.map { $0.toCanvasCluster(blocks: blocks, thinkspaceId: tsId) }
-            for idx in userClusters.indices where userClusters[idx].viewMode != .canvas {
+            for idx in userClusters.indices where shouldFitLoadedCluster(userClusters[idx]) {
                 let id = userClusters[idx].id
                 let mode = userClusters[idx].viewMode
                 if let fitted = fitClusterRectForMode(clusterId: id, mode: mode, blocks: blocks, viewportInCanvas: nil) {
@@ -966,6 +973,17 @@ class CanvasClusterEngine: ObservableObject {
             }
         } catch {
             print("CanvasClusterEngine: Failed to load user clusters: \(error)")
+        }
+    }
+
+    private func shouldFitLoadedCluster(_ cluster: CanvasCluster) -> Bool {
+        switch cluster.viewMode {
+        case .canvas:
+            return false
+        case .grid:
+            return cluster.boundingRect.width <= 0 || cluster.boundingRect.height <= 0
+        case .list, .board:
+            return true
         }
     }
 

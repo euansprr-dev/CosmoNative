@@ -172,6 +172,11 @@ struct ClusterGridContent: View {
         return (columnHeights.max() ?? 0)
     }
 
+    static func orderedMemberBlocks(for cluster: CanvasCluster, blocks: [CanvasBlock]) -> [CanvasBlock] {
+        let blocksByUUID = Dictionary(blocks.map { ($0.entityUuid, $0) }, uniquingKeysWith: { first, _ in first })
+        return cluster.blockUUIDs.compactMap { blocksByUUID[$0] }
+    }
+
     @ViewBuilder
     private func gridBlockView(for block: CanvasBlock) -> some View {
         let cellHeight = gridCellHeight(for: block)
@@ -218,8 +223,7 @@ struct ClusterGridContent: View {
     // MARK: - Data
 
     private var memberBlocks: [CanvasBlock] {
-        let uuids = Set(cluster.blockUUIDs)
-        return blocks.filter { uuids.contains($0.entityUuid) }
+        Self.orderedMemberBlocks(for: cluster, blocks: blocks)
     }
 
     private func dragProvider(for block: CanvasBlock) -> NSItemProvider {

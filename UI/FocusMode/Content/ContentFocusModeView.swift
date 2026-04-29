@@ -61,6 +61,7 @@ struct ContentFocusModeView: View {
     @State private var showWritingAICard = false
     @State private var focusBandRange: NSRange?
     @State private var manuscriptScrollView: NSScrollView?
+    @State private var manuscriptScrollMetrics = ManuscriptScrollMetrics()
     @State private var isActivelyTyping = false
     @State private var typingActivityTask: Task<Void, Never>?
 
@@ -569,9 +570,16 @@ struct ContentFocusModeView: View {
                                     .padding(.bottom, DS.space20)
                                     .background(ScrollViewIntrospector { scrollView in
                                         manuscriptScrollView = scrollView
+                                    } onMetricsChange: { metrics in
+                                        manuscriptScrollMetrics = metrics
                                     })
                             }
                             .scrollIndicators(.hidden)
+                            .overlay(alignment: .trailing) {
+                                PremiumManuscriptScrollbar(metrics: manuscriptScrollMetrics)
+                                    .padding(.trailing, DS.space4)
+                                    .padding(.vertical, DS.space8)
+                            }
 
                             if !zenMode {
                                 scriptoriumRightMargin
@@ -1968,27 +1976,79 @@ struct ContentFocusModeView: View {
     }
 
     private func scrollCursorToTypewriterBand() {
-        guard let scrollView = manuscriptScrollView else { return }
-        let rect = selectionInfo.rectInEditor
-        guard rect != .zero else { return }
+        guard let scrollView = manuscriptScrollView,
+              let textView = focusedEditorTextView(in: scrollView),
+              let cursorRect = cursorRectInManuscript(for: textView, scrollView: scrollView) else { return }
 
-        let visibleHeight = scrollView.contentView.bounds.height
-        let currentY = scrollView.contentView.bounds.origin.y
-        let cursorYInViewport = draftEditorOrigin.y + rect.midY
-        let targetYInViewport = visibleHeight * 0.44
-        let delta = cursorYInViewport - targetYInViewport
+        let visibleRect = scrollView.documentVisibleRect
+        let visibleHeight = visibleRect.height
+        let targetY = visibleRect.minY + visibleHeight * 0.44
+        let delta = cursorRect.midY - targetY
         guard abs(delta) > 10 else { return }
 
         let documentHeight = scrollView.documentView?.bounds.height ?? visibleHeight
         let maxY = max(0, documentHeight - visibleHeight)
-        let targetY = min(max(0, currentY + delta), maxY)
+        let targetOriginY = min(max(0, visibleRect.minY + delta), maxY)
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
+            context.duration = 0.18
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: targetY))
+            scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: visibleRect.minX, y: targetOriginY))
         }
         scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func focusedEditorTextView(in scrollView: NSScrollView) -> NSTextView? {
+        guard let documentView = scrollView.documentView else { return nil }
+        if let textView = scrollView.window?.firstResponder as? NSTextView,
+           textView.isDescendant(of: documentView) {
+            return textView
+        }
+        return nil
+    }
+
+    private func cursorRectInManuscript(for textView: NSTextView, scrollView: NSScrollView) -> CGRect? {
+        guard !textView.string.isEmpty,
+              let documentView = scrollView.documentView,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else { return nil }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let textLength = textView.string.utf16.count
+        let selectedRange = textView.selectedRange()
+        let characterLocation = min(max(selectedRange.location, 0), textLength)
+
+        let nsText = textView.string as NSString
+        var usesExtraLineFragment = false
+        var cursorRect: CGRect
+        if characterLocation == textLength,
+           textLength > 0,
+           nsText.substring(with: NSRange(location: textLength - 1, length: 1)) == "\n",
+           !layoutManager.extraLineFragmentRect.isEmpty {
+            usesExtraLineFragment = true
+            cursorRect = layoutManager.extraLineFragmentRect
+        } else {
+            let measuredLocation = min(characterLocation, max(textLength - 1, 0))
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: NSRange(location: measuredLocation, length: 1),
+                actualCharacterRange: nil
+            )
+            cursorRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        }
+
+        if cursorRect.isEmpty {
+            cursorRect = CGRect(x: 0, y: 0, width: 1, height: textView.font?.pointSize ?? 17)
+        } else if characterLocation >= textLength, !usesExtraLineFragment {
+            cursorRect.origin.x = cursorRect.maxX
+            cursorRect.size.width = 1
+        } else {
+            cursorRect.size.width = max(cursorRect.width, 1)
+        }
+        cursorRect.size.height = max(cursorRect.height, textView.font?.pointSize ?? 17)
+
+        let textContainerOrigin = textView.textContainerOrigin
+        let rectInTextView = cursorRect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        return textView.convert(rectInTextView, to: documentView)
     }
 
     private func triggerInlineAction(_ action: AIWritingAction) {
@@ -2256,13 +2316,49 @@ struct ContentFocusModeView: View {
 
 }
 
+private struct ManuscriptScrollMetrics: Equatable {
+    var progress: CGFloat = 0
+    var thumbFraction: CGFloat = 1
+    var isScrollable: Bool = false
+}
+
+private struct PremiumManuscriptScrollbar: View {
+    let metrics: ManuscriptScrollMetrics
+
+    var body: some View {
+        GeometryReader { proxy in
+            let trackHeight = proxy.size.height
+            let thumbHeight = max(32, trackHeight * metrics.thumbFraction)
+            let travel = max(0, trackHeight - thumbHeight)
+
+            ZStack(alignment: .top) {
+                Capsule()
+                    .fill(DS.inkFaded.opacity(0.10))
+                    .frame(width: 2)
+
+                Capsule()
+                    .fill(DS.inkFaded.opacity(0.62))
+                    .frame(width: 2.5, height: thumbHeight)
+                    .offset(y: travel * metrics.progress)
+            }
+            .frame(width: 8, height: trackHeight)
+            .opacity(metrics.isScrollable ? 1 : 0)
+            .animation(ProMotionSprings.gentle, value: metrics)
+            .allowsHitTesting(false)
+        }
+        .frame(width: 8)
+    }
+}
+
 private struct ScrollViewIntrospector: NSViewRepresentable {
     var onResolve: (NSScrollView) -> Void
+    var onMetricsChange: (ManuscriptScrollMetrics) -> Void = { _ in }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async {
             if let scrollView = view.enclosingScrollView {
+                context.coordinator.attach(to: scrollView)
                 onResolve(scrollView)
             }
         }
@@ -2270,10 +2366,100 @@ private struct ScrollViewIntrospector: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onResolve = onResolve
+        context.coordinator.onMetricsChange = onMetricsChange
         DispatchQueue.main.async {
             if let scrollView = nsView.enclosingScrollView {
+                context.coordinator.attach(to: scrollView)
                 onResolve(scrollView)
             }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onResolve: onResolve, onMetricsChange: onMetricsChange)
+    }
+
+    final class Coordinator {
+        var onResolve: (NSScrollView) -> Void
+        var onMetricsChange: (ManuscriptScrollMetrics) -> Void
+        private weak var scrollView: NSScrollView?
+        private var observers: [NSObjectProtocol] = []
+        private var lastMetrics = ManuscriptScrollMetrics()
+
+        init(
+            onResolve: @escaping (NSScrollView) -> Void,
+            onMetricsChange: @escaping (ManuscriptScrollMetrics) -> Void
+        ) {
+            self.onResolve = onResolve
+            self.onMetricsChange = onMetricsChange
+        }
+
+        deinit {
+            observers.forEach(NotificationCenter.default.removeObserver)
+        }
+
+        func attach(to scrollView: NSScrollView) {
+            if self.scrollView === scrollView {
+                configure(scrollView)
+                publishMetrics(for: scrollView)
+                return
+            }
+
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
+            self.scrollView = scrollView
+            configure(scrollView)
+
+            let clipView = scrollView.contentView
+            clipView.postsBoundsChangedNotifications = true
+            scrollView.postsFrameChangedNotifications = true
+
+            observers.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSView.boundsDidChangeNotification,
+                    object: clipView,
+                    queue: .main
+                ) { [weak self, weak scrollView] _ in
+                    guard let scrollView else { return }
+                    self?.publishMetrics(for: scrollView)
+                }
+            )
+            observers.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSView.frameDidChangeNotification,
+                    object: scrollView,
+                    queue: .main
+                ) { [weak self, weak scrollView] _ in
+                    guard let scrollView else { return }
+                    self?.publishMetrics(for: scrollView)
+                }
+            )
+
+            publishMetrics(for: scrollView)
+        }
+
+        private func configure(_ scrollView: NSScrollView) {
+            scrollView.hasVerticalScroller = false
+            scrollView.hasHorizontalScroller = false
+            scrollView.autohidesScrollers = true
+            scrollView.scrollerStyle = .overlay
+            scrollView.drawsBackground = false
+        }
+
+        private func publishMetrics(for scrollView: NSScrollView) {
+            let visibleHeight = max(scrollView.documentVisibleRect.height, 1)
+            let documentHeight = max(scrollView.documentView?.bounds.height ?? visibleHeight, visibleHeight)
+            let scrollableDistance = max(documentHeight - visibleHeight, 0)
+            let rawProgress = scrollableDistance > 0 ? scrollView.documentVisibleRect.minY / scrollableDistance : 0
+            let metrics = ManuscriptScrollMetrics(
+                progress: min(max(rawProgress, 0), 1),
+                thumbFraction: min(max(visibleHeight / documentHeight, 0.08), 1),
+                isScrollable: scrollableDistance > 1
+            )
+            guard metrics != lastMetrics else { return }
+            lastMetrics = metrics
+            onMetricsChange(metrics)
         }
     }
 }

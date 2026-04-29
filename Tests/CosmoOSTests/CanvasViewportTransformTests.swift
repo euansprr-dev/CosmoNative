@@ -33,6 +33,69 @@ final class CanvasViewportTransformTests: XCTestCase {
         XCTAssertEqual(transform.visibleCanvasRect.width, 500, accuracy: 0.001)
         XCTAssertEqual(transform.visibleCanvasRect.height, 400, accuracy: 0.001)
     }
+
+    func testCanvasAffineTransformMatchesPointwiseConversionAcrossPanAndZoom() {
+        let transforms = [
+            CanvasViewportTransform(
+                viewportSize: CGSize(width: 1200, height: 800),
+                committedOffset: CGSize(width: 180, height: -90),
+                gesturePanOffset: CGSize(width: 60, height: 30),
+                committedScale: 1.4,
+                gestureMagnification: 1.1
+            ),
+            CanvasViewportTransform(
+                viewportSize: CGSize(width: 900, height: 700),
+                committedOffset: CGSize(width: -240, height: 160),
+                gesturePanOffset: CGSize(width: -80, height: 45),
+                committedScale: 0.35,
+                gestureMagnification: 0.8
+            ),
+            CanvasViewportTransform(
+                viewportSize: CGSize(width: 1440, height: 960),
+                committedOffset: CGSize(width: 20, height: 300),
+                gesturePanOffset: CGSize(width: 120, height: -90),
+                committedScale: 2.6,
+                gestureMagnification: 1.4
+            )
+        ]
+        let points = [
+            CGPoint(x: 0, y: 0),
+            CGPoint(x: 320, y: 470),
+            CGPoint(x: -180, y: 920),
+            CGPoint(x: 1_500, y: -640)
+        ]
+
+        for transform in transforms {
+            let affine = transform.canvasToScreenAffineTransform()
+            for point in points {
+                let affinePoint = point.applying(affine)
+                let pointwise = transform.canvasToScreen(point)
+                XCTAssertEqual(affinePoint.x, pointwise.x, accuracy: 0.001)
+                XCTAssertEqual(affinePoint.y, pointwise.y, accuracy: 0.001)
+            }
+        }
+    }
+
+    func testContentAffineTransformMatchesCanvasPointsWithOffsetAlreadyApplied() {
+        let transform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1000, height: 800),
+            committedOffset: CGSize(width: -120, height: 260),
+            gesturePanOffset: CGSize(width: 150, height: -90),
+            committedScale: 1.75,
+            gestureMagnification: 0.7
+        )
+        let canvasPoint = CGPoint(x: 480, y: 260)
+        let contentPoint = CGPoint(
+            x: canvasPoint.x + transform.contentOffset.width,
+            y: canvasPoint.y + transform.contentOffset.height
+        )
+
+        let affinePoint = contentPoint.applying(transform.contentToScreenAffineTransform())
+        let pointwise = transform.canvasToScreen(canvasPoint)
+
+        XCTAssertEqual(affinePoint.x, pointwise.x, accuracy: 0.001)
+        XCTAssertEqual(affinePoint.y, pointwise.y, accuracy: 0.001)
+    }
 }
 
 final class ActiveCanvasDragStateTests: XCTestCase {

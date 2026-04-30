@@ -816,13 +816,19 @@ struct CanvasView: View {
         observersRegistered = false
     }
 
+    private func updateCanvasSize(_ size: CGSize) {
+        guard size.width > 0, size.height > 0, canvasSize != size else { return }
+        canvasSize = size
+        scheduleFrameUpdate()
+    }
+
     // MARK: - Body
 
     var body: some View {
         GeometryReader { geometry in
             canvasContent
                 .onAppear {
-                    canvasSize = geometry.size
+                    updateCanvasSize(geometry.size)
                     canvasIsActive = isActive
 
                 // Register context provider for global Cosmo window
@@ -1397,6 +1403,9 @@ struct CanvasView: View {
                 removeCanvasObservers()
                 thinkspaceSwitchTask?.cancel()
                 thinkspaceSwitchTask = nil
+            }
+            .onChange(of: geometry.size) { _, newSize in
+                updateCanvasSize(newSize)
             }
             .onChange(of: isActive) { _, newValue in
                 canvasIsActive = newValue

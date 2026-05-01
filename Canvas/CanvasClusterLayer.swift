@@ -85,13 +85,10 @@ struct CanvasClusterLayer: View {
             RoundedRectangle(cornerRadius: 16)
                 .fill(DS.vellumDeep.opacity(clusterSurfaceOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
 
-            // Calendar-like accent wash: brighter base color, controlled by render-site
-            // opacity so large panels stay breathable instead of neon.
+            // Uniform calendar-like accent wash. Keep this flat so dark mode does not
+            // pick up a fake left-side light source.
             RoundedRectangle(cornerRadius: 16)
                 .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
-                .blendMode(DS.palette.isDark ? .screen : .normal)
-
-            clusterChromaticLift(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)
 
             // Sepia hairline plus a precise color rim. The rim carries
             // identity at low zoom; stronger states are reserved for selection.
@@ -106,13 +103,6 @@ struct CanvasClusterLayer: View {
                     )
                 )
                 .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
-
-            clusterAccentEdge(
-                color: cluster.color,
-                isSelected: isSelected,
-                isHovered: isHovered,
-                isDropTarget: isDropTarget
-            )
 
             if cluster.isUserCreated && (isSelected || isHovered || isDropTarget) {
                 RoundedRectangle(cornerRadius: 16)
@@ -222,53 +212,23 @@ struct CanvasClusterLayer: View {
     }
 
     private func clusterSurfaceOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
-        if isDropTarget { return DS.palette.isDark ? 0.68 : 0.76 }
+        if isDropTarget { return DS.palette.isDark ? 0.46 : 0.76 }
         if cluster.isUserCreated {
             return (cluster.viewMode != .canvas || isZone)
-                ? (DS.palette.isDark ? 0.62 : 0.72)
-                : (DS.palette.isDark ? 0.56 : 0.68)
+                ? (DS.palette.isDark ? 0.42 : 0.72)
+                : (DS.palette.isDark ? 0.38 : 0.68)
         }
-        return DS.palette.isDark ? 0.48 : 0.62
+        return DS.palette.isDark ? 0.34 : 0.62
     }
 
     private func backgroundOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
-        if isDropTarget { return DS.palette.isDark ? 0.18 : 0.15 }
+        if isDropTarget { return DS.palette.isDark ? 0.22 : 0.15 }
         if cluster.isUserCreated {
             return (cluster.viewMode != .canvas || isZone)
-                ? (DS.palette.isDark ? 0.125 : 0.105)
-                : (DS.palette.isDark ? 0.095 : 0.082)
+                ? (DS.palette.isDark ? 0.17 : 0.105)
+                : (DS.palette.isDark ? 0.145 : 0.082)
         }
-        return DS.palette.isDark ? 0.070 : 0.060
-    }
-
-    @ViewBuilder
-    private func clusterChromaticLift(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> some View {
-        let opacity = chromaticLiftOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZone)
-
-        RoundedRectangle(cornerRadius: 16)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        cluster.color.opacity(opacity),
-                        cluster.color.opacity(opacity * 0.36),
-                        Color.clear
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .blendMode(DS.palette.isDark ? .screen : .normal)
-            .allowsHitTesting(false)
-    }
-
-    private func chromaticLiftOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
-        if isDropTarget { return DS.palette.isDark ? 0.22 : 0.16 }
-        if cluster.isUserCreated {
-            return (cluster.viewMode != .canvas || isZone)
-                ? (DS.palette.isDark ? 0.15 : 0.11)
-                : (DS.palette.isDark ? 0.12 : 0.09)
-        }
-        return DS.palette.isDark ? 0.085 : 0.070
+        return DS.palette.isDark ? 0.105 : 0.060
     }
 
     private func clusterStrokeOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
@@ -289,52 +249,6 @@ struct CanvasClusterLayer: View {
         if isSelected { return 0.34 }
         if isHovered { return 0.20 }
         return 0
-    }
-
-    @ViewBuilder
-    private func clusterAccentEdge(color: Color, isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> some View {
-        let opacity = accentEdgeOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)
-        let edgeWidth: CGFloat = isSelected || isDropTarget ? 3 : 2
-
-        HStack(spacing: 0) {
-            Capsule()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            color.opacity(opacity),
-                            color.opacity(opacity * 0.48)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(width: edgeWidth)
-                .padding(.vertical, 14)
-                .padding(.leading, 2)
-                .shadow(color: color.opacity(opacity * 0.28), radius: 5, x: 0, y: 0)
-
-            LinearGradient(
-                colors: [
-                    color.opacity(opacity * (DS.palette.isDark ? 0.16 : 0.10)),
-                    Color.clear
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(width: isSelected || isDropTarget ? 96 : 72)
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .blendMode(DS.palette.isDark ? .screen : .normal)
-        .allowsHitTesting(false)
-    }
-
-    private func accentEdgeOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
-        if isDropTarget { return 0.98 }
-        if isSelected { return 0.92 }
-        if isHovered { return 0.74 }
-        return DS.palette.isDark ? 0.64 : 0.54
     }
 
     // MARK: - Gilt Corner Brackets

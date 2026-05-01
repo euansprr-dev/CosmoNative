@@ -80,19 +80,23 @@ struct CanvasClusterLayer: View {
         let dragOffset = draggingCluster(cluster.id) ? (clusterDragOffset ?? .zero) : .zero
 
         ZStack {
-            // Vellum inset parchment base — clusters feel like pages from a manuscript
+            // Translucent vellum base — enough body to frame content, but not so much
+            // that the canvas grid disappears behind large clusters.
             RoundedRectangle(cornerRadius: 16)
-                .fill(DS.vellumDeep)
+                .fill(DS.vellumDeep.opacity(clusterSurfaceOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
 
-            // Controlled accent wash: identity is present without turning the
-            // whole cluster into a colored panel.
+            // Calendar-like accent wash: brighter base color, controlled by render-site
+            // opacity so large panels stay breathable instead of neon.
             RoundedRectangle(cornerRadius: 16)
                 .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
+                .blendMode(DS.palette.isDark ? .screen : .normal)
+
+            clusterChromaticLift(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)
 
             // Sepia hairline plus a precise color rim. The rim carries
             // identity at low zoom; stronger states are reserved for selection.
             RoundedRectangle(cornerRadius: 16)
-                .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                .stroke(DS.sepiaBorder.opacity(DS.palette.isDark ? 0.62 : 0.78), lineWidth: 0.5)
             RoundedRectangle(cornerRadius: 16)
                 .stroke(
                     cluster.color.opacity(clusterStrokeOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)),
@@ -103,26 +107,33 @@ struct CanvasClusterLayer: View {
                 )
                 .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
 
+            clusterAccentEdge(
+                color: cluster.color,
+                isSelected: isSelected,
+                isHovered: isHovered,
+                isDropTarget: isDropTarget
+            )
+
             if cluster.isUserCreated && (isSelected || isHovered || isDropTarget) {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(
                         cluster.color.opacity(clusterGlowOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)),
-                        lineWidth: isSelected || isDropTarget ? 4 : 3
+                        lineWidth: isSelected || isDropTarget ? 5 : 3
                     )
-                    .blur(radius: isSelected || isDropTarget ? 7 : 4)
+                    .blur(radius: isSelected || isDropTarget ? 8 : 4)
                     .allowsHitTesting(false)
             }
 
             // Four gilt corner brackets — manuscript corner ornaments
             if cluster.isUserCreated {
-                clusterGiltCorners(rect: rect, isActive: isSelected || isHovered)
+                clusterGiltCorners(rect: rect, color: cluster.color, isActive: isSelected || isHovered || isDropTarget)
             }
 
             // Drop-target accent glow
             if isDropTarget {
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(cluster.color.opacity(0.28), lineWidth: 4)
-                    .blur(radius: 6)
+                    .stroke(cluster.color.opacity(0.42), lineWidth: 5)
+                    .blur(radius: 8)
             }
 
             if showLabel || hasAltContent {
@@ -210,69 +221,157 @@ struct CanvasClusterLayer: View {
         selectedClusterId == clusterId && clusterDragOffset != nil
     }
 
-    private func backgroundOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
-        if isDropTarget { return DS.palette.isDark ? 0.085 : 0.105 }
+    private func clusterSurfaceOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
+        if isDropTarget { return DS.palette.isDark ? 0.68 : 0.76 }
         if cluster.isUserCreated {
             return (cluster.viewMode != .canvas || isZone)
-                ? (DS.palette.isDark ? 0.050 : 0.070)
-                : (DS.palette.isDark ? 0.030 : 0.045)
+                ? (DS.palette.isDark ? 0.62 : 0.72)
+                : (DS.palette.isDark ? 0.56 : 0.68)
         }
-        return DS.palette.isDark ? 0.025 : 0.040
+        return DS.palette.isDark ? 0.48 : 0.62
+    }
+
+    private func backgroundOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
+        if isDropTarget { return DS.palette.isDark ? 0.18 : 0.15 }
+        if cluster.isUserCreated {
+            return (cluster.viewMode != .canvas || isZone)
+                ? (DS.palette.isDark ? 0.125 : 0.105)
+                : (DS.palette.isDark ? 0.095 : 0.082)
+        }
+        return DS.palette.isDark ? 0.070 : 0.060
+    }
+
+    @ViewBuilder
+    private func clusterChromaticLift(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> some View {
+        let opacity = chromaticLiftOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZone)
+
+        RoundedRectangle(cornerRadius: 16)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        cluster.color.opacity(opacity),
+                        cluster.color.opacity(opacity * 0.36),
+                        Color.clear
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .blendMode(DS.palette.isDark ? .screen : .normal)
+            .allowsHitTesting(false)
+    }
+
+    private func chromaticLiftOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
+        if isDropTarget { return DS.palette.isDark ? 0.22 : 0.16 }
+        if cluster.isUserCreated {
+            return (cluster.viewMode != .canvas || isZone)
+                ? (DS.palette.isDark ? 0.15 : 0.11)
+                : (DS.palette.isDark ? 0.12 : 0.09)
+        }
+        return DS.palette.isDark ? 0.085 : 0.070
     }
 
     private func clusterStrokeOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
-        if isDropTarget { return 0.82 }
-        if isSelected { return 0.74 }
-        if isHovered { return 0.34 }
-        return DS.palette.isDark ? 0.24 : 0.18
+        if isDropTarget { return 0.96 }
+        if isSelected { return 0.88 }
+        if isHovered { return 0.52 }
+        return DS.palette.isDark ? 0.36 : 0.30
     }
 
     private func clusterStrokeWidth(isSelected: Bool, isDropTarget: Bool) -> CGFloat {
-        if isDropTarget { return 2.25 }
-        if isSelected { return 1.75 }
-        return 1
+        if isDropTarget { return 2.75 }
+        if isSelected { return 2.1 }
+        return 1.15
     }
 
     private func clusterGlowOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
-        if isDropTarget { return 0.30 }
-        if isSelected { return 0.22 }
-        if isHovered { return 0.12 }
+        if isDropTarget { return 0.46 }
+        if isSelected { return 0.34 }
+        if isHovered { return 0.20 }
         return 0
+    }
+
+    @ViewBuilder
+    private func clusterAccentEdge(color: Color, isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> some View {
+        let opacity = accentEdgeOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)
+        let edgeWidth: CGFloat = isSelected || isDropTarget ? 3 : 2
+
+        HStack(spacing: 0) {
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            color.opacity(opacity),
+                            color.opacity(opacity * 0.48)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(width: edgeWidth)
+                .padding(.vertical, 14)
+                .padding(.leading, 2)
+                .shadow(color: color.opacity(opacity * 0.28), radius: 5, x: 0, y: 0)
+
+            LinearGradient(
+                colors: [
+                    color.opacity(opacity * (DS.palette.isDark ? 0.16 : 0.10)),
+                    Color.clear
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: isSelected || isDropTarget ? 96 : 72)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .blendMode(DS.palette.isDark ? .screen : .normal)
+        .allowsHitTesting(false)
+    }
+
+    private func accentEdgeOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
+        if isDropTarget { return 0.98 }
+        if isSelected { return 0.92 }
+        if isHovered { return 0.74 }
+        return DS.palette.isDark ? 0.64 : 0.54
     }
 
     // MARK: - Gilt Corner Brackets
 
-    /// Four gilt L-brackets pinned to the cluster corners — akashic manuscript ornament.
+    /// Four accent L-brackets pinned to the cluster corners — enough ornament to keep
+    /// the Cosmo language, but keyed to the cluster color for clearer identity.
     @ViewBuilder
-    private func clusterGiltCorners(rect: CGRect, isActive: Bool) -> some View {
-        let opacity = isActive ? 0.75 : 0.45
+    private func clusterGiltCorners(rect: CGRect, color: Color, isActive: Bool) -> some View {
+        let opacity = isActive ? 0.86 : (DS.palette.isDark ? 0.58 : 0.48)
         let size: CGFloat = 14
         let inset: CGFloat = 10
+        let stroke = color.opacity(opacity)
 
         ZStack {
             // Top-left
             GiltCornerBracket()
-                .stroke(DS.gilt, lineWidth: 0.9)
+                .stroke(stroke, lineWidth: isActive ? 1.15 : 0.95)
                 .frame(width: size, height: size)
                 .position(x: inset + size / 2, y: inset + size / 2)
 
             // Top-right (rotated 90°)
             GiltCornerBracket()
-                .stroke(DS.gilt, lineWidth: 0.9)
+                .stroke(stroke, lineWidth: isActive ? 1.15 : 0.95)
                 .frame(width: size, height: size)
                 .rotationEffect(.degrees(90))
                 .position(x: rect.width - inset - size / 2, y: inset + size / 2)
 
             // Bottom-right (rotated 180°)
             GiltCornerBracket()
-                .stroke(DS.gilt, lineWidth: 0.9)
+                .stroke(stroke, lineWidth: isActive ? 1.15 : 0.95)
                 .frame(width: size, height: size)
                 .rotationEffect(.degrees(180))
                 .position(x: rect.width - inset - size / 2, y: rect.height - inset - size / 2)
 
             // Bottom-left (rotated 270°)
             GiltCornerBracket()
-                .stroke(DS.gilt, lineWidth: 0.9)
+                .stroke(stroke, lineWidth: isActive ? 1.15 : 0.95)
                 .frame(width: size, height: size)
                 .rotationEffect(.degrees(270))
                 .position(x: inset + size / 2, y: rect.height - inset - size / 2)

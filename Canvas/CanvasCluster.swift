@@ -87,17 +87,17 @@ struct CanvasCluster: Identifiable {
     /// Grouping mode for board columns
     var boardGrouping: ClusterBoardGrouping = .auto
 
-    // 8-color premium palette. Keep these as opaque base colors and apply
-    // opacity at render sites so interaction states can feel precise.
+    // 8-color Apple Calendar-inspired palette. Keep these as opaque base colors and apply
+    // opacity at render sites so large clusters can stay translucent without going dusty.
     static let paletteHexes = [
-        "7B7EC0",  // Dusty indigo
-        "9585C0",  // Lavender gray
-        "C07B9E",  // Dusty rose
-        "C4A870",  // Antique gold
-        "6BAF8E",  // Sage
-        "62AFC4",  // Muted cyan
-        "7199C4",  // Steel blue
-        "C48B6A",  // Warm clay
+        "5E5CE6",  // System indigo
+        "AF52DE",  // System purple
+        "FF2D55",  // System pink
+        "FF9F0A",  // System orange
+        "34C759",  // System green
+        "64D2FF",  // System cyan
+        "0A84FF",  // System blue
+        "FF6B35",  // Warm coral
     ]
 
     static let palette: [Color] = paletteHexes.map { Color(hex: $0) }

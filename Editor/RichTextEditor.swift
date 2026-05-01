@@ -44,6 +44,7 @@ struct RichTextEditor: View {
     var onCustomPrompt: ((String) -> Void)? = nil
     var onWritingAIRequest: (() -> Void)? = nil
     var focusBandRange: NSRange? = nil
+    var focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil
     var onActivate: (() -> Void)? = nil
     var onDeactivate: (() -> Void)? = nil
     var onCommit: (() -> Void)? = nil
@@ -94,6 +95,7 @@ struct RichTextEditor: View {
         onCustomPrompt: ((String) -> Void)? = nil,
         onWritingAIRequest: (() -> Void)? = nil,
         focusBandRange: NSRange? = nil,
+        focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil,
         onActivate: (() -> Void)? = nil,
         onDeactivate: (() -> Void)? = nil,
         onCommit: (() -> Void)? = nil,
@@ -127,6 +129,7 @@ struct RichTextEditor: View {
         self.onCustomPrompt = onCustomPrompt
         self.onWritingAIRequest = onWritingAIRequest
         self.focusBandRange = focusBandRange
+        self.focusBandRangeProvider = focusBandRangeProvider
         self.onActivate = onActivate
         self.onDeactivate = onDeactivate
         self.onCommit = onCommit
@@ -157,6 +160,7 @@ struct RichTextEditor: View {
                 baseFontWeight: baseFontWeight,
                 polishHighlights: polishHighlights,
                 focusBandRange: focusBandRange,
+                focusBandRangeProvider: focusBandRangeProvider,
                 textAlignment: textAlignment,
                 typewriterMode: typewriterMode,
                 isEditable: isEditable,

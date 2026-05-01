@@ -84,22 +84,34 @@ struct CanvasClusterLayer: View {
             RoundedRectangle(cornerRadius: 16)
                 .fill(DS.vellumDeep)
 
-            // Colored accent wash on top of the parchment — cluster identity
+            // Controlled accent wash: identity is present without turning the
+            // whole cluster into a colored panel.
             RoundedRectangle(cornerRadius: 16)
                 .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
 
-            // Sepia hairline border + accent stroke on selection / drop target
+            // Sepia hairline plus a precise color rim. The rim carries
+            // identity at low zoom; stronger states are reserved for selection.
             RoundedRectangle(cornerRadius: 16)
                 .stroke(DS.sepiaBorder, lineWidth: 0.5)
             RoundedRectangle(cornerRadius: 16)
                 .stroke(
-                    isSelected ? cluster.color.opacity(0.6) : cluster.color.opacity(isDropTarget ? 0.55 : 0.18),
+                    cluster.color.opacity(clusterStrokeOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)),
                     style: StrokeStyle(
-                        lineWidth: isSelected || isDropTarget ? 2 : 1,
+                        lineWidth: clusterStrokeWidth(isSelected: isSelected, isDropTarget: isDropTarget),
                         dash: (isSelected || isDropTarget) ? [] : [5, 5]
                     )
                 )
                 .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
+
+            if cluster.isUserCreated && (isSelected || isHovered || isDropTarget) {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(
+                        cluster.color.opacity(clusterGlowOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)),
+                        lineWidth: isSelected || isDropTarget ? 4 : 3
+                    )
+                    .blur(radius: isSelected || isDropTarget ? 7 : 4)
+                    .allowsHitTesting(false)
+            }
 
             // Four gilt corner brackets — manuscript corner ornaments
             if cluster.isUserCreated {
@@ -199,11 +211,33 @@ struct CanvasClusterLayer: View {
     }
 
     private func backgroundOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
-        if isDropTarget { return 0.12 }
+        if isDropTarget { return DS.palette.isDark ? 0.085 : 0.105 }
         if cluster.isUserCreated {
-            return (cluster.viewMode != .canvas || isZone) ? 0.09 : 0.06
+            return (cluster.viewMode != .canvas || isZone)
+                ? (DS.palette.isDark ? 0.050 : 0.070)
+                : (DS.palette.isDark ? 0.030 : 0.045)
         }
-        return 0.05
+        return DS.palette.isDark ? 0.025 : 0.040
+    }
+
+    private func clusterStrokeOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
+        if isDropTarget { return 0.82 }
+        if isSelected { return 0.74 }
+        if isHovered { return 0.34 }
+        return DS.palette.isDark ? 0.24 : 0.18
+    }
+
+    private func clusterStrokeWidth(isSelected: Bool, isDropTarget: Bool) -> CGFloat {
+        if isDropTarget { return 2.25 }
+        if isSelected { return 1.75 }
+        return 1
+    }
+
+    private func clusterGlowOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
+        if isDropTarget { return 0.30 }
+        if isSelected { return 0.22 }
+        if isHovered { return 0.12 }
+        return 0
     }
 
     // MARK: - Gilt Corner Brackets

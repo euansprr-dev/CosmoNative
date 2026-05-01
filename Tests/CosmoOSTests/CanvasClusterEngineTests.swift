@@ -3,6 +3,23 @@ import XCTest
 
 @MainActor
 final class CanvasClusterEngineTests: XCTestCase {
+    func testClusterPaletteDefinesOpaquePremiumBaseColors() {
+        XCTAssertEqual(
+            CanvasCluster.paletteHexes,
+            [
+                "7B7EC0",
+                "9585C0",
+                "C07B9E",
+                "C4A870",
+                "6BAF8E",
+                "62AFC4",
+                "7199C4",
+                "C48B6A",
+            ]
+        )
+        XCTAssertEqual(CanvasCluster.palette.count, CanvasCluster.paletteHexes.count)
+    }
+
     func testFitClusterRectForListAppliesMinimumSize() {
         let clusterId = UUID()
         let engine = CanvasClusterEngine()

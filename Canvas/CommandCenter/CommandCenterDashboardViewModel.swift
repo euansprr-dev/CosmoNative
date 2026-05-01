@@ -151,10 +151,48 @@ class CommandCenterDashboardViewModel: ObservableObject {
     @Published var upcomingDayGroups: [UpcomingDayViewModel] = []
     @Published var upcomingWeekOffset: Int = 0
     @Published var upcomingCalendarEvents: [String: [CalendarEvent]] = [:]  // keyed by date string
+    @Published var upcomingCalendarScope: UpcomingCalendarScope = .week
+    @Published var upcomingAnchorDate: Date = Calendar.current.startOfDay(for: Date())
 
     var upcomingWeekStart: Date {
-        let today = Calendar.current.startOfDay(for: Date())
-        return Calendar.current.date(byAdding: .day, value: upcomingWeekOffset * 7, to: today) ?? today
+        Calendar.current.startOfDay(for: upcomingAnchorDate)
+    }
+
+    var upcomingVisibleDates: [Date] {
+        CommandCenterCalendarLayout.visibleDates(
+            anchor: upcomingAnchorDate,
+            scope: upcomingCalendarScope,
+            calendar: Calendar.current
+        )
+    }
+
+    var upcomingVisibleInterval: DateInterval {
+        CommandCenterCalendarLayout.visibleInterval(
+            anchor: upcomingAnchorDate,
+            scope: upcomingCalendarScope,
+            calendar: Calendar.current
+        )
+    }
+
+    var upcomingRangeText: String {
+        let dates = upcomingVisibleDates
+        guard let first = dates.first, let last = dates.last else { return "" }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+
+        switch upcomingCalendarScope {
+        case .day:
+            let dayFormatter = DateFormatter()
+            dayFormatter.dateFormat = "EEE, MMM d"
+            return dayFormatter.string(from: upcomingAnchorDate)
+        case .week:
+            return "\(formatter.string(from: first)) - \(formatter.string(from: last))"
+        case .month:
+            let monthFormatter = DateFormatter()
+            monthFormatter.dateFormat = "MMMM yyyy"
+            return monthFormatter.string(from: upcomingAnchorDate)
+        }
     }
 
     // MARK: - Things 3 Smart Lists
@@ -279,12 +317,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 Task { [weak self] in
                     guard let self else { return }
                     if self.viewMode == .upcoming {
-                        // Navigate the board to the week containing selected date
-                        let calendar = Calendar.current
-                        let today = calendar.startOfDay(for: Date())
-                        let selected = calendar.startOfDay(for: self.selectedDate)
-                        let daysDiff = calendar.dateComponents([.day], from: today, to: selected).day ?? 0
-                        self.upcomingWeekOffset = daysDiff / 7
+                        self.upcomingAnchorDate = Calendar.current.startOfDay(for: self.selectedDate)
+                        self.syncUpcomingWeekOffset()
                         await self.loadUpcomingTasks()
                     } else {
                         await self.refreshTasks()
@@ -383,6 +417,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
             .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshCalendarEvents()
+                Task { [weak self] in
+                    await self?.loadUpcomingCalendarEvents()
+                }
             }
             .store(in: &cancellables)
     }
@@ -415,7 +452,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
             guard let self else { return }
             await self.performRefresh(domain)
-            await self.finishRefresh(domain)
+            self.finishRefresh(domain)
         }
     }
 
@@ -568,13 +605,11 @@ class CommandCenterDashboardViewModel: ObservableObject {
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
             let calendar = Calendar.current
             let today = calendar.startOfDay(for: Date())
-            let weekStart = upcomingWeekStart
+            let visibleDates = upcomingVisibleDates
 
-            // Build day groups for 7 days from weekStart
             var dayGroups: [UpcomingDayViewModel] = []
 
-            for dayOffset in 0..<7 {
-                let dayStart = calendar.date(byAdding: .day, value: dayOffset, to: weekStart)!
+            for dayStart in visibleDates {
                 let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
 
                 let dayTasks = atoms.compactMap { atom -> TaskViewModel? in
@@ -585,24 +620,33 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     // Exclude overdue tasks from day columns — they appear in the overdue column
                     if vm.isOverdue { return nil }
 
-                    let isDue = vm.dueDate.map { $0 >= dayStart && $0 < dayEnd } ?? false
-                    let isScheduled = vm.scheduledDate.map { $0 >= dayStart && $0 < dayEnd } ?? false
+                    let candidateDates = [
+                        vm.scheduledStart,
+                        vm.scheduledTime,
+                        vm.whenDate,
+                        vm.scheduledDate,
+                        vm.dueDate
+                    ].compactMap { $0 }
 
-                    if isDue || isScheduled { return vm }
+                    if candidateDates.contains(where: { $0 >= dayStart && $0 < dayEnd }) { return vm }
                     return nil
                 }
                 .sorted {
+                    let lhsStart = $0.scheduledStart ?? $0.scheduledTime
+                    let rhsStart = $1.scheduledStart ?? $1.scheduledTime
+                    if lhsStart != rhsStart {
+                        return (lhsStart ?? .distantFuture) < (rhsStart ?? .distantFuture)
+                    }
                     if $0.priority.sortOrder != $1.priority.sortOrder {
                         return $0.priority.sortOrder < $1.priority.sortOrder
                     }
-                    return ($0.scheduledTime ?? .distantFuture) < ($1.scheduledTime ?? .distantFuture)
+                    return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
                 }
 
                 dayGroups.append(UpcomingDayViewModel(date: dayStart, tasks: dayTasks))
             }
 
-            // Collect overdue tasks (only when viewing current week)
-            if upcomingWeekOffset == 0 {
+            if upcomingVisibleInterval.contains(Date()) {
                 let overdue = atoms.compactMap { atom -> TaskViewModel? in
                     guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                     if vm.isCompleted { return nil }
@@ -618,26 +662,37 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
 
             assignIfChanged(\.upcomingDayGroups, to: dayGroups)
-            loadUpcomingCalendarEvents()
+            await loadUpcomingCalendarEvents()
         } catch {
             print("❌ Dashboard: Failed to load upcoming tasks: \(error)")
         }
     }
 
-    private func loadUpcomingCalendarEvents() {
+    func loadUpcomingCalendarEvents() async {
         let calendar = Calendar.current
-        let weekStart = upcomingWeekStart
-        let weekEnd = calendar.date(byAdding: .day, value: 7, to: weekStart)!
+        let interval = upcomingVisibleInterval
+
+        if calendarService.hasCalendarAccess {
+            await calendarService.fetchExternalEvents(for: interval)
+        }
 
         let events = calendarService.externalEvents
-            .filter { $0.startDate >= weekStart && $0.startDate < weekEnd }
+            .filter { $0.startDate < interval.end && $0.endDate > interval.start }
 
         var grouped: [String: [CalendarEvent]] = [:]
         for event in events {
-            let key = calendar.startOfDay(for: event.startDate).formatted(.iso8601.year().month().day())
-            grouped[key, default: []].append(event)
+            let eventStart = calendar.startOfDay(for: max(event.startDate, interval.start))
+            let inclusiveEnd = min(event.endDate.addingTimeInterval(-1), interval.end.addingTimeInterval(-1))
+            let eventEnd = calendar.startOfDay(for: max(eventStart, inclusiveEnd))
+            var cursor = eventStart
+
+            while cursor <= eventEnd && cursor < interval.end {
+                let key = cursor.formatted(.iso8601.year().month().day())
+                grouped[key, default: []].append(event)
+                cursor = calendar.date(byAdding: .day, value: 1, to: cursor) ?? interval.end
+            }
         }
-        // Sort events within each day
+
         for key in grouped.keys {
             grouped[key]?.sort { $0.startDate < $1.startDate }
         }
@@ -744,13 +799,62 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     func shiftUpcomingWeek(by offset: Int) {
-        upcomingWeekOffset += offset
-        Task { await loadUpcomingTasks() }
+        shiftUpcomingRange(by: offset)
     }
 
     func resetUpcomingToToday() {
+        upcomingAnchorDate = Calendar.current.startOfDay(for: Date())
         upcomingWeekOffset = 0
         Task { await loadUpcomingTasks() }
+    }
+
+    func setUpcomingCalendarScope(_ scope: UpcomingCalendarScope) {
+        guard upcomingCalendarScope != scope else { return }
+        upcomingCalendarScope = scope
+        syncUpcomingWeekOffset()
+        Task { await loadUpcomingTasks() }
+    }
+
+    func setUpcomingAnchorDate(_ date: Date) {
+        let day = Calendar.current.startOfDay(for: date)
+        guard !Calendar.current.isDate(day, inSameDayAs: upcomingAnchorDate) else { return }
+        upcomingAnchorDate = day
+        selectedDate = day
+        syncUpcomingWeekOffset()
+        Task { await loadUpcomingTasks() }
+    }
+
+    func shiftUpcomingRange(by offset: Int) {
+        let calendar = Calendar.current
+        let component: Calendar.Component
+        let value: Int
+
+        switch upcomingCalendarScope {
+        case .day:
+            component = .day
+            value = offset
+        case .week:
+            component = .day
+            value = offset * 7
+        case .month:
+            component = .month
+            value = offset
+        }
+
+        upcomingAnchorDate = calendar.startOfDay(
+            for: calendar.date(byAdding: component, value: value, to: upcomingAnchorDate) ?? upcomingAnchorDate
+        )
+        selectedDate = upcomingAnchorDate
+        syncUpcomingWeekOffset()
+        Task { await loadUpcomingTasks() }
+    }
+
+    private func syncUpcomingWeekOffset() {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let selected = calendar.startOfDay(for: upcomingAnchorDate)
+        let daysDiff = calendar.dateComponents([.day], from: today, to: selected).day ?? 0
+        upcomingWeekOffset = daysDiff / 7
     }
 
     // MARK: - Completed Tasks
@@ -1611,6 +1715,206 @@ class CommandCenterDashboardViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func createCalendarTimeBlock(
+        title: String,
+        start: Date,
+        end: Date,
+        body: String? = nil
+    ) async -> TaskViewModel? {
+        do {
+            let normalized = normalizedTimeBlockRange(start: start, end: end)
+            var metadata = TaskMetadata()
+            applyCalendarTimeRange(start: normalized.start, end: normalized.end, to: &metadata)
+
+            if calendarService.hasCalendarAccess,
+               let eventId = try? await calendarService.createCosmoEvent(
+                title: title.isEmpty ? "New Event" : title,
+                start: normalized.start,
+                end: normalized.end
+               ) {
+                metadata.calendarEventId = eventId
+            }
+
+            let metadataString = encodeTaskMetadata(metadata)
+            let atom = Atom.new(
+                type: .task,
+                title: title.isEmpty ? "New Event" : title,
+                body: body?.isEmpty == true ? nil : body,
+                metadata: metadataString
+            )
+            let created = try await AtomRepository.shared.create(atom)
+            await refreshTaskCollectionsAfterMutation()
+            await loadHabits()
+            return TaskViewModel.from(atom: created)
+        } catch {
+            print("❌ Dashboard: Failed to create calendar time block: \(error)")
+            return nil
+        }
+    }
+
+    @discardableResult
+    func createAllDayTask(title: String, date: Date, body: String? = nil) async -> TaskViewModel? {
+        do {
+            let day = Calendar.current.startOfDay(for: date)
+            var metadata = TaskMetadata()
+            let dateString = PlannerumFormatters.iso8601.string(from: day)
+            metadata.dueDate = dateString
+            metadata.focusDate = dateString
+            metadata.whenDate = dateString
+            metadata.schedulingState = nil
+
+            let atom = Atom.new(
+                type: .task,
+                title: title.isEmpty ? "New Event" : title,
+                body: body?.isEmpty == true ? nil : body,
+                metadata: encodeTaskMetadata(metadata)
+            )
+            let created = try await AtomRepository.shared.create(atom)
+            await refreshTaskCollectionsAfterMutation()
+            await loadHabits()
+            return TaskViewModel.from(atom: created)
+        } catch {
+            print("❌ Dashboard: Failed to create all-day task: \(error)")
+            return nil
+        }
+    }
+
+    func updateCalendarTimeBlock(
+        uuid: String,
+        title: String? = nil,
+        body: String? = nil,
+        start: Date,
+        end: Date
+    ) async {
+        do {
+            let normalized = normalizedTimeBlockRange(start: start, end: end)
+            var calendarEventId: String?
+
+            _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
+                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                applyCalendarTimeRange(start: normalized.start, end: normalized.end, to: &metadata)
+
+                if let title { atom.title = title.isEmpty ? "New Event" : title }
+                if let body { atom.body = body.isEmpty ? nil : body }
+                calendarEventId = metadata.calendarEventId
+                atom = atom.withMetadata(metadata)
+            }
+
+            if calendarService.hasCalendarAccess {
+                let resolvedTitle: String
+                if let title, !title.isEmpty {
+                    resolvedTitle = title
+                } else {
+                    resolvedTitle = try await AtomRepository.shared.fetch(uuid: uuid)?.title ?? "New Event"
+                }
+
+                if let calendarEventId {
+                    try? await calendarService.updateCosmoEvent(
+                        eventId: calendarEventId,
+                        title: resolvedTitle,
+                        start: normalized.start,
+                        end: normalized.end
+                    )
+                } else if let newEventId = try? await calendarService.createCosmoEvent(
+                    title: resolvedTitle,
+                    start: normalized.start,
+                    end: normalized.end
+                ) {
+                    _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
+                        var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                        metadata.calendarEventId = newEventId
+                        atom = atom.withMetadata(metadata)
+                    }
+                }
+            }
+
+            await refreshTaskCollectionsAfterMutation()
+            await loadHabits()
+        } catch {
+            print("❌ Dashboard: Failed to update calendar time block: \(error)")
+        }
+    }
+
+    func updateAllDayTask(uuid: String, title: String? = nil, body: String? = nil, date: Date) async {
+        do {
+            let day = Calendar.current.startOfDay(for: date)
+            _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
+                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                let dateString = PlannerumFormatters.iso8601.string(from: day)
+                metadata.dueDate = dateString
+                metadata.focusDate = dateString
+                metadata.whenDate = dateString
+                metadata.startTime = nil
+                metadata.endTime = nil
+                metadata.durationMinutes = nil
+                metadata.scheduledStart = nil
+                metadata.scheduledEnd = nil
+                metadata.schedulingState = nil
+
+                if let title { atom.title = title.isEmpty ? "New Event" : title }
+                if let body { atom.body = body.isEmpty ? nil : body }
+                atom = atom.withMetadata(metadata)
+            }
+            await refreshTaskCollectionsAfterMutation()
+            await loadHabits()
+        } catch {
+            print("❌ Dashboard: Failed to update all-day task: \(error)")
+        }
+    }
+
+    func clearCalendarTimeBlock(uuid: String) async {
+        do {
+            var calendarEventId: String?
+            _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
+                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                calendarEventId = metadata.calendarEventId
+                metadata.startTime = nil
+                metadata.endTime = nil
+                metadata.durationMinutes = nil
+                metadata.scheduledStart = nil
+                metadata.scheduledEnd = nil
+                metadata.calendarEventId = nil
+                atom = atom.withMetadata(metadata)
+            }
+
+            if calendarService.hasCalendarAccess, let calendarEventId {
+                try? await calendarService.deleteCosmoEvent(eventId: calendarEventId)
+            }
+
+            await refreshTaskCollectionsAfterMutation()
+        } catch {
+            print("❌ Dashboard: Failed to clear calendar time block: \(error)")
+        }
+    }
+
+    private func normalizedTimeBlockRange(start: Date, end: Date) -> (start: Date, end: Date) {
+        let snappedStart = CommandCenterCalendarLayout.snappedDate(for: start, calendar: Calendar.current)
+        let snappedEnd = CommandCenterCalendarLayout.snappedDate(for: end, calendar: Calendar.current)
+        let minEnd = Calendar.current.date(byAdding: .minute, value: 15, to: snappedStart) ?? snappedStart.addingTimeInterval(900)
+        return (snappedStart, max(snappedEnd, minEnd))
+    }
+
+    private func applyCalendarTimeRange(start: Date, end: Date, to metadata: inout TaskMetadata) {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: start)
+        let dateString = PlannerumFormatters.iso8601.string(from: day)
+        metadata.dueDate = dateString
+        metadata.focusDate = dateString
+        metadata.whenDate = dateString
+        metadata.startTime = PlannerumFormatters.iso8601.string(from: start)
+        metadata.endTime = PlannerumFormatters.iso8601.string(from: end)
+        metadata.scheduledStart = PlannerumFormatters.iso8601.string(from: start)
+        metadata.scheduledEnd = PlannerumFormatters.iso8601.string(from: end)
+        metadata.durationMinutes = max(15, Int(end.timeIntervalSince(start) / 60))
+        metadata.schedulingState = nil
+    }
+
+    private func encodeTaskMetadata(_ metadata: TaskMetadata) -> String? {
+        guard let data = try? JSONEncoder().encode(metadata) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     func recurrenceRule(for task: TaskViewModel) async -> RecurrenceRule? {
         do {
             guard let atom = try await AtomRepository.shared.fetch(uuid: task.uuid) else {
@@ -1705,7 +2009,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func deleteTask(uuid: String) async {
         do {
+            let calendarEventId = try await AtomRepository.shared.fetch(uuid: uuid)?
+                .metadataValue(as: TaskMetadata.self)?
+                .calendarEventId
             try await AtomRepository.shared.delete(uuid: uuid)
+            if calendarService.hasCalendarAccess, let calendarEventId {
+                try? await calendarService.deleteCosmoEvent(eventId: calendarEventId)
+            }
             await refreshTasks()
             if viewMode == .upcoming {
                 await loadUpcomingTasks()
@@ -2019,7 +2329,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
             // Previous month for trend
             guard let prevMonth = calendar.date(byAdding: .month, value: -1, to: monthStart) else { return }
-            guard let prevMonthRange = calendar.range(of: .day, in: .month, for: prevMonth) else { return }
             let prevComps = calendar.dateComponents([.year, .month], from: prevMonth)
             guard let prevMonthStart = calendar.date(from: prevComps) else { return }
 

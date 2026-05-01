@@ -69,6 +69,9 @@ struct CanvasView: View {
 
     // Thinkspace switch transition
     @State private var thinkspaceSwitchTask: Task<Void, Never>?
+    @State private var sceneTintUpdateTask: Task<Void, Never>?
+    @State private var lastPublishedSceneTintKey: String?
+    @State private var lastPublishedSceneMaterial: CosmoGlassSceneMaterial?
     @State private var canvasContentOpacity: Double = 1.0
     @State private var canvasContentScale: CGFloat = 1.0
     @State private var canvasContentBlur: CGFloat = 0
@@ -192,6 +195,7 @@ struct CanvasView: View {
                         },
                         onChangeColor: { id, colorIndex in
                             clusterEngine.changeClusterColor(id: id, colorIndex: colorIndex)
+                            scheduleSceneTintPublish()
                         },
                         onChangeSortOrder: { id, order in
                             clusterEngine.setSortOrder(for: id, order: order)
@@ -358,17 +362,26 @@ struct CanvasView: View {
             // so 100ms delay is imperceptible. Previously ran 60-120x/sec during pan/zoom.
             .onChange(of: spatialEngine.blocks.count) { _, _ in
                 scheduleFrameUpdate()
+                scheduleSceneTintPublish()
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
             }
             .onChange(of: canvasOffset) { _, _ in
                 scheduleFrameUpdate()
+                scheduleSceneTintPublish()
                 debouncedSaveZoomPan()
             }
             .onChange(of: canvasScale) { _, _ in
                 scheduleFrameUpdate()
+                scheduleSceneTintPublish()
                 debouncedSaveZoomPan()
+            }
+            .onChange(of: selectedBlockId) { _, _ in
+                scheduleSceneTintPublish(delay: .milliseconds(80))
+            }
+            .onChange(of: clusterEngine.selectedClusterId) { _, _ in
+                scheduleSceneTintPublish(delay: .milliseconds(80))
             }
         }
         // NOTE: Removed .drawingGroup() from here - it was breaking async image loading
@@ -820,6 +833,152 @@ struct CanvasView: View {
         guard size.width > 0, size.height > 0, canvasSize != size else { return }
         canvasSize = size
         scheduleFrameUpdate()
+        scheduleSceneTintPublish()
+    }
+
+    private func scheduleSceneTintPublish(delay: Duration = .milliseconds(300)) {
+        sceneTintUpdateTask?.cancel()
+        sceneTintUpdateTask = Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            publishSceneTint()
+        }
+    }
+
+    private func publishSceneTint() {
+        guard canvasIsActive else { return }
+        let tint = currentCanvasSceneTint()
+        let material = currentCanvasSceneMaterial(fallbackTint: tint)
+
+        if lastPublishedSceneTintKey != tint.visualKey {
+            lastPublishedSceneTintKey = tint.visualKey
+            NotificationCenter.default.post(
+                name: .cosmoGlassSceneTintDidChange,
+                object: tint
+            )
+        }
+
+        if lastPublishedSceneMaterial?.isVisuallyEquivalent(to: material) != true {
+            lastPublishedSceneMaterial = material
+            NotificationCenter.default.post(
+                name: .cosmoGlassSceneMaterialDidChange,
+                object: material
+            )
+        }
+    }
+
+    private func currentCanvasSceneTint() -> CosmoGlassSceneTint {
+        let visibleClusters = visibleClusterSignals()
+        let nearClusterColors = visibleClusters.filter { $0.isNearSidebar }.map { $0.color }
+        let visibleBlocks = visibleBlockSignals()
+        let nearBlockColors = visibleBlocks.filter { $0.isNearSidebar }.map { $0.color }
+
+        var palette: [Color] = []
+        palette.append(contentsOf: nearClusterColors)
+        palette.append(contentsOf: nearBlockColors)
+
+        let hasNearContent = !nearClusterColors.isEmpty || !nearBlockColors.isEmpty
+
+        let intensity: Double
+        let edgeIntensity: Double
+        if hasNearContent {
+            intensity = 0.34
+            edgeIntensity = 0.55
+        } else {
+            intensity = 0.08
+            edgeIntensity = 0.10
+        }
+
+        return CosmoGlassSceneTint(
+            primary: paletteColor(at: 0, in: palette, fallback: DS.accent),
+            secondary: paletteColor(at: 1, in: palette, fallback: DS.entityConnection),
+            tertiary: paletteColor(at: 2, in: palette, fallback: DS.green),
+            intensity: intensity,
+            edgeIntensity: edgeIntensity
+        )
+    }
+
+    private func currentCanvasSceneMaterial(fallbackTint: CosmoGlassSceneTint) -> CosmoGlassSceneMaterial {
+        let clusterSignals = visibleClusterSignals().filter { $0.isNearSidebar }
+        let blockSignals = visibleBlockSignals().filter { $0.isNearSidebar }
+        var signals: [CosmoGlassSceneSignal] = []
+
+        signals.append(
+            contentsOf: clusterSignals.prefix(3).map { signal in
+                CosmoGlassSceneSignal(
+                    id: "canvas-cluster-\(signal.id)",
+                    color: signal.color,
+                    rect: signal.rect,
+                    intensity: 0.44,
+                    source: .canvasCluster,
+                    allowsDeepDiffusion: signal.rect.minX < 960
+                )
+            }
+        )
+
+        signals.append(
+            contentsOf: blockSignals.prefix(5).map { signal in
+                CosmoGlassSceneSignal(
+                    id: "canvas-block-\(signal.id)",
+                    color: signal.color,
+                    rect: signal.rect,
+                    intensity: 0.54,
+                    source: .canvasBlock,
+                    allowsDeepDiffusion: signal.rect.minX < 960
+                )
+            }
+        )
+
+        return CosmoGlassSceneMaterial(
+            fallbackTint: fallbackTint,
+            signals: signals,
+            busyness: min(Double(signals.count) / 8.0, 1),
+            luminanceBias: -0.04,
+            mode: signals.isEmpty ? .nativeOnly : .canvasEdgeResponse
+        )
+    }
+
+    private typealias SceneColorSignal = (id: String, color: Color, rect: CGRect, isNearSidebar: Bool)
+
+    private func visibleClusterSignals() -> [SceneColorSignal] {
+        let viewport = CGRect(origin: .zero, size: canvasSize).insetBy(dx: -120, dy: -120)
+        let nearLimit: CGFloat = 1_160
+
+        return clusterEngine.allClusters.compactMap { cluster in
+            let rect = viewportTransform.canvasRectToScreen(cluster.boundingRect)
+            guard rect.width > 1, rect.height > 1, rect.intersects(viewport) else { return nil }
+            return ("\(cluster.id)", cluster.color, rect, rect.minX <= nearLimit)
+        }
+    }
+
+    private func visibleBlockSignals() -> [SceneColorSignal] {
+        let viewport = CGRect(origin: .zero, size: canvasSize).insetBy(dx: -120, dy: -120)
+        let nearLimit: CGFloat = 1_160
+
+        return spatialEngine.blocks.compactMap { block in
+            let rect = screenRect(for: block)
+            guard rect.intersects(viewport) else { return nil }
+            return (block.id, block.entityType.color, rect, rect.minX <= nearLimit)
+        }
+    }
+
+    private func screenRect(for block: CanvasBlock) -> CGRect {
+        let center = viewportTransform.canvasToScreen(block.position)
+        let scale = viewportTransform.effectiveScale
+        let size = CGSize(
+            width: block.size.width * scale,
+            height: block.size.height * scale
+        )
+        return CGRect(
+            x: center.x - size.width / 2,
+            y: center.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    private func paletteColor(at index: Int, in palette: [Color], fallback: Color) -> Color {
+        palette.indices.contains(index) ? palette[index] : fallback
     }
 
     // MARK: - Body
@@ -855,6 +1014,7 @@ struct CanvasView: View {
                         thinkspaceId: thinkspaceId,
                         blocks: spatialEngine.blocks
                     )
+                    scheduleSceneTintPublish(delay: .milliseconds(80))
                     
                 }
 
@@ -1401,6 +1561,8 @@ struct CanvasView: View {
                 }
                 isSpaceHeld = false
                 removeCanvasObservers()
+                sceneTintUpdateTask?.cancel()
+                sceneTintUpdateTask = nil
                 thinkspaceSwitchTask?.cancel()
                 thinkspaceSwitchTask = nil
             }
@@ -1409,6 +1571,9 @@ struct CanvasView: View {
             }
             .onChange(of: isActive) { _, newValue in
                 canvasIsActive = newValue
+                if newValue {
+                    scheduleSceneTintPublish(delay: .milliseconds(80))
+                }
                 if !newValue && isSpaceHeld {
                     isSpaceHeld = false
                 }
@@ -1459,6 +1624,7 @@ struct CanvasView: View {
                     guard !Task.isCancelled else { return }
 
                     rebuildMediaContentCache()
+                    scheduleSceneTintPublish(delay: .milliseconds(80))
 
                     // Set entry starting position (small/far — behind the background)
                     canvasContentScale = 0.97

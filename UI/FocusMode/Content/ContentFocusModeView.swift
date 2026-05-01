@@ -698,6 +698,9 @@ struct ContentFocusModeView: View {
                 onCustomPrompt: { prompt in triggerCustomPrompt(prompt) },
                 onWritingAIRequest: { openWritingAI() },
                 focusBandRange: focusBandRange,
+                focusBandRangeProvider: { plainText, selectionRange in
+                    focusBandRange(for: selectionRange, mode: focusBandMode, in: plainText)
+                },
                 onDocumentChange: { document, plainText in
                     let changed = plainText != localDraftContent
                     print("[FOCUS-CONTENT] onDocumentChange(draft) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")

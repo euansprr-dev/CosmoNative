@@ -85,6 +85,12 @@ struct InboxView: View {
         }
         .padding(.horizontal, DS.space24)
         .padding(.vertical, DS.space16)
+        .cosmoGlassSceneSignal(
+            id: "inbox-header",
+            source: .routeAccent,
+            color: DS.accent,
+            intensity: 0.18
+        )
     }
 
     private var visibleItemCount: Int {
@@ -149,6 +155,13 @@ struct InboxView: View {
         InboxCaptureBar(viewModel: viewModel)
             .padding(.horizontal, DS.space24)
             .padding(.bottom, DS.space12)
+            .cosmoGlassSceneSignal(
+                id: "inbox-capture-bar",
+                source: .inboxFilter,
+                color: DS.accent,
+                intensity: 0.26,
+                allowsDeepDiffusion: true
+            )
     }
 
     // MARK: - Stats & Filters
@@ -233,6 +246,13 @@ struct InboxView: View {
             .animation(
                 ProMotionSprings.staggered(index: index),
                 value: item.uuid
+            )
+            .cosmoGlassSceneSignal(
+                id: "inbox-item-\(item.uuid)",
+                source: .inboxItem,
+                color: inboxSignalColor(for: item),
+                intensity: item.isRead ? 0.20 : 0.32,
+                allowsDeepDiffusion: index < 3
             )
             .onAppear { viewModel.markReadIfNeeded(item) }
             .onTapGesture(count: 1) {
@@ -453,5 +473,18 @@ struct InboxView: View {
         if interval < 3600 { return "\(Int(interval / 60))m ago" }
         if interval < 86400 { return "\(Int(interval / 3600))h ago" }
         return "\(Int(interval / 86400))d ago"
+    }
+
+    private func inboxSignalColor(for item: InboxItem) -> Color {
+        switch item.classification {
+        case .merge:
+            return DS.orange
+        case .place:
+            return DS.accent
+        case .new:
+            return DS.classNew
+        case .none:
+            return DS.textMuted
+        }
     }
 }

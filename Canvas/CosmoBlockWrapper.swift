@@ -159,6 +159,9 @@ struct CosmoBlockWrapper<Content: View>: View {
             .background(blockBackground)
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
             .overlay(blockBorder)
+            .overlay(alignment: .topTrailing) {
+                blockAccentChip
+            }
             .overlay(alignment: .topLeading) {
                 if !suppressGiltCorner {
                     GiltCornerBracket()
@@ -267,11 +270,31 @@ struct CosmoBlockWrapper<Content: View>: View {
         if isSelected {
             ZStack {
                 shape.fill(baseSurface)
-                shape.fill(accentColor.opacity(0.035))
+                shape.fill(accentColor.opacity(DS.palette.isDark ? 0.060 : 0.045))
             }
         } else {
             shape.fill(baseSurface)
         }
+    }
+
+    private var blockAccentChip: some View {
+        Capsule(style: .continuous)
+            .fill(accentColor.opacity(blockAccentOpacity))
+            .frame(width: isSelected ? 34 : 28, height: isSelected ? 4 : 3)
+            .padding(8)
+            .shadow(
+                color: isSelected ? accentColor.opacity(0.26) : .clear,
+                radius: 5,
+                x: 0,
+                y: 0
+            )
+            .allowsHitTesting(false)
+    }
+
+    private var blockAccentOpacity: Double {
+        if isSelected { return 0.92 }
+        if isHovered { return 0.70 }
+        return DS.palette.isDark ? 0.48 : 0.40
     }
 
     // MARK: - Border
@@ -281,7 +304,7 @@ struct CosmoBlockWrapper<Content: View>: View {
         return ZStack {
             if isSelected {
                 // Selected: accent stroke + warm inner sepia line for richness
-                shape.stroke(accentColor.opacity(0.55), lineWidth: 1)
+                shape.stroke(accentColor.opacity(0.78), lineWidth: 1.25)
             } else if crystallizationLevel > .raw {
                 // Crystallization levels keep accent-tinted borders
                 shape.stroke(
@@ -297,10 +320,15 @@ struct CosmoBlockWrapper<Content: View>: View {
             // Outer glow for connected+ levels
             if crystallizationLevel >= .connected && !isSelected {
                 shape.stroke(
-                    accentColor.opacity(crystallizationLevel == .crystallized ? 0.3 : 0.15),
+                    accentColor.opacity(crystallizationLevel == .crystallized ? 0.34 : 0.18),
                     lineWidth: 2
                 )
                 .blur(radius: crystallizationLevel == .crystallized ? 8 : 4)
+            }
+
+            if isSelected {
+                shape.stroke(accentColor.opacity(0.22), lineWidth: 3)
+                    .blur(radius: 6)
             }
         }
     }

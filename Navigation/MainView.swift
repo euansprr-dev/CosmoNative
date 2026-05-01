@@ -49,6 +49,10 @@ struct MainView: View {
     @AppStorage("unifiedSidebarContext") private var activeSidebarContext: SidebarContext = .thinkspaces
     @State private var sidebarPanelWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
     @State private var sidebarInteractionWidth: CGFloat = 0
+    @State private var sidebarReservedWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
+    @State private var canvasSceneTint: CosmoGlassSceneTint = .fallback
+    @State private var canvasSceneMaterial: CosmoGlassSceneMaterial = .fallback
+    @State private var routeSceneSignals: [CosmoGlassSceneSignal] = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
@@ -691,56 +695,125 @@ struct MainView: View {
 
     @ViewBuilder
     private var mainContentLayout: some View {
-        ZStack(alignment: .leading) {
-            HStack(spacing: 0) {
-                if !isSidebarHidden {
-                    sidebarPanel
-                        .transition(.move(edge: .leading).combined(with: .opacity))
-                        .zIndex(20)
-                }
+        GeometryReader { geo in
+            let sidebarLayout = sidebarLayoutMetrics(for: geo.size)
 
-                SplitPaneContainer(paneManager: paneManager) {
-                    ZStack {
-                        destinationContent
-                        focusModeOverlay
+            ZStack(alignment: .leading) {
+                if shouldUnderlapCanvasBehindSidebar {
+                    SplitPaneContainer(paneManager: paneManager) {
+                        ZStack {
+                            destinationContent
+                            focusModeOverlay
+                        }
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .zIndex(appState.focusedEntity != nil ? 195 : 10)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+
+                    if !isSidebarHidden {
+                        sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
+                            .padding(.leading, sidebarLayout.leadingInset)
+                            .padding(.trailing, sidebarLayout.trailingInset)
+                            .padding(.vertical, sidebarLayout.verticalInset)
+                            .frame(
+                                width: sidebarLayout.reservedWidth,
+                                height: geo.size.height,
+                                alignment: .leading
+                            )
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                            .zIndex(20)
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        if !isSidebarHidden {
+                            sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
+                                .padding(.leading, sidebarLayout.leadingInset)
+                                .padding(.trailing, sidebarLayout.trailingInset)
+                                .padding(.vertical, sidebarLayout.verticalInset)
+                                .frame(
+                                    width: sidebarLayout.reservedWidth,
+                                    height: geo.size.height,
+                                    alignment: .leading
+                                )
+                                .transition(.move(edge: .leading).combined(with: .opacity))
+                                .zIndex(20)
+                        }
+
+                        SplitPaneContainer(paneManager: paneManager) {
+                            ZStack {
+                                destinationContent
+                                focusModeOverlay
+                            }
+                        }
+                        .zIndex(appState.focusedEntity != nil ? 195 : 10)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
                     }
                 }
-                .zIndex(appState.focusedEntity != nil ? 195 : 10)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
-            }
 
-            if isSidebarHidden && appState.focusedEntity == nil {
-                sidebarToggleButton
-                    .zIndex(201)
-            }
+                if isSidebarHidden && appState.focusedEntity == nil {
+                    sidebarToggleButton
+                        .zIndex(201)
+                }
 
-            if crossDragManager.isOverSidebar || crossDragManager.hasThinkspaceSwitched,
-               let block = crossDragManager.draggedBlock {
-                CrossThinkspaceDragPreview(block: block)
-                    .position(crossDragManager.floatingPosition)
-                    .transition(.scale(scale: 0.8).combined(with: .opacity))
-                    .zIndex(10000)
-                    .allowsHitTesting(false)
+                if crossDragManager.isOverSidebar || crossDragManager.hasThinkspaceSwitched,
+                   let block = crossDragManager.draggedBlock {
+                    CrossThinkspaceDragPreview(block: block)
+                        .position(crossDragManager.floatingPosition)
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                        .zIndex(10000)
+                        .allowsHitTesting(false)
+                }
             }
-        }
-        .background(DS.canvas)
-        .animation(sidebarAnimation, value: isSidebarHidden)
-        .animation(sidebarAnimation, value: sidebarPanelWidth)
-        .onAppear {
-            syncSidebarContext(with: currentDestination)
-            restoreSidebarState()
-            setupCrossThinkspaceDragCallbacks()
-            updateSidebarInteractionWidth()
-        }
-        .onChange(of: isSidebarHidden) { _, _ in
-            updateSidebarInteractionWidth()
-        }
-        .onChange(of: sidebarPanelWidth) { _, _ in
-            updateSidebarInteractionWidth()
+            .background {
+                appSceneBackdrop
+            }
+            .coordinateSpace(name: CosmoGlassSceneMaterial.coordinateSpaceName)
+            .animation(sidebarAnimation, value: isSidebarHidden)
+            .animation(sidebarAnimation, value: sidebarPanelWidth)
+            .animation(sceneTintAnimation, value: sidebarSceneTintAnimationKey)
+            .onAppear {
+                syncSidebarContext(with: currentDestination)
+                restoreSidebarState()
+                setupCrossThinkspaceDragCallbacks()
+                updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
+            }
+            .onChange(of: geo.size) { _, newSize in
+                updateSidebarInteractionWidth(
+                    reservedWidth: sidebarLayoutMetrics(for: newSize).reservedWidth
+                )
+            }
+            .onChange(of: isSidebarHidden) { _, _ in
+                updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
+            }
+            .onChange(of: sidebarPanelWidth) { _, _ in
+                updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .cosmoGlassSceneTintDidChange)) { notification in
+                guard let tint = notification.object as? CosmoGlassSceneTint else { return }
+                canvasSceneTint = tint
+                let material = CosmoGlassSceneMaterial(fallbackTint: tint, mode: .canvasEdgeResponse)
+                if !canvasSceneMaterial.isVisuallyEquivalent(to: material) {
+                    canvasSceneMaterial = material
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .cosmoGlassSceneMaterialDidChange)) { notification in
+                guard let material = notification.object as? CosmoGlassSceneMaterial else { return }
+                canvasSceneTint = material.representativeTint
+                if !canvasSceneMaterial.isVisuallyEquivalent(to: material) {
+                    canvasSceneMaterial = material
+                }
+            }
+            .onPreferenceChange(CosmoGlassSceneSignalPreferenceKey.self) { signals in
+                let visibleSignals = signals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
+                let cappedSignals = Array(visibleSignals.prefix(8))
+                if routeSceneSignals != cappedSignals {
+                    routeSceneSignals = cappedSignals
+                }
+            }
         }
     }
 
-    private var sidebarPanel: some View {
+    private func sidebarPanel(cornerRadius: CGFloat) -> some View {
         UnifiedSidebar(
             currentDestination: $currentDestination,
             inboxRoute: $inboxRoute,
@@ -748,6 +821,9 @@ struct MainView: View {
             panelWidth: $sidebarPanelWidth,
             thinkspaceManager: thinkspaceManager,
             commandCenterViewModel: commandCenterViewModel,
+            sceneTint: activeSidebarSceneTint,
+            sceneMaterial: activeSidebarSceneMaterial,
+            cornerRadius: cornerRadius,
             onClose: { closeSidebar() }
         )
         .environmentObject(crossDragManager)
@@ -788,8 +864,32 @@ struct MainView: View {
         }
     }
 
-    private func updateSidebarInteractionWidth() {
-        sidebarInteractionWidth = isSidebarHidden ? 0 : sidebarPanelWidth
+    private struct SidebarLayoutMetrics {
+        var leadingInset: CGFloat
+        var trailingInset: CGFloat
+        var verticalInset: CGFloat
+        var cornerRadius: CGFloat
+        var reservedWidth: CGFloat
+    }
+
+    private func sidebarLayoutMetrics(for size: CGSize) -> SidebarLayoutMetrics {
+        let allowsInset = size.width >= 860 && size.height >= 500
+        let horizontalInset = allowsInset ? UnifiedSidebarMetrics.floatingMargin : 0
+        let verticalInset = allowsInset ? UnifiedSidebarMetrics.floatingMargin : 0
+        return SidebarLayoutMetrics(
+            leadingInset: horizontalInset,
+            trailingInset: horizontalInset,
+            verticalInset: verticalInset,
+            cornerRadius: allowsInset ? UnifiedSidebarMetrics.panelCornerRadius : 0,
+            reservedWidth: sidebarPanelWidth + horizontalInset + horizontalInset
+        )
+    }
+
+    private func updateSidebarInteractionWidth(reservedWidth: CGFloat? = nil) {
+        if let reservedWidth {
+            sidebarReservedWidth = reservedWidth
+        }
+        sidebarInteractionWidth = isSidebarHidden ? 0 : sidebarReservedWidth
         crossDragManager.sidebarWidth = sidebarInteractionWidth
     }
 
@@ -810,6 +910,99 @@ struct MainView: View {
         case .codex:
             break
         }
+    }
+
+    private var shouldUnderlapCanvasBehindSidebar: Bool {
+        isCanvasDestination && appState.focusedEntity == nil
+    }
+
+    @ViewBuilder
+    private var appSceneBackdrop: some View {
+        if appState.focusedEntity != nil {
+            DS.bg.ignoresSafeArea()
+        } else if isCanvasDestination {
+            canvasSidebarBackdrop
+        } else {
+            DS.bg.ignoresSafeArea()
+        }
+    }
+
+    private var canvasSidebarBackdrop: some View {
+        ZStack {
+            DS.canvas.ignoresSafeArea()
+            ThinkspaceAuroraView().ignoresSafeArea()
+            FilmGrainOverlay(opacity: DS.palette.isDark ? 0.014 : 0.010)
+                .blendMode(DS.palette.isDark ? .screen : .multiply)
+                .ignoresSafeArea()
+        }
+    }
+
+    private var activeSidebarSceneTint: CosmoGlassSceneTint {
+        if let focusedEntity = appState.focusedEntity {
+            return focusModeSceneTint(for: focusedEntity.type)
+        }
+
+        switch currentDestination {
+        case .thinkspace:
+            return canvasSceneTint.dampened(0.58)
+        case .commandCenter, .inbox, .codex:
+            return .neutral
+        }
+    }
+
+    private var activeSidebarSceneMaterial: CosmoGlassSceneMaterial {
+        if let focusedEntity = appState.focusedEntity {
+            let tint = focusModeSceneTint(for: focusedEntity.type)
+            return CosmoGlassSceneMaterial(fallbackTint: tint, mode: .rimAccentOnly)
+        }
+
+        switch currentDestination {
+        case .thinkspace:
+            return canvasSceneMaterial.dampened(0.82)
+        case .commandCenter, .inbox:
+            return sidebarRouteSceneMaterial
+        case .codex:
+            return .neutral
+        }
+    }
+
+    private var sidebarRouteSceneMaterial: CosmoGlassSceneMaterial {
+        guard !routeSceneSignals.isEmpty else { return .neutral }
+
+        let signals = Array(routeSceneSignals.prefix(8))
+        let fallbackTint = CosmoGlassSceneTint(
+            primary: signals.first?.color ?? DS.textMuted,
+            secondary: signals.dropFirst().first?.color ?? DS.surfaceElevated,
+            tertiary: signals.dropFirst(2).first?.color ?? DS.borderActive,
+            intensity: 0.12,
+            edgeIntensity: 0.22
+        )
+
+        return CosmoGlassSceneMaterial(
+            fallbackTint: fallbackTint,
+            signals: signals,
+            busyness: min(Double(signals.count) / 8.0, 1),
+            luminanceBias: DS.palette.isDark ? -0.06 : 0.04,
+            mode: .canvasEdgeResponse
+        )
+    }
+
+    private func focusModeSceneTint(for type: EntityType) -> CosmoGlassSceneTint {
+        CosmoGlassSceneTint(
+            primary: type.color,
+            secondary: DS.textMuted,
+            tertiary: DS.surfaceElevated,
+            intensity: 0.10,
+            edgeIntensity: 0.16
+        )
+    }
+
+    private var sceneTintAnimation: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 0.32)
+    }
+
+    private var sidebarSceneTintAnimationKey: String {
+        "\(currentDestination)-\(appState.focusedEntity?.type.rawValue ?? "scene")"
     }
 
     /// Wire up cross-thinkspace drag manager callbacks

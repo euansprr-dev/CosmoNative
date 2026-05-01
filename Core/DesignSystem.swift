@@ -229,6 +229,65 @@ enum DS {
     static var glassBorderFocused: Color { palette.glassBorderFocused }
 
     // ═══════════════════════════════════════════════════════════════
+    // SIDEBAR MATERIAL — Semantic glass panel tokens
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Base wash layered above native macOS material for major app sidebars.
+    static var sidebarMaterialBase: Color {
+        palette.isDark ? Color.black.opacity(0.026) : Color.white.opacity(0.070)
+    }
+
+    /// Solid fallback used when Reduce Transparency is enabled.
+    static var sidebarMaterialFallback: Color {
+        palette.isDark ? palette.surface : palette.surfaceElevated
+    }
+
+    /// Hairline material edge.
+    static var sidebarMaterialBorder: Color {
+        palette.isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.085)
+    }
+
+    /// Top/leading highlight for the glass surface.
+    static var sidebarMaterialHighlight: Color {
+        palette.isDark ? Color.white.opacity(0.24) : Color.white.opacity(0.54)
+    }
+
+    /// Inner shade that keeps translucent panels readable.
+    static var sidebarMaterialInnerShade: Color {
+        palette.isDark ? Color.black.opacity(0.032) : Color.black.opacity(0.014)
+    }
+
+    /// Ambient scene tint cap for global sidebars.
+    static var sidebarMaterialAmbientOpacity: Double {
+        palette.isDark ? 0.034 : 0.020
+    }
+
+    /// Stronger tint cap along the content-facing edge.
+    static var sidebarMaterialEdgeTintOpacity: Double {
+        palette.isDark ? 0.050 : 0.030
+    }
+
+    /// Subtle edge response used only when canvas content is physically near the sidebar.
+    static var sidebarMaterialCanvasEdgeOpacity: Double {
+        palette.isDark ? 0.064 : 0.040
+    }
+
+    /// Tiny rim-only accent cap for focus or compatibility tints.
+    static var sidebarMaterialRimAccentOpacity: Double {
+        palette.isDark ? 0.006 : 0.004
+    }
+
+    /// Low-cost noir texture opacity for major glass panels.
+    static var sidebarMaterialNoiseOpacity: Double {
+        palette.isDark ? 0.012 : 0.008
+    }
+
+    /// Exterior shadow for inset glass panels.
+    static var sidebarMaterialShadow: Color {
+        Color.black.opacity(palette.isDark ? 0.075 : 0.028)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // TYPOGRAPHY — System font (SF Pro) everywhere
     // Complete type scale: display → caption2
     // ═══════════════════════════════════════════════════════════════

@@ -274,6 +274,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var baseFontWeight: NSFont.Weight = .regular
     var polishHighlights: WritingAnalysis? = nil
     var focusBandRange: NSRange? = nil
+    var focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil
     var textAlignment: NSTextAlignment = .natural
 
     var typewriterMode: Bool = false
@@ -699,7 +700,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
 
-            guard let requestedRange = parent.focusBandRange,
+            let requestedRange: NSRange?
+            if let provider = parent.focusBandRangeProvider {
+                requestedRange = provider(textView.string, textView.selectedRange())
+            } else {
+                requestedRange = parent.focusBandRange
+            }
+
+            guard let requestedRange,
                   requestedRange.location != NSNotFound else {
                 return
             }
@@ -745,6 +753,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             normalizeSingleLineViewport(for: textView)
             syncBindings(from: textView)
+            applyFocusBand(to: textView)
 
             let text = textView.string
             let cursorLocation = textView.selectedRange().location
@@ -834,6 +843,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             guard !isUpdatingFromSwiftUI else { return }
 
             parent.cursorPosition = selectedRange.location
+            applyFocusBand(to: textView)
 
             // Auto-detect block mode based on current line prefix (must run for ALL cursor positions)
             let lineRange = currentLineRange(in: textView)

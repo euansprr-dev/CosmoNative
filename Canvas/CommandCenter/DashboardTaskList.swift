@@ -19,28 +19,32 @@ struct DashboardTaskList: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 0) {
-                switch viewModel.viewMode {
-                case .today:
-                    todayView
-                case .upcoming:
-                    upcomingView
-                case .logbook:
-                    completedView
-                case .anytime:
-                    anytimeView
-                case .someday:
-                    somedayView
-                case .project:
-                    projectView
-                case .area:
-                    EmptyView()
+        if viewModel.viewMode == .upcoming {
+            upcomingView
+        } else {
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    switch viewModel.viewMode {
+                    case .today:
+                        todayView
+                    case .upcoming:
+                        EmptyView()
+                    case .logbook:
+                        completedView
+                    case .anytime:
+                        anytimeView
+                    case .someday:
+                        somedayView
+                    case .project:
+                        projectView
+                    case .area:
+                        EmptyView()
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollIndicators(.never)
         }
-        .scrollIndicators(.never)
     }
 
     // MARK: - Today View

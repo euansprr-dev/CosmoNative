@@ -28,26 +28,31 @@ struct UniversalFocusSidebar<Content: View>: View {
         // Conditional rendering — sidebar is completely removed from the view tree when hidden.
         // This eliminates ghost hit areas from .offset() (which only moves visuals, not hit testing).
         if shouldShow {
-            VStack(spacing: 0) {
-                header
+            CosmoGlassPanel(
+                sceneTint: CosmoGlassSceneTint(
+                    primary: accentColor,
+                    secondary: DS.accent,
+                    tertiary: DS.entityContent,
+                    intensity: 0.54,
+                    edgeIntensity: 0.64
+                ),
+                role: .focusSidebar,
+                cornerRadius: 18
+            ) {
+                VStack(spacing: 0) {
+                    header
 
-                Divider()
-                    .background(DS.borderActive)
+                    Divider()
+                        .background(DS.sidebarMaterialBorder)
 
-                ScrollView {
-                    content()
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
+                    ScrollView {
+                        content()
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 12)
+                    }
                 }
             }
             .frame(width: sidebarWidth)
-            .background(DS.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(DS.border, lineWidth: 1)
-            )
-            .dsFloatingShadow()
             .padding(.bottom, 16)
             .transition(.move(edge: .leading).combined(with: .opacity))
             .onHover { hovering in

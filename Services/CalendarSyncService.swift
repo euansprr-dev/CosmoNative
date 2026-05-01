@@ -17,6 +17,7 @@ public struct CalendarEvent: Identifiable, Equatable {
     public let calendarName: String
     public let calendarColor: NSColor
     public let isExternal: Bool  // true = from Apple Calendar, false = CosmoOS-created
+    public let isAllDay: Bool
 
     public var duration: TimeInterval {
         endDate.timeIntervalSince(startDate)
@@ -33,7 +34,8 @@ public struct CalendarEvent: Identifiable, Equatable {
         endDate: Date,
         calendarName: String,
         calendarColor: NSColor = .systemBlue,
-        isExternal: Bool = true
+        isExternal: Bool = true,
+        isAllDay: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -42,6 +44,7 @@ public struct CalendarEvent: Identifiable, Equatable {
         self.calendarName = calendarName
         self.calendarColor = calendarColor
         self.isExternal = isExternal
+        self.isAllDay = isAllDay
     }
 
     /// SwiftUI-compatible color from NSColor
@@ -197,9 +200,6 @@ public class CalendarSyncService: ObservableObject {
                 return nil
             }
 
-            // Skip all-day events
-            if event.isAllDay { return nil }
-
             return CalendarEvent(
                 id: event.eventIdentifier,
                 title: event.title ?? "Untitled",
@@ -207,7 +207,8 @@ public class CalendarSyncService: ObservableObject {
                 endDate: event.endDate,
                 calendarName: event.calendar.title,
                 calendarColor: NSColor(cgColor: event.calendar.cgColor) ?? .systemBlue,
-                isExternal: true
+                isExternal: true,
+                isAllDay: event.isAllDay
             )
         }
         .sorted { $0.startDate < $1.startDate }

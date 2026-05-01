@@ -81,11 +81,7 @@ struct CommandCenterMasthead: View {
     }
 
     private var upcomingWeekText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        let start = viewModel.upcomingWeekStart
-        let end = Calendar.current.date(byAdding: .day, value: 6, to: start) ?? start
-        return "\(formatter.string(from: start)) - \(formatter.string(from: end))"
+        viewModel.upcomingRangeText
     }
 
     private var formattedTodayTotal: String {

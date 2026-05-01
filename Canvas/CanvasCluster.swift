@@ -87,17 +87,20 @@ struct CanvasCluster: Identifiable {
     /// Grouping mode for board columns
     var boardGrouping: ClusterBoardGrouping = .auto
 
-    // 8-color muted palette — visible on light canvas backgrounds
-    static let palette: [Color] = [
-        Color(hex: "6366F1").opacity(0.6),  // Indigo
-        Color(hex: "8B5CF6").opacity(0.6),  // Violet
-        Color(hex: "EC4899").opacity(0.6),  // Pink
-        Color(hex: "D97706").opacity(0.6),  // Amber
-        Color(hex: "2D6A4F").opacity(0.6),  // Forest green
-        Color(hex: "06B6D4").opacity(0.6),  // Cyan
-        Color(hex: "3B82F6").opacity(0.6),  // Blue
-        Color(hex: "C4783A").opacity(0.6),  // Warm orange
+    // 8-color premium palette. Keep these as opaque base colors and apply
+    // opacity at render sites so interaction states can feel precise.
+    static let paletteHexes = [
+        "7B7EC0",  // Dusty indigo
+        "9585C0",  // Lavender gray
+        "C07B9E",  // Dusty rose
+        "C4A870",  // Antique gold
+        "6BAF8E",  // Sage
+        "62AFC4",  // Muted cyan
+        "7199C4",  // Steel blue
+        "C48B6A",  // Warm clay
     ]
+
+    static let palette: [Color] = paletteHexes.map { Color(hex: $0) }
 
     var color: Color { Self.palette[colorIndex % Self.palette.count] }
 

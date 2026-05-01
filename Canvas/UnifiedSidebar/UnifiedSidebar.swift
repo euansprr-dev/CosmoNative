@@ -133,6 +133,7 @@ enum UnifiedSidebarMetrics {
 
     static let moduleRadius: CGFloat = 12
     static let rowRadius: CGFloat = 10
+    static let panelCornerRadius: CGFloat = 22
 
     static let commandPillHeight: CGFloat = 34
     static let standardRowHeight: CGFloat = 40
@@ -205,12 +206,29 @@ private struct UnifiedSidebarRowChromeModifier: ViewModifier {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(isActive ? activeFill : (isHovered ? hoverFill : Color.clear))
+                    .fill(isActive ? activeFill.opacity(0.78) : (isHovered ? hoverFill.opacity(0.58) : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(isActive ? activeBorder : Color.clear, lineWidth: 1)
+                    .stroke(isActive ? activeBorder.opacity(0.7) : DS.sidebarMaterialHighlight.opacity(isHovered ? 0.16 : 0), lineWidth: 0.75)
             )
+            .overlay(alignment: .topLeading) {
+                if isActive {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    DS.sidebarMaterialHighlight.opacity(0.22),
+                                    Color.clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 0.55
+                        )
+                        .allowsHitTesting(false)
+                }
+            }
     }
 }
 
@@ -219,9 +237,9 @@ extension View {
         isActive: Bool,
         isHovered: Bool,
         cornerRadius: CGFloat = UnifiedSidebarMetrics.rowRadius,
-        activeFill: Color = DS.giltSoft,
-        hoverFill: Color = DS.vellumDeep,
-        activeBorder: Color = .clear
+        activeFill: Color = DS.accentSoft,
+        hoverFill: Color = DS.surfaceHover,
+        activeBorder: Color = DS.sidebarMaterialBorder
     ) -> some View {
         modifier(
             UnifiedSidebarRowChromeModifier(
@@ -245,12 +263,14 @@ struct UnifiedSidebar: View {
     @Binding var panelWidth: CGFloat
     @ObservedObject var thinkspaceManager: ThinkspaceManager
     @ObservedObject var commandCenterViewModel: CommandCenterDashboardViewModel
+    var sceneTint: CosmoGlassSceneTint = .fallback
+    var sceneMaterial: CosmoGlassSceneMaterial? = nil
+    var cornerRadius: CGFloat = UnifiedSidebarMetrics.panelCornerRadius
     var onClose: () -> Void = {}
     var onNavigate: () -> Void = {}
 
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     @State private var hoveredFooterItem: String?
     @State private var hoveredHeaderItem: String?
@@ -278,42 +298,29 @@ struct UnifiedSidebar: View {
         String(userFirstName.prefix(1)).uppercased()
     }
 
-    @ViewBuilder
-    private var sidebarBackground: some View {
-        if reduceTransparency {
-            Rectangle()
-                .fill(DS.surface)
-        } else {
-            ZStack {
-                Rectangle()
-                    .fill(.regularMaterial)
-                Rectangle()
-                    .fill(DS.surface.opacity(DS.palette.isDark ? 0.58 : 0.36))
-            }
-        }
-    }
-
     var body: some View {
-        VStack(spacing: 0) {
-            sidebarHeader
+        CosmoGlassPanel(
+            sceneTint: sceneTint,
+            sceneMaterial: sceneMaterial,
+            role: .globalSidebar,
+            cornerRadius: cornerRadius
+        ) {
+            VStack(spacing: 0) {
+                sidebarHeader
 
-            ScrollView(.vertical) {
-                sidebarBody
-                .padding(.horizontal, outerPadding)
-                .padding(.vertical, UnifiedSidebarMetrics.contentVerticalPadding)
+                ScrollView(.vertical) {
+                    sidebarBody
+                    .padding(.horizontal, outerPadding)
+                    .padding(.vertical, UnifiedSidebarMetrics.contentVerticalPadding)
+                }
+                .scrollIndicators(.hidden)
+
+                sidebarFooter
             }
-            .scrollIndicators(.hidden)
-
-            sidebarFooter
         }
         .frame(width: sidebarWidth)
         .frame(maxHeight: .infinity)
-        .background(sidebarBackground)
         .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(DS.glassBorder)
-                .frame(width: 0.5)
-
             resizeHandle
                 .padding(.trailing, 2)
         }
@@ -572,7 +579,7 @@ struct UnifiedSidebar: View {
             .contentShape(Rectangle())
             .overlay(alignment: .center) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(isResizeHandleHovered ? DS.borderActive : DS.glassBorder)
+                    .fill(isResizeHandleHovered ? DS.borderActive : DS.sidebarMaterialBorder)
                     .frame(width: 2, height: 52)
                     .opacity(isResizeHandleHovered || resizeStartWidth != nil ? 1 : 0.5)
                     .padding(.trailing, 2)

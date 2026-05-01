@@ -227,7 +227,7 @@ struct SidebarThinkspaceSection: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(color)
+                    .fill(color.opacity(isSelected ? 1.0 : 0.78))
                     .frame(width: 6, height: 6)
 
                 Text(label)
@@ -238,10 +238,14 @@ struct SidebarThinkspaceSection: View {
             .padding(.horizontal, 10)
             .frame(height: 28)
             .background(
-                Capsule().fill(isSelected ? color.opacity(0.12) : DS.bg)
+                Capsule().fill(
+                    isSelected
+                        ? color.opacity(DS.palette.isDark ? 0.18 : 0.14)
+                        : DS.bg
+                )
             )
             .overlay(
-                Capsule().stroke(isSelected ? color.opacity(0.22) : DS.borderSubtle, lineWidth: 1)
+                Capsule().stroke(isSelected ? color.opacity(0.36) : DS.borderSubtle, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -326,6 +330,8 @@ struct SidebarThinkspaceSection: View {
     }
 
     private func thinkspaceRow(_ thinkspace: Thinkspace, level: Int) -> some View {
+        let project = projectFor(thinkspace)
+        let rowColor = project.map { projectColor(for: $0) } ?? DS.accent
         let isActive = activeThinkspaceId == thinkspace.id
         let isHovered = hoveredThinkspaceId == thinkspace.id
         let isExpanded = expandedThinkspaces.contains(thinkspace.id)
@@ -361,7 +367,8 @@ struct SidebarThinkspaceSection: View {
             isDropTarget: isDropTarget,
             isSpringLoading: isSpringLoading,
             springLoadPulse: springLoadPulse,
-            fillColor: thinkspaceRowFill(isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget)
+            accentColor: rowColor,
+            fillColor: thinkspaceRowFill(color: rowColor, isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget)
         ))
         .onHover { hoveredThinkspaceId = $0 ? thinkspace.id : nil }
         .contextMenu {
@@ -392,12 +399,12 @@ struct SidebarThinkspaceSection: View {
                 selectThinkspace(thinkspace)
             } label: {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isActive ? DS.accentSoft : Color.clear)
+                    .fill(isActive ? color.opacity(DS.palette.isDark ? 0.18 : 0.14) : Color.clear)
                     .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
                     .overlay(
                         Image(systemName: isActive ? "folder.fill" : "folder")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(isActive ? DS.accent : color)
+                            .foregroundStyle(color.opacity(isActive ? 1.0 : 0.82))
                     )
                     .contentShape(Rectangle())
             }
@@ -445,7 +452,7 @@ struct SidebarThinkspaceSection: View {
 
                             Text("\(thinkspace.blockCount)")
                                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .foregroundStyle(DS.textMuted)
+                                .foregroundStyle(isActive ? color.opacity(0.92) : DS.textMuted)
                                 .frame(minWidth: 22, alignment: .trailing)
                         }
                     }
@@ -470,8 +477,8 @@ struct SidebarThinkspaceSection: View {
         isExpandable: Bool,
         level: Int
     ) -> some View {
-        let avatarFill = isActive ? DS.accent.opacity(0.14) : color.opacity(0.14)
-        let avatarForeground = isActive ? DS.accent : color
+        let avatarFill = color.opacity(isActive ? (DS.palette.isDark ? 0.22 : 0.16) : (DS.palette.isDark ? 0.13 : 0.11))
+        let avatarForeground = color.opacity(isActive ? 1.0 : 0.86)
         let showsDisclosure = isExpandable && isHovered
         let avatarSize = level > 0 ? CGFloat(22) : CGFloat(24)
         let avatarRadius = level > 0 ? CGFloat(7) : CGFloat(8)
@@ -987,15 +994,15 @@ struct SidebarThinkspaceSection: View {
         .help("New ThinkSpace")
     }
 
-    private func thinkspaceRowFill(isActive: Bool, isHovered: Bool, isDropTarget: Bool) -> Color {
+    private func thinkspaceRowFill(color: Color, isActive: Bool, isHovered: Bool, isDropTarget: Bool) -> Color {
         if isDropTarget {
-            return DS.accentSoft
+            return color.opacity(DS.palette.isDark ? 0.22 : 0.16)
         }
         if isActive {
-            return DS.accentSoft
+            return color.opacity(DS.palette.isDark ? 0.16 : 0.12)
         }
         if isHovered {
-            return DS.bg
+            return color.opacity(DS.palette.isDark ? 0.070 : 0.055)
         }
         return .clear
     }
@@ -1268,6 +1275,7 @@ private struct ThinkspaceRowChrome: ViewModifier {
     let isDropTarget: Bool
     let isSpringLoading: Bool
     let springLoadPulse: Double
+    let accentColor: Color
     let fillColor: Color
 
     func body(content: Content) -> some View {
@@ -1280,7 +1288,7 @@ private struct ThinkspaceRowChrome: ViewModifier {
             .overlay(strokeOverlay)
             .shadow(
                 color: (isDropTarget || isSpringLoading)
-                    ? DS.accentGlow.opacity(0.18 + springLoadPulse * 0.34)
+                    ? accentColor.opacity(0.20 + springLoadPulse * 0.32)
                     : .clear,
                 radius: 10 + springLoadPulse * 8,
                 x: 0,
@@ -1291,7 +1299,7 @@ private struct ThinkspaceRowChrome: ViewModifier {
 
     private var springLoadFill: some View {
         RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-            .fill(DS.accent.opacity(0.06 + springLoadPulse * 0.16))
+            .fill(accentColor.opacity(0.07 + springLoadPulse * 0.16))
             .opacity(isSpringLoading ? 1 : 0)
     }
 
@@ -1299,8 +1307,8 @@ private struct ThinkspaceRowChrome: ViewModifier {
         RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
             .strokeBorder(
                 isSpringLoading
-                    ? DS.accent.opacity(0.18 + springLoadPulse * 0.34)
-                    : (isDropTarget ? DS.accent.opacity(0.26) : Color.clear),
+                    ? accentColor.opacity(0.24 + springLoadPulse * 0.36)
+                    : (isDropTarget ? accentColor.opacity(0.34) : (isActive ? accentColor.opacity(0.22) : Color.clear)),
                 lineWidth: (isDropTarget || isSpringLoading) ? 1.5 : 1
             )
     }

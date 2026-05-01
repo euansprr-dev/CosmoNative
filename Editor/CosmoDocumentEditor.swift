@@ -48,6 +48,7 @@ struct CosmoDocumentEditor: View {
     var onCustomPrompt: ((String) -> Void)? = nil
     var onWritingAIRequest: (() -> Void)? = nil
     var focusBandRange: NSRange? = nil
+    var focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil
     var onPlainTextChange: ((String) -> Void)? = nil
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
     var onDocumentChange: ((RichDocument, String) -> Void)? = nil
@@ -84,6 +85,7 @@ struct CosmoDocumentEditor: View {
             onCustomPrompt: onCustomPrompt,
             onWritingAIRequest: onWritingAIRequest,
             focusBandRange: focusBandRange,
+            focusBandRangeProvider: focusBandRangeProvider,
             onActivate: onActivate,
             onDeactivate: onDeactivate,
             onCommit: onCommit,

@@ -48,6 +48,12 @@ struct CommandCenterDashboard: View {
         CommandCenterSidebar(viewModel: viewModel)
             .frame(width: 240)
             .padding(.trailing, DS.space24)
+            .cosmoGlassSceneSignal(
+                id: "command-center-internal-sidebar",
+                source: .commandTask,
+                color: DS.entityTask,
+                intensity: 0.18
+            )
     }
 
     // MARK: - Center Column — Timer + Content (Smart List or Project)
@@ -59,25 +65,61 @@ struct CommandCenterDashboard: View {
                let project = viewModel.projects.first(where: { $0.uuid == projectUUID }) {
                 ProjectDetailView(project: project, viewModel: viewModel)
             } else {
-                CommandCenterMasthead(viewModel: viewModel)
+                if viewModel.viewMode == .upcoming {
+                    CommandCenterMasthead(viewModel: viewModel)
 
-                DashboardTimeTracker(viewModel: viewModel)
+                    UpcomingBoardView(viewModel: viewModel, composer: composer)
+                        .frame(maxHeight: .infinity)
+                        .cosmoGlassSceneSignal(
+                            id: "command-center-calendar",
+                            source: .commandCalendar,
+                            color: DS.info,
+                            intensity: 0.36,
+                            allowsDeepDiffusion: true
+                        )
+                } else {
+                    CommandCenterMasthead(viewModel: viewModel)
+                        .cosmoGlassSceneSignal(
+                            id: "command-center-masthead",
+                            source: .routeAccent,
+                            color: DS.accent,
+                            intensity: 0.22
+                        )
 
-                gradientDivider
+                    DashboardTimeTracker(viewModel: viewModel)
+                        .cosmoGlassSceneSignal(
+                            id: "command-center-timer",
+                            source: .commandTask,
+                            color: DS.orange,
+                            intensity: 0.30,
+                            allowsDeepDiffusion: true
+                        )
 
-                // Task list (scrollable)
-                DashboardTaskList(viewModel: viewModel, composer: composer) { task in
-                    withAnimation(ProMotionSprings.snappy) {
-                        selectedTaskForDetail = task
-                        viewModel.showReports = false
+                    gradientDivider
+
+                    // Task list (scrollable)
+                    DashboardTaskList(viewModel: viewModel, composer: composer) { task in
+                        withAnimation(ProMotionSprings.snappy) {
+                            selectedTaskForDetail = task
+                            viewModel.showReports = false
+                        }
                     }
+                    .cosmoGlassSceneSignal(
+                        id: "command-center-tasks-\(viewModel.viewMode.rawValue)",
+                        source: .commandTask,
+                        color: DS.entityTask,
+                        intensity: 0.34,
+                        allowsDeepDiffusion: true
+                    )
                 }
             }
 
             Spacer(minLength: 0)
 
             // Objectives bar (pinned at bottom)
-            DashboardObjectivesBar(viewModel: viewModel)
+            if viewModel.viewMode != .upcoming {
+                DashboardObjectivesBar(viewModel: viewModel)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, DS.space16)
@@ -219,14 +261,32 @@ struct CommandCenterDashboard: View {
                 if let task = resolvedSelectedTask {
                     TaskDetailPanel(task: task, viewModel: viewModel, composer: composer)
                         .id(task.uuid)
+                        .cosmoGlassSceneSignal(
+                            id: "command-center-task-detail-\(task.uuid)",
+                            source: .commandTask,
+                            color: DS.entityTask,
+                            intensity: 0.26
+                        )
                 }
             case .reports:
                 ScrollView(.vertical) {
                     DashboardReportsPanel(viewModel: viewModel)
                 }
                 .scrollIndicators(.never)
+                .cosmoGlassSceneSignal(
+                    id: "command-center-reports",
+                    source: .commandCalendar,
+                    color: DS.info,
+                    intensity: 0.24
+                )
             case .habits:
                 DashboardHabitPanel(viewModel: viewModel, composer: composer)
+                    .cosmoGlassSceneSignal(
+                        id: "command-center-habits",
+                        source: .commandHabit,
+                        color: DS.green,
+                        intensity: 0.28
+                    )
             }
 
             Spacer(minLength: 0)

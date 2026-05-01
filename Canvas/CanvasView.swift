@@ -232,11 +232,13 @@ struct CanvasView: View {
                         },
                         onMagnify: { magnification in
                             clusterMagnification = magnification
+                            publishSceneTintImmediately()
                         },
                         onMagnifyEnd: { magnification in
                             let newScale = canvasScale * magnification
                             canvasScale = min(max(newScale, minScale), maxScale)
                             clusterMagnification = 1.0
+                            publishSceneTintImmediately()
                         },
                         expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
                     )
@@ -297,17 +299,20 @@ struct CanvasView: View {
                             DragGesture(minimumDistance: 1)
                                 .onChanged { value in
                                     spacePanOffset = value.translation
+                                    publishSceneTintImmediately()
                                 }
                                 .onEnded { value in
                                     canvasOffset.width += value.translation.width / effectiveScale
                                     canvasOffset.height += value.translation.height / effectiveScale
                                     spacePanOffset = .zero
+                                    publishSceneTintImmediately()
                                 }
                         )
                         .onAppear { NSCursor.openHand.push() }
                         .onDisappear {
                             NSCursor.pop()
                             spacePanOffset = .zero
+                            publishSceneTintImmediately()
                         }
                 }
             }
@@ -369,12 +374,24 @@ struct CanvasView: View {
             }
             .onChange(of: canvasOffset) { _, _ in
                 scheduleFrameUpdate()
-                scheduleSceneTintPublish()
+                publishSceneTintImmediately()
                 debouncedSaveZoomPan()
+            }
+            .onChange(of: panOffset) { _, _ in
+                publishSceneTintImmediately()
+            }
+            .onChange(of: spacePanOffset) { _, _ in
+                publishSceneTintImmediately()
+            }
+            .onChange(of: magnificationState) { _, _ in
+                publishSceneTintImmediately()
+            }
+            .onChange(of: clusterMagnification) { _, _ in
+                publishSceneTintImmediately()
             }
             .onChange(of: canvasScale) { _, _ in
                 scheduleFrameUpdate()
-                scheduleSceneTintPublish()
+                publishSceneTintImmediately()
                 debouncedSaveZoomPan()
             }
             .onChange(of: selectedBlockId) { _, _ in
@@ -762,6 +779,7 @@ struct CanvasView: View {
                         // When zoomed out, a 100px drag should move the canvas 100px on screen
                         canvasOffset.width += value.translation.width / viewportTransform.effectiveScale
                         canvasOffset.height += value.translation.height / viewportTransform.effectiveScale
+                        publishSceneTintImmediately()
                     }
             )
             .simultaneousGesture(
@@ -776,6 +794,7 @@ struct CanvasView: View {
                         // produce a visible snap/bounce in drawing overlays.
                         let newScale = canvasScale * value.magnification
                         canvasScale = min(max(newScale, minScale), maxScale)
+                        publishSceneTintImmediately()
                     }
             )
     }
@@ -845,10 +864,24 @@ struct CanvasView: View {
         }
     }
 
+    private func publishSceneTintImmediately() {
+        sceneTintUpdateTask?.cancel()
+        publishSceneTint()
+    }
+
     private func publishSceneTint() {
         guard canvasIsActive else { return }
-        let tint = currentCanvasSceneTint()
-        let material = currentCanvasSceneMaterial(fallbackTint: tint)
+        let visibleClusters = visibleClusterSignals()
+        let visibleBlocks = visibleBlockSignals()
+        let tint = currentCanvasSceneTint(
+            visibleClusters: visibleClusters,
+            visibleBlocks: visibleBlocks
+        )
+        let material = currentCanvasSceneMaterial(
+            fallbackTint: tint,
+            visibleClusters: visibleClusters,
+            visibleBlocks: visibleBlocks
+        )
 
         if lastPublishedSceneTintKey != tint.visualKey {
             lastPublishedSceneTintKey = tint.visualKey
@@ -867,10 +900,11 @@ struct CanvasView: View {
         }
     }
 
-    private func currentCanvasSceneTint() -> CosmoGlassSceneTint {
-        let visibleClusters = visibleClusterSignals()
+    private func currentCanvasSceneTint(
+        visibleClusters: [SceneColorSignal],
+        visibleBlocks: [SceneColorSignal]
+    ) -> CosmoGlassSceneTint {
         let nearClusterColors = visibleClusters.filter { $0.isNearSidebar }.map { $0.color }
-        let visibleBlocks = visibleBlockSignals()
         let nearBlockColors = visibleBlocks.filter { $0.isNearSidebar }.map { $0.color }
 
         var palette: [Color] = []
@@ -898,9 +932,13 @@ struct CanvasView: View {
         )
     }
 
-    private func currentCanvasSceneMaterial(fallbackTint: CosmoGlassSceneTint) -> CosmoGlassSceneMaterial {
-        let clusterSignals = visibleClusterSignals().filter { $0.isNearSidebar }
-        let blockSignals = visibleBlockSignals().filter { $0.isNearSidebar }
+    private func currentCanvasSceneMaterial(
+        fallbackTint: CosmoGlassSceneTint,
+        visibleClusters: [SceneColorSignal],
+        visibleBlocks: [SceneColorSignal]
+    ) -> CosmoGlassSceneMaterial {
+        let clusterSignals = visibleClusters.filter { $0.isNearSidebar }
+        let blockSignals = visibleBlocks.filter { $0.isNearSidebar }
         var signals: [CosmoGlassSceneSignal] = []
 
         signals.append(
@@ -945,7 +983,7 @@ struct CanvasView: View {
         let nearLimit: CGFloat = 1_160
 
         return clusterEngine.allClusters.compactMap { cluster in
-            let rect = viewportTransform.canvasRectToScreen(cluster.boundingRect)
+            let rect = viewportTransform.canvasRectToScreen(liveSceneRect(for: cluster))
             guard rect.width > 1, rect.height > 1, rect.intersects(viewport) else { return nil }
             return ("\(cluster.id)", cluster.color, rect, rect.minX <= nearLimit)
         }
@@ -956,14 +994,40 @@ struct CanvasView: View {
         let nearLimit: CGFloat = 1_160
 
         return spatialEngine.blocks.compactMap { block in
-            let rect = screenRect(for: block)
+            let rect = screenRect(for: block, position: liveScenePosition(for: block))
             guard rect.intersects(viewport) else { return nil }
             return (block.id, block.entityType.color, rect, rect.minX <= nearLimit)
         }
     }
 
-    private func screenRect(for block: CanvasBlock) -> CGRect {
-        let center = viewportTransform.canvasToScreen(block.position)
+    private func liveSceneRect(for cluster: CanvasCluster) -> CGRect {
+        guard draggingClusterId == cluster.id else { return cluster.boundingRect }
+        return cluster.boundingRect.offsetBy(
+            dx: clusterDragTranslation.width,
+            dy: clusterDragTranslation.height
+        )
+    }
+
+    private func liveScenePosition(for block: CanvasBlock) -> CGPoint {
+        if blockDragState.activeId == block.id {
+            return CGPoint(
+                x: block.position.x + blockDragState.translation.width,
+                y: block.position.y + blockDragState.translation.height
+            )
+        }
+
+        if draggingClusterId != nil, draggingClusterMemberUUIDs.contains(block.entityUuid) {
+            return CGPoint(
+                x: block.position.x + clusterDragTranslation.width,
+                y: block.position.y + clusterDragTranslation.height
+            )
+        }
+
+        return block.position
+    }
+
+    private func screenRect(for block: CanvasBlock, position: CGPoint? = nil) -> CGRect {
+        let center = viewportTransform.canvasToScreen(position ?? block.position)
         let scale = viewportTransform.effectiveScale
         let size = CGSize(
             width: block.size.width * scale,
@@ -2488,6 +2552,8 @@ struct CanvasView: View {
         } else {
             clearCanvasClusterDropPreview()
         }
+
+        publishSceneTintImmediately()
     }
 
     /// Detect when a dragged block enters the sidebar zone for cross-thinkspace transfer
@@ -2540,6 +2606,7 @@ struct CanvasView: View {
         // into another thinkspace, let the shared manager finish the transfer.
         if isCrossThinkspaceDrop {
             blockDragState.clear()
+            publishSceneTintImmediately()
             // The crossDragManager's NSEvent mouseUp handler or completeDrop will handle the rest
             let fallbackPosition = crossDragManager.floatingPosition
             if let window = NSApp.keyWindow ?? NSApp.mainWindow {
@@ -2613,6 +2680,8 @@ struct CanvasView: View {
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
             updateClusterMembership(for: block, resolvedTargetClusterId: finalResolvedTargetClusterId)
         }
+
+        publishSceneTintImmediately()
     }
 
     /// Update cluster membership when a block is dragged into/out of a user cluster zone.
@@ -2686,6 +2755,7 @@ struct CanvasView: View {
         }
 
         clusterEngine.resizeCluster(id: clusterId, delta: delta, edge: edge, blocks: spatialEngine.blocks)
+        publishSceneTintImmediately()
 
         guard cluster.viewMode == .canvas,
               let currentRect = clusterEngine.userClusters.first(where: { $0.id == clusterId })?.boundingRect,
@@ -2722,6 +2792,7 @@ struct CanvasView: View {
         }
 
         clusterEngine.commitClusterResize(id: clusterId, blocks: spatialEngine.blocks)
+        publishSceneTintImmediately()
     }
 
     /// Handle live cluster drag — single state write instead of N per-block writes
@@ -2734,6 +2805,7 @@ struct CanvasView: View {
             draggingClusterMemberUUIDs = Set(clusterEngine.memberBlockUUIDs(for: clusterId))
         }
         clusterDragTranslation = translation
+        publishSceneTintImmediately()
     }
 
     /// Commit cluster drag — move all member blocks to their new positions
@@ -2772,6 +2844,7 @@ struct CanvasView: View {
 
         // Persist moved cluster + member block positions
         clusterEngine.persistAfterMove()
+        publishSceneTintImmediately()
     }
 
     /// Clears any live drag preview offsets for a specific cluster.
@@ -2781,6 +2854,7 @@ struct CanvasView: View {
             draggingClusterId = nil
             draggingClusterMemberUUIDs = []
         }
+        publishSceneTintImmediately()
     }
 
     // Legacy handlers (kept for compatibility with other callers)

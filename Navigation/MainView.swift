@@ -118,7 +118,11 @@ struct MainView: View {
             // Keep alive (but hidden) when user opens focus mode FROM Cmd-K,
             // so all state (tab, search, filters, scroll, gallery data) is preserved.
             if showCommandK || commandKBehindFocusMode {
-                CommandKView(initialTab: commandKReturnTab ?? .database)
+                CommandKView(
+                    initialTab: commandKReturnTab ?? .database,
+                    isActive: showCommandK,
+                    viewModel: commandKViewModel
+                )
                     .opacity(showCommandK ? 1 : 0)
                     .allowsHitTesting(showCommandK)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))

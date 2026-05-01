@@ -93,6 +93,17 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// Batch-fetch atoms by legacy integer IDs.
+    func fetchBatch(ids: [Int64]) async throws -> [Atom] {
+        guard !ids.isEmpty else { return [] }
+        return try await database.asyncRead { db in
+            try Atom
+                .filter(ids.contains(Atom.CodingKeys.id))
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .fetchAll(db)
+        }
+    }
+
     /// Fetch a single atom by ID (legacy compatibility)
     func fetch(id: Int64) async throws -> Atom? {
         try await database.asyncRead { db in

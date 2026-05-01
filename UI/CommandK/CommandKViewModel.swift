@@ -16,6 +16,10 @@ public enum CommandKTab: String, CaseIterable, Equatable {
     case readwise
     case inquiry
 
+    public static var allCases: [CommandKTab] {
+        [.database, .swipeGallery, .ideas, .readwise]
+    }
+
     var title: String {
         switch self {
         case .database: return "Database"
@@ -694,6 +698,11 @@ public final class CommandKViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var searchTask: Task<Void, Never>?
     private var ideaGalleryReloadTask: Task<Void, Never>?
+    private let searchPipeline = CommandKSearchPipeline()
+    private var searchIndex = CommandKSearchIndex()
+    private var searchIndexLoaded = false
+    private var searchIndexTask: Task<Void, Never>?
+    private var isSurfaceActive = true
 
     /// Unfiltered results for computing filter counts
     private var unfilteredResults: [RankedResult] = []
@@ -708,6 +717,20 @@ public final class CommandKViewModel: ObservableObject {
         setupIdeaRefreshListener()
     }
 
+    public func setSurfaceActive(_ active: Bool) {
+        guard isSurfaceActive != active else { return }
+        isSurfaceActive = active
+
+        if active {
+            prewarmSearchIndexIfNeeded()
+        } else {
+            searchTask?.cancel()
+            ideaGalleryReloadTask?.cancel()
+            searchIndexTask?.cancel()
+            currentPhase = .idle
+        }
+    }
+
     // MARK: - Query Handling
 
     private func setupQueryDebounce() {
@@ -715,8 +738,9 @@ public final class CommandKViewModel: ObservableObject {
             .debounce(for: .seconds(searchDebounce), scheduler: DispatchQueue.main)
             .removeDuplicates()
             .sink { [weak self] query in
-                Task {
-                    await self?.performSearch(query: query)
+                Task { @MainActor [weak self] in
+                    guard let self, self.isSurfaceActive else { return }
+                    await self.performSearch(query: query)
                 }
             }
             .store(in: &cancellables)
@@ -729,6 +753,28 @@ public final class CommandKViewModel: ObservableObject {
                 self?.applyFiltersToResults()
             }
             .store(in: &cancellables)
+    }
+
+    private func prewarmSearchIndexIfNeeded(force: Bool = false) {
+        guard isSurfaceActive else { return }
+        guard force || !searchIndexLoaded else { return }
+
+        searchIndexTask?.cancel()
+        searchIndexTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("prewarm-search-index")
+            defer {
+                CommandKPerformanceInstrumentation.signposter.endInterval("prewarm-search-index", signpost)
+            }
+            do {
+                let atoms = try await AtomRepository.shared.fetchRecent(limit: 10_000)
+                guard !Task.isCancelled, self.isSurfaceActive else { return }
+                self.searchIndex.replace(atoms: atoms)
+                self.searchIndexLoaded = true
+            } catch {
+                CommandKPerformanceInstrumentation.logger.error("Command-K search index prewarm failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     /// Parse #type prefix from query and return (stripped query, type filter)
@@ -756,6 +802,12 @@ public final class CommandKViewModel: ObservableObject {
     public func performSearch(query: String) async {
         // Cancel previous search
         searchTask?.cancel()
+        guard isSurfaceActive else { return }
+        let requestID = await searchPipeline.nextRequestID()
+        let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("perform-search")
+        defer {
+            CommandKPerformanceInstrumentation.signposter.endInterval("perform-search", signpost)
+        }
 
         // Parse #type prefix
         let parsed = parseTypePrefix(query)
@@ -806,6 +858,15 @@ public final class CommandKViewModel: ObservableObject {
         currentPhase = .searching
 
         let effectiveQuery = searchQuery.isEmpty ? "" : searchQuery
+        let queryForSearch = effectiveQuery.isEmpty ? query : effectiveQuery
+
+        let instantIndexedResults = searchIndex.search(queryForSearch, limit: maxResults)
+        if !instantIndexedResults.isEmpty {
+            unfilteredResults = instantIndexedResults
+            computeFilterCounts()
+            applyFiltersToResults()
+            currentPhase = .instant
+        }
 
         // Check cache first
         let cacheKey = QueryResultCache.cacheKey(
@@ -819,21 +880,23 @@ public final class CommandKViewModel: ObservableObject {
             unfilteredResults = cached
             computeFilterCounts()
             applyFiltersToResults()
-            await performUnifiedSearch(query: effectiveQuery.isEmpty ? query : effectiveQuery)
+            await performUnifiedSearch(query: queryForSearch)
             currentPhase = .instant
             return
         }
 
         // Perform hybrid search (BM25 + vector similarity)
-        searchTask = Task {
+        searchTask = Task { @MainActor in
             do {
+                let hybridSignpost = CommandKPerformanceInstrumentation.signposter.beginInterval("hybrid-search")
                 // Use HybridSearchEngine for semantic + keyword search
                 let hybridResults = try await hybridSearch.search(
-                    query: effectiveQuery.isEmpty ? query : effectiveQuery,
+                    query: queryForSearch,
                     context: nil,
                     limit: maxResults * 2,  // Get more for filtering
                     entityTypes: nil  // Don't filter at search level, do it client-side for counts
                 )
+                CommandKPerformanceInstrumentation.signposter.endInterval("hybrid-search", hybridSignpost)
 
                 // Convert HybridSearchEngine.SearchResult to RankedResult
                 var rankedResults: [RankedResult] = []
@@ -871,19 +934,21 @@ public final class CommandKViewModel: ObservableObject {
                 rankedResults.sort()
 
                 // Update state
-                if !Task.isCancelled {
+                if !Task.isCancelled,
+                   isSurfaceActive,
+                   await searchPipeline.isCurrent(requestID) {
                     isAIRanked = false
                     unfilteredResults = rankedResults
                     computeFilterCounts()
                     applyFiltersToResults()
-                    await performUnifiedSearch(query: effectiveQuery.isEmpty ? query : effectiveQuery)
+                    await performUnifiedSearch(query: queryForSearch)
                     currentPhase = .complete
 
                     // Cache unfiltered results
                     await QueryResultCache.shared.set(rankedResults, for: cacheKey)
 
                     // Fire AI re-ranker asynchronously (results reorder after 1-2s)
-                    let queryForReRank = effectiveQuery.isEmpty ? query : effectiveQuery
+                    let queryForReRank = queryForSearch
                     let reRankInputs = rankedResults.prefix(25).map { r in
                         ReRankInput(
                             uuid: r.atomUUID,
@@ -893,11 +958,13 @@ public final class CommandKViewModel: ObservableObject {
                             score: r.relevance
                         )
                     }
-                    Task {
+                    Task { @MainActor in
+                        let rerankSignpost = CommandKPerformanceInstrumentation.signposter.beginInterval("ai-rerank")
                         if let reRanked = await SearchReRanker.shared.reRank(
                             query: queryForReRank,
                             results: reRankInputs
-                        ) {
+                        ), isSurfaceActive,
+                           await searchPipeline.isCurrent(requestID) {
                             // Rebuild results with AI-boosted semantic weights
                             let aiScoreMap = Dictionary(uniqueKeysWithValues: reRanked.map { ($0.uuid, $0.blendedScore) })
                             let reRankedResults = unfilteredResults.map { r in
@@ -922,10 +989,13 @@ public final class CommandKViewModel: ObservableObject {
                             await performUnifiedSearch(query: queryForReRank)
                             isAIRanked = true
                         }
+                        CommandKPerformanceInstrumentation.signposter.endInterval("ai-rerank", rerankSignpost)
                     }
                 }
             } catch {
-                if !Task.isCancelled {
+                if !Task.isCancelled,
+                   isSurfaceActive,
+                   await searchPipeline.isCurrent(requestID) {
                     // Fallback to graph-based search if hybrid fails
                     await fallbackToGraphSearch(query: query)
                 }
@@ -1260,11 +1330,14 @@ public final class CommandKViewModel: ObservableObject {
         selectedResultIndex = -1
         selectedNodeId = nil
         clearSelection()
-        Task { await loadRecentsForCompact() }
+        if isSurfaceActive {
+            Task { await loadRecentsForCompact() }
+        }
     }
 
     /// Load recent atoms for compact mode display
     public func loadRecentsForCompact() async {
+        guard isSurfaceActive else { return }
         do {
             let recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 12)
             recentItems = recentAtoms.filter { $0.type != .task }.prefix(8).map { atom in
@@ -1327,6 +1400,7 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Load the total database atom count for bubble display
     private func loadDatabaseCount() async {
+        guard isSurfaceActive else { return }
         do {
             let atoms = try await AtomRepository.shared.fetchRecent(limit: 500)
             databaseTotalCount = atoms.count
@@ -1339,6 +1413,8 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Initialize cortex mode based on initial tab from MainView
     public func initializeCortexMode() {
+        guard isSurfaceActive else { return }
+        prewarmSearchIndexIfNeeded()
         if let tab = initialExpandedTab {
             transitionToExpanded(tab)
         } else {
@@ -1452,6 +1528,7 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Load all swipe file atoms into gallery items
     public func loadSwipeGallery() async {
+        guard isSurfaceActive else { return }
         guard !swipeGalleryLoaded else { return }
 
         do {
@@ -1615,6 +1692,7 @@ public final class CommandKViewModel: ObservableObject {
             .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self else { return }
+                guard self.isSurfaceActive else { return }
                 self.swipeGalleryLoaded = false
                 Task { await self.loadSwipeGallery() }
             }
@@ -1633,7 +1711,7 @@ public final class CommandKViewModel: ObservableObject {
             NotificationCenter.default.publisher(for: name)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] notification in
-                    guard let self, Self.notificationTargetsIdeaGallery(notification) else { return }
+                    guard let self, self.isSurfaceActive, Self.notificationTargetsIdeaGallery(notification) else { return }
                     Task { @MainActor [weak self] in
                         self?.handleIdeaGalleryNotification(notification)
                     }
@@ -1645,7 +1723,7 @@ public final class CommandKViewModel: ObservableObject {
             NotificationCenter.default.publisher(for: name)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] notification in
-                    guard let self else { return }
+                    guard let self, self.isSurfaceActive else { return }
                     Task { @MainActor [weak self] in
                         self?.handleIdeaGalleryNotification(notification)
                     }
@@ -1657,6 +1735,7 @@ public final class CommandKViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
+                    guard self?.isSurfaceActive == true else { return }
                     self?.scheduleIdeaGalleryReload()
                 }
             }
@@ -1665,6 +1744,7 @@ public final class CommandKViewModel: ObservableObject {
 
     @MainActor
     private func handleIdeaGalleryNotification(_ notification: Notification) {
+        guard isSurfaceActive else { return }
         if let uuid = Self.ideaUUID(from: notification),
            Self.notificationRemovesIdeaFromGallery(notification) {
             ideaGalleryItems.removeAll { $0.atomUUID == uuid }
@@ -1675,10 +1755,11 @@ public final class CommandKViewModel: ObservableObject {
 
     @MainActor
     private func scheduleIdeaGalleryReload() {
+        guard isSurfaceActive else { return }
         ideaGalleryReloadTask?.cancel()
         ideaGalleryReloadTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 150_000_000)
-            guard let self, !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, self.isSurfaceActive else { return }
             await self.loadIdeaGallery(forceReload: true)
         }
     }
@@ -1725,6 +1806,7 @@ public final class CommandKViewModel: ObservableObject {
     /// Load all idea atoms into gallery items
     /// - Parameter forceReload: If true, reloads even if already loaded (for after quick capture)
     public func loadIdeaGallery(forceReload: Bool = false) async {
+        guard isSurfaceActive else { return }
         guard !ideaGalleryLoaded || forceReload else { return }
 
         do {
@@ -1861,6 +1943,11 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Perform unified search across all libraries
     func performUnifiedSearch(query: String) async {
+        guard isSurfaceActive else { return }
+        let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("unified-search")
+        defer {
+            CommandKPerformanceInstrumentation.signposter.endInterval("unified-search", signpost)
+        }
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         let requestID = nextUnifiedSearchRequestID()
 

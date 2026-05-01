@@ -189,6 +189,36 @@ struct CanvasClusterLayer: View {
                     onDragEndCluster?(cluster.id, gesture.translation)
                 }
         )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10, coordinateSpace: .named("clusterLayer"))
+                .onChanged { gesture in
+                    guard hasAltContent,
+                          cluster.isUserCreated,
+                          !isEditing,
+                          resizingClusterId == nil,
+                          localResizingClusterId == nil,
+                          CanvasClusterMoveHitTesting.allowsDragStart(
+                            at: gesture.startLocation,
+                            in: rect,
+                            hasAltContent: hasAltContent
+                          ) else { return }
+                    if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
+                    onDragCluster?(cluster.id, gesture.translation)
+                }
+                .onEnded { gesture in
+                    guard hasAltContent,
+                          cluster.isUserCreated,
+                          !isEditing,
+                          resizingClusterId == nil,
+                          localResizingClusterId == nil,
+                          CanvasClusterMoveHitTesting.allowsDragStart(
+                            at: gesture.startLocation,
+                            in: rect,
+                            hasAltContent: hasAltContent
+                          ) else { return }
+                    onDragEndCluster?(cluster.id, gesture.translation)
+                }
+        )
         .onHover { hovered in
             hoveredClusterID = hovered ? cluster.id : nil
         }
@@ -373,18 +403,6 @@ struct CanvasClusterLayer: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .contentShape(Rectangle())
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 10, coordinateSpace: .named("clusterLayer"))
-                .onChanged { gesture in
-                    guard (isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil else { return }
-                    if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
-                    onDragCluster?(cluster.id, gesture.translation)
-                }
-                .onEnded { gesture in
-                    guard (isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil else { return }
-                    onDragEndCluster?(cluster.id, gesture.translation)
-                }
-        )
     }
 
     // MARK: - Alternative Content (List / Board)
@@ -607,6 +625,24 @@ struct CanvasClusterLayer: View {
         let screenY = origin.y + canvasOffset.height + scaledPanOffset.height
 
         return CGRect(x: screenX, y: screenY, width: size.width, height: size.height)
+    }
+}
+
+enum CanvasClusterMoveHitTesting {
+    private static let altContentHeaderHeight: CGFloat = 58
+    private static let altContentChromeGutter: CGFloat = 18
+
+    static func allowsDragStart(at point: CGPoint, in rect: CGRect, hasAltContent: Bool) -> Bool {
+        guard hasAltContent else { return rect.contains(point) }
+        guard rect.contains(point) else { return false }
+
+        if point.y <= rect.minY + altContentHeaderHeight {
+            return true
+        }
+
+        return point.x <= rect.minX + altContentChromeGutter ||
+            point.x >= rect.maxX - altContentChromeGutter ||
+            point.y >= rect.maxY - altContentChromeGutter
     }
 }
 

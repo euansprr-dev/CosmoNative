@@ -29,6 +29,7 @@ class SpatialEngine: ObservableObject {
 
     // MARK: - Load Blocks from Database
     func loadBlocks(for documentType: String = "home", documentId: Int64 = 0, thinkspaceId: String? = nil) async {
+        let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("thinkspace-load-blocks")
         isLoading = true
         currentDocumentType = documentType
         currentDocumentId = documentId
@@ -93,39 +94,54 @@ class SpatialEngine: ObservableObject {
                 loadedBlocks.append(block)
             }
 
-            // Enrich research and image blocks with atom metadata (URL, platform, imagePath, etc.)
-            // This ensures hasMediaContent() routes correctly and images load after restart
-            var enrichedBlocks: [CanvasBlock] = []
-            for block in loadedBlocks {
-                if block.entityType == .research || block.entityType == .image || block.entityType == .note || block.entityType == .template {
-                    // Fetch atom by ID first, fall back to UUID (fixes blocks saved with entityId = -1)
-                    var atom = try? await AtomRepository.shared.fetch(id: block.entityId)
-                    if atom == nil, !block.entityUuid.isEmpty {
-                        atom = try? await AtomRepository.shared.fetch(uuid: block.entityUuid)
-                    }
-                    if let atom {
-                        // Rebuild with proper metadata from atom, preserving DB position/id/pin state/size
-                        let fromAtom = CanvasBlock.fromAtom(atom, position: block.position)
-                        let enriched = CanvasBlock(
-                            id: block.id,
-                            position: block.position,
-                            size: block.size,
-                            isPinned: block.isPinned,
-                            zIndex: block.zIndex,
-                            entityType: fromAtom.entityType,
-                            entityId: fromAtom.entityId,
-                            entityUuid: fromAtom.entityUuid,
-                            title: fromAtom.title,
-                            subtitle: fromAtom.subtitle,
-                            metadata: fromAtom.metadata
-                        )
-                        enrichedBlocks.append(enriched)
-                    } else {
-                        enrichedBlocks.append(block)
-                    }
-                } else {
-                    enrichedBlocks.append(block)
+            // Enrich rich block types with atom metadata in two batch reads instead
+            // of one DB round-trip per block during thinkspace switches.
+            let enrichableBlocks = loadedBlocks.filter {
+                $0.entityType == .research ||
+                $0.entityType == .image ||
+                $0.entityType == .note ||
+                $0.entityType == .template
+            }
+            let idsToFetch = enrichableBlocks
+                .map(\.entityId)
+                .filter { $0 > 0 }
+            let uuidsToFetch = enrichableBlocks
+                .map(\.entityUuid)
+                .filter { !$0.isEmpty }
+
+            async let atomsByIDTask = AtomRepository.shared.fetchBatch(ids: Array(Set(idsToFetch)))
+            async let atomsByUUIDTask = AtomRepository.shared.fetchBatch(uuids: Array(Set(uuidsToFetch)))
+            let atomsByID = Dictionary(uniqueKeysWithValues: ((try? await atomsByIDTask) ?? []).compactMap { atom in
+                atom.id.map { ($0, atom) }
+            })
+            let atomsByUUID = Dictionary(uniqueKeysWithValues: ((try? await atomsByUUIDTask) ?? []).map { ($0.uuid, $0) })
+
+            let enrichedBlocks = loadedBlocks.map { block -> CanvasBlock in
+                guard block.entityType == .research ||
+                        block.entityType == .image ||
+                        block.entityType == .note ||
+                        block.entityType == .template else {
+                    return block
                 }
+
+                let atom = atomsByID[block.entityId] ?? atomsByUUID[block.entityUuid]
+                guard let atom else { return block }
+
+                // Rebuild with proper metadata from atom, preserving DB position/id/pin state/size.
+                let fromAtom = CanvasBlock.fromAtom(atom, position: block.position)
+                return CanvasBlock(
+                    id: block.id,
+                    position: block.position,
+                    size: block.size,
+                    isPinned: block.isPinned,
+                    zIndex: block.zIndex,
+                    entityType: fromAtom.entityType,
+                    entityId: fromAtom.entityId,
+                    entityUuid: fromAtom.entityUuid,
+                    title: fromAtom.title,
+                    subtitle: fromAtom.subtitle,
+                    metadata: fromAtom.metadata
+                )
             }
 
             // Deduplicate: if multiple blocks reference the same entity, keep only the first
@@ -147,10 +163,12 @@ class SpatialEngine: ObservableObject {
             }
             self.blocks = deduped
             isLoading = false
+            CanvasPerformanceInstrumentation.signposter.endInterval("thinkspace-load-blocks", signpost)
             print("✅ Loaded \(deduped.count) canvas blocks for \(documentType)/\(documentId) (\(enrichedBlocks.count - deduped.count) duplicates removed)")
 
         } catch {
             isLoading = false
+            CanvasPerformanceInstrumentation.signposter.endInterval("thinkspace-load-blocks", signpost)
             print("❌ Failed to load canvas blocks: \(error)")
         }
     }

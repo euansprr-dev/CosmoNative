@@ -1682,6 +1682,15 @@ class CosmoDatabase: ObservableObject {
             print("✅ atom_uuid migration complete")
         }
 
+        migrator.registerMigration("canvas_blocks_thinkspace_lookup_index") { db in
+            print("🔨 Adding thinkspace lookup index to canvas_blocks...")
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_canvas_blocks_thinkspace_lookup
+                ON canvas_blocks(thinkspace_id, is_deleted, z_index)
+            """)
+            print("✅ canvas_blocks thinkspace lookup index ready")
+        }
+
         // Create automation_rules performance index table
         migrator.registerMigration("create_automation_rules") { db in
             print("🔨 Creating automation_rules table...")
@@ -2046,6 +2055,7 @@ class CosmoDatabase: ObservableObject {
             CREATE INDEX IF NOT EXISTS idx_journal_entries_uuid ON journal_entries(uuid);
             CREATE INDEX IF NOT EXISTS idx_connections_uuid ON connections(uuid);
             CREATE INDEX IF NOT EXISTS idx_canvas_blocks_document ON canvas_blocks(document_type, document_id, is_deleted);
+            CREATE INDEX IF NOT EXISTS idx_canvas_blocks_thinkspace_lookup ON canvas_blocks(thinkspace_id, is_deleted, z_index);
             CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status, created_at);
         """)
     }

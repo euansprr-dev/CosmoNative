@@ -194,31 +194,7 @@ struct NoteBlockView: View {
         VStack(alignment: .leading, spacing: 24) {
             titleView
 
-            // Body — always-on editor with in-block scrolling via NSScrollView
-            CosmoDocumentEditor(
-                document: $noteBodyDocument,
-                fontSize: bodyFontSize,
-                compact: true,
-                placeholder: "Press / for commands...",
-                allowSlashCommands: isEditingBody,
-                allowMentions: isEditingBody,
-                allowSelectionMenu: isEditingBody,
-                allowImages: isEditingBody,
-                isEditable: isEditingBody,
-                scrollsInternally: true,
-                onDocumentChange: { _, plainText in
-                    let changed = plainText != noteText
-                    print("[BLOCK-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
-                    noteText = plainText
-                    noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
-                    if !isSyncingFromDB {
-                        hasLocalEdits = true
-                        scheduleAutoSave()
-                    }
-                },
-                onActivate: { isEditingBody = true }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            bodyView
 
             noteFooter
         }
@@ -229,6 +205,59 @@ struct NoteBlockView: View {
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
             isEditingTitle = false
             isEditingBody = false
+        }
+    }
+
+    @ViewBuilder
+    private var bodyView: some View {
+        if isEditingBody {
+            CosmoDocumentEditor(
+                document: $noteBodyDocument,
+                fontSize: bodyFontSize,
+                compact: true,
+                placeholder: "Press / for commands...",
+                allowSlashCommands: true,
+                allowMentions: true,
+                allowSelectionMenu: true,
+                allowImages: true,
+                isEditable: true,
+                scrollsInternally: true,
+                onDocumentChange: { _, plainText in
+                    let changed = plainText != noteText
+                    print("[BLOCK-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
+                    noteText = plainText
+                    noteWordCount = Self.wordCount(in: plainText)
+                    if !isSyncingFromDB {
+                        hasLocalEdits = true
+                        scheduleAutoSave()
+                    }
+                },
+                onDeactivate: { isEditingBody = false },
+                autoFocus: true
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            ScrollView(.vertical, showsIndicators: false) {
+                if noteBodyDocument.isEmpty {
+                    Text("Press / for commands...")
+                        .font(.system(size: bodyFontSize))
+                        .foregroundStyle(DS.textMuted)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    CosmoDocumentRenderer(
+                        document: noteBodyDocument,
+                        fontSize: bodyFontSize
+                    )
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+            .contentMargins(.top, 4, for: .scrollContent)
+            .contentMargins(.bottom, 8, for: .scrollContent)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                isEditingBody = true
+            }
         }
     }
 

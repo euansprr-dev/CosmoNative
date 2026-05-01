@@ -23,10 +23,28 @@ struct FloatingOverlayBackdrop: View {
     }
 }
 
+// MARK: - Cortex Overlay Backdrop
+
+/// Shared blurred backdrop used by Command-K-style overlays.
+struct CortexOverlayBackdrop: View {
+    let onClose: () -> Void
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(DS.palette.isDark ? 0.62 : 0.42)
+            Color.black.opacity(DS.palette.isDark ? 0.24 : 0.08)
+        }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture { onClose() }
+    }
+}
+
 // MARK: - Floating Overlay Panel Modifier
 
-/// Applies the Akashic floating panel chrome: vellum surface,
-/// 24px continuous corners, warm sepia border, and premium floating shadow.
+/// Applies the legacy floating panel chrome used by older overlays.
 private struct FloatingOverlayPanelModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -43,19 +61,35 @@ private struct FloatingOverlayPanelModifier: ViewModifier {
     }
 }
 
+private struct SettingsGlassPanelModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        CosmoGlassPanel(
+            sceneMaterial: .neutral,
+            role: .globalSidebar,
+            cornerRadius: CommandKMetrics.overlayCornerRadius
+        ) {
+            content
+        }
+    }
+}
+
 extension View {
     /// Apply the standard floating overlay panel chrome (white bg, 24px corners, border, shadow).
     func floatingOverlayPanel() -> some View {
         modifier(FloatingOverlayPanelModifier())
     }
 
-    /// Apply Cortex glass panel chrome — frosted material with clean outline border.
+    /// Apply the same spatial glass system used by the global sidebar.
+    func settingsGlassPanel() -> some View {
+        modifier(SettingsGlassPanelModifier())
+    }
+
+    /// Apply the same spatial glass system used by settings and the global sidebar.
     func cortexGlassPanel() -> some View {
         modifier(CortexGlassPanelModifier())
     }
 
-    /// Apply Cortex inspector panel chrome — ultraThinMaterial, top-down light,
-    /// hairline white border, floating shadow. Used by block/cluster detail menus.
+    /// Apply the shared spatial glass system used by floating inspector panels.
     func cortexInspectorPanel(cornerRadius: CGFloat = 24) -> some View {
         modifier(CortexInspectorPanelModifier(cornerRadius: cornerRadius))
     }
@@ -69,56 +103,32 @@ extension View {
 // MARK: - Cortex Glass Panel
 
 /// Frosted glass panel for the Cortex Command-K overlay.
-/// Uses .ultraThinMaterial for translucent depth, with a clean
-/// 1px border and floating shadow — inspired by macOS Spotlight.
 private struct CortexGlassPanelModifier: ViewModifier {
     func body(content: Content) -> some View {
-        content
-            .background(
-                RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .dsFloatingShadow()
+        CosmoGlassPanel(
+            sceneMaterial: .neutral,
+            role: .globalSidebar,
+            cornerRadius: CommandKMetrics.overlayCornerRadius
+        ) {
+            content
+        }
     }
 }
 
 // MARK: - Cortex Inspector Panel
 
-/// Frosted glass inspector panel with a top-down light gradient —
-/// the visual language used by block & cluster detail menus. Family member
-/// of the Cortex glass system; matches Spotlight's material but adds a
-/// subtle luminance bloom along the top edge to feel like a lens, not a card.
+/// Frosted glass inspector panel with the same neutral material as Command-K.
 private struct CortexInspectorPanelModifier: ViewModifier {
     let cornerRadius: CGFloat
 
     func body(content: Content) -> some View {
-        content
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.06), Color.white.opacity(0.0)],
-                            startPoint: .top,
-                            endPoint: .center
-                        )
-                    )
-                    .allowsHitTesting(false)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .dsFloatingShadow()
+        CosmoGlassPanel(
+            sceneMaterial: .neutral,
+            role: .globalSidebar,
+            cornerRadius: cornerRadius
+        ) {
+            content
+        }
     }
 }
 

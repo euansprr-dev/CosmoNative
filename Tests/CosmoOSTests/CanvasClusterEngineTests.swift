@@ -158,6 +158,36 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(cluster.manualSizeOverride, cluster.boundingRect.size)
     }
 
+    func testDocumentBlocksUsePageSizedCreationDefaults() {
+        let note = CanvasBlock.noteBlock(position: .zero)
+        let content = CanvasBlock(
+            position: .zero,
+            entityType: .content,
+            entityId: 1,
+            entityUuid: "content-1",
+            title: "Draft"
+        )
+
+        XCTAssertEqual(note.size.width, CanvasBlock.documentBlockSize.width, accuracy: 0.001)
+        XCTAssertEqual(note.size.height, CanvasBlock.documentBlockSize.height, accuracy: 0.001)
+        XCTAssertEqual(note.defaultSize.width, CanvasBlock.documentLayoutSize.width, accuracy: 0.001)
+        XCTAssertEqual(note.defaultSize.height, CanvasBlock.documentLayoutSize.height, accuracy: 0.001)
+        XCTAssertEqual(content.defaultSize.width, CanvasBlock.documentLayoutSize.width, accuracy: 0.001)
+        XCTAssertEqual(content.defaultSize.height, CanvasBlock.documentLayoutSize.height, accuracy: 0.001)
+        XCTAssertEqual(CanvasBlock.documentBlockSize.width, 453.333, accuracy: 0.001)
+        XCTAssertEqual(CanvasBlock.documentBlockSize.height, 586.667, accuracy: 0.001)
+    }
+
+    func testGridUsesFullDocumentFootprintForNoteAndContentBlocks() {
+        let note = makeBlock(uuid: "note-1", type: .note, position: .zero, size: CanvasBlock.documentBlockSize)
+        let content = makeBlock(uuid: "content-1", type: .content, position: .zero, size: CanvasBlock.documentBlockSize)
+
+        XCTAssertEqual(ClusterGridContent.canonicalCellWidth(for: note), CanvasBlock.documentBlockSize.width, accuracy: 0.001)
+        XCTAssertEqual(ClusterGridContent.canonicalCellHeight(for: note), CanvasBlock.documentBlockSize.height, accuracy: 0.001)
+        XCTAssertEqual(ClusterGridContent.canonicalCellWidth(for: content), CanvasBlock.documentBlockSize.width, accuracy: 0.001)
+        XCTAssertEqual(ClusterGridContent.canonicalCellHeight(for: content), CanvasBlock.documentBlockSize.height, accuracy: 0.001)
+    }
+
     func testSettingGridModeAgainDoesNotRefitExistingGridRect() {
         let clusterId = UUID()
         let blocks = (0..<12).map { index in

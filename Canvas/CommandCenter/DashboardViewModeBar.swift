@@ -41,6 +41,17 @@ enum DashboardViewMode: String, CaseIterable {
         case .area: return "square.stack.fill"
         }
     }
+
+    var activeTint: Color {
+        switch self {
+        case .today: return DS.orange
+        case .upcoming: return DS.info
+        case .anytime: return DS.entityIdea
+        case .someday: return DS.entityConnection
+        case .logbook: return DS.green
+        case .project, .area: return DS.accent
+        }
+    }
 }
 
 struct DashboardViewModeBar: View {
@@ -92,21 +103,22 @@ struct DashboardViewModeBar: View {
                 HStack(spacing: DS.space4) {
                     Image(systemName: mode.icon)
                         .font(DS.caption2)
+                        .foregroundStyle(isSelected ? mode.activeTint : DS.inkFaded)
 
                     Text(mode.label)
                         .font(isSelected ? DS.headline : DS.callout)
+                        .foregroundStyle(isSelected ? DS.inkWash : DS.inkFaded)
 
                     if count > 0 {
                         badge(for: mode, count: count, isSelected: isSelected)
                     }
                 }
-                .foregroundStyle(isSelected ? DS.accent : DS.inkFaded)
                 .padding(.horizontal, DS.space12)
                 .padding(.vertical, DS.space6)
 
                 // Bottom indicator line — slides between tabs
                 Rectangle()
-                    .fill(isSelected ? DS.accent : Color.clear)
+                    .fill(isSelected ? mode.activeTint : Color.clear)
                     .frame(height: 2)
                     .frame(maxWidth: .infinity)
                     .scaleEffect(x: isSelected ? 0.8 : 0, anchor: .center)
@@ -124,7 +136,7 @@ struct DashboardViewModeBar: View {
         return Text("\(count)")
             .font(DS.caption2)
             .contentTransition(.numericText(value: Double(count)))
-            .foregroundStyle(isSelected ? DS.accent : DS.inkFaded)
+            .foregroundStyle(isSelected ? mode.activeTint : DS.inkFaded)
             .frame(width: 16, height: 16)
             .background(
                 Circle()

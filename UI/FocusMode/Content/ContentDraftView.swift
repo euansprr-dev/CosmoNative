@@ -1244,6 +1244,14 @@ struct DraftEditorTextView: NSViewRepresentable {
         }
 
         // Apply or clear Hemingway highlights
+        let themeTextColor = NSColor(DS.text)
+        textView.textColor = themeTextColor
+        textView.insertionPointColor = themeTextColor
+        textView.typingAttributes[.foregroundColor] = themeTextColor
+        if let storage = textView.textStorage, storage.length > 0 {
+            storage.addAttribute(.foregroundColor, value: themeTextColor, range: NSRange(location: 0, length: storage.length))
+        }
+
         applyHighlighting(to: textView, coordinator: context.coordinator)
     }
 
@@ -1445,4 +1453,3 @@ struct InlineDiffText: View {
         .font(.system(size: 11))
     }
 }
-

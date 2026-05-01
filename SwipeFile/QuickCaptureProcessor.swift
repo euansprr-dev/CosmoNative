@@ -196,6 +196,7 @@ final class QuickCaptureProcessor: ObservableObject {
         igData.caption = mediaData.caption
         igData.extractedMediaURL = mediaData.videoURL
         igData.extractedAt = Date()
+        igData.expectedCarouselItemCount = mediaData.expectedCarouselItemCount
 
         if let items = mediaData.carouselItems {
             igData.carouselItems = items

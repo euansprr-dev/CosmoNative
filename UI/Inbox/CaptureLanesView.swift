@@ -56,6 +56,19 @@ final class CaptureLanesViewModel {
         }
     }
 
+    func deleteLane(_ destination: CaptureDestination) async {
+        do {
+            try await destinationRepo.archive(uuid: destination.uuid)
+            destinations = try await destinationRepo.fetchActive()
+            if selectedDestinationId == destination.uuid {
+                selectedDestinationId = destinations.first?.uuid
+            }
+            await loadItems()
+        } catch {
+            print("CaptureLanesViewModel.deleteLane failed: \(error)")
+        }
+    }
+
     private func loadItems() async {
         selectedItems = (try? await capturedRepo.fetch(destinationId: selectedDestinationId)) ?? []
         var map: [String: [MediaAttachment]] = [:]
@@ -103,6 +116,11 @@ struct CaptureLanesView: View {
             }
             await viewModel.refresh()
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.itemAdded)) { notification in
+            let changedDestinationId = notification.userInfo?["captureDestinationId"] as? String
+            guard changedDestinationId == nil || changedDestinationId == viewModel.selectedDestinationId else { return }
+            Task { await viewModel.refresh() }
+        }
     }
 
     private var laneSidebar: some View {
@@ -115,7 +133,8 @@ struct CaptureLanesView: View {
                         CaptureLaneSidebarRow(
                             destination: destination,
                             isSelected: viewModel.selectedDestinationId == destination.uuid,
-                            onSelect: { viewModel.select(destination) }
+                            onSelect: { viewModel.select(destination) },
+                            onDelete: { Task { await viewModel.deleteLane(destination) } }
                         )
                     }
                 }
@@ -225,7 +244,11 @@ struct CaptureLanesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(viewModel.destinations) { destination in
-                        CaptureCommandRegistryRow(destination: destination)
+                        CaptureCommandRegistryRow(
+                            destination: destination,
+                            onOpen: { viewModel.select(destination) },
+                            onDelete: { Task { await viewModel.deleteLane(destination) } }
+                        )
                     }
                 }
                 .padding(DS.space24)
@@ -335,6 +358,9 @@ private struct CaptureLaneSidebarRow: View {
     let destination: CaptureDestination
     let isSelected: Bool
     let onSelect: () -> Void
+    let onDelete: () -> Void
+
+    @State private var showDeleteConfirm = false
 
     var body: some View {
         Button(action: onSelect) {
@@ -367,11 +393,40 @@ private struct CaptureLaneSidebarRow: View {
             .background(isSelected ? DS.accent : DS.surfaceHover.opacity(0.001), in: .rect(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                onSelect()
+            } label: {
+                Label("Open", systemImage: "arrow.right.circle")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                showDeleteConfirm = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .confirmationDialog(
+            "Delete \(destination.name)?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive, action: onDelete)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The lane and its Telegram command aliases will be hidden. Existing captures stay in the database.")
+        }
     }
 }
 
 private struct CaptureCommandRegistryRow: View {
     let destination: CaptureDestination
+    let onOpen: () -> Void
+    let onDelete: () -> Void
+
+    @State private var showDeleteConfirm = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -411,6 +466,31 @@ private struct CaptureCommandRegistryRow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(DS.borderSubtle, lineWidth: 1)
         )
+        .contextMenu {
+            Button {
+                onOpen()
+            } label: {
+                Label("Open Lane", systemImage: "arrow.right.circle")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                showDeleteConfirm = true
+            } label: {
+                Label("Delete Command", systemImage: "trash")
+            }
+        }
+        .confirmationDialog(
+            "Delete \(destination.name)?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive, action: onDelete)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the lane from the sidebar and command registry.")
+        }
     }
 }
 

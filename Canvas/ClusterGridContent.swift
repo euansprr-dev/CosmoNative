@@ -15,8 +15,8 @@ struct ClusterTransferEvent {
 
 // MARK: - Masonry Layout
 
-/// Pinterest-style masonry layout: fixed column width, variable cell heights.
-/// Columns are computed dynamically from available width.
+/// Pinterest-style masonry layout: compact cards occupy one column while
+/// document-style cards can span multiple columns at their natural page width.
 struct ClusterMasonryLayout: Layout {
     let columnWidth: CGFloat
     let spacing: CGFloat
@@ -33,9 +33,13 @@ struct ClusterMasonryLayout: Layout {
         var columnHeights = Array(repeating: CGFloat(0), count: columns)
 
         for subview in subviews {
-            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
-            let size = subview.sizeThatFits(.init(width: columnWidth, height: nil))
-            columnHeights[minCol] += size.height + spacing
+            let size = subview.sizeThatFits(.unspecified)
+            let span = columnSpan(for: size.width, columns: columns)
+            let minCol = bestColumnStart(for: span, columnHeights: columnHeights)
+            let rowHeight = maxHeight(in: minCol..<(minCol + span), columnHeights: columnHeights)
+            for index in minCol..<(minCol + span) {
+                columnHeights[index] = rowHeight + size.height + spacing
+            }
         }
 
         let maxHeight = (columnHeights.max() ?? 0) - (columnHeights.isEmpty ? 0 : spacing)
@@ -48,18 +52,48 @@ struct ClusterMasonryLayout: Layout {
         var columnHeights = Array(repeating: CGFloat(0), count: columns)
 
         for subview in subviews {
-            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
+            let size = subview.sizeThatFits(.unspecified)
+            let span = columnSpan(for: size.width, columns: columns)
+            let minCol = bestColumnStart(for: span, columnHeights: columnHeights)
+            let rowHeight = maxHeight(in: minCol..<(minCol + span), columnHeights: columnHeights)
             let x = bounds.minX + CGFloat(minCol) * (columnWidth + spacing)
-            let y = bounds.minY + columnHeights[minCol]
-            let size = subview.sizeThatFits(.init(width: columnWidth, height: nil))
+            let y = bounds.minY + rowHeight
 
             subview.place(
                 at: CGPoint(x: x, y: y),
                 anchor: .topLeading,
-                proposal: .init(width: columnWidth, height: size.height)
+                proposal: .init(width: size.width, height: size.height)
             )
-            columnHeights[minCol] += size.height + spacing
+            for index in minCol..<(minCol + span) {
+                columnHeights[index] = rowHeight + size.height + spacing
+            }
         }
+    }
+
+    private func columnSpan(for width: CGFloat, columns: Int) -> Int {
+        guard width > columnWidth else { return 1 }
+        let footprint = columnWidth + spacing
+        return min(columns, max(1, Int(ceil((width + spacing) / footprint))))
+    }
+
+    private func bestColumnStart(for span: Int, columnHeights: [CGFloat]) -> Int {
+        guard span < columnHeights.count else { return 0 }
+        var bestStart = 0
+        var bestHeight = CGFloat.greatestFiniteMagnitude
+
+        for start in 0...(columnHeights.count - span) {
+            let height = maxHeight(in: start..<(start + span), columnHeights: columnHeights)
+            if height < bestHeight {
+                bestHeight = height
+                bestStart = start
+            }
+        }
+
+        return bestStart
+    }
+
+    private func maxHeight(in range: Range<Int>, columnHeights: [CGFloat]) -> CGFloat {
+        range.reduce(CGFloat(0)) { max($0, columnHeights[$1]) }
     }
 }
 
@@ -154,8 +188,18 @@ struct ClusterGridContent: View {
             ref = block.defaultSize
         }
         guard ref.width > 0 else { return minCellHeight }
-        let scale = masonryColumnWidth / ref.width
+        let width = canonicalCellWidth(for: block)
+        let scale = width / ref.width
         return max(minCellHeight, ref.height * scale)
+    }
+
+    static func canonicalCellWidth(for block: CanvasBlock) -> CGFloat {
+        switch block.entityType {
+        case .note, .content:
+            return CanvasBlock.documentBlockSize.width
+        default:
+            return masonryColumnWidth
+        }
     }
 
     /// Estimate the total masonry layout height for a set of blocks without rendering.
@@ -165,9 +209,19 @@ struct ClusterGridContent: View {
         var columnHeights = Array(repeating: CGFloat(0), count: columns)
 
         for block in blocks {
+            let cellWidth = canonicalCellWidth(for: block)
             let cellHeight = canonicalCellHeight(for: block)
-            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
-            columnHeights[minCol] += cellHeight + masonrySpacing
+            let span = min(columns, max(1, Int(ceil((cellWidth + masonrySpacing) / (masonryColumnWidth + masonrySpacing)))))
+            let rangeStarts = span < columns ? Array(0...(columns - span)) : [0]
+            let minCol = rangeStarts.min { lhs, rhs in
+                let lhsHeight = (lhs..<(lhs + span)).reduce(CGFloat(0)) { max($0, columnHeights[$1]) }
+                let rhsHeight = (rhs..<(rhs + span)).reduce(CGFloat(0)) { max($0, columnHeights[$1]) }
+                return lhsHeight < rhsHeight
+            } ?? 0
+            let rowHeight = (minCol..<(minCol + span)).reduce(CGFloat(0)) { max($0, columnHeights[$1]) }
+            for index in minCol..<(minCol + span) {
+                columnHeights[index] = rowHeight + cellHeight + masonrySpacing
+            }
         }
         return (columnHeights.max() ?? 0)
     }
@@ -180,19 +234,20 @@ struct ClusterGridContent: View {
     @ViewBuilder
     private func gridBlockView(for block: CanvasBlock) -> some View {
         let cellHeight = gridCellHeight(for: block)
+        let cellWidth = Self.canonicalCellWidth(for: block)
 
         // Pass a block copy whose size matches the cell so
         // CosmoBlockWrapper lays content out at the cell dimensions
         // instead of pixel-scaling from the original size.
         let gridBlock: CanvasBlock = {
             var b = block
-            b.size = CGSize(width: Self.masonryColumnWidth, height: cellHeight)
+            b.size = CGSize(width: cellWidth, height: cellHeight)
             b.isSelected = false
             return b
         }()
 
         blockContent(for: gridBlock)
-            .frame(width: Self.masonryColumnWidth, height: cellHeight)
+            .frame(width: cellWidth, height: cellHeight)
             .clipShape(.rect(cornerRadius: DS.radiusMedium))
     }
 

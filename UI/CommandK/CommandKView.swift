@@ -50,14 +50,9 @@ public struct CommandKView: View {
     // MARK: - Background
 
     private var backgroundLayer: some View {
-        // Lighter backdrop than FloatingOverlayBackdrop — just a dim scrim
-        // so the glass panels can blur the actual app content underneath.
-        Color.black.opacity(0.3)
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture {
-                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-            }
+        CortexOverlayBackdrop {
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        }
     }
 
     // MARK: - Panel Container
@@ -147,14 +142,13 @@ public struct CommandKView: View {
         .frame(height: 52)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(DS.glassInputFill)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                .stroke(DS.glassBorder, lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.15), radius: 24, x: 0, y: 10)
     }
 
     // MARK: - Domain Bubbles (inline in search bar)

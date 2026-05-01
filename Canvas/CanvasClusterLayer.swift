@@ -91,19 +91,6 @@ struct CanvasClusterLayer: View {
             RoundedRectangle(cornerRadius: 16)
                 .fill(cluster.color.opacity(accentWashOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
 
-            // Neutral hairline plus a precise color rim.
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(DS.sidebarMaterialBorder.opacity(DS.palette.isDark ? 0.70 : 0.58), lineWidth: 0.5)
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(
-                    cluster.color.opacity(clusterStrokeOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)),
-                    style: StrokeStyle(
-                        lineWidth: clusterStrokeWidth(isSelected: isSelected, isDropTarget: isDropTarget),
-                        dash: (isSelected || isDropTarget) ? [] : [5, 5]
-                    )
-                )
-                .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
-
             if cluster.isUserCreated && (isSelected || isHovered || isDropTarget) {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(
@@ -153,6 +140,14 @@ struct CanvasClusterLayer: View {
         }
         .frame(width: rect.width, height: rect.height)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay {
+            clusterOutlineOverlay(
+                cluster: cluster,
+                isSelected: isSelected,
+                isHovered: isHovered,
+                isDropTarget: isDropTarget
+            )
+        }
         .contentShape(RoundedRectangle(cornerRadius: 16))
         .onDrop(
             of: [.text],
@@ -204,6 +199,41 @@ struct CanvasClusterLayer: View {
                 tx.animation = nil
             }
         }
+    }
+
+    @ViewBuilder
+    private func clusterOutlineOverlay(
+        cluster: CanvasCluster,
+        isSelected: Bool,
+        isHovered: Bool,
+        isDropTarget: Bool
+    ) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 16)
+
+        ZStack {
+            shape
+                .strokeBorder(
+                    DS.sidebarMaterialBorder.opacity(DS.palette.isDark ? 0.70 : 0.58),
+                    lineWidth: 0.5
+                )
+
+            shape
+                .strokeBorder(
+                    cluster.color.opacity(
+                        clusterStrokeOpacity(
+                            isSelected: isSelected,
+                            isHovered: isHovered,
+                            isDropTarget: isDropTarget
+                        )
+                    ),
+                    style: StrokeStyle(
+                        lineWidth: clusterStrokeWidth(isSelected: isSelected, isDropTarget: isDropTarget),
+                        dash: (isSelected || isDropTarget) ? [] : [5, 5]
+                    )
+                )
+                .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
+        }
+        .allowsHitTesting(false)
     }
 
     private func draggingCluster(_ clusterId: UUID) -> Bool {

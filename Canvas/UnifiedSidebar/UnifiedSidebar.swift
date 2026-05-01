@@ -13,6 +13,23 @@ enum SidebarDestination: Equatable, Hashable {
     case thinkspace(id: String)
 }
 
+enum MainSidebarContentLayoutPolicy {
+    static func contentLeadingInset(
+        for destination: SidebarDestination,
+        isSidebarHidden: Bool,
+        isFocusModeActive: Bool,
+        sidebarReservedWidth: CGFloat
+    ) -> CGFloat {
+        guard !isSidebarHidden else { return 0 }
+
+        if case .thinkspace = destination, !isFocusModeActive {
+            return 0
+        }
+
+        return sidebarReservedWidth
+    }
+}
+
 enum SidebarContext: String, CaseIterable, Equatable, Hashable {
     case thinkspaces
     case commandCenter
@@ -120,13 +137,13 @@ enum UnifiedSidebarMetrics {
     static let maxExpandedWidth: CGFloat = 336
     static let collapsedWidth: CGFloat = 56
 
-    static let headerHeight: CGFloat = 52
-    static let footerHeight: CGFloat = 52
+    static let headerHeight: CGFloat = 94
+    static let footerHeight: CGFloat = 60
 
-    static let expandedOuterPadding: CGFloat = 12
+    static let expandedOuterPadding: CGFloat = 14
     static let collapsedOuterPadding: CGFloat = 8
-    static let contentVerticalPadding: CGFloat = 8
-    static let sectionVerticalPaddingExpanded: CGFloat = 10
+    static let contentVerticalPadding: CGFloat = 12
+    static let sectionVerticalPaddingExpanded: CGFloat = 12
     static let sectionVerticalPaddingCollapsed: CGFloat = 8
     static let sectionHorizontalPaddingExpanded: CGFloat = 4
     static let sectionHorizontalPaddingCollapsed: CGFloat = 2
@@ -136,8 +153,8 @@ enum UnifiedSidebarMetrics {
     static let panelCornerRadius: CGFloat = 22
 
     static let commandPillHeight: CGFloat = 34
-    static let standardRowHeight: CGFloat = 40
-    static let thinkspaceRowHeight: CGFloat = 36
+    static let standardRowHeight: CGFloat = 42
+    static let thinkspaceRowHeight: CGFloat = 38
     static let railHitTarget: CGFloat = 32
     static let iconSize: CGFloat = 16
     static let resizeHandleWidth: CGFloat = 8
@@ -309,7 +326,11 @@ struct UnifiedSidebar: View {
                 sidebarHeader
 
                 ScrollView(.vertical) {
-                    sidebarBody
+                    Group {
+                        sidebarBody
+                    }
+                    .id(activeContext)
+                    .transition(.opacity)
                     .padding(.horizontal, outerPadding)
                     .padding(.vertical, UnifiedSidebarMetrics.contentVerticalPadding)
                 }
@@ -325,6 +346,7 @@ struct UnifiedSidebar: View {
                 .padding(.trailing, 2)
         }
         .animation(motionAnimation, value: panelWidth)
+        .animation(motionAnimation, value: activeContext)
         .onAppear {
             let persistedWidth = UnifiedSidebarMetrics.clampedExpandedWidth(
                 StatePersistence.shared.getSidebarWidth()
@@ -384,7 +406,7 @@ struct UnifiedSidebar: View {
             contextTabRow
         }
         .padding(.horizontal, outerPadding)
-        .frame(height: 86)
+        .frame(height: UnifiedSidebarMetrics.headerHeight)
     }
 
     @ViewBuilder
@@ -629,6 +651,7 @@ private struct SidebarContextRow: View {
     var subtitle: String?
     var isActive: Bool
     var tint: Color = DS.textSecondary
+    var activeTint: Color = DS.accent
     var action: () -> Void
 
     @State private var isHovered = false
@@ -638,7 +661,7 @@ private struct SidebarContextRow: View {
             HStack(spacing: 9) {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                    .foregroundStyle(isActive ? DS.accent : tint)
+                    .foregroundStyle(isActive ? activeTint : tint)
                     .frame(width: 18)
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -660,7 +683,7 @@ private struct SidebarContextRow: View {
                 if let count, count > 0 {
                     Text("\(count)")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isActive ? DS.accent : DS.textMuted)
+                        .foregroundStyle(isActive ? activeTint : DS.textMuted)
                         .monospacedDigit()
                 }
             }
@@ -670,7 +693,7 @@ private struct SidebarContextRow: View {
             .unifiedSidebarRowChrome(
                 isActive: isActive,
                 isHovered: isHovered,
-                activeFill: DS.accentSoft,
+                activeFill: activeTint.opacity(DS.palette.isDark ? 0.18 : 0.12),
                 hoverFill: DS.bg
             )
         }
@@ -735,7 +758,8 @@ private struct SidebarCommandCenterContext: View {
                 viewModel.viewMode == mode &&
                 viewModel.selectedProjectUUID == nil &&
                 viewModel.selectedAreaUUID == nil &&
-                !viewModel.showReports
+                !viewModel.showReports,
+            activeTint: mode.activeTint
         ) {
             openCommandCenter()
             withAnimation(ProMotionSprings.snappy) {
@@ -834,8 +858,10 @@ private struct SidebarCommandCenterContext: View {
     }
 
     private func openCommandCenter() {
-        if currentDestination != .commandCenter {
-            currentDestination = .commandCenter
+        withAnimation(ProMotionSprings.snappy) {
+            if currentDestination != .commandCenter {
+                currentDestination = .commandCenter
+            }
         }
         onNavigate()
     }

@@ -9,6 +9,14 @@ struct CommandCenterMasthead: View {
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
 
     var body: some View {
+        if viewModel.viewMode == .upcoming {
+            upcomingMasthead
+        } else {
+            standardMasthead
+        }
+    }
+
+    private var standardMasthead: some View {
         VStack(alignment: .leading, spacing: DS.space6) {
             HStack(alignment: .firstTextBaseline, spacing: DS.space12) {
                 Text(viewModel.viewMode.label)
@@ -40,6 +48,123 @@ struct CommandCenterMasthead: View {
         }
     }
 
+    private var upcomingMasthead: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            ZStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: DS.space6) {
+                    Text(viewModel.viewMode.label)
+                        .font(.system(size: 30, weight: .semibold, design: .serif))
+                        .foregroundStyle(DS.inkWash)
+
+                    HStack(spacing: DS.space8) {
+                        Image(systemName: viewModel.viewMode.icon)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.giltMuted)
+
+                        Text(summaryText)
+                            .font(DS.callout)
+                            .foregroundStyle(DS.inkFaded)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                upcomingScopeControl
+                    .padding(.top, DS.space32)
+
+                VStack(alignment: .trailing, spacing: DS.space6) {
+                    Text(dateContext)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.inkFaded)
+
+                    upcomingRangeNavigation
+                }
+                .frame(maxWidth: .infinity, alignment: .topTrailing)
+            }
+            .frame(minHeight: 68)
+
+            Rectangle()
+                .fill(DS.sepiaSubtle)
+                .frame(height: 0.5)
+        }
+    }
+
+    private var upcomingScopeControl: some View {
+        HStack(spacing: 2) {
+            ForEach(UpcomingCalendarScope.allCases) { scope in
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        viewModel.setUpcomingCalendarScope(scope)
+                    }
+                } label: {
+                    Text(scope.label)
+                        .font(.system(size: 12, weight: viewModel.upcomingCalendarScope == scope ? .semibold : .medium))
+                        .foregroundStyle(viewModel.upcomingCalendarScope == scope ? DS.text : DS.textSecondary)
+                        .frame(width: 56, height: 28)
+                        .background(
+                            viewModel.upcomingCalendarScope == scope ? DS.surfaceHover : Color.clear,
+                            in: .rect(cornerRadius: 8)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(DS.surface.opacity(0.72), in: .rect(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(DS.borderSubtle, lineWidth: 0.5)
+        )
+    }
+
+    private var upcomingRangeNavigation: some View {
+        HStack(spacing: 0) {
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.shiftUpcomingRange(by: -1)
+                }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Previous \(viewModel.upcomingCalendarScope.label)")
+
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.resetUpcomingToToday()
+                }
+            } label: {
+                Text("Today")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .padding(.horizontal, DS.space12)
+                    .frame(height: 30)
+                    .background(DS.surface, in: .rect(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(DS.borderSubtle, lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.shiftUpcomingRange(by: 1)
+                }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Next \(viewModel.upcomingCalendarScope.label)")
+        }
+    }
+
     private var dateContext: String {
         switch viewModel.viewMode {
         case .upcoming:
@@ -59,9 +184,7 @@ struct CommandCenterMasthead: View {
         switch viewModel.viewMode {
         case .today:
             return [
-                countText(viewModel.todayActiveCount, singular: "open task", plural: "open tasks"),
-                countText(viewModel.scheduledTasks.count, singular: "scheduled", plural: "scheduled"),
-                countText(viewModel.unscheduledTasks.count, singular: "unscheduled", plural: "unscheduled"),
+                countText(viewModel.scheduledTasks.count, singular: "scheduled task", plural: "scheduled tasks"),
                 "\(formattedTodayTotal) tracked"
             ].joined(separator: " · ")
         case .upcoming:

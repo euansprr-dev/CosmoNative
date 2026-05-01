@@ -541,10 +541,10 @@ struct CloudSyncSettingsTab: View {
 
     private var glassCard: some View {
         RoundedRectangle(cornerRadius: DS.radiusMedium)
-            .fill(DS.surface)
+            .fill(DS.glassCardFill)
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
+                    .stroke(DS.glassBorder, lineWidth: 1)
             )
     }
 }

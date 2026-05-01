@@ -35,8 +35,7 @@ final class SwipeProcessingService {
     private init() {}
 
     nonisolated static func isLikelyCarouselPostURL(_ url: URL) -> Bool {
-        let path = url.path.lowercased()
-        return path.contains("/p/") || path.contains("/share/p/")
+        InstagramMediaResolution.isInstagramPostURL(url)
     }
 
     nonisolated static func shouldUseThumbnailFallback(
@@ -44,19 +43,37 @@ final class SwipeProcessingService {
         sourceURL: URL,
         existingCarouselItems: [CarouselItem]? = nil
     ) -> Bool {
-        guard mediaData.thumbnailURL != nil else { return false }
-        guard mediaData.videoURL == nil else { return false }
+        InstagramMediaResolution.shouldUseThumbnailFallback(
+            mediaData: mediaData,
+            sourceURL: sourceURL,
+            existingCarouselItems: existingCarouselItems
+        )
+    }
 
-        let items = existingCarouselItems ?? mediaData.carouselItems
-        if let items, !items.isEmpty {
+    nonisolated static func shouldSkipExistingTranscript(
+        sourceURL: URL?,
+        transcriptStatus: String?,
+        transcriptSlideCount: Int,
+        carouselItemCount: Int?,
+        expectedCarouselItemCount: Int?
+    ) -> Bool {
+        guard transcriptStatus == "available", transcriptSlideCount > 0 else {
             return false
         }
 
-        if isLikelyCarouselPostURL(sourceURL) {
-            return false
+        guard let sourceURL, isLikelyCarouselPostURL(sourceURL) else {
+            return true
         }
 
-        return true
+        if let expectedCarouselItemCount {
+            return transcriptSlideCount >= expectedCarouselItemCount
+        }
+
+        if let carouselItemCount, carouselItemCount > 1 {
+            return transcriptSlideCount >= carouselItemCount
+        }
+
+        return transcriptSlideCount > 1
     }
 
     // MARK: - Pending Swipe Scanner
@@ -100,7 +117,11 @@ final class SwipeProcessingService {
     // MARK: - Single-Post Entry Point
 
     /// Fire-and-forget background processing for a single swipe (clipboard capture path)
-    func processSwipeInBackground(uuid: String, skipAutoAdaptation: Bool = false) {
+    func processSwipeInBackground(
+        uuid: String,
+        skipAutoAdaptation: Bool = false,
+        forceExtractionRetry: Bool = false
+    ) {
         guard !inFlightUUIDs.contains(uuid) else {
             print("SwipeProcessingService: Already processing \(uuid), skipping")
             return
@@ -113,7 +134,7 @@ final class SwipeProcessingService {
         }
 
         Task.detached { [weak self] in
-            if let output = await self?.transcribe(uuid: uuid) {
+            if let output = await self?.transcribe(uuid: uuid, forceExtractionRetry: forceExtractionRetry) {
                 await self?.persistAndAnalyze(output: output)
 
                 // Auto-generate hook adaptations for each client profile
@@ -168,7 +189,10 @@ final class SwipeProcessingService {
 
     /// Runs transcription off MainActor for true parallelism.
     /// Hops to MainActor briefly for DB reads/writes and media cache lookups.
-    private nonisolated func transcribe(uuid: String) async -> SwipeTranscriptionOutput? {
+    private nonisolated func transcribe(
+        uuid: String,
+        forceExtractionRetry: Bool = false
+    ) async -> SwipeTranscriptionOutput? {
         print("SwipeProcessingService: Starting transcription for \(uuid)")
 
         // Step 1: Fetch atom (brief MainActor hop)
@@ -180,16 +204,33 @@ final class SwipeProcessingService {
         // Step 2a: Bail if extraction has been retried too many times
         let retryCount = atom.swipeAnalysis?.extractionRetryCount ?? 0
         if retryCount >= 3 {
-            print("SwipeProcessingService: Max extraction retries (\(retryCount)) reached for \(uuid)")
-            atom.processingStatus = "extraction_failed"
-            _ = try? await AtomRepository.shared.update(atom)
-            return nil
+            if forceExtractionRetry {
+                print("SwipeProcessingService: Forcing extraction retry for \(uuid) after \(retryCount) failed attempt(s)")
+                var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+                sa.extractionRetryCount = 0
+                atom = atom.withSwipeAnalysis(sa)
+                _ = try? await AtomRepository.shared.update(atom)
+            } else {
+                print("SwipeProcessingService: Max extraction retries (\(retryCount)) reached for \(uuid)")
+                atom.processingStatus = "extraction_failed"
+                _ = try? await AtomRepository.shared.update(atom)
+                return nil
+            }
         }
 
-        // Step 2b: Skip if already transcribed (need BOTH transcript status + actual slides, not just body text)
-        let hasTranscript = atom.richContent?.transcriptStatus == "available"
-        let hasSlides = (atom.swipeAnalysis?.transcriptSlides?.count ?? 0) > 0
-        if hasTranscript && hasSlides {
+        // Step 2b: Skip if already transcribed. A single-slide /p/ transcript is
+        // suspicious unless metadata confirms the post is actually single-image.
+        let sourceURL = atom.url.flatMap(URL.init(string:))
+        let transcriptSlideCount = atom.swipeAnalysis?.transcriptSlides?.count ?? 0
+        let carouselItemCount = atom.richContent?.instagramData?.carouselItems?.count
+        let expectedCarouselItemCount = atom.richContent?.instagramData?.expectedCarouselItemCount
+        if Self.shouldSkipExistingTranscript(
+            sourceURL: sourceURL,
+            transcriptStatus: atom.richContent?.transcriptStatus,
+            transcriptSlideCount: transcriptSlideCount,
+            carouselItemCount: carouselItemCount,
+            expectedCarouselItemCount: expectedCarouselItemCount
+        ) {
             print("SwipeProcessingService: Atom \(uuid) already has transcript + \(atom.swipeAnalysis?.transcriptSlides?.count ?? 0) slides, skipping")
             return nil
         }
@@ -249,7 +290,19 @@ final class SwipeProcessingService {
         let carouselItems = mediaData.carouselItems
             ?? atom.richContent?.instagramData?.carouselItems
 
-        if let items = carouselItems, !items.isEmpty {
+        if InstagramMediaResolution.isIncompletePostMedia(
+            mediaData: mediaData,
+            sourceURL: url,
+            existingCarouselItems: carouselItems
+        ) {
+            print("SwipeProcessingService: Incomplete carousel extraction for \(uuid), refusing partial carousel/thumbnail fallback")
+            var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+            sa.extractionRetryCount = (sa.extractionRetryCount ?? 0) + 1
+            atom = atom.withSwipeAnalysis(sa)
+            atom.processingStatus = "extraction_failed"
+            _ = try? await AtomRepository.shared.update(atom)
+            return nil
+        } else if let items = carouselItems, !items.isEmpty {
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
                 items: items
             ) { progress in
@@ -370,6 +423,7 @@ final class SwipeProcessingService {
         let transcriptionResult = output.result
         let carouselItems = output.carouselItems
         let url = output.sourceURL
+        let mediaData = output.mediaData
 
         let finalSlides = transcriptionResult.cleanedSlides
         let rawSlides = transcriptionResult.rawSlides
@@ -423,12 +477,24 @@ final class SwipeProcessingService {
         richContent.transcript = combined
         richContent.transcriptStatus = "available"
 
+        if let expectedCount = mediaData.expectedCarouselItemCount {
+            var igData = richContent.instagramData ?? InstagramData(
+                originalURL: url,
+                contentType: mediaData.contentType
+            )
+            igData.expectedCarouselItemCount = expectedCount
+            richContent.instagramData = igData
+        }
+
         // Persist carousel items + sourceType + thumbnail if this was a carousel
         if let items = carouselItems, !items.isEmpty {
             var igData = richContent.instagramData ?? InstagramData(
                 originalURL: url,
                 contentType: .carousel
             )
+            if igData.expectedCarouselItemCount != mediaData.expectedCarouselItemCount {
+                igData.expectedCarouselItemCount = mediaData.expectedCarouselItemCount
+            }
             let existingCarouselCount = igData.carouselItems?.count ?? 0
             let existingSignature = (igData.carouselItems ?? []).map {
                 "\($0.index)|\($0.mediaType.rawValue)|\($0.mediaURL.absoluteString)"

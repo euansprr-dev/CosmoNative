@@ -56,18 +56,6 @@ struct DashboardTaskList: View {
             batchActionBar
         }
 
-        // Overdue section
-        if !viewModel.overdueTasks.isEmpty {
-            taskSection(
-                title: "Overdue",
-                tasks: viewModel.overdueTasks,
-                headerColor: DS.red,
-                showReschedule: true,
-                section: .overdue
-            )
-        }
-
-        // Scheduled section
         if !viewModel.scheduledTasks.isEmpty {
             taskSection(
                 title: "Scheduled",
@@ -77,22 +65,11 @@ struct DashboardTaskList: View {
             )
         }
 
-        // Unscheduled section
-        taskSection(
-            title: viewModel.overdueTasks.isEmpty && viewModel.scheduledTasks.isEmpty
-                ? "Tasks" : "Unscheduled",
-            tasks: viewModel.unscheduledTasks,
-            headerColor: DS.textSecondary,
-            showAddRow: true,
-            section: .unscheduled
-        )
-
-        // Empty state
-        if viewModel.overdueTasks.isEmpty && viewModel.scheduledTasks.isEmpty
-            && viewModel.unscheduledTasks.isEmpty
-        {
-            emptyState(message: "All clear for today", icon: "checkmark.circle")
+        if viewModel.scheduledTasks.isEmpty {
+            emptyState(message: "No scheduled tasks today", icon: "calendar")
         }
+
+        SmartTaskCaptureRow(viewModel: viewModel)
     }
 
     // MARK: - Upcoming View

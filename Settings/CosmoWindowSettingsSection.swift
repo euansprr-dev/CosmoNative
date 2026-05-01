@@ -101,8 +101,8 @@ struct CosmoWindowSettingsSection: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.border, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.glassCardFill))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.glassBorder, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -179,8 +179,8 @@ struct CosmoWindowSettingsSection: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.border, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.glassCardFill))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.glassBorder, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -201,8 +201,8 @@ struct CosmoWindowSettingsSection: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.border, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.glassCardFill))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.glassBorder, lineWidth: 1))
     }
 
     // MARK: - Collapsible Header

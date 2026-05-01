@@ -234,7 +234,13 @@ enum DS {
 
     /// Base wash layered above native macOS material for major app sidebars.
     static var sidebarMaterialBase: Color {
-        palette.isDark ? Color.black.opacity(0.026) : Color.white.opacity(0.070)
+        palette.isDark ? Color.black.opacity(0.018) : Color.white.opacity(0.010)
+    }
+
+    /// Opacity for the native material layer. Light mode needs a lower value so
+    /// bright canvas content can still register through the sidebar.
+    static var sidebarMaterialNativeOpacity: Double {
+        palette.isDark ? 0.94 : 0.74
     }
 
     /// Solid fallback used when Reduce Transparency is enabled.
@@ -249,37 +255,37 @@ enum DS {
 
     /// Top/leading highlight for the glass surface.
     static var sidebarMaterialHighlight: Color {
-        palette.isDark ? Color.white.opacity(0.24) : Color.white.opacity(0.54)
+        palette.isDark ? Color.white.opacity(0.18) : Color.white.opacity(0.30)
     }
 
     /// Inner shade that keeps translucent panels readable.
     static var sidebarMaterialInnerShade: Color {
-        palette.isDark ? Color.black.opacity(0.032) : Color.black.opacity(0.014)
+        palette.isDark ? Color.black.opacity(0.018) : Color.black.opacity(0.010)
     }
 
     /// Ambient scene tint cap for global sidebars.
     static var sidebarMaterialAmbientOpacity: Double {
-        palette.isDark ? 0.034 : 0.020
+        0
     }
 
     /// Stronger tint cap along the content-facing edge.
     static var sidebarMaterialEdgeTintOpacity: Double {
-        palette.isDark ? 0.050 : 0.030
+        0
     }
 
     /// Subtle edge response used only when canvas content is physically near the sidebar.
     static var sidebarMaterialCanvasEdgeOpacity: Double {
-        palette.isDark ? 0.064 : 0.040
+        0
     }
 
     /// Tiny rim-only accent cap for focus or compatibility tints.
     static var sidebarMaterialRimAccentOpacity: Double {
-        palette.isDark ? 0.006 : 0.004
+        0
     }
 
-    /// Low-cost noir texture opacity for major glass panels.
+    /// Optional material texture opacity for major glass panels.
     static var sidebarMaterialNoiseOpacity: Double {
-        palette.isDark ? 0.012 : 0.008
+        0
     }
 
     /// Exterior shadow for inset glass panels.

@@ -212,10 +212,15 @@ final class InstagramExtractor: Sendable {
         if !(mediaData.caption?.isEmpty ?? true) { score += 10 }
         if !(mediaData.authorUsername?.isEmpty ?? true) { score += 5 }
         score += itemCount * 3
+        if let expectedCount = mediaData.expectedCarouselItemCount {
+            score += expectedCount * 4
+        }
 
         if isPostURL {
             if itemCount > 0 {
                 score += 500 + (itemCount * 25)
+            } else if mediaData.expectedCarouselItemCount == 1 {
+                score += 300
             } else if mediaData.videoURL == nil {
                 score -= 200
             }
@@ -265,6 +270,7 @@ final class InstagramExtractor: Sendable {
             authorUsername: importedPost.ownerUsername,
             caption: importedPost.caption,
             carouselItems: importedPost.carouselItems,
+            expectedCarouselItemCount: importedPost.carouselMediaCount ?? importedPost.carouselItems?.count,
             extractedAt: Date()
         )
     }
@@ -453,6 +459,7 @@ final class InstagramExtractor: Sendable {
             contentType: .carousel,
             videoURL: firstVideoURL,
             carouselItems: carouselItems,
+            expectedCarouselItemCount: picker.count,
             extractedAt: Date()
         )
     }
@@ -626,7 +633,12 @@ final class InstagramExtractor: Sendable {
             throw InstagramExtractionError.couldNotExtract
         }
 
-        return try parseMediaObject(media, originalURL: url, baseType: contentType)
+        return try parseMediaObject(
+            media,
+            originalURL: url,
+            baseType: contentType,
+            confirmedSidecarState: true
+        )
     }
 
     // MARK: - Strategy 4: HTML Page Fetching + Multiple Parse Strategies
@@ -879,7 +891,12 @@ final class InstagramExtractor: Sendable {
 
     // MARK: - Media Object Parser
 
-    func parseMediaObject(_ media: [String: Any], originalURL: URL, baseType: InstagramContentType) throws -> InstagramMediaData {
+    func parseMediaObject(
+        _ media: [String: Any],
+        originalURL: URL,
+        baseType: InstagramContentType,
+        confirmedSidecarState: Bool = false
+    ) throws -> InstagramMediaData {
         let isVideo = media["is_video"] as? Bool ?? false
 
         var videoURL: URL?
@@ -911,11 +928,13 @@ final class InstagramExtractor: Sendable {
         }
 
         var carouselItems: [CarouselItem]?
+        var expectedCarouselItemCount: Int?
         var finalType = isVideo ? .videoPost : baseType
 
         if let edgeSidecar = media["edge_sidecar_to_children"] as? [String: Any],
            let edges = edgeSidecar["edges"] as? [[String: Any]] {
             finalType = .carousel
+            expectedCarouselItemCount = edges.count
             carouselItems = edges.enumerated().compactMap { index, edge -> CarouselItem? in
                 guard let node = edge["node"] as? [String: Any] else { return nil }
                 let nodeIsVideo = node["is_video"] as? Bool ?? false
@@ -945,6 +964,11 @@ final class InstagramExtractor: Sendable {
                     duration: itemDuration
                 )
             }
+        } else if confirmedSidecarState,
+                  baseType == .carousel,
+                  !isVideo,
+                  InstagramMediaResolution.isInstagramPostURL(originalURL) {
+            expectedCarouselItemCount = 1
         }
 
         if baseType == .reel {
@@ -960,6 +984,7 @@ final class InstagramExtractor: Sendable {
             authorUsername: author,
             caption: caption,
             carouselItems: carouselItems,
+            expectedCarouselItemCount: expectedCarouselItemCount,
             extractedAt: Date()
         )
     }
@@ -1361,6 +1386,7 @@ final class InstagramExtractor: Sendable {
                 authorUsername: author,
                 caption: caption,
                 carouselItems: carouselItems.isEmpty ? nil : carouselItems,
+                expectedCarouselItemCount: entries.count,
                 extractedAt: Date()
             )
         }
@@ -1381,6 +1407,7 @@ final class InstagramExtractor: Sendable {
             duration: duration,
             authorUsername: author,
             caption: caption,
+            expectedCarouselItemCount: contentType == .carousel && directURL == nil ? 1 : nil,
             extractedAt: Date()
         )
     }
@@ -1666,12 +1693,14 @@ final class InstagramMediaCache {
 
     private func isUsableCachedResult(_ mediaData: InstagramMediaData) -> Bool {
         let itemCount = mediaData.carouselItems?.count ?? 0
+        let expectedCount = mediaData.expectedCarouselItemCount
 
         // >=2 carousel items is a definitive result. A 1-item array on a /p/ URL
         // is treated as incomplete so the cache will trigger extractBestAvailableCarouselMedia
         // and give GraphQL a second pass; if the post really is single-image, that pass
         // returns the same 1 item and the 60s incomplete-refresh cooldown prevents thrashing.
         if itemCount >= 2 { return true }
+        if expectedCount == 1 && mediaData.thumbnailURL != nil { return true }
 
         let path = mediaData.originalURL.path.lowercased()
         let isPostPath = path.contains("/p/") || path.contains("/share/p/")
@@ -1681,7 +1710,7 @@ final class InstagramMediaCache {
         case .reel, .videoPost:
             return mediaData.videoURL != nil
         case .carousel:
-            return mediaData.videoURL != nil
+            return mediaData.videoURL != nil || (expectedCount == 1 && mediaData.thumbnailURL != nil)
         case .image:
             // For image posts, require more than just a thumbnail — a minimal result
             // from the embed page may have missed carousel slides. Re-extract if we

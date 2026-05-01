@@ -334,6 +334,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // the NSTextView with stale binding content, destroying text the user just typed.
         let isFirstResponder = textView.window?.firstResponder == textView
         guard !context.coordinator.isUpdatingFromTextView, !isFirstResponder else {
+            applyStorageOverrides(textView.textStorage)
             context.coordinator.applyPolishHighlights(to: textView)
             context.coordinator.applyFocusBand(to: textView)
             if shouldRefocus {
@@ -356,6 +357,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             context.coordinator.notifyContentHeightChange(for: textView)
         }
 
+        applyStorageOverrides(textView.textStorage)
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.applyFocusBand(to: textView)
         context.coordinator.normalizeSingleLineViewport(for: textView)

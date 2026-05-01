@@ -315,7 +315,6 @@ struct CosmoGlassPanel<Content: View>: View {
         content
             .background {
                 CosmoGlassPanelBackground(
-                    sceneMaterial: sceneMaterial,
                     role: role,
                     cornerRadius: cornerRadius,
                     reduceTransparency: reduceTransparency
@@ -323,17 +322,13 @@ struct CosmoGlassPanel<Content: View>: View {
             }
             .clipShape(shape)
             .overlay {
-                CosmoGlassPanelRimOverlay(
-                    sceneMaterial: sceneMaterial,
-                    role: role,
+                CosmoGlassPanelDepthOverlay(
                     cornerRadius: cornerRadius,
                     reduceTransparency: reduceTransparency
                 )
             }
             .overlay {
-                CosmoGlassPanelDepthOverlay(
-                    sceneMaterial: sceneMaterial,
-                    role: role,
+                CosmoGlassPanelRimOverlay(
                     cornerRadius: cornerRadius,
                     reduceTransparency: reduceTransparency
                 )
@@ -354,7 +349,6 @@ struct CosmoGlassPanel<Content: View>: View {
 }
 
 private struct CosmoGlassPanelBackground: View {
-    let sceneMaterial: CosmoGlassSceneMaterial
     let role: CosmoGlassPanelRole
     let cornerRadius: CGFloat
     let reduceTransparency: Bool
@@ -368,20 +362,6 @@ private struct CosmoGlassPanelBackground: View {
             } else {
                 nativeMaterialBackground(cornerRadius)
                 shape.fill(DS.sidebarMaterialBase)
-            }
-
-            if !reduceTransparency {
-                CosmoGlassEdgeResponseLayer(
-                    sceneMaterial: sceneMaterial,
-                    role: role
-                )
-            }
-
-            if !reduceTransparency {
-                CosmoGlassAmbientReflectionLayer(
-                    sceneMaterial: sceneMaterial,
-                    role: role
-                )
             }
 
             if !reduceTransparency {
@@ -401,204 +381,34 @@ private struct CosmoGlassPanelBackground: View {
             isEmphasized: false,
             cornerRadius: cornerRadius
         )
+        .opacity(DS.sidebarMaterialNativeOpacity)
         .allowsHitTesting(false)
-    }
-}
-
-private struct CosmoGlassEdgeResponseLayer: View {
-    let sceneMaterial: CosmoGlassSceneMaterial
-    let role: CosmoGlassPanelRole
-
-    var body: some View {
-        GeometryReader { geo in
-            let panelFrame = geo.frame(in: .named(CosmoGlassSceneMaterial.coordinateSpaceName))
-            let response = edgeResponse(for: panelFrame)
-
-            LinearGradient(
-                colors: [
-                    Color.clear,
-                    response.color.opacity(response.opacity * 0.18),
-                    response.color.opacity(response.opacity)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(width: response.width)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .opacity(response.opacity > 0 ? 1 : 0)
-        }
-        .blendMode(DS.palette.isDark ? .screen : .plusLighter)
-        .allowsHitTesting(false)
-    }
-
-    private struct EdgeResponse {
-        let color: Color
-        let opacity: Double
-        let width: CGFloat
-    }
-
-    private func edgeResponse(for panelFrame: CGRect) -> EdgeResponse {
-        guard sceneMaterial.mode != .nativeOnly else {
-            return EdgeResponse(color: .clear, opacity: 0, width: 1)
-        }
-
-        let tint = sceneMaterial.representativeTint
-
-        guard sceneMaterial.mode == .canvasEdgeResponse else {
-            let cap = DS.sidebarMaterialRimAccentOpacity
-            return EdgeResponse(
-                color: tint.primary,
-                opacity: min(cap * 0.45 * tint.edgeIntensity * role.ambientMultiplier, cap * 0.45),
-                width: 28
-            )
-        }
-
-        let panelRight = panelFrame.maxX
-        let strongest = sceneMaterial.signals
-            .compactMap { signal -> (CosmoGlassSceneSignal, Double)? in
-                guard signal.rect.width > 1, signal.rect.height > 1 else { return nil }
-
-                let overlapsPanel = signal.rect.intersects(panelFrame.insetBy(dx: -24, dy: -28))
-                let distance = max(0, signal.rect.minX - panelRight)
-                let normalizedDistance = min(distance / 820, 1)
-                let response = overlapsPanel ? 1 : pow(1 - normalizedDistance, 1.65)
-                guard response > 0.02 else { return nil }
-
-                return (signal, response * signal.intensity)
-            }
-            .max { $0.1 < $1.1 }
-
-        guard let strongest else {
-            return EdgeResponse(color: tint.primary, opacity: 0, width: 1)
-        }
-
-        let cap = DS.sidebarMaterialCanvasEdgeOpacity
-        return EdgeResponse(
-            color: strongest.0.color,
-            opacity: min(cap * strongest.1 * role.ambientMultiplier, cap),
-            width: strongest.0.allowsDeepDiffusion ? 118 : 74
-        )
-    }
-}
-
-private struct CosmoGlassAmbientReflectionLayer: View {
-    let sceneMaterial: CosmoGlassSceneMaterial
-    let role: CosmoGlassPanelRole
-
-    var body: some View {
-        GeometryReader { geo in
-            let panelFrame = geo.frame(in: .named(CosmoGlassSceneMaterial.coordinateSpaceName))
-            let reflections = ambientReflections(for: panelFrame)
-
-            ZStack {
-                ForEach(reflections) { reflection in
-                    RadialGradient(
-                        colors: [
-                            reflection.color.opacity(reflection.opacity),
-                            reflection.color.opacity(reflection.opacity * 0.45),
-                            Color.clear
-                        ],
-                        center: UnitPoint(x: 1.08, y: reflection.unitY),
-                        startRadius: 0,
-                        endRadius: max(geo.size.width, geo.size.height) * 0.96
-                    )
-                }
-            }
-        }
-        .blendMode(DS.palette.isDark ? .screen : .plusLighter)
-        .allowsHitTesting(false)
-    }
-
-    private struct AmbientReflection: Identifiable {
-        let id: String
-        let color: Color
-        let opacity: Double
-        let unitY: Double
-        let strength: Double
-    }
-
-    private func ambientReflections(for panelFrame: CGRect) -> [AmbientReflection] {
-        guard sceneMaterial.mode == .canvasEdgeResponse else {
-            let tint = sceneMaterial.representativeTint
-            let opacity = DS.sidebarMaterialAmbientOpacity * 0.42 * tint.intensity * role.ambientMultiplier
-            guard opacity > 0 else { return [] }
-            return [
-                AmbientReflection(
-                    id: "fallback",
-                    color: tint.primary,
-                    opacity: opacity,
-                    unitY: 0.50,
-                    strength: opacity
-                )
-            ]
-        }
-
-        let panelRight = panelFrame.maxX
-        let cap = DS.sidebarMaterialAmbientOpacity
-        return sceneMaterial.signals
-            .compactMap { signal -> AmbientReflection? in
-                guard signal.rect.width > 1, signal.rect.height > 1 else { return nil }
-
-                let overlapsPanel = signal.rect.intersects(panelFrame.insetBy(dx: -32, dy: -44))
-                let distance = max(0, signal.rect.minX - panelRight)
-                let normalizedDistance = min(distance / 1_100, 1)
-                let distanceResponse = overlapsPanel ? 1 : pow(1 - normalizedDistance, 1.38)
-                guard distanceResponse > 0.035 else { return nil }
-
-                let unitY = clampedUnitY(
-                    panelFrame.height > 1
-                        ? (signal.rect.midY - panelFrame.minY) / panelFrame.height
-                        : 0.5
-                )
-                let diffusionBoost = signal.allowsDeepDiffusion ? 1.28 : 0.90
-                let opacity = min(
-                    cap * signal.intensity * distanceResponse * diffusionBoost * role.ambientMultiplier,
-                    cap
-                )
-
-                return AmbientReflection(
-                    id: signal.id,
-                    color: signal.color,
-                    opacity: opacity,
-                    unitY: unitY,
-                    strength: opacity
-                )
-            }
-            .sorted { $0.strength > $1.strength }
-            .prefix(4)
-            .map { $0 }
-    }
-
-    private func clampedUnitY(_ value: CGFloat) -> Double {
-        min(max(Double(value), 0.08), 0.92)
     }
 }
 
 private struct CosmoGlassPanelDepthOverlay: View {
-    let sceneMaterial: CosmoGlassSceneMaterial
-    let role: CosmoGlassPanelRole
     let cornerRadius: CGFloat
     let reduceTransparency: Bool
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-
-        LinearGradient(
-            colors: [
-                Color.clear,
-                DS.sidebarMaterialInnerShade
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .clipShape(shape)
-        .allowsHitTesting(false)
+        if !reduceTransparency {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            DS.sidebarMaterialInnerShade
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .allowsHitTesting(false)
+        }
     }
 }
 
 private struct CosmoGlassPanelRimOverlay: View {
-    let sceneMaterial: CosmoGlassSceneMaterial
-    let role: CosmoGlassPanelRole
     let cornerRadius: CGFloat
     let reduceTransparency: Bool
 
@@ -606,56 +416,20 @@ private struct CosmoGlassPanelRimOverlay: View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
         ZStack {
-            shape.strokeBorder(outerSeparationGradient, lineWidth: 0.9)
+            shape.strokeBorder(outerSeparationColor, lineWidth: 0.9)
             shape
                 .inset(by: 0.75)
-                .strokeBorder(innerSpecularGradient, lineWidth: 0.55)
+                .strokeBorder(innerHighlightColor, lineWidth: 0.55)
         }
         .allowsHitTesting(false)
     }
 
-    private var outerSeparationGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                DS.sidebarMaterialBorder.opacity(reduceTransparency ? 0.70 : 0.42),
-                DS.sidebarMaterialBorder.opacity(0.56),
-                rimTint.opacity(edgeOpacity),
-                Color.black.opacity(DS.palette.isDark ? 0.20 : 0.08)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+    private var outerSeparationColor: Color {
+        DS.sidebarMaterialBorder.opacity(reduceTransparency ? 0.70 : 0.52)
     }
 
-    private var innerSpecularGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                DS.sidebarMaterialHighlight.opacity(reduceTransparency ? 0.42 : 0.16),
-                DS.sidebarMaterialHighlight.opacity(reduceTransparency ? 0.18 : 0.055),
-                rimTint.opacity(edgeOpacity * 0.62),
-                Color.clear
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var rimTint: Color {
-        sceneMaterial.representativeTint.primary
-    }
-
-    private var edgeOpacity: Double {
-        guard !reduceTransparency else { return 0 }
-        let cap: Double
-        switch sceneMaterial.mode {
-        case .nativeOnly:
-            cap = 0
-        case .canvasEdgeResponse:
-            cap = DS.sidebarMaterialCanvasEdgeOpacity
-        case .rimAccentOnly:
-            cap = DS.sidebarMaterialRimAccentOpacity
-        }
-        return min(cap * sceneMaterial.representativeTint.edgeIntensity * role.ambientMultiplier, cap)
+    private var innerHighlightColor: Color {
+        DS.sidebarMaterialHighlight.opacity(reduceTransparency ? 0.24 : 0.10)
     }
 }
 

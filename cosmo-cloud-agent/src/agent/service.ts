@@ -164,6 +164,80 @@ async function tryFastInboxCapture(
   return { response, toolsUsed: ['capture_to_inbox'], createdAtomUUIDs, intent: 'capture' };
 }
 
+async function tryFastCaptureLaneTransport(
+  text: string,
+  chatId: string,
+  messages: AgentMessage[],
+): Promise<ProcessResult | null> {
+  const parsed = parseCaptureLanePrefix(text);
+  if (!parsed) return null;
+
+  console.log(`📥 Fast-path capture lane: ${parsed.destinationName} "${parsed.body.substring(0, 80)}..."`);
+
+  const title = parsed.body.substring(0, 120);
+  const atom = await createAtom({
+    type: 'note',
+    title,
+    body: parsed.body,
+    metadata: {
+      isCaptureLaneCapture: true,
+      captureDestinationName: parsed.destinationName,
+      captureSource: 'telegram_cloud',
+      telegramChatId: chatId,
+    },
+  });
+
+  const createdAtomUUIDs = atom?.uuid ? [atom.uuid] : [];
+  const response = atom
+    ? `📥 Saved to ${parsed.destinationName}\n"${title}"\nOpen CosmoOS to review.`
+    : `Something went wrong saving to ${parsed.destinationName}.`;
+
+  messages.push({ role: 'user', content: text });
+  messages.push({ role: 'assistant', content: response });
+  await saveConversation(chatId, messages, { linkedAtomUUIDs: createdAtomUUIDs });
+
+  return { response, toolsUsed: ['capture_lane_transport'], createdAtomUUIDs, intent: 'capture' };
+}
+
+function parseCaptureLanePrefix(text: string): { destinationName: string; body: string } | null {
+  const trimmed = text.trim();
+  const colonIndex = trimmed.indexOf(':');
+  if (colonIndex <= 0) return null;
+
+  const prefix = trimmed.slice(0, colonIndex).trim();
+  const body = trimmed.slice(colonIndex + 1).trim();
+  if (!prefix || !body) return null;
+  if (prefix.length < 2 || prefix.length > 64) return null;
+  if (prefix.includes('/')) return null;
+  if (/^\d+$/.test(prefix)) return null;
+
+  const normalized = prefix.toLowerCase().replace(/\s+/g, ' ');
+  const urlSchemes = new Set(['http', 'https', 'ftp', 'mailto', 'tel', 'file']);
+  if (urlSchemes.has(normalized)) return null;
+
+  const reservedPrefixes = new Set([
+    'inbox',
+    'idea',
+    'save idea',
+    'new idea',
+    'capture idea',
+    'task',
+    'todo',
+    'to do',
+    'swipe',
+    'research',
+    'content',
+    'lesson',
+    'rule',
+    'current',
+    'current inquiry',
+    'inquiry',
+  ]);
+  if (reservedPrefixes.has(normalized)) return null;
+
+  return { destinationName: prefix, body };
+}
+
 function parseIdeaCaptureRequest(text: string): {
   title: string;
   clientName?: string;
@@ -489,15 +563,20 @@ export async function processMessage(
   const fastInboxResult = await tryFastInboxCapture(text, chatId, messages);
   if (fastInboxResult) return fastInboxResult;
 
-  // 1c. FAST PATH — deterministic plain idea capture
+  // 1c. FAST PATH — custom capture lane transport (`books: ...`, `cosmo: ...`).
+  // The Mac app resolves the prefix against local Capture Lanes when the atom syncs down.
+  const fastCaptureLaneResult = await tryFastCaptureLaneTransport(text, chatId, messages);
+  if (fastCaptureLaneResult) return fastCaptureLaneResult;
+
+  // 1d. FAST PATH — deterministic plain idea capture
   const fastIdeaCaptureResult = await tryFastIdeaCapture(text, chatId, messages, onToolProgress);
   if (fastIdeaCaptureResult) return fastIdeaCaptureResult;
 
-  // 1d. FAST PATH — deterministic swipe + linked idea capture
+  // 1e. FAST PATH — deterministic swipe + linked idea capture
   const fastCaptureWithIdeaResult = await tryFastCaptureWithIdea(text, intent, chatId, messages, onToolProgress);
   if (fastCaptureWithIdeaResult) return fastCaptureWithIdeaResult;
 
-  // 1e. FAST PATH — deterministic capture for obvious swipe/capture commands
+  // 1f. FAST PATH — deterministic capture for obvious swipe/capture commands
   // Bypasses LLM entirely when intent is unambiguous (e.g. "swipe this" + URL)
   const fastCaptureResult = await tryFastCapture(text, intent, chatId, messages, onToolProgress);
   if (fastCaptureResult) return fastCaptureResult;

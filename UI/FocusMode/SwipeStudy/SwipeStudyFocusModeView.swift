@@ -1138,6 +1138,7 @@ struct SwipeStudyFocusModeView: View {
                     authorUsername: storedIGData.authorUsername,
                     caption: storedIGData.caption,
                     carouselItems: items,
+                    expectedCarouselItemCount: storedIGData.expectedCarouselItemCount,
                     extractedAt: storedIGData.extractedAt ?? Date()
                 )
                 carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
@@ -1180,6 +1181,27 @@ struct SwipeStudyFocusModeView: View {
                 if let caption = mediaData.caption, !caption.isEmpty,
                    (currentAtom ?? atom).richContent?.instagramData?.caption == nil {
                     persistCaptionToAtom(caption, expectedAtomUUID: expectedUUID)
+                }
+
+                if InstagramMediaResolution.isIncompletePostMedia(
+                    mediaData: mediaData,
+                    sourceURL: url
+                ) {
+                    print("SwipeStudy: Instagram post extraction is incomplete — waiting for full carousel media")
+                    isCarouselContent = true
+                    igIsExtractingVideo = false
+
+                    let currentUUID = (currentAtom ?? atom).uuid
+                    if SwipeProcessingService.shared.isProcessing(uuid: currentUUID) {
+                        pollForBackgroundCompletion()
+                    } else {
+                        SwipeProcessingService.shared.processSwipeInBackground(
+                            uuid: currentUUID,
+                            forceExtractionRetry: true
+                        )
+                        pollForBackgroundCompletion()
+                    }
+                    return
                 }
 
                 // Carousel branch — show image pager instead of video player
@@ -1234,7 +1256,11 @@ struct SwipeStudyFocusModeView: View {
                     } else if isBackgroundProcessing {
                         pollForBackgroundCompletion()
                     }
-                } else if let thumbnailURL = mediaData.thumbnailURL {
+                } else if let thumbnailURL = mediaData.thumbnailURL,
+                          InstagramMediaResolution.shouldUseThumbnailFallback(
+                            mediaData: mediaData,
+                            sourceURL: url
+                          ) {
                     // Image post — no video but has thumbnail. Show as single-image carousel.
                     print("SwipeStudy: Instagram image post (no video), showing thumbnail as image content")
                     let singleItem = CarouselItem(
@@ -1252,6 +1278,7 @@ struct SwipeStudyFocusModeView: View {
                         authorUsername: mediaData.authorUsername,
                         caption: mediaData.caption,
                         carouselItems: [singleItem],
+                        expectedCarouselItemCount: mediaData.expectedCarouselItemCount,
                         extractedAt: mediaData.extractedAt
                     )
                     isCarouselContent = true
@@ -1441,6 +1468,7 @@ struct SwipeStudyFocusModeView: View {
                         authorUsername: instagramData.authorUsername,
                         caption: instagramData.caption,
                         carouselItems: items,
+                        expectedCarouselItemCount: instagramData.expectedCarouselItemCount,
                         extractedAt: instagramData.extractedAt ?? Date()
                     )
                     carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
@@ -2458,6 +2486,11 @@ struct SwipeStudyFocusModeView: View {
 
         if igData.extractedAt != mediaData.extractedAt {
             igData.extractedAt = mediaData.extractedAt
+            didChange = true
+        }
+
+        if igData.expectedCarouselItemCount != mediaData.expectedCarouselItemCount {
+            igData.expectedCarouselItemCount = mediaData.expectedCarouselItemCount
             didChange = true
         }
 

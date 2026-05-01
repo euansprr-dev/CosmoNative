@@ -243,13 +243,13 @@ class TaskRecurrenceEngine {
         instanceMetadata.habitUUID = metadata.habitUUID
         instanceMetadata.habitAssignmentSource = metadata.habitAssignmentSource
         instanceMetadata.linkedAtomUUID = metadata.linkedAtomUUID
-        instanceMetadata.startTime = metadata.startTime
         instanceMetadata.energyLevel = metadata.energyLevel
         instanceMetadata.cognitiveLoad = metadata.cognitiveLoad
         instanceMetadata.taskType = metadata.taskType
         instanceMetadata.estimatedFocusMinutes = metadata.estimatedFocusMinutes
         instanceMetadata.headingUUID = metadata.headingUUID
         instanceMetadata.titleMentions = metadata.titleMentions
+        copyCalendarTime(from: metadata, to: &instanceMetadata, on: date)
         // Do NOT copy linkedIdeaUUID -- each instance starts fresh for .writeContent
 
         // Copy checklist from template with all items unchecked
@@ -282,5 +282,51 @@ class TaskRecurrenceEngine {
         )
 
         try await atomRepository.create(instance)
+    }
+
+    private func copyCalendarTime(from source: TaskMetadata, to destination: inout TaskMetadata, on date: Date) {
+        let startSource = source.scheduledStart ?? source.startTime
+        guard let startSource, let sourceStart = PlannerumFormatters.iso8601.date(from: startSource) else { return }
+
+        let endSource = source.scheduledEnd ?? source.endTime
+        let sourceEnd = endSource.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
+        let duration = sourceEnd.map { max(15, Int($0.timeIntervalSince(sourceStart) / 60)) }
+            ?? source.durationMinutes
+            ?? source.estimatedFocusMinutes
+            ?? 30
+
+        let start = merge(date: date, time: sourceStart)
+        let end = Calendar.current.date(byAdding: .minute, value: duration, to: start)
+            ?? start.addingTimeInterval(TimeInterval(duration * 60))
+        applyCalendarTimeRange(start: start, end: end, to: &destination)
+    }
+
+    private func merge(date: Date, time: Date) -> Date {
+        let calendar = Calendar.current
+        let dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: time)
+        var merged = DateComponents()
+        merged.year = dateComponents.year
+        merged.month = dateComponents.month
+        merged.day = dateComponents.day
+        merged.hour = timeComponents.hour
+        merged.minute = timeComponents.minute
+        merged.second = timeComponents.second ?? 0
+        return calendar.date(from: merged) ?? date
+    }
+
+    private func applyCalendarTimeRange(start: Date, end: Date, to metadata: inout TaskMetadata) {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: start)
+        let dateString = PlannerumFormatters.iso8601.string(from: day)
+        metadata.dueDate = dateString
+        metadata.focusDate = dateString
+        metadata.whenDate = dateString
+        metadata.startTime = PlannerumFormatters.iso8601.string(from: start)
+        metadata.endTime = PlannerumFormatters.iso8601.string(from: end)
+        metadata.scheduledStart = PlannerumFormatters.iso8601.string(from: start)
+        metadata.scheduledEnd = PlannerumFormatters.iso8601.string(from: end)
+        metadata.durationMinutes = max(15, Int(end.timeIntervalSince(start) / 60))
+        metadata.schedulingState = nil
     }
 }

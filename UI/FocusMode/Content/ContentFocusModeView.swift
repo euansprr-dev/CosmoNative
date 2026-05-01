@@ -676,6 +676,7 @@ struct ContentFocusModeView: View {
                 document: $draftDocument,
                 fontSize: 17,
                 placeholder: "begin writing…",
+                overrideTextColor: NSColor(DS.text),
                 allowSlashCommands: true,
                 allowMentions: true,
                 allowSelectionMenu: true,
@@ -2191,7 +2192,7 @@ struct ContentFocusModeView: View {
                 string: replacement,
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 16),
-                    .foregroundColor: NSColor(CosmoColors.textPrimary)
+                    .foregroundColor: NSColor(DS.text)
                 ]
             )
         )
@@ -2220,7 +2221,7 @@ struct ContentFocusModeView: View {
                 string: insertion,
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 16),
-                    .foregroundColor: NSColor(CosmoColors.textPrimary)
+                    .foregroundColor: NSColor(DS.text)
                 ]
             )
         )

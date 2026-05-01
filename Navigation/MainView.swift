@@ -697,57 +697,37 @@ struct MainView: View {
     private var mainContentLayout: some View {
         GeometryReader { geo in
             let sidebarLayout = sidebarLayoutMetrics(for: geo.size)
+            let contentLeadingInset = MainSidebarContentLayoutPolicy.contentLeadingInset(
+                for: currentDestination,
+                isSidebarHidden: isSidebarHidden,
+                isFocusModeActive: appState.focusedEntity != nil,
+                sidebarReservedWidth: sidebarLayout.reservedWidth
+            )
 
             ZStack(alignment: .leading) {
-                if shouldUnderlapCanvasBehindSidebar {
-                    SplitPaneContainer(paneManager: paneManager) {
-                        ZStack {
-                            destinationContent
-                            focusModeOverlay
-                        }
+                SplitPaneContainer(paneManager: paneManager) {
+                    ZStack {
+                        destinationContent(contentLeadingInset: contentLeadingInset)
+                        focusModeOverlay(contentLeadingInset: contentLeadingInset)
                     }
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .zIndex(appState.focusedEntity != nil ? 195 : 10)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .zIndex(appState.focusedEntity != nil ? 195 : 10)
+                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+                .animation(routeContentTransitionAnimation, value: contentLeadingInset)
 
-                    if !isSidebarHidden {
-                        sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
-                            .padding(.leading, sidebarLayout.leadingInset)
-                            .padding(.trailing, sidebarLayout.trailingInset)
-                            .padding(.vertical, sidebarLayout.verticalInset)
-                            .frame(
-                                width: sidebarLayout.reservedWidth,
-                                height: geo.size.height,
-                                alignment: .leading
-                            )
-                            .transition(.move(edge: .leading).combined(with: .opacity))
-                            .zIndex(20)
-                    }
-                } else {
-                    HStack(spacing: 0) {
-                        if !isSidebarHidden {
-                            sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
-                                .padding(.leading, sidebarLayout.leadingInset)
-                                .padding(.trailing, sidebarLayout.trailingInset)
-                                .padding(.vertical, sidebarLayout.verticalInset)
-                                .frame(
-                                    width: sidebarLayout.reservedWidth,
-                                    height: geo.size.height,
-                                    alignment: .leading
-                                )
-                                .transition(.move(edge: .leading).combined(with: .opacity))
-                                .zIndex(20)
-                        }
-
-                        SplitPaneContainer(paneManager: paneManager) {
-                            ZStack {
-                                destinationContent
-                                focusModeOverlay
-                            }
-                        }
-                        .zIndex(appState.focusedEntity != nil ? 195 : 10)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
-                    }
+                if !isSidebarHidden {
+                    sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
+                        .padding(.leading, sidebarLayout.leadingInset)
+                        .padding(.trailing, sidebarLayout.trailingInset)
+                        .padding(.vertical, sidebarLayout.verticalInset)
+                        .frame(
+                            width: sidebarLayout.reservedWidth,
+                            height: geo.size.height,
+                            alignment: .leading
+                        )
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .zIndex(20)
                 }
 
                 if isSidebarHidden && appState.focusedEntity == nil {
@@ -770,6 +750,7 @@ struct MainView: View {
             .coordinateSpace(name: CosmoGlassSceneMaterial.coordinateSpaceName)
             .animation(sidebarAnimation, value: isSidebarHidden)
             .animation(sidebarAnimation, value: sidebarPanelWidth)
+            .animation(routeContentTransitionAnimation, value: currentDestination)
             .animation(sceneTintAnimation, value: sidebarSceneTintAnimationKey)
             .onAppear {
                 syncSidebarContext(with: currentDestination)
@@ -852,6 +833,10 @@ struct MainView: View {
         reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.sidebar
     }
 
+    private var routeContentTransitionAnimation: Animation? {
+        reduceMotion ? .easeOut(duration: 0.12) : .easeInOut(duration: 0.24)
+    }
+
     private func restoreSidebarState() {
         sidebarPanelWidth = UnifiedSidebarMetrics.clampedExpandedWidth(
             StatePersistence.shared.getSidebarWidth()
@@ -910,10 +895,6 @@ struct MainView: View {
         case .codex:
             break
         }
-    }
-
-    private var shouldUnderlapCanvasBehindSidebar: Bool {
-        isCanvasDestination && appState.focusedEntity == nil
     }
 
     @ViewBuilder
@@ -1078,7 +1059,7 @@ struct MainView: View {
     }
 
     @ViewBuilder
-    private var destinationContent: some View {
+    private func destinationContent(contentLeadingInset: CGFloat) -> some View {
         ZStack {
             // Canvas layer — ALWAYS alive, hidden when a non-canvas destination is active.
             // Preserves all @StateObject engines, loaded blocks, zoom/pan state, and
@@ -1098,6 +1079,7 @@ struct MainView: View {
             // Non-canvas destinations rendered on top when active
             if case .inbox = currentDestination {
                 InboxView(route: $inboxRoute)
+                    .padding(.leading, contentLeadingInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .transition(.opacity)
@@ -1106,11 +1088,13 @@ struct MainView: View {
                     viewModel: commandCenterViewModel,
                     showsInternalSidebar: false
                 )
+                    .padding(.leading, contentLeadingInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .transition(.opacity)
             } else if case .codex = currentDestination {
                 CodexNavigationView()
+                    .padding(.leading, contentLeadingInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .transition(.opacity)
@@ -1119,13 +1103,14 @@ struct MainView: View {
     }
 
     @ViewBuilder
-    private var focusModeOverlay: some View {
+    private func focusModeOverlay(contentLeadingInset: CGFloat) -> some View {
         if let focusEntity = appState.focusedEntity {
             FocusModeView(entity: focusEntity)
                 .id(focusEntity)
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
+                .padding(.leading, contentLeadingInset)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
     }
@@ -1755,7 +1740,7 @@ struct MainView: View {
     @ViewBuilder
     private var settingsOverlay: some View {
         ZStack {
-            FloatingOverlayBackdrop {
+            CortexOverlayBackdrop {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                     showSettings = false
                 }
@@ -1767,7 +1752,7 @@ struct MainView: View {
                 }
             })
             .frame(width: 720, height: 560)
-            .floatingOverlayPanel()
+            .settingsGlassPanel()
         }
     }
 

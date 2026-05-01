@@ -80,20 +80,20 @@ struct CanvasClusterLayer: View {
         let dragOffset = draggingCluster(cluster.id) ? (clusterDragOffset ?? .zero) : .zero
 
         ZStack {
-            // Translucent vellum base — enough body to frame content, but not so much
-            // that the canvas grid disappears behind large clusters.
+            // Native glass base. Keep the cluster body neutral so blocks and grid
+            // remain visible through large zones in both light and dark mode.
             RoundedRectangle(cornerRadius: 16)
-                .fill(DS.vellumDeep.opacity(clusterSurfaceOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 16)
+                .fill(clusterSurfaceFill(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster))
 
-            // Uniform calendar-like accent wash. Keep this flat so dark mode does not
-            // pick up a fake left-side light source.
+            // Accent color is only a light wash; the border carries identity.
             RoundedRectangle(cornerRadius: 16)
-                .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
+                .fill(cluster.color.opacity(accentWashOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
 
-            // Sepia hairline plus a precise color rim. The rim carries
-            // identity at low zoom; stronger states are reserved for selection.
+            // Neutral hairline plus a precise color rim.
             RoundedRectangle(cornerRadius: 16)
-                .stroke(DS.sepiaBorder.opacity(DS.palette.isDark ? 0.62 : 0.78), lineWidth: 0.5)
+                .stroke(DS.sidebarMaterialBorder.opacity(DS.palette.isDark ? 0.70 : 0.58), lineWidth: 0.5)
             RoundedRectangle(cornerRadius: 16)
                 .stroke(
                     cluster.color.opacity(clusterStrokeOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)),
@@ -114,16 +114,15 @@ struct CanvasClusterLayer: View {
                     .allowsHitTesting(false)
             }
 
-            // Four gilt corner brackets — manuscript corner ornaments
-            if cluster.isUserCreated {
+            if cluster.isUserCreated && (isSelected || isHovered || isDropTarget) {
                 clusterGiltCorners(rect: rect, color: cluster.color, isActive: isSelected || isHovered || isDropTarget)
             }
 
             // Drop-target accent glow
             if isDropTarget {
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(cluster.color.opacity(0.42), lineWidth: 5)
-                    .blur(radius: 8)
+                    .stroke(cluster.color.opacity(0.28), lineWidth: 4)
+                    .blur(radius: 5)
             }
 
             if showLabel || hasAltContent {
@@ -211,31 +210,36 @@ struct CanvasClusterLayer: View {
         selectedClusterId == clusterId && clusterDragOffset != nil
     }
 
-    private func clusterSurfaceOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
-        if isDropTarget { return DS.palette.isDark ? 0.46 : 0.76 }
-        if cluster.isUserCreated {
-            return (cluster.viewMode != .canvas || isZone)
-                ? (DS.palette.isDark ? 0.42 : 0.72)
-                : (DS.palette.isDark ? 0.38 : 0.68)
+    private func clusterSurfaceFill(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Color {
+        let opacity: Double
+        if isDropTarget {
+            opacity = DS.palette.isDark ? 0.050 : 0.030
+        } else if cluster.isUserCreated {
+            opacity = (cluster.viewMode != .canvas || isZone)
+                ? (DS.palette.isDark ? 0.040 : 0.026)
+                : (DS.palette.isDark ? 0.032 : 0.022)
+        } else {
+            opacity = DS.palette.isDark ? 0.026 : 0.018
         }
-        return DS.palette.isDark ? 0.34 : 0.62
+
+        return DS.palette.isDark ? Color.black.opacity(opacity) : Color.white.opacity(opacity)
     }
 
-    private func backgroundOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
-        if isDropTarget { return DS.palette.isDark ? 0.22 : 0.15 }
+    private func accentWashOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
+        if isDropTarget { return DS.palette.isDark ? 0.075 : 0.22 }
         if cluster.isUserCreated {
             return (cluster.viewMode != .canvas || isZone)
-                ? (DS.palette.isDark ? 0.17 : 0.105)
-                : (DS.palette.isDark ? 0.145 : 0.082)
+                ? (DS.palette.isDark ? 0.040 : 0.18)
+                : (DS.palette.isDark ? 0.032 : 0.155)
         }
-        return DS.palette.isDark ? 0.105 : 0.060
+        return DS.palette.isDark ? 0.022 : 0.12
     }
 
     private func clusterStrokeOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
         if isDropTarget { return 0.96 }
         if isSelected { return 0.88 }
-        if isHovered { return 0.52 }
-        return DS.palette.isDark ? 0.36 : 0.30
+        if isHovered { return DS.palette.isDark ? 0.52 : 0.68 }
+        return DS.palette.isDark ? 0.36 : 0.54
     }
 
     private func clusterStrokeWidth(isSelected: Bool, isDropTarget: Bool) -> CGFloat {
@@ -245,19 +249,18 @@ struct CanvasClusterLayer: View {
     }
 
     private func clusterGlowOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
-        if isDropTarget { return 0.46 }
-        if isSelected { return 0.34 }
-        if isHovered { return 0.20 }
+        if isDropTarget { return 0.20 }
+        if isSelected { return 0.12 }
+        if isHovered { return 0.06 }
         return 0
     }
 
     // MARK: - Gilt Corner Brackets
 
-    /// Four accent L-brackets pinned to the cluster corners — enough ornament to keep
-    /// the Cosmo language, but keyed to the cluster color for clearer identity.
+    /// Four subtle accent L-brackets shown only while a cluster is active.
     @ViewBuilder
     private func clusterGiltCorners(rect: CGRect, color: Color, isActive: Bool) -> some View {
-        let opacity = isActive ? 0.86 : (DS.palette.isDark ? 0.58 : 0.48)
+        let opacity = isActive ? (DS.palette.isDark ? 0.48 : 0.34) : 0
         let size: CGFloat = 14
         let inset: CGFloat = 10
         let stroke = color.opacity(opacity)

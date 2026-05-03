@@ -122,6 +122,127 @@ private struct DashboardAtomRefreshSignature: Equatable {
     }
 }
 
+struct CommandCenterTodayTaskSections: Equatable {
+    var overdue: [TaskViewModel]
+    var scheduled: [TaskViewModel]
+    var unscheduled: [TaskViewModel]
+}
+
+enum CommandCenterTodayTaskSectioning {
+    static func sectionTasks(
+        _ tasks: [TaskViewModel],
+        selectedDate: Date,
+        calendar: Calendar = .current
+    ) -> CommandCenterTodayTaskSections {
+        let dayStart = calendar.startOfDay(for: selectedDate)
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+
+        var overdue: [TaskViewModel] = []
+        var scheduled: [TaskViewModel] = []
+        var unscheduled: [TaskViewModel] = []
+        let recurrenceParentsWithSelectedDayInstance = Set(
+            tasks.compactMap { task -> String? in
+                guard let parentUUID = task.recurrenceParentUUID,
+                      isPlannedOnSelectedDay(task, dayStart: dayStart, dayEnd: dayEnd, calendar: calendar) else {
+                    return nil
+                }
+                return parentUUID
+            }
+        )
+
+        for task in tasks {
+            if let calendarStart = task.calendarStart {
+                if calendarStart >= dayStart && calendarStart < dayEnd {
+                    scheduled.append(task)
+                } else if calendarStart < dayStart,
+                          !isSuppressedRecurringOverdue(task, repeatedTodayParents: recurrenceParentsWithSelectedDayInstance) {
+                    overdue.append(task)
+                }
+                continue
+            }
+
+            guard let plannedDate = plannedDate(for: task) else { continue }
+            let plannedDay = calendar.startOfDay(for: plannedDate)
+
+            if plannedDay < dayStart,
+               !isSuppressedRecurringOverdue(task, repeatedTodayParents: recurrenceParentsWithSelectedDayInstance) {
+                overdue.append(task)
+            } else if plannedDay >= dayStart && plannedDay < dayEnd {
+                unscheduled.append(task)
+            }
+        }
+
+        return CommandCenterTodayTaskSections(
+            overdue: overdue.sorted(by: overdueSort(calendar: calendar)),
+            scheduled: scheduled.sorted(by: scheduledSort),
+            unscheduled: unscheduled.sorted(by: unscheduledSort)
+        )
+    }
+
+    private static func plannedDate(for task: TaskViewModel) -> Date? {
+        task.whenDate ?? task.scheduledDate ?? task.dueDate
+    }
+
+    private static func isPlannedOnSelectedDay(
+        _ task: TaskViewModel,
+        dayStart: Date,
+        dayEnd: Date,
+        calendar: Calendar
+    ) -> Bool {
+        if let calendarStart = task.calendarStart {
+            return calendarStart >= dayStart && calendarStart < dayEnd
+        }
+
+        guard let plannedDate = plannedDate(for: task) else { return false }
+        let plannedDay = calendar.startOfDay(for: plannedDate)
+        return plannedDay >= dayStart && plannedDay < dayEnd
+    }
+
+    private static func isSuppressedRecurringOverdue(
+        _ task: TaskViewModel,
+        repeatedTodayParents: Set<String>
+    ) -> Bool {
+        guard let parentUUID = task.recurrenceParentUUID else { return false }
+        return repeatedTodayParents.contains(parentUUID)
+    }
+
+    private static func overdueSort(calendar: Calendar) -> (TaskViewModel, TaskViewModel) -> Bool {
+        { lhs, rhs in
+            let lhsDay = plannedDate(for: lhs).map { calendar.startOfDay(for: $0) } ?? lhs.calendarStart ?? .distantPast
+            let rhsDay = plannedDate(for: rhs).map { calendar.startOfDay(for: $0) } ?? rhs.calendarStart ?? .distantPast
+            if lhsDay != rhsDay { return lhsDay < rhsDay }
+            return fallbackSort(lhs, rhs)
+        }
+    }
+
+    private static func scheduledSort(_ lhs: TaskViewModel, _ rhs: TaskViewModel) -> Bool {
+        let lhsStart = lhs.calendarStart ?? .distantFuture
+        let rhsStart = rhs.calendarStart ?? .distantFuture
+        if lhsStart != rhsStart { return lhsStart < rhsStart }
+        return fallbackSort(lhs, rhs)
+    }
+
+    private static func unscheduledSort(_ lhs: TaskViewModel, _ rhs: TaskViewModel) -> Bool {
+        if lhs.manualSortOrder != rhs.manualSortOrder {
+            return (lhs.manualSortOrder ?? Int.max) < (rhs.manualSortOrder ?? Int.max)
+        }
+        if lhs.priority.sortOrder != rhs.priority.sortOrder {
+            return lhs.priority.sortOrder < rhs.priority.sortOrder
+        }
+        return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+    }
+
+    private static func fallbackSort(_ lhs: TaskViewModel, _ rhs: TaskViewModel) -> Bool {
+        if lhs.manualSortOrder != rhs.manualSortOrder {
+            return (lhs.manualSortOrder ?? Int.max) < (rhs.manualSortOrder ?? Int.max)
+        }
+        if lhs.priority.sortOrder != rhs.priority.sortOrder {
+            return lhs.priority.sortOrder < rhs.priority.sortOrder
+        }
+        return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+    }
+}
+
 // MARK: - ViewModel
 
 @MainActor
@@ -152,7 +273,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     @Published var upcomingAnchorDate: Date = Calendar.current.startOfDay(for: Date())
 
     var upcomingWeekStart: Date {
-        Calendar.current.startOfDay(for: upcomingAnchorDate)
+        CommandCenterCalendarLayout.mondayStartingWeek(containing: upcomingAnchorDate)
     }
 
     var upcomingVisibleDates: [Date] {
@@ -271,7 +392,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     var currentVisibleTasks: [TaskViewModel] {
         switch viewMode {
         case .today:
-            return scheduledTasks
+            return overdueTasks + scheduledTasks + unscheduledTasks
         case .upcoming:
             return upcomingDayGroups.flatMap { $0.tasks }
         case .logbook:
@@ -288,7 +409,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     var todayActiveCount: Int {
-        scheduledTasks.count
+        overdueTasks.count + scheduledTasks.count + unscheduledTasks.count
     }
 
     var upcomingTotalCount: Int {
@@ -529,35 +650,32 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Task Loading (Today view — sectioned)
 
     func refreshTasks() async {
-        var allTasks: [TaskViewModel] = []
+        var activeTasks: [TaskViewModel] = []
 
         do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
-            let dayStart = Calendar.current.startOfDay(for: selectedDate)
-            let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+            try? await TaskRecurrenceEngine.shared.deduplicateGeneratedInstances()
 
-            allTasks = atoms.compactMap { atom -> TaskViewModel? in
+            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+
+            activeTasks = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 if vm.isCompleted { return nil }
                 if vm.isRecurring && vm.recurrenceParentUUID == nil { return nil }
-                guard let calendarStart = vm.calendarStart else { return nil }
-                return calendarStart >= dayStart && calendarStart < dayEnd ? vm : nil
+                return vm
             }
         } catch {
-            print("❌ Dashboard: Failed to load scheduled tasks for date: \(error)")
+            print("❌ Dashboard: Failed to load today tasks for date: \(error)")
         }
 
-        let nextScheduled = allTasks
-            .sorted { lhs, rhs in
-                let lhsStart = lhs.calendarStart ?? .distantFuture
-                let rhsStart = rhs.calendarStart ?? .distantFuture
-                if lhsStart != rhsStart { return lhsStart < rhsStart }
-                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
+        let sections = CommandCenterTodayTaskSectioning.sectionTasks(
+            activeTasks,
+            selectedDate: selectedDate,
+            calendar: Calendar.current
+        )
 
-        assignIfChanged(\.overdueTasks, to: [])
-        assignIfChanged(\.scheduledTasks, to: nextScheduled)
-        assignIfChanged(\.unscheduledTasks, to: [])
+        assignIfChanged(\.overdueTasks, to: sections.overdue)
+        assignIfChanged(\.scheduledTasks, to: sections.scheduled)
+        assignIfChanged(\.unscheduledTasks, to: sections.unscheduled)
 
         // Load completed tasks independently (todayTasks excludes completed)
         await loadCompletedTasks()
@@ -567,6 +685,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func loadUpcomingTasks() async {
         do {
+            try? await TaskRecurrenceEngine.shared.generateInstances(in: upcomingVisibleInterval)
+
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
             let calendar = Calendar.current
             let visibleDates = upcomingVisibleDates
@@ -743,14 +863,16 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     func resetUpcomingToToday() {
+        upcomingCalendarScope = .week
         upcomingAnchorDate = Calendar.current.startOfDay(for: Date())
         upcomingWeekOffset = 0
         Task { await loadUpcomingTasks() }
     }
 
     func setUpcomingCalendarScope(_ scope: UpcomingCalendarScope) {
-        guard upcomingCalendarScope != scope else { return }
-        upcomingCalendarScope = scope
+        let normalizedScope: UpcomingCalendarScope = .week
+        guard upcomingCalendarScope != normalizedScope || scope != normalizedScope else { return }
+        upcomingCalendarScope = normalizedScope
         syncUpcomingWeekOffset()
         Task { await loadUpcomingTasks() }
     }
@@ -758,6 +880,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     func setUpcomingAnchorDate(_ date: Date) {
         let day = Calendar.current.startOfDay(for: date)
         guard !Calendar.current.isDate(day, inSameDayAs: upcomingAnchorDate) else { return }
+        upcomingCalendarScope = .week
         upcomingAnchorDate = day
         selectedDate = day
         syncUpcomingWeekOffset()
@@ -766,23 +889,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func shiftUpcomingRange(by offset: Int) {
         let calendar = Calendar.current
-        let component: Calendar.Component
-        let value: Int
-
-        switch upcomingCalendarScope {
-        case .day:
-            component = .day
-            value = offset
-        case .week:
-            component = .day
-            value = offset * 7
-        case .month:
-            component = .month
-            value = offset
-        }
+        upcomingCalendarScope = .week
 
         upcomingAnchorDate = calendar.startOfDay(
-            for: calendar.date(byAdding: component, value: value, to: upcomingAnchorDate) ?? upcomingAnchorDate
+            for: calendar.date(byAdding: .day, value: offset * 7, to: upcomingAnchorDate) ?? upcomingAnchorDate
         )
         selectedDate = upcomingAnchorDate
         syncUpcomingWeekOffset()
@@ -791,8 +901,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     private func syncUpcomingWeekOffset() {
         let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let selected = calendar.startOfDay(for: upcomingAnchorDate)
+        let today = CommandCenterCalendarLayout.mondayStartingWeek(containing: Date(), calendar: calendar)
+        let selected = CommandCenterCalendarLayout.mondayStartingWeek(containing: upcomingAnchorDate, calendar: calendar)
         let daysDiff = calendar.dateComponents([.day], from: today, to: selected).day ?? 0
         upcomingWeekOffset = daysDiff / 7
     }

@@ -9,15 +9,40 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         return calendar
     }
 
-    func testWeekVisibleDatesStartAtAnchorAndSpanSevenDays() throws {
+    func testWeekVisibleDatesStartOnMondayAndEndOnSunday() throws {
         let anchor = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 30)))
 
         let dates = CommandCenterCalendarLayout.visibleDates(anchor: anchor, scope: .week, calendar: calendar)
 
         XCTAssertEqual(dates.count, 7)
-        XCTAssertEqual(calendar.component(.day, from: dates[0]), 30)
-        XCTAssertEqual(calendar.component(.day, from: dates[6]), 6)
+        XCTAssertEqual(calendar.component(.weekday, from: dates[0]), 2)
+        XCTAssertEqual(calendar.component(.day, from: dates[0]), 27)
+        XCTAssertEqual(calendar.component(.month, from: dates[0]), 4)
+        XCTAssertEqual(calendar.component(.weekday, from: dates[6]), 1)
+        XCTAssertEqual(calendar.component(.day, from: dates[6]), 3)
         XCTAssertEqual(calendar.component(.month, from: dates[6]), 5)
+    }
+
+    func testWeekVisibleDatesKeepSundayInTheSameMondayBasedWeek() throws {
+        let anchor = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 3)))
+
+        let dates = CommandCenterCalendarLayout.visibleDates(anchor: anchor, scope: .week, calendar: calendar)
+
+        XCTAssertEqual(dates.count, 7)
+        XCTAssertEqual(calendar.component(.day, from: dates[0]), 27)
+        XCTAssertEqual(calendar.component(.month, from: dates[0]), 4)
+        XCTAssertEqual(calendar.component(.day, from: dates[6]), 3)
+        XCTAssertEqual(calendar.component(.month, from: dates[6]), 5)
+    }
+
+    func testDayScopeStillShowsTheWholeMondayBasedWeek() throws {
+        let anchor = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 30)))
+
+        let dates = CommandCenterCalendarLayout.visibleDates(anchor: anchor, scope: .day, calendar: calendar)
+
+        XCTAssertEqual(dates.count, 7)
+        XCTAssertEqual(calendar.component(.day, from: dates[0]), 27)
+        XCTAssertEqual(calendar.component(.day, from: dates[6]), 3)
     }
 
     func testMonthVisibleDatesIncludeFullMondayBasedGrid() throws {
@@ -56,6 +81,46 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         XCTAssertEqual(height, CommandCenterCalendarLayout.hourHeight * 2.25, accuracy: 0.001)
     }
 
+    func testTopResizePreviewExpandsUpwardAndKeepsMinimumHeight() {
+        let expanded = CommandCenterCalendarLayout.resizePreview(
+            edge: .top,
+            translationHeight: -26,
+            originalHeight: 52
+        )
+
+        XCTAssertEqual(expanded.offsetY, -26, accuracy: 0.001)
+        XCTAssertEqual(expanded.height, 78, accuracy: 0.001)
+
+        let collapsed = CommandCenterCalendarLayout.resizePreview(
+            edge: .top,
+            translationHeight: 80,
+            originalHeight: 52
+        )
+
+        XCTAssertEqual(collapsed.offsetY, 34, accuracy: 0.001)
+        XCTAssertEqual(collapsed.height, 18, accuracy: 0.001)
+    }
+
+    func testBottomResizePreviewExpandsDownwardAndKeepsMinimumHeight() {
+        let expanded = CommandCenterCalendarLayout.resizePreview(
+            edge: .bottom,
+            translationHeight: 26,
+            originalHeight: 52
+        )
+
+        XCTAssertEqual(expanded.offsetY, 0, accuracy: 0.001)
+        XCTAssertEqual(expanded.height, 78, accuracy: 0.001)
+
+        let collapsed = CommandCenterCalendarLayout.resizePreview(
+            edge: .bottom,
+            translationHeight: -80,
+            originalHeight: 52
+        )
+
+        XCTAssertEqual(collapsed.offsetY, 0, accuracy: 0.001)
+        XCTAssertEqual(collapsed.height, 18, accuracy: 0.001)
+    }
+
     func testOverlapPlacementSplitsConcurrentEventsIntoStableLanes() throws {
         let day = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 30)))
         func time(_ hour: Int, _ minute: Int = 0) throws -> Date {
@@ -80,5 +145,135 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
 
         XCTAssertTrue(CommandCenterCalendarLayout.isAllDay(start: day, end: almostFullDay, calendar: calendar))
         XCTAssertFalse(CommandCenterCalendarLayout.isAllDay(start: day, end: shortBlock, calendar: calendar))
+    }
+
+    func testWeeklyRecurrenceProducesEveryMatchingDayInVisibleWeek() throws {
+        let rule = RecurrenceRule.weekly(on: [.monday, .wednesday, .friday])
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 27, hour: 9)))
+        let intervalStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 27)))
+        let intervalEnd = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 4)))
+
+        let dates = rule.occurrenceDates(
+            in: DateInterval(start: intervalStart, end: intervalEnd),
+            startingFrom: start,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(dates.map { calendar.component(.weekday, from: $0) }, [2, 4, 6])
+        XCTAssertTrue(dates.allSatisfy { calendar.component(.hour, from: $0) == 9 })
+    }
+
+    func testWeekdayRecurrenceSkipsWeekendInVisibleWeek() throws {
+        let rule = RecurrenceRule.weekdays()
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 27, hour: 9)))
+        let intervalStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 27)))
+        let intervalEnd = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 4)))
+
+        let dates = rule.occurrenceDates(
+            in: DateInterval(start: intervalStart, end: intervalEnd),
+            startingFrom: start,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(dates.map { calendar.component(.weekday, from: $0) }, [2, 3, 4, 5, 6])
+    }
+
+    func testTodaySectionsKeepUntimedTasksOnTheirPlannedDayOnly() throws {
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2)))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let tomorrow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: today))
+
+        let plannedToday = task("today", title: "Untimed today", whenDate: today, createdAt: yesterday)
+        let plannedTomorrow = task("tomorrow", title: "Untimed tomorrow", whenDate: tomorrow, createdAt: today)
+        let noPlannedDay = task("no-date", title: "No planned day", createdAt: today)
+
+        let sections = CommandCenterTodayTaskSectioning.sectionTasks(
+            [plannedToday, plannedTomorrow, noPlannedDay],
+            selectedDate: today,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(sections.unscheduled.map(\.uuid), ["today"])
+        XCTAssertTrue(sections.overdue.isEmpty)
+        XCTAssertTrue(sections.scheduled.isEmpty)
+    }
+
+    func testTodaySectionsMovePastUntimedTasksToOverdue() throws {
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2)))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let tomorrow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: today))
+
+        let overdue = task("overdue", title: "Untimed yesterday", whenDate: yesterday)
+        let todayTask = task("today", title: "Untimed today", whenDate: today)
+        let scheduledStart = try XCTUnwrap(calendar.date(byAdding: .hour, value: 9, to: today))
+        let scheduled = task("scheduled", title: "Scheduled today", scheduledStart: scheduledStart)
+        let future = task("future", title: "Future untimed", whenDate: tomorrow)
+
+        let sections = CommandCenterTodayTaskSectioning.sectionTasks(
+            [todayTask, scheduled, overdue, future],
+            selectedDate: today,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(sections.overdue.map(\.uuid), ["overdue"])
+        XCTAssertEqual(sections.scheduled.map(\.uuid), ["scheduled"])
+        XCTAssertEqual(sections.unscheduled.map(\.uuid), ["today"])
+    }
+
+    func testTodaySectionsSuppressRecurringOverdueWhenSameParentRepeatsToday() throws {
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2)))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let todayStart = try XCTUnwrap(calendar.date(byAdding: .hour, value: 9, to: today))
+        let yesterdayStart = try XCTUnwrap(calendar.date(byAdding: .hour, value: 9, to: yesterday))
+
+        let oldRecurring = task(
+            "old-recurring",
+            title: "Old repeat",
+            scheduledStart: yesterdayStart,
+            recurrenceParentUUID: "repeat-1"
+        )
+        let todayRecurring = task(
+            "today-recurring",
+            title: "Today repeat",
+            scheduledStart: todayStart,
+            recurrenceParentUUID: "repeat-1"
+        )
+        let normalOverdue = task("normal-overdue", title: "Normal overdue", whenDate: yesterday)
+        let otherRecurring = task(
+            "other-recurring",
+            title: "Other repeat overdue",
+            scheduledStart: yesterdayStart,
+            recurrenceParentUUID: "repeat-2"
+        )
+
+        let sections = CommandCenterTodayTaskSectioning.sectionTasks(
+            [oldRecurring, todayRecurring, normalOverdue, otherRecurring],
+            selectedDate: today,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(sections.scheduled.map(\.uuid), ["today-recurring"])
+        XCTAssertEqual(sections.overdue.map(\.uuid), ["other-recurring", "normal-overdue"])
+    }
+
+    private func task(
+        _ uuid: String,
+        title: String,
+        scheduledStart: Date? = nil,
+        whenDate: Date? = nil,
+        dueDate: Date? = nil,
+        recurrenceParentUUID: String? = nil,
+        createdAt: Date? = nil
+    ) -> TaskViewModel {
+        TaskViewModel(
+            uuid: uuid,
+            title: title,
+            dueDate: dueDate,
+            scheduledStart: scheduledStart,
+            whenDate: whenDate,
+            recurrenceParentUUID: recurrenceParentUUID,
+            isRecurring: recurrenceParentUUID != nil,
+            createdAt: createdAt ?? Date(timeIntervalSince1970: 0)
+        )
     }
 }

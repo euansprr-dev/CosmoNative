@@ -432,6 +432,104 @@ struct RecurrenceRule: Codable, Equatable {
 
 // MARK: - Extensions for UI
 extension RecurrenceRule {
+    func occurrenceDates(
+        in interval: DateInterval,
+        startingFrom startDate: Date,
+        calendar: Calendar = .current
+    ) -> [Date] {
+        guard interval.end > interval.start else { return [] }
+
+        var dates: [Date] = []
+        var cursor = calendar.startOfDay(for: startDate)
+        let endDay = calendar.startOfDay(for: interval.end)
+        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: startDate)
+        var occurrenceIndex = 0
+
+        while cursor < interval.end && cursor <= endDay {
+            let candidate = merge(date: cursor, timeComponents: timeComponents, calendar: calendar)
+
+            if candidate >= startDate,
+               candidate >= interval.start,
+               candidate < interval.end,
+               includes(candidate, startingFrom: startDate, calendar: calendar) {
+                switch endCondition {
+                case .never:
+                    dates.append(candidate)
+                case .onDate(let endDate):
+                    if calendar.startOfDay(for: candidate) <= calendar.startOfDay(for: endDate) {
+                        dates.append(candidate)
+                    }
+                case .afterOccurrences(let max):
+                    if occurrenceIndex < max {
+                        dates.append(candidate)
+                    }
+                }
+                occurrenceIndex += 1
+            }
+
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+
+        return dates
+    }
+
+    private func includes(_ date: Date, startingFrom startDate: Date, calendar: Calendar) -> Bool {
+        switch frequency {
+        case .daily:
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: startDate), to: calendar.startOfDay(for: date)).day ?? 0
+            return days >= 0 && days % max(1, interval) == 0
+        case .weekdays:
+            let weekday = calendar.component(.weekday, from: date)
+            return weekday >= 2 && weekday <= 6
+        case .weekly, .biweekly, .custom:
+            if let daysOfWeek, !daysOfWeek.isEmpty {
+                let weekday = calendar.component(.weekday, from: date)
+                guard daysOfWeek.contains(where: { $0.rawValue == weekday }) else { return false }
+            }
+
+            let weekOfYear = calendar.dateComponents(
+                [.weekOfYear],
+                from: calendar.startOfDay(for: startDate),
+                to: calendar.startOfDay(for: date)
+            ).weekOfYear ?? 0
+            let weekInterval = frequency == .biweekly ? 2 : max(1, interval)
+            return weekOfYear >= 0 && weekOfYear % weekInterval == 0
+        case .monthly:
+            if let dayOfMonth {
+                guard calendar.component(.day, from: date) == dayOfMonth else { return false }
+            }
+            let months = calendar.dateComponents(
+                [.month],
+                from: calendar.startOfDay(for: startDate),
+                to: calendar.startOfDay(for: date)
+            ).month ?? 0
+            return months >= 0 && months % max(1, interval) == 0
+        case .yearly:
+            if let monthOfYear {
+                guard calendar.component(.month, from: date) == monthOfYear else { return false }
+            }
+            let years = calendar.dateComponents(
+                [.year],
+                from: calendar.startOfDay(for: startDate),
+                to: calendar.startOfDay(for: date)
+            ).year ?? 0
+            return years >= 0 && years % max(1, interval) == 0
+        }
+    }
+
+    private func merge(date: Date, timeComponents: DateComponents, calendar: Calendar) -> Date {
+        let dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        var merged = DateComponents()
+        merged.year = dateComponents.year
+        merged.month = dateComponents.month
+        merged.day = dateComponents.day
+        merged.hour = timeComponents.hour
+        merged.minute = timeComponents.minute
+        merged.second = timeComponents.second ?? 0
+        return calendar.date(from: merged) ?? date
+    }
+
     var icon: String {
         frequency.icon
     }

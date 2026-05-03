@@ -75,6 +75,22 @@ enum CommandCenterComposerRoute: Equatable {
             return anchor
         }
     }
+
+    var taskUUID: String? {
+        switch self {
+        case let .taskActions(task, _),
+             let .taskDate(task, _, _, _),
+             let .taskIntent(task, _, _),
+             let .taskHabit(task, _, _):
+            return task.uuid
+        case .batchSchedule,
+             .intentEditor,
+             .intentLibrary,
+             .habitEditor,
+             .habitLibrary:
+            return nil
+        }
+    }
 }
 
 @MainActor
@@ -174,6 +190,7 @@ struct CommandCenterComposerHost: View {
                     Task { await viewModel.setTaskRecurrence(uuid: task.uuid, rule: rule) }
                 },
                 onDelete: {
+                    composer.dismiss()
                     Task { await viewModel.deleteTask(uuid: task.uuid) }
                 },
                 onDismiss: composer.dismiss

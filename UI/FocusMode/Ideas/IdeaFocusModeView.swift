@@ -39,6 +39,7 @@ struct IdeaFocusModeView: View {
     @State private var showFrameworkSheet: Bool = false
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
+    @FocusState private var focusedOutlineSlideID: UUID?
 
     // MARK: - Constants
 
@@ -773,13 +774,15 @@ extension IdeaFocusModeView {
                 .foregroundStyle(DS.giltMuted)
                 .frame(width: 36, alignment: .leading)
 
-            TextField("what should this slide do?",
-                      text: slideNoteBinding(for: slide.id),
-                      axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(DS.callout)
-                .foregroundStyle(DS.text)
-                .lineLimit(1...4)
+            OutlineSlideNoteEditor(
+                text: slideNoteBinding(for: slide.id),
+                slideID: slide.id,
+                focusedSlideID: $focusedOutlineSlideID,
+                placeholder: "what should this slide do?",
+                onReturn: { insertSlideAfterFocusedSlide(slide.id) },
+                onDeleteEmpty: { handleDeleteOnSlide(slide.id) == .handled }
+            )
+            .frame(minHeight: 22, maxHeight: 88)
 
             Button { removeSlide(slide.id) } label: {
                 Image(systemName: "xmark")
@@ -963,22 +966,39 @@ extension IdeaFocusModeView {
 
     private func addNewSlide() {
         guard var outline = viewModel.codexOutline else { return }
-        let nextPos = (outline.slides.map(\.position).max() ?? 0) + 1
-        outline.slides.append(CodexOutlineSlide(
-            id: UUID(), position: nextPos,
-            speechAct: nil, readerDeltas: [], frame: nil,
-            distance: nil, techniques: [], transition: nil, note: nil
-        ))
+        _ = CodexOutlineEditing.insertSlide(after: outline.slides.last?.id ?? UUID(), in: &outline)
         viewModel.codexOutline = outline
     }
 
     private func removeSlide(_ id: UUID) {
         guard var outline = viewModel.codexOutline else { return }
         outline.slides.removeAll { $0.id == id }
-        for i in outline.slides.indices {
-            outline.slides[i].position = i + 1
-        }
+        CodexOutlineEditing.renumberSlides(in: &outline)
         viewModel.codexOutline = outline
+    }
+
+    private func insertSlideAfterFocusedSlide(_ slideID: UUID) {
+        guard var outline = viewModel.codexOutline else { return }
+        let newID = CodexOutlineEditing.insertSlide(after: slideID, in: &outline)
+        viewModel.codexOutline = outline
+        focusOutlineSlide(newID)
+    }
+
+    private func handleDeleteOnSlide(_ slideID: UUID) -> KeyPress.Result {
+        guard var outline = viewModel.codexOutline,
+              let previousID = CodexOutlineEditing.removeSlideIfEmpty(slideID, in: &outline) else {
+            return .ignored
+        }
+
+        viewModel.codexOutline = outline
+        focusOutlineSlide(previousID)
+        return .handled
+    }
+
+    private func focusOutlineSlide(_ slideID: UUID) {
+        DispatchQueue.main.async {
+            focusedOutlineSlideID = slideID
+        }
     }
 
     private func addElementToSlide(slideId: UUID, field: String, name: String) {
@@ -1009,6 +1029,145 @@ extension IdeaFocusModeView {
         default: break
         }
         viewModel.codexOutline = outline
+    }
+}
+
+private struct OutlineSlideNoteEditor: NSViewRepresentable {
+    @Binding var text: String
+    let slideID: UUID
+    @FocusState.Binding var focusedSlideID: UUID?
+    let placeholder: String
+    let onReturn: () -> Void
+    let onDeleteEmpty: () -> Bool
+
+    func makeNSView(context: Context) -> OutlineSlideNoteTextView {
+        let textView = OutlineSlideNoteTextView()
+        textView.delegate = context.coordinator
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.minSize = NSSize(width: 0, height: 22)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: 88)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.font = NSFont.systemFont(ofSize: 14)
+        textView.textColor = NSColor(DS.text)
+        textView.placeholder = placeholder
+        textView.onReturn = onReturn
+        textView.onDeleteEmpty = onDeleteEmpty
+        return textView
+    }
+
+    func updateNSView(_ textView: OutlineSlideNoteTextView, context: Context) {
+        context.coordinator.parent = self
+        textView.onReturn = onReturn
+        textView.onDeleteEmpty = onDeleteEmpty
+        textView.placeholder = placeholder
+
+        if textView.string != text {
+            textView.string = text
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        if focusedSlideID == slideID,
+           textView.window?.firstResponder !== textView {
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(textView)
+                textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: OutlineSlideNoteTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? nsView.frame.width
+        let measured = nsView.measuredHeight(for: width)
+        return CGSize(width: width, height: min(max(22, measured), 88))
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: OutlineSlideNoteEditor
+
+        init(parent: OutlineSlideNoteEditor) {
+            self.parent = parent
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            parent.focusedSlideID = parent.slideID
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? OutlineSlideNoteTextView else { return }
+            parent.text = textView.string
+            textView.invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+private final class OutlineSlideNoteTextView: NSTextView {
+    var placeholder: String = ""
+    var onReturn: (() -> Void)?
+    var onDeleteEmpty: (() -> Bool)?
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: measuredHeight(for: bounds.width))
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let isPlainReturn = event.keyCode == 36 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
+        if isPlainReturn {
+            onReturn?()
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(deleteBackward(_:)),
+           string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           onDeleteEmpty?() == true {
+            return
+        }
+
+        if selector == #selector(insertNewline(_:)) {
+            onReturn?()
+            return
+        }
+
+        super.doCommand(by: selector)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        guard string.isEmpty else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 14),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+        placeholder.draw(at: NSPoint(x: 0, y: 1), withAttributes: attributes)
+    }
+
+    func measuredHeight(for width: CGFloat) -> CGFloat {
+        guard width > 0 else { return 22 }
+        let storage = NSTextStorage(string: string.isEmpty ? " " : string)
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        let manager = NSLayoutManager()
+        container.lineFragmentPadding = 0
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+        storage.addAttribute(.font, value: font ?? NSFont.systemFont(ofSize: 14), range: NSRange(location: 0, length: storage.length))
+        manager.ensureLayout(for: container)
+        return ceil(manager.usedRect(for: container).height)
     }
 }
 

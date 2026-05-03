@@ -56,6 +56,33 @@ final class CommandCenterComposerTests: XCTestCase {
     }
 
     @MainActor
+    func testRecurringInstanceMatchParsesPlannerumFractionalDates() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let occurrence = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2, hour: 8)))
+
+        var metadata = TaskMetadata()
+        metadata.recurrenceParentUUID = "template-1"
+        metadata.focusDate = PlannerumFormatters.iso8601.string(from: occurrence)
+
+        XCTAssertTrue(
+            TaskRecurrenceEngine.recurrenceInstanceMatches(
+                templateUUID: "template-1",
+                date: occurrence,
+                metadata: metadata,
+                calendar: calendar
+            )
+        )
+        XCTAssertFalse(
+            TaskRecurrenceEngine.recurrenceInstanceMatches(
+                templateUUID: "template-1",
+                date: try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: occurrence)),
+                metadata: metadata,
+                calendar: calendar
+            )
+        )
+    }
+
+    @MainActor
     func testIntentEngineReturnsExplicitUnassignedPresentation() {
         let engine = CommandCenterIntentEngine()
 

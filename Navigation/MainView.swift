@@ -790,7 +790,16 @@ struct MainView: View {
             }
             .onPreferenceChange(CosmoGlassSceneSignalPreferenceKey.self) { signals in
                 let visibleSignals = signals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
-                let cappedSignals = Array(visibleSignals.prefix(8))
+                let cappedSignals = Array(
+                    visibleSignals
+                        .sorted {
+                            let lhsDistance = max(0, $0.rect.minX - sidebarReservedWidth)
+                            let rhsDistance = max(0, $1.rect.minX - sidebarReservedWidth)
+                            if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+                            return $0.intensity > $1.intensity
+                        }
+                        .prefix(8)
+                )
                 if routeSceneSignals != cappedSignals {
                     routeSceneSignals = cappedSignals
                 }
@@ -943,7 +952,10 @@ struct MainView: View {
 
         switch currentDestination {
         case .thinkspace:
-            return canvasSceneMaterial.dampened(0.82)
+            return mergedSidebarSceneMaterial(
+                base: canvasSceneMaterial.dampened(0.82),
+                extraSignals: routeSceneSignals.filter { $0.source == .canvasBlock || $0.source == .canvasCluster }
+            )
         case .commandCenter, .inbox:
             return sidebarRouteSceneMaterial
         case .codex:
@@ -968,6 +980,23 @@ struct MainView: View {
             signals: signals,
             busyness: min(Double(signals.count) / 8.0, 1),
             luminanceBias: DS.palette.isDark ? -0.06 : 0.04,
+            mode: .canvasEdgeResponse
+        )
+    }
+
+    private func mergedSidebarSceneMaterial(
+        base: CosmoGlassSceneMaterial,
+        extraSignals: [CosmoGlassSceneSignal]
+    ) -> CosmoGlassSceneMaterial {
+        let visibleExtras = extraSignals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
+        guard !visibleExtras.isEmpty else { return base }
+
+        let mergedSignals = Array((visibleExtras + base.signals).prefix(8))
+        return CosmoGlassSceneMaterial(
+            fallbackTint: base.fallbackTint,
+            signals: mergedSignals,
+            busyness: min(Double(mergedSignals.count) / 8.0, 1),
+            luminanceBias: base.luminanceBias,
             mode: .canvasEdgeResponse
         )
     }

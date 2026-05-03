@@ -8,6 +8,10 @@ enum UpcomingCalendarScope: String, CaseIterable, Identifiable {
     case week
     case month
 
+    static var allCases: [UpcomingCalendarScope] {
+        [.week]
+    }
+
     var id: String { rawValue }
 
     var label: String {
@@ -34,6 +38,16 @@ enum CommandCenterCalendarEntrySource: Equatable {
     case task(String)
     case externalEvent(String)
     case draft
+}
+
+enum CalendarResizeEdge {
+    case top
+    case bottom
+}
+
+struct CalendarResizePreview: Equatable {
+    let offsetY: CGFloat
+    let height: CGFloat
 }
 
 struct CommandCenterCalendarEntry: Identifiable {
@@ -87,10 +101,9 @@ enum CommandCenterCalendarLayout {
         let anchorDay = calendar.startOfDay(for: anchor)
 
         switch scope {
-        case .day:
-            return [anchorDay]
-        case .week:
-            return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: anchorDay) }
+        case .day, .week:
+            let weekStart = mondayStartingWeek(containing: anchorDay, calendar: calendar)
+            return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: weekStart) }
         case .month:
             guard let monthInterval = calendar.dateInterval(of: .month, for: anchorDay) else { return [anchorDay] }
             let firstWeekday = calendar.component(.weekday, from: monthInterval.start)
@@ -109,6 +122,13 @@ enum CommandCenterCalendarLayout {
             }
             return dates
         }
+    }
+
+    static func mondayStartingWeek(containing date: Date, calendar: Calendar = .current) -> Date {
+        let day = calendar.startOfDay(for: date)
+        let weekday = calendar.component(.weekday, from: day)
+        let daysSinceMonday = (weekday + 5) % 7
+        return calendar.date(byAdding: .day, value: -daysSinceMonday, to: day) ?? day
     }
 
     static func visibleInterval(
@@ -130,6 +150,28 @@ enum CommandCenterCalendarLayout {
 
     static func blockHeight(from start: Date, to end: Date, hourHeight: CGFloat = hourHeight) -> CGFloat {
         max(18, CGFloat(max(0, end.timeIntervalSince(start))) / 3_600 * hourHeight)
+    }
+
+    static func resizePreview(
+        edge: CalendarResizeEdge,
+        translationHeight: CGFloat,
+        originalHeight: CGFloat
+    ) -> CalendarResizePreview {
+        let minimumHeight: CGFloat = 18
+
+        switch edge {
+        case .top:
+            let clampedTranslation = min(translationHeight, originalHeight - minimumHeight)
+            return CalendarResizePreview(
+                offsetY: clampedTranslation,
+                height: originalHeight - clampedTranslation
+            )
+        case .bottom:
+            return CalendarResizePreview(
+                offsetY: 0,
+                height: max(minimumHeight, originalHeight + translationHeight)
+            )
+        }
     }
 
     static func snappedDate(forY y: CGFloat, on day: Date, hourHeight: CGFloat = hourHeight, calendar: Calendar = .current) -> Date {
@@ -274,9 +316,7 @@ struct UpcomingBoardView: View {
     }
 
     private var timelineDates: [Date] {
-        viewModel.upcomingCalendarScope == .day
-            ? [Calendar.current.startOfDay(for: viewModel.upcomingAnchorDate)]
-            : viewModel.upcomingVisibleDates
+        viewModel.upcomingVisibleDates
     }
 
     private var calendarEntries: [CommandCenterCalendarEntry] {
@@ -481,11 +521,6 @@ struct UpcomingBoardView: View {
         formatter.dateFormat = "HH:mm"
         return "\(formatter.string(from: start))-\(formatter.string(from: end))"
     }
-}
-
-private enum CalendarResizeEdge {
-    case top
-    case bottom
 }
 
 private struct UpcomingTimelineCalendarView: View {
@@ -857,39 +892,74 @@ private struct CalendarEntryPositionReader: View {
     let onMove: (CGSize) -> Void
     let onResize: (CalendarResizeEdge, CGSize) -> Void
 
+    @State private var resizeEdge: CalendarResizeEdge?
+    @State private var resizeTranslation: CGSize = .zero
+
     var body: some View {
         GeometryReader { proxy in
             CalendarEntryBlock(entry: entry, isSelected: isSelected, isHovered: isHovered)
-                .frame(width: frameWidth, height: frameHeight)
+                .frame(width: frameWidth, height: preview.height)
+                .offset(y: preview.offsetY)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     onOpenEditor(entry, proxy.frame(in: .named(coordinateSpaceName)))
                 }
                 .onHover(perform: onHover)
-                .simultaneousGesture(
+                .gesture(
                     DragGesture(minimumDistance: 5)
                         .onEnded { value in
                             onMove(value.translation)
                         }
                 )
                 .overlay(alignment: .top) {
-                    CalendarResizeHandle()
+                    CalendarResizeHandle(isActive: resizeEdge == .top, isVisible: showsResizeHandles)
                         .gesture(
                             DragGesture(minimumDistance: 2)
-                                .onEnded { value in onResize(.top, value.translation) }
+                                .onChanged { value in
+                                    resizeEdge = .top
+                                    resizeTranslation = value.translation
+                                }
+                                .onEnded { value in
+                                    onResize(.top, value.translation)
+                                    resizeEdge = nil
+                                    resizeTranslation = .zero
+                                }
                         )
-                        .opacity(entry.isEditableTask ? 1 : 0)
+                        .allowsHitTesting(entry.isEditableTask)
                 }
                 .overlay(alignment: .bottom) {
-                    CalendarResizeHandle()
+                    CalendarResizeHandle(isActive: resizeEdge == .bottom, isVisible: showsResizeHandles)
                         .gesture(
                             DragGesture(minimumDistance: 2)
-                                .onEnded { value in onResize(.bottom, value.translation) }
+                                .onChanged { value in
+                                    resizeEdge = .bottom
+                                    resizeTranslation = value.translation
+                                }
+                                .onEnded { value in
+                                    onResize(.bottom, value.translation)
+                                    resizeEdge = nil
+                                    resizeTranslation = .zero
+                                }
                         )
-                        .opacity(entry.isEditableTask ? 1 : 0)
+                        .allowsHitTesting(entry.isEditableTask)
                 }
         }
         .frame(width: frameWidth, height: frameHeight)
+    }
+
+    private var preview: CalendarResizePreview {
+        guard let resizeEdge else {
+            return CalendarResizePreview(offsetY: 0, height: frameHeight)
+        }
+        return CommandCenterCalendarLayout.resizePreview(
+            edge: resizeEdge,
+            translationHeight: resizeTranslation.height,
+            originalHeight: frameHeight
+        )
+    }
+
+    private var showsResizeHandles: Bool {
+        entry.isEditableTask && (isSelected || isHovered || resizeEdge != nil)
     }
 }
 
@@ -937,6 +1007,13 @@ private struct CalendarEntryBlock: View {
         )
         .shadow(color: isSelected ? entry.accent.opacity(0.20) : .black.opacity(0.18), radius: isSelected ? 14 : 3, x: 0, y: isSelected ? 4 : 1)
         .opacity(entry.source == .draft ? 0.78 : 1)
+        .cosmoGlassSceneSignal(
+            id: "upcoming-entry-\(entry.id)",
+            source: .commandCalendar,
+            color: entry.accent,
+            intensity: entry.source == .draft ? 0.24 : 0.20,
+            allowsDeepDiffusion: true
+        )
         .accessibilityElement(children: .combine)
     }
 
@@ -951,10 +1028,19 @@ private struct CalendarEntryBlock: View {
 }
 
 private struct CalendarResizeHandle: View {
+    let isActive: Bool
+    let isVisible: Bool
+
     var body: some View {
-        Capsule()
+        Rectangle()
             .fill(Color.white.opacity(0.001))
-            .frame(height: 8)
+            .frame(height: 12)
+            .overlay {
+                Capsule()
+                    .fill(DS.textMuted.opacity(isActive ? 0.55 : 0.30))
+                    .frame(width: 28, height: 3)
+                    .opacity(isVisible ? 1 : 0)
+            }
             .contentShape(Rectangle())
     }
 }

@@ -45,6 +45,24 @@ final class CommandKIdeaLifecycleTests: XCTestCase {
         XCTAssertEqual(CortexIdeasCapture.normalizedTitle(from: "  greenhouse hook  "), "greenhouse hook")
     }
 
+    func testSectionBuilderKeepsClientColumnsSortedAndUnassignedLast() {
+        let clientB = Atom.new(type: .clientProfile, title: "Ben", body: nil, metadata: nil)
+        let clientA = Atom.new(type: .clientProfile, title: "Alice", body: nil, metadata: nil)
+        let assigned = makeIdea(title: "Assigned idea", clientUUID: clientB.uuid)
+        let unassigned = makeIdea(title: "Loose idea", clientUUID: nil)
+
+        let sections = CortexIdeasSectionBuilder.sections(
+            visibleIdeas: [unassigned, assigned],
+            clientProfiles: [clientB, clientA]
+        )
+
+        XCTAssertEqual(sections.map(\.clientName), ["Alice", "Ben", "Unassigned"])
+        XCTAssertEqual(sections[0].items.count, 0)
+        XCTAssertEqual(sections[1].items.map(\.title), ["Assigned idea"])
+        XCTAssertEqual(sections[2].clientUUID, nil)
+        XCTAssertEqual(sections[2].items.map(\.title), ["Loose idea"])
+    }
+
     func testMatchesIdeaCreationNotificationFromTelegramAgentPayload() {
         let atom = Atom.new(type: .idea, title: "TG capture", body: nil, metadata: nil)
         let notification = Notification(
@@ -80,5 +98,28 @@ final class CommandKIdeaLifecycleTests: XCTestCase {
 
         XCTAssertFalse(CommandKViewModel.notificationTargetsIdeaGallery(notification))
         XCTAssertEqual(CommandKViewModel.ideaUUID(from: notification), atom.uuid)
+    }
+
+    private func makeIdea(title: String, clientUUID: String?) -> IdeaGalleryItem {
+        IdeaGalleryItem(
+            id: title,
+            atomUUID: title,
+            entityId: Int64(abs(title.hashValue % 10_000)),
+            title: title,
+            body: nil,
+            status: .spark,
+            contentFormat: nil,
+            platform: nil,
+            clientName: nil,
+            clientUUID: clientUUID,
+            tags: [],
+            insightScore: nil,
+            matchingSwipeCount: nil,
+            suggestedFramework: nil,
+            isPinned: false,
+            contentCount: 0,
+            createdAt: isoNow,
+            updatedAt: isoNow
+        )
     }
 }

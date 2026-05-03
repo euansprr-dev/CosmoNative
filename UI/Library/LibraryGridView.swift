@@ -12,38 +12,324 @@ struct LibraryGridView: View {
     var selectedUUIDs: Set<String> = []
     var onToggleSelection: ((String) -> Void)? = nil
 
-    // Responsive columns based on available width
-    private let minCardWidth: CGFloat = 248
-    private let cardSpacing: CGFloat = CommandKMetrics.cardSpacing
+    private let minTileWidth: CGFloat = 156
+    private let maxTileWidth: CGFloat = 180
+    private let gridSpacing: CGFloat = 28
 
     var body: some View {
         GeometryReader { geometry in
-            let columnCount = max(2, Int(geometry.size.width / (minCardWidth + cardSpacing)))
-            let totalSpacing = CGFloat(columnCount - 1) * cardSpacing + (CommandKMetrics.contentPadding * 2)
-            let cardWidth = (geometry.size.width - totalSpacing) / CGFloat(columnCount)
+            let horizontalPadding = CommandKMetrics.contentPadding
+            let availableWidth = max(1, geometry.size.width - horizontalPadding * 2)
+            let columnCount = max(2, Int((availableWidth + gridSpacing) / (minTileWidth + gridSpacing)))
+            let rawTileWidth = (availableWidth - CGFloat(columnCount - 1) * gridSpacing) / CGFloat(columnCount)
+            let tileWidth = min(maxTileWidth, max(minTileWidth, rawTileWidth))
+            let columns = Array(
+                repeating: GridItem(.fixed(tileWidth), spacing: gridSpacing, alignment: .top),
+                count: columnCount
+            )
 
             ScrollView {
-                MasonryLayout(columnCount: columnCount, spacing: cardSpacing) {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 26) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        LibraryCardView(
+                        CosmoFinderTileView(
                             item: item,
-                            cardWidth: cardWidth,
+                            tileWidth: tileWidth,
+                            onOpen: { onItemTap(item) },
                             onDelete: onItemDelete,
                             isSelected: selectedUUIDs.contains(item.uuid),
                             onToggleSelection: onToggleSelection.map { closure in { closure(item.uuid) } }
                         )
-                            .onTapGesture { onItemTap(item) }
-                            .onTapGesture(count: 2) { onItemDoubleTap(item) }
-                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                            .animation(
-                                ProMotionSprings.cardEntrance.delay(Double(index % 12) * 0.03),
-                                value: items.count
-                            )
+                        .onTapGesture { onItemTap(item) }
+                        .onTapGesture(count: 2) { onItemDoubleTap(item) }
+                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                        .animation(
+                            ProMotionSprings.cardEntrance.delay(Double(index % 16) * 0.02),
+                            value: items.count
+                        )
                     }
                 }
-                .padding(CommandKMetrics.contentPadding)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, 22)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+}
+
+// MARK: - Finder Tile View
+
+struct CosmoFinderTileView: View {
+    let item: LibraryItem
+    let tileWidth: CGFloat
+    let onOpen: () -> Void
+    var onDelete: ((LibraryItem) -> Void)?
+    var isSelected: Bool = false
+    var onToggleSelection: (() -> Void)? = nil
+
+    @State private var isHovered = false
+    @State private var showDeleteAlert = false
+
+    private var previewHeight: CGFloat {
+        min(180, max(132, tileWidth))
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            previewWell
+            labelStack
+        }
+        .frame(width: tileWidth, alignment: .top)
+        .contentShape(.rect(cornerRadius: 12))
+        .onHover { isHovered = $0 }
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .contextMenu { contextMenuContent }
+        .alert("Delete \"\(item.title)\"?", isPresented: $showDeleteAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                onDelete?(item)
+            }
+        } message: {
+            Text("This item will be moved to Recently Deleted for 30 days.")
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.title), \(item.typeName)")
+    }
+
+    private var previewWell: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isHovered || isSelected ? DS.surfaceElevated : DS.surfaceCard)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(
+                            isSelected ? item.color.opacity(0.65) : DS.border.opacity(isHovered ? 0.75 : 0.35),
+                            lineWidth: isSelected ? 1.4 : 1
+                        )
+                )
+                .shadow(
+                    color: .black.opacity(isHovered ? 0.12 : 0.035),
+                    radius: isHovered ? 14 : 4,
+                    x: 0,
+                    y: isHovered ? 8 : 2
+                )
+
+            previewContent
+                .padding(item.isLibraryFolder ? 0 : 12)
+
+            if !item.isLibraryFolder {
+                typeBadge
+            }
+        }
+        .frame(width: tileWidth, height: previewHeight)
+        .scaleEffect(isHovered ? 1.018 : 1)
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if item.isLibraryFolder {
+            FinderFolderGlyph(color: item.color, count: item.childCount)
+                .frame(width: tileWidth * 0.58, height: previewHeight * 0.43)
+        } else if let thumbnailURL = item.thumbnailURL, !thumbnailURL.isEmpty {
+            SpotlightImageContent(urlString: thumbnailURL)
+        } else if item.atomType == .connection {
+            SpotlightConnectionPreview(preview: item.preview, accentColor: item.color)
+        } else if let preview = item.preview, !preview.isEmpty {
+            SpotlightPageContent(text: preview, accentColor: item.color)
+        } else {
+            SpotlightFauxPage(accentColor: item.color)
+        }
+    }
+
+    private var labelStack: some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 5) {
+                if item.isLibraryFolder {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(item.color)
+                        .accessibilityHidden(true)
+                }
+
+                Text(item.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity)
+
+            Text(metadataLabel)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+        .frame(height: 44, alignment: .top)
+    }
+
+    private var metadataLabel: String {
+        if item.isLibraryFolder {
+            let count = item.childCount
+            return "\(count) item\(count == 1 ? "" : "s") · \(item.relativeDate)"
+        }
+        if let provenance = item.provenanceSummary, !provenance.isEmpty {
+            return provenance
+        }
+        return "\(item.typeName) · \(item.relativeDate)"
+    }
+
+    private var typeBadge: some View {
+        Image(systemName: item.icon)
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 16, height: 16)
+            .background(item.color, in: Circle())
+            .padding(7)
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var contextMenuContent: some View {
+        Button {
+            if item.isLibraryFolder {
+                onOpen()
+            } else {
+                openInFocusMode()
+            }
+        } label: {
+            Label(item.isLibraryFolder ? "Open Folder" : "Open in Focus Mode", systemImage: item.isLibraryFolder ? "folder" : "arrow.up.left.and.arrow.down.right")
+        }
+
+        if item.kind != .cluster {
+            Button {
+                openAsPane()
+            } label: {
+                Label("Open as Pane", systemImage: "rectangle.split.2x1")
+            }
+        }
+
+        if item.kind == .atom {
+            Button {
+                addToCanvas()
+            } label: {
+                Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+            }
+        }
+
+        if onToggleSelection != nil {
+            Divider()
+            Button {
+                onToggleSelection?()
+            } label: {
+                Label(isSelected ? "Deselect" : "Select", systemImage: isSelected ? "checkmark.circle.fill" : "circle")
+            }
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            showDeleteAlert = true
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    private func openInFocusMode() {
+        if item.kind == .thinkspace {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                object: nil,
+                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: item.uuid).userInfo
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            return
+        }
+
+        if item.isLibraryFolder {
+            return
+        }
+
+        guard let entityType = EntityType(rawValue: item.atomType.rawValue),
+              item.entityId > 0 else { return }
+
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: ["type": entityType, "id": item.entityId]
+        )
+    }
+
+    private func openAsPane() {
+        if item.kind == .thinkspace {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: ["thinkspaceId": item.uuid]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            return
+        }
+
+        if let entityType = EntityType(rawValue: item.atomType.rawValue) {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: ["type": entityType, "id": item.entityId]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        }
+    }
+
+    private func addToCanvas() {
+        guard item.kind == .atom else { return }
+        NotificationCenter.default.post(
+            name: CosmoNotification.NodeGraph.addToCanvas,
+            object: nil,
+            userInfo: ["atomUUID": item.uuid]
+        )
+    }
+}
+
+private struct FinderFolderGlyph: View {
+    let color: Color
+    let count: Int
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let tabWidth = size.width * 0.38
+            let tabHeight = size.height * 0.22
+
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(color.opacity(0.78))
+                    .frame(width: tabWidth, height: tabHeight)
+                    .offset(x: size.width * 0.08)
+
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(color)
+                    .frame(width: size.width, height: size.height * 0.78)
+                    .offset(y: tabHeight * 0.72)
+                    .overlay(alignment: .top) {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(.white.opacity(0.18))
+                            .frame(height: size.height * 0.12)
+                            .offset(y: tabHeight * 0.72)
+                    }
+
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.18), in: Capsule())
+                        .offset(x: size.width * 0.72, y: size.height * 0.58)
+                }
+            }
+            .shadow(color: color.opacity(0.25), radius: 8, x: 0, y: 4)
+        }
+        .accessibilityHidden(true)
     }
 }
 

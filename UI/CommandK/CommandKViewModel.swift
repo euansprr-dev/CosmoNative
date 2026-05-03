@@ -2121,6 +2121,8 @@ public final class CommandKViewModel: ObservableObject {
             resultKind = .project
         case .thinkspace:
             resultKind = .thinkspace
+        case .cluster:
+            resultKind = .thinkspace
         }
 
         return UnifiedSearchResult(
@@ -2135,7 +2137,7 @@ public final class CommandKViewModel: ObservableObject {
             relevance: result.relevance,
             atomUUID: result.atomUUID,
             atomType: result.atomType,
-            thinkspaceId: result.thinkspaceId ?? (item.kind == .thinkspace ? item.uuid : nil),
+            thinkspaceId: result.thinkspaceId ?? (item.kind == .thinkspace ? item.uuid : item.thinkspaceUUIDs.first),
             projectUUID: item.projectUUID,
             projectName: item.projectName,
             thinkspaceNames: item.thinkspaceNames,

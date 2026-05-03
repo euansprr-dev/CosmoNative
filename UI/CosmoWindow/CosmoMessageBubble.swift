@@ -75,8 +75,8 @@ struct CosmoMessageBubble: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(DS.textSecondary)
                             .frame(width: 26, height: 26)
-                            .background(Circle().fill(DS.surfaceElevated))
-                            .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 1))
+                            .background(Circle().fill(DS.glassSectionFill))
+                            .overlay(Circle().stroke(DS.glassBorder, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                     .offset(x: 10, y: -10)
@@ -238,11 +238,11 @@ struct CosmoMessageBubble: View {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: CosmoWindowMetrics.cardCornerRadius, style: .continuous)
-                    .fill(isError ? DS.redSoft.opacity(0.7) : DS.surfaceElevated)
+                    .fill(isError ? DS.redSoft.opacity(0.7) : DS.glassCardFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: CosmoWindowMetrics.cardCornerRadius, style: .continuous)
-                    .stroke(isError ? DS.red.opacity(0.18) : DS.border, lineWidth: 1)
+                    .stroke(isError ? DS.red.opacity(0.18) : DS.glassBorder, lineWidth: 1)
             )
 
             Spacer(minLength: 72)
@@ -285,7 +285,7 @@ struct CosmoMessageBubble: View {
     private func timelineMarker(icon: String, title: String, tint: Color) -> some View {
         HStack(spacing: 10) {
             Rectangle()
-                .fill(DS.borderSubtle)
+                .fill(DS.glassBorder)
                 .frame(height: 1)
 
             HStack(spacing: 6) {
@@ -302,15 +302,15 @@ struct CosmoMessageBubble: View {
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(DS.surfaceElevated)
+                    .fill(DS.glassSectionFill)
             )
             .overlay(
                 Capsule()
-                    .stroke(DS.borderSubtle, lineWidth: 1)
+                    .stroke(DS.glassBorder, lineWidth: 1)
             )
 
             Rectangle()
-                .fill(DS.borderSubtle)
+                .fill(DS.glassBorder)
                 .frame(height: 1)
         }
         .padding(.horizontal, CosmoWindowMetrics.contentPadding)
@@ -678,7 +678,7 @@ private struct CosmoMarkdownBlockView: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(DS.bg)
+                    .fill(DS.glassSectionFill)
             )
         case .code(let code):
             ScrollView(.horizontal, showsIndicators: false) {
@@ -690,11 +690,11 @@ private struct CosmoMarkdownBlockView: View {
             }
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(DS.bg)
+                    .fill(DS.glassSectionFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
+                    .stroke(DS.glassBorder, lineWidth: 1)
             )
         }
     }

@@ -56,6 +56,16 @@ struct DashboardTaskList: View {
             batchActionBar
         }
 
+        if !viewModel.overdueTasks.isEmpty {
+            taskSection(
+                title: "Overdue",
+                tasks: viewModel.overdueTasks,
+                headerColor: DS.red,
+                showReschedule: true,
+                section: .overdue
+            )
+        }
+
         if !viewModel.scheduledTasks.isEmpty {
             taskSection(
                 title: "Scheduled",
@@ -65,8 +75,17 @@ struct DashboardTaskList: View {
             )
         }
 
-        if viewModel.scheduledTasks.isEmpty {
-            emptyState(message: "No scheduled tasks today", icon: "calendar")
+        if !viewModel.unscheduledTasks.isEmpty {
+            taskSection(
+                title: "Today",
+                tasks: viewModel.unscheduledTasks,
+                headerColor: DS.textSecondary,
+                section: .unscheduled
+            )
+        }
+
+        if viewModel.overdueTasks.isEmpty && viewModel.scheduledTasks.isEmpty && viewModel.unscheduledTasks.isEmpty {
+            emptyState(message: "No tasks today", icon: "calendar")
         }
 
         SmartTaskCaptureRow(viewModel: viewModel)
@@ -522,6 +541,12 @@ struct DashboardTaskList: View {
                 size: 18
             )
             .contentShape(Circle())
+            .cosmoGlassSceneSignal(
+                id: "command-task-check-\(task.uuid)",
+                source: .commandTask,
+                color: task.isCompleted || completionState != nil ? DS.green : task.priority.color,
+                intensity: task.isCompleted || completionState != nil ? 0.62 : 0.30
+            )
         }
         .buttonStyle(.plain)
     }

@@ -122,14 +122,10 @@ struct LibraryView: View {
                 smartCollectionsRow
             }
 
-            if viewModel.isAtHome && searchText.isEmpty && !viewModel.homeStandaloneItems.isEmpty {
-                standaloneSection
-            }
-
             // Main content
             if viewModel.isLoading {
                 loadingView
-            } else if viewModel.displayItems.isEmpty && viewModel.homeStandaloneItems.isEmpty {
+            } else if viewModel.displayItems.isEmpty {
                 emptyState
             } else {
                 switch viewMode {
@@ -146,112 +142,6 @@ struct LibraryView: View {
         }
     }
 
-    private var standaloneSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Standalone")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(DS.text)
-                    Text("Unplaced atoms created outside canvases and projects.")
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.textMuted)
-                }
-
-                Spacer()
-
-                Text("\(viewModel.homeStandaloneItems.count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(DS.textSecondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(DS.border)
-                    )
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(viewModel.homeStandaloneItems) { item in
-                        standaloneCard(item)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-    }
-
-    private func standaloneCard(_ item: LibraryItem) -> some View {
-        Button {
-            viewModel.handleItemTap(item)
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Image(systemName: item.icon)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(item.color)
-                        .frame(width: 30, height: 30)
-                        .background(item.color.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(DS.text)
-                            .lineLimit(2)
-
-                        Text(item.typeName)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.textMuted)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-
-                if let preview = item.preview, !preview.isEmpty {
-                    Text(preview)
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.textSecondary)
-                        .lineLimit(3)
-                }
-
-                HStack {
-                    Text("Standalone")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(item.color.opacity(0.95))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(item.color.opacity(0.12))
-                        .clipShape(Capsule())
-
-                    Spacer()
-
-                    Text(item.relativeDate)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
-                }
-            }
-            .frame(width: 280, alignment: .leading)
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(DS.borderSubtle)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(DS.border, lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .onTapGesture(count: 2) {
-            viewModel.openInFocusMode(item)
-        }
-    }
-
     // MARK: - Top Bar
 
     private var topBar: some View {
@@ -262,7 +152,7 @@ struct LibraryView: View {
                     .font(.system(size: 14))
                     .foregroundColor(DS.textMuted)
 
-                TextField("Search library...", text: $searchText)
+                TextField("Search anything...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
                     .foregroundColor(DS.text)
@@ -584,12 +474,14 @@ enum LibraryItemKind: String {
     case atom
     case project
     case thinkspace
+    case cluster
 
     var sortRank: Int {
         switch self {
         case .project: return 0
         case .thinkspace: return 1
-        case .atom: return 2
+        case .cluster: return 2
+        case .atom: return 3
         }
     }
 }
@@ -617,9 +509,14 @@ struct LibraryItem: Identifiable {
     let thinkspaceNames: [String]
     let nestedThinkspaceCount: Int
     let blockCount: Int
+    let clusterBlockUUIDs: [String]
 
     var isFolder: Bool {
         kind == .project
+    }
+
+    var isLibraryFolder: Bool {
+        kind == .project || kind == .thinkspace || kind == .cluster
     }
 
     var isStandalone: Bool {
@@ -632,6 +529,12 @@ struct LibraryItem: Identifiable {
             return nil
         case .thinkspace:
             return projectName
+        case .cluster:
+            let segments = [projectName, thinkspaceNames.first].compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            return segments.isEmpty ? nil : segments.joined(separator: " / ")
         case .atom:
             let segments = [projectName, thinkspaceNames.first].compactMap { value -> String? in
                 guard let value, !value.isEmpty else { return nil }
@@ -709,6 +612,55 @@ struct LibraryItem: Identifiable {
         return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
     }
 
+    init(
+        uuid: String,
+        entityId: Int64,
+        title: String,
+        atomType: AtomType,
+        icon: String,
+        color: Color,
+        typeName: String,
+        relativeDate: String,
+        childCount: Int,
+        createdAt: Date,
+        updatedAt: Date,
+        preview: String?,
+        thumbnailURL: String?,
+        statusBadge: String?,
+        kind: LibraryItemKind,
+        projectUUID: String?,
+        projectName: String?,
+        thinkspaceUUIDs: [String],
+        thinkspaceNames: [String],
+        nestedThinkspaceCount: Int,
+        blockCount: Int,
+        clusterBlockUUIDs: [String] = []
+    ) {
+        self.id = uuid
+        self.uuid = uuid
+        self.entityId = entityId
+        self.title = title
+        self.atomType = atomType
+        self.icon = icon
+        self.color = color
+        self.typeName = typeName
+        self.relativeDate = relativeDate
+        self.childCount = childCount
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.preview = preview
+        self.thumbnailURL = thumbnailURL
+        self.statusBadge = statusBadge
+        self.kind = kind
+        self.projectUUID = projectUUID
+        self.projectName = projectName
+        self.thinkspaceUUIDs = thinkspaceUUIDs
+        self.thinkspaceNames = thinkspaceNames
+        self.nestedThinkspaceCount = nestedThinkspaceCount
+        self.blockCount = blockCount
+        self.clusterBlockUUIDs = clusterBlockUUIDs
+    }
+
     init(atom: Atom, childCount: Int = 0, project: Atom? = nil, thinkspaces: [Thinkspace] = []) {
         let thinkspaceMetadata = atom.type == .thinkspace
             ? atom.metadataValue(as: ThinkspaceMetadata.self)
@@ -774,6 +726,7 @@ struct LibraryItem: Identifiable {
         self.thinkspaceNames = thinkspaces.map(\.name)
         self.nestedThinkspaceCount = 0
         self.blockCount = thinkspaceMetadata?.blockIds.count ?? 0
+        self.clusterBlockUUIDs = []
         switch atom.type {
         case .project:
             self.kind = .project
@@ -876,6 +829,116 @@ struct LibraryItem: Identifiable {
             : "Nested space · \(thinkspace.blockCount) block\(thinkspace.blockCount == 1 ? "" : "s")"
         self.thumbnailURL = nil
         self.statusBadge = nestedThinkspaceCount > 0 ? "\(nestedThinkspaceCount) space\(nestedThinkspaceCount == 1 ? "" : "s")" : nil
+        self.clusterBlockUUIDs = []
+    }
+
+    init(cluster: CodableCluster, thinkspace: Thinkspace, project: Atom?) {
+        let blockCount = cluster.blockUUIDs.count
+        let title = cluster.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeTitle = title.isEmpty ? "Untitled Cluster" : title
+        let paletteIndex = ((cluster.colorIndex % CanvasCluster.palette.count) + CanvasCluster.palette.count) % CanvasCluster.palette.count
+        let color = CanvasCluster.palette[paletteIndex]
+        let projectUUID = project?.uuid ?? thinkspace.projectUuid
+
+        self.init(
+            uuid: cluster.id,
+            entityId: 0,
+            title: safeTitle,
+            atomType: .thinkspace,
+            icon: "folder.fill",
+            color: color,
+            typeName: "Cluster",
+            relativeDate: Self.relativeDateString(from: thinkspace.lastOpened),
+            childCount: blockCount,
+            createdAt: thinkspace.lastOpened,
+            updatedAt: thinkspace.lastOpened,
+            preview: cluster.synthesis ?? "\(blockCount) item\(blockCount == 1 ? "" : "s")",
+            thumbnailURL: nil,
+            statusBadge: "\(blockCount)",
+            kind: .cluster,
+            projectUUID: projectUUID,
+            projectName: project?.title,
+            thinkspaceUUIDs: [thinkspace.id],
+            thinkspaceNames: [thinkspace.name],
+            nestedThinkspaceCount: 0,
+            blockCount: blockCount,
+            clusterBlockUUIDs: cluster.blockUUIDs
+        )
+    }
+}
+
+struct LibraryHomeContents {
+    let items: [LibraryItem]
+    let standalone: [LibraryItem]
+}
+
+enum LibraryHierarchy {
+    static func homeItems(
+        from items: [LibraryItem],
+        projectOwnedAtomUUIDs: Set<String>
+    ) -> LibraryHomeContents {
+        var primary: [LibraryItem] = []
+        var standalone: [LibraryItem] = []
+
+        for item in items {
+            switch item.kind {
+            case .project:
+                primary.append(item)
+            case .thinkspace, .cluster:
+                if item.projectUUID == nil {
+                    primary.append(item)
+                }
+            case .atom:
+                if item.isStandalone {
+                    standalone.append(item)
+                } else if !projectOwnedAtomUUIDs.contains(item.uuid) {
+                    primary.append(item)
+                }
+            }
+        }
+
+        return LibraryHomeContents(
+            items: sortFolderFirst(primary),
+            standalone: standalone.sorted(by: libraryItemFallbackSort)
+        )
+    }
+
+    static func contents(of folder: LibraryItem, in items: [LibraryItem]) -> [LibraryItem] {
+        switch folder.kind {
+        case .project:
+            return sortFolderFirst(items.filter { item in
+                item.uuid != folder.uuid &&
+                item.projectUUID == folder.uuid &&
+                (item.kind == .thinkspace || item.kind == .cluster || item.kind == .atom)
+            })
+        case .thinkspace:
+            return sortFolderFirst(items.filter { item in
+                item.uuid != folder.uuid &&
+                item.thinkspaceUUIDs.contains(folder.uuid) &&
+                (item.kind == .cluster || item.kind == .atom)
+            })
+        case .cluster:
+            let atomsByUUID = Dictionary(uniqueKeysWithValues: items.filter { $0.kind == .atom }.map { ($0.uuid, $0) })
+            return folder.clusterBlockUUIDs.compactMap { atomsByUUID[$0] }
+        case .atom:
+            return []
+        }
+    }
+
+    private static func sortFolderFirst(_ items: [LibraryItem]) -> [LibraryItem] {
+        items.sorted { lhs, rhs in
+            if lhs.kind.sortRank != rhs.kind.sortRank {
+                return lhs.kind.sortRank < rhs.kind.sortRank
+            }
+            return libraryItemFallbackSort(lhs: lhs, rhs: rhs)
+        }
+    }
+
+    private static func libraryItemFallbackSort(lhs: LibraryItem, rhs: LibraryItem) -> Bool {
+        if lhs.updatedAt != rhs.updatedAt {
+            return lhs.updatedAt > rhs.updatedAt
+        }
+        return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
     }
 }
 
@@ -933,6 +996,9 @@ final class LibraryViewModel: ObservableObject {
             let projectsByUUID = Dictionary(uniqueKeysWithValues: projects.map { ($0.uuid, $0) })
             let thinkspaces = ThinkspaceManager.shared.sidebarThinkspaces
             let thinkspacesByID = Dictionary(uniqueKeysWithValues: thinkspaces.map { ($0.id, $0) })
+            let thinkspaceAtoms = try await AtomRepository.shared.fetchAll(type: .thinkspace)
+                .filter { !$0.isDeleted }
+            let thinkspaceAtomsByUUID = Dictionary(uniqueKeysWithValues: thinkspaceAtoms.map { ($0.uuid, $0) })
             let memberships = try await AtomRepository.shared.fetchThinkspaceMembership(
                 for: atoms.filter { $0.type != .project }.map(\.uuid)
             )
@@ -990,7 +1056,20 @@ final class LibraryViewModel: ObservableObject {
                 )
             }
 
-            allItems = atomItems + thinkspaceItems
+            let clusterItems = thinkspaces.flatMap { thinkspace -> [LibraryItem] in
+                guard let atom = thinkspaceAtomsByUUID[thinkspace.id],
+                      let metadata = atom.metadataValue(as: ThinkspaceMetadata.self),
+                      !metadata.clusters.isEmpty else {
+                    return []
+                }
+
+                let project = thinkspace.projectUuid.flatMap { projectsByUUID[$0] }
+                return metadata.clusters.map { cluster in
+                    LibraryItem(cluster: cluster, thinkspace: thinkspace, project: project)
+                }
+            }
+
+            allItems = atomItems + thinkspaceItems + clusterItems
             applySort()
             applyFilters()
 
@@ -1074,7 +1153,7 @@ final class LibraryViewModel: ObservableObject {
     // MARK: - Navigation
 
     func handleItemTap(_ item: LibraryItem) {
-        if item.isFolder {
+        if item.isLibraryFolder {
             navigateIntoFolder(item)
         } else if item.kind == .thinkspace {
             openThinkspace(item)
@@ -1108,6 +1187,11 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func openInFocusMode(_ item: LibraryItem) {
+        if item.kind == .cluster {
+            navigateIntoFolder(item)
+            return
+        }
+
         if item.kind == .thinkspace {
             openThinkspace(item)
             return
@@ -1159,14 +1243,15 @@ final class LibraryViewModel: ObservableObject {
 
     private func loadFolderContents(_ folderUUID: String) async {
         homeStandaloneItems = []
-        let projectThinkspaces = allItems.filter {
-            $0.kind == .thinkspace && $0.projectUUID == folderUUID
+        guard let folder = allItems.first(where: { $0.uuid == folderUUID }) else {
+            displayItems = []
+            return
         }
-        let projectAtoms = allItems.filter {
-            $0.kind == .atom && $0.projectUUID == folderUUID
+
+        displayItems = LibraryHierarchy.contents(of: folder, in: allItems)
+        if folder.kind != .cluster {
+            applySortToDisplay()
         }
-        displayItems = projectThinkspaces + projectAtoms
-        applySortToDisplay()
     }
 
     // MARK: - Sort & Filter
@@ -1204,24 +1289,14 @@ final class LibraryViewModel: ObservableObject {
                 ($0.provenanceSummary?.localizedCaseInsensitiveContains(searchFilter) ?? false)
             }
         } else {
-            // At home level without search: exclude non-folder atoms owned by a project
-            items = items.filter { item in
-                if item.kind == .thinkspace {
-                    return false
-                }
-                return item.isFolder || !projectOwnedAtomUUIDs.contains(item.uuid)
-            }
-
-            let standalone = items.filter(\.isStandalone)
-            if !standalone.isEmpty {
-                homeStandaloneItems = standalone.sorted(by: librarySortComparator)
-                items.removeAll { $0.isStandalone }
-            }
+            let home = LibraryHierarchy.homeItems(from: items, projectOwnedAtomUUIDs: projectOwnedAtomUUIDs)
+            homeStandaloneItems = home.standalone.sorted(by: librarySortComparator)
+            items = home.items + homeStandaloneItems
         }
 
         // Folders first, then individual items
-        let folders = items.filter(\.isFolder)
-        let nonFolders = items.filter { !$0.isFolder }
+        let folders = items.filter(\.isLibraryFolder)
+        let nonFolders = items.filter { !$0.isLibraryFolder }
         items = folders + nonFolders
 
         displayItems = items

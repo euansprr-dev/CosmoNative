@@ -203,6 +203,7 @@
 		44C42FD576CDC7B4081E1035 /* CreatorImportEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83AF9A8D3FF1C6488C737709 /* CreatorImportEngine.swift */; };
 		457715DE0FB3C1070AEE326D /* AutomationSuggestionTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E1B2545437ED01F406DE12B /* AutomationSuggestionTracker.swift */; };
 		461DC9BFF7C5834C5963B4E1 /* CodexOutlineModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53849164A37882306B87F15D /* CodexOutlineModel.swift */; };
+		C0DEC0DEC0DEC0DEC0DE0002 /* CodexOutlineEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DEC0DEC0DEC0DE0001 /* CodexOutlineEditing.swift */; };
 		462B146214FDD1079EAD2FCD /* ConversationMemoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A65A12758E70813B100C65 /* ConversationMemoryService.swift */; };
 		463FB9A8348CD5AF89C4B0F2 /* WeeklyStrategyReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = E466FDE1978C3D46D7B3269E /* WeeklyStrategyReview.swift */; };
 		4641A2F6F5544A48D9677766 /* AgentContextAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511D8ABEA86028198F618C2F /* AgentContextAssembler.swift */; };
@@ -1399,6 +1400,7 @@
 		E31816A8994B6F3E31F00139 /* CommandCenterTaskMenus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterTaskMenus.swift; sourceTree = "<group>"; };
 		E373AEBDAE3902EDE1B33740 /* ParsedAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParsedAction.swift; sourceTree = "<group>"; };
 		E3944EBE2B33F243DAFBBA96 /* CodexElementCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexElementCategory.swift; sourceTree = "<group>"; };
+		C0DEC0DEC0DEC0DEC0DE0001 /* CodexOutlineEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOutlineEditing.swift; sourceTree = "<group>"; };
 		E466FDE1978C3D46D7B3269E /* WeeklyStrategyReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyStrategyReview.swift; sourceTree = "<group>"; };
 		E4FDD04AE45F22506C1976C3 /* 0000300_adapters.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 0000300_adapters.safetensors; sourceTree = "<group>"; };
 		E5070FC20E557CA5D406E5FE /* SynthesisEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisEngine.swift; sourceTree = "<group>"; };
@@ -2218,6 +2220,7 @@
 			children = (
 				3D7464A8F0A06D34F3A6C360 /* CodexElement.swift */,
 				E3944EBE2B33F243DAFBBA96 /* CodexElementCategory.swift */,
+				C0DEC0DEC0DEC0DEC0DE0001 /* CodexOutlineEditing.swift */,
 				53849164A37882306B87F15D /* CodexOutlineModel.swift */,
 				D31F77F925A84B3FA906AE21 /* CodexWalkthrough.swift */,
 			);
@@ -3273,6 +3276,7 @@
 				DF4243ACFBCEF6C1E950F315 /* CodexHeroHeader.swift in Sources */,
 				8523E9E05DE99B179214ABB5 /* CodexImporter.swift in Sources */,
 				78289985F284AFDAF2B47F3C /* CodexNavigationView.swift in Sources */,
+				C0DEC0DEC0DEC0DEC0DE0002 /* CodexOutlineEditing.swift in Sources */,
 				461DC9BFF7C5834C5963B4E1 /* CodexOutlineModel.swift in Sources */,
 				ADB41AF76DBB0E8A9F929828 /* CodexRepository.swift in Sources */,
 				5341100E1800F0B2462DC3D0 /* CodexSettingsTab.swift in Sources */,

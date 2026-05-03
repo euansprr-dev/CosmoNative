@@ -1138,8 +1138,8 @@ struct CanvasView: View {
         let intensity: Double
         let edgeIntensity: Double
         if hasNearContent {
-            intensity = 0.34
-            edgeIntensity = 0.55
+            intensity = 0.17
+            edgeIntensity = 0.275
         } else {
             intensity = 0.08
             edgeIntensity = 0.10
@@ -1159,8 +1159,12 @@ struct CanvasView: View {
         visibleClusters: [SceneColorSignal],
         visibleBlocks: [SceneColorSignal]
     ) -> CosmoGlassSceneMaterial {
-        let clusterSignals = visibleClusters.filter { $0.isNearSidebar }
-        let blockSignals = visibleBlocks.filter { $0.isNearSidebar }
+        let clusterSignals = visibleClusters
+            .filter { $0.isNearSidebar }
+            .sorted { $0.rect.minX < $1.rect.minX }
+        let blockSignals = visibleBlocks
+            .filter { $0.isNearSidebar }
+            .sorted { $0.rect.minX < $1.rect.minX }
         var signals: [CosmoGlassSceneSignal] = []
 
         signals.append(
@@ -1169,9 +1173,9 @@ struct CanvasView: View {
                     id: "canvas-cluster-\(signal.id)",
                     color: signal.color,
                     rect: signal.rect,
-                    intensity: 0.44,
+                    intensity: 0.22,
                     source: .canvasCluster,
-                    allowsDeepDiffusion: signal.rect.minX < 960
+                    allowsDeepDiffusion: signal.rect.minX < 640
                 )
             }
         )
@@ -1182,9 +1186,9 @@ struct CanvasView: View {
                     id: "canvas-block-\(signal.id)",
                     color: signal.color,
                     rect: signal.rect,
-                    intensity: 0.54,
+                    intensity: 0.27,
                     source: .canvasBlock,
-                    allowsDeepDiffusion: signal.rect.minX < 960
+                    allowsDeepDiffusion: signal.rect.minX < 640
                 )
             }
         )
@@ -1202,7 +1206,7 @@ struct CanvasView: View {
 
     private func visibleClusterSignals() -> [SceneColorSignal] {
         let viewport = CGRect(origin: .zero, size: canvasSize).insetBy(dx: -120, dy: -120)
-        let nearLimit: CGFloat = 1_160
+        let nearLimit: CGFloat = 740
 
         return clusterEngine.allClusters.compactMap { cluster in
             let rect = viewportTransform.canvasRectToScreen(liveSceneRect(for: cluster))
@@ -1213,7 +1217,7 @@ struct CanvasView: View {
 
     private func visibleBlockSignals() -> [SceneColorSignal] {
         let viewport = CGRect(origin: .zero, size: canvasSize).insetBy(dx: -120, dy: -120)
-        let nearLimit: CGFloat = 1_160
+        let nearLimit: CGFloat = 740
 
         return renderSnapshot.renderableBlocks.compactMap { block in
             let rect = screenRect(for: block, position: liveScenePosition(for: block))

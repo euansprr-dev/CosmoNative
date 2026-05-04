@@ -156,6 +156,17 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         )
     }
 
+    func testMainContentPushUsesTransformInsteadOfAnimatingLayoutPadding() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let mainView = try String(
+            contentsOf: root.appendingPathComponent("Navigation/MainView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertFalse(mainView.contains(".padding(.leading, contentPushOffset)"))
+        XCTAssertTrue(mainView.contains(".offset(x: contentPushOffset)"))
+    }
+
     func testContentFocusSidebarSurfacesDoNotHardTruncateWritingContext() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let contentFocusView = try String(

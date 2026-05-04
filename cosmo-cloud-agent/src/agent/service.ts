@@ -10,6 +10,7 @@ import { assembleSystemPrompt } from './contextAssembler';
 import { executeTool, jsonEncode } from './toolExecutor';
 import { loadConversation, saveConversation, logApiUsage, createAtom, fetchAtom } from '../db/queries';
 import { getToolDefinitions } from './toolRegistry';
+import { parseCaptureLanePrefix, TelegramCapturedMedia, telegramMediaPlaceholder } from './captureLane';
 
 interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -24,6 +25,13 @@ interface ProcessResult {
   toolsUsed: string[];
   createdAtomUUIDs: string[];
   intent: AgentIntent;
+}
+
+interface ProcessMessageOptions {
+  telegramMedia?: TelegramCapturedMedia[];
+  telegramMessageId?: string;
+  telegramMediaGroupId?: string;
+  telegramSender?: string;
 }
 
 // Module-level active items context for numbered reference resolution
@@ -168,22 +176,31 @@ async function tryFastCaptureLaneTransport(
   text: string,
   chatId: string,
   messages: AgentMessage[],
+  options: ProcessMessageOptions = {},
 ): Promise<ProcessResult | null> {
-  const parsed = parseCaptureLanePrefix(text);
+  const media = options.telegramMedia || [];
+  const parsed = parseCaptureLanePrefix(text, { allowsEmptyBody: media.length > 0 });
   if (!parsed) return null;
 
-  console.log(`📥 Fast-path capture lane: ${parsed.destinationName} "${parsed.body.substring(0, 80)}..."`);
+  const body = parsed.body || telegramMediaPlaceholder(media);
+  console.log(`📥 Fast-path capture lane: ${parsed.destinationName} "${body.substring(0, 80)}..."`);
 
-  const title = parsed.body.substring(0, 120);
+  const title = body.substring(0, 120);
   const atom = await createAtom({
     type: 'note',
     title,
-    body: parsed.body,
+    body,
     metadata: {
       isCaptureLaneCapture: true,
       captureDestinationName: parsed.destinationName,
+      captureLaneCommandText: parsed.commandText,
+      ...(parsed.subroute ? { captureLaneSubroute: parsed.subroute } : {}),
       captureSource: 'telegram_cloud',
       telegramChatId: chatId,
+      ...(options.telegramMessageId ? { telegramMessageId: options.telegramMessageId } : {}),
+      ...(options.telegramMediaGroupId ? { telegramMediaGroupId: options.telegramMediaGroupId } : {}),
+      ...(options.telegramSender ? { telegramSender: options.telegramSender } : {}),
+      ...(media.length > 0 ? { telegramMedia: media } : {}),
     },
   });
 
@@ -197,45 +214,6 @@ async function tryFastCaptureLaneTransport(
   await saveConversation(chatId, messages, { linkedAtomUUIDs: createdAtomUUIDs });
 
   return { response, toolsUsed: ['capture_lane_transport'], createdAtomUUIDs, intent: 'capture' };
-}
-
-function parseCaptureLanePrefix(text: string): { destinationName: string; body: string } | null {
-  const trimmed = text.trim();
-  const colonIndex = trimmed.indexOf(':');
-  if (colonIndex <= 0) return null;
-
-  const prefix = trimmed.slice(0, colonIndex).trim();
-  const body = trimmed.slice(colonIndex + 1).trim();
-  if (!prefix || !body) return null;
-  if (prefix.length < 2 || prefix.length > 64) return null;
-  if (prefix.includes('/')) return null;
-  if (/^\d+$/.test(prefix)) return null;
-
-  const normalized = prefix.toLowerCase().replace(/\s+/g, ' ');
-  const urlSchemes = new Set(['http', 'https', 'ftp', 'mailto', 'tel', 'file']);
-  if (urlSchemes.has(normalized)) return null;
-
-  const reservedPrefixes = new Set([
-    'inbox',
-    'idea',
-    'save idea',
-    'new idea',
-    'capture idea',
-    'task',
-    'todo',
-    'to do',
-    'swipe',
-    'research',
-    'content',
-    'lesson',
-    'rule',
-    'current',
-    'current inquiry',
-    'inquiry',
-  ]);
-  if (reservedPrefixes.has(normalized)) return null;
-
-  return { destinationName: prefix, body };
 }
 
 function parseIdeaCaptureRequest(text: string): {
@@ -544,6 +522,7 @@ export async function processMessage(
   text: string,
   chatId: string,
   onToolProgress?: ToolProgressCallback,
+  options: ProcessMessageOptions = {},
 ): Promise<ProcessResult> {
   // 1. Classify intent (with escalation based on conversation history)
   let intent = classifyIntent(text);
@@ -565,7 +544,7 @@ export async function processMessage(
 
   // 1c. FAST PATH — custom capture lane transport (`books: ...`, `cosmo: ...`).
   // The Mac app resolves the prefix against local Capture Lanes when the atom syncs down.
-  const fastCaptureLaneResult = await tryFastCaptureLaneTransport(text, chatId, messages);
+  const fastCaptureLaneResult = await tryFastCaptureLaneTransport(text, chatId, messages, options);
   if (fastCaptureLaneResult) return fastCaptureLaneResult;
 
   // 1d. FAST PATH — deterministic plain idea capture

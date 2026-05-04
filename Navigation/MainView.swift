@@ -732,7 +732,7 @@ struct MainView: View {
     private var mainContentLayout: some View {
         GeometryReader { geo in
             let sidebarLayout = sidebarLayoutMetrics(for: geo.size)
-            let contentLeadingInset = MainSidebarContentLayoutPolicy.contentLeadingInset(
+            let contentPushOffset = MainSidebarContentLayoutPolicy.contentLeadingInset(
                 for: currentDestination,
                 isSidebarVisible: isSidebarVisible,
                 isFocusModeActive: appState.focusedEntity != nil,
@@ -742,14 +742,14 @@ struct MainView: View {
             ZStack(alignment: .topLeading) {
                 SplitPaneContainer(paneManager: paneManager) {
                     ZStack {
-                        destinationContent(contentLeadingInset: contentLeadingInset)
-                        focusModeOverlay(contentLeadingInset: contentLeadingInset)
+                        destinationContent(contentPushOffset: contentPushOffset)
+                        focusModeOverlay(contentPushOffset: contentPushOffset)
                     }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .zIndex(appState.focusedEntity != nil ? 195 : 10)
                 .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
-                .animation(sidebarAnimation, value: contentLeadingInset)
+                .animation(sidebarAnimation, value: contentPushOffset)
 
                 if isSidebarVisible {
                     sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
@@ -1270,7 +1270,7 @@ struct MainView: View {
     }
 
     @ViewBuilder
-    private func destinationContent(contentLeadingInset: CGFloat) -> some View {
+    private func destinationContent(contentPushOffset: CGFloat) -> some View {
         ZStack {
             // Canvas layer — ALWAYS alive, hidden when a non-canvas destination is active.
             // Preserves all @StateObject engines, loaded blocks, zoom/pan state, and
@@ -1290,38 +1290,38 @@ struct MainView: View {
             // Non-canvas destinations rendered on top when active
             if case .inbox = currentDestination {
                 InboxView(route: $inboxRoute)
-                    .padding(.leading, contentLeadingInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
+                    .offset(x: contentPushOffset)
                     .transition(.opacity)
             } else if case .commandCenter = currentDestination {
                 CommandCenterDashboard(
                     viewModel: commandCenterViewModel,
                     showsInternalSidebar: false
                 )
-                    .padding(.leading, contentLeadingInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
+                    .offset(x: contentPushOffset)
                     .transition(.opacity)
             } else if case .codex = currentDestination {
                 CodexNavigationView()
-                    .padding(.leading, contentLeadingInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
+                    .offset(x: contentPushOffset)
                     .transition(.opacity)
             }
         }
     }
 
     @ViewBuilder
-    private func focusModeOverlay(contentLeadingInset: CGFloat) -> some View {
+    private func focusModeOverlay(contentPushOffset: CGFloat) -> some View {
         if let focusEntity = appState.focusedEntity {
             FocusModeView(entity: focusEntity)
                 .id(focusEntity)
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
-                .padding(.leading, contentLeadingInset)
+                .offset(x: contentPushOffset)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
     }

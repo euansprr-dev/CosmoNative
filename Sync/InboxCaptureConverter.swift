@@ -167,7 +167,9 @@ enum InboxCaptureConverter {
             "sourceAtomUuid": sourceAtomUuid,
             "captureSource": "telegram_cloud",
             "captureDestinationName": destinationName,
-            "telegramChatId": metadata["telegramChatId"] as? String ?? ""
+            "telegramChatId": metadata["telegramChatId"] as? String ?? "",
+            "telegramMessageId": metadata["telegramMessageId"] as? String ?? "",
+            "telegramMediaGroupId": metadata["telegramMediaGroupId"] as? String ?? ""
         ]
         let provenanceJSON = try? String(
             data: JSONSerialization.data(withJSONObject: provenance),
@@ -180,11 +182,22 @@ enum InboxCaptureConverter {
                     rawText: rawText,
                     caption: nil,
                     chatId: metadata["telegramChatId"] as? String ?? "telegram_cloud",
-                    messageId: sourceAtomUuid,
+                    messageId: metadata["telegramMessageId"] as? String ?? sourceAtomUuid,
+                    mediaGroupId: metadata["telegramMediaGroupId"] as? String,
                     sender: metadata["telegramSender"] as? String,
                     metadata: provenanceJSON
                 )
             )
+            let mediaIds = try await createTelegramMediaAttachments(
+                capturedItemId: captured.uuid,
+                metadata: metadata
+            )
+            if !mediaIds.isEmpty {
+                try await CapturedItemRepository.shared.attachMedia(
+                    capturedItemId: captured.uuid,
+                    mediaIds: mediaIds
+                )
+            }
             try await CapturedItemRepository.shared.updateRouting(
                 uuid: captured.uuid,
                 destinationId: destination.uuid,
@@ -230,6 +243,48 @@ enum InboxCaptureConverter {
         } catch {
             print("⚠️ InboxCaptureConverter: Failed fallback inbox capture: \(error)")
         }
+    }
+
+    @MainActor
+    private static func createTelegramMediaAttachments(
+        capturedItemId: String,
+        metadata: [String: Any]
+    ) async throws -> [String] {
+        guard let media = metadata["telegramMedia"] as? [[String: Any]], !media.isEmpty else {
+            return []
+        }
+
+        var ids: [String] = []
+        for item in media {
+            guard let fileId = item["fileId"] as? String else { continue }
+
+            let kind = (item["kind"] as? String).flatMap(MediaAttachmentKind.init(rawValue:)) ?? .unknown
+            let attachmentMetadata = try? String(
+                data: JSONSerialization.data(withJSONObject: item),
+                encoding: .utf8
+            )
+            let attachment = MediaAttachment.makeTelegram(
+                capturedItemId: capturedItemId,
+                kind: kind,
+                fileId: fileId,
+                fileUniqueId: item["fileUniqueId"] as? String,
+                filename: item["filename"] as? String,
+                mimeType: item["mimeType"] as? String,
+                fileSize: int64Value(item["fileSize"]),
+                metadata: attachmentMetadata
+            )
+            let saved = try await MediaAttachmentRepository.shared.create(attachment)
+            ids.append(saved.uuid)
+        }
+        return ids
+    }
+
+    private static func int64Value(_ value: Any?) -> Int64? {
+        if let value = value as? Int64 { return value }
+        if let value = value as? Int { return Int64(value) }
+        if let value = value as? Double { return Int64(value) }
+        if let value = value as? String { return Int64(value) }
+        return nil
     }
 
     private static func softDeleteTransportAtom(uuid: String) async {

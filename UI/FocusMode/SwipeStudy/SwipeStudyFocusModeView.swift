@@ -483,7 +483,11 @@ struct SwipeStudyFocusModeView: View {
             Spacer(minLength: DS.space8)
             if let urlString = atom.url, let url = URL(string: urlString) {
                 Button {
-                    NSWorkspace.shared.open(url)
+                    if isInstagramSwipe(atom) {
+                        openInstagramURLInPane(url)
+                    } else {
+                        NSWorkspace.shared.open(url)
+                    }
                 } label: {
                     Image(systemName: "arrow.up.right")
                         .font(DS.footnote)
@@ -514,6 +518,17 @@ struct SwipeStudyFocusModeView: View {
         let sourceType = detectSourceType(for: atom)
         return sourceType == .instagram || sourceType == .instagramReel
             || sourceType == .instagramPost || sourceType == .instagramCarousel
+    }
+
+    private func openInstagramURLInPane(_ url: URL) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openWebBrowserPane,
+            object: nil,
+            userInfo: [
+                "url": url,
+                "title": "Instagram"
+            ]
+        )
     }
 
     private func sourceDescriptor(for atom: Atom) -> String {
@@ -679,7 +694,7 @@ struct SwipeStudyFocusModeView: View {
                                 .foregroundStyle(DS.textSecondary)
                             if let url = atom.url, let openURL = URL(string: url) {
                                 Button {
-                                    NSWorkspace.shared.open(openURL)
+                                    openInstagramURLInPane(openURL)
                                 } label: {
                                     HStack(spacing: 4) {
                                         Image(systemName: "arrow.up.right.square")
@@ -766,7 +781,7 @@ struct SwipeStudyFocusModeView: View {
                                     .foregroundStyle(DS.textSecondary)
                                 if let url = atom.url, let openURL = URL(string: url) {
                                     Button {
-                                        NSWorkspace.shared.open(openURL)
+                                        openInstagramURLInPane(openURL)
                                     } label: {
                                         HStack(spacing: 4) {
                                             Image(systemName: "arrow.up.right.square")
@@ -1076,7 +1091,7 @@ struct SwipeStudyFocusModeView: View {
                     .foregroundStyle(DS.textMuted)
 
                 Button {
-                    NSWorkspace.shared.open(igURL)
+                    openInstagramURLInPane(igURL)
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.up.right.square")

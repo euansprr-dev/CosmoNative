@@ -16,7 +16,7 @@ struct PaneContentView: View {
             // Content
             contentBody
 
-            // Close button (for thinkspace and command center panes — entity focus modes handle their own)
+            // Close button (for generic panes — entity focus modes and browser panes handle their own)
             if content.thinkspaceId != nil || content.id == "commandCenter" {
                 paneCloseButton
             }
@@ -51,6 +51,12 @@ struct PaneContentView: View {
 
         case .commandCenter:
             CommandCenterDashboard()
+                .environment(\.isPaneContext, true)
+                .environment(\.isPaneActive, isActive)
+                .environment(\.isPaneContextOwner, isContextOwner)
+
+        case .webBrowser(let url, let title):
+            CosmoWebBrowserPane(url: url, title: title, onClose: onClose)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)

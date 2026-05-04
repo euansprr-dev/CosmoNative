@@ -20,6 +20,7 @@ struct CanvasView: View {
     @StateObject private var connectManager = DragToConnectManager()
     @StateObject private var drawingState = DrawingStateManager()
     @StateObject private var clusterEngine = CanvasClusterEngine()
+    @StateObject private var renderPipeline = CanvasRenderPipeline()
     @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
@@ -149,7 +150,7 @@ struct CanvasView: View {
 
     private func renderSnapshot(for blocks: [CanvasBlock]) -> CanvasRenderSnapshot {
         let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-snapshot")
-        let snapshot = CanvasRenderSnapshotBuilder.build(
+        let snapshot = renderPipeline.snapshot(
             blocks: blocks,
             transform: viewportTransform,
             userClusters: clusterEngine.userClusters,
@@ -885,7 +886,8 @@ struct CanvasView: View {
                     block: block,
                     isMediaContent: snapshot.mediaContentBlockIds.contains(block.id),
                     isViewportActive: snapshot.visibleBlockIds.contains(block.id)
-                ),
+                )
+                .equatable(),
                 onDragChanged: { translation in
                     if NSEvent.modifierFlags.contains(.option) {
                         let blockCanvasX = block.position.x + viewportTransform.contentOffset.width
@@ -1219,8 +1221,11 @@ struct CanvasView: View {
     }
 
     private func visibleBlockSignals() -> [SceneColorSignal] {
-        CanvasSceneSignalBuilder.blockSignals(
-            blocks: renderedBlocks,
+        let signalBlocks = renderPipeline.hasResolvedSnapshot
+            ? renderPipeline.lastRenderableBlocks
+            : renderedBlocks
+        return CanvasSceneSignalBuilder.blockSignals(
+            blocks: signalBlocks,
             transform: viewportTransform,
             viewportSize: canvasSize,
             activeBlockDrag: blockDragState,
@@ -4589,7 +4594,7 @@ struct ThinkspaceAuroraView: View {
 // a tiled CGImage once and reuses it. Same visual effect, zero per-frame cost.
 
 // MARK: - Per-Block Content
-struct CanvasBlockStaticView: View {
+struct CanvasBlockStaticView: View, Equatable {
     let block: CanvasBlock
     let isMediaContent: Bool
     let isViewportActive: Bool

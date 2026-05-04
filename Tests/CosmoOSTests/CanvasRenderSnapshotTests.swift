@@ -2,6 +2,62 @@ import XCTest
 @testable import CosmoOS
 
 final class CanvasRenderSnapshotTests: XCTestCase {
+    func testRenderDataSnapshotReusesDataAcrossViewportFiltering() {
+        let visibleAtOrigin = CanvasBlock(
+            id: "origin",
+            position: CGPoint(x: 500, y: 400),
+            size: CGSize(width: 200, height: 120),
+            zIndex: 2,
+            entityType: .research,
+            entityId: 1,
+            entityUuid: "origin-uuid",
+            title: "Origin",
+            metadata: ["url": "https://youtu.be/abc"]
+        )
+        let visibleAfterPan = CanvasBlock(
+            id: "after-pan",
+            position: CGPoint(x: 1_800, y: 400),
+            size: CGSize(width: 200, height: 120),
+            zIndex: 1,
+            entityType: .idea,
+            entityId: 2,
+            entityUuid: "after-pan-uuid",
+            title: "After pan"
+        )
+
+        let dataSnapshot = CanvasRenderDataSnapshot.build(
+            blocks: [visibleAtOrigin, visibleAfterPan],
+            userClusters: []
+        )
+
+        let originSnapshot = dataSnapshot.renderSnapshot(
+            transform: CanvasViewportTransform(
+                viewportSize: CGSize(width: 1_000, height: 800),
+                committedOffset: .zero
+            ),
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+
+        let pannedSnapshot = dataSnapshot.renderSnapshot(
+            transform: CanvasViewportTransform(
+                viewportSize: CGSize(width: 1_000, height: 800),
+                committedOffset: CGSize(width: -1_300, height: 0)
+            ),
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+
+        XCTAssertEqual(dataSnapshot.blocksById.count, 2)
+        XCTAssertEqual(dataSnapshot.mediaContentBlockIds, [visibleAtOrigin.id])
+        XCTAssertEqual(originSnapshot.renderableBlocks.map(\.id), [visibleAtOrigin.id])
+        XCTAssertEqual(pannedSnapshot.renderableBlocks.map(\.id), [visibleAfterPan.id])
+    }
+
     func testSnapshotBuildsStableVisibleAndMediaSets() {
         let transform = CanvasViewportTransform(
             viewportSize: CGSize(width: 1_000, height: 800),

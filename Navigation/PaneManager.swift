@@ -16,6 +16,7 @@ enum PaneContent: Identifiable, Equatable {
     case entity(EntitySelection)
     case thinkspace(thinkspaceId: String)
     case commandCenter
+    case webBrowser(url: URL, title: String?)
     case collaborator(target: CollaborationTarget, presetId: String?)
 
     var id: String {
@@ -26,6 +27,8 @@ enum PaneContent: Identifiable, Equatable {
             return "thinkspace_\(thinkspaceId)"
         case .commandCenter:
             return "commandCenter"
+        case .webBrowser(let url, _):
+            return "web_\(url.absoluteString)"
         case .collaborator:
             return "collaborator"
         }
@@ -35,7 +38,7 @@ enum PaneContent: Identifiable, Equatable {
     var entityId: Int64? {
         switch self {
         case .entity(let entity): return entity.id
-        case .thinkspace, .commandCenter, .collaborator: return nil
+        case .thinkspace, .commandCenter, .webBrowser, .collaborator: return nil
         }
     }
 
@@ -43,16 +46,21 @@ enum PaneContent: Identifiable, Equatable {
     var entitySelection: EntitySelection? {
         switch self {
         case .entity(let entity): return entity
-        case .thinkspace, .commandCenter, .collaborator: return nil
+        case .thinkspace, .commandCenter, .webBrowser, .collaborator: return nil
         }
     }
 
     /// The thinkspace ID if this is a thinkspace pane
     var thinkspaceId: String? {
         switch self {
-        case .entity, .commandCenter, .collaborator: return nil
+        case .entity, .commandCenter, .webBrowser, .collaborator: return nil
         case .thinkspace(let id): return id
         }
+    }
+
+    var webURL: URL? {
+        guard case .webBrowser(let url, _) = self else { return nil }
+        return url
     }
 
     var collaborationTarget: CollaborationTarget? {
@@ -64,7 +72,7 @@ enum PaneContent: Identifiable, Equatable {
         switch self {
         case .collaborator:
             return .minimal
-        case .entity, .thinkspace, .commandCenter:
+        case .entity, .thinkspace, .commandCenter, .webBrowser:
             return .standard
         }
     }
@@ -127,6 +135,11 @@ class PaneManager: ObservableObject {
         Set(panes.compactMap { $0.thinkspaceId })
     }
 
+    /// Set of web URLs currently open in panes.
+    var openBrowserURLs: Set<URL> {
+        Set(panes.compactMap { $0.webURL })
+    }
+
     // MARK: - Duplicate Prevention
 
     /// Check if an entity can be opened as a pane.
@@ -151,6 +164,13 @@ class PaneManager: ObservableObject {
     /// Check if Command Center can be opened as a pane.
     func canOpenCommandCenter() -> Bool {
         guard !panes.contains(where: { $0.id == PaneContent.commandCenter.id }) else { return false }
+        guard panes.count < maxPanes else { return false }
+        return true
+    }
+
+    /// Check if a browser pane can be opened for the URL.
+    func canOpenBrowser(url: URL) -> Bool {
+        guard !openBrowserURLs.contains(url) else { return false }
         guard panes.count < maxPanes else { return false }
         return true
     }

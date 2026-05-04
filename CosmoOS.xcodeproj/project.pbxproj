@@ -446,6 +446,7 @@
 		98F593CDE1238539937AC977 /* CrossThinkspaceDragManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 826CA0231299D8B7DA223A6A /* CrossThinkspaceDragManager.swift */; };
 		9943786D33BCAEADF7630CE8 /* UndoableAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD1E8165AAF8E69D144FCA4F /* UndoableAction.swift */; };
 		99A57AC401CE3DE2D685BF4A /* PaneManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22BFF9A0AAB7355DD9F96456 /* PaneManager.swift */; };
+		918F3DE32ED64C5E8D801C2E /* CosmoWebBrowserPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EBDA407F1364CD4ABBCF514 /* CosmoWebBrowserPane.swift */; };
 		9AA563E8F4E76E49275B105D /* SwipeAdaptationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50155FE0B109881A55A4A799 /* SwipeAdaptationEngine.swift */; };
 		9B1763187183A56535D4762E /* InquiryWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A0FD758181BC833C5421F5C /* InquiryWorkspaceView.swift */; };
 		9B4DCC663814AFEDFE4D0ACA /* CosmoDocumentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32CA3704F5CF28B0CC6B37B4 /* CosmoDocumentRenderer.swift */; };
@@ -842,6 +843,7 @@
 		227559B36BA19282F06B89BA /* CanvasDrawingRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingRecord.swift; sourceTree = "<group>"; };
 		229A581FC01C4C1886C9D2FA /* LevelUpCelebrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LevelUpCelebrationView.swift; sourceTree = "<group>"; };
 		22BFF9A0AAB7355DD9F96456 /* PaneManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneManager.swift; sourceTree = "<group>"; };
+		7EBDA407F1364CD4ABBCF514 /* CosmoWebBrowserPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoWebBrowserPane.swift; sourceTree = "<group>"; };
 		24A516D094886BD8E3F17209 /* ContentScorecardEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentScorecardEngine.swift; sourceTree = "<group>"; };
 		24C62881B788932B3C7AC977 /* ChalkboardModeOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChalkboardModeOverlay.swift; sourceTree = "<group>"; };
 		24D7DA3674BBC5215AF7B2BC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -1751,6 +1753,7 @@
 			isa = PBXGroup;
 			children = (
 				1ACBFD4B62BDFE51DA2D9B57 /* CommandPaletteModeIndicator.swift */,
+				7EBDA407F1364CD4ABBCF514 /* CosmoWebBrowserPane.swift */,
 				BF6C489D8C60057A5F544D7B /* MainView.swift */,
 				9376B898E8A9EDBD9CB9B2C9 /* PaneCanvasView.swift */,
 				16CB13D98D05DC5F7ED289ED /* PaneContentView.swift */,
@@ -3643,6 +3646,7 @@
 				C7BCB81C5F7C0C1E1297ECDB /* PaneContentView.swift in Sources */,
 				099B24CA57855A83B683F820 /* PaneEnvironment.swift in Sources */,
 				99A57AC401CE3DE2D685BF4A /* PaneManager.swift in Sources */,
+				918F3DE32ED64C5E8D801C2E /* CosmoWebBrowserPane.swift in Sources */,
 				414C15F5B627D1B3B860CFBC /* ParsedAction.swift in Sources */,
 				C4B893D4E74605EA4AA27677 /* PatternMatcher.swift in Sources */,
 				F3F308E7777185CAEDFF1798 /* PeekSidebarContent.swift in Sources */,

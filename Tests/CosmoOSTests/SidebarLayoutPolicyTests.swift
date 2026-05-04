@@ -189,4 +189,22 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertFalse(sidebarContent.contains("swipes.prefix(3)"))
         XCTAssertFalse(sidebarContent.contains("inheritedConnectionAtoms.prefix(3)"))
     }
+
+    func testFocusModeSwipeAndBlueprintClicksOpenPaneWhenRequested() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let mainView = try String(
+            contentsOf: root.appendingPathComponent("Navigation/MainView.swift"),
+            encoding: .utf8
+        )
+        let ideaFocusView = try String(
+            contentsOf: root.appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(mainView.contains("let shouldOpenAsPane = notification.userInfo?[\"asPane\"] as? Bool == true"))
+        XCTAssertTrue(mainView.contains("handleOpenBlockInFocusMode(atomUUID: atomUUID, asPane: shouldOpenAsPane)"))
+        XCTAssertTrue(mainView.contains("if asPane {"))
+        XCTAssertTrue(mainView.contains("paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))"))
+        XCTAssertTrue(ideaFocusView.contains("openAtomInPane(blueprint.uuid)"))
+    }
 }

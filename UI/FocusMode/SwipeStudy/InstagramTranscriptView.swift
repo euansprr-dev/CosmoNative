@@ -47,7 +47,7 @@ struct InstagramTranscriptView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // URL display with Open in Browser
+                // URL display with in-app pane browser
                 urlSection
 
                 // Instagram embed (if shortcode available)
@@ -89,13 +89,13 @@ struct InstagramTranscriptView: View {
 
             Button {
                 if let urlString = atom.url, let url = URL(string: urlString) {
-                    NSWorkspace.shared.open(url)
+                    openInstagramURLInPane(url)
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: "safari")
+                    Image(systemName: "rectangle.split.2x1")
                         .font(.system(size: 11))
-                    Text("Open in Browser")
+                    Text("Open in Pane")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundColor(DS.textSecondary)
@@ -110,6 +110,17 @@ struct InstagramTranscriptView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(DS.border, lineWidth: 1)
+        )
+    }
+
+    private func openInstagramURLInPane(_ url: URL) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openWebBrowserPane,
+            object: nil,
+            userInfo: [
+                "url": url,
+                "title": "Instagram"
+            ]
         )
     }
 
@@ -175,7 +186,7 @@ struct InstagramTranscriptView: View {
                                     .foregroundColor(DS.textSecondary)
                                 if let urlString = atom.url, let openURL = URL(string: urlString) {
                                     Button {
-                                        NSWorkspace.shared.open(openURL)
+                                        openInstagramURLInPane(openURL)
                                     } label: {
                                         HStack(spacing: 4) {
                                             Image(systemName: "arrow.up.right.square")

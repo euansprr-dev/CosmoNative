@@ -489,6 +489,20 @@ struct MainView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openWebBrowserPane)) { notification in
+            let url = (notification.userInfo?["url"] as? URL)
+                ?? (notification.userInfo?["urlString"] as? String).flatMap(URL.init(string:))
+            guard let url else { return }
+
+            let title = notification.userInfo?["title"] as? String
+            withAnimation(ProMotionSprings.snappy) {
+                if paneManager.canOpenBrowser(url: url) {
+                    paneManager.openPane(.webBrowser(url: url, title: title))
+                } else if let pane = paneManager.panes.first(where: { $0.webURL == url }) {
+                    paneManager.activatePane(pane.id)
+                }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openCollaboratorPane)) { notification in
             guard let payload = CosmoNotification.Navigation.CollaboratorPanePayload(from: notification) else { return }
             handleOpenCollaboratorPane(atomUUID: payload.atomUUID, presetId: payload.presetId)
@@ -722,7 +736,8 @@ struct MainView: View {
         // Open block in focus mode by UUID (used by promoteToContent, context panels, etc.)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openBlockInFocusMode)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-            handleOpenBlockInFocusMode(atomUUID: atomUUID)
+            let shouldOpenAsPane = notification.userInfo?["asPane"] as? Bool == true
+            handleOpenBlockInFocusMode(atomUUID: atomUUID, asPane: shouldOpenAsPane)
         }
     }
 
@@ -1342,7 +1357,32 @@ struct MainView: View {
 
     /// Handles the openBlockInFocusMode notification (from promoteToContent, context panels, etc.)
     /// Fetches the atom by UUID, determines its type, and navigates to the appropriate focus mode.
-    private func handleOpenBlockInFocusMode(atomUUID: String) {
+    private func handleOpenBlockInFocusMode(atomUUID: String, asPane: Bool = false) {
+        if asPane {
+            Task { @MainActor in
+                do {
+                    guard let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                        print("MainView: handleOpenBlockInFocusMode — atom not found: \(atomUUID)")
+                        return
+                    }
+
+                    let entityType = mapAtomTypeToEntityType(atom.type)
+                    guard let entityId = atom.id else {
+                        print("MainView: handleOpenBlockInFocusMode pane skipped — atom has no id: \(atomUUID)")
+                        return
+                    }
+                    guard paneManager.canOpen(entityId: entityId, appState: appState) else { return }
+
+                    withAnimation(ProMotionSprings.snappy) {
+                        paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))
+                    }
+                } catch {
+                    print("MainView: handleOpenBlockInFocusMode pane failed: \(error)")
+                }
+            }
+            return
+        }
+
         // Show loading overlay
         withAnimation(.easeOut(duration: 0.2)) {
             activationLoadingMessage = "Opening content..."

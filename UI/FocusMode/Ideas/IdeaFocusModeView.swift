@@ -1634,7 +1634,7 @@ extension IdeaFocusModeView {
             if let blueprint = viewModel.selectedBlueprint {
                 VStack(alignment: .leading, spacing: DS.space4) {
                     Button {
-                        showBlueprintSheet = true
+                        openAtomInPane(blueprint.uuid)
                     } label: {
                         Text(blueprint.title?.lowercased() ?? "blueprint")
                             .font(.system(size: 14, weight: .regular, design: .serif))

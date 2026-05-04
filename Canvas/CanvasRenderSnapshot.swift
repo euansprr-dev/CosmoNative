@@ -29,6 +29,233 @@ struct CanvasRenderSnapshot: Equatable {
     var visibleBlockCount: Int { visibleBlockIds.count }
 }
 
+struct CanvasRenderDataSnapshot {
+    static let empty = CanvasRenderDataSnapshot(
+        blocksById: [:],
+        clusterConsumedBlockUUIDs: [],
+        mediaContentBlockIds: [],
+        sortedBlocks: [],
+        userClusters: []
+    )
+
+    let blocksById: [String: CanvasBlock]
+    let clusterConsumedBlockUUIDs: Set<String>
+    let mediaContentBlockIds: Set<String>
+    let sortedBlocks: [CanvasBlock]
+    let userClusters: [CanvasCluster]
+
+    static func build(
+        blocks: [CanvasBlock],
+        userClusters: [CanvasCluster]
+    ) -> CanvasRenderDataSnapshot {
+        CanvasRenderDataSnapshot(
+            blocksById: Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
+            clusterConsumedBlockUUIDs: clusterConsumedBlockUUIDs(from: userClusters),
+            mediaContentBlockIds: mediaContentBlockIds(from: blocks),
+            sortedBlocks: blocks.sorted { lhs, rhs in
+                if lhs.zIndex == rhs.zIndex { return lhs.id < rhs.id }
+                return lhs.zIndex < rhs.zIndex
+            },
+            userClusters: userClusters
+        )
+    }
+
+    func renderSnapshot(
+        transform: CanvasViewportTransform,
+        selectedBlockId: String?,
+        selectedClusterId: UUID?,
+        draggingClusterId: UUID?,
+        resizingClusterId: UUID?,
+        preloadInset: CGFloat = 320
+    ) -> CanvasRenderSnapshot {
+        let visibility = CanvasVisibilityIndex(transform: transform, preloadInset: preloadInset)
+
+        var visibleIDs = Set<String>()
+        var renderable: [CanvasBlock] = []
+        renderable.reserveCapacity(min(sortedBlocks.count, 128))
+        let activeClusterBlockUUIDs = activeGestureBlockUUIDs(
+            clusters: userClusters,
+            draggingClusterId: draggingClusterId,
+            resizingClusterId: resizingClusterId
+        )
+
+        for block in sortedBlocks {
+            guard visibility.isBlockVisible(block) else { continue }
+            visibleIDs.insert(block.id)
+
+            let isClusterGestureMember = activeClusterBlockUUIDs.contains(block.entityUuid)
+            guard !clusterConsumedBlockUUIDs.contains(block.entityUuid) || isClusterGestureMember else { continue }
+            renderable.append(block)
+        }
+
+        return CanvasRenderSnapshot(
+            blocksById: blocksById,
+            visibleBlockIds: visibleIDs,
+            clusterConsumedBlockUUIDs: clusterConsumedBlockUUIDs,
+            mediaContentBlockIds: mediaContentBlockIds,
+            renderableBlocks: renderable,
+            selectedBlockId: selectedBlockId,
+            selectedClusterId: selectedClusterId
+        )
+    }
+
+    private static func clusterConsumedBlockUUIDs(from clusters: [CanvasCluster]) -> Set<String> {
+        var consumed = Set<String>()
+        for cluster in clusters where cluster.viewMode != .canvas {
+            consumed.formUnion(cluster.blockUUIDs)
+        }
+        return consumed
+    }
+
+    private static func mediaContentBlockIds(from blocks: [CanvasBlock]) -> Set<String> {
+        var ids = Set<String>()
+        for block in blocks where block.entityType == .research {
+            let url = (block.metadata["url"] ?? "").lowercased()
+            if url.contains("youtube") ||
+                url.contains("youtu.be") ||
+                url.contains("instagram") ||
+                url.contains("tiktok") ||
+                block.metadata["isSwipeFile"] == "true" {
+                ids.insert(block.id)
+            }
+        }
+        return ids
+    }
+
+    private func activeGestureBlockUUIDs(
+        clusters: [CanvasCluster],
+        draggingClusterId: UUID?,
+        resizingClusterId: UUID?
+    ) -> Set<String> {
+        guard let activeClusterId = draggingClusterId ?? resizingClusterId,
+              let cluster = clusters.first(where: { $0.id == activeClusterId }) else {
+            return []
+        }
+        guard cluster.viewMode == .canvas else { return [] }
+        return Set(cluster.blockUUIDs)
+    }
+}
+
+private struct CanvasRenderDataSignature: Equatable {
+    let blockKeys: [BlockKey]
+    let clusterKeys: [ClusterKey]
+
+    init(blocks: [CanvasBlock], userClusters: [CanvasCluster]) {
+        self.blockKeys = blocks.map(BlockKey.init)
+        self.clusterKeys = userClusters.map(ClusterKey.init)
+    }
+
+    struct BlockKey: Equatable {
+        let id: String
+        let position: CGPoint
+        let size: CGSize
+        let scale: Double
+        let rotation: Double
+        let isPinned: Bool
+        let zIndex: Int
+        let entityType: EntityType
+        let entityId: Int64
+        let entityUuid: String
+        let isSelected: Bool
+        let opacity: Double
+        let title: String
+        let subtitle: String?
+        let metadata: [String: String]
+
+        init(block: CanvasBlock) {
+            self.id = block.id
+            self.position = block.position
+            self.size = block.size
+            self.scale = block.scale
+            self.rotation = block.rotation
+            self.isPinned = block.isPinned
+            self.zIndex = block.zIndex
+            self.entityType = block.entityType
+            self.entityId = block.entityId
+            self.entityUuid = block.entityUuid
+            self.isSelected = block.isSelected
+            self.opacity = block.opacity
+            self.title = block.title
+            self.subtitle = block.subtitle
+            self.metadata = block.metadata
+        }
+    }
+
+    struct ClusterKey: Equatable {
+        let id: UUID
+        let blockUUIDs: [String]
+        let viewMode: ClusterViewMode
+
+        init(cluster: CanvasCluster) {
+            self.id = cluster.id
+            self.blockUUIDs = cluster.blockUUIDs
+            self.viewMode = cluster.viewMode
+        }
+    }
+}
+
+private struct CanvasRenderViewportSignature: Equatable {
+    let transform: CanvasViewportTransform
+    let selectedBlockId: String?
+    let selectedClusterId: UUID?
+    let draggingClusterId: UUID?
+    let resizingClusterId: UUID?
+}
+
+@MainActor
+final class CanvasRenderPipeline: ObservableObject {
+    private var dataSignature: CanvasRenderDataSignature?
+    private var dataSnapshot: CanvasRenderDataSnapshot = .empty
+    private var viewportSignature: CanvasRenderViewportSignature?
+    private var viewportSnapshot: CanvasRenderSnapshot = .empty
+
+    private(set) var lastRenderableBlocks: [CanvasBlock] = []
+    private(set) var hasResolvedSnapshot = false
+
+    func snapshot(
+        blocks: [CanvasBlock],
+        transform: CanvasViewportTransform,
+        userClusters: [CanvasCluster],
+        selectedBlockId: String?,
+        selectedClusterId: UUID?,
+        draggingClusterId: UUID?,
+        resizingClusterId: UUID?
+    ) -> CanvasRenderSnapshot {
+        let nextDataSignature = CanvasRenderDataSignature(blocks: blocks, userClusters: userClusters)
+        if dataSignature != nextDataSignature {
+            let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-data-snapshot")
+            dataSnapshot = CanvasRenderDataSnapshot.build(blocks: blocks, userClusters: userClusters)
+            dataSignature = nextDataSignature
+            viewportSignature = nil
+            CanvasPerformanceInstrumentation.signposter.endInterval("render-data-snapshot", signpost)
+        }
+
+        let nextViewportSignature = CanvasRenderViewportSignature(
+            transform: transform,
+            selectedBlockId: selectedBlockId,
+            selectedClusterId: selectedClusterId,
+            draggingClusterId: draggingClusterId,
+            resizingClusterId: resizingClusterId
+        )
+        if viewportSignature != nextViewportSignature {
+            let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-viewport-snapshot")
+            viewportSnapshot = dataSnapshot.renderSnapshot(
+                transform: transform,
+                selectedBlockId: selectedBlockId,
+                selectedClusterId: selectedClusterId,
+                draggingClusterId: draggingClusterId,
+                resizingClusterId: resizingClusterId
+            )
+            viewportSignature = nextViewportSignature
+            lastRenderableBlocks = viewportSnapshot.renderableBlocks
+            hasResolvedSnapshot = true
+            CanvasPerformanceInstrumentation.signposter.endInterval("render-viewport-snapshot", signpost)
+        }
+
+        return viewportSnapshot
+    }
+}
+
 struct CanvasSceneColorSignal: Equatable {
     let id: String
     let color: Color
@@ -164,78 +391,16 @@ enum CanvasRenderSnapshotBuilder {
         resizingClusterId: UUID?,
         preloadInset: CGFloat = 320
     ) -> CanvasRenderSnapshot {
-        let visibility = CanvasVisibilityIndex(transform: transform, preloadInset: preloadInset)
-        let blocksById = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let consumedUUIDs = clusterConsumedBlockUUIDs(from: userClusters)
-        let mediaIDs = mediaContentBlockIds(from: blocks)
-
-        var visibleIDs = Set<String>()
-        var renderable: [CanvasBlock] = []
-        renderable.reserveCapacity(min(blocks.count, 128))
-
-        for block in blocks {
-            guard visibility.isBlockVisible(block) else { continue }
-            visibleIDs.insert(block.id)
-
-            let isClusterGestureMember = clusterGestureConsumes(
-                block: block,
-                clusters: userClusters,
+        CanvasRenderDataSnapshot
+            .build(blocks: blocks, userClusters: userClusters)
+            .renderSnapshot(
+                transform: transform,
+                selectedBlockId: selectedBlockId,
+                selectedClusterId: selectedClusterId,
                 draggingClusterId: draggingClusterId,
-                resizingClusterId: resizingClusterId
+                resizingClusterId: resizingClusterId,
+                preloadInset: preloadInset
             )
-            guard !consumedUUIDs.contains(block.entityUuid) || isClusterGestureMember else { continue }
-            renderable.append(block)
-        }
-
-        return CanvasRenderSnapshot(
-            blocksById: blocksById,
-            visibleBlockIds: visibleIDs,
-            clusterConsumedBlockUUIDs: consumedUUIDs,
-            mediaContentBlockIds: mediaIDs,
-            renderableBlocks: renderable.sorted { lhs, rhs in
-                if lhs.zIndex == rhs.zIndex { return lhs.id < rhs.id }
-                return lhs.zIndex < rhs.zIndex
-            },
-            selectedBlockId: selectedBlockId,
-            selectedClusterId: selectedClusterId
-        )
-    }
-
-    private static func clusterConsumedBlockUUIDs(from clusters: [CanvasCluster]) -> Set<String> {
-        var consumed = Set<String>()
-        for cluster in clusters where cluster.viewMode != .canvas {
-            consumed.formUnion(cluster.blockUUIDs)
-        }
-        return consumed
-    }
-
-    private static func clusterGestureConsumes(
-        block: CanvasBlock,
-        clusters: [CanvasCluster],
-        draggingClusterId: UUID?,
-        resizingClusterId: UUID?
-    ) -> Bool {
-        guard let activeClusterId = draggingClusterId ?? resizingClusterId,
-              let cluster = clusters.first(where: { $0.id == activeClusterId }) else {
-            return false
-        }
-        guard cluster.viewMode == .canvas else { return false }
-        return cluster.blockUUIDs.contains(block.entityUuid)
-    }
-
-    private static func mediaContentBlockIds(from blocks: [CanvasBlock]) -> Set<String> {
-        var ids = Set<String>()
-        for block in blocks where block.entityType == .research {
-            let url = (block.metadata["url"] ?? "").lowercased()
-            if url.contains("youtube") ||
-                url.contains("youtu.be") ||
-                url.contains("instagram") ||
-                url.contains("tiktok") ||
-                block.metadata["isSwipeFile"] == "true" {
-                ids.insert(block.id)
-            }
-        }
-        return ids
     }
 }
 
@@ -267,14 +432,9 @@ final class ThinkspaceCanvasSnapshotCache {
             blocks: blocks,
             zoomLevel: zoomLevel,
             panOffset: panOffset,
-            mediaContentBlockIds: CanvasRenderSnapshotBuilder.build(
+            mediaContentBlockIds: CanvasRenderDataSnapshot.build(
                 blocks: blocks,
-                transform: CanvasViewportTransform(viewportSize: CGSize(width: 1, height: 1), committedOffset: .zero),
-                userClusters: [],
-                selectedBlockId: nil,
-                selectedClusterId: nil,
-                draggingClusterId: nil,
-                resizingClusterId: nil
+                userClusters: []
             ).mediaContentBlockIds,
             storedAt: Date()
         )

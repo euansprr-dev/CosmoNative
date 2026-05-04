@@ -123,7 +123,7 @@ struct CanvasDrawingToolbar: View {
         } label: {
             ZStack {
                 Circle()
-                    .fill(CanvasDrawing.colorFromHex(drawingState.currentStrokeColor))
+                    .fill(CanvasDrawing.themeResolvedColorFromHex(drawingState.currentStrokeColor))
                     .frame(width: 14, height: 14)
                     .overlay(
                         Circle().stroke(DS.textMuted.opacity(0.5), lineWidth: 1)
@@ -132,7 +132,7 @@ struct CanvasDrawingToolbar: View {
                 // Inner fill indicator if fill is active
                 if drawingState.currentFillColor != nil {
                     Circle()
-                        .fill(CanvasDrawing.colorFromHex(drawingState.currentFillColor!))
+                        .fill(CanvasDrawing.themeResolvedColorFromHex(drawingState.currentFillColor!))
                         .frame(width: 6, height: 6)
                 }
             }
@@ -412,7 +412,7 @@ struct CanvasDrawingToolbar: View {
 
                 if let fill = drawingState.currentFillColor {
                     Circle()
-                        .fill(CanvasDrawing.colorFromHex(fill))
+                        .fill(CanvasDrawing.themeResolvedColorFromHex(fill))
                         .frame(width: 16, height: 16)
                         .overlay(Circle().stroke(DS.textMuted.opacity(0.3), lineWidth: 1))
                 }

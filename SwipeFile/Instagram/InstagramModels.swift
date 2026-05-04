@@ -59,6 +59,7 @@ struct InstagramMediaData: Codable, Sendable, Equatable {
     let authorUsername: String?
     let caption: String?
     let carouselItems: [CarouselItem]?
+    let expectedCarouselItemCount: Int?
     let extractedAt: Date
 
     /// Check if CDN URL has expired (24-hour cache)
@@ -75,6 +76,7 @@ struct InstagramMediaData: Codable, Sendable, Equatable {
         authorUsername: String? = nil,
         caption: String? = nil,
         carouselItems: [CarouselItem]? = nil,
+        expectedCarouselItemCount: Int? = nil,
         extractedAt: Date = Date()
     ) {
         self.originalURL = originalURL
@@ -85,7 +87,58 @@ struct InstagramMediaData: Codable, Sendable, Equatable {
         self.authorUsername = authorUsername
         self.caption = caption
         self.carouselItems = carouselItems
+        self.expectedCarouselItemCount = expectedCarouselItemCount
         self.extractedAt = extractedAt
+    }
+}
+
+// MARK: - Instagram Media Resolution
+
+/// Shared policy for deciding when incomplete Instagram media is safe to transcribe.
+enum InstagramMediaResolution {
+    static func isInstagramPostURL(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        return path.contains("/p/") || path.contains("/share/p/")
+    }
+
+    static func shouldUseThumbnailFallback(
+        mediaData: InstagramMediaData,
+        sourceURL: URL,
+        existingCarouselItems: [CarouselItem]? = nil
+    ) -> Bool {
+        guard mediaData.thumbnailURL != nil else { return false }
+        guard mediaData.videoURL == nil else { return false }
+
+        let items = existingCarouselItems ?? mediaData.carouselItems
+        if let items, !items.isEmpty {
+            return false
+        }
+
+        if isInstagramPostURL(sourceURL) {
+            return mediaData.expectedCarouselItemCount == 1
+        }
+
+        return true
+    }
+
+    static func isIncompletePostMedia(
+        mediaData: InstagramMediaData,
+        sourceURL: URL,
+        existingCarouselItems: [CarouselItem]? = nil
+    ) -> Bool {
+        guard isInstagramPostURL(sourceURL) else { return false }
+        guard mediaData.videoURL == nil else { return false }
+
+        let items = existingCarouselItems ?? mediaData.carouselItems
+        let itemCount = items?.count ?? 0
+        if let expected = mediaData.expectedCarouselItemCount {
+            if expected == 1 {
+                return itemCount == 0 && mediaData.thumbnailURL == nil
+            }
+            return itemCount < expected
+        }
+
+        return itemCount <= 1
     }
 }
 
@@ -135,6 +188,7 @@ struct InstagramData: Codable, Sendable, Equatable {
     var extractedMediaURL: URL?
     var extractedAt: Date?
     var carouselItems: [CarouselItem]?
+    var expectedCarouselItemCount: Int?
 
     // Manual transcript (for reels/videos without auto-transcript)
     var manualTranscript: ManualTranscript?
@@ -150,6 +204,7 @@ struct InstagramData: Codable, Sendable, Equatable {
         extractedMediaURL: URL? = nil,
         extractedAt: Date? = nil,
         carouselItems: [CarouselItem]? = nil,
+        expectedCarouselItemCount: Int? = nil,
         manualTranscript: ManualTranscript? = nil,
         aspectRatio: Double? = nil
     ) {
@@ -160,6 +215,7 @@ struct InstagramData: Codable, Sendable, Equatable {
         self.extractedMediaURL = extractedMediaURL
         self.extractedAt = extractedAt
         self.carouselItems = carouselItems
+        self.expectedCarouselItemCount = expectedCarouselItemCount
         self.manualTranscript = manualTranscript
         self.aspectRatio = aspectRatio
     }

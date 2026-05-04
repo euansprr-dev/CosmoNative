@@ -5,6 +5,13 @@ import Foundation
 import SwiftUI
 
 struct CanvasBlock: Identifiable, Codable, Equatable {
+    static let documentLayoutSize = CGSize(width: 680, height: 880)
+    static let documentDisplayScale: CGFloat = 1.0 / 1.5
+    static let documentBlockSize = CGSize(
+        width: documentLayoutSize.width * documentDisplayScale,
+        height: documentLayoutSize.height * documentDisplayScale
+    )
+
     let id: String
     var position: CGPoint
     var size: CGSize
@@ -78,11 +85,11 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .task:       return CGSize(width: 280, height: 120)
         case .project:    return CGSize(width: 320, height: 240)
         case .research:   return CGSize(width: 320, height: 340)
-        case .content:    return CGSize(width: 220, height: 310)
+        case .content:    return Self.documentLayoutSize
         case .connection: return CGSize(width: 220, height: 310)
         case .idea:       return CGSize(width: 280, height: 180)
         case .cosmoAI:    return CGSize(width: 320, height: 280)
-        case .note:       return CGSize(width: 220, height: 310)
+        case .note:       return Self.documentLayoutSize
         case .calendar:   return CGSize(width: 400, height: 500)
         case .image:      return CGSize(width: 320, height: 240)
         case .stickyNote: return CGSize(width: 220, height: 220)
@@ -145,7 +152,9 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
                 }
             }
         case .content:
-            size = CGSize(width: 220, height: 310)
+            size = Self.documentBlockSize
+        case .note:
+            size = Self.documentBlockSize
         case .connection:
             size = CGSize(width: 220, height: 310)
         case .deepDive:
@@ -365,7 +374,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
     static func noteBlock(position: CGPoint, content: String = "") -> CanvasBlock {
         return CanvasBlock(
             position: position,
-            size: CGSize(width: 220, height: 310),
+            size: Self.documentBlockSize,
             entityType: .note,
             entityId: -1,
             entityUuid: UUID().uuidString,
@@ -434,7 +443,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
     static func previewContentBlock(position: CGPoint = CGPoint(x: 200, y: 200)) -> CanvasBlock {
         return CanvasBlock(
             position: position,
-            size: CGSize(width: 320, height: 340),
+            size: Self.documentBlockSize,
             entityType: .content,
             entityId: -1,
             entityUuid: UUID().uuidString,

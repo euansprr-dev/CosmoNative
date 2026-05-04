@@ -246,6 +246,7 @@ final class SwipeFileEngine: ObservableObject {
 
                 igData.extractedMediaURL = mediaData.videoURL
                 igData.extractedAt = mediaData.extractedAt
+                igData.expectedCarouselItemCount = mediaData.expectedCarouselItemCount
                 if let carouselItems = mediaData.carouselItems, !carouselItems.isEmpty {
                     igData.carouselItems = carouselItems
                     // Upgrade sourceType if it was .instagramPost

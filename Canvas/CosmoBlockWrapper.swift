@@ -26,7 +26,7 @@ extension EnvironmentValues {
 /// Surface style for a block wrapper. Most blocks use `.vellum` (aged parchment,
 /// the default for the Akashic canvas). Photographic / chromatically-sensitive
 /// blocks like Media opt into `.crisp` for pure white backgrounds.
-enum BlockSurfaceStyle {
+enum BlockSurfaceStyle: Equatable {
     case vellum
     case crisp
 }
@@ -49,8 +49,17 @@ struct CosmoBlockWrapper<Content: View>: View {
     // Surface style — .vellum (default) or .crisp (pure white, for Media)
     var surfaceStyle: BlockSurfaceStyle = .vellum
 
+    // Fixed internal layout size. When set, resizing scales this layout instead of reflowing content.
+    var fixedLayoutSize: CGSize?
+
+    // When true, drag-resizing keeps the block at fixedLayoutSize's aspect ratio.
+    var preservesAspectRatio: Bool = false
+
     // When true, suppresses the gilt corner ornament (for blocks with their own chrome)
     var suppressGiltCorner: Bool = false
+
+    // When true, suppresses the small top-right accent chip.
+    var suppressAccentChip: Bool = false
 
     // Optional callbacks
     var onClose: (() -> Void)? = nil
@@ -83,7 +92,10 @@ struct CosmoBlockWrapper<Content: View>: View {
         title: String,
         autoHeight: Bool = false,
         surfaceStyle: BlockSurfaceStyle = .vellum,
+        fixedLayoutSize: CGSize? = nil,
+        preservesAspectRatio: Bool = false,
         suppressGiltCorner: Bool = false,
+        suppressAccentChip: Bool = false,
         onClose: (() -> Void)? = nil,
         onFocusMode: (() -> Void)? = nil,
         onDuplicate: (() -> Void)? = nil,
@@ -96,7 +108,10 @@ struct CosmoBlockWrapper<Content: View>: View {
         self.title = title
         self.autoHeight = autoHeight
         self.surfaceStyle = surfaceStyle
+        self.fixedLayoutSize = fixedLayoutSize
+        self.preservesAspectRatio = preservesAspectRatio
         self.suppressGiltCorner = suppressGiltCorner
+        self.suppressAccentChip = suppressAccentChip
         self.onClose = onClose
         self.onFocusMode = onFocusMode
         self.onDuplicate = onDuplicate
@@ -126,6 +141,20 @@ struct CosmoBlockWrapper<Content: View>: View {
                     // Auto-height mode: content flows naturally, no scaling
                     content()
                         .frame(width: effectiveWidth, alignment: .topLeading)
+                        .contentShape(Rectangle())
+                } else if let fixedLayoutSize {
+                    let scale = min(
+                        effectiveWidth / max(fixedLayoutSize.width, 1),
+                        effectiveHeight / max(fixedLayoutSize.height, 1)
+                    )
+                    content()
+                        .frame(width: fixedLayoutSize.width, height: fixedLayoutSize.height, alignment: .topLeading)
+                        .scaleEffect(scale, anchor: .topLeading)
+                        .frame(
+                            width: fixedLayoutSize.width * scale,
+                            height: fixedLayoutSize.height * scale,
+                            alignment: .topLeading
+                        )
                         .contentShape(Rectangle())
                 } else {
                     // Fixed-size mode: content fills block dimensions directly
@@ -160,7 +189,9 @@ struct CosmoBlockWrapper<Content: View>: View {
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
             .overlay(blockBorder)
             .overlay(alignment: .topTrailing) {
-                blockAccentChip
+                if !suppressAccentChip {
+                    blockAccentChip
+                }
             }
             .overlay(alignment: .topLeading) {
                 if !suppressGiltCorner {
@@ -178,7 +209,8 @@ struct CosmoBlockWrapper<Content: View>: View {
                     size: $blockSize,
                     blockId: block.id,
                     minSize: CGSize(width: minWidth, height: minHeight),
-                    maxSize: CGSize(width: maxWidth, height: maxHeight)
+                    maxSize: CGSize(width: maxWidth, height: maxHeight),
+                    aspectRatio: preservesAspectRatio ? fixedLayoutSize.map { $0.width / max($0.height, 1) } : nil
                 )
             }
             // PERF: Fixed shadow during drag — avoids GPU shadow recomputation per frame.
@@ -201,6 +233,13 @@ struct CosmoBlockWrapper<Content: View>: View {
                 radius: isSelected ? 14 : 0,
                 x: 0,
                 y: 0
+            )
+            .cosmoGlassSceneSignal(
+                id: "canvas-block-wrapper-\(block.id)",
+                source: .canvasBlock,
+                color: accentColor,
+                intensity: block.entityType == .image ? 0.64 : 0.46,
+                allowsDeepDiffusion: block.entityType == .image || block.size.width >= 300
             )
             .animation(isDragging ? nil : ProMotionSprings.hover, value: isDragging)
             // Per design language: card hover is depth change, not scale.
@@ -270,7 +309,9 @@ struct CosmoBlockWrapper<Content: View>: View {
         if isSelected {
             ZStack {
                 shape.fill(baseSurface)
-                shape.fill(accentColor.opacity(DS.palette.isDark ? 0.060 : 0.045))
+                if surfaceStyle == .vellum {
+                    shape.fill(accentColor.opacity(DS.palette.isDark ? 0.060 : 0.045))
+                }
             }
         } else {
             shape.fill(baseSurface)
@@ -461,6 +502,7 @@ struct SimpleResizeOverlay: View {
     let blockId: String
     let minSize: CGSize
     let maxSize: CGSize
+    var aspectRatio: CGFloat? = nil
 
     @State private var isDragging = false
     @State private var dragStartSize: CGSize = .zero
@@ -485,12 +527,25 @@ struct SimpleResizeOverlay: View {
                                     dragStartSize = size
                                 }
 
-                                let newWidth = max(minSize.width, min(maxSize.width,
-                                    dragStartSize.width + value.translation.width))
-                                let newHeight = max(minSize.height, min(maxSize.height,
-                                    dragStartSize.height + value.translation.height))
+                                if let aspectRatio {
+                                    let widthScale = (dragStartSize.width + value.translation.width) / max(dragStartSize.width, 1)
+                                    let heightScale = (dragStartSize.height + value.translation.height) / max(dragStartSize.height, 1)
+                                    let scale = max(widthScale, heightScale)
+                                    size = constrainedSize(
+                                        CGSize(
+                                            width: dragStartSize.width * scale,
+                                            height: dragStartSize.height * scale
+                                        ),
+                                        aspectRatio: aspectRatio
+                                    )
+                                } else {
+                                    let newWidth = max(minSize.width, min(maxSize.width,
+                                        dragStartSize.width + value.translation.width))
+                                    let newHeight = max(minSize.height, min(maxSize.height,
+                                        dragStartSize.height + value.translation.height))
 
-                                size = CGSize(width: newWidth, height: newHeight)
+                                    size = CGSize(width: newWidth, height: newHeight)
+                                }
                             }
                             .onEnded { _ in
                                 isDragging = false
@@ -526,9 +581,18 @@ struct SimpleResizeOverlay: View {
                                 isDragging = true
                                 dragStartSize = size
                             }
-                            let newWidth = max(minSize.width, min(maxSize.width,
-                                dragStartSize.width + value.translation.width))
-                            size = CGSize(width: newWidth, height: size.height)
+                            let newWidth = dragStartSize.width + value.translation.width
+                            if let aspectRatio {
+                                size = constrainedSize(
+                                    CGSize(width: newWidth, height: newWidth / aspectRatio),
+                                    aspectRatio: aspectRatio
+                                )
+                            } else {
+                                size = CGSize(
+                                    width: max(minSize.width, min(maxSize.width, newWidth)),
+                                    height: size.height
+                                )
+                            }
                         }
                         .onEnded { _ in
                             isDragging = false
@@ -563,9 +627,18 @@ struct SimpleResizeOverlay: View {
                                 isDragging = true
                                 dragStartSize = size
                             }
-                            let newHeight = max(minSize.height, min(maxSize.height,
-                                dragStartSize.height + value.translation.height))
-                            size = CGSize(width: size.width, height: newHeight)
+                            let newHeight = dragStartSize.height + value.translation.height
+                            if let aspectRatio {
+                                size = constrainedSize(
+                                    CGSize(width: newHeight * aspectRatio, height: newHeight),
+                                    aspectRatio: aspectRatio
+                                )
+                            } else {
+                                size = CGSize(
+                                    width: size.width,
+                                    height: max(minSize.height, min(maxSize.height, newHeight))
+                                )
+                            }
                         }
                         .onEnded { _ in
                             isDragging = false
@@ -585,6 +658,13 @@ struct SimpleResizeOverlay: View {
                 }
         }
         .padding(.horizontal, handleSize)
+    }
+
+    private func constrainedSize(_ proposed: CGSize, aspectRatio: CGFloat) -> CGSize {
+        let widthFloor = max(minSize.width, minSize.height * aspectRatio)
+        let widthCeiling = min(maxSize.width, maxSize.height * aspectRatio)
+        let width = max(widthFloor, min(widthCeiling, proposed.width))
+        return CGSize(width: width, height: width / aspectRatio)
     }
 }
 

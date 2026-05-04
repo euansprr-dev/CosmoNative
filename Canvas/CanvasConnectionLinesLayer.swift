@@ -67,11 +67,11 @@ struct CanvasConnectionLinesLayer: View {
         }
     }
 
-    /// Affine transform from inner-ZStack content space to screen space.
-    /// Points here already include `contentOffset`; raw canvas-space drawing uses
-    /// `canvasToScreenAffineTransform()` instead.
+    /// Affine transform from raw canvas space to screen space.
+    /// Connection endpoints are cached in raw canvas coordinates so pan/zoom can
+    /// move them with this transform instead of forcing endpoint recomputation.
     private var screenTransform: CGAffineTransform {
-        transform.contentToScreenAffineTransform()
+        transform.canvasToScreenAffineTransform()
     }
 
     // MARK: - Body
@@ -136,12 +136,9 @@ struct CanvasConnectionLinesLayer: View {
             fetchEdges()
             recomputeVisibleEdgesAndEndpoints()
         }
-        .onChange(of: transform.contentOffset) { _, _ in
-            recomputeEndpoints()
-        }
-        .onChange(of: transform.effectiveScale) { _, _ in
-            recomputeEndpoints()
-        }
+        // Cached endpoints are stored in canvas space. Pan/zoom only changes the
+        // affine transform applied at render time, so endpoint recomputation is
+        // reserved for actual block geometry changes.
         .onChange(of: blockGeometrySignature) { _, _ in
             recomputeEndpoints()
         }
@@ -416,13 +413,13 @@ struct CanvasConnectionLinesLayer: View {
 
     // MARK: - Position & Endpoint Helpers (Canvas Space)
 
-    /// Block position in canvas coordinate space (matching the positions inside the scaled ZStack),
-    /// including live drag offset so lines follow blocks during drag
+    /// Block position in raw canvas coordinate space, including live drag offset
+    /// so lines follow blocks during drag.
     private func blockCanvasPosition(_ block: CanvasBlock) -> CGPoint {
         let dragOffset = activeBlockDrag.translation(for: block.id)
         return CGPoint(
-            x: block.position.x + transform.contentOffset.width + dragOffset.width,
-            y: block.position.y + transform.contentOffset.height + dragOffset.height
+            x: block.position.x + dragOffset.width,
+            y: block.position.y + dragOffset.height
         )
     }
 

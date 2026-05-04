@@ -102,11 +102,7 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
     func fetchPost(url: URL) async throws -> ImportedPost {
         guard let token = apiToken else { throw ImportError.apiKeyMissing }
 
-        let input: [String: Any] = [
-            "username": [url.absoluteString],
-            "resultsLimit": 1,
-            "dataDetailLevel": "basicData"
-        ]
+        let input = Self.postActorInput(for: url)
 
         let results: [[String: Any]] = try await runActor(
             postActorId,
@@ -135,6 +131,16 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
         }
 
         throw ImportError.decodingError("Could not parse Apify post result")
+    }
+
+    static func postActorInput(for url: URL) -> [String: Any] {
+        [
+            "username": [url.absoluteString],
+            "resultsLimit": 1,
+            // Direct post fallback needs child media for carousels. Apify's
+            // basic payload can return only thumbnail/caption/imagesCount.
+            "dataDetailLevel": "detailedData"
+        ]
     }
 
     // MARK: - Cost Estimate
@@ -374,7 +380,13 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
             return (items.isEmpty ? nil : items, childPayloads.count)
         }
 
-        if let images = json["images"] as? [String], images.count > 1 {
+        if let images = firstStringArray(in: json, keys: [
+            "images",
+            "imageUrls",
+            "imageURLS",
+            "displayUrls",
+            "displayURLS"
+        ]), !images.isEmpty {
             let items = images.enumerated().compactMap { index, urlString -> CarouselItem? in
                 guard let mediaURL = URL(string: urlString) else { return nil }
                 return CarouselItem(
@@ -387,14 +399,23 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
             return (items.isEmpty ? nil : items, images.count)
         }
 
-        if let imageDicts = json["images"] as? [[String: Any]], imageDicts.count > 1 {
+        if let imageDicts = firstDictionaryArray(in: json, keys: [
+            "images",
+            "imageUrls",
+            "displayUrls"
+        ]), !imageDicts.isEmpty {
             let items = imageDicts.enumerated().compactMap { index, child in
                 parseCarouselItem(from: child, index: index)
             }
             return (items.isEmpty ? nil : items, imageDicts.count)
         }
 
-        if let count = json["imagesCount"] as? Int, count > 1 {
+        if let count = firstInt(in: json, keys: [
+            "imagesCount",
+            "imageCount",
+            "carouselMediaCount",
+            "carousel_media_count"
+        ]), count > 0 {
             return (nil, count)
         }
 
@@ -415,6 +436,9 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
         for key in directKeys {
             if let children = json[key] as? [[String: Any]], !children.isEmpty {
                 return children
+            }
+            if let children = json[key] as? [String], !children.isEmpty {
+                return children.map { ["displayUrl": $0] }
             }
         }
 
@@ -453,22 +477,35 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
     }
 
     private static func parseCarouselItem(from child: [String: Any], index: Int) -> CarouselItem? {
-        let childType = (child["type"] as? String ?? child["mediaType"] as? String ?? "").lowercased()
-        let isVideoFlag = child["isVideo"] as? Bool ?? child["is_video"] as? Bool ?? false
+        let payload: [String: Any]
+        if let node = child["node"] as? [String: Any] {
+            payload = node
+        } else {
+            payload = child
+        }
+
+        let childType = (payload["type"] as? String ?? payload["mediaType"] as? String ?? "").lowercased()
+        let isVideoFlag = payload["isVideo"] as? Bool ?? payload["is_video"] as? Bool ?? false
         let isVideo = isVideoFlag || childType == "video" || childType == "reel"
         let mediaType: CarouselMediaType = isVideo ? .video : .image
 
-        let displayURLString = firstString(in: child, keys: [
+        let displayURLString = firstString(in: payload, keys: [
             "displayUrl",
             "display_url",
             "imageUrl",
             "image_url",
+            "mediaUrl",
+            "media_url",
             "thumbnailUrl",
-            "thumbnail_url"
+            "thumbnail_url",
+            "url",
+            "src"
         ])
-        let videoURLString = firstString(in: child, keys: [
+        let videoURLString = firstString(in: payload, keys: [
             "videoUrl",
-            "video_url"
+            "video_url",
+            "videoUrlDownload",
+            "video_url_download"
         ])
 
         let mediaURLString = isVideo ? (videoURLString ?? displayURLString) : (displayURLString ?? videoURLString)
@@ -477,7 +514,7 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
         }
 
         let thumbnailURL = displayURLString.flatMap(URL.init(string:))
-        let duration = child["videoDuration"] as? TimeInterval ?? child["video_duration"] as? TimeInterval
+        let duration = payload["videoDuration"] as? TimeInterval ?? payload["video_duration"] as? TimeInterval
 
         return CarouselItem(
             index: index,
@@ -492,6 +529,39 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
         for key in keys {
             if let value = json[key] as? String, !value.isEmpty {
                 return value
+            }
+        }
+        return nil
+    }
+
+    private static func firstStringArray(in json: [String: Any], keys: [String]) -> [String]? {
+        for key in keys {
+            if let values = json[key] as? [String], !values.isEmpty {
+                return values
+            }
+        }
+        return nil
+    }
+
+    private static func firstDictionaryArray(in json: [String: Any], keys: [String]) -> [[String: Any]]? {
+        for key in keys {
+            if let values = json[key] as? [[String: Any]], !values.isEmpty {
+                return values
+            }
+        }
+        return nil
+    }
+
+    private static func firstInt(in json: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let value = json[key] as? Int {
+                return value
+            }
+            if let value = json[key] as? Double {
+                return Int(value)
+            }
+            if let value = json[key] as? String, let intValue = Int(value) {
+                return intValue
             }
         }
         return nil

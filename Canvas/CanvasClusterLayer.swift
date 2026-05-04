@@ -91,19 +91,6 @@ struct CanvasClusterLayer: View {
             RoundedRectangle(cornerRadius: 16)
                 .fill(cluster.color.opacity(accentWashOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
 
-            // Neutral hairline plus a precise color rim.
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(DS.sidebarMaterialBorder.opacity(DS.palette.isDark ? 0.70 : 0.58), lineWidth: 0.5)
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(
-                    cluster.color.opacity(clusterStrokeOpacity(isSelected: isSelected, isHovered: isHovered, isDropTarget: isDropTarget)),
-                    style: StrokeStyle(
-                        lineWidth: clusterStrokeWidth(isSelected: isSelected, isDropTarget: isDropTarget),
-                        dash: (isSelected || isDropTarget) ? [] : [5, 5]
-                    )
-                )
-                .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
-
             if cluster.isUserCreated && (isSelected || isHovered || isDropTarget) {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(
@@ -152,7 +139,22 @@ struct CanvasClusterLayer: View {
             }
         }
         .frame(width: rect.width, height: rect.height)
+        .cosmoGlassSceneSignal(
+            id: "canvas-cluster-surface-\(cluster.id)",
+            source: .canvasCluster,
+            color: cluster.color,
+            intensity: cluster.isUserCreated ? 0.48 : 0.36,
+            allowsDeepDiffusion: rect.width >= 360 || rect.height >= 280
+        )
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay {
+            clusterOutlineOverlay(
+                cluster: cluster,
+                isSelected: isSelected,
+                isHovered: isHovered,
+                isDropTarget: isDropTarget
+            )
+        }
         .contentShape(RoundedRectangle(cornerRadius: 16))
         .onDrop(
             of: [.text],
@@ -194,6 +196,36 @@ struct CanvasClusterLayer: View {
                     onDragEndCluster?(cluster.id, gesture.translation)
                 }
         )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10, coordinateSpace: .named("clusterLayer"))
+                .onChanged { gesture in
+                    guard hasAltContent,
+                          cluster.isUserCreated,
+                          !isEditing,
+                          resizingClusterId == nil,
+                          localResizingClusterId == nil,
+                          CanvasClusterMoveHitTesting.allowsDragStart(
+                            at: gesture.startLocation,
+                            in: rect,
+                            hasAltContent: hasAltContent
+                          ) else { return }
+                    if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
+                    onDragCluster?(cluster.id, gesture.translation)
+                }
+                .onEnded { gesture in
+                    guard hasAltContent,
+                          cluster.isUserCreated,
+                          !isEditing,
+                          resizingClusterId == nil,
+                          localResizingClusterId == nil,
+                          CanvasClusterMoveHitTesting.allowsDragStart(
+                            at: gesture.startLocation,
+                            in: rect,
+                            hasAltContent: hasAltContent
+                          ) else { return }
+                    onDragEndCluster?(cluster.id, gesture.translation)
+                }
+        )
         .onHover { hovered in
             hoveredClusterID = hovered ? cluster.id : nil
         }
@@ -204,6 +236,41 @@ struct CanvasClusterLayer: View {
                 tx.animation = nil
             }
         }
+    }
+
+    @ViewBuilder
+    private func clusterOutlineOverlay(
+        cluster: CanvasCluster,
+        isSelected: Bool,
+        isHovered: Bool,
+        isDropTarget: Bool
+    ) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 16)
+
+        ZStack {
+            shape
+                .strokeBorder(
+                    DS.sidebarMaterialBorder.opacity(DS.palette.isDark ? 0.70 : 0.58),
+                    lineWidth: 0.5
+                )
+
+            shape
+                .strokeBorder(
+                    cluster.color.opacity(
+                        clusterStrokeOpacity(
+                            isSelected: isSelected,
+                            isHovered: isHovered,
+                            isDropTarget: isDropTarget
+                        )
+                    ),
+                    style: StrokeStyle(
+                        lineWidth: clusterStrokeWidth(isSelected: isSelected, isDropTarget: isDropTarget),
+                        dash: (isSelected || isDropTarget) ? [] : [5, 5]
+                    )
+                )
+                .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
+        }
+        .allowsHitTesting(false)
     }
 
     private func draggingCluster(_ clusterId: UUID) -> Bool {
@@ -343,18 +410,6 @@ struct CanvasClusterLayer: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .contentShape(Rectangle())
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 10, coordinateSpace: .named("clusterLayer"))
-                .onChanged { gesture in
-                    guard (isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil else { return }
-                    if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
-                    onDragCluster?(cluster.id, gesture.translation)
-                }
-                .onEnded { gesture in
-                    guard (isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil else { return }
-                    onDragEndCluster?(cluster.id, gesture.translation)
-                }
-        )
     }
 
     // MARK: - Alternative Content (List / Board)
@@ -577,6 +632,24 @@ struct CanvasClusterLayer: View {
         let screenY = origin.y + canvasOffset.height + scaledPanOffset.height
 
         return CGRect(x: screenX, y: screenY, width: size.width, height: size.height)
+    }
+}
+
+enum CanvasClusterMoveHitTesting {
+    private static let altContentHeaderHeight: CGFloat = 58
+    private static let altContentChromeGutter: CGFloat = 18
+
+    static func allowsDragStart(at point: CGPoint, in rect: CGRect, hasAltContent: Bool) -> Bool {
+        guard hasAltContent else { return rect.contains(point) }
+        guard rect.contains(point) else { return false }
+
+        if point.y <= rect.minY + altContentHeaderHeight {
+            return true
+        }
+
+        return point.x <= rect.minX + altContentChromeGutter ||
+            point.x >= rect.maxX - altContentChromeGutter ||
+            point.y >= rect.maxY - altContentChromeGutter
     }
 }
 

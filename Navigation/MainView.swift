@@ -4,6 +4,25 @@
 import SwiftUI
 import AppKit
 
+final class MainRightClickRoutingState: ObservableObject {
+    private var sidebarIsHidden = true
+    private var sidebarInteractionWidth: CGFloat = 0
+    private let sidebarRightClickSlop: CGFloat
+
+    init(sidebarRightClickSlop: CGFloat = 20) {
+        self.sidebarRightClickSlop = sidebarRightClickSlop
+    }
+
+    func updateSidebar(isHidden: Bool, interactionWidth: CGFloat) {
+        sidebarIsHidden = isHidden
+        sidebarInteractionWidth = max(0, interactionWidth)
+    }
+
+    func shouldBypassCanvasMenuForSidebar(windowPoint: CGPoint) -> Bool {
+        !sidebarIsHidden && windowPoint.x < sidebarInteractionWidth + sidebarRightClickSlop
+    }
+}
+
 struct MainView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var database: CosmoDatabase
@@ -19,6 +38,7 @@ struct MainView: View {
     @State private var rightClickMonitor: Any?
     @State private var keyMonitor: Any?
     @State private var inAppVoiceHotkeyActive = false
+    @StateObject private var rightClickRoutingState = MainRightClickRoutingState()
 
     // Command-K (constellation-based search)
     @State private var showCommandK = false
@@ -50,6 +70,10 @@ struct MainView: View {
     @State private var sidebarPanelWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
     @State private var sidebarInteractionWidth: CGFloat = 0
     @State private var sidebarReservedWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
+    @State private var isSidebarHoverRevealed = false
+    @State private var isHoveringSidebarRevealTrigger = false
+    @State private var isHoveringSidebarPanel = false
+    @State private var sidebarHoverCloseTask: Task<Void, Never>?
     @State private var canvasSceneTint: CosmoGlassSceneTint = .fallback
     @State private var canvasSceneMaterial: CosmoGlassSceneMaterial = .fallback
     @State private var routeSceneSignals: [CosmoGlassSceneSignal] = []
@@ -118,7 +142,11 @@ struct MainView: View {
             // Keep alive (but hidden) when user opens focus mode FROM Cmd-K,
             // so all state (tab, search, filters, scroll, gallery data) is preserved.
             if showCommandK || commandKBehindFocusMode {
-                CommandKView(initialTab: commandKReturnTab ?? .database)
+                CommandKView(
+                    initialTab: commandKReturnTab ?? .database,
+                    isActive: showCommandK,
+                    viewModel: commandKViewModel
+                )
                     .opacity(showCommandK ? 1 : 0)
                     .allowsHitTesting(showCommandK)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -466,6 +494,13 @@ struct MainView: View {
             handleOpenCollaboratorPane(atomUUID: payload.atomUUID, presetId: payload.presetId)
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
+            if newValue != nil {
+                cancelSidebarHoverClose()
+                isHoveringSidebarRevealTrigger = false
+                isHoveringSidebarPanel = false
+                isSidebarHoverRevealed = false
+            }
+
             // When focus mode closes, reveal Command-K if it was kept alive behind focus mode
             if newValue == nil, commandKBehindFocusMode {
                 // CMD+K view is still in the tree — just reveal it (no delay, no recreation)
@@ -697,62 +732,48 @@ struct MainView: View {
     private var mainContentLayout: some View {
         GeometryReader { geo in
             let sidebarLayout = sidebarLayoutMetrics(for: geo.size)
+            let contentPushOffset = MainSidebarContentLayoutPolicy.contentLeadingInset(
+                for: currentDestination,
+                isSidebarVisible: isSidebarVisible,
+                isFocusModeActive: appState.focusedEntity != nil,
+                sidebarReservedWidth: sidebarLayout.reservedWidth
+            )
 
-            ZStack(alignment: .leading) {
-                if shouldUnderlapCanvasBehindSidebar {
-                    SplitPaneContainer(paneManager: paneManager) {
-                        ZStack {
-                            destinationContent
-                            focusModeOverlay
-                        }
+            ZStack(alignment: .topLeading) {
+                SplitPaneContainer(paneManager: paneManager) {
+                    ZStack {
+                        destinationContent(contentPushOffset: contentPushOffset)
+                        focusModeOverlay(contentPushOffset: contentPushOffset)
                     }
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .zIndex(appState.focusedEntity != nil ? 195 : 10)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .zIndex(appState.focusedEntity != nil ? 195 : 10)
+                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+                .animation(sidebarAnimation, value: contentPushOffset)
 
-                    if !isSidebarHidden {
-                        sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
-                            .padding(.leading, sidebarLayout.leadingInset)
-                            .padding(.trailing, sidebarLayout.trailingInset)
-                            .padding(.vertical, sidebarLayout.verticalInset)
-                            .frame(
-                                width: sidebarLayout.reservedWidth,
-                                height: geo.size.height,
-                                alignment: .leading
-                            )
-                            .transition(.move(edge: .leading).combined(with: .opacity))
-                            .zIndex(20)
-                    }
-                } else {
-                    HStack(spacing: 0) {
-                        if !isSidebarHidden {
-                            sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
-                                .padding(.leading, sidebarLayout.leadingInset)
-                                .padding(.trailing, sidebarLayout.trailingInset)
-                                .padding(.vertical, sidebarLayout.verticalInset)
-                                .frame(
-                                    width: sidebarLayout.reservedWidth,
-                                    height: geo.size.height,
-                                    alignment: .leading
-                                )
-                                .transition(.move(edge: .leading).combined(with: .opacity))
-                                .zIndex(20)
-                        }
-
-                        SplitPaneContainer(paneManager: paneManager) {
-                            ZStack {
-                                destinationContent
-                                focusModeOverlay
-                            }
-                        }
-                        .zIndex(appState.focusedEntity != nil ? 195 : 10)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
-                    }
+                if isSidebarVisible {
+                    sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
+                        .padding(.leading, sidebarLayout.leadingInset)
+                        .padding(.trailing, sidebarLayout.trailingInset)
+                        .padding(.vertical, sidebarLayout.verticalInset)
+                        .frame(
+                            width: sidebarLayout.reservedWidth,
+                            height: geo.size.height,
+                            alignment: .leading
+                        )
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .onHover { handleSidebarPanelHover($0) }
+                        .zIndex(20)
                 }
 
                 if isSidebarHidden && appState.focusedEntity == nil {
-                    sidebarToggleButton
-                        .zIndex(201)
+                    sidebarHoverRevealTrigger(height: geo.size.height)
+                        .zIndex(200)
+
+                    if !isSidebarHoverRevealed {
+                        sidebarToggleButton
+                            .zIndex(202)
+                    }
                 }
 
                 if crossDragManager.isOverSidebar || crossDragManager.hasThinkspaceSwitched,
@@ -769,7 +790,9 @@ struct MainView: View {
             }
             .coordinateSpace(name: CosmoGlassSceneMaterial.coordinateSpaceName)
             .animation(sidebarAnimation, value: isSidebarHidden)
+            .animation(sidebarAnimation, value: isSidebarHoverRevealed)
             .animation(sidebarAnimation, value: sidebarPanelWidth)
+            .animation(routeContentTransitionAnimation, value: currentDestination)
             .animation(sceneTintAnimation, value: sidebarSceneTintAnimationKey)
             .onAppear {
                 syncSidebarContext(with: currentDestination)
@@ -777,12 +800,22 @@ struct MainView: View {
                 setupCrossThinkspaceDragCallbacks()
                 updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
             }
+            .onDisappear {
+                cancelSidebarHoverClose()
+            }
             .onChange(of: geo.size) { _, newSize in
                 updateSidebarInteractionWidth(
                     reservedWidth: sidebarLayoutMetrics(for: newSize).reservedWidth
                 )
             }
             .onChange(of: isSidebarHidden) { _, _ in
+                if !isSidebarHidden {
+                    cancelSidebarHoverClose()
+                    isSidebarHoverRevealed = false
+                }
+                updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
+            }
+            .onChange(of: isSidebarHoverRevealed) { _, _ in
                 updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
             }
             .onChange(of: sidebarPanelWidth) { _, _ in
@@ -805,7 +838,16 @@ struct MainView: View {
             }
             .onPreferenceChange(CosmoGlassSceneSignalPreferenceKey.self) { signals in
                 let visibleSignals = signals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
-                let cappedSignals = Array(visibleSignals.prefix(8))
+                let cappedSignals = Array(
+                    visibleSignals
+                        .sorted {
+                            let lhsDistance = max(0, $0.rect.minX - sidebarReservedWidth)
+                            let rhsDistance = max(0, $1.rect.minX - sidebarReservedWidth)
+                            if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+                            return $0.intensity > $1.intensity
+                        }
+                        .prefix(8)
+                )
                 if routeSceneSignals != cappedSignals {
                     routeSceneSignals = cappedSignals
                 }
@@ -824,16 +866,25 @@ struct MainView: View {
             sceneTint: activeSidebarSceneTint,
             sceneMaterial: activeSidebarSceneMaterial,
             cornerRadius: cornerRadius,
-            onClose: { closeSidebar() }
+            sidebarButtonTitle: sidebarButtonTitle,
+            sidebarButtonHelp: sidebarButtonHelp,
+            onClose: { handleSidebarButtonPress() }
         )
         .environmentObject(crossDragManager)
     }
 
+    private func sidebarHoverRevealTrigger(height: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.001))
+            .contentShape(Rectangle())
+            .frame(width: UnifiedSidebarMetrics.hoverRevealTriggerWidth, height: height)
+            .onHover { handleSidebarRevealTriggerHover($0) }
+            .accessibilityHidden(true)
+    }
+
     private var sidebarToggleButton: some View {
         Button("Show sidebar", systemImage: "sidebar.left") {
-            withAnimation(sidebarAnimation) {
-                isSidebarHidden = false
-            }
+            openSidebarPersistently()
         }
         .labelStyle(.iconOnly)
         .font(.system(size: 14, weight: .medium))
@@ -843,13 +894,24 @@ struct MainView: View {
         .buttonStyle(.plain)
         .padding(.top, 4)
         .padding(.leading, 4)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .help("Show sidebar (Cmd+\\)")
+        .onHover { handleSidebarRevealTriggerHover($0) }
+        .help(isSidebarHoverRevealed ? "Keep sidebar open (Cmd+\\)" : "Show sidebar (Cmd+\\)")
         .accessibilityLabel("Show sidebar")
+    }
+
+    private var isSidebarVisible: Bool {
+        MainSidebarHoverRevealPolicy.isSidebarVisible(
+            isSidebarHidden: isSidebarHidden,
+            isHoverRevealed: isSidebarHoverRevealed
+        )
     }
 
     private var sidebarAnimation: Animation? {
         reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.sidebar
+    }
+
+    private var routeContentTransitionAnimation: Animation? {
+        reduceMotion ? .easeOut(duration: 0.12) : .easeInOut(duration: 0.24)
     }
 
     private func restoreSidebarState() {
@@ -859,8 +921,35 @@ struct MainView: View {
     }
 
     private func closeSidebar() {
+        cancelSidebarHoverClose()
+        isHoveringSidebarRevealTrigger = false
+        isHoveringSidebarPanel = false
         withAnimation(sidebarAnimation) {
             isSidebarHidden = true
+            isSidebarHoverRevealed = false
+        }
+    }
+
+    private var isSidebarTransientlyRevealed: Bool {
+        MainSidebarButtonPolicy.shouldPersistTransientReveal(
+            isSidebarHidden: isSidebarHidden,
+            isHoverRevealed: isSidebarHoverRevealed
+        )
+    }
+
+    private var sidebarButtonTitle: String {
+        isSidebarTransientlyRevealed ? "Keep sidebar open" : "Close sidebar"
+    }
+
+    private var sidebarButtonHelp: String {
+        isSidebarTransientlyRevealed ? "Keep sidebar open (Cmd+\\)" : "Close sidebar (Cmd+\\)"
+    }
+
+    private func handleSidebarButtonPress() {
+        if isSidebarTransientlyRevealed {
+            openSidebarPersistently()
+        } else {
+            closeSidebar()
         }
     }
 
@@ -889,14 +978,101 @@ struct MainView: View {
         if let reservedWidth {
             sidebarReservedWidth = reservedWidth
         }
-        sidebarInteractionWidth = isSidebarHidden ? 0 : sidebarReservedWidth
+        sidebarInteractionWidth = isSidebarVisible ? sidebarReservedWidth : 0
         crossDragManager.sidebarWidth = sidebarInteractionWidth
+        rightClickRoutingState.updateSidebar(
+            isHidden: !isSidebarVisible,
+            interactionWidth: sidebarInteractionWidth
+        )
     }
 
     private func toggleSidebarFromKeyboard() {
+        cancelSidebarHoverClose()
+        isHoveringSidebarRevealTrigger = false
+        isHoveringSidebarPanel = false
         withAnimation(sidebarAnimation) {
             isSidebarHidden.toggle()
+            isSidebarHoverRevealed = false
         }
+    }
+
+    private func openSidebarPersistently() {
+        cancelSidebarHoverClose()
+        isHoveringSidebarRevealTrigger = false
+        isHoveringSidebarPanel = false
+        withAnimation(sidebarAnimation) {
+            isSidebarHidden = false
+            isSidebarHoverRevealed = false
+        }
+    }
+
+    private func handleSidebarRevealTriggerHover(_ hovering: Bool) {
+        isHoveringSidebarRevealTrigger = hovering
+
+        guard isSidebarHidden, appState.focusedEntity == nil else {
+            if !isSidebarHidden {
+                cancelSidebarHoverClose()
+            }
+            return
+        }
+
+        if hovering {
+            revealSidebarForHover()
+        } else {
+            scheduleSidebarHoverCloseIfNeeded()
+        }
+    }
+
+    private func handleSidebarPanelHover(_ hovering: Bool) {
+        isHoveringSidebarPanel = hovering
+
+        if hovering {
+            cancelSidebarHoverClose()
+        } else {
+            scheduleSidebarHoverCloseIfNeeded()
+        }
+    }
+
+    private func revealSidebarForHover() {
+        cancelSidebarHoverClose()
+
+        guard isSidebarHidden, !isSidebarHoverRevealed else { return }
+
+        withAnimation(sidebarAnimation) {
+            isSidebarHoverRevealed = true
+        }
+    }
+
+    private func scheduleSidebarHoverCloseIfNeeded() {
+        cancelSidebarHoverClose()
+
+        guard MainSidebarHoverRevealPolicy.shouldCloseTransientReveal(
+            isSidebarHidden: isSidebarHidden,
+            isHoverRevealed: isSidebarHoverRevealed,
+            isHoveringRevealTrigger: isHoveringSidebarRevealTrigger,
+            isHoveringSidebarPanel: isHoveringSidebarPanel
+        ) else { return }
+
+        sidebarHoverCloseTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled else { return }
+
+            guard MainSidebarHoverRevealPolicy.shouldCloseTransientReveal(
+                isSidebarHidden: isSidebarHidden,
+                isHoverRevealed: isSidebarHoverRevealed,
+                isHoveringRevealTrigger: isHoveringSidebarRevealTrigger,
+                isHoveringSidebarPanel: isHoveringSidebarPanel
+            ) else { return }
+
+            withAnimation(sidebarAnimation) {
+                isSidebarHoverRevealed = false
+            }
+        }
+    }
+
+    private func cancelSidebarHoverClose() {
+        sidebarHoverCloseTask?.cancel()
+        sidebarHoverCloseTask = nil
     }
 
     private func syncSidebarContext(with destination: SidebarDestination) {
@@ -910,10 +1086,6 @@ struct MainView: View {
         case .codex:
             break
         }
-    }
-
-    private var shouldUnderlapCanvasBehindSidebar: Bool {
-        isCanvasDestination && appState.focusedEntity == nil
     }
 
     @ViewBuilder
@@ -958,7 +1130,10 @@ struct MainView: View {
 
         switch currentDestination {
         case .thinkspace:
-            return canvasSceneMaterial.dampened(0.82)
+            return mergedSidebarSceneMaterial(
+                base: canvasSceneMaterial.dampened(0.82),
+                extraSignals: routeSceneSignals.filter { $0.source == .canvasBlock || $0.source == .canvasCluster }
+            )
         case .commandCenter, .inbox:
             return sidebarRouteSceneMaterial
         case .codex:
@@ -983,6 +1158,23 @@ struct MainView: View {
             signals: signals,
             busyness: min(Double(signals.count) / 8.0, 1),
             luminanceBias: DS.palette.isDark ? -0.06 : 0.04,
+            mode: .canvasEdgeResponse
+        )
+    }
+
+    private func mergedSidebarSceneMaterial(
+        base: CosmoGlassSceneMaterial,
+        extraSignals: [CosmoGlassSceneSignal]
+    ) -> CosmoGlassSceneMaterial {
+        let visibleExtras = extraSignals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
+        guard !visibleExtras.isEmpty else { return base }
+
+        let mergedSignals = Array((visibleExtras + base.signals).prefix(8))
+        return CosmoGlassSceneMaterial(
+            fallbackTint: base.fallbackTint,
+            signals: mergedSignals,
+            busyness: min(Double(mergedSignals.count) / 8.0, 1),
+            luminanceBias: base.luminanceBias,
             mode: .canvasEdgeResponse
         )
     }
@@ -1078,7 +1270,7 @@ struct MainView: View {
     }
 
     @ViewBuilder
-    private var destinationContent: some View {
+    private func destinationContent(contentPushOffset: CGFloat) -> some View {
         ZStack {
             // Canvas layer — ALWAYS alive, hidden when a non-canvas destination is active.
             // Preserves all @StateObject engines, loaded blocks, zoom/pan state, and
@@ -1100,6 +1292,7 @@ struct MainView: View {
                 InboxView(route: $inboxRoute)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
+                    .offset(x: contentPushOffset)
                     .transition(.opacity)
             } else if case .commandCenter = currentDestination {
                 CommandCenterDashboard(
@@ -1108,24 +1301,27 @@ struct MainView: View {
                 )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
+                    .offset(x: contentPushOffset)
                     .transition(.opacity)
             } else if case .codex = currentDestination {
                 CodexNavigationView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
+                    .offset(x: contentPushOffset)
                     .transition(.opacity)
             }
         }
     }
 
     @ViewBuilder
-    private var focusModeOverlay: some View {
+    private func focusModeOverlay(contentPushOffset: CGFloat) -> some View {
         if let focusEntity = appState.focusedEntity {
             FocusModeView(entity: focusEntity)
                 .id(focusEntity)
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
+                .offset(x: contentPushOffset)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
     }
@@ -1593,7 +1789,7 @@ struct MainView: View {
             )
 
             // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
-            if !isSidebarHidden, windowPoint.x < sidebarInteractionWidth + 20 {
+            if rightClickRoutingState.shouldBypassCanvasMenuForSidebar(windowPoint: windowPoint) {
                 return event
             }
 
@@ -1755,7 +1951,7 @@ struct MainView: View {
     @ViewBuilder
     private var settingsOverlay: some View {
         ZStack {
-            FloatingOverlayBackdrop {
+            CortexOverlayBackdrop {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                     showSettings = false
                 }
@@ -1767,7 +1963,7 @@ struct MainView: View {
                 }
             })
             .frame(width: 720, height: 560)
-            .floatingOverlayPanel()
+            .settingsGlassPanel()
         }
     }
 

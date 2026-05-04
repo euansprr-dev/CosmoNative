@@ -68,6 +68,10 @@ class AgentToolExecutor {
     /// Set by CosmoWindowViewModel before each agent call; cleared after completion.
     var onActionButtons: ((_ message: String, _ buttons: [(label: String, action: String)]) -> Void)?
 
+    /// Optional callback for non-mutating canvas plan proposals.
+    /// The Cosmo window owns review/apply/cancel so tools never directly mutate canvas state.
+    var onCanvasPlan: ((PendingCanvasPlan) -> Void)?
+
     private init() {}
 
     /// Context atom UUIDs from @ mentions — passed to cloud writing engine
@@ -108,6 +112,8 @@ class AgentToolExecutor {
         case "create_content": return try await createContent(arguments)
         case "get_content": return try await getContent(arguments)
         case "create_thinkspace": return try await createThinkspace(arguments)
+        case "inspect_current_thinkspace": return try await inspectCurrentThinkspace(arguments)
+        case "propose_canvas_plan": return try await proposeCanvasPlan(arguments)
         // Calendar / Schedule Blocks
         case "get_calendar_blocks": return try await getCalendarBlocks(arguments)
         case "create_block": return try await createBlock(arguments)
@@ -1516,6 +1522,72 @@ class AgentToolExecutor {
             "title": title,
             "message": "Thinkspace created: \(title)"
         ] as [String: Any])
+    }
+
+    private func inspectCurrentThinkspace(_ args: [String: Any]) async throws -> String {
+        let context = CosmoWindowViewModel.shared.activeContext
+        let contextBlock = context.data.toContextBlock()
+        var result: [String: Any] = [
+            "success": true,
+            "contextType": context.type.rawValue,
+            "contextName": context.type.displayName,
+            "summary": context.summary,
+            "contextBlock": contextBlock,
+            "availableActions": context.actions.map(\.name)
+        ]
+        if let value = context.data.currentAtomUUID { result["currentAtomUUID"] = value }
+        if let value = context.data.currentAtomType { result["currentAtomType"] = value }
+        if let value = context.data.currentAtomTitle { result["currentAtomTitle"] = value }
+        if let value = context.data.visibleItemCount { result["visibleItemCount"] = value }
+        return jsonEncode(result)
+    }
+
+    private func proposeCanvasPlan(_ args: [String: Any]) async throws -> String {
+        let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rationale = (args["rationale"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawOperations = args["operations"] as? [[String: Any]]
+
+        guard let title, !title.isEmpty else {
+            return jsonError("Missing required parameter: title")
+        }
+        guard let rationale, !rationale.isEmpty else {
+            return jsonError("Missing required parameter: rationale")
+        }
+        guard let rawOperations, !rawOperations.isEmpty else {
+            return jsonError("Missing required parameter: operations")
+        }
+
+        let operations = rawOperations.map { raw in
+            PendingCanvasOperation(
+                kind: PendingCanvasOperationKind(rawValue: raw["kind"] as? String ?? "") ?? .unsupported,
+                summary: (raw["summary"] as? String) ?? "Canvas operation",
+                payload: stringifyCanvasPayload(raw)
+            )
+        }
+
+        let plan = PendingCanvasPlan(title: title, rationale: rationale, operations: operations)
+        onCanvasPlan?(plan)
+
+        return jsonEncode([
+            "success": true,
+            "pendingPlanId": plan.id.uuidString,
+            "operationCount": operations.count,
+            "message": "Canvas plan is ready for user review. Do not say it has been applied until the user clicks Apply."
+        ] as [String: Any])
+    }
+
+    private func stringifyCanvasPayload(_ raw: [String: Any]) -> [String: String] {
+        var payload: [String: String] = [:]
+        for (key, value) in raw where key != "summary" {
+            if let string = value as? String {
+                payload[key] = string
+            } else if let number = value as? NSNumber {
+                payload[key] = number.stringValue
+            } else {
+                payload[key] = "\(value)"
+            }
+        }
+        return payload
     }
 
     // MARK: - Calendar / Schedule Blocks

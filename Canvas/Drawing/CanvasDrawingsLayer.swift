@@ -126,11 +126,11 @@ struct CanvasDrawingsLayer: View {
 
                 switch rendering {
                 case .fill:
-                    drawingContext.fill(translatedPath, with: .color(CanvasDrawing.colorFromHex(drawing.strokeColor)))
+                    drawingContext.fill(translatedPath, with: .color(drawing.strokeSwiftUIColor))
                 case .stroke(_, let lineWidth):
                     drawingContext.stroke(
                         translatedPath,
-                        with: .color(CanvasDrawing.colorFromHex(drawing.strokeColor)),
+                        with: .color(drawing.strokeSwiftUIColor),
                         style: StrokeStyle(
                             lineWidth: lineWidth,
                             lineCap: .round,
@@ -690,13 +690,13 @@ struct CanvasDrawingsLayer: View {
                     drawingId: drawing.id,
                     drawingState: drawingState,
                     textWeight: weight,
-                    strokeColor: drawing.strokeColor,
+                    resolvedStrokeColor: drawing.strokeSwiftUIColor,
                     scaledFontSize: scaledFontSize
                 )
             } else {
                 Text(drawing.textContent ?? "")
                     .font(.system(size: scaledFontSize, weight: weight.fontWeight))
-                    .foregroundColor(CanvasDrawing.colorFromHex(drawing.strokeColor))
+                    .foregroundColor(drawing.strokeSwiftUIColor)
                     .onTapGesture {
                         if drawingState.toolMode == .erase {
                             drawingState.deleteDrawing(drawing.id)
@@ -930,11 +930,11 @@ struct CanvasDrawingsLayer: View {
 
             if widths.count == screenPoints.count {
                 variableWidthStrokePath(points: screenPoints, widths: widths)
-                    .fill(CanvasDrawing.colorFromHex(active.strokeColor))
+                    .fill(active.strokeSwiftUIColor)
             } else {
                 smoothBezierPath(through: screenPoints)
                     .stroke(
-                        CanvasDrawing.colorFromHex(active.strokeColor),
+                        active.strokeSwiftUIColor,
                         style: StrokeStyle(
                             lineWidth: active.strokeWidth * effectiveScale,
                             lineCap: .round,
@@ -1047,7 +1047,7 @@ struct DrawingTextEditor: View {
     let drawingId: String
     @ObservedObject var drawingState: DrawingStateManager
     let textWeight: DrawingTextWeight
-    let strokeColor: String
+    let resolvedStrokeColor: Color
     var scaledFontSize: CGFloat? = nil
 
     @FocusState private var isFocused: Bool
@@ -1069,7 +1069,7 @@ struct DrawingTextEditor: View {
 
             TextField("", text: $text)
                 .font(.system(size: fontSize, weight: textWeight.fontWeight))
-                .foregroundColor(CanvasDrawing.colorFromHex(strokeColor))
+                .foregroundColor(resolvedStrokeColor)
                 .textFieldStyle(.plain)
                 .focused($isFocused)
                 .frame(minWidth: 80)

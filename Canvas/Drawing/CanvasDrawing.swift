@@ -215,23 +215,44 @@ struct CanvasDrawing: Identifiable, Codable {
     // MARK: - Color Helpers
 
     static func colorFromHex(_ hex: String) -> Color {
+        let components = rgbComponents(from: hex)
+        guard let components else {
+            return Color(red: 0.1, green: 0.1, blue: 0.1)
+        }
+        return Color(red: components.red, green: components.green, blue: components.blue)
+    }
+
+    static func themeResolvedColorFromHex(_ hex: String) -> Color {
+        if !DS.palette.isDark, isAdaptiveCanvasWhite(hex) {
+            return DS.text
+        }
+        return colorFromHex(hex)
+    }
+
+    private static func rgbComponents(from hex: String) -> (red: Double, green: Double, blue: Double)? {
         let cleaned = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
         guard cleaned.count == 6,
               let val = UInt64(cleaned, radix: 16) else {
-            return Color(red: 0.1, green: 0.1, blue: 0.1)
+            return nil
         }
         let r = Double((val >> 16) & 0xFF) / 255.0
         let g = Double((val >> 8) & 0xFF) / 255.0
         let b = Double(val & 0xFF) / 255.0
-        return Color(red: r, green: g, blue: b)
+        return (r, g, b)
+    }
+
+    private static func isAdaptiveCanvasWhite(_ hex: String) -> Bool {
+        guard let components = rgbComponents(from: hex) else { return false }
+        return components.red >= 0.94 &&
+            components.green >= 0.94 &&
+            components.blue >= 0.94
     }
 
     var strokeSwiftUIColor: Color {
-        Self.colorFromHex(strokeColor)
+        Self.themeResolvedColorFromHex(strokeColor)
     }
 
     var fillSwiftUIColor: Color? {
-        fillColor.map { Self.colorFromHex($0) }
+        fillColor.map { Self.themeResolvedColorFromHex($0) }
     }
 }
-

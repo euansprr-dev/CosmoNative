@@ -117,7 +117,7 @@ class SyncEngine: ObservableObject {
     /// Recovers cloud inbox captures that were pulled into GRDB before the
     /// batch-pull path learned how to convert them. Runs once per install.
     private func runInboxCatchupMigrationIfNeeded() async {
-        let key = "inboxCatchupMigrationRan_v1"
+        let key = "inboxCatchupMigrationRan_v2"
         if UserDefaults.standard.bool(forKey: key) { return }
 
         let rows: [[String: Any]]? = try? await database.asyncRead { db in
@@ -127,7 +127,10 @@ class SyncEngine: ObservableObject {
                 SELECT uuid, body, title, metadata, is_deleted
                 FROM atoms
                 WHERE is_deleted = 0
-                  AND metadata LIKE '%"isInboxCapture":true%'
+                  AND (
+                    metadata LIKE '%"isInboxCapture":true%'
+                    OR metadata LIKE '%"isCaptureLaneCapture":true%'
+                  )
                 """
             )
             return rows.map { row -> [String: Any] in

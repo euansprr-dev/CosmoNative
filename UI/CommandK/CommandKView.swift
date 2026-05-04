@@ -13,16 +13,35 @@ public struct CommandKView: View {
 
     // MARK: - State
     var initialTab: CommandKTab?
-    @StateObject private var viewModel = CommandKViewModel()
+    var isActive: Bool
+    @StateObject private var viewModel: CommandKViewModel
     @FocusState private var isSearchFocused: Bool
     @Namespace private var cortexNamespace
 
-    init(initialTab: CommandKTab = .database) {
+    @MainActor
+    init(
+        initialTab: CommandKTab = .database,
+        isActive: Bool = true
+    ) {
+        self.init(
+            initialTab: initialTab,
+            isActive: isActive,
+            viewModel: CommandKViewModel()
+        )
+    }
+
+    init(
+        initialTab: CommandKTab = .database,
+        isActive: Bool = true,
+        viewModel: CommandKViewModel
+    ) {
         if initialTab == .database {
             self.initialTab = nil
         } else {
             self.initialTab = initialTab
         }
+        self.isActive = isActive
+        _viewModel = StateObject(wrappedValue: viewModel)
     }
 
     // MARK: - Body
@@ -36,8 +55,21 @@ public struct CommandKView: View {
             .ignoresSafeArea()
             .onAppear {
                 viewModel.initialExpandedTab = initialTab
-                viewModel.initializeCortexMode()
-                isSearchFocused = true
+                viewModel.setSurfaceActive(isActive)
+                if isActive {
+                    viewModel.initializeCortexMode()
+                    isSearchFocused = true
+                }
+            }
+            .onChange(of: isActive) { _, active in
+                viewModel.setSurfaceActive(active)
+                if active {
+                    viewModel.initialExpandedTab = initialTab
+                    viewModel.initializeCortexMode()
+                    isSearchFocused = true
+                } else {
+                    isSearchFocused = false
+                }
             }
         }
         .onKeyPress(.escape) { handleEscape() }
@@ -50,14 +82,9 @@ public struct CommandKView: View {
     // MARK: - Background
 
     private var backgroundLayer: some View {
-        // Lighter backdrop than FloatingOverlayBackdrop — just a dim scrim
-        // so the glass panels can blur the actual app content underneath.
-        Color.black.opacity(0.3)
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture {
-                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-            }
+        CortexOverlayBackdrop {
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        }
     }
 
     // MARK: - Panel Container
@@ -147,14 +174,13 @@ public struct CommandKView: View {
         .frame(height: 52)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(DS.glassInputFill)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                .stroke(DS.glassBorder, lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.15), radius: 24, x: 0, y: 10)
     }
 
     // MARK: - Domain Bubbles (inline in search bar)

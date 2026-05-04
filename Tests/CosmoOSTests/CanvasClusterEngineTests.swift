@@ -158,6 +158,46 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(cluster.manualSizeOverride, cluster.boundingRect.size)
     }
 
+    func testDocumentBlocksUsePageSizedCreationDefaults() {
+        let note = CanvasBlock.noteBlock(position: .zero)
+        let content = CanvasBlock(
+            position: .zero,
+            entityType: .content,
+            entityId: 1,
+            entityUuid: "content-1",
+            title: "Draft"
+        )
+
+        XCTAssertEqual(note.size.width, CanvasBlock.documentBlockSize.width, accuracy: 0.001)
+        XCTAssertEqual(note.size.height, CanvasBlock.documentBlockSize.height, accuracy: 0.001)
+        XCTAssertEqual(note.defaultSize.width, CanvasBlock.documentLayoutSize.width, accuracy: 0.001)
+        XCTAssertEqual(note.defaultSize.height, CanvasBlock.documentLayoutSize.height, accuracy: 0.001)
+        XCTAssertEqual(content.defaultSize.width, CanvasBlock.documentLayoutSize.width, accuracy: 0.001)
+        XCTAssertEqual(content.defaultSize.height, CanvasBlock.documentLayoutSize.height, accuracy: 0.001)
+        XCTAssertEqual(CanvasBlock.documentBlockSize.width, 453.333, accuracy: 0.001)
+        XCTAssertEqual(CanvasBlock.documentBlockSize.height, 586.667, accuracy: 0.001)
+    }
+
+    func testGridUsesFullDocumentFootprintForNoteAndContentBlocks() {
+        let note = makeBlock(uuid: "note-1", type: .note, position: .zero, size: CanvasBlock.documentBlockSize)
+        let content = makeBlock(uuid: "content-1", type: .content, position: .zero, size: CanvasBlock.documentBlockSize)
+
+        XCTAssertEqual(ClusterGridContent.canonicalCellWidth(for: note), CanvasBlock.documentBlockSize.width, accuracy: 0.001)
+        XCTAssertEqual(ClusterGridContent.canonicalCellHeight(for: note), CanvasBlock.documentBlockSize.height, accuracy: 0.001)
+        XCTAssertEqual(ClusterGridContent.canonicalCellWidth(for: content), CanvasBlock.documentBlockSize.width, accuracy: 0.001)
+        XCTAssertEqual(ClusterGridContent.canonicalCellHeight(for: content), CanvasBlock.documentBlockSize.height, accuracy: 0.001)
+    }
+
+    func testGridPacksTwoDocumentBlocksIntoOneRowWithOnlySpacingBetweenThem() {
+        let note = makeBlock(uuid: "note-1", type: .note, position: .zero, size: CanvasBlock.documentBlockSize)
+        let content = makeBlock(uuid: "content-1", type: .content, position: .zero, size: CanvasBlock.documentBlockSize)
+        let availableWidth = CanvasBlock.documentBlockSize.width * 2 + 10
+
+        let height = ClusterGridContent.estimatedGridHeight(blocks: [note, content], availableWidth: availableWidth)
+
+        XCTAssertEqual(height, CanvasBlock.documentBlockSize.height, accuracy: 0.001)
+    }
+
     func testSettingGridModeAgainDoesNotRefitExistingGridRect() {
         let clusterId = UUID()
         let blocks = (0..<12).map { index in
@@ -479,6 +519,32 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(ordered.map(\.entityUuid), [a.entityUuid, c.entityUuid, b.entityUuid])
     }
 
+    func testAltModeClusterMoveHitTestingAllowsHeaderAndBorderChromeOnly() {
+        let rect = CGRect(x: 100, y: 200, width: 640, height: 420)
+
+        XCTAssertTrue(
+            CanvasClusterMoveHitTesting.allowsDragStart(
+                at: CGPoint(x: 260, y: 222),
+                in: rect,
+                hasAltContent: true
+            )
+        )
+        XCTAssertTrue(
+            CanvasClusterMoveHitTesting.allowsDragStart(
+                at: CGPoint(x: 108, y: 360),
+                in: rect,
+                hasAltContent: true
+            )
+        )
+        XCTAssertFalse(
+            CanvasClusterMoveHitTesting.allowsDragStart(
+                at: CGPoint(x: 260, y: 360),
+                in: rect,
+                hasAltContent: true
+            )
+        )
+    }
+
     func testPersistedCanvasClusterRectRemainsAuthoritativeWhenMembersFitInside() {
         let block = makeBlock(
             uuid: "b-1",
@@ -617,6 +683,48 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(preview["block-1"]?.position.y, 30, accuracy: 0.001)
         XCTAssertEqual(preview["block-1"]?.size.width, 270, accuracy: 0.001)
         XCTAssertEqual(preview["block-1"]?.size.height, 180, accuracy: 0.001)
+    }
+
+    func testThinkspaceLibrarySnapshotGroupsClusteredAndInventoryItems() {
+        let cluster = makeCluster(
+            id: UUID(),
+            blockUUIDs: ["clustered-visible", "clustered-inventory"],
+            rect: CGRect(x: 0, y: 0, width: 400, height: 300),
+            viewMode: .canvas
+        )
+        var visibleBlock = makeBlock(uuid: "clustered-visible", type: .note, position: .zero, size: CGSize(width: 180, height: 120))
+        visibleBlock.title = "Visible Note"
+        let inventoryOnly = ChildDoc(
+            id: "doc-1",
+            entityType: .research,
+            entityId: 2,
+            entityUuid: "clustered-inventory",
+            title: "Stored Source",
+            outlineReferenceCount: 0
+        )
+        let looseInventory = ChildDoc(
+            id: "doc-2",
+            entityType: .task,
+            entityId: 3,
+            entityUuid: "loose-inventory",
+            title: "Loose Task",
+            outlineReferenceCount: 0
+        )
+
+        let snapshot = ThinkspaceLibrarySnapshot.make(
+            blocks: [visibleBlock],
+            clusters: [cluster],
+            inventory: [inventoryOnly, looseInventory]
+        )
+
+        XCTAssertEqual(snapshot.folders.count, 1)
+        XCTAssertEqual(snapshot.folders[0].items.map(\.title), ["Stored Source", "Visible Note"])
+        XCTAssertEqual(snapshot.looseItems.map(\.title), ["Loose Task"])
+        XCTAssertTrue(snapshot.folders[0].items.contains { $0.entityUuid == "clustered-inventory" && !$0.isOnCanvas })
+    }
+
+    func testCommandKPrimaryTabsExcludeInquiry() {
+        XCTAssertFalse(CommandKTab.allCases.contains(.inquiry))
     }
 }
 

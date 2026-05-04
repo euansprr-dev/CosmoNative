@@ -153,6 +153,16 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         scheduledTime != nil
     }
 
+    /// Whether the task belongs on the calendar timeline.
+    public var hasCalendarTime: Bool {
+        scheduledStart != nil || scheduledTime != nil
+    }
+
+    /// Canonical start used by Today and Upcoming calendar surfaces.
+    public var calendarStart: Date? {
+        scheduledStart ?? scheduledTime
+    }
+
     /// Estimated XP for completing this task
     public var estimatedXP: Int {
         let baseXP = 10

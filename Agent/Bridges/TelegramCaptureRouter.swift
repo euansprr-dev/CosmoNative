@@ -138,6 +138,7 @@ final class TelegramCaptureRouter {
                 createdObjectIds: objectIds
             )
             await destinations.markUsed(uuid: destination.uuid)
+            postCaptureAdded(destinationId: destination.uuid)
             if attachments.isEmpty, command.body.isEmpty {
                 return .handled(reply: "Created “\(destination.name).”", capturedItemId: captured.uuid)
             }
@@ -173,6 +174,7 @@ final class TelegramCaptureRouter {
                     createdObjectIds: objectIds
                 )
                 await destinations.markUsed(uuid: destination.uuid)
+                postCaptureAdded(destinationId: destination.uuid)
                 return .handled(reply: routedReply(destination: destination, command: command, attachments: attachments), capturedItemId: captured.uuid)
             }
 
@@ -356,6 +358,15 @@ final class TelegramCaptureRouter {
             status: .needsReview
         )
         NotificationCenter.default.post(name: CosmoNotification.Inbox.itemAdded, object: nil)
+    }
+
+    private func postCaptureAdded(destinationId: String?) {
+        let userInfo: [AnyHashable: Any]? = destinationId.map { ["captureDestinationId": $0] }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Inbox.itemAdded,
+            object: nil,
+            userInfo: userInfo
+        )
     }
 
     private func createMediaSource(title: String, captured: CapturedItem, attachments: [MediaAttachment], isSwipe: Bool) async throws -> Atom {

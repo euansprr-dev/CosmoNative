@@ -34,6 +34,8 @@ class TaskRecurrenceEngine {
 
     /// Run on app launch and at midnight -- generates today's task instances
     func generateTodayInstances() async throws {
+        try await deduplicateGeneratedInstances()
+
         let templates = try await getTemplates()
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
@@ -68,6 +70,27 @@ class TaskRecurrenceEngine {
         }
     }
 
+    /// Generate missing instances for every occurrence in a visible calendar interval.
+    func generateInstances(in interval: DateInterval) async throws {
+        try await deduplicateGeneratedInstances()
+
+        let templates = try await getTemplates()
+
+        for template in templates {
+            guard let metadata = template.metadataValue(as: TaskMetadata.self),
+                  let recurrenceJSON = metadata.recurrence,
+                  let rule = RecurrenceRule.fromJSON(recurrenceJSON),
+                  let startDate = recurrenceStartDate(from: metadata) else {
+                continue
+            }
+
+            for occurrence in rule.occurrenceDates(in: interval, startingFrom: startDate) {
+                if try await instanceExists(templateUUID: template.uuid, date: occurrence) { continue }
+                try await createInstance(from: template, metadata: metadata, for: occurrence)
+            }
+        }
+    }
+
     /// Returns template UUIDs that already have at least one incomplete
     /// instance. Completed past instances do not block generation.
     func batchTemplatesWithActiveInstance() async throws -> Set<String> {
@@ -87,21 +110,28 @@ class TaskRecurrenceEngine {
 
     /// Check if an instance already exists for a template on a given date
     func instanceExists(templateUUID: String, date: Date) async throws -> Bool {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: date)
-        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
-
         let allTasks = try await atomRepository.fetchAll(type: .task)
 
         return allTasks.contains { atom in
-            guard let meta = atom.metadataValue(as: TaskMetadata.self),
-                  meta.recurrenceParentUUID == templateUUID,
-                  let focusDateStr = meta.focusDate,
-                  let focusDate = ISO8601DateFormatter().date(from: focusDateStr) else {
-                return false
-            }
-            return focusDate >= dayStart && focusDate < dayEnd
+            guard let meta = atom.metadataValue(as: TaskMetadata.self) else { return false }
+            return Self.recurrenceInstanceMatches(templateUUID: templateUUID, date: date, metadata: meta)
         }
+    }
+
+    static func recurrenceInstanceMatches(
+        templateUUID: String,
+        date: Date,
+        metadata: TaskMetadata,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard metadata.recurrenceParentUUID == templateUUID,
+              let occurrenceDate = occurrenceDate(from: metadata) else {
+            return false
+        }
+
+        let dayStart = calendar.startOfDay(for: date)
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+        return occurrenceDate >= dayStart && occurrenceDate < dayEnd
     }
 
     /// Get all recurring templates (tasks with recurrence set but no parent)
@@ -226,6 +256,74 @@ class TaskRecurrenceEngine {
         }
     }
 
+    func deduplicateGeneratedInstances() async throws {
+        let allTasks = try await atomRepository.fetchAll(type: .task)
+        let calendar = Calendar.current
+        var grouped: [String: [Atom]] = [:]
+
+        for atom in allTasks {
+            guard let metadata = atom.metadataValue(as: TaskMetadata.self),
+                  metadata.isCompleted != true,
+                  let parentUUID = metadata.recurrenceParentUUID,
+                  let occurrenceDate = Self.occurrenceDate(from: metadata) else {
+                continue
+            }
+
+            let day = calendar.startOfDay(for: occurrenceDate)
+            let dayKey = PlannerumFormatters.iso8601.string(from: day)
+            grouped["\(parentUUID)|\(dayKey)", default: []].append(atom)
+        }
+
+        for duplicates in grouped.values where duplicates.count > 1 {
+            let sorted = duplicates.sorted { lhs, rhs in
+                let lhsCreated = PlannerumFormatters.iso8601.date(from: lhs.createdAt) ?? .distantPast
+                let rhsCreated = PlannerumFormatters.iso8601.date(from: rhs.createdAt) ?? .distantPast
+                if lhsCreated != rhsCreated { return lhsCreated < rhsCreated }
+                return lhs.uuid < rhs.uuid
+            }
+
+            for duplicate in sorted.dropFirst() {
+                try await atomRepository.delete(uuid: duplicate.uuid)
+            }
+        }
+    }
+
+    private static func occurrenceDate(from metadata: TaskMetadata) -> Date? {
+        let candidates = [
+            metadata.focusDate,
+            metadata.scheduledStart,
+            metadata.startTime,
+            metadata.whenDate,
+            metadata.dueDate
+        ]
+
+        for candidate in candidates {
+            if let candidate, let date = PlannerumFormatters.iso8601.date(from: candidate) {
+                return date
+            }
+        }
+
+        return nil
+    }
+
+    private func recurrenceStartDate(from metadata: TaskMetadata) -> Date? {
+        let candidates = [
+            metadata.scheduledStart,
+            metadata.startTime,
+            metadata.focusDate,
+            metadata.whenDate,
+            metadata.dueDate
+        ]
+
+        for candidate in candidates {
+            if let candidate, let date = PlannerumFormatters.iso8601.date(from: candidate) {
+                return date
+            }
+        }
+
+        return nil
+    }
+
     /// Create a task instance from a template for a specific date
     private func createInstance(from template: Atom, metadata: TaskMetadata, for date: Date) async throws {
         var instanceMetadata = TaskMetadata()
@@ -243,13 +341,13 @@ class TaskRecurrenceEngine {
         instanceMetadata.habitUUID = metadata.habitUUID
         instanceMetadata.habitAssignmentSource = metadata.habitAssignmentSource
         instanceMetadata.linkedAtomUUID = metadata.linkedAtomUUID
-        instanceMetadata.startTime = metadata.startTime
         instanceMetadata.energyLevel = metadata.energyLevel
         instanceMetadata.cognitiveLoad = metadata.cognitiveLoad
         instanceMetadata.taskType = metadata.taskType
         instanceMetadata.estimatedFocusMinutes = metadata.estimatedFocusMinutes
         instanceMetadata.headingUUID = metadata.headingUUID
         instanceMetadata.titleMentions = metadata.titleMentions
+        copyCalendarTime(from: metadata, to: &instanceMetadata, on: date)
         // Do NOT copy linkedIdeaUUID -- each instance starts fresh for .writeContent
 
         // Copy checklist from template with all items unchecked
@@ -282,5 +380,51 @@ class TaskRecurrenceEngine {
         )
 
         try await atomRepository.create(instance)
+    }
+
+    private func copyCalendarTime(from source: TaskMetadata, to destination: inout TaskMetadata, on date: Date) {
+        let startSource = source.scheduledStart ?? source.startTime
+        guard let startSource, let sourceStart = PlannerumFormatters.iso8601.date(from: startSource) else { return }
+
+        let endSource = source.scheduledEnd ?? source.endTime
+        let sourceEnd = endSource.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
+        let duration = sourceEnd.map { max(15, Int($0.timeIntervalSince(sourceStart) / 60)) }
+            ?? source.durationMinutes
+            ?? source.estimatedFocusMinutes
+            ?? 30
+
+        let start = merge(date: date, time: sourceStart)
+        let end = Calendar.current.date(byAdding: .minute, value: duration, to: start)
+            ?? start.addingTimeInterval(TimeInterval(duration * 60))
+        applyCalendarTimeRange(start: start, end: end, to: &destination)
+    }
+
+    private func merge(date: Date, time: Date) -> Date {
+        let calendar = Calendar.current
+        let dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: time)
+        var merged = DateComponents()
+        merged.year = dateComponents.year
+        merged.month = dateComponents.month
+        merged.day = dateComponents.day
+        merged.hour = timeComponents.hour
+        merged.minute = timeComponents.minute
+        merged.second = timeComponents.second ?? 0
+        return calendar.date(from: merged) ?? date
+    }
+
+    private func applyCalendarTimeRange(start: Date, end: Date, to metadata: inout TaskMetadata) {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: start)
+        let dateString = PlannerumFormatters.iso8601.string(from: day)
+        metadata.dueDate = dateString
+        metadata.focusDate = dateString
+        metadata.whenDate = dateString
+        metadata.startTime = PlannerumFormatters.iso8601.string(from: start)
+        metadata.endTime = PlannerumFormatters.iso8601.string(from: end)
+        metadata.scheduledStart = PlannerumFormatters.iso8601.string(from: start)
+        metadata.scheduledEnd = PlannerumFormatters.iso8601.string(from: end)
+        metadata.durationMinutes = max(15, Int(end.timeIntervalSince(start) / 60))
+        metadata.schedulingState = nil
     }
 }

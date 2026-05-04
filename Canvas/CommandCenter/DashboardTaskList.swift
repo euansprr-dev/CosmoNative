@@ -56,7 +56,6 @@ struct DashboardTaskList: View {
             batchActionBar
         }
 
-        // Overdue section
         if !viewModel.overdueTasks.isEmpty {
             taskSection(
                 title: "Overdue",
@@ -67,7 +66,6 @@ struct DashboardTaskList: View {
             )
         }
 
-        // Scheduled section
         if !viewModel.scheduledTasks.isEmpty {
             taskSection(
                 title: "Scheduled",
@@ -77,22 +75,20 @@ struct DashboardTaskList: View {
             )
         }
 
-        // Unscheduled section
-        taskSection(
-            title: viewModel.overdueTasks.isEmpty && viewModel.scheduledTasks.isEmpty
-                ? "Tasks" : "Unscheduled",
-            tasks: viewModel.unscheduledTasks,
-            headerColor: DS.textSecondary,
-            showAddRow: true,
-            section: .unscheduled
-        )
-
-        // Empty state
-        if viewModel.overdueTasks.isEmpty && viewModel.scheduledTasks.isEmpty
-            && viewModel.unscheduledTasks.isEmpty
-        {
-            emptyState(message: "All clear for today", icon: "checkmark.circle")
+        if !viewModel.unscheduledTasks.isEmpty {
+            taskSection(
+                title: "Today",
+                tasks: viewModel.unscheduledTasks,
+                headerColor: DS.textSecondary,
+                section: .unscheduled
+            )
         }
+
+        if viewModel.overdueTasks.isEmpty && viewModel.scheduledTasks.isEmpty && viewModel.unscheduledTasks.isEmpty {
+            emptyState(message: "No tasks today", icon: "calendar")
+        }
+
+        SmartTaskCaptureRow(viewModel: viewModel)
     }
 
     // MARK: - Upcoming View
@@ -545,6 +541,12 @@ struct DashboardTaskList: View {
                 size: 18
             )
             .contentShape(Circle())
+            .cosmoGlassSceneSignal(
+                id: "command-task-check-\(task.uuid)",
+                source: .commandTask,
+                color: task.isCompleted || completionState != nil ? DS.green : task.priority.color,
+                intensity: task.isCompleted || completionState != nil ? 0.62 : 0.30
+            )
         }
         .buttonStyle(.plain)
     }

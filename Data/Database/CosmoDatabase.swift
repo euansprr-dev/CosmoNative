@@ -1682,6 +1682,15 @@ class CosmoDatabase: ObservableObject {
             print("✅ atom_uuid migration complete")
         }
 
+        migrator.registerMigration("canvas_blocks_thinkspace_lookup_index") { db in
+            print("🔨 Adding thinkspace lookup index to canvas_blocks...")
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_canvas_blocks_thinkspace_lookup
+                ON canvas_blocks(thinkspace_id, is_deleted, z_index)
+            """)
+            print("✅ canvas_blocks thinkspace lookup index ready")
+        }
+
         // Create automation_rules performance index table
         migrator.registerMigration("create_automation_rules") { db in
             print("🔨 Creating automation_rules table...")
@@ -1742,6 +1751,52 @@ class CosmoDatabase: ObservableObject {
                 )
             """)
             print("✅ sync_fence + user_settings tables created")
+        }
+
+        migrator.registerMigration("create_custom_agent_profiles") { db in
+            print("🔨 Creating custom_agent_profiles table...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS custom_agent_profiles (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    icon TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    runtime_prompt TEXT NOT NULL,
+                    seed_prompts TEXT NOT NULL DEFAULT '[]',
+                    tool_bundles TEXT NOT NULL,
+                    context_scopes TEXT NOT NULL,
+                    preferred_model_tier TEXT,
+                    is_enabled INTEGER NOT NULL DEFAULT 1,
+                    is_builtin INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    is_deleted INTEGER NOT NULL DEFAULT 0,
+                    _local_version INTEGER DEFAULT 1,
+                    _server_version INTEGER DEFAULT 0,
+                    _sync_version INTEGER DEFAULT 0,
+                    _local_pending INTEGER DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_custom_agent_profiles_enabled
+                    ON custom_agent_profiles(is_enabled, is_deleted);
+                CREATE INDEX IF NOT EXISTS idx_custom_agent_profiles_updated
+                    ON custom_agent_profiles(updated_at DESC);
+            """)
+            print("✅ custom_agent_profiles table created")
+        }
+
+        migrator.registerMigration("add_seed_prompts_to_custom_agent_profiles") { db in
+            print("🔨 Adding seed_prompts to custom_agent_profiles...")
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(custom_agent_profiles)")
+            let columnNames = Set(columns.compactMap { $0["name"] as? String })
+
+            if !columnNames.contains("seed_prompts") {
+                try db.execute(sql: "ALTER TABLE custom_agent_profiles ADD COLUMN seed_prompts TEXT NOT NULL DEFAULT '[]'")
+                print("  ✅ Added seed_prompts")
+            } else {
+                print("  ℹ️ seed_prompts already exists")
+            }
+            print("✅ custom_agent_profiles seed prompts migration complete")
         }
 
         return migrator
@@ -2046,6 +2101,7 @@ class CosmoDatabase: ObservableObject {
             CREATE INDEX IF NOT EXISTS idx_journal_entries_uuid ON journal_entries(uuid);
             CREATE INDEX IF NOT EXISTS idx_connections_uuid ON connections(uuid);
             CREATE INDEX IF NOT EXISTS idx_canvas_blocks_document ON canvas_blocks(document_type, document_id, is_deleted);
+            CREATE INDEX IF NOT EXISTS idx_canvas_blocks_thinkspace_lookup ON canvas_blocks(thinkspace_id, is_deleted, z_index);
             CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status, created_at);
         """)
     }

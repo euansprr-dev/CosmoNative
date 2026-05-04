@@ -10,6 +10,7 @@ import { assembleSystemPrompt } from './contextAssembler';
 import { executeTool, jsonEncode } from './toolExecutor';
 import { loadConversation, saveConversation, logApiUsage, createAtom, fetchAtom } from '../db/queries';
 import { getToolDefinitions } from './toolRegistry';
+import { parseCaptureLanePrefix, TelegramCapturedMedia, telegramMediaPlaceholder } from './captureLane';
 
 interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -24,6 +25,13 @@ interface ProcessResult {
   toolsUsed: string[];
   createdAtomUUIDs: string[];
   intent: AgentIntent;
+}
+
+interface ProcessMessageOptions {
+  telegramMedia?: TelegramCapturedMedia[];
+  telegramMessageId?: string;
+  telegramMediaGroupId?: string;
+  telegramSender?: string;
 }
 
 // Module-level active items context for numbered reference resolution
@@ -162,6 +170,50 @@ async function tryFastInboxCapture(
   await saveConversation(chatId, messages, { linkedAtomUUIDs: createdAtomUUIDs });
 
   return { response, toolsUsed: ['capture_to_inbox'], createdAtomUUIDs, intent: 'capture' };
+}
+
+async function tryFastCaptureLaneTransport(
+  text: string,
+  chatId: string,
+  messages: AgentMessage[],
+  options: ProcessMessageOptions = {},
+): Promise<ProcessResult | null> {
+  const media = options.telegramMedia || [];
+  const parsed = parseCaptureLanePrefix(text, { allowsEmptyBody: media.length > 0 });
+  if (!parsed) return null;
+
+  const body = parsed.body || telegramMediaPlaceholder(media);
+  console.log(`📥 Fast-path capture lane: ${parsed.destinationName} "${body.substring(0, 80)}..."`);
+
+  const title = body.substring(0, 120);
+  const atom = await createAtom({
+    type: 'note',
+    title,
+    body,
+    metadata: {
+      isCaptureLaneCapture: true,
+      captureDestinationName: parsed.destinationName,
+      captureLaneCommandText: parsed.commandText,
+      ...(parsed.subroute ? { captureLaneSubroute: parsed.subroute } : {}),
+      captureSource: 'telegram_cloud',
+      telegramChatId: chatId,
+      ...(options.telegramMessageId ? { telegramMessageId: options.telegramMessageId } : {}),
+      ...(options.telegramMediaGroupId ? { telegramMediaGroupId: options.telegramMediaGroupId } : {}),
+      ...(options.telegramSender ? { telegramSender: options.telegramSender } : {}),
+      ...(media.length > 0 ? { telegramMedia: media } : {}),
+    },
+  });
+
+  const createdAtomUUIDs = atom?.uuid ? [atom.uuid] : [];
+  const response = atom
+    ? `📥 Saved to ${parsed.destinationName}\n"${title}"\nOpen CosmoOS to review.`
+    : `Something went wrong saving to ${parsed.destinationName}.`;
+
+  messages.push({ role: 'user', content: text });
+  messages.push({ role: 'assistant', content: response });
+  await saveConversation(chatId, messages, { linkedAtomUUIDs: createdAtomUUIDs });
+
+  return { response, toolsUsed: ['capture_lane_transport'], createdAtomUUIDs, intent: 'capture' };
 }
 
 function parseIdeaCaptureRequest(text: string): {
@@ -470,6 +522,7 @@ export async function processMessage(
   text: string,
   chatId: string,
   onToolProgress?: ToolProgressCallback,
+  options: ProcessMessageOptions = {},
 ): Promise<ProcessResult> {
   // 1. Classify intent (with escalation based on conversation history)
   let intent = classifyIntent(text);
@@ -489,15 +542,20 @@ export async function processMessage(
   const fastInboxResult = await tryFastInboxCapture(text, chatId, messages);
   if (fastInboxResult) return fastInboxResult;
 
-  // 1c. FAST PATH — deterministic plain idea capture
+  // 1c. FAST PATH — custom capture lane transport (`books: ...`, `cosmo: ...`).
+  // The Mac app resolves the prefix against local Capture Lanes when the atom syncs down.
+  const fastCaptureLaneResult = await tryFastCaptureLaneTransport(text, chatId, messages, options);
+  if (fastCaptureLaneResult) return fastCaptureLaneResult;
+
+  // 1d. FAST PATH — deterministic plain idea capture
   const fastIdeaCaptureResult = await tryFastIdeaCapture(text, chatId, messages, onToolProgress);
   if (fastIdeaCaptureResult) return fastIdeaCaptureResult;
 
-  // 1d. FAST PATH — deterministic swipe + linked idea capture
+  // 1e. FAST PATH — deterministic swipe + linked idea capture
   const fastCaptureWithIdeaResult = await tryFastCaptureWithIdea(text, intent, chatId, messages, onToolProgress);
   if (fastCaptureWithIdeaResult) return fastCaptureWithIdeaResult;
 
-  // 1e. FAST PATH — deterministic capture for obvious swipe/capture commands
+  // 1f. FAST PATH — deterministic capture for obvious swipe/capture commands
   // Bypasses LLM entirely when intent is unambiguous (e.g. "swipe this" + URL)
   const fastCaptureResult = await tryFastCapture(text, intent, chatId, messages, onToolProgress);
   if (fastCaptureResult) return fastCaptureResult;

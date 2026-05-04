@@ -62,6 +62,7 @@ struct SanctuarySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     var onClose: (() -> Void)? = nil
     @State private var selectedTab: SettingsTab = .connections
+    @State private var hoveredTab: SettingsTab?
 
     // Connections — Health
     @AppStorage("healthKitEnabled") private var healthKitEnabled = false
@@ -97,12 +98,12 @@ struct SanctuarySettingsView: View {
         VStack(spacing: 0) {
             header
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(DS.sidebarMaterialBorder.opacity(0.45))
                 .frame(height: 1)
             HStack(spacing: 0) {
                 sidebar
                 Rectangle()
-                    .fill(DS.sepiaSubtle)
+                    .fill(DS.sidebarMaterialBorder.opacity(0.35))
                     .frame(width: 1)
                 content
             }
@@ -155,28 +156,39 @@ struct SanctuarySettingsView: View {
                 selectedTab = tab
             }
         }) {
+            let isSelected = selectedTab == tab
+            let isHovered = hoveredTab == tab
+
             HStack(spacing: 8) {
                 Image(systemName: tab.icon)
                     .font(DS.navTitle)
-                    .foregroundStyle(selectedTab == tab ? DS.accent : DS.textSecondary)
+                    .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
                     .frame(width: 20)
 
                 Text(tab.rawValue)
                     .font(DS.navTitle)
-                    .fontWeight(selectedTab == tab ? .medium : .regular)
-                    .foregroundStyle(selectedTab == tab ? DS.text : DS.textSecondary)
+                    .fontWeight(isSelected ? .medium : .regular)
+                    .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
 
                 Spacer()
             }
             .padding(.horizontal, DS.space8)
             .padding(.vertical, DS.space10)
-            .commandKToolbarChip(
-                isActive: selectedTab == tab,
+            .contentShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous))
+            .unifiedSidebarRowChrome(
+                isActive: isSelected,
+                isHovered: isHovered,
                 activeFill: DS.accentSoft,
-                activeBorder: DS.accent.opacity(0.18)
+                hoverFill: DS.surfaceHover,
+                activeBorder: DS.sidebarMaterialBorder
             )
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                hoveredTab = hovering ? tab : nil
+            }
+        }
     }
 
     // MARK: - Content
@@ -643,7 +655,7 @@ struct SanctuarySettingsView: View {
                 .padding(.vertical, DS.space4)
                 .background(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .fill(DS.surface)
+                        .fill(DS.glassInputFill)
                 )
         }
         .padding(DS.space16)
@@ -723,10 +735,10 @@ struct SanctuarySettingsView: View {
             .padding(DS.space8)
             .background(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .fill(DS.surface)
+                    .fill(DS.glassInputFill)
                     .overlay(
                         RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .stroke(DS.sepiaSubtle, lineWidth: 1)
+                            .stroke(DS.glassBorder, lineWidth: 1)
                     )
             )
             .onSubmit {
@@ -944,10 +956,10 @@ struct SanctuarySettingsView: View {
 
     private var glassCard: some View {
         RoundedRectangle(cornerRadius: DS.radiusMedium)
-            .fill(DS.surface)
+            .fill(DS.glassCardFill)
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .stroke(DS.sepiaSubtle, lineWidth: 1)
+                    .stroke(DS.glassBorder, lineWidth: 1)
             )
     }
 }
@@ -977,10 +989,10 @@ private struct APIKeyCard: View {
         .padding(DS.space16)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .fill(DS.surface)
+                .fill(DS.glassCardFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusMedium)
-                        .stroke(DS.sepiaSubtle, lineWidth: 1)
+                        .stroke(DS.glassBorder, lineWidth: 1)
                 )
         )
         .onAppear {
@@ -1065,10 +1077,10 @@ private struct APIKeyCard: View {
         .padding(.vertical, DS.space10)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(DS.surface)
+                .fill(DS.glassInputFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .stroke(DS.sepiaSubtle, lineWidth: 1)
+                        .stroke(DS.glassBorder, lineWidth: 1)
                 )
         )
     }
@@ -1440,19 +1452,19 @@ private struct SocialPlatformConnectionCard: View {
 
     private var tokenFieldBackground: some View {
         RoundedRectangle(cornerRadius: DS.radiusSmall)
-            .fill(DS.surface)
+            .fill(DS.glassInputFill)
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .stroke(DS.sepiaSubtle, lineWidth: 1)
+                    .stroke(DS.glassBorder, lineWidth: 1)
             )
     }
 
     private var platformGlassCard: some View {
         RoundedRectangle(cornerRadius: DS.radiusMedium)
-            .fill(DS.surface)
+            .fill(DS.glassCardFill)
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .stroke(isConnected ? platform.accentColor.opacity(0.2) : DS.sepiaSubtle, lineWidth: 1)
+                    .stroke(isConnected ? platform.accentColor.opacity(0.2) : DS.glassBorder, lineWidth: 1)
             )
     }
 

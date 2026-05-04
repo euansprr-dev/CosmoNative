@@ -34,7 +34,7 @@ struct CosmoMentionOverlay: View {
             header
 
             Rectangle()
-                .fill(DS.borderSubtle)
+                .fill(DS.glassBorder)
                 .frame(height: 1)
 
             categoryRow
@@ -42,19 +42,17 @@ struct CosmoMentionOverlay: View {
                 .padding(.vertical, 12)
 
             Rectangle()
-                .fill(DS.borderSubtle)
+                .fill(DS.glassBorder)
                 .frame(height: 1)
 
             resultsSection
         }
         .frame(maxHeight: 420)
-        .background(DS.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
+        .cosmoGlassPanel(
+            sceneMaterial: .neutral,
+            role: .floatingAssistant,
+            cornerRadius: 18
         )
-        .dsFloatingShadow()
         .padding(.horizontal, 2)
         .padding(.bottom, 4)
         .onChange(of: searchText) { newValue in
@@ -117,11 +115,11 @@ struct CosmoMentionOverlay: View {
                         .frame(width: 28, height: 28)
                         .background(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(DS.surfaceElevated)
+                                .fill(DS.glassSectionFill)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(DS.borderSubtle, lineWidth: 1)
+                                .stroke(DS.glassBorder, lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)
@@ -159,7 +157,7 @@ struct CosmoMentionOverlay: View {
                 Text(category.label)
                     .font(.system(size: 12, weight: .semibold))
             }
-            .foregroundColor(isSelected ? DS.surfaceElevated : pillColor)
+            .foregroundColor(isSelected ? DS.textOnAccent : pillColor)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
@@ -196,7 +194,7 @@ struct CosmoMentionOverlay: View {
             .padding(.vertical, 12)
         }
         .frame(maxHeight: 248)
-        .background(DS.bg)
+        .background(DS.glassSectionFill.opacity(0.22))
     }
 
     private func resultRow(atom: Atom) -> some View {
@@ -277,11 +275,11 @@ struct CosmoMentionOverlay: View {
             .padding(.vertical, 13)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(isHovered ? DS.surface : DS.surfaceElevated)
+                    .fill(isHovered ? DS.glassInputFillFocused : DS.glassCardFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isHovered ? accent.opacity(0.18) : DS.borderSubtle, lineWidth: 1)
+                    .stroke(isHovered ? accent.opacity(0.18) : DS.glassBorder, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -293,7 +291,7 @@ struct CosmoMentionOverlay: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(DS.surfaceElevated)
+                .fill(DS.glassSectionFill)
                 .frame(width: 46, height: 46)
                 .overlay(
                     Image(systemName: "magnifyingglass")
@@ -311,7 +309,7 @@ struct CosmoMentionOverlay: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
-        .background(DS.bg)
+        .background(DS.glassSectionFill.opacity(0.22))
     }
 
     private var promptState: some View {
@@ -348,7 +346,7 @@ struct CosmoMentionOverlay: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.bg)
+        .background(DS.glassSectionFill.opacity(0.22))
     }
 
     private var headerSubtitle: String {

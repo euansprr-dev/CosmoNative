@@ -40,7 +40,7 @@ final class ProfileTranscriptionManager: ObservableObject {
         states[documentId] = TranscriptionState(isTranscribing: true, progressText: "Extracting media...")
 
         // Step 1: Extract media via InstagramMediaCache
-        let mediaData: InstagramMediaData
+        var mediaData: InstagramMediaData
         do {
             mediaData = try await InstagramMediaCache.shared.getMedia(for: url)
         } catch {
@@ -54,9 +54,12 @@ final class ProfileTranscriptionManager: ObservableObject {
         // parses edge_sidecar_to_children for carousel posts.
         var carouselItems = mediaData.carouselItems
         if (carouselItems ?? []).isEmpty {
-            if let fallbackItems = await fetchCarouselItemsViaGraphQL(url: url) {
-                carouselItems = fallbackItems
-                print("ProfileTranscriptionManager: GraphQL fallback found \(fallbackItems.count) carousel items")
+            if let fallbackMediaData = await fetchCarouselMediaViaGraphQL(url: url) {
+                mediaData = fallbackMediaData
+                carouselItems = fallbackMediaData.carouselItems
+                if let fallbackItems = carouselItems, !fallbackItems.isEmpty {
+                    print("ProfileTranscriptionManager: GraphQL fallback found \(fallbackItems.count) carousel items")
+                }
             }
         }
 
@@ -66,7 +69,14 @@ final class ProfileTranscriptionManager: ObservableObject {
         var transcriptionResult: TranscriptionResult
         var isCarousel = false
 
-        if let items = carouselItems, !items.isEmpty {
+        if InstagramMediaResolution.isIncompletePostMedia(
+            mediaData: mediaData,
+            sourceURL: url,
+            existingCarouselItems: carouselItems
+        ) {
+            states[documentId] = TranscriptionState(error: "Carousel extraction incomplete")
+            return nil
+        } else if let items = carouselItems, !items.isEmpty {
             // Carousel path
             isCarousel = true
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
@@ -92,7 +102,12 @@ final class ProfileTranscriptionManager: ObservableObject {
                     self?.updateProgress(documentId: documentId, progress: progress)
                 }
             }
-        } else if let thumbnailURL = mediaData.thumbnailURL {
+        } else if let thumbnailURL = mediaData.thumbnailURL,
+                  InstagramMediaResolution.shouldUseThumbnailFallback(
+                    mediaData: mediaData,
+                    sourceURL: url,
+                    existingCarouselItems: carouselItems
+                  ) {
             // Thumbnail-only fallback — warn if this is a reel/video (degraded result)
             let isVideoContent = mediaData.contentType == .reel || mediaData.contentType == .videoPost
             if isVideoContent {
@@ -186,7 +201,7 @@ final class ProfileTranscriptionManager: ObservableObject {
     /// Direct GraphQL API call to extract carousel items when the primary extraction
     /// pipeline missed them (e.g. Cobalt returned a single URL instead of a picker).
     /// Uses the same endpoint and parsing as InstagramExtractor Strategy 3.
-    private func fetchCarouselItemsViaGraphQL(url: URL) async -> [CarouselItem]? {
+    private func fetchCarouselMediaViaGraphQL(url: URL) async -> InstagramMediaData? {
         guard let shortcode = InstagramExtractor.shared.extractShortcode(from: url) else { return nil }
 
         let graphqlURL = URL(string: "https://www.instagram.com/api/graphql")!
@@ -216,9 +231,13 @@ final class ProfileTranscriptionManager: ObservableObject {
                 return nil
             }
 
-            let mediaData = try InstagramExtractor.shared.parseMediaObject(media, originalURL: url, baseType: .image)
-            let items = mediaData.carouselItems
-            return (items?.isEmpty == false) ? items : nil
+            let mediaData = try InstagramExtractor.shared.parseMediaObject(
+                media,
+                originalURL: url,
+                baseType: .carousel,
+                confirmedSidecarState: true
+            )
+            return mediaData
         } catch {
             print("ProfileTranscriptionManager: GraphQL carousel fallback failed: \(error.localizedDescription)")
             return nil

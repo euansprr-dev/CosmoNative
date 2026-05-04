@@ -306,6 +306,8 @@ class CosmoAgentService: ObservableObject {
         source: MessageSource = .inApp,
         tierOverride: AgentModelTier? = nil,
         systemPromptOverride: String? = nil,
+        profileToolBundles: [AgentToolBundle] = [],
+        forcedToolBundles: Set<AgentToolBundle> = [],
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         activeSessionCount += 1
@@ -383,6 +385,8 @@ class CosmoAgentService: ObservableObject {
             provider: provider,
             tierOverride: tierOverride,
             systemPromptOverride: systemPromptOverride,
+            profileToolBundles: profileToolBundles,
+            forcedToolBundles: forcedToolBundles,
             onToolActivity: onToolActivity
         )
     }
@@ -396,6 +400,8 @@ class CosmoAgentService: ObservableObject {
         provider: LLMProvider,
         tierOverride: AgentModelTier? = nil,
         systemPromptOverride: String? = nil,
+        profileToolBundles: [AgentToolBundle] = [],
+        forcedToolBundles: Set<AgentToolBundle> = [],
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         // --- Feedback classification for previous generation (scoped per conversation) ---
@@ -427,7 +433,12 @@ class CosmoAgentService: ObservableObject {
         let preferences = await PreferenceLearningEngine.shared.getAllPreferences(scope: nil)
 
         // Get tools for intent (source-gated: Telegram vs in-app UX tools)
-        let tools = toolRegistry.toolsForIntent(intent, source: conversation.source)
+        let tools = toolRegistry.toolsForIntent(
+            intent,
+            source: conversation.source,
+            profileBundles: profileToolBundles,
+            forcedBundles: forcedToolBundles
+        )
 
         // Assemble system prompt with intent-aware context (cached/dynamic split)
         let systemPrompt = await contextAssembler.assembleSystemPrompt(

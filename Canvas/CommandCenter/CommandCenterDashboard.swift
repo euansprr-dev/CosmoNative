@@ -60,59 +60,60 @@ struct CommandCenterDashboard: View {
 
     private var centerColumn: some View {
         VStack(alignment: .leading, spacing: DS.space16) {
-            // Content switches between smart list task view and project detail view
-            if viewModel.viewMode == .project, let projectUUID = viewModel.selectedProjectUUID,
-               let project = viewModel.projects.first(where: { $0.uuid == projectUUID }) {
-                ProjectDetailView(project: project, viewModel: viewModel)
-            } else {
-                if viewModel.viewMode == .upcoming {
-                    CommandCenterMasthead(viewModel: viewModel)
-
-                    UpcomingBoardView(viewModel: viewModel, composer: composer)
-                        .frame(maxHeight: .infinity)
-                        .cosmoGlassSceneSignal(
-                            id: "command-center-calendar",
-                            source: .commandCalendar,
-                            color: DS.info,
-                            intensity: 0.36,
-                            allowsDeepDiffusion: true
-                        )
+            Group {
+                // Content switches between smart list task view and project detail view
+                if viewModel.viewMode == .project, let projectUUID = viewModel.selectedProjectUUID,
+                   let project = viewModel.projects.first(where: { $0.uuid == projectUUID }) {
+                    ProjectDetailView(project: project, viewModel: viewModel)
                 } else {
-                    CommandCenterMasthead(viewModel: viewModel)
-                        .cosmoGlassSceneSignal(
-                            id: "command-center-masthead",
-                            source: .routeAccent,
-                            color: DS.accent,
-                            intensity: 0.22
-                        )
+                    if viewModel.viewMode == .upcoming {
+                        CommandCenterMasthead(viewModel: viewModel)
 
-                    DashboardTimeTracker(viewModel: viewModel)
-                        .cosmoGlassSceneSignal(
-                            id: "command-center-timer",
-                            source: .commandTask,
-                            color: DS.orange,
-                            intensity: 0.30,
-                            allowsDeepDiffusion: true
-                        )
+                        UpcomingBoardView(viewModel: viewModel, composer: composer)
+                            .frame(maxHeight: .infinity)
+                            .cosmoGlassSceneSignal(
+                                id: "command-center-calendar",
+                                source: .commandCalendar,
+                                color: DS.info,
+                                intensity: 0.16
+                            )
+                    } else {
+                        CommandCenterMasthead(viewModel: viewModel)
+                            .cosmoGlassSceneSignal(
+                                id: "command-center-masthead",
+                                source: .routeAccent,
+                                color: DS.accent,
+                                intensity: 0.22
+                            )
 
-                    gradientDivider
+                        DashboardTimeTracker(viewModel: viewModel)
+                            .cosmoGlassSceneSignal(
+                                id: "command-center-timer",
+                                source: .commandTask,
+                                color: DS.orange,
+                                intensity: 0.22
+                            )
 
-                    // Task list (scrollable)
-                    DashboardTaskList(viewModel: viewModel, composer: composer) { task in
-                        withAnimation(ProMotionSprings.snappy) {
-                            selectedTaskForDetail = task
-                            viewModel.showReports = false
+                        gradientDivider
+
+                        // Task list (scrollable)
+                        DashboardTaskList(viewModel: viewModel, composer: composer) { task in
+                            withAnimation(ProMotionSprings.snappy) {
+                                selectedTaskForDetail = task
+                                viewModel.showReports = false
+                            }
                         }
+                        .cosmoGlassSceneSignal(
+                            id: "command-center-tasks-\(viewModel.viewMode.rawValue)",
+                            source: .commandTask,
+                            color: DS.entityTask,
+                            intensity: 0.20
+                        )
                     }
-                    .cosmoGlassSceneSignal(
-                        id: "command-center-tasks-\(viewModel.viewMode.rawValue)",
-                        source: .commandTask,
-                        color: DS.entityTask,
-                        intensity: 0.34,
-                        allowsDeepDiffusion: true
-                    )
                 }
             }
+            .id(centerContentTransitionID)
+            .transition(.opacity)
 
             Spacer(minLength: 0)
 
@@ -123,9 +124,19 @@ struct CommandCenterDashboard: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, DS.space16)
+        .animation(.easeInOut(duration: 0.22), value: centerContentTransitionID)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("com.cosmo.commandCenter.keyboardAction"))) { notification in
             handleKeyboardAction(notification)
         }
+    }
+
+    private var centerContentTransitionID: String {
+        [
+            viewModel.viewMode.rawValue,
+            viewModel.selectedProjectUUID ?? "no-project",
+            viewModel.selectedAreaUUID ?? "no-area",
+            viewModel.showReports ? "reports" : "main"
+        ].joined(separator: ":")
     }
 
     // MARK: - Keyboard Handling
@@ -259,7 +270,14 @@ struct CommandCenterDashboard: View {
             switch showingDetailTab {
             case .details:
                 if let task = resolvedSelectedTask {
-                    TaskDetailPanel(task: task, viewModel: viewModel, composer: composer)
+                    TaskDetailPanel(
+                        task: task,
+                        viewModel: viewModel,
+                        composer: composer,
+                        onDeleted: { deletedTaskUUID in
+                            handleDeletedSelectedTask(uuid: deletedTaskUUID)
+                        }
+                    )
                         .id(task.uuid)
                         .cosmoGlassSceneSignal(
                             id: "command-center-task-detail-\(task.uuid)",
@@ -293,6 +311,9 @@ struct CommandCenterDashboard: View {
         }
         .frame(width: 280)
         .padding(.leading, DS.space20)
+        .onChange(of: visibleTaskUUIDs) { _, taskUUIDs in
+            clearDeletedTaskState(visibleTaskUUIDs: taskUUIDs)
+        }
         .overlay(alignment: .leading) {
             Rectangle()
                 .fill(DS.sepiaSubtle.opacity(0.7))
@@ -316,7 +337,32 @@ struct CommandCenterDashboard: View {
 
     private var resolvedSelectedTask: TaskViewModel? {
         guard let selectedTaskForDetail else { return nil }
-        return viewModel.currentVisibleTasks.first(where: { $0.uuid == selectedTaskForDetail.uuid }) ?? selectedTaskForDetail
+        return viewModel.currentVisibleTasks.first(where: { $0.uuid == selectedTaskForDetail.uuid })
+    }
+
+    private var visibleTaskUUIDs: [String] {
+        viewModel.currentVisibleTasks.map(\.uuid)
+    }
+
+    private func handleDeletedSelectedTask(uuid: String) {
+        withAnimation(ProMotionSprings.snappy) {
+            if selectedTaskForDetail?.uuid == uuid {
+                selectedTaskForDetail = nil
+            }
+            composer.dismiss()
+        }
+    }
+
+    private func clearDeletedTaskState(visibleTaskUUIDs: [String]) {
+        if let selectedTaskForDetail, !visibleTaskUUIDs.contains(selectedTaskForDetail.uuid) {
+            withAnimation(ProMotionSprings.snappy) {
+                self.selectedTaskForDetail = nil
+            }
+        }
+
+        if let activeTaskUUID = composer.route?.taskUUID, !visibleTaskUUIDs.contains(activeTaskUUID) {
+            composer.dismiss()
+        }
     }
 
     private func rightColumnTab(_ title: String, icon: String, isActive: Bool) -> some View {

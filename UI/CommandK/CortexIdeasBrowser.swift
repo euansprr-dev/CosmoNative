@@ -99,17 +99,26 @@ struct CortexIdeasBrowser: View {
 
         return VStack(alignment: .leading, spacing: DS.space12) {
             columnHeader(section)
-            captureRowView(for: section)
+            IdeaMaterialCaptureRow(
+                section: section,
+                draft: Binding(
+                    get: { captureDrafts[section.id] ?? "" },
+                    set: { captureDrafts[section.id] = $0 }
+                ),
+                focusedClient: $focusedClient
+            ) {
+                submitCapture(for: section)
+            }
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
-                    LedgerRow(item: item) { openIdea(item) }
+                    IdeaMaterialLedgerRow(item: item) { openIdea(item) }
                         .atelierStaggerIn(
                             delay: staggerDelay(sectionIndex: sectionIndex, rowIndex: index),
                             appeared: hasAppeared
                         )
                     if index < visibleItems.count - 1 {
                         Rectangle()
-                            .fill(DS.borderSubtle)
+                            .fill(DS.glassBorder.opacity(0.55))
                             .frame(height: 0.5)
                             .padding(.leading, DS.space12)
                     }
@@ -122,121 +131,35 @@ struct CortexIdeasBrowser: View {
             }
         }
         .padding(DS.space16)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
-                .fill(DS.surfaceElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.04), radius: 16, y: 8)
+        .modifier(IdeaMaterialLaneChrome(accentColor: section.color))
     }
 
     private func columnHeader(_ section: IdeasLedgerSection) -> some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             HStack(spacing: DS.space10) {
-                HStack(spacing: DS.space8) {
-                    Circle()
-                        .fill(section.color.opacity(0.85))
-                        .frame(width: 8, height: 8)
-                        .accessibilityHidden(true)
-                    Text(section.clientName)
-                        .font(DS.headline)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, DS.space10)
-                .padding(.vertical, DS.space8)
-                .background(Capsule().fill(section.color.opacity(0.12)))
+                Circle()
+                    .fill(section.color.opacity(0.82))
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+
+                Text(section.clientName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
 
                 Spacer(minLength: DS.space8)
 
                 Text(section.countText)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(DS.textSecondary)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(DS.textMuted)
             }
+            .padding(.horizontal, DS.space4)
+            .padding(.vertical, DS.space4)
 
             Rectangle()
-                .fill(DS.borderSubtle)
+                .fill(DS.glassBorder.opacity(0.7))
                 .frame(height: 0.5)
         }
-    }
-
-    // MARK: - Capture
-
-    private func captureRowView(for section: IdeasLedgerSection) -> some View {
-        let isActive = focusedClient == section.id
-        let draft = captureDrafts[section.id] ?? ""
-        let canSubmit = CortexIdeasCapture.normalizedTitle(from: draft) != nil
-
-        return HStack(spacing: DS.space8) {
-            Image(systemName: "plus.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(canSubmit ? section.color : DS.textMuted)
-                .frame(width: 16)
-                .accessibilityHidden(true)
-
-            TextField(
-                "add idea",
-                text: Binding(
-                    get: { captureDrafts[section.id] ?? "" },
-                    set: { captureDrafts[section.id] = $0 }
-                )
-            )
-            .textFieldStyle(.plain)
-            .font(.system(size: 15, weight: .regular, design: .serif))
-            .italic(draft.isEmpty)
-            .foregroundStyle(isActive || !draft.isEmpty ? DS.text : DS.textMuted)
-            .focused($focusedClient, equals: section.id)
-            .onSubmit { submitCapture(for: section) }
-            .accessibilityLabel("Add idea for \(section.clientName)")
-
-            Button("Capture") {
-                submitCapture(for: section)
-            }
-            .buttonStyle(.plain)
-            .font(DS.buttonText)
-            .foregroundStyle(canSubmit ? DS.textOnAccent : DS.textMuted)
-            .padding(.horizontal, DS.space10)
-            .padding(.vertical, DS.space8)
-            .background(
-                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                    .fill(canSubmit ? section.color : DS.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                    .stroke(canSubmit ? section.color.opacity(0.18) : DS.borderSubtle, lineWidth: 1)
-            )
-            .disabled(!canSubmit)
-        }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space10)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .fill(isActive ? section.color.opacity(0.08) : DS.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .stroke(isActive ? section.color.opacity(0.28) : DS.borderSubtle, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-        .animation(ProMotionSprings.hover, value: isActive)
-        .onTapGesture {
-            focusedClient = section.id
-        }
-        .onKeyPress(.return) {
-            handleCaptureReturn(for: section)
-        }
-    }
-
-    private func handleCaptureReturn(for section: IdeasLedgerSection) -> KeyPress.Result {
-        guard focusedClient == section.id else { return .ignored }
-        guard CortexIdeasCapture.normalizedTitle(from: captureDrafts[section.id] ?? "") != nil else {
-            return .ignored
-        }
-        submitCapture(for: section)
-        return .handled
     }
 
     private func submitCapture(for section: IdeasLedgerSection) {
@@ -271,11 +194,11 @@ struct CortexIdeasBrowser: View {
         .buttonStyle(.plain)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .fill(section.color.opacity(0.08))
+                .fill(section.color.opacity(0.055))
         )
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .stroke(section.color.opacity(0.18), lineWidth: 1)
+                .stroke(section.color.opacity(0.16), lineWidth: 0.5)
         )
         .accessibilityLabel("Show \(hiddenCount) more ideas for \(section.clientName)")
     }
@@ -303,11 +226,11 @@ struct CortexIdeasBrowser: View {
         .buttonStyle(.plain)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .fill(DS.surface)
+                .fill(DS.glassInputFill.opacity(0.52))
         )
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
+                .stroke(DS.glassBorder.opacity(0.65), lineWidth: 0.5)
         )
         .accessibilityLabel("Collapse ideas preview for \(section.clientName)")
     }
@@ -356,40 +279,11 @@ struct CortexIdeasBrowser: View {
     }
 
     private var clientSections: [IdeasLedgerSection] {
-        var grouped: [String: [IdeaGalleryItem]] = [:]
-        var unassigned: [IdeaGalleryItem] = []
-
-        for item in visibleIdeas.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            if let uuid = item.clientUUID {
-                grouped[uuid, default: []].append(item)
-            } else {
-                unassigned.append(item)
-            }
-        }
-
-        var sections: [IdeasLedgerSection] = []
-        let sortedClients = clientProfiles.sorted { ($0.title ?? "") < ($1.title ?? "") }
-        for client in sortedClients {
-            sections.append(IdeasLedgerSection(
-                id: client.uuid,
-                clientName: client.title ?? "Client",
-                clientUUID: client.uuid,
-                color: DS.clientColor(for: client.uuid),
-                items: grouped[client.uuid] ?? []
-            ))
-        }
-
-        if !unassigned.isEmpty {
-            sections.append(IdeasLedgerSection(
-                id: Self.unassignedKey,
-                clientName: "Unassigned",
-                clientUUID: nil,
-                color: DS.entityIdea,
-                items: unassigned
-            ))
-        }
-
-        return sections
+        CortexIdeasSectionBuilder.sections(
+            visibleIdeas: visibleIdeas,
+            clientProfiles: clientProfiles,
+            unassignedKey: Self.unassignedKey
+        )
     }
 
     private func reload() async {
@@ -410,7 +304,7 @@ struct CortexIdeasBrowser: View {
 
 // MARK: - Section Model
 
-private struct IdeasLedgerSection: Identifiable {
+struct IdeasLedgerSection: Identifiable {
     let id: String
     let clientName: String
     let clientUUID: String?
@@ -422,9 +316,153 @@ private struct IdeasLedgerSection: Identifiable {
     }
 }
 
+enum CortexIdeasSectionBuilder {
+    static func sections(
+        visibleIdeas: [IdeaGalleryItem],
+        clientProfiles: [Atom],
+        unassignedKey: String = "__unassigned__"
+    ) -> [IdeasLedgerSection] {
+        var grouped: [String: [IdeaGalleryItem]] = [:]
+        var unassigned: [IdeaGalleryItem] = []
+
+        for item in visibleIdeas.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            if let uuid = item.clientUUID {
+                grouped[uuid, default: []].append(item)
+            } else {
+                unassigned.append(item)
+            }
+        }
+
+        let clientSections = clientProfiles
+            .sorted { ($0.title ?? "") < ($1.title ?? "") }
+            .map { client in
+                IdeasLedgerSection(
+                    id: client.uuid,
+                    clientName: client.title ?? "Client",
+                    clientUUID: client.uuid,
+                    color: DS.clientColor(for: client.uuid),
+                    items: grouped[client.uuid] ?? []
+                )
+            }
+
+        guard !unassigned.isEmpty else { return clientSections }
+
+        return clientSections + [
+            IdeasLedgerSection(
+                id: unassignedKey,
+                clientName: "Unassigned",
+                clientUUID: nil,
+                color: DS.entityIdea,
+                items: unassigned
+            )
+        ]
+    }
+}
+
+// MARK: - Material Chrome
+
+private struct IdeaMaterialLaneChrome: ViewModifier {
+    let accentColor: Color
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
+
+        content
+            .background {
+                ZStack {
+                    shape.fill(DS.glassCardFill.opacity(0.30))
+                    shape.fill(accentColor.opacity(0.025))
+                }
+            }
+            .overlay {
+                shape.strokeBorder(DS.glassBorder.opacity(0.74), lineWidth: 0.5)
+            }
+            .overlay(alignment: .topLeading) {
+                shape
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                DS.sidebarMaterialHighlight.opacity(0.22),
+                                Color.clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.55
+                    )
+                    .allowsHitTesting(false)
+            }
+            .clipShape(shape)
+            .shadow(color: DS.sidebarMaterialShadow.opacity(0.42), radius: 10, x: 0, y: 4)
+            .shadow(color: Color.black.opacity(DS.palette.isDark ? 0.035 : 0.018), radius: 2, x: 0, y: 1)
+    }
+}
+
+private struct IdeaMaterialCaptureRow: View {
+    let section: IdeasLedgerSection
+    @Binding var draft: String
+    @FocusState.Binding var focusedClient: String?
+    let onSubmit: () -> Void
+
+    private var isActive: Bool {
+        focusedClient == section.id
+    }
+
+    private var canSubmit: Bool {
+        CortexIdeasCapture.normalizedTitle(from: draft) != nil
+    }
+
+    var body: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: canSubmit ? "plus.circle.fill" : "plus.circle")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(canSubmit ? section.color : DS.textMuted)
+                .frame(width: 16)
+                .accessibilityHidden(true)
+
+            TextField("add idea", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, weight: .regular, design: .serif))
+                .italic(draft.isEmpty)
+                .foregroundStyle(isActive || !draft.isEmpty ? DS.text : DS.textMuted)
+                .focused($focusedClient, equals: section.id)
+                .onSubmit(onSubmit)
+                .accessibilityLabel("Add idea for \(section.clientName)")
+
+            Button(action: onSubmit) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(canSubmit ? section.color : DS.textMuted.opacity(0.58))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit)
+            .help("Capture idea")
+            .accessibilityLabel("Capture idea for \(section.clientName)")
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space10)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(isActive ? section.color.opacity(0.065) : DS.glassInputFill.opacity(0.46))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .strokeBorder(isActive ? section.color.opacity(0.24) : DS.glassBorder.opacity(0.62), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+        .animation(ProMotionSprings.hover, value: isActive)
+        .animation(ProMotionSprings.hover, value: canSubmit)
+        .onTapGesture {
+            focusedClient = section.id
+        }
+    }
+}
+
 // MARK: - Ledger Row
 
-struct LedgerRow: View {
+struct IdeaMaterialLedgerRow: View {
     let item: IdeaGalleryItem
     let onTap: () -> Void
     @State private var isHovered = false
@@ -442,7 +480,11 @@ struct LedgerRow: View {
             .frame(minHeight: 64)
             .background(
                 RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                    .fill(isHovered ? accentColor.opacity(0.05) : Color.clear)
+                    .fill(isHovered ? accentColor.opacity(0.055) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .strokeBorder(isHovered ? accentColor.opacity(0.14) : Color.clear, lineWidth: 0.5)
             )
             .contentShape(Rectangle())
         }

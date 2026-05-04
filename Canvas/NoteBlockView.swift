@@ -44,18 +44,37 @@ struct NoteBlockView: View {
     private let accentColor = CosmoColors.blockNote
     private let titleStyle = SharedTitleSurfaceStyle.noteCanvas
 
-    private var titleFontSize: CGFloat { titleStyle.fontSize }
+    private var titleFontSize: CGFloat { 40 }
+    private var bodyFontSize: CGFloat { 20 }
+    private var documentTitleFont: Font {
+        .system(size: titleFontSize, weight: .semibold, design: .serif)
+    }
 
     private var titleMinHeight: CGFloat {
-        titleStyle.minimumHeight
+        EditorLayoutMetrics.titleHeight(
+            fontSize: titleFontSize,
+            compact: titleStyle.compact,
+            baseFontWeight: titleStyle.baseFontWeight,
+            lineCount: 1
+        )
     }
 
     private var titlePreviewMaxHeight: CGFloat {
-        titleStyle.previewMaxHeight
+        EditorLayoutMetrics.titleHeight(
+            fontSize: titleFontSize,
+            compact: titleStyle.compact,
+            baseFontWeight: titleStyle.baseFontWeight,
+            lineCount: titleStyle.previewLineLimit
+        )
     }
 
     private var titleEditingMaxHeight: CGFloat {
-        titleStyle.editingMaxHeight
+        EditorLayoutMetrics.titleHeight(
+            fontSize: titleFontSize,
+            compact: titleStyle.compact,
+            baseFontWeight: titleStyle.baseFontWeight,
+            lineCount: titleStyle.editingLineLimit
+        )
     }
 
     var body: some View {
@@ -64,6 +83,11 @@ struct NoteBlockView: View {
             accentColor: accentColor,
             icon: "note.text",
             title: displayTitle,
+            surfaceStyle: .crisp,
+            fixedLayoutSize: CanvasBlock.documentLayoutSize,
+            preservesAspectRatio: true,
+            suppressGiltCorner: true,
+            suppressAccentChip: true,
             onFocusMode: openFocusMode
         ) {
             noteContent
@@ -125,6 +149,7 @@ struct NoteBlockView: View {
                 }
                 if let body = notification.userInfo?["body"] as? String {
                     noteText = body
+                    noteWordCount = Self.wordCount(in: body)
                     if let json = notification.userInfo?["bodyDocumentJSON"] as? String,
                        let data = json.data(using: .utf8),
                        let doc = try? JSONDecoder().decode(RichDocument.self, from: data) {
@@ -166,70 +191,89 @@ struct NoteBlockView: View {
     // MARK: - Note Content
 
     private var noteContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Gilt corner lives on the wrapper; keep minimal header top inset.
-            Color.clear.frame(height: 2)
-
+        VStack(alignment: .leading, spacing: 24) {
             titleView
 
-            // Body — always-on editor with in-block scrolling via NSScrollView
+            bodyView
+
+            noteFooter
+        }
+        .padding(.top, 78)
+        .padding(.horizontal, 56)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
+            isEditingTitle = false
+            isEditingBody = false
+        }
+    }
+
+    @ViewBuilder
+    private var bodyView: some View {
+        if isEditingBody {
             CosmoDocumentEditor(
                 document: $noteBodyDocument,
-                fontSize: 15,
+                fontSize: bodyFontSize,
                 compact: true,
                 placeholder: "Press / for commands...",
-                allowSlashCommands: isEditingBody,
-                allowMentions: isEditingBody,
-                allowSelectionMenu: isEditingBody,
-                allowImages: isEditingBody,
-                isEditable: isEditingBody,
+                allowSlashCommands: true,
+                allowMentions: true,
+                allowSelectionMenu: true,
+                allowImages: true,
+                isEditable: true,
                 scrollsInternally: true,
                 onDocumentChange: { _, plainText in
                     let changed = plainText != noteText
                     print("[BLOCK-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
                     noteText = plainText
-                    noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+                    noteWordCount = Self.wordCount(in: plainText)
                     if !isSyncingFromDB {
                         hasLocalEdits = true
                         scheduleAutoSave()
                     }
                 },
-                onActivate: { isEditingBody = true }
+                onDeactivate: { isEditingBody = false },
+                autoFocus: true
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            // Footer: word count + timestamp
-            HStack(spacing: 6) {
-                if noteWordCount > 0 {
-                    Text("\(noteWordCount)w")
-                        .font(DS.caption2)
-                        .foregroundStyle(accentColor.opacity(0.6))
-                }
-
-                Spacer()
-
-                if let timestamp = block.metadata["created"] {
-                    Text(formatTimestamp(timestamp))
-                        .font(DS.caption2)
+        } else {
+            ScrollView(.vertical, showsIndicators: false) {
+                if noteBodyDocument.isEmpty {
+                    Text("Press / for commands...")
+                        .font(.system(size: bodyFontSize))
                         .foregroundStyle(DS.textMuted)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    CosmoDocumentRenderer(
+                        document: noteBodyDocument,
+                        fontSize: bodyFontSize
+                    )
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             }
+            .contentMargins(.top, 4, for: .scrollContent)
+            .contentMargins(.bottom, 8, for: .scrollContent)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                isEditingBody = true
+            }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // Signature detail: a faint sepia ruled margin down the left edge for
-        // the journal feel. Lives behind the content so the editor ignores it.
-        .background(alignment: .leading) {
-            Rectangle()
-                .fill(DS.sepiaSubtle)
-                .frame(width: 0.5)
-                .padding(.vertical, 14)
-                .padding(.leading, 14)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
-            isEditingTitle = false
-            isEditingBody = false
+    }
+
+    private var noteFooter: some View {
+        HStack {
+            Spacer()
+            Text("\(noteWordCount) words  ·  \(noteText.count) chars")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
+                }
         }
     }
 
@@ -270,7 +314,7 @@ struct NoteBlockView: View {
                 .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
             } else {
                 Text(noteTitleText.isEmpty ? "Heading" : noteTitleText)
-                    .font(titleStyle.swiftUIFont)
+                    .font(documentTitleFont)
                     .foregroundStyle(noteTitleText.isEmpty ? DS.textMuted : DS.text)
                     .lineLimit(titleStyle.previewLineLimit)
                     .truncationMode(.tail)
@@ -303,6 +347,7 @@ struct NoteBlockView: View {
         )
         noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
         noteText = noteBodyDocument.plainText
+        noteWordCount = Self.wordCount(in: noteText)
 
         if noteTitleText.isEmpty, let title = block.metadata["title"] {
             noteTitleText = title
@@ -319,6 +364,7 @@ struct NoteBlockView: View {
         if noteText.isEmpty, let subtitle = block.subtitle {
             noteText = subtitle
             noteBodyDocument = RichDocument.migrateLegacy(subtitle)
+            noteWordCount = Self.wordCount(in: noteText)
         }
 
         // If linked to an atom, load freshest data from database
@@ -350,6 +396,7 @@ struct NoteBlockView: View {
                             )
                             noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
                             noteText = noteBodyDocument.plainText
+                            noteWordCount = Self.wordCount(in: noteText)
                             trackedEntityId = atom.id ?? trackedEntityId
                             trackedEntityUuid = atom.uuid
                         }
@@ -422,6 +469,7 @@ struct NoteBlockView: View {
                             didApplyDatabaseState = true
                             noteBodyDocument = newBodyDocument
                             noteText = newBody
+                            noteWordCount = Self.wordCount(in: newBody)
                         } else if isEditingBody, newBody != noteText {
                             print("[BLOCK-NOTE] 🔔 observation SKIPPED body (editing) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
                         }
@@ -855,6 +903,10 @@ struct NoteBlockView: View {
     }
 
     // MARK: - Helpers
+
+    private static func wordCount(in text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+    }
 
     private func formatTimestamp(_ timestamp: String) -> String {
         if let date = ISO8601DateFormatter().date(from: timestamp) {

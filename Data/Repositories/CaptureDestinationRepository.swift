@@ -71,6 +71,20 @@ final class CaptureDestinationRepository: ObservableObject {
         }
     }
 
+    func archive(uuid: String) async throws {
+        try await database.asyncWrite { db in
+            let now = ISO8601DateFormatter().string(from: Date())
+            try db.execute(
+                sql: """
+                    UPDATE capture_destinations
+                    SET isArchived = 1, isEnabled = 0, updatedAt = ?
+                    WHERE uuid = ?
+                    """,
+                arguments: [now, uuid]
+            )
+        }
+    }
+
     func markUsed(uuid: String) async {
         try? await database.asyncWrite { db in
             let now = ISO8601DateFormatter().string(from: Date())

@@ -10,6 +10,7 @@
 
 import { config } from '../config';
 import { processMessage, ToolProgressCallback } from '../agent/service';
+import { extractTelegramMedia, extractTelegramMessageText, parseCaptureLanePrefix } from '../agent/captureLane';
 
 // Debounce state
 const debounceBuffers: Map<string, string[]> = new Map();
@@ -88,9 +89,10 @@ async function handleMessage(message: any): Promise<void> {
   }
   lastActiveChatId = chatId;
 
-  // Extract text
-  const text = message.text as string | undefined;
-  if (!text) return; // Skip non-text messages for now
+  const media = extractTelegramMedia(message);
+  const text = extractTelegramMessageText(message);
+  if (!text && media.length === 0) return;
+  if (!text) return; // Uncaptioned media has no deterministic cloud route yet.
 
   // Group chat filtering — only respond to @mentions or replies to bot
   const chatType = message.chat.type;
@@ -104,6 +106,20 @@ async function handleMessage(message: any): Promise<void> {
   let cleanText = text;
   if (botUsername) {
     cleanText = cleanText.replace(new RegExp(`@${botUsername}\\s?`, 'gi'), '').trim();
+  }
+
+  // Captioned media can use custom capture lanes (`books:`). Handle it immediately
+  // so the media metadata is not lost in the text debounce buffer.
+  if (media.length > 0 && parseCaptureLanePrefix(cleanText, { allowsEmptyBody: true })) {
+    await sendChatAction(chatId, 'typing', threadId);
+    const result = await processMessage(cleanText, compositeId, undefined, {
+      telegramMedia: media,
+      telegramMessageId: typeof message.message_id === 'number' ? String(message.message_id) : undefined,
+      telegramMediaGroupId: typeof message.media_group_id === 'string' ? message.media_group_id : undefined,
+      telegramSender: telegramSender(message),
+    });
+    await sendLongMessage(chatId, result.response, threadId);
+    return;
   }
 
   // Commands (bypass debounce)
@@ -140,6 +156,14 @@ async function handleMessage(message: any): Promise<void> {
   }, config.debounceWindowMs);
 
   debounceTimers.set(compositeId, timer);
+}
+
+function telegramSender(message: any): string | undefined {
+  const from = message.from;
+  if (!from || typeof from !== 'object') return undefined;
+  if (typeof from.username === 'string') return from.username;
+  if (typeof from.first_name === 'string') return from.first_name;
+  return undefined;
 }
 
 async function flushDebounceBuffer(compositeId: string, chatId: string, threadId?: number): Promise<void> {

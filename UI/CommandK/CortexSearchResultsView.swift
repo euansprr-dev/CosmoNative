@@ -236,26 +236,26 @@ private struct CortexSearchSection: View {
     private var ideaPreviewList: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(visibleIdeaResults.enumerated()), id: \.element.result.id) { index, entry in
-                LedgerRow(item: entry.item) {
+                IdeaMaterialLedgerRow(item: entry.item) {
                     onSelect(entry.result)
                 }
                 .id(entry.result.selectionID)
 
                 if index < visibleIdeaResults.count - 1 {
                     Rectangle()
-                        .fill(DS.borderSubtle)
+                        .fill(DS.glassBorder.opacity(0.55))
                         .frame(height: 0.5)
                         .padding(.leading, DS.space12)
                 }
             }
         }
         .padding(DS.space12)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous))
+        .background(DS.glassCardFill.opacity(0.30), in: RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusLarge, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
+                .stroke(DS.glassBorder.opacity(0.74), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.04), radius: 16, y: 8)
+        .shadow(color: DS.sidebarMaterialShadow.opacity(0.42), radius: 10, y: 4)
     }
 
     private var readwisePreviewStrip: some View {

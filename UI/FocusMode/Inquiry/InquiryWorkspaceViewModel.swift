@@ -27,11 +27,10 @@ final class InquiryWorkspaceViewModel {
 
     // Local UI state
     var notebookMode: InquiryNotebookMode = .notes
-    var noteDraft: String = ""
-    var aiPromptDraft: String = ""
     var aiBusy: Bool = false
+    var isRefreshingSources: Bool = false
+    var sourceActivityLine: String?
     var toast: InquiryToast?
-    var noteSaveState: Bool = false
 
     // Captures (in-memory until commit/crystallize)
     var captures: [SessionCapture] {
@@ -42,6 +41,7 @@ final class InquiryWorkspaceViewModel {
     // Persistence
     private var saveTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
+    private var sourceActivityTask: Task<Void, Never>?
 
     init(session: Atom) {
         self.session = session
@@ -77,6 +77,7 @@ final class InquiryWorkspaceViewModel {
             metadata.lastActiveAt = ISO8601DateFormatter().string(from: Date())
             scheduleSave()
         }
+        await refreshSourceRecommendationsIfNeeded()
     }
 
     private func reloadDeepDiveScopedAtoms() async {
@@ -132,8 +133,24 @@ final class InquiryWorkspaceViewModel {
     }
 
     var activeSourceTab: SourceTab? {
-        guard let id = activeSourceTabId else { return structured.sourceTabs.first }
-        return structured.sourceTabs.first { $0.id == id } ?? structured.sourceTabs.first
+        guard let id = activeSourceTabId else { return nil }
+        return structured.sourceTabs.first { $0.id == id }
+    }
+
+    var activeRecommendationBatch: InquiryRecommendationBatch? {
+        activeRecommendationBatchIndex.map { structured.recommendationBatches[$0] }
+    }
+
+    var activeSourceCandidates: [InquirySourceCandidate] {
+        guard let batch = activeRecommendationBatch else { return [] }
+        return batch.candidates
+            .filter { !batch.dismissedCandidateIds.contains($0.id) && $0.importStatus != .dismissed }
+            .sorted {
+                if $0.importStatus == $1.importStatus {
+                    return $0.score > $1.score
+                }
+                return $0.importStatus != .imported && $1.importStatus == .imported
+            }
     }
 
     func questionTitle(for uuid: String?) -> String {
@@ -161,6 +178,9 @@ final class InquiryWorkspaceViewModel {
         }
         structured.uiState.selectedInspectorQuestionUUID = questionUUID
         scheduleSave()
+        Task { [weak self] in
+            await self?.refreshSourceRecommendationsIfNeeded()
+        }
     }
 
     func cycleQuestion(offset: Int) {
@@ -261,6 +281,19 @@ final class InquiryWorkspaceViewModel {
 
     func recentNotes(for questionUUID: String?, limit: Int = 3) -> [Atom] {
         Array(extracts(for: questionUUID, kinds: [.note]).prefix(limit))
+    }
+
+    func notebookItems(for questionUUID: String?) -> [Atom] {
+        extracts(for: questionUUID, kinds: Set(ExtractKind.allCases))
+            .filter { $0.extractMetadata?.status != .ignored }
+    }
+
+    func sourceTitle(for sourceUUID: String?) -> String? {
+        guard let sourceUUID else { return nil }
+        if let ref = structured.sourceRefs.first(where: { $0.sourceUUID == sourceUUID }) {
+            return ref.title
+        }
+        return structured.sourceTabs.first(where: { $0.sourceUUID == sourceUUID })?.title
     }
 
     func claims(for questionUUID: String?) -> [Atom] {
@@ -695,6 +728,174 @@ final class InquiryWorkspaceViewModel {
 
     // MARK: - Sources
 
+    private var activeRecommendationBatchIndex: Int? {
+        let matching = structured.recommendationBatches.enumerated().filter { _, batch in
+            batch.branchNodeId == activeBranchNodeId || batch.questionUUID == activeQuestionUUID
+        }
+        return matching.max { lhs, rhs in
+            lhs.element.generatedAt < rhs.element.generatedAt
+        }?.offset
+    }
+
+    func refreshSourceRecommendationsIfNeeded() async {
+        guard activeRecommendationBatch == nil else { return }
+        await refreshSourceRecommendations()
+    }
+
+    func refreshSourceRecommendations(
+        query: String? = nil,
+        mode: InquirySourceSearchMode = .quick
+    ) async {
+        guard !isRefreshingSources else { return }
+        isRefreshingSources = true
+        defer { isRefreshingSources = false }
+
+        let focusedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let profile = branchResearchProfile(sourceQuery: focusedQuery)
+        startSourceActivity(plan: InquirySourceRecommendationEngine.activityPlan(for: profile, mode: mode))
+
+        let localSources = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
+        let batch = await InquirySourceRecommendationEngine.shared.recommend(
+            profile: profile,
+            existingSourceRefs: structured.sourceRefs,
+            localSources: localSources,
+            searchMode: mode
+        )
+
+        structured.recommendationBatches.removeAll { existing in
+            existing.branchNodeId == batch.branchNodeId || existing.questionUUID == batch.questionUUID
+        }
+        structured.recommendationBatches.append(batch)
+        appendRouteReceipt(
+            InquiryRouteReceipt(
+                kind: .sourceRefreshed,
+                message: mode == .deepScout ? "Deep Scout completed" : "Source Radar refreshed",
+                detail: "\(batch.candidates.count) candidates for \(focusedQuery ?? activeQuestionTitle)",
+                questionUUID: activeQuestionUUID,
+                branchNodeId: activeBranchNodeId
+            )
+        )
+        finishSourceActivity(
+            mode == .deepScout
+                ? "Deep Scout ranked \(batch.candidates.count) source candidates"
+                : "Source Radar found \(batch.candidates.count) source candidates"
+        )
+        scheduleSave()
+    }
+
+    func importSourceCandidate(_ candidate: InquirySourceCandidate) async {
+        if let sourceUUID = candidate.importedSourceUUID,
+           let source = try? await AtomRepository.shared.fetch(uuid: sourceUUID) {
+            let tab = openSourceAtom(source, url: source.url ?? candidate.url, title: candidate.title, kind: candidate.sourceKind == .localNote ? .internalAtom : .web)
+            markCandidate(candidate.id, status: .imported, sourceUUID: source.uuid)
+            activeSourceTabId = tab.id
+            appendRouteReceipt(
+                InquiryRouteReceipt(
+                    kind: .sourceImported,
+                    message: "Opened library source",
+                    detail: candidate.title,
+                    questionUUID: activeQuestionUUID,
+                    branchNodeId: activeBranchNodeId,
+                    sourceUUID: source.uuid,
+                    candidateId: candidate.id
+                )
+            )
+            scheduleSave()
+            return
+        }
+
+        guard let rawURL = candidate.url, !rawURL.isEmpty else {
+            queueSourceCandidate(candidate)
+            showToast("Queued source", detail: "No direct URL was available.")
+            return
+        }
+
+        let canonical = InquiryRepository.shared.canonicalURL(rawURL)
+        do {
+            let source = try await InquiryRepository.shared.createOrFindURLSource(
+                urlString: canonical,
+                title: candidate.title,
+                sourceType: candidate.sourceKind.rawValue
+            )
+            let tab = openSourceAtom(source, url: canonical, title: candidate.title, kind: sourceTabKind(for: candidate))
+            markCandidate(candidate.id, status: .imported, sourceUUID: source.uuid)
+            activeSourceTabId = tab.id
+            appendActivity(
+                .init(
+                    kind: .sourceOpened,
+                    title: "Source imported",
+                    detail: candidate.title,
+                    questionUUID: activeQuestionUUID,
+                    sourceUUID: source.uuid
+                )
+            )
+            appendRouteReceipt(
+                InquiryRouteReceipt(
+                    kind: .sourceImported,
+                    message: "Imported source",
+                    detail: candidate.title,
+                    questionUUID: activeQuestionUUID,
+                    branchNodeId: activeBranchNodeId,
+                    sourceUUID: source.uuid,
+                    candidateId: candidate.id
+                )
+            )
+            showToast("Source imported", detail: "Attached to \(activeQuestionTitle)")
+            scheduleSave()
+        } catch {
+            print("[InquiryWorkspaceVM] importSourceCandidate failed: \(error)")
+            showToast("Import failed", detail: error.localizedDescription)
+        }
+    }
+
+    func queueSourceCandidate(_ candidate: InquirySourceCandidate) {
+        updateActiveRecommendationBatch { batch in
+            if !batch.queuedCandidateIds.contains(candidate.id) {
+                batch.queuedCandidateIds.append(candidate.id)
+            }
+            if let idx = batch.candidates.firstIndex(where: { $0.id == candidate.id }) {
+                batch.candidates[idx].importStatus = .queued
+            }
+        }
+        if !structured.operationalTasks.contains(where: { $0.title == candidate.title && $0.attachedQuestionUUID == activeQuestionUUID }) {
+            structured.operationalTasks.append(
+                InquiryOperationalTask(
+                    type: .sourceSearch,
+                    title: candidate.title,
+                    detail: candidate.reason,
+                    attachedQuestionUUID: activeQuestionUUID,
+                    sourceUUID: candidate.importedSourceUUID,
+                    relationshipType: .sourceSearchForQuestion
+                )
+            )
+        }
+        appendRouteReceipt(
+            InquiryRouteReceipt(
+                kind: .sourceQueued,
+                message: "Queued source",
+                detail: candidate.title,
+                questionUUID: activeQuestionUUID,
+                branchNodeId: activeBranchNodeId,
+                sourceUUID: candidate.importedSourceUUID,
+                candidateId: candidate.id
+            )
+        )
+        showToast("Queued source", detail: "Added to research tasks.")
+        scheduleSave()
+    }
+
+    func dismissSourceCandidate(_ candidate: InquirySourceCandidate) {
+        updateActiveRecommendationBatch { batch in
+            if !batch.dismissedCandidateIds.contains(candidate.id) {
+                batch.dismissedCandidateIds.append(candidate.id)
+            }
+            if let idx = batch.candidates.firstIndex(where: { $0.id == candidate.id }) {
+                batch.candidates[idx].importStatus = .dismissed
+            }
+        }
+        scheduleSave()
+    }
+
     func openURLSource(_ rawURL: String) async {
         let canonical = InquiryRepository.shared.canonicalURL(rawURL)
         guard let url = URL(string: canonical) else { return }
@@ -710,6 +911,16 @@ final class InquiryWorkspaceViewModel {
                     title: "Source opened",
                     detail: title,
                     questionUUID: activeQuestionUUID,
+                    sourceUUID: source.uuid
+                )
+            )
+            appendRouteReceipt(
+                InquiryRouteReceipt(
+                    kind: .sourceOpened,
+                    message: "Opened source",
+                    detail: title,
+                    questionUUID: activeQuestionUUID,
+                    branchNodeId: activeBranchNodeId,
                     sourceUUID: source.uuid
                 )
             )
@@ -750,7 +961,7 @@ final class InquiryWorkspaceViewModel {
             structured.sourceRefs[refIdx].tabId = nil
         }
         if activeSourceTabId == id {
-            activeSourceTabId = structured.sourceTabs.first?.id
+            activeSourceTabId = nil
         }
         appendActivity(
             .init(
@@ -822,17 +1033,190 @@ final class InquiryWorkspaceViewModel {
         }
     }
 
-    // MARK: - Notes (commits a note Atom on save)
+    private func upsertInternalSourceRef(for source: Atom, tab: SourceTab, title: String) {
+        let now = ISO8601DateFormatter().string(from: Date())
+        if let idx = structured.sourceRefs.firstIndex(where: { $0.sourceUUID == source.uuid }) {
+            structured.sourceRefs[idx].tabId = tab.id
+            structured.sourceRefs[idx].title = source.title ?? title
+            structured.sourceRefs[idx].status = .viewed
+            structured.sourceRefs[idx].primaryQuestionUUID = activeQuestionUUID
+            structured.sourceRefs[idx].primaryNodeId = activeBranchNodeId
+            structured.sourceRefs[idx].lastOpenedAt = now
+        } else {
+            structured.sourceRefs.append(
+                InquirySourceRef(
+                    sourceUUID: source.uuid,
+                    tabId: tab.id,
+                    url: source.url,
+                    title: source.title ?? title,
+                    domain: source.url.flatMap { URL(string: $0)?.host },
+                    sourceType: source.type.rawValue,
+                    primaryQuestionUUID: activeQuestionUUID,
+                    primaryNodeId: activeBranchNodeId,
+                    openedAt: now,
+                    lastOpenedAt: now
+                )
+            )
+        }
+    }
 
-    func saveNoteDraft() async {
-        let trimmed = noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+    private func openSourceAtom(_ source: Atom, url: String?, title: String, kind: SourceTab.Kind) -> SourceTab {
+        if let existing = structured.sourceTabs.first(where: { $0.sourceUUID == source.uuid }) {
+            return existing
+        }
+        let tab = SourceTab(
+            kind: kind,
+            sourceUUID: source.uuid,
+            url: url,
+            title: source.title ?? title,
+            attachedQuestionUUID: activeQuestionUUID,
+            attachedNodeId: activeBranchNodeId
+        )
+        structured.sourceTabs.append(tab)
+        if let url, !url.isEmpty {
+            upsertSourceRef(for: source, tab: tab, url: url, title: title)
+        } else {
+            upsertInternalSourceRef(for: source, tab: tab, title: title)
+        }
+        return tab
+    }
 
-        // Persist as an Extract atom of kind .note (preserves provenance).
+    private func sourceTabKind(for candidate: InquirySourceCandidate) -> SourceTab.Kind {
+        switch candidate.sourceKind {
+        case .video: return .youTube
+        case .localNote: return .internalAtom
+        default: return .web
+        }
+    }
+
+    private func branchResearchProfile(sourceQuery: String? = nil) -> InquiryBranchResearchProfile {
+        InquiryBranchResearchProfile(
+            deepDiveTitle: deepDive?.title,
+            activeQuestionTitle: activeQuestionTitle,
+            activeQuestionUUID: activeQuestionUUID,
+            branchNodeId: activeBranchNodeId,
+            ancestorTitles: activeQuestion.map { questionAncestors(for: $0).compactMap(\.title) } ?? [],
+            claims: claims(for: activeQuestionUUID).compactMap { $0.body ?? $0.title },
+            evidence: evidence(for: activeQuestionUUID).compactMap { $0.body ?? $0.title },
+            sourceQuery: sourceQuery
+        )
+    }
+
+    private func updateActiveRecommendationBatch(_ update: (inout InquiryRecommendationBatch) -> Void) {
+        guard let idx = activeRecommendationBatchIndex else { return }
+        update(&structured.recommendationBatches[idx])
+    }
+
+    private func markCandidate(_ candidateId: String, status: InquirySourceImportStatus, sourceUUID: String? = nil) {
+        updateActiveRecommendationBatch { batch in
+            if let idx = batch.candidates.firstIndex(where: { $0.id == candidateId }) {
+                batch.candidates[idx].importStatus = status
+                batch.candidates[idx].importedSourceUUID = sourceUUID ?? batch.candidates[idx].importedSourceUUID
+            }
+            if status == .imported && !batch.importedCandidateIds.contains(candidateId) {
+                batch.importedCandidateIds.append(candidateId)
+            }
+            if status == .queued && !batch.queuedCandidateIds.contains(candidateId) {
+                batch.queuedCandidateIds.append(candidateId)
+            }
+            if status == .dismissed && !batch.dismissedCandidateIds.contains(candidateId) {
+                batch.dismissedCandidateIds.append(candidateId)
+            }
+        }
+    }
+
+    private func startSourceActivity(plan: [String]) {
+        sourceActivityTask?.cancel()
+        let steps = plan.isEmpty ? ["Searching sources"] : plan
+        sourceActivityLine = steps[0]
+        guard steps.count > 1 else { return }
+
+        sourceActivityTask = Task { [weak self] in
+            var index = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_150_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self else { return }
+                    index = (index + 1) % steps.count
+                    self.sourceActivityLine = steps[index]
+                }
+            }
+        }
+    }
+
+    private func finishSourceActivity(_ finalLine: String) {
+        sourceActivityTask?.cancel()
+        sourceActivityTask = nil
+        sourceActivityLine = finalLine
+
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            await MainActor.run {
+                guard let self,
+                      !self.isRefreshingSources,
+                      self.sourceActivityLine == finalLine else { return }
+                self.sourceActivityLine = nil
+            }
+        }
+    }
+
+    func submitDockText(_ raw: String) async {
+        let parsed = InquiryDockPrefixParser.parse(raw)
+        let body = parsed.body.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch parsed.intent {
+        case .refreshSources:
+            await refreshSourceRecommendations(query: body.nilIfEmpty)
+        case .openSource:
+            await openURLSource(body)
+        case .source:
+            if InquiryDockPrefixParser.looksLikeURL(body) {
+                await openURLSource(body)
+            } else {
+                createSourceSearchTask(body)
+                await refreshSourceRecommendations(query: body)
+            }
+        case .deepScout:
+            createSourceSearchTask(body.isEmpty ? activeQuestionTitle : body)
+            await refreshSourceRecommendations(query: body.nilIfEmpty, mode: .deepScout)
+        case .rootQuestion:
+            await createRootLikeQuestion(body)
+        case .branchQuestion:
+            guard !body.isEmpty else { return }
+            if let question = await createChildQuestion(title: body) {
+                appendRouteReceipt(
+                    InquiryRouteReceipt(
+                        kind: .branchCreated,
+                        message: "Created branch",
+                        detail: question.title,
+                        questionUUID: question.uuid,
+                        branchNodeId: questionNodeId(for: question.uuid)
+                    )
+                )
+            }
+        case .question:
+            await createPlacedQuestionFromDock(body)
+        case .challenge:
+            createEvidenceChallengeTask(body)
+        case .summarize:
+            await summarizeFromDock(body)
+        case .note, .claim, .speculativeClaim, .evidence, .counterevidence, .term, .practice, .output:
+            guard let kind = parsed.extractKind else { return }
+            await saveDockExtract(body, kind: kind, originType: parsed.intent.rawValue)
+        case .ask:
+            await saveDockExtract(body, kind: .note, originType: "dock")
+        }
+    }
+
+    @discardableResult
+    private func saveDockExtract(_ raw: String, kind: ExtractKind, originType: String) async -> Atom? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
         do {
             let extract = try await InquiryRepository.shared.createExtract(
                 body: trimmed,
-                kind: .note,
+                kind: kind,
                 sourceUUID: activeSourceTab?.sourceUUID,
                 selectionRange: nil,
                 sessionUUID: session.uuid,
@@ -841,77 +1225,148 @@ final class InquiryWorkspaceViewModel {
                 branchNodeId: activeBranchNodeId,
                 sourceTabId: activeSourceTabId,
                 userNote: nil,
-                originType: "manual",
-                citation: nil
+                originType: originType,
+                citation: activeSourceTab?.url ?? activeSourceTab?.title
             )
-            extracts.append(extract)
-            if let sourceUUID = extract.extractMetadata?.sourceUUID,
-               let refIdx = structured.sourceRefs.firstIndex(where: { $0.sourceUUID == sourceUUID }) {
-                structured.sourceRefs[refIdx].noteCount += 1
-            }
-            noteSaveState = true
-            appendActivity(
-                .init(
-                    kind: .noteSaved,
-                    title: "Note saved",
-                    detail: "Saved to \(activeQuestionTitle)",
+            registerSavedExtract(extract, sourceTabId: activeSourceTabId)
+            appendRouteReceipt(
+                InquiryRouteReceipt(
+                    kind: kind == .note ? .noteSaved : .extractSaved,
+                    message: "\(kind.displayName) saved",
+                    detail: "Routed to \(activeQuestionTitle)",
                     questionUUID: activeQuestionUUID,
+                    branchNodeId: activeBranchNodeId,
                     sourceUUID: activeSourceTab?.sourceUUID,
                     extractUUID: extract.uuid
                 )
             )
-            showToast("Saved to \(activeQuestionTitle)", detail: nil)
             routeThought(trimmed, originExtractUUID: extract.uuid, sourceTabId: activeSourceTabId)
+            showToast("\(kind.displayName) saved", detail: "Routed to \(activeQuestionTitle)")
             scheduleSave()
-            noteDraft = ""
-            resetNoteSaveStateSoon()
+            return extract
         } catch {
-            print("[InquiryWorkspaceVM] saveNoteDraft failed: \(error)")
+            print("[InquiryWorkspaceVM] saveDockExtract failed: \(error)")
+            showToast("Save failed", detail: error.localizedDescription)
+            return nil
         }
     }
 
-    func savePinnedNoteDraft(for questionUUID: String) async {
-        let raw = structured.uiState.pinnedNoteDraftsByQuestionUUID[questionUUID] ?? ""
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let branchNodeId = questionNodeId(for: questionUUID) ?? activeBranchNodeId
-        do {
-            let extract = try await InquiryRepository.shared.createExtract(
-                body: trimmed,
-                kind: .note,
-                sourceUUID: activeSourceTab?.sourceUUID,
-                selectionRange: nil,
-                sessionUUID: session.uuid,
-                questionUUID: questionUUID,
-                deepDiveUUID: deepDive?.uuid,
-                branchNodeId: branchNodeId,
+    private func createRootLikeQuestion(_ raw: String) async {
+        let title = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        let placement = InquiryPlacementDecision(
+            nodeType: .rootQuestion,
+            parentQuestionUUID: nil,
+            parentBranchNodeId: nil,
+            relationshipType: .rootUnderTopic,
+            confidence: .high,
+            explanation: "Created from the Thinking Dock as a root-level inquiry question.",
+            requiresApproval: false,
+            appearsInBranchMap: true
+        )
+        let question = await createPlacedQuestion(title: title, placement: placement, makeActive: true)
+        appendRouteReceipt(
+            InquiryRouteReceipt(
+                kind: .branchCreated,
+                message: "Created root question",
+                detail: question?.title,
+                questionUUID: question?.uuid,
+                branchNodeId: question.flatMap { questionNodeId(for: $0.uuid) }
+            )
+        )
+    }
+
+    private func createPlacedQuestionFromDock(_ raw: String) async {
+        let title = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        let placement = InquiryPlacementEngine.placement(
+            for: title,
+            fullText: title,
+            context: InquiryPlacementEngine.Context(
+                deepDiveTitle: deepDive?.title,
+                activeQuestion: activeQuestion,
+                activeQuestionUUID: activeQuestionUUID,
+                activeBranchNodeId: activeBranchNodeId,
                 sourceTabId: activeSourceTabId,
-                userNote: nil,
-                originType: "manual",
-                citation: nil
+                originExtractUUID: nil,
+                originAction: .manualAdd,
+                questions: questions,
+                claims: claims(for: activeQuestionUUID)
             )
-            extracts.append(extract)
-            if let sourceUUID = extract.extractMetadata?.sourceUUID,
-               let refIdx = structured.sourceRefs.firstIndex(where: { $0.sourceUUID == sourceUUID }) {
-                structured.sourceRefs[refIdx].noteCount += 1
-            }
-            appendActivity(
-                .init(
-                    kind: .noteSaved,
-                    title: "Note saved",
-                    detail: "Saved to \(questionTitle(for: questionUUID))",
-                    questionUUID: questionUUID,
-                    sourceUUID: activeSourceTab?.sourceUUID,
-                    extractUUID: extract.uuid
-                )
+        )
+        let question = await createPlacedQuestion(title: title, placement: placement, makeActive: true)
+        appendRouteReceipt(
+            InquiryRouteReceipt(
+                kind: .branchCreated,
+                message: placement.nodeType == .rootQuestion ? "Created root question" : "Created branch",
+                detail: question?.title,
+                questionUUID: question?.uuid,
+                branchNodeId: question.flatMap { questionNodeId(for: $0.uuid) }
             )
-            showToast("Saved to \(questionTitle(for: questionUUID))", detail: nil)
-            routeThought(trimmed, originExtractUUID: extract.uuid, sourceTabId: activeSourceTabId, questionUUID: questionUUID, branchNodeId: branchNodeId)
-            structured.uiState.pinnedNoteDraftsByQuestionUUID[questionUUID] = ""
-            scheduleSave()
-        } catch {
-            print("[InquiryWorkspaceVM] savePinnedNoteDraft failed: \(error)")
-        }
+        )
+    }
+
+    private func createSourceSearchTask(_ raw: String) {
+        let title = raw.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Find stronger sources for \(activeQuestionTitle)"
+        structured.operationalTasks.append(
+            InquiryOperationalTask(
+                type: .sourceSearch,
+                title: title,
+                detail: "Created from the Thinking Dock.",
+                attachedQuestionUUID: activeQuestionUUID,
+                relationshipType: .sourceSearchForQuestion
+            )
+        )
+        appendRouteReceipt(
+            InquiryRouteReceipt(
+                kind: .sourceQueued,
+                message: "Created source task",
+                detail: title,
+                questionUUID: activeQuestionUUID,
+                branchNodeId: activeBranchNodeId
+            )
+        )
+        scheduleSave()
+    }
+
+    private func createEvidenceChallengeTask(_ raw: String) {
+        let title = raw.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Challenge the evidence for \(activeQuestionTitle)"
+        structured.operationalTasks.append(
+            InquiryOperationalTask(
+                type: .evidenceAudit,
+                title: title,
+                detail: "Look for stronger support, limitations, replications, and counterevidence.",
+                attachedQuestionUUID: activeQuestionUUID,
+                relationshipType: .evidenceAuditForClaim
+            )
+        )
+        appendRouteReceipt(
+            InquiryRouteReceipt(
+                kind: .sourceQueued,
+                message: "Created evidence challenge",
+                detail: title,
+                questionUUID: activeQuestionUUID,
+                branchNodeId: activeBranchNodeId
+            )
+        )
+        scheduleSave()
+    }
+
+    private func summarizeFromDock(_ raw: String) async {
+        let target = activeSourceTab?.title ?? activeQuestionTitle
+        let extra = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        await runAIPrompt("Summarize \(target). Focus on claims, evidence, counterevidence, mechanisms, and what should be routed into the active inquiry. \(extra)")
+        appendRouteReceipt(
+            InquiryRouteReceipt(
+                kind: .aiAsked,
+                message: "Summarized context",
+                detail: target,
+                questionUUID: activeQuestionUUID,
+                branchNodeId: activeBranchNodeId,
+                sourceUUID: activeSourceTab?.sourceUUID
+            )
+        )
+        scheduleSave()
     }
 
     private func routeThought(_ text: String, originExtractUUID: String?, sourceTabId: String?, questionUUID: String? = nil, branchNodeId: String? = nil) {
@@ -956,6 +1411,13 @@ final class InquiryWorkspaceViewModel {
         }
     }
 
+    private func appendRouteReceipt(_ receipt: InquiryRouteReceipt) {
+        structured.routeReceipts.append(receipt)
+        if structured.routeReceipts.count > 16 {
+            structured.routeReceipts.removeFirst(structured.routeReceipts.count - 16)
+        }
+    }
+
     private func showToast(_ message: String, detail: String?) {
         toastTask?.cancel()
         toast = InquiryToast(message: message, detail: detail)
@@ -963,14 +1425,6 @@ final class InquiryWorkspaceViewModel {
             try? await Task.sleep(nanoseconds: 2_400_000_000)
             guard let self, !Task.isCancelled else { return }
             self.toast = nil
-        }
-    }
-
-    private func resetNoteSaveStateSoon() {
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_400_000_000)
-            guard let self else { return }
-            self.noteSaveState = false
         }
     }
 
@@ -1209,7 +1663,6 @@ final class InquiryWorkspaceViewModel {
         let response = await InquiryAICopilot.shared.ask(prompt: fullPrompt)
         recordAIInteraction(prompt: trimmed, response: response)
         routeThought(trimmed, originExtractUUID: nil, sourceTabId: activeSourceTabId)
-        aiPromptDraft = ""
     }
 
     private func buildAIContext() -> String {
@@ -1315,7 +1768,7 @@ enum InquiryNotebookMode: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .notes: return "Notes"
+        case .notes: return "Notebook"
         case .tree: return "Branch Map"
         case .captures: return "Captures"
         case .currentUnderstanding: return "Current Understanding"
@@ -1335,5 +1788,11 @@ struct InquiryQuestionCounts: Equatable {
 
     var compactLabel: String {
         "S\(sources) · N\(notes) · C\(claims) · Ev\(evidence) · T\(tasks) · Q\(children)"
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

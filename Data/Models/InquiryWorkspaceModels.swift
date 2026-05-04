@@ -331,6 +331,336 @@ struct InquiryOperationalTask: Codable, Sendable, Identifiable, Hashable {
     }
 }
 
+enum InquirySourceProvider: String, Codable, CaseIterable, Sendable, Hashable {
+    case local
+    case openAlex
+    case crossref
+    case semanticScholar
+    case pubMed
+    case arxiv
+    case youtube
+    case web
+
+    var displayName: String {
+        switch self {
+        case .local: return "Local"
+        case .openAlex: return "OpenAlex"
+        case .crossref: return "Crossref"
+        case .semanticScholar: return "Semantic Scholar"
+        case .pubMed: return "PubMed"
+        case .arxiv: return "arXiv"
+        case .youtube: return "YouTube"
+        case .web: return "Web"
+        }
+    }
+}
+
+enum InquirySourceKind: String, Codable, CaseIterable, Sendable, Hashable {
+    case paper
+    case review
+    case metaAnalysis
+    case video
+    case web
+    case book
+    case localResearch
+    case localNote
+    case unknown
+
+    var displayName: String {
+        switch self {
+        case .paper: return "Paper"
+        case .review: return "Review"
+        case .metaAnalysis: return "Meta-analysis"
+        case .video: return "Video"
+        case .web: return "Web"
+        case .book: return "Book"
+        case .localResearch: return "Your library"
+        case .localNote: return "Local note"
+        case .unknown: return "Source"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .paper, .review, .metaAnalysis: return "doc.text"
+        case .video: return "play.rectangle"
+        case .web: return "globe"
+        case .book: return "book.closed"
+        case .localResearch, .localNote: return "archivebox"
+        case .unknown: return "link"
+        }
+    }
+}
+
+enum InquiryEvidenceRole: String, Codable, CaseIterable, Sendable, Hashable {
+    case foundational
+    case recent
+    case review
+    case metaAnalysis
+    case mechanism
+    case counterevidence
+    case practicalGuide
+    case videoExplainer
+    case localLibrary
+    case webContext
+
+    var displayName: String {
+        switch self {
+        case .foundational: return "Foundational"
+        case .recent: return "Recent"
+        case .review: return "Review"
+        case .metaAnalysis: return "Meta"
+        case .mechanism: return "Mechanism"
+        case .counterevidence: return "Counter"
+        case .practicalGuide: return "Practice"
+        case .videoExplainer: return "Video"
+        case .localLibrary: return "Library"
+        case .webContext: return "Context"
+        }
+    }
+}
+
+enum InquirySourceImportStatus: String, Codable, CaseIterable, Sendable, Hashable {
+    case candidate
+    case queued
+    case imported
+    case dismissed
+}
+
+enum InquirySourceSearchMode: String, Codable, CaseIterable, Sendable, Hashable {
+    case quick
+    case deepScout
+
+    var displayName: String {
+        switch self {
+        case .quick: return "Quick"
+        case .deepScout: return "Deep Scout"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .quick: return "scope"
+        case .deepScout: return "sparkle.magnifyingglass"
+        }
+    }
+}
+
+struct InquiryProviderStatus: Codable, Sendable, Identifiable, Hashable {
+    enum State: String, Codable, Sendable, Hashable {
+        case idle
+        case loading
+        case succeeded
+        case failed
+        case missingKey
+        case rateLimited
+    }
+
+    var id: String { provider.rawValue }
+    var provider: InquirySourceProvider
+    var state: State
+    var message: String?
+    var count: Int
+
+    init(
+        provider: InquirySourceProvider,
+        state: State = .idle,
+        message: String? = nil,
+        count: Int = 0
+    ) {
+        self.provider = provider
+        self.state = state
+        self.message = message
+        self.count = count
+    }
+}
+
+struct InquirySourceCandidate: Codable, Sendable, Identifiable, Hashable {
+    var id: String
+    var provider: InquirySourceProvider
+    var sourceKind: InquirySourceKind
+    var title: String
+    var subtitle: String?
+    var authors: [String]
+    var publishedDate: String?
+    var url: String?
+    var doi: String?
+    var abstract: String?
+    var evidenceRole: InquiryEvidenceRole
+    var reason: String
+    var score: Double
+    var qualitySignals: [String]
+    var branchQuestionUUID: String?
+    var branchNodeId: String?
+    var importedSourceUUID: String?
+    var importStatus: InquirySourceImportStatus
+    var generatedAt: String
+
+    init(
+        id: String = UUID().uuidString,
+        provider: InquirySourceProvider,
+        sourceKind: InquirySourceKind,
+        title: String,
+        subtitle: String? = nil,
+        authors: [String] = [],
+        publishedDate: String? = nil,
+        url: String? = nil,
+        doi: String? = nil,
+        abstract: String? = nil,
+        evidenceRole: InquiryEvidenceRole,
+        reason: String,
+        score: Double = 0,
+        qualitySignals: [String] = [],
+        branchQuestionUUID: String? = nil,
+        branchNodeId: String? = nil,
+        importedSourceUUID: String? = nil,
+        importStatus: InquirySourceImportStatus = .candidate,
+        generatedAt: String = ISO8601DateFormatter().string(from: Date())
+    ) {
+        self.id = id
+        self.provider = provider
+        self.sourceKind = sourceKind
+        self.title = title
+        self.subtitle = subtitle
+        self.authors = authors
+        self.publishedDate = publishedDate
+        self.url = url
+        self.doi = doi
+        self.abstract = abstract
+        self.evidenceRole = evidenceRole
+        self.reason = reason
+        self.score = score
+        self.qualitySignals = qualitySignals
+        self.branchQuestionUUID = branchQuestionUUID
+        self.branchNodeId = branchNodeId
+        self.importedSourceUUID = importedSourceUUID
+        self.importStatus = importStatus
+        self.generatedAt = generatedAt
+    }
+}
+
+struct InquiryRecommendationBatch: Codable, Sendable, Identifiable, Hashable {
+    var id: String
+    var questionUUID: String?
+    var branchNodeId: String
+    var query: String
+    var searchMode: InquirySourceSearchMode
+    var generatedAt: String
+    var providerStatuses: [InquiryProviderStatus]
+    var scoutSteps: [String]
+    var candidates: [InquirySourceCandidate]
+    var queuedCandidateIds: [String]
+    var dismissedCandidateIds: [String]
+    var importedCandidateIds: [String]
+
+    init(
+        id: String = UUID().uuidString,
+        questionUUID: String?,
+        branchNodeId: String,
+        query: String,
+        searchMode: InquirySourceSearchMode = .quick,
+        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        providerStatuses: [InquiryProviderStatus] = [],
+        scoutSteps: [String] = [],
+        candidates: [InquirySourceCandidate] = [],
+        queuedCandidateIds: [String] = [],
+        dismissedCandidateIds: [String] = [],
+        importedCandidateIds: [String] = []
+    ) {
+        self.id = id
+        self.questionUUID = questionUUID
+        self.branchNodeId = branchNodeId
+        self.query = query
+        self.searchMode = searchMode
+        self.generatedAt = generatedAt
+        self.providerStatuses = providerStatuses
+        self.scoutSteps = scoutSteps
+        self.candidates = candidates
+        self.queuedCandidateIds = queuedCandidateIds
+        self.dismissedCandidateIds = dismissedCandidateIds
+        self.importedCandidateIds = importedCandidateIds
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case questionUUID
+        case branchNodeId
+        case query
+        case searchMode
+        case generatedAt
+        case providerStatuses
+        case scoutSteps
+        case candidates
+        case queuedCandidateIds
+        case dismissedCandidateIds
+        case importedCandidateIds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        questionUUID = try container.decodeIfPresent(String.self, forKey: .questionUUID)
+        branchNodeId = try container.decode(String.self, forKey: .branchNodeId)
+        query = try container.decode(String.self, forKey: .query)
+        searchMode = try container.decodeIfPresent(InquirySourceSearchMode.self, forKey: .searchMode) ?? .quick
+        generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt) ?? ISO8601DateFormatter().string(from: Date())
+        providerStatuses = try container.decodeIfPresent([InquiryProviderStatus].self, forKey: .providerStatuses) ?? []
+        scoutSteps = try container.decodeIfPresent([String].self, forKey: .scoutSteps) ?? []
+        candidates = try container.decodeIfPresent([InquirySourceCandidate].self, forKey: .candidates) ?? []
+        queuedCandidateIds = try container.decodeIfPresent([String].self, forKey: .queuedCandidateIds) ?? []
+        dismissedCandidateIds = try container.decodeIfPresent([String].self, forKey: .dismissedCandidateIds) ?? []
+        importedCandidateIds = try container.decodeIfPresent([String].self, forKey: .importedCandidateIds) ?? []
+    }
+}
+
+struct InquiryRouteReceipt: Codable, Sendable, Identifiable, Hashable {
+    enum Kind: String, Codable, Sendable, Hashable {
+        case noteSaved
+        case extractSaved
+        case branchCreated
+        case sourceOpened
+        case sourceQueued
+        case sourceImported
+        case sourceRefreshed
+        case aiAsked
+    }
+
+    var id: String
+    var kind: Kind
+    var message: String
+    var detail: String?
+    var questionUUID: String?
+    var branchNodeId: String?
+    var sourceUUID: String?
+    var extractUUID: String?
+    var candidateId: String?
+    var createdAt: String
+
+    init(
+        id: String = UUID().uuidString,
+        kind: Kind,
+        message: String,
+        detail: String? = nil,
+        questionUUID: String? = nil,
+        branchNodeId: String? = nil,
+        sourceUUID: String? = nil,
+        extractUUID: String? = nil,
+        candidateId: String? = nil,
+        createdAt: String = ISO8601DateFormatter().string(from: Date())
+    ) {
+        self.id = id
+        self.kind = kind
+        self.message = message
+        self.detail = detail
+        self.questionUUID = questionUUID
+        self.branchNodeId = branchNodeId
+        self.sourceUUID = sourceUUID
+        self.extractUUID = extractUUID
+        self.candidateId = candidateId
+        self.createdAt = createdAt
+    }
+}
+
 /// Maturity ladder for a Lexicon Entry.
 enum LexiconMaturity: String, Codable, CaseIterable, Sendable {
     case mention
@@ -1906,6 +2236,8 @@ struct InquirySessionStructured: Codable, Sendable {
     var uiState: InquiryWorkspaceUIState
     var routingCards: [InquiryRoutingCard]
     var operationalTasks: [InquiryOperationalTask]
+    var recommendationBatches: [InquiryRecommendationBatch]
+    var routeReceipts: [InquiryRouteReceipt]
     var crystallizationResult: CrystallizationOutput?
 
     enum CodingKeys: String, CodingKey {
@@ -1919,6 +2251,8 @@ struct InquirySessionStructured: Codable, Sendable {
         case uiState
         case routingCards
         case operationalTasks
+        case recommendationBatches
+        case routeReceipts
         case crystallizationResult
     }
 
@@ -1933,6 +2267,8 @@ struct InquirySessionStructured: Codable, Sendable {
         uiState: InquiryWorkspaceUIState = InquiryWorkspaceUIState(),
         routingCards: [InquiryRoutingCard] = [],
         operationalTasks: [InquiryOperationalTask] = [],
+        recommendationBatches: [InquiryRecommendationBatch] = [],
+        routeReceipts: [InquiryRouteReceipt] = [],
         crystallizationResult: CrystallizationOutput? = nil
     ) {
         self.researchTree = researchTree
@@ -1945,6 +2281,8 @@ struct InquirySessionStructured: Codable, Sendable {
         self.uiState = uiState
         self.routingCards = routingCards
         self.operationalTasks = operationalTasks
+        self.recommendationBatches = recommendationBatches
+        self.routeReceipts = routeReceipts
         self.crystallizationResult = crystallizationResult
     }
 
@@ -1960,6 +2298,8 @@ struct InquirySessionStructured: Codable, Sendable {
         uiState = try container.decodeIfPresent(InquiryWorkspaceUIState.self, forKey: .uiState) ?? InquiryWorkspaceUIState()
         routingCards = try container.decodeIfPresent([InquiryRoutingCard].self, forKey: .routingCards) ?? []
         operationalTasks = try container.decodeIfPresent([InquiryOperationalTask].self, forKey: .operationalTasks) ?? []
+        recommendationBatches = try container.decodeIfPresent([InquiryRecommendationBatch].self, forKey: .recommendationBatches) ?? []
+        routeReceipts = try container.decodeIfPresent([InquiryRouteReceipt].self, forKey: .routeReceipts) ?? []
         crystallizationResult = try container.decodeIfPresent(CrystallizationOutput.self, forKey: .crystallizationResult)
     }
 }

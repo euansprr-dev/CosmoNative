@@ -15,51 +15,63 @@ struct ClusterTransferEvent {
 
 // MARK: - Masonry Layout
 
-/// Pinterest-style masonry layout: fixed column width, variable cell heights.
-/// Columns are computed dynamically from available width.
+/// Packed grid layout: each cell keeps its natural width and rows wrap with
+/// a small gap, avoiding invisible column spans around document-style blocks.
 struct ClusterMasonryLayout: Layout {
     let columnWidth: CGFloat
     let spacing: CGFloat
 
-    private func columnCount(for width: CGFloat) -> Int {
-        // Use columnWidth + spacing as the per-column footprint, but the last column
-        // doesn't need trailing spacing, so add spacing back once to the available width.
-        max(1, Int((width + spacing) / (columnWidth + spacing)))
-    }
-
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let availableWidth = proposal.width ?? 600
-        let columns = columnCount(for: availableWidth)
-        var columnHeights = Array(repeating: CGFloat(0), count: columns)
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let availableWidth = resolvedWidth(proposal.width, sizes: sizes)
+        let placements = placements(for: sizes, availableWidth: availableWidth)
 
-        for subview in subviews {
-            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
-            let size = subview.sizeThatFits(.init(width: columnWidth, height: nil))
-            columnHeights[minCol] += size.height + spacing
-        }
-
-        let maxHeight = (columnHeights.max() ?? 0) - (columnHeights.isEmpty ? 0 : spacing)
         // Return the full proposed width so the layout fills available space
-        return CGSize(width: availableWidth, height: max(0, maxHeight))
+        return CGSize(width: availableWidth, height: placements.height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let columns = columnCount(for: bounds.width)
-        var columnHeights = Array(repeating: CGFloat(0), count: columns)
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let placements = placements(for: sizes, availableWidth: bounds.width)
 
-        for subview in subviews {
-            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
-            let x = bounds.minX + CGFloat(minCol) * (columnWidth + spacing)
-            let y = bounds.minY + columnHeights[minCol]
-            let size = subview.sizeThatFits(.init(width: columnWidth, height: nil))
-
+        for (index, subview) in subviews.enumerated() {
+            let placement = placements.items[index]
             subview.place(
-                at: CGPoint(x: x, y: y),
+                at: CGPoint(x: bounds.minX + placement.origin.x, y: bounds.minY + placement.origin.y),
                 anchor: .topLeading,
-                proposal: .init(width: columnWidth, height: size.height)
+                proposal: .init(width: placement.size.width, height: placement.size.height)
             )
-            columnHeights[minCol] += size.height + spacing
         }
+    }
+
+    private struct Placement {
+        let origin: CGPoint
+        let size: CGSize
+    }
+
+    private func resolvedWidth(_ proposedWidth: CGFloat?, sizes: [CGSize]) -> CGFloat {
+        max(proposedWidth ?? columnWidth, sizes.map(\.width).max() ?? columnWidth)
+    }
+
+    private func placements(for sizes: [CGSize], availableWidth: CGFloat) -> (items: [Placement], height: CGFloat) {
+        var items: [Placement] = []
+        var cursor = CGPoint.zero
+        var rowHeight: CGFloat = 0
+        let rowWidth = max(availableWidth, sizes.map(\.width).max() ?? columnWidth)
+
+        for size in sizes {
+            if cursor.x > 0, cursor.x + size.width > rowWidth {
+                cursor.x = 0
+                cursor.y += rowHeight + spacing
+                rowHeight = 0
+            }
+
+            items.append(Placement(origin: cursor, size: size))
+            cursor.x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+
+        return (items, items.isEmpty ? 0 : cursor.y + rowHeight)
     }
 }
 
@@ -154,22 +166,44 @@ struct ClusterGridContent: View {
             ref = block.defaultSize
         }
         guard ref.width > 0 else { return minCellHeight }
-        let scale = masonryColumnWidth / ref.width
+        let width = canonicalCellWidth(for: block)
+        let scale = width / ref.width
         return max(minCellHeight, ref.height * scale)
+    }
+
+    static func canonicalCellWidth(for block: CanvasBlock) -> CGFloat {
+        switch block.entityType {
+        case .note, .content:
+            return CanvasBlock.documentBlockSize.width
+        default:
+            return masonryColumnWidth
+        }
     }
 
     /// Estimate the total masonry layout height for a set of blocks without rendering.
     /// Used by `CanvasClusterEngine.fitClusterRectForMode` for accurate adaptive sizing.
     static func estimatedGridHeight(blocks: [CanvasBlock], availableWidth: CGFloat) -> CGFloat {
-        let columns = max(1, Int((availableWidth + masonrySpacing) / (masonryColumnWidth + masonrySpacing)))
-        var columnHeights = Array(repeating: CGFloat(0), count: columns)
+        var cursorX: CGFloat = 0
+        var cursorY: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        let maxCellWidth = blocks.map { canonicalCellWidth(for: $0) }.max() ?? masonryColumnWidth
+        let rowWidth = max(availableWidth, maxCellWidth)
 
         for block in blocks {
+            let cellWidth = canonicalCellWidth(for: block)
             let cellHeight = canonicalCellHeight(for: block)
-            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
-            columnHeights[minCol] += cellHeight + masonrySpacing
+
+            if cursorX > 0, cursorX + cellWidth > rowWidth {
+                cursorX = 0
+                cursorY += rowHeight + masonrySpacing
+                rowHeight = 0
+            }
+
+            cursorX += cellWidth + masonrySpacing
+            rowHeight = max(rowHeight, cellHeight)
         }
-        return (columnHeights.max() ?? 0)
+
+        return blocks.isEmpty ? 0 : cursorY + rowHeight
     }
 
     static func orderedMemberBlocks(for cluster: CanvasCluster, blocks: [CanvasBlock]) -> [CanvasBlock] {
@@ -180,19 +214,20 @@ struct ClusterGridContent: View {
     @ViewBuilder
     private func gridBlockView(for block: CanvasBlock) -> some View {
         let cellHeight = gridCellHeight(for: block)
+        let cellWidth = Self.canonicalCellWidth(for: block)
 
         // Pass a block copy whose size matches the cell so
         // CosmoBlockWrapper lays content out at the cell dimensions
         // instead of pixel-scaling from the original size.
         let gridBlock: CanvasBlock = {
             var b = block
-            b.size = CGSize(width: Self.masonryColumnWidth, height: cellHeight)
+            b.size = CGSize(width: cellWidth, height: cellHeight)
             b.isSelected = false
             return b
         }()
 
         blockContent(for: gridBlock)
-            .frame(width: Self.masonryColumnWidth, height: cellHeight)
+            .frame(width: cellWidth, height: cellHeight)
             .clipShape(.rect(cornerRadius: DS.radiusMedium))
     }
 

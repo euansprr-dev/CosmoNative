@@ -11,6 +11,8 @@ struct InquiryWorkspaceView: View {
     let onClose: () -> Void
 
     @State private var viewModel: InquiryWorkspaceViewModel
+    @State private var dockDraft: String = ""
+    @FocusState private var dockFocused: Bool
 
     init(sessionAtom: Atom, onClose: @escaping () -> Void) {
         self.sessionAtom = sessionAtom
@@ -25,6 +27,10 @@ struct InquiryWorkspaceView: View {
                 topBar
                 Divider().background(DS.borderSubtle)
                 paneRow
+                if viewModel.metadata.layoutMode != .review {
+                    Divider().background(DS.borderSubtle)
+                    thinkingDock
+                }
             }
             if let toast = viewModel.toast {
                 toastView(toast)
@@ -95,7 +101,8 @@ struct InquiryWorkspaceView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    viewModel.aiPromptDraft = "Suggest one crisp child question for: \(viewModel.activeQuestionTitle)"
+                    dockDraft = "branch: "
+                    dockFocused = true
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 10, weight: .semibold))
@@ -245,6 +252,116 @@ struct InquiryWorkspaceView: View {
         Rectangle()
             .fill(DS.borderSubtle)
             .frame(width: 1)
+    }
+
+    // MARK: - Thinking Dock
+
+    private var thinkingDock: some View {
+        HStack(spacing: DS.space10) {
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 30, height: 30)
+                .background(DS.accentSoft, in: Circle())
+
+            if let activity = viewModel.sourceActivityLine {
+                dockActivityLine(activity)
+            } else {
+                TextField("Think out loud, paste a URL, or route with claim: source: scout: branch:", text: $dockDraft)
+                    .textFieldStyle(.plain)
+                    .font(CosmoTypography.body)
+                    .focused($dockFocused)
+                    .onSubmit { submitDockDraft() }
+            }
+
+            HStack(spacing: 5) {
+                dockPrefixButton("claim:")
+                dockPrefixButton("source:")
+                dockPrefixButton("scout:")
+                dockPrefixButton("branch:")
+                dockCommandButton("/sources")
+            }
+
+            Button {
+                submitDockDraft()
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 30, height: 30)
+                    .background(dockDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? DS.surfaceHover : DS.accent, in: Circle())
+                    .foregroundStyle(dockDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? CosmoColors.textTertiary : DS.textOnAccent)
+            }
+            .buttonStyle(.plain)
+            .disabled(dockDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Route thought")
+        }
+        .padding(.horizontal, DS.space20)
+        .padding(.vertical, DS.space10)
+        .background(DS.surface)
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: viewModel.sourceActivityLine)
+    }
+
+    private func dockActivityLine(_ activity: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.58)
+            Text(activity)
+                .font(CosmoTypography.bodySmall)
+                .foregroundStyle(CosmoColors.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, 6)
+        .background(DS.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.accent.opacity(0.14), lineWidth: 1))
+        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+    }
+
+    private func dockPrefixButton(_ prefix: String) -> some View {
+        Button {
+            if dockDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                dockDraft = "\(prefix) "
+            } else {
+                dockDraft = "\(prefix) \(dockDraft)"
+            }
+            dockFocused = true
+        } label: {
+            Text(prefix)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textSecondary)
+                .padding(.horizontal, DS.space8)
+                .padding(.vertical, 5)
+                .background(DS.surfaceElevated, in: Capsule())
+                .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help("Route as \(prefix)")
+    }
+
+    private func dockCommandButton(_ command: String) -> some View {
+        Button {
+            dockDraft = command
+            submitDockDraft()
+        } label: {
+            Text(command)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(DS.accent)
+                .padding(.horizontal, DS.space8)
+                .padding(.vertical, 5)
+                .background(DS.accent.opacity(0.08), in: Capsule())
+                .overlay(Capsule().stroke(DS.accent.opacity(0.18), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help("Refresh source recommendations")
+    }
+
+    private func submitDockDraft() {
+        let text = dockDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        dockDraft = ""
+        Task { await viewModel.submitDockText(text) }
     }
 
     private struct PaneWidths { let notebook: CGFloat; let source: CGFloat; let copilot: CGFloat }

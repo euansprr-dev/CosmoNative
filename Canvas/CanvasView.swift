@@ -70,6 +70,8 @@ struct CanvasView: View {
     // Thinkspace switch transition
     @State private var thinkspaceSwitchTask: Task<Void, Never>?
     @State private var sceneTintUpdateTask: Task<Void, Never>?
+    @State private var sceneTintThrottleTask: Task<Void, Never>?
+    @State private var sceneTintNeedsTrailingPublish = false
     @State private var lastPublishedSceneTintKey: String?
     @State private var lastPublishedSceneMaterial: CosmoGlassSceneMaterial?
     @State private var canvasContentOpacity: Double = 1.0
@@ -103,6 +105,12 @@ struct CanvasView: View {
 
     // Minimap overlay
     @State private var showMinimap = false
+
+    // Thinkspace mode switcher
+    @State private var thinkspaceMode: ThinkspaceCanvasMode = .canvas
+    @State private var isModeSwitcherExpanded = false
+    @State private var libraryInventory: [ChildDoc] = []
+    @State private var libraryLoadTask: Task<Void, Never>?
 
     // Provocation engine (AI devil's advocate)
     @StateObject private var provocationEngine = ProvocationEngine.shared
@@ -139,11 +147,28 @@ struct CanvasView: View {
         CanvasVisibilityIndex(transform: viewportTransform)
     }
 
+    private func renderSnapshot(for blocks: [CanvasBlock]) -> CanvasRenderSnapshot {
+        let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-snapshot")
+        let snapshot = CanvasRenderSnapshotBuilder.build(
+            blocks: blocks,
+            transform: viewportTransform,
+            userClusters: clusterEngine.userClusters,
+            selectedBlockId: selectedBlockId,
+            selectedClusterId: clusterEngine.selectedClusterId,
+            draggingClusterId: draggingClusterId,
+            resizingClusterId: clusterEngine.resizingClusterId
+        )
+        CanvasPerformanceInstrumentation.signposter.endInterval("render-snapshot", signpost)
+        return snapshot
+    }
+
     // MARK: - Canvas Content (broken out for type-checking performance)
 
     private var canvasContent: some View {
         GeometryReader { geo in
             let screenCenter = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            let currentRenderedBlocks = renderedBlocks
+            let snapshot = renderSnapshot(for: currentRenderedBlocks)
 
             ZStack {
                 // Background always fills the screen (infinite canvas)
@@ -244,7 +269,7 @@ struct CanvasView: View {
                     )
 
                     canvasClusterDropPreviewLayer
-                    blocksLayer
+                    blocksLayer(snapshot: snapshot)
                     inboxBlocksLayer
 
                     // Drag-to-connect overlay (canvas coordinates, inside scaled container
@@ -268,7 +293,7 @@ struct CanvasView: View {
                 // Connection lines layer (screen coordinates, outside scaled container
                 // to prevent frame clipping at non-100% zoom levels)
                 CanvasConnectionLinesLayer(
-                    blocks: renderedBlocks,
+                    blocks: currentRenderedBlocks,
                     transform: viewportTransform,
                     activeBlockDrag: blockDragState,
                     isActive: canvasIsActive
@@ -290,9 +315,15 @@ struct CanvasView: View {
                 // Provocation markers overlay (screen coordinates, on top of blocks)
                 ProvocationOverlay(provocationEngine: provocationEngine)
 
+                if thinkspaceMode == .library {
+                    thinkspaceLibraryView
+                        .transition(.opacity.combined(with: .scale(scale: 0.99)))
+                        .zIndex(2000)
+                }
+
                 // Space+drag pan overlay — sits above everything so dragging
                 // works even over blocks and clusters (like Figma hand tool)
-                if isSpaceHeld {
+                if isSpaceHeld && thinkspaceMode == .canvas {
                     Color.clear
                         .contentShape(Rectangle())
                         .gesture(
@@ -324,14 +355,13 @@ struct CanvasView: View {
                 }
             ))
             .overlay(alignment: .bottomTrailing) {
-                // Zoom indicator
-                zoomIndicator
+                bottomCanvasControls
             }
             .overlay(alignment: .bottomLeading) {
                 CanvasPerformanceOverlay(
                     transform: viewportTransform,
                     blockCount: spatialEngine.blocks.count,
-                    visibleBlockCount: spatialEngine.blocks.filter { visibilityIndex.isBlockVisible($0) }.count,
+                    visibleBlockCount: snapshot.visibleBlockCount,
                     activeDragLabel: blockDragState.activeId ?? draggingClusterId?.uuidString
                 )
             }
@@ -371,6 +401,12 @@ struct CanvasView: View {
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
+                ThinkspaceCanvasSnapshotCache.shared.store(
+                    blocks: spatialEngine.blocks,
+                    zoomLevel: canvasScale,
+                    panOffset: canvasOffset,
+                    thinkspaceId: thinkspaceId
+                )
             }
             .onChange(of: canvasOffset) { _, _ in
                 scheduleFrameUpdate()
@@ -406,6 +442,96 @@ struct CanvasView: View {
         // selectively to specific components (GridPatternView, RadialMenuView) instead.
     }
 
+    // MARK: - Bottom Canvas Controls
+    private var bottomCanvasControls: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            thinkspaceModeSwitcher
+            zoomIndicator
+        }
+        .padding(.trailing, 20)
+        .padding(.bottom, 20)
+    }
+
+    private var bottomControlHeight: CGFloat { 34 }
+    private var modeSwitcherCollapsedWidth: CGFloat { 34 }
+    private var modeSwitcherButtonHeight: CGFloat { 24 }
+
+    private var modeSwitcherAnimation: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.14)
+            : .spring(response: 0.28, dampingFraction: 0.86, blendDuration: 0.08)
+    }
+
+    private var modeSwitcherItemTransition: AnyTransition {
+        .asymmetric(
+            insertion: .offset(y: 9)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.97, anchor: .bottom)),
+            removal: .offset(y: 5)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.98, anchor: .bottom))
+        )
+    }
+
+    private var thinkspaceModeSwitcher: some View {
+        HStack(spacing: isModeSwitcherExpanded ? 3 : 0) {
+            if isModeSwitcherExpanded {
+                ForEach(ThinkspaceCanvasMode.allCases) { mode in
+                    Button {
+                        selectThinkspaceMode(mode)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: mode.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(mode.title)
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundStyle(thinkspaceMode == mode ? DS.text : DS.textSecondary)
+                        .padding(.horizontal, 8)
+                        .frame(height: modeSwitcherButtonHeight)
+                        .background(
+                            Capsule()
+                                .fill(thinkspaceMode == mode ? DS.accent.opacity(0.12) : Color.clear)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .transition(modeSwitcherItemTransition)
+                }
+            } else {
+                Button {
+                    withAnimation(modeSwitcherAnimation) {
+                        isModeSwitcherExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: thinkspaceMode.icon)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(DS.textSecondary)
+                        .frame(width: modeSwitcherButtonHeight, height: modeSwitcherButtonHeight)
+                }
+                .buttonStyle(.plain)
+                .transition(modeSwitcherItemTransition)
+            }
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 4)
+        .frame(minWidth: modeSwitcherCollapsedWidth)
+        .frame(height: bottomControlHeight)
+        .background(DS.surfaceElevated, in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(DS.borderActive, lineWidth: 1)
+        )
+        .clipShape(Capsule())
+        .shadow(color: DS.accent.opacity(0.1), radius: 8, y: 2)
+        .onHover { hovering in
+            withAnimation(modeSwitcherAnimation) {
+                isModeSwitcherExpanded = hovering
+            }
+        }
+        .animation(modeSwitcherAnimation, value: isModeSwitcherExpanded)
+        .animation(modeSwitcherAnimation, value: thinkspaceMode)
+    }
+
     // MARK: - Zoom Indicator
     private var zoomIndicator: some View {
         Group {
@@ -430,14 +556,13 @@ struct CanvasView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                .frame(height: bottomControlHeight)
                 .background(DS.surfaceElevated, in: Capsule())
                 .overlay(
                     Capsule()
                         .stroke(DS.borderActive, lineWidth: 1)
                 )
                 .shadow(color: DS.accent.opacity(0.1), radius: 8, y: 2)
-                .padding(.trailing, 20)
-                .padding(.bottom, 20)
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
@@ -617,6 +742,96 @@ struct CanvasView: View {
         }
     }
 
+    private var thinkspaceLibrarySnapshot: ThinkspaceLibrarySnapshot {
+        ThinkspaceLibrarySnapshot.make(
+            blocks: spatialEngine.blocks,
+            clusters: clusterEngine.userClusters,
+            inventory: libraryInventory
+        )
+    }
+
+    private var thinkspaceLibraryView: some View {
+        ThinkspaceLibraryModeView(
+            thinkspaceName: thinkspaceManager.currentThinkspace?.name ?? "Thinkspace",
+            snapshot: thinkspaceLibrarySnapshot,
+            onOpenItem: { item in
+                openLibraryItem(item)
+            }
+        )
+        .onAppear {
+            refreshLibraryInventory()
+        }
+    }
+
+    private func selectThinkspaceMode(_ mode: ThinkspaceCanvasMode) {
+        if mode == .deepDive {
+            openCurrentThinkspaceDeepDive()
+            withAnimation(modeSwitcherAnimation) {
+                isModeSwitcherExpanded = false
+            }
+            return
+        }
+
+        withAnimation(modeSwitcherAnimation) {
+            thinkspaceMode = mode
+            isModeSwitcherExpanded = false
+        }
+
+        if mode == .library {
+            refreshLibraryInventory()
+        }
+    }
+
+    private func refreshLibraryInventory() {
+        guard let activeThinkspaceId = thinkspaceId ?? spatialEngine.currentThinkspaceId else {
+            libraryInventory = []
+            return
+        }
+
+        libraryLoadTask?.cancel()
+        libraryLoadTask = Task { @MainActor in
+            await thinkspaceManager.fetchNavigationData(for: activeThinkspaceId)
+            guard !Task.isCancelled else { return }
+            libraryInventory = thinkspaceManager.navigationCache[activeThinkspaceId]?.blockInventory ?? []
+        }
+    }
+
+    private func openLibraryItem(_ item: ThinkspaceLibraryItem) {
+        guard item.entityId > 0 else { return }
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: [
+                "type": item.entityType,
+                "id": item.entityId
+            ]
+        )
+    }
+
+    private func openCurrentThinkspaceDeepDive() {
+        let activeThinkspaceId = thinkspaceId ?? spatialEngine.currentThinkspaceId
+        guard let activeThinkspace = thinkspaceManager.currentThinkspace
+            ?? thinkspaceManager.thinkspaces.first(where: { $0.id == activeThinkspaceId }) else {
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                let profile = try await InquiryRepository.shared.resolveDeepDiveProfile(
+                    forThinkspace: activeThinkspace.id,
+                    title: activeThinkspace.name
+                )
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Inquiry.openDeepDive,
+                    object: nil,
+                    userInfo: ["uuid": profile.uuid]
+                )
+            } catch {
+                print("⚠️ Failed to open Thinkspace Deep Dive: \(error)")
+            }
+        }
+    }
+
     private func blockDragOffset(for block: CanvasBlock) -> CGSize {
         if draggingClusterMemberUUIDs.contains(block.entityUuid) {
             return clusterDragTranslation
@@ -640,7 +855,8 @@ struct CanvasView: View {
     }
 
     private var renderedBlocks: [CanvasBlock] {
-        spatialEngine.blocks.map(renderedBlock(for:))
+        guard clusterResizeSession != nil else { return spatialEngine.blocks }
+        return spatialEngine.blocks.map(renderedBlock(for:))
     }
 
     private func renderedBlock(for block: CanvasBlock) -> CanvasBlock {
@@ -654,8 +870,8 @@ struct CanvasView: View {
         return rendered
     }
 
-    private var blocksLayer: some View {
-        ForEach(renderedBlocks.filter { !clusterConsumedBlockUUIDs.contains($0.entityUuid) }, id: \.id) { block in
+    private func blocksLayer(snapshot: CanvasRenderSnapshot) -> some View {
+        ForEach(snapshot.renderableBlocks, id: \.id) { block in
             CanvasBlockTransformHost(
                 block: block,
                 transform: viewportTransform,
@@ -667,8 +883,8 @@ struct CanvasView: View {
                 isCrossThinkspaceDragging: crossDragManager.isOverSidebar && crossDragManager.draggedBlock?.id == block.id,
                 staticContent: CanvasBlockStaticView(
                     block: block,
-                    isMediaContent: mediaContentBlockIds.contains(block.id),
-                    isViewportActive: visibilityIndex.isBlockVisible(block)
+                    isMediaContent: snapshot.mediaContentBlockIds.contains(block.id),
+                    isViewportActive: snapshot.visibleBlockIds.contains(block.id)
                 ),
                 onDragChanged: { translation in
                     if NSEvent.modifierFlags.contains(.option) {
@@ -708,11 +924,9 @@ struct CanvasView: View {
 
     /// Block UUIDs consumed by non-canvas clusters (list/board) — hidden from normal blocksLayer
     private var clusterConsumedBlockUUIDs: Set<String> {
-        var s = Set<String>()
-        for c in clusterEngine.userClusters where c.viewMode != .canvas {
-            s.formUnion(c.blockUUIDs)
-        }
-        return s
+        Set(clusterEngine.userClusters
+            .filter { $0.viewMode != .canvas }
+            .flatMap(\.blockUUIDs))
     }
 
     /// Block hit testing only needs to be suppressed while the cluster itself is actively
@@ -749,7 +963,7 @@ struct CanvasView: View {
     private var panGestureBackground: some View {
         Color.clear
             .contentShape(Rectangle())
-            .allowsHitTesting(drawingState.toolMode == .select)
+            .allowsHitTesting(drawingState.toolMode == .select && thinkspaceMode == .canvas)
             .onTapGesture {
                 // Only deselect the previously selected block (not the whole array)
                 if let prevId = selectedBlockId,
@@ -866,7 +1080,19 @@ struct CanvasView: View {
 
     private func publishSceneTintImmediately() {
         sceneTintUpdateTask?.cancel()
-        publishSceneTint()
+        if sceneTintThrottleTask == nil {
+            publishSceneTint()
+            sceneTintThrottleTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(16))
+                sceneTintThrottleTask = nil
+                if sceneTintNeedsTrailingPublish {
+                    sceneTintNeedsTrailingPublish = false
+                    publishSceneTint()
+                }
+            }
+        } else {
+            sceneTintNeedsTrailingPublish = true
+        }
     }
 
     private func publishSceneTint() {
@@ -916,8 +1142,8 @@ struct CanvasView: View {
         let intensity: Double
         let edgeIntensity: Double
         if hasNearContent {
-            intensity = 0.34
-            edgeIntensity = 0.55
+            intensity = 0.17
+            edgeIntensity = 0.275
         } else {
             intensity = 0.08
             edgeIntensity = 0.10
@@ -937,8 +1163,12 @@ struct CanvasView: View {
         visibleClusters: [SceneColorSignal],
         visibleBlocks: [SceneColorSignal]
     ) -> CosmoGlassSceneMaterial {
-        let clusterSignals = visibleClusters.filter { $0.isNearSidebar }
-        let blockSignals = visibleBlocks.filter { $0.isNearSidebar }
+        let clusterSignals = visibleClusters
+            .filter { $0.isNearSidebar }
+            .sorted { $0.rect.minX < $1.rect.minX }
+        let blockSignals = visibleBlocks
+            .filter { $0.isNearSidebar }
+            .sorted { $0.rect.minX < $1.rect.minX }
         var signals: [CosmoGlassSceneSignal] = []
 
         signals.append(
@@ -947,9 +1177,9 @@ struct CanvasView: View {
                     id: "canvas-cluster-\(signal.id)",
                     color: signal.color,
                     rect: signal.rect,
-                    intensity: 0.44,
+                    intensity: 0.22,
                     source: .canvasCluster,
-                    allowsDeepDiffusion: signal.rect.minX < 960
+                    allowsDeepDiffusion: signal.rect.minX < 640
                 )
             }
         )
@@ -960,9 +1190,9 @@ struct CanvasView: View {
                     id: "canvas-block-\(signal.id)",
                     color: signal.color,
                     rect: signal.rect,
-                    intensity: 0.54,
+                    intensity: 0.27,
                     source: .canvasBlock,
-                    allowsDeepDiffusion: signal.rect.minX < 960
+                    allowsDeepDiffusion: signal.rect.minX < 640
                 )
             }
         )
@@ -976,68 +1206,28 @@ struct CanvasView: View {
         )
     }
 
-    private typealias SceneColorSignal = (id: String, color: Color, rect: CGRect, isNearSidebar: Bool)
+    private typealias SceneColorSignal = CanvasSceneColorSignal
 
     private func visibleClusterSignals() -> [SceneColorSignal] {
-        let viewport = CGRect(origin: .zero, size: canvasSize).insetBy(dx: -120, dy: -120)
-        let nearLimit: CGFloat = 1_160
-
-        return clusterEngine.allClusters.compactMap { cluster in
-            let rect = viewportTransform.canvasRectToScreen(liveSceneRect(for: cluster))
-            guard rect.width > 1, rect.height > 1, rect.intersects(viewport) else { return nil }
-            return ("\(cluster.id)", cluster.color, rect, rect.minX <= nearLimit)
-        }
+        CanvasSceneSignalBuilder.clusterSignals(
+            clusters: clusterEngine.allClusters,
+            transform: viewportTransform,
+            viewportSize: canvasSize,
+            draggingClusterId: draggingClusterId,
+            clusterDragTranslation: clusterDragTranslation
+        )
     }
 
     private func visibleBlockSignals() -> [SceneColorSignal] {
-        let viewport = CGRect(origin: .zero, size: canvasSize).insetBy(dx: -120, dy: -120)
-        let nearLimit: CGFloat = 1_160
-
-        return spatialEngine.blocks.compactMap { block in
-            let rect = screenRect(for: block, position: liveScenePosition(for: block))
-            guard rect.intersects(viewport) else { return nil }
-            return (block.id, block.entityType.color, rect, rect.minX <= nearLimit)
-        }
-    }
-
-    private func liveSceneRect(for cluster: CanvasCluster) -> CGRect {
-        guard draggingClusterId == cluster.id else { return cluster.boundingRect }
-        return cluster.boundingRect.offsetBy(
-            dx: clusterDragTranslation.width,
-            dy: clusterDragTranslation.height
-        )
-    }
-
-    private func liveScenePosition(for block: CanvasBlock) -> CGPoint {
-        if blockDragState.activeId == block.id {
-            return CGPoint(
-                x: block.position.x + blockDragState.translation.width,
-                y: block.position.y + blockDragState.translation.height
-            )
-        }
-
-        if draggingClusterId != nil, draggingClusterMemberUUIDs.contains(block.entityUuid) {
-            return CGPoint(
-                x: block.position.x + clusterDragTranslation.width,
-                y: block.position.y + clusterDragTranslation.height
-            )
-        }
-
-        return block.position
-    }
-
-    private func screenRect(for block: CanvasBlock, position: CGPoint? = nil) -> CGRect {
-        let center = viewportTransform.canvasToScreen(position ?? block.position)
-        let scale = viewportTransform.effectiveScale
-        let size = CGSize(
-            width: block.size.width * scale,
-            height: block.size.height * scale
-        )
-        return CGRect(
-            x: center.x - size.width / 2,
-            y: center.y - size.height / 2,
-            width: size.width,
-            height: size.height
+        CanvasSceneSignalBuilder.blockSignals(
+            blocks: renderedBlocks,
+            transform: viewportTransform,
+            viewportSize: canvasSize,
+            activeBlockDrag: blockDragState,
+            draggingClusterId: draggingClusterId,
+            draggingClusterMemberUUIDs: draggingClusterMemberUUIDs,
+            clusterDragTranslation: clusterDragTranslation,
+            consumedBlockUUIDs: clusterConsumedBlockUUIDs
         )
     }
 
@@ -1060,6 +1250,13 @@ struct CanvasView: View {
 
                 // Load persisted blocks from database for this ThinkSpace
                 Task { @MainActor in
+                    if let cached = ThinkspaceCanvasSnapshotCache.shared.entry(for: thinkspaceId) {
+                        spatialEngine.blocks = cached.blocks
+                        canvasScale = cached.zoomLevel
+                        canvasOffset = cached.panOffset
+                        mediaContentBlockIds = cached.mediaContentBlockIds
+                    }
+
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
@@ -1073,11 +1270,19 @@ struct CanvasView: View {
                         canvasOffset = ts.panOffset
                     }
 
+                    ThinkspaceCanvasSnapshotCache.shared.store(
+                        blocks: spatialEngine.blocks,
+                        zoomLevel: canvasScale,
+                        panOffset: canvasOffset,
+                        thinkspaceId: thinkspaceId
+                    )
+
                     // Load user-created clusters
                     await clusterEngine.loadUserClusters(
                         thinkspaceId: thinkspaceId,
                         blocks: spatialEngine.blocks
                     )
+                    refreshLibraryInventory()
                     scheduleSceneTintPublish(delay: .milliseconds(80))
                     
                 }
@@ -1627,8 +1832,13 @@ struct CanvasView: View {
                 removeCanvasObservers()
                 sceneTintUpdateTask?.cancel()
                 sceneTintUpdateTask = nil
+                sceneTintThrottleTask?.cancel()
+                sceneTintThrottleTask = nil
+                sceneTintNeedsTrailingPublish = false
                 thinkspaceSwitchTask?.cancel()
                 thinkspaceSwitchTask = nil
+                libraryLoadTask?.cancel()
+                libraryLoadTask = nil
             }
             .onChange(of: geometry.size) { _, newSize in
                 updateCanvasSize(newSize)
@@ -1675,6 +1885,13 @@ struct CanvasView: View {
                     }
 
                     // Load new content
+                    if let cached = ThinkspaceCanvasSnapshotCache.shared.entry(for: newId) {
+                        spatialEngine.blocks = cached.blocks
+                        canvasScale = cached.zoomLevel
+                        canvasOffset = cached.panOffset
+                        mediaContentBlockIds = cached.mediaContentBlockIds
+                    }
+
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: newId)
                     guard !Task.isCancelled else { return }
 
@@ -1688,6 +1905,16 @@ struct CanvasView: View {
                     guard !Task.isCancelled else { return }
 
                     rebuildMediaContentCache()
+                    libraryInventory = []
+                    if thinkspaceMode == .library {
+                        refreshLibraryInventory()
+                    }
+                    ThinkspaceCanvasSnapshotCache.shared.store(
+                        blocks: spatialEngine.blocks,
+                        zoomLevel: canvasScale,
+                        panOffset: canvasOffset,
+                        thinkspaceId: newId
+                    )
                     scheduleSceneTintPublish(delay: .milliseconds(80))
 
                     // Set entry starting position (small/far — behind the background)
@@ -2275,6 +2502,12 @@ struct CanvasView: View {
                 panOffset: canvasOffset,
                 blockIds: blockIds
             )
+            ThinkspaceCanvasSnapshotCache.shared.store(
+                blocks: spatialEngine.blocks,
+                zoomLevel: canvasScale,
+                panOffset: canvasOffset,
+                thinkspaceId: thinkspaceId
+            )
         }
     }
 
@@ -2675,6 +2908,12 @@ struct CanvasView: View {
 
         // Update frame tracker after position change
         blockFrameTracker.updateFrames(blocks: spatialEngine.blocks, transform: viewportTransform)
+        ThinkspaceCanvasSnapshotCache.shared.store(
+            blocks: spatialEngine.blocks,
+            zoomLevel: canvasScale,
+            panOffset: canvasOffset,
+            thinkspaceId: thinkspaceId
+        )
 
         // Check cluster zone membership after drag
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
@@ -4394,6 +4633,542 @@ struct CanvasBlockStaticView: View {
             DeepDivePortalBlockView(block: block)
         default:
             FloatingBlockView(block: block)
+        }
+    }
+}
+
+// MARK: - Thinkspace Mode Library
+
+enum ThinkspaceCanvasMode: String, CaseIterable, Identifiable {
+    case canvas
+    case library
+    case deepDive
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .canvas: return "Canvas"
+        case .library: return "Library"
+        case .deepDive: return "Deep Dive"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .canvas: return "square.grid.3x3"
+        case .library: return "folder"
+        case .deepDive: return "circle.hexagongrid.circle"
+        }
+    }
+}
+
+struct ThinkspaceLibraryItem: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let entityType: EntityType
+    let entityId: Int64
+    let entityUuid: String
+    let isOnCanvas: Bool
+    let block: CanvasBlock?
+}
+
+struct ThinkspaceLibraryFolder: Identifiable, Equatable {
+    let id: UUID
+    let title: String
+    let colorIndex: Int
+    let items: [ThinkspaceLibraryItem]
+
+    var color: Color {
+        let index = ((colorIndex % CanvasCluster.palette.count) + CanvasCluster.palette.count) % CanvasCluster.palette.count
+        return CanvasCluster.palette[index]
+    }
+}
+
+struct ThinkspaceLibrarySnapshot: Equatable {
+    let folders: [ThinkspaceLibraryFolder]
+    let looseItems: [ThinkspaceLibraryItem]
+
+    static func make(
+        blocks: [CanvasBlock],
+        clusters: [CanvasCluster],
+        inventory: [ChildDoc]
+    ) -> ThinkspaceLibrarySnapshot {
+        var itemsByUUID: [String: ThinkspaceLibraryItem] = [:]
+
+        for doc in inventory where !doc.entityUuid.isEmpty {
+            itemsByUUID[doc.entityUuid] = ThinkspaceLibraryItem(
+                id: doc.entityUuid,
+                title: doc.title,
+                entityType: doc.entityType,
+                entityId: doc.entityId,
+                entityUuid: doc.entityUuid,
+                isOnCanvas: false,
+                block: nil
+            )
+        }
+
+        for block in blocks where !block.entityUuid.isEmpty {
+            itemsByUUID[block.entityUuid] = ThinkspaceLibraryItem(
+                id: block.entityUuid,
+                title: block.title.isEmpty ? block.entityType.rawValue.replacingOccurrences(of: "_", with: " ").capitalized : block.title,
+                entityType: block.entityType,
+                entityId: block.entityId,
+                entityUuid: block.entityUuid,
+                isOnCanvas: true,
+                block: block
+            )
+        }
+
+        let sortedClusters = clusters.sorted { lhs, rhs in
+            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+
+        let folders = sortedClusters.map { cluster in
+            let items = cluster.blockUUIDs
+                .compactMap { itemsByUUID[$0] }
+            return ThinkspaceLibraryFolder(
+                id: cluster.id,
+                title: cluster.name,
+                colorIndex: cluster.colorIndex,
+                items: items
+            )
+        }
+
+        let clusteredUUIDs = Set(clusters.flatMap(\.blockUUIDs))
+        let looseItems = itemsByUUID.values
+            .filter { !clusteredUUIDs.contains($0.entityUuid) }
+            .sorted { lhs, rhs in
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+
+        return ThinkspaceLibrarySnapshot(folders: folders, looseItems: looseItems)
+    }
+}
+
+private struct ThinkspaceLibraryModeView: View {
+    let thinkspaceName: String
+    let snapshot: ThinkspaceLibrarySnapshot
+    let onOpenItem: (ThinkspaceLibraryItem) -> Void
+
+    @State private var selectedFolderID: UUID?
+    @State private var searchText = ""
+
+    var body: some View {
+        ZStack {
+            DS.canvas
+                .ignoresSafeArea()
+
+            libraryContent
+                .padding(.horizontal, 44)
+                .padding(.vertical, 34)
+        }
+    }
+
+    private var itemCount: Int {
+        snapshot.looseItems.count + snapshot.folders.reduce(0) { $0 + $1.items.count }
+    }
+
+    private var selectedFolder: ThinkspaceLibraryFolder? {
+        selectedFolderID.flatMap { id in snapshot.folders.first { $0.id == id } }
+    }
+
+    private var visibleLooseItems: [ThinkspaceLibraryItem] {
+        filteredItems(snapshot.looseItems)
+    }
+
+    private var visibleFolders: [ThinkspaceLibraryFolder] {
+        guard selectedFolder == nil else { return [] }
+        guard !trimmedSearch.isEmpty else { return snapshot.folders }
+        return snapshot.folders.filter { folder in
+            matches(folder.title) || folder.items.contains(where: { matches($0.title) })
+        }
+    }
+
+    private var visibleFolderItems: [ThinkspaceLibraryItem] {
+        filteredItems(selectedFolder?.items ?? [])
+    }
+
+    private var trimmedSearch: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var libraryContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            ThinkspaceLibraryHeader(
+                title: selectedFolder?.title ?? thinkspaceName,
+                subtitle: subtitleText,
+                searchText: $searchText,
+                selectedFolder: selectedFolder,
+                onBack: { selectedFolderID = nil }
+            )
+
+            ScrollView {
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 28) {
+                    rootFolderTiles
+                    documentTiles
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 92)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .overlay {
+                if shouldShowEmptyState {
+                    emptyState
+                }
+            }
+        }
+    }
+
+    private var rootFolderTiles: some View {
+        ForEach(visibleFolders) { folder in
+            ThinkspaceLibraryFolderTile(folder: folder) {
+                selectedFolderID = folder.id
+            }
+        }
+    }
+
+    private var documentTiles: some View {
+        ForEach(currentVisibleItems) { item in
+            ThinkspaceLibraryDocumentTile(item: item) {
+                onOpenItem(item)
+            }
+        }
+    }
+
+    private var currentVisibleItems: [ThinkspaceLibraryItem] {
+        selectedFolder == nil ? visibleLooseItems : visibleFolderItems
+    }
+
+    private var gridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 156, maximum: 180), spacing: 28, alignment: .top)]
+    }
+
+    private var subtitleText: String {
+        if let folder = selectedFolder {
+            return "\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")"
+        }
+        return "\(itemCount) item\(itemCount == 1 ? "" : "s")"
+    }
+
+    private var shouldShowEmptyState: Bool {
+        if selectedFolder != nil {
+            return visibleFolderItems.isEmpty
+        }
+        return visibleFolders.isEmpty && visibleLooseItems.isEmpty
+    }
+
+    private var emptyState: some View {
+        ThinkspaceLibraryEmptyState(
+            icon: trimmedSearch.isEmpty ? "folder" : "magnifyingglass",
+            title: emptyTitle,
+            message: emptyMessage
+        )
+        .frame(maxWidth: .infinity, minHeight: 260)
+    }
+
+    private var emptyTitle: String {
+        if !trimmedSearch.isEmpty { return "No matches" }
+        if selectedFolder != nil { return "This cluster is empty" }
+        return "Your workspace is ready"
+    }
+
+    private var emptyMessage: String {
+        if !trimmedSearch.isEmpty {
+            return "Try a document, cluster, or phrase from this Thinkspace."
+        }
+        if selectedFolder != nil {
+            return "Drag documents into this cluster from the canvas to fill it."
+        }
+        return "Create a block or capture a thought to start building this library."
+    }
+
+    private func filteredItems(_ items: [ThinkspaceLibraryItem]) -> [ThinkspaceLibraryItem] {
+        guard !trimmedSearch.isEmpty else { return items }
+        return items.filter { item in
+            matches(item.title) || matches(item.block?.subtitle ?? "") || matches(item.block?.metadata["content"] ?? "")
+        }
+    }
+
+    private func matches(_ value: String) -> Bool {
+        value.localizedCaseInsensitiveContains(trimmedSearch)
+    }
+}
+
+private struct ThinkspaceLibraryHeader: View {
+    let title: String
+    let subtitle: String
+    @Binding var searchText: String
+    let selectedFolder: ThinkspaceLibraryFolder?
+    let onBack: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            breadcrumb
+            HStack(alignment: .firstTextBaseline) {
+                titleBlock
+                Spacer()
+                searchField
+            }
+        }
+    }
+
+    private var breadcrumb: some View {
+        Group {
+            if let selectedFolder {
+                Button(action: onBack) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Library")
+                        Text("/")
+                            .foregroundStyle(DS.textMuted)
+                        Text(selectedFolder.title)
+                            .foregroundStyle(DS.text)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+            Text(subtitle)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+            TextField("Search anything...", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 260)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 34)
+        .background(DS.surfaceElevated.opacity(0.72), in: Capsule())
+        .overlay(Capsule().stroke(DS.border.opacity(0.42), lineWidth: 1))
+    }
+}
+
+private struct ThinkspaceLibraryFolderTile: View {
+    let folder: ThinkspaceLibraryFolder
+    let onOpen: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(spacing: 10) {
+                previewWell
+                label
+            }
+            .frame(width: 156)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.gentle) {
+                isHovered = hovering
+            }
+        }
+        .accessibilityLabel("\(folder.title), \(folder.items.count) items")
+    }
+
+    private var previewWell: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DS.surfaceCard.opacity(isHovered ? 0.94 : 0.72))
+            ThinkspaceLibraryFolderGlyph(color: folder.color)
+                .frame(width: 92, height: 70)
+        }
+        .frame(width: 156, height: 132)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isHovered ? folder.color.opacity(0.34) : DS.border.opacity(0.3), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.08 : 0.035), radius: isHovered ? 14 : 6, y: isHovered ? 8 : 3)
+        .scaleEffect(isHovered ? 1.015 : 1)
+    }
+
+    private var label: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(folder.color.opacity(0.82))
+                    .frame(width: 12, height: 9)
+                Text(folder.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+            }
+            Text("\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+        .frame(width: 156, height: 44, alignment: .top)
+    }
+}
+
+private struct ThinkspaceLibraryDocumentTile: View {
+    let item: ThinkspaceLibraryItem
+    let onOpen: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(spacing: 10) {
+                previewWell
+                label
+            }
+            .frame(width: 156)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.gentle) {
+                isHovered = hovering
+            }
+        }
+        .accessibilityLabel(item.title)
+    }
+
+    private var previewWell: some View {
+        ZStack(alignment: .topTrailing) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DS.surfaceCard.opacity(isHovered ? 0.98 : 0.78))
+            previewContent
+            typeBadge
+        }
+        .frame(width: 116, height: 132)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isHovered ? item.entityType.color.opacity(0.3) : DS.border.opacity(0.28), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.08 : 0.035), radius: isHovered ? 14 : 6, y: isHovered ? 8 : 3)
+        .scaleEffect(isHovered ? 1.015 : 1)
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if let thumbnail = thumbnailPath {
+            SpotlightImageContent(urlString: thumbnail)
+        } else if item.entityType == .connection {
+            SpotlightConnectionPreview(preview: previewText, accentColor: item.entityType.color)
+        } else if let previewText, !previewText.isEmpty {
+            SpotlightPageContent(text: previewText, accentColor: item.entityType.color)
+        } else {
+            SpotlightFauxPage(accentColor: item.entityType.color)
+        }
+    }
+
+    private var typeBadge: some View {
+        Image(systemName: item.entityType.icon)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(item.entityType.color)
+            .frame(width: 22, height: 22)
+            .background(Circle().fill(DS.surfaceElevated.opacity(0.92)))
+            .overlay(Circle().stroke(DS.border.opacity(0.32), lineWidth: 1))
+            .padding(7)
+    }
+
+    private var label: some View {
+        VStack(spacing: 4) {
+            Text(item.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.text)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+            Text(item.isOnCanvas ? "On canvas" : "Stored")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+        .frame(width: 156, height: 44, alignment: .top)
+    }
+
+    private var previewText: String? {
+        item.block?.metadata["content"] ?? item.block?.subtitle ?? item.title
+    }
+
+    private var thumbnailPath: String? {
+        item.block?.metadata["thumbnail"] ?? item.block?.metadata["imagePath"]
+    }
+}
+
+private struct ThinkspaceLibraryFolderGlyph: View {
+    let color: Color
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            tab
+            bodyShape
+            highlight
+        }
+    }
+
+    private var tab: some View {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(color.opacity(0.72))
+            .frame(width: 45, height: 17)
+            .offset(x: -24, y: -37)
+    }
+
+    private var bodyShape: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(color.opacity(0.88))
+            .frame(width: 92, height: 56)
+            .overlay(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.24), Color.clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .clipShape(.rect(cornerRadius: 8))
+            )
+    }
+
+    private var highlight: some View {
+        RoundedRectangle(cornerRadius: 3, style: .continuous)
+            .fill(Color.white.opacity(0.34))
+            .frame(width: 72, height: 4)
+            .offset(y: -45)
+    }
+}
+
+private struct ThinkspaceLibraryEmptyState: View {
+    let icon: String
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 34, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(DS.text)
+            Text(message)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
         }
     }
 }

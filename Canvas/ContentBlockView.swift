@@ -40,6 +40,11 @@ struct ContentBlockView: View {
             accentColor: accentColor,
             icon: "doc.text.fill",
             title: displayTitle,
+            surfaceStyle: .crisp,
+            fixedLayoutSize: CanvasBlock.documentLayoutSize,
+            preservesAspectRatio: true,
+            suppressGiltCorner: true,
+            suppressAccentChip: true,
             onFocusMode: openFocusMode
         ) {
             workflowCardView
@@ -80,71 +85,42 @@ struct ContentBlockView: View {
     // MARK: - Workflow Card View
 
     private var workflowCardView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header strip — gilt corner lives on the wrapper
-            VStack(alignment: .leading, spacing: 0) {
-                Color.clear.frame(height: 6)
-
-                HStack {
-                    Spacer()
-                    HStack(spacing: 3) {
-                        Image(systemName: currentStep.icon)
-                            .font(.system(size: 9))
-                        Text(currentStep.label)
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundColor(accentColor.opacity(0.7))
-                }
-                .padding(.top, 4)
-            }
-            .padding(.top, 12)
-            .padding(.horizontal, 16)
-
-            // Title section
+        VStack(alignment: .leading, spacing: 24) {
             titleSection
-                .padding(.top, 4)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
 
-            // Thin separator
-            Rectangle()
-                .fill(DS.border)
-                .frame(height: 1)
-
-            // Unified content preview (scrollable when content overflows)
             ScrollView(.vertical, showsIndicators: false) {
                 contentPreview
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
             .frame(maxHeight: .infinity)
 
-            // Bottom info bar
-            bottomInfoBar
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
+            documentFooter
         }
+        .padding(.top, 78)
+        .padding(.horizontal, 56)
+        .padding(.bottom, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Title Section
 
     private var titleSection: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(displayTitle)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(DS.text)
+                .font(.system(size: 40, weight: .semibold, design: .serif))
+                .foregroundStyle(DS.text)
                 .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let client = clientName, !client.isEmpty {
                 Text("For \(client)")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
             } else if let platform = platformName, !platform.isEmpty {
                 Text(platform)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
             }
         }
@@ -153,101 +129,78 @@ struct ContentBlockView: View {
     // MARK: - Unified Content Preview
 
     private var contentPreview: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !draftContent.isEmpty {
-                // Draft excerpt — primary display
-                Text(draftContent)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
-
-                // Word count badge
-                if wordCount > 0 {
-                    HStack(spacing: 4) {
-                        Image(systemName: "text.word.spacing")
-                            .font(.system(size: 9))
-                        Text("\(wordCount) words")
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundColor(accentColor)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(accentColor.opacity(0.1), in: Capsule())
-                }
-            } else if !coreIdea.isEmpty {
-                // Fallback to core idea
-                Text(coreIdea)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
-            } else if !contentDescription.isEmpty {
-                // Fallback to description
-                Text(contentDescription)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
-            } else if !hooks.isEmpty {
-                // Fallback to hooks
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(hooks.prefix(2).enumerated()), id: \.offset) { _, hook in
-                        HStack(spacing: 4) {
-                            Image(systemName: "sparkle")
-                                .font(.system(size: 8))
-                                .foregroundColor(accentColor)
-                            Text(String(hook.prefix(50)))
-                                .font(.system(size: 10))
-                                .foregroundColor(DS.text)
-                                .lineLimit(1)
-                        }
-                    }
-                }
+        Group {
+            if documentBodyText.isEmpty {
+                Text("Open to start writing...")
+                    .font(.system(size: 20))
+                    .foregroundStyle(DS.textMuted)
+                    .italic()
             } else {
-                // Empty state
-                VStack(spacing: 8) {
-                    Image(systemName: "pencil.line")
-                        .font(.system(size: 20))
-                        .foregroundColor(accentColor.opacity(0.25))
-                    Text("Open to start writing...")
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.textMuted)
-                        .italic()
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                Text(documentBodyText)
+                    .font(.system(size: 20))
+                    .lineSpacing(8)
+                    .foregroundStyle(DS.text)
+                    .textSelection(.enabled)
             }
         }
+    }
+
+    private var documentFooter: some View {
+        ZStack {
+            Text(currentStep.label)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(accentColor.opacity(0.75))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(accentColor.opacity(0.08), in: Capsule(style: .continuous))
+
+            HStack {
+                Spacer()
+                Text("\(documentWordCount) words  ·  \(documentBodyText.count) chars")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var documentBodyText: String {
+        if !draftContent.isEmpty { return draftContent }
+        if !contentBody.isEmpty { return contentBody }
+        if !coreIdea.isEmpty { return coreIdea }
+        if !contentDescription.isEmpty { return contentDescription }
+        if !outlineItems.isEmpty { return outlineItems.joined(separator: "\n\n") }
+        if !hooks.isEmpty { return hooks.joined(separator: "\n\n") }
+        return ""
+    }
+
+    private var documentWordCount: Int {
+        if wordCount > 0 { return wordCount }
+        return documentBodyText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
     }
 
     // MARK: - Bottom Info Bar
 
     private var bottomInfoBar: some View {
         HStack(spacing: 4) {
-            // 3-dot step progress (brainstorm / draft / polish)
-            HStack(spacing: 3) {
-                ForEach(ContentStep.allCases, id: \.rawValue) { step in
-                    Circle()
-                        .fill(stepDotColor(step))
-                        .frame(width: 5, height: 5)
-                }
-            }
-
-            if wordCount > 0 {
-                Text("\u{00B7}")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
-                Text("\(wordCount)w")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
-            }
-
             Spacer()
 
             // Last modified
             if let modified = lastModified {
                 Text(formatRelativeDate(modified))
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             } else if let timestamp = block.metadata["updated"] {
                 Text(formatTimestamp(timestamp))
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }

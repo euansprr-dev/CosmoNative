@@ -32,11 +32,25 @@ enum InboxCaptureConverter {
 
         guard let metaStr = metadataStr,
               let metaData = metaStr.data(using: .utf8),
-              let meta = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any],
-              meta["isInboxCapture"] as? Bool == true else { return }
+              let meta = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any] else { return }
+
+        let isInboxCapture = meta["isInboxCapture"] as? Bool == true
+        let isCaptureLaneCapture = meta["isCaptureLaneCapture"] as? Bool == true
+        guard isInboxCapture || isCaptureLaneCapture else { return }
 
         let rawText = atomData["body"] as? String ?? atomData["title"] as? String ?? ""
         guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        if isCaptureLaneCapture {
+            await convertCaptureLaneCapture(
+                sourceAtomUuid: uuid,
+                destinationName: meta["captureDestinationName"] as? String,
+                rawText: rawText,
+                title: atomData["title"] as? String,
+                metadata: meta
+            )
+            return
+        }
 
         let title = atomData["title"] as? String
 
@@ -114,6 +128,171 @@ enum InboxCaptureConverter {
                     print("⚠️ InboxCaptureConverter: Failed to create InboxItem from cloud capture: \(error)")
                 }
             }
+        }
+    }
+
+    @MainActor
+    private static func convertCaptureLaneCapture(
+        sourceAtomUuid: String,
+        destinationName: String?,
+        rawText: String,
+        title: String?,
+        metadata: [String: Any]
+    ) async {
+        guard let destinationName,
+              let destination = try? await CaptureDestinationRepository.shared.resolveCommand(destinationName) else {
+            await convertLaneCaptureToInbox(
+                sourceAtomUuid: sourceAtomUuid,
+                rawText: rawText,
+                title: title,
+                reason: "Unknown capture lane"
+            )
+            return
+        }
+
+        let dedupeNeedle = "\"sourceAtomUuid\":\"\(sourceAtomUuid)\""
+        let alreadyConverted = (try? await CosmoDatabase.shared.asyncRead { db in
+            try Row.fetchOne(
+                db,
+                sql: "SELECT 1 FROM captured_items WHERE provenanceMetadata LIKE ? LIMIT 1",
+                arguments: ["%\(dedupeNeedle)%"]
+            )
+        }) ?? nil
+        if alreadyConverted != nil {
+            await softDeleteTransportAtom(uuid: sourceAtomUuid)
+            return
+        }
+
+        let provenance = [
+            "sourceAtomUuid": sourceAtomUuid,
+            "captureSource": "telegram_cloud",
+            "captureDestinationName": destinationName,
+            "telegramChatId": metadata["telegramChatId"] as? String ?? "",
+            "telegramMessageId": metadata["telegramMessageId"] as? String ?? "",
+            "telegramMediaGroupId": metadata["telegramMediaGroupId"] as? String ?? ""
+        ]
+        let provenanceJSON = try? String(
+            data: JSONSerialization.data(withJSONObject: provenance),
+            encoding: .utf8
+        )
+
+        do {
+            let captured = try await CapturedItemRepository.shared.create(
+                .makeTelegram(
+                    rawText: rawText,
+                    caption: nil,
+                    chatId: metadata["telegramChatId"] as? String ?? "telegram_cloud",
+                    messageId: metadata["telegramMessageId"] as? String ?? sourceAtomUuid,
+                    mediaGroupId: metadata["telegramMediaGroupId"] as? String,
+                    sender: metadata["telegramSender"] as? String,
+                    metadata: provenanceJSON
+                )
+            )
+            let mediaIds = try await createTelegramMediaAttachments(
+                capturedItemId: captured.uuid,
+                metadata: metadata
+            )
+            if !mediaIds.isEmpty {
+                try await CapturedItemRepository.shared.attachMedia(
+                    capturedItemId: captured.uuid,
+                    mediaIds: mediaIds
+                )
+            }
+            try await CapturedItemRepository.shared.updateRouting(
+                uuid: captured.uuid,
+                destinationId: destination.uuid,
+                parsedCommand: destinationName,
+                parsedIntent: "cloud_capture_lane",
+                confidence: 1.0,
+                status: .routed
+            )
+            await CaptureDestinationRepository.shared.markUsed(uuid: destination.uuid)
+            await softDeleteTransportAtom(uuid: sourceAtomUuid)
+            NotificationCenter.default.post(
+                name: CosmoNotification.Inbox.itemAdded,
+                object: nil,
+                userInfo: ["captureDestinationId": destination.uuid]
+            )
+            print("📥 InboxCaptureConverter: routed cloud capture \(sourceAtomUuid) to lane \(destination.name)")
+        } catch {
+            print("⚠️ InboxCaptureConverter: Failed to route cloud lane capture: \(error)")
+            await convertLaneCaptureToInbox(
+                sourceAtomUuid: sourceAtomUuid,
+                rawText: rawText,
+                title: title,
+                reason: "Lane routing failed"
+            )
+        }
+    }
+
+    @MainActor
+    private static func convertLaneCaptureToInbox(sourceAtomUuid: String, rawText: String, title: String?, reason: String) async {
+        let inboxMetadata = "{\"sourceAtomUuid\":\"\(sourceAtomUuid)\",\"reason\":\"\(reason)\"}"
+        let item = InboxItem.new(
+            source: .telegramText,
+            rawText: rawText,
+            title: title,
+            metadata: inboxMetadata
+        )
+
+        do {
+            _ = try await InboxRepository.shared.create(item)
+            await softDeleteTransportAtom(uuid: sourceAtomUuid)
+            NotificationCenter.default.post(name: CosmoNotification.Inbox.itemAdded, object: nil)
+            print("📥 InboxCaptureConverter: fallback inbox item created for cloud lane capture \(sourceAtomUuid)")
+        } catch {
+            print("⚠️ InboxCaptureConverter: Failed fallback inbox capture: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func createTelegramMediaAttachments(
+        capturedItemId: String,
+        metadata: [String: Any]
+    ) async throws -> [String] {
+        guard let media = metadata["telegramMedia"] as? [[String: Any]], !media.isEmpty else {
+            return []
+        }
+
+        var ids: [String] = []
+        for item in media {
+            guard let fileId = item["fileId"] as? String else { continue }
+
+            let kind = (item["kind"] as? String).flatMap(MediaAttachmentKind.init(rawValue:)) ?? .unknown
+            let attachmentMetadata = try? String(
+                data: JSONSerialization.data(withJSONObject: item),
+                encoding: .utf8
+            )
+            let attachment = MediaAttachment.makeTelegram(
+                capturedItemId: capturedItemId,
+                kind: kind,
+                fileId: fileId,
+                fileUniqueId: item["fileUniqueId"] as? String,
+                filename: item["filename"] as? String,
+                mimeType: item["mimeType"] as? String,
+                fileSize: int64Value(item["fileSize"]),
+                metadata: attachmentMetadata
+            )
+            let saved = try await MediaAttachmentRepository.shared.create(attachment)
+            ids.append(saved.uuid)
+        }
+        return ids
+    }
+
+    private static func int64Value(_ value: Any?) -> Int64? {
+        if let value = value as? Int64 { return value }
+        if let value = value as? Int { return Int64(value) }
+        if let value = value as? Double { return Int64(value) }
+        if let value = value as? String { return Int64(value) }
+        return nil
+    }
+
+    private static func softDeleteTransportAtom(uuid: String) async {
+        try? await CosmoDatabase.shared.asyncWrite { db in
+            try db.execute(
+                sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+            )
         }
     }
 }

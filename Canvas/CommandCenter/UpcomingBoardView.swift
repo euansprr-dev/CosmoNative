@@ -8,6 +8,10 @@ enum UpcomingCalendarScope: String, CaseIterable, Identifiable {
     case week
     case month
 
+    static var allCases: [UpcomingCalendarScope] {
+        [.week]
+    }
+
     var id: String { rawValue }
 
     var label: String {
@@ -34,6 +38,16 @@ enum CommandCenterCalendarEntrySource: Equatable {
     case task(String)
     case externalEvent(String)
     case draft
+}
+
+enum CalendarResizeEdge {
+    case top
+    case bottom
+}
+
+struct CalendarResizePreview: Equatable {
+    let offsetY: CGFloat
+    let height: CGFloat
 }
 
 struct CommandCenterCalendarEntry: Identifiable {
@@ -87,10 +101,9 @@ enum CommandCenterCalendarLayout {
         let anchorDay = calendar.startOfDay(for: anchor)
 
         switch scope {
-        case .day:
-            return [anchorDay]
-        case .week:
-            return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: anchorDay) }
+        case .day, .week:
+            let weekStart = mondayStartingWeek(containing: anchorDay, calendar: calendar)
+            return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: weekStart) }
         case .month:
             guard let monthInterval = calendar.dateInterval(of: .month, for: anchorDay) else { return [anchorDay] }
             let firstWeekday = calendar.component(.weekday, from: monthInterval.start)
@@ -109,6 +122,13 @@ enum CommandCenterCalendarLayout {
             }
             return dates
         }
+    }
+
+    static func mondayStartingWeek(containing date: Date, calendar: Calendar = .current) -> Date {
+        let day = calendar.startOfDay(for: date)
+        let weekday = calendar.component(.weekday, from: day)
+        let daysSinceMonday = (weekday + 5) % 7
+        return calendar.date(byAdding: .day, value: -daysSinceMonday, to: day) ?? day
     }
 
     static func visibleInterval(
@@ -130,6 +150,28 @@ enum CommandCenterCalendarLayout {
 
     static func blockHeight(from start: Date, to end: Date, hourHeight: CGFloat = hourHeight) -> CGFloat {
         max(18, CGFloat(max(0, end.timeIntervalSince(start))) / 3_600 * hourHeight)
+    }
+
+    static func resizePreview(
+        edge: CalendarResizeEdge,
+        translationHeight: CGFloat,
+        originalHeight: CGFloat
+    ) -> CalendarResizePreview {
+        let minimumHeight: CGFloat = 18
+
+        switch edge {
+        case .top:
+            let clampedTranslation = min(translationHeight, originalHeight - minimumHeight)
+            return CalendarResizePreview(
+                offsetY: clampedTranslation,
+                height: originalHeight - clampedTranslation
+            )
+        case .bottom:
+            return CalendarResizePreview(
+                offsetY: 0,
+                height: max(minimumHeight, originalHeight + translationHeight)
+            )
+        }
     }
 
     static func snappedDate(forY y: CGFloat, on day: Date, hourHeight: CGFloat = hourHeight, calendar: Calendar = .current) -> Date {
@@ -216,11 +258,8 @@ struct UpcomingBoardView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: DS.space12) {
-                calendarToolbar
-                calendarContent
-            }
-            .coordinateSpace(name: Self.coordinateSpaceName)
+            calendarContent
+                .coordinateSpace(name: Self.coordinateSpaceName)
 
             if let editorDraft {
                 CalendarEditorPopover(
@@ -236,18 +275,6 @@ struct UpcomingBoardView: View {
                 .zIndex(20)
             }
         }
-    }
-
-    private var calendarToolbar: some View {
-        ZStack {
-            scopeControl
-
-            HStack {
-                Spacer(minLength: 0)
-                rangeNavigation
-            }
-        }
-        .frame(height: 38)
     }
 
     private var calendarContent: some View {
@@ -288,86 +315,8 @@ struct UpcomingBoardView: View {
         .animation(ProMotionSprings.snappy, value: viewModel.upcomingCalendarScope)
     }
 
-    private var scopeControl: some View {
-        HStack(spacing: 2) {
-            ForEach(UpcomingCalendarScope.allCases) { scope in
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        viewModel.setUpcomingCalendarScope(scope)
-                    }
-                } label: {
-                    Text(scope.label)
-                        .font(.system(size: 12, weight: viewModel.upcomingCalendarScope == scope ? .semibold : .medium))
-                        .foregroundStyle(viewModel.upcomingCalendarScope == scope ? DS.text : DS.textSecondary)
-                        .frame(width: 56, height: 28)
-                        .background(
-                            (viewModel.upcomingCalendarScope == scope ? DS.surfaceHover : Color.clear),
-                            in: .rect(cornerRadius: 8)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(2)
-        .background(DS.surface.opacity(0.72), in: .rect(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.borderSubtle, lineWidth: 0.5)
-        )
-    }
-
-    private var rangeNavigation: some View {
-        HStack(spacing: 0) {
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.shiftUpcomingRange(by: -1)
-                }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Previous \(viewModel.upcomingCalendarScope.label)")
-
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.resetUpcomingToToday()
-                }
-            } label: {
-                Text("Today")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DS.text)
-                    .padding(.horizontal, DS.space12)
-                    .frame(height: 30)
-                    .background(DS.surface, in: .rect(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(DS.borderSubtle, lineWidth: 0.5)
-                    )
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.shiftUpcomingRange(by: 1)
-                }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Next \(viewModel.upcomingCalendarScope.label)")
-        }
-    }
-
     private var timelineDates: [Date] {
-        viewModel.upcomingCalendarScope == .day
-            ? [Calendar.current.startOfDay(for: viewModel.upcomingAnchorDate)]
-            : viewModel.upcomingVisibleDates
+        viewModel.upcomingVisibleDates
     }
 
     private var calendarEntries: [CommandCenterCalendarEntry] {
@@ -574,11 +523,6 @@ struct UpcomingBoardView: View {
     }
 }
 
-private enum CalendarResizeEdge {
-    case top
-    case bottom
-}
-
 private struct UpcomingTimelineCalendarView: View {
     let dates: [Date]
     let entries: [CommandCenterCalendarEntry]
@@ -596,13 +540,13 @@ private struct UpcomingTimelineCalendarView: View {
     var body: some View {
         GeometryReader { proxy in
             let dayWidth = resolvedDayWidth(totalWidth: proxy.size.width)
-            let contentWidth = CommandCenterCalendarLayout.timeRailWidth + dayWidth * CGFloat(dates.count)
+            let contentWidth = proxy.size.width
 
             ScrollViewReader { scrollProxy in
                 VStack(spacing: 0) {
                     headerRows(dayWidth: dayWidth, contentWidth: contentWidth)
 
-                    ScrollView([.vertical, .horizontal], showsIndicators: false) {
+                    ScrollView(.vertical, showsIndicators: false) {
                         timelineCanvas(dayWidth: dayWidth, contentWidth: contentWidth)
                             .frame(width: contentWidth, alignment: .leading)
                     }
@@ -613,7 +557,7 @@ private struct UpcomingTimelineCalendarView: View {
                         }
                     }
                 }
-                .background(calendarSurfaceBackground)
+                .background(Color.clear)
                 .overlay(alignment: .bottom) {
                     Rectangle()
                         .fill(DS.borderSubtle.opacity(0.55))
@@ -652,11 +596,11 @@ private struct UpcomingTimelineCalendarView: View {
                     .frame(width: dayWidth, height: CommandCenterCalendarLayout.allDayLaneHeight)
                 }
             }
-            .background(DS.surface.opacity(0.45))
+            .background(Color.clear)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(width: contentWidth, alignment: .leading)
-        .background(DS.canvas.opacity(0.52))
+        .background(Color.clear)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(DS.borderSubtle)
@@ -840,18 +784,7 @@ private struct UpcomingTimelineCalendarView: View {
     private func resolvedDayWidth(totalWidth: CGFloat) -> CGFloat {
         let available = max(0, totalWidth - CommandCenterCalendarLayout.timeRailWidth)
         let ideal = available / CGFloat(max(dates.count, 1))
-        return max(dates.count == 1 ? 620 : 118, ideal)
-    }
-
-    private var calendarSurfaceBackground: some ShapeStyle {
-        LinearGradient(
-            colors: [
-                DS.canvas.opacity(0.78),
-                DS.bg.opacity(0.34)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        return max(ideal, 1)
     }
 
     private func snappedMinuteDelta(from height: CGFloat) -> Int {
@@ -959,39 +892,74 @@ private struct CalendarEntryPositionReader: View {
     let onMove: (CGSize) -> Void
     let onResize: (CalendarResizeEdge, CGSize) -> Void
 
+    @State private var resizeEdge: CalendarResizeEdge?
+    @State private var resizeTranslation: CGSize = .zero
+
     var body: some View {
         GeometryReader { proxy in
             CalendarEntryBlock(entry: entry, isSelected: isSelected, isHovered: isHovered)
-                .frame(width: frameWidth, height: frameHeight)
+                .frame(width: frameWidth, height: preview.height)
+                .offset(y: preview.offsetY)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     onOpenEditor(entry, proxy.frame(in: .named(coordinateSpaceName)))
                 }
                 .onHover(perform: onHover)
-                .simultaneousGesture(
+                .gesture(
                     DragGesture(minimumDistance: 5)
                         .onEnded { value in
                             onMove(value.translation)
                         }
                 )
                 .overlay(alignment: .top) {
-                    CalendarResizeHandle()
+                    CalendarResizeHandle(isActive: resizeEdge == .top, isVisible: showsResizeHandles)
                         .gesture(
                             DragGesture(minimumDistance: 2)
-                                .onEnded { value in onResize(.top, value.translation) }
+                                .onChanged { value in
+                                    resizeEdge = .top
+                                    resizeTranslation = value.translation
+                                }
+                                .onEnded { value in
+                                    onResize(.top, value.translation)
+                                    resizeEdge = nil
+                                    resizeTranslation = .zero
+                                }
                         )
-                        .opacity(entry.isEditableTask ? 1 : 0)
+                        .allowsHitTesting(entry.isEditableTask)
                 }
                 .overlay(alignment: .bottom) {
-                    CalendarResizeHandle()
+                    CalendarResizeHandle(isActive: resizeEdge == .bottom, isVisible: showsResizeHandles)
                         .gesture(
                             DragGesture(minimumDistance: 2)
-                                .onEnded { value in onResize(.bottom, value.translation) }
+                                .onChanged { value in
+                                    resizeEdge = .bottom
+                                    resizeTranslation = value.translation
+                                }
+                                .onEnded { value in
+                                    onResize(.bottom, value.translation)
+                                    resizeEdge = nil
+                                    resizeTranslation = .zero
+                                }
                         )
-                        .opacity(entry.isEditableTask ? 1 : 0)
+                        .allowsHitTesting(entry.isEditableTask)
                 }
         }
         .frame(width: frameWidth, height: frameHeight)
+    }
+
+    private var preview: CalendarResizePreview {
+        guard let resizeEdge else {
+            return CalendarResizePreview(offsetY: 0, height: frameHeight)
+        }
+        return CommandCenterCalendarLayout.resizePreview(
+            edge: resizeEdge,
+            translationHeight: resizeTranslation.height,
+            originalHeight: frameHeight
+        )
+    }
+
+    private var showsResizeHandles: Bool {
+        entry.isEditableTask && (isSelected || isHovered || resizeEdge != nil)
     }
 }
 
@@ -1039,6 +1007,13 @@ private struct CalendarEntryBlock: View {
         )
         .shadow(color: isSelected ? entry.accent.opacity(0.20) : .black.opacity(0.18), radius: isSelected ? 14 : 3, x: 0, y: isSelected ? 4 : 1)
         .opacity(entry.source == .draft ? 0.78 : 1)
+        .cosmoGlassSceneSignal(
+            id: "upcoming-entry-\(entry.id)",
+            source: .commandCalendar,
+            color: entry.accent,
+            intensity: entry.source == .draft ? 0.24 : 0.20,
+            allowsDeepDiffusion: true
+        )
         .accessibilityElement(children: .combine)
     }
 
@@ -1053,10 +1028,19 @@ private struct CalendarEntryBlock: View {
 }
 
 private struct CalendarResizeHandle: View {
+    let isActive: Bool
+    let isVisible: Bool
+
     var body: some View {
-        Capsule()
+        Rectangle()
             .fill(Color.white.opacity(0.001))
-            .frame(height: 8)
+            .frame(height: 12)
+            .overlay {
+                Capsule()
+                    .fill(DS.textMuted.opacity(isActive ? 0.55 : 0.30))
+                    .frame(width: 28, height: 3)
+                    .opacity(isVisible ? 1 : 0)
+            }
             .contentShape(Rectangle())
     }
 }
@@ -1087,7 +1071,7 @@ private struct UpcomingMonthCalendarView: View {
                 }
             }
         }
-        .background(DS.canvas.opacity(0.72))
+        .background(Color.clear)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(DS.borderSubtle.opacity(0.55))

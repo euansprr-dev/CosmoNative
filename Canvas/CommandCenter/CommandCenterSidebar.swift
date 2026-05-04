@@ -45,7 +45,10 @@ struct CommandCenterSidebar: View {
 
     @ViewBuilder
     private func smartListRow(_ mode: DashboardViewMode) -> some View {
-        let isSelected = viewModel.viewMode == mode && viewModel.selectedProjectUUID == nil
+        let isSelected = viewModel.viewMode == mode &&
+            viewModel.selectedProjectUUID == nil &&
+            viewModel.selectedAreaUUID == nil &&
+            !viewModel.showReports
         let count = badgeCount(for: mode)
 
         Button {
@@ -56,16 +59,16 @@ struct CommandCenterSidebar: View {
             }
         } label: {
             HStack(spacing: DS.space10) {
-                // Gilt dot — selected indicator, replaces accent bar pattern
+                // Selected indicator, replacing the old accent bar pattern.
                 if isSelected {
                     Circle()
-                        .fill(DS.gilt)
+                        .fill(mode.activeTint.opacity(0.9))
                         .frame(width: 4, height: 4)
                 }
 
                 Image(systemName: mode.icon)
                     .font(DS.callout)
-                    .foregroundStyle(iconColor(for: mode))
+                    .foregroundStyle(isSelected ? mode.activeTint : DS.inkFaded)
                     .frame(width: DS.space20)
 
                 Text(mode.label)
@@ -77,7 +80,7 @@ struct CommandCenterSidebar: View {
                 if count > 0 {
                     Text("\(count)")
                         .font(DS.footnote)
-                        .foregroundStyle(isSelected ? DS.gilt : DS.inkFaded)
+                        .foregroundStyle(isSelected ? mode.activeTint : DS.inkFaded)
                         .monospacedDigit()
                 }
             }
@@ -94,17 +97,6 @@ struct CommandCenterSidebar: View {
         .dropDestination(for: String.self) { uuids, _ in
             handleDrop(uuids: uuids, onto: mode)
             return true
-        }
-    }
-
-    private func iconColor(for mode: DashboardViewMode) -> Color {
-        switch mode {
-        case .today: return DS.orange
-        case .upcoming: return DS.red
-        case .anytime: return DS.entityIdea
-        case .someday: return DS.entityIdea
-        case .logbook: return DS.green
-        default: return DS.textMuted
         }
     }
 

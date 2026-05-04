@@ -899,6 +899,61 @@ class AgentToolRegistry {
         ]
     }
 
+    // MARK: - Canvas Spatial Tools
+
+    private var canvasSpatialTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "inspect_current_thinkspace",
+                description: "Inspect the current Cosmo window/canvas context before proposing spatial changes. Use this before reorganizing a thinkspace or deciding what canvas operations to propose.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [:] as [String: Any],
+                    "required": [] as [String]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "propose_canvas_plan",
+                description: "Create a pending canvas/thinkspace operation plan for the user to review. This NEVER mutates the canvas directly; the user must approve the plan in Cosmo first.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "Short review-card title for the canvas plan"] as [String: Any],
+                        "rationale": ["type": "string", "description": "Brief explanation of why this spatial change helps"] as [String: Any],
+                        "operations": [
+                            "type": "array",
+                            "description": "Ordered operations to preview. Supported kinds: arrange, place_search, create_entity, place_existing_atom, move_selection, resize_selection, create_ai_block.",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "kind": ["type": "string", "description": "Operation kind: arrange, place_search, create_entity, place_existing_atom, move_selection, resize_selection, create_ai_block"] as [String: Any],
+                                    "summary": ["type": "string", "description": "User-facing operation summary"] as [String: Any],
+                                    "entityType": ["type": "string", "description": "idea, content, research, task, note, connection, swipe_file, or cosmoAI"] as [String: Any],
+                                    "title": ["type": "string", "description": "Title for created content/card"] as [String: Any],
+                                    "content": ["type": "string", "description": "Body/content for created content/card"] as [String: Any],
+                                    "query": ["type": "string", "description": "Search query for place_search or prompt for create_ai_block"] as [String: Any],
+                                    "quantity": ["type": "integer", "description": "Number of search results to place"] as [String: Any],
+                                    "layout": ["type": "string", "description": "Layout style such as orbital, grid, stack, timeline, cluster"] as [String: Any],
+                                    "style": ["type": "string", "description": "Arrangement style such as orbital, grid, stack, timeline, cluster"] as [String: Any],
+                                    "direction": ["type": "string", "description": "Movement direction: left, right, up, down"] as [String: Any],
+                                    "distance": ["type": "number", "description": "Movement distance in canvas points"] as [String: Any],
+                                    "existingAtomUUID": ["type": "string", "description": "UUID of an existing atom to place on canvas"] as [String: Any],
+                                    "x": ["type": "number", "description": "Optional screen x position"] as [String: Any],
+                                    "y": ["type": "number", "description": "Optional screen y position"] as [String: Any],
+                                    "width": ["type": "number", "description": "Width for resize_selection"] as [String: Any],
+                                    "height": ["type": "number", "description": "Height for resize_selection"] as [String: Any],
+                                    "scale": ["type": "number", "description": "Scale factor for resize_selection"] as [String: Any]
+                                ] as [String: Any],
+                                "required": ["kind", "summary"]
+                            ] as [String: Any]
+                        ] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["title", "rationale", "operations"]
+                ]
+            )
+        ]
+    }
+
     // MARK: - Client Profile Tools
 
     private var clientProfileTools: [LLMToolDefinition] {
@@ -1054,9 +1109,64 @@ class AgentToolRegistry {
         }
     }
 
+    func toolsForIntent(
+        _ intent: AgentIntent,
+        source: MessageSource = .inApp,
+        profileBundles: [AgentToolBundle],
+        forcedBundles: Set<AgentToolBundle>
+    ) -> [LLMToolDefinition] {
+        let base = toolsForIntent(intent, source: source)
+        let bundled = tools(forBundles: Set(profileBundles).union(forcedBundles), source: source)
+        return deduplicated(base + bundled)
+    }
+
+    func tools(forBundles bundles: Set<AgentToolBundle>, source: MessageSource = .inApp) -> [LLMToolDefinition] {
+        var tools: [LLMToolDefinition] = []
+
+        for bundle in bundles {
+            switch bundle {
+            case .webResearch:
+                tools += webSearchTools
+            case .contentSearch:
+                tools += ideaTools + contentTools + captureTools
+            case .clientProfiles:
+                tools += clientTools + clientProfileTools
+            case .clientMemory:
+                tools += clientMemoryTools
+            case .swipes:
+                tools += swipeTools
+            case .writing:
+                tools += writingTools + contentTools
+            case .strategy:
+                tools += strategyTools + intelligenceTools + insightMemoryTools + lessonTools + moduleManagementTools
+            case .canvasSpatial:
+                tools += canvasSpatialTools + contentTools
+            case .scheduling:
+                tools += scheduleTools
+            case .analytics:
+                tools += analyticsTools + scoringTools
+            case .preferences:
+                tools += preferenceTools + standingInstructionTools
+            }
+        }
+
+        tools += interactiveUXTools(for: source)
+        return deduplicated(tools)
+    }
+
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools
+        allTools = deduplicated(ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools)
+    }
+
+    private func deduplicated(_ tools: [LLMToolDefinition]) -> [LLMToolDefinition] {
+        var seen: Set<String> = []
+        var result: [LLMToolDefinition] = []
+        for tool in tools where !seen.contains(tool.name) {
+            seen.insert(tool.name)
+            result.append(tool)
+        }
+        return result
     }
 }

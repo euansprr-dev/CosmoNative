@@ -3,6 +3,7 @@
 // February 2026 - Focus mode with GRDB observation + 1.5s debounce auto-save
 
 import SwiftUI
+import AppKit
 import GRDB
 import Combine
 
@@ -427,6 +428,7 @@ struct NoteFocusModeView: View {
                     fontSize: 17,
                     placeholder: "Start writing…",
                     darkMode: false,
+                    overrideTextColor: NSColor(DS.text),
                     allowSlashCommands: true,
                     allowMentions: true,
                     allowSelectionMenu: true,
@@ -805,6 +807,7 @@ struct NoteFocusModeView: View {
                         compact: titleStyle.compact,
                         placeholder: "Untitled Note",
                         darkMode: false,
+                        overrideTextColor: NSColor(DS.text),
                         allowSlashCommands: false,
                         allowMentions: true,
                         allowSelectionMenu: false,

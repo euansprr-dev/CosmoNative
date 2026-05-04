@@ -9,6 +9,7 @@ struct TaskDetailPanel: View {
     let task: TaskViewModel
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
     let composer: CommandCenterComposerController
+    var onDeleted: (String) -> Void = { _ in }
 
     @State private var editedTitle: String = ""
     @State private var editedNotes: String = ""
@@ -423,6 +424,7 @@ struct TaskDetailPanel: View {
 
     private var deleteSection: some View {
         Button(role: .destructive) {
+            onDeleted(task.uuid)
             Task {
                 await viewModel.deleteTask(uuid: task.uuid)
             }

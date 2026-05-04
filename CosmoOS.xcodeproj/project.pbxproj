@@ -129,6 +129,7 @@
 		AD4E6F8A1B2C43D59E70F10A /* CapturedItemRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4E6F891B2C43D59E70F10A /* CapturedItemRepository.swift */; };
 		BA91D37C6E524F10B8C2A30B /* TelegramCaptureRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA91D37B6E524F10B8C2A30B /* TelegramCaptureRouter.swift */; };
 		25C86241C77E36FE057B4339 /* CanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC015AD19E281A8886EA2EF9 /* CanvasView.swift */; };
+		46968460B1B74076B0F66A08 /* CanvasRenderSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DE3C17B82342219B7C1ADB /* CanvasRenderSnapshot.swift */; };
 		26B318B36FC190FC63AEF491 /* LevelUpCelebrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 229A581FC01C4C1886C9D2FA /* LevelUpCelebrationView.swift */; };
 		2726845FEF41335478D3E06B /* ProvocationMarkerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D90EB9F9711C69828C18E59 /* ProvocationMarkerView.swift */; };
 		27C45EBCBF613E734910542A /* IdeaFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B25898A72ADD2874C6B76830 /* IdeaFocusModeView.swift */; };
@@ -202,6 +203,7 @@
 		44C42FD576CDC7B4081E1035 /* CreatorImportEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83AF9A8D3FF1C6488C737709 /* CreatorImportEngine.swift */; };
 		457715DE0FB3C1070AEE326D /* AutomationSuggestionTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E1B2545437ED01F406DE12B /* AutomationSuggestionTracker.swift */; };
 		461DC9BFF7C5834C5963B4E1 /* CodexOutlineModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53849164A37882306B87F15D /* CodexOutlineModel.swift */; };
+		C0DEC0DEC0DEC0DEC0DE0002 /* CodexOutlineEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0DEC0DEC0DEC0DE0001 /* CodexOutlineEditing.swift */; };
 		462B146214FDD1079EAD2FCD /* ConversationMemoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A65A12758E70813B100C65 /* ConversationMemoryService.swift */; };
 		463FB9A8348CD5AF89C4B0F2 /* WeeklyStrategyReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = E466FDE1978C3D46D7B3269E /* WeeklyStrategyReview.swift */; };
 		4641A2F6F5544A48D9677766 /* AgentContextAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511D8ABEA86028198F618C2F /* AgentContextAssembler.swift */; };
@@ -372,6 +374,7 @@
 		81BB83C2A850B3685188E9EF /* InboxTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0AF15277D2538980C50048 /* InboxTypes.swift */; };
 		81BCDCC33782CB46BC0A778C /* SwipeAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7934C72FDC42A0AB1F8471 /* SwipeAnalysis.swift */; };
 		8244F40A7631AA44ADB03570 /* CommandKViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFC7FDEB605D173EFA4C750 /* CommandKViewModel.swift */; };
+		F378DE2FEF9C4BC28FD1A50F /* CommandKSearchPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5D0F60BCF34536B41CFC51 /* CommandKSearchPipeline.swift */; };
 		824E18463FFD8A000048B797 /* CodexCardHoverModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F82B23729674C5100B6F8F54 /* CodexCardHoverModifier.swift */; };
 		829444BC2CC9EC73C9A88001 /* CosmoVoiceDaemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 891FE94AF6E3DE3235B5036C /* CosmoVoiceDaemon.swift */; };
 		829C58AAE407C268D5C06035 /* NodeGraphEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC3A26A717A911273DA405C4 /* NodeGraphEngine.swift */; };
@@ -907,6 +910,7 @@
 		3BB050A4359F78D4D63F62DA /* InsightExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightExtractor.swift; sourceTree = "<group>"; };
 		3C50E6B5F60AB761009F6153 /* MentionSearchProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentionSearchProvider.swift; sourceTree = "<group>"; };
 		3CFC7FDEB605D173EFA4C750 /* CommandKViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandKViewModel.swift; sourceTree = "<group>"; };
+		2F5D0F60BCF34536B41CFC51 /* CommandKSearchPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandKSearchPipeline.swift; sourceTree = "<group>"; };
 		3D7464A8F0A06D34F3A6C360 /* CodexElement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexElement.swift; sourceTree = "<group>"; };
 		3D90EB9F9711C69828C18E59 /* ProvocationMarkerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvocationMarkerView.swift; sourceTree = "<group>"; };
 		3E025BB12991E82D30590C7F /* ManuscriptModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManuscriptModeView.swift; sourceTree = "<group>"; };
@@ -1368,6 +1372,7 @@
 		DB44193A09EC4158BFE3948C /* ClaudeAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAPIClient.swift; sourceTree = "<group>"; };
 		DB9B9F2355E9BE521DCB7A0A /* EditableConnectionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditableConnectionSection.swift; sourceTree = "<group>"; };
 		DC015AD19E281A8886EA2EF9 /* CanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasView.swift; sourceTree = "<group>"; };
+		06DE3C17B82342219B7C1ADB /* CanvasRenderSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasRenderSnapshot.swift; sourceTree = "<group>"; };
 		DC99E97105C0EDF16E4DD977 /* FocusCosmoPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusCosmoPanel.swift; sourceTree = "<group>"; };
 		DCB85AC924AE37E836256AAC /* InboxItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxItem.swift; sourceTree = "<group>"; };
 		DD1CBD66888E6F95933DC4E9 /* CosmoUndoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoUndoManager.swift; sourceTree = "<group>"; };
@@ -1395,6 +1400,7 @@
 		E31816A8994B6F3E31F00139 /* CommandCenterTaskMenus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterTaskMenus.swift; sourceTree = "<group>"; };
 		E373AEBDAE3902EDE1B33740 /* ParsedAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParsedAction.swift; sourceTree = "<group>"; };
 		E3944EBE2B33F243DAFBBA96 /* CodexElementCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexElementCategory.swift; sourceTree = "<group>"; };
+		C0DEC0DEC0DEC0DEC0DE0001 /* CodexOutlineEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOutlineEditing.swift; sourceTree = "<group>"; };
 		E466FDE1978C3D46D7B3269E /* WeeklyStrategyReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyStrategyReview.swift; sourceTree = "<group>"; };
 		E4FDD04AE45F22506C1976C3 /* 0000300_adapters.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 0000300_adapters.safetensors; sourceTree = "<group>"; };
 		E5070FC20E557CA5D406E5FE /* SynthesisEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisEngine.swift; sourceTree = "<group>"; };
@@ -2214,6 +2220,7 @@
 			children = (
 				3D7464A8F0A06D34F3A6C360 /* CodexElement.swift */,
 				E3944EBE2B33F243DAFBBA96 /* CodexElementCategory.swift */,
+				C0DEC0DEC0DEC0DEC0DE0001 /* CodexOutlineEditing.swift */,
 				53849164A37882306B87F15D /* CodexOutlineModel.swift */,
 				D31F77F925A84B3FA906AE21 /* CodexWalkthrough.swift */,
 			);
@@ -2607,6 +2614,7 @@
 				1FBB105A8125A1FA4E63F7D8 /* CanvasGridPatternCache.swift */,
 				944D959CC420DC6CE575B491 /* CanvasMinimapOverlay.swift */,
 				63DAED081CE2A16809444287 /* CanvasPerformanceOverlay.swift */,
+				06DE3C17B82342219B7C1ADB /* CanvasRenderSnapshot.swift */,
 				04DCC4582FB65724D0520443 /* CanvasSelectionInspector.swift */,
 				DC015AD19E281A8886EA2EF9 /* CanvasView.swift */,
 				74EDBF40785BB101D6FA40A3 /* CanvasViewLayersToolbar.swift */,
@@ -2756,6 +2764,7 @@
 			children = (
 				B5CDF2023DDE36591190268E /* CardSelectionOverlay.swift */,
 				4BFD2CAD45046EDC94BB4BD6 /* CommandKPremiumChrome.swift */,
+				2F5D0F60BCF34536B41CFC51 /* CommandKSearchPipeline.swift */,
 				CB34A564E77A8B0756D3667E /* CommandKView.swift */,
 				3CFC7FDEB605D173EFA4C750 /* CommandKViewModel.swift */,
 				9B9B997719BD82C477919E18 /* CortexCompactView.swift */,
@@ -3228,6 +3237,7 @@
 				6B3628A6CBF327BC388FC561 /* CanvasGridPatternCache.swift in Sources */,
 				0CDECA751B391E0DE7CBAFB8 /* CanvasMinimapOverlay.swift in Sources */,
 				A65060D3748A7DCDDE9740C6 /* CanvasPerformanceOverlay.swift in Sources */,
+				46968460B1B74076B0F66A08 /* CanvasRenderSnapshot.swift in Sources */,
 				B6288AE5BA010203BD575050 /* CanvasSelectionInspector.swift in Sources */,
 				833C06AF57577920AA6D3510 /* CanvasToolMode.swift in Sources */,
 				25C86241C77E36FE057B4339 /* CanvasView.swift in Sources */,
@@ -3266,6 +3276,7 @@
 				DF4243ACFBCEF6C1E950F315 /* CodexHeroHeader.swift in Sources */,
 				8523E9E05DE99B179214ABB5 /* CodexImporter.swift in Sources */,
 				78289985F284AFDAF2B47F3C /* CodexNavigationView.swift in Sources */,
+				C0DEC0DEC0DEC0DEC0DE0002 /* CodexOutlineEditing.swift in Sources */,
 				461DC9BFF7C5834C5963B4E1 /* CodexOutlineModel.swift in Sources */,
 				ADB41AF76DBB0E8A9F929828 /* CodexRepository.swift in Sources */,
 				5341100E1800F0B2462DC3D0 /* CodexSettingsTab.swift in Sources */,
@@ -3285,6 +3296,7 @@
 				FDC5BC742D5182954B6EEA3E /* CommandHubEngine.swift in Sources */,
 				649B9343DFAE928747077D1B /* CommandHubView.swift in Sources */,
 				B0B25D8F4A278583855ECBE7 /* CommandKPremiumChrome.swift in Sources */,
+				F378DE2FEF9C4BC28FD1A50F /* CommandKSearchPipeline.swift in Sources */,
 				A5D768ADE2A539F3AE53A717 /* CommandKView.swift in Sources */,
 				8244F40A7631AA44ADB03570 /* CommandKViewModel.swift in Sources */,
 				F1F01CC99136B77926EDF94D /* CommandPaletteModeIndicator.swift in Sources */,

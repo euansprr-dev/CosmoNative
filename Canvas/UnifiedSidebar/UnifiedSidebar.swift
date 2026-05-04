@@ -16,17 +16,47 @@ enum SidebarDestination: Equatable, Hashable {
 enum MainSidebarContentLayoutPolicy {
     static func contentLeadingInset(
         for destination: SidebarDestination,
-        isSidebarHidden: Bool,
+        isSidebarVisible: Bool,
         isFocusModeActive: Bool,
         sidebarReservedWidth: CGFloat
     ) -> CGFloat {
-        guard !isSidebarHidden else { return 0 }
+        guard isSidebarVisible else { return 0 }
 
         if case .thinkspace = destination, !isFocusModeActive {
             return 0
         }
 
         return sidebarReservedWidth
+    }
+}
+
+enum MainSidebarHoverRevealPolicy {
+    static func isSidebarVisible(
+        isSidebarHidden: Bool,
+        isHoverRevealed: Bool
+    ) -> Bool {
+        !isSidebarHidden || isHoverRevealed
+    }
+
+    static func shouldCloseTransientReveal(
+        isSidebarHidden: Bool,
+        isHoverRevealed: Bool,
+        isHoveringRevealTrigger: Bool,
+        isHoveringSidebarPanel: Bool
+    ) -> Bool {
+        isSidebarHidden
+            && isHoverRevealed
+            && !isHoveringRevealTrigger
+            && !isHoveringSidebarPanel
+    }
+}
+
+enum MainSidebarButtonPolicy {
+    static func shouldPersistTransientReveal(
+        isSidebarHidden: Bool,
+        isHoverRevealed: Bool
+    ) -> Bool {
+        isSidebarHidden && isHoverRevealed
     }
 }
 
@@ -156,6 +186,7 @@ enum UnifiedSidebarMetrics {
     static let standardRowHeight: CGFloat = 42
     static let thinkspaceRowHeight: CGFloat = 38
     static let railHitTarget: CGFloat = 32
+    static let hoverRevealTriggerWidth: CGFloat = 18
     static let iconSize: CGFloat = 16
     static let resizeHandleWidth: CGFloat = 8
     static let floatingMargin: CGFloat = 8
@@ -283,6 +314,8 @@ struct UnifiedSidebar: View {
     var sceneTint: CosmoGlassSceneTint = .fallback
     var sceneMaterial: CosmoGlassSceneMaterial? = nil
     var cornerRadius: CGFloat = UnifiedSidebarMetrics.panelCornerRadius
+    var sidebarButtonTitle: String = "Close sidebar"
+    var sidebarButtonHelp: String = "Close sidebar"
     var onClose: () -> Void = {}
     var onNavigate: () -> Void = {}
 
@@ -384,7 +417,7 @@ struct UnifiedSidebar: View {
 
                 newMenu
 
-                Button("Close sidebar", systemImage: "sidebar.left") {
+                Button(sidebarButtonTitle, systemImage: "sidebar.left") {
                     withAnimation(motionAnimation) {
                         onClose()
                     }
@@ -399,8 +432,8 @@ struct UnifiedSidebar: View {
                 )
                 .buttonStyle(.plain)
                 .onHover { hoveredHeaderItem = $0 ? "close" : nil }
-                .help("Close sidebar")
-                .accessibilityLabel("Close sidebar")
+                .help(sidebarButtonHelp)
+                .accessibilityLabel(sidebarButtonTitle)
             }
 
             contextTabRow

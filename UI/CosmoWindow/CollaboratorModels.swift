@@ -1,4 +1,5 @@
 import SwiftUI
+import GRDB
 
 enum PromptTransformPolicy: String, Codable, Sendable {
     case dockedExistingArtifact
@@ -15,6 +16,136 @@ enum CollaboratorContextSource: String, Codable, Sendable, CaseIterable {
     case note
     case profile
     case contextBundle
+}
+
+enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
+    case webResearch
+    case contentSearch
+    case clientProfiles
+    case clientMemory
+    case swipes
+    case writing
+    case strategy
+    case canvasSpatial
+    case scheduling
+    case analytics
+    case preferences
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .webResearch: return "Web Research"
+        case .contentSearch: return "Content Search"
+        case .clientProfiles: return "Client Profiles"
+        case .clientMemory: return "Client Memory"
+        case .swipes: return "Swipes"
+        case .writing: return "Writing"
+        case .strategy: return "Strategy"
+        case .canvasSpatial: return "Canvas Spatial"
+        case .scheduling: return "Scheduling"
+        case .analytics: return "Analytics"
+        case .preferences: return "Preferences"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .webResearch: return "globe"
+        case .contentSearch: return "doc.text.magnifyingglass"
+        case .clientProfiles: return "person.crop.rectangle.stack"
+        case .clientMemory: return "person.badge.clock"
+        case .swipes: return "rectangle.stack"
+        case .writing: return "pencil.and.scribble"
+        case .strategy: return "point.3.connected.trianglepath.dotted"
+        case .canvasSpatial: return "square.grid.3x3"
+        case .scheduling: return "calendar"
+        case .analytics: return "chart.bar"
+        case .preferences: return "slider.horizontal.3"
+        }
+    }
+
+    var accessDescription: String {
+        switch self {
+        case .webResearch:
+            return "Lets the agent search the web for current information, sources, stats, market examples, and facts outside your local Cosmo database."
+        case .contentSearch:
+            return "Lets the agent search, read, create, and update Cosmo ideas, content, captures, and thinkspaces."
+        case .clientProfiles:
+            return "Lets the agent list and read client profiles, voice notes, brand angles, audience models, and client-tagged work."
+        case .clientMemory:
+            return "Lets the agent read and update persistent client-specific memory such as preferences, voice quirks, forbidden patterns, and learned rules."
+        case .swipes:
+            return "Lets the agent search, browse, filter, analyze, score, and adapt your swipe library and hook/framework references."
+        case .writing:
+            return "Lets the agent use Cosmo writing tools for outlines, drafts, hooks, revisions, and content generation instead of only replying inline."
+        case .strategy:
+            return "Lets the agent use strategy, intelligence, insight memory, lessons, and module suggestion tools for higher-level planning and synthesis."
+        case .canvasSpatial:
+            return "Lets the agent inspect the current thinkspace and propose reviewable canvas plans for arranging, placing, creating, moving, and resizing blocks."
+        case .scheduling:
+            return "Lets the agent read and modify calendar blocks, schedule blocks, tasks, and unscheduled work."
+        case .analytics:
+            return "Lets the agent access performance, scoring, XP, analytics, and aggregate signals for prioritization and review."
+        case .preferences:
+            return "Lets the agent read and update global preferences, standing instructions, and long-term behavioral guidance."
+        }
+    }
+}
+
+enum CustomAgentContextScope: String, Codable, Sendable, CaseIterable, Identifiable {
+    case activeContext
+    case mentions
+    case database
+    case web
+    case clients
+    case swipes
+    case canvas
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .activeContext: return "Active Context"
+        case .mentions: return "Mentions"
+        case .database: return "Database"
+        case .web: return "Web"
+        case .clients: return "Clients"
+        case .swipes: return "Swipes"
+        case .canvas: return "Canvas"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .activeContext: return "scope"
+        case .mentions: return "at"
+        case .database: return "cylinder.split.1x2"
+        case .web: return "globe"
+        case .clients: return "person.crop.rectangle.stack"
+        case .swipes: return "rectangle.stack"
+        case .canvas: return "square.grid.3x3"
+        }
+    }
+
+    var accessDescription: String {
+        switch self {
+        case .activeContext:
+            return "Includes the current Cosmo workspace, focused item, selected text, visible item count, filters, and surface-specific state."
+        case .mentions:
+            return "Includes atoms explicitly referenced with @ mentions, expanded with title, body, UUID, type, and swipe analysis when available."
+        case .database:
+            return "Allows the agent to reason across local Cosmo docs, notes, ideas, content, research, tasks, and other database-backed records."
+        case .web:
+            return "Allows the agent to combine local context with online research when web research tools are also enabled."
+        case .clients:
+            return "Allows the agent to use client profiles, client-tagged work, and client memory as relevant context."
+        case .swipes:
+            return "Allows the agent to use swipe analyses, hooks, frameworks, formats, emotions, and structural references as context."
+        case .canvas:
+            return "Allows the agent to use the current thinkspace/canvas state and propose spatial plans tied to that workspace."
+        }
+    }
 }
 
 struct CollaboratorSessionKey: Hashable, Codable, Sendable {
@@ -105,6 +236,127 @@ struct CollaboratorPreset: Identifiable, Equatable, Codable, Sendable {
         defaultEditPolicy: .insertFirst,
         seedPrompts: CollaboratorPromptLibrary.seedPrompts
     )
+}
+
+struct CustomAgentProfile: Identifiable, Equatable, Codable, Sendable {
+    var id: String
+    var name: String
+    var icon: String
+    var summary: String
+    var runtimePrompt: String
+    var seedPrompts: [String]
+    var toolBundles: [AgentToolBundle]
+    var contextScopes: [CustomAgentContextScope]
+    var preferredModelTier: AgentModelTier?
+    var isEnabled: Bool
+    var isBuiltin: Bool
+    var createdAt: Date
+    var updatedAt: Date
+
+    var routingPromptLayer: String {
+        let bundles = toolBundles.map(\.displayName).joined(separator: ", ")
+        let scopes = contextScopes.map(\.displayName).joined(separator: ", ")
+        return """
+        ## Selected Cosmo Agent: \(name)
+        Summary: \(summary)
+        Allowed tool bundles: \(bundles.isEmpty ? "None" : bundles)
+        Allowed context scopes: \(scopes.isEmpty ? "None" : scopes)
+
+        \(runtimePrompt)
+        """
+    }
+
+    static var blankCustom: CustomAgentProfile {
+        let now = Date()
+        return CustomAgentProfile(
+            id: UUID().uuidString,
+            name: "New Agent",
+            icon: "sparkles",
+            summary: "A focused Cosmo agent.",
+            runtimePrompt: "Help the user with a focused, high-context workflow. Ask only when a decision is genuinely blocked.",
+            seedPrompts: [
+                "Help me think through this",
+                "Summarize what matters here",
+                "Turn this into next steps"
+            ],
+            toolBundles: [.contentSearch, .writing],
+            contextScopes: [.activeContext, .mentions, .database],
+            preferredModelTier: nil,
+            isEnabled: true,
+            isBuiltin: false,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+}
+
+enum PendingCanvasOperationKind: String, Codable, Sendable, CaseIterable {
+    case arrange
+    case placeSearch = "place_search"
+    case createEntity = "create_entity"
+    case placeExistingAtom = "place_existing_atom"
+    case moveSelection = "move_selection"
+    case resizeSelection = "resize_selection"
+    case createAIBlock = "create_ai_block"
+    case unsupported
+
+    var displayName: String {
+        switch self {
+        case .arrange: return "Arrange"
+        case .placeSearch: return "Place Results"
+        case .createEntity: return "Create Card"
+        case .placeExistingAtom: return "Place Existing"
+        case .moveSelection: return "Move Selection"
+        case .resizeSelection: return "Resize Selection"
+        case .createAIBlock: return "Create AI Block"
+        case .unsupported: return "Preview Only"
+        }
+    }
+}
+
+struct PendingCanvasOperation: Identifiable, Equatable, Codable, Sendable {
+    var id: UUID
+    var kind: PendingCanvasOperationKind
+    var summary: String
+    var payload: [String: String]
+
+    init(
+        id: UUID = UUID(),
+        kind: PendingCanvasOperationKind,
+        summary: String,
+        payload: [String: String] = [:]
+    ) {
+        self.id = id
+        self.kind = kind
+        self.summary = summary
+        self.payload = payload
+    }
+}
+
+struct PendingCanvasPlan: Identifiable, Equatable, Codable, Sendable {
+    var id: UUID
+    var title: String
+    var rationale: String
+    var operations: [PendingCanvasOperation]
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        rationale: String,
+        operations: [PendingCanvasOperation],
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.rationale = rationale
+        self.operations = operations
+        self.createdAt = createdAt
+    }
+
+    var affectedObjectCount: Int {
+        operations.count
+    }
 }
 
 enum CollaboratorPromptLibrary {
@@ -208,6 +460,298 @@ The user is already inside an existing Connection artifact with named sections.
 - Keep the source prompt's question selection rules, related ideas / related projects behavior, pattern spotting, paradox hunting, naming the unnamed, contrast creation, and tone exactly as described above.
 """#
         }
+    }
+}
+
+@MainActor
+final class CustomAgentProfileStore: ObservableObject {
+    static let shared = CustomAgentProfileStore()
+
+    @Published private(set) var profiles: [CustomAgentProfile] = []
+    @Published private(set) var error: String?
+
+    var enabledProfiles: [CustomAgentProfile] {
+        profiles.filter(\.isEnabled)
+    }
+
+    private let isoFormatter = ISO8601DateFormatter()
+
+    private init() {}
+
+    func loadProfiles() async {
+        do {
+            try await ensureDefaultProfiles()
+            profiles = try await fetchProfiles()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func save(_ profile: CustomAgentProfile) async {
+        var updated = profile
+        updated.updatedAt = Date()
+        do {
+            try await upsert(updated, overwriteExisting: true)
+            profiles = try await fetchProfiles()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func delete(_ profile: CustomAgentProfile) async {
+        guard !profile.isBuiltin else { return }
+        do {
+            let updatedAt = isoFormatter.string(from: Date())
+            try await CosmoDatabase.shared.asyncWrite { db in
+                try db.execute(
+                    sql: """
+                        UPDATE custom_agent_profiles
+                        SET is_deleted = 1, updated_at = ?, _local_pending = 1, _local_version = COALESCE(_local_version, 1) + 1
+                        WHERE id = ?
+                    """,
+                    arguments: [updatedAt, profile.id]
+                )
+            }
+            profiles = try await fetchProfiles()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func setEnabled(_ isEnabled: Bool, for profile: CustomAgentProfile) async {
+        var updated = profile
+        updated.isEnabled = isEnabled
+        await save(updated)
+    }
+
+    private func ensureDefaultProfiles() async throws {
+        for profile in Self.defaultProfiles {
+            try await upsert(profile, overwriteExisting: false)
+        }
+    }
+
+    private func fetchProfiles() async throws -> [CustomAgentProfile] {
+        try await CosmoDatabase.shared.asyncRead { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM custom_agent_profiles
+                    WHERE is_deleted = 0
+                    ORDER BY is_builtin DESC, name COLLATE NOCASE ASC
+                """
+            )
+            return rows.compactMap(Self.profile(from:))
+        }
+    }
+
+    private func upsert(_ profile: CustomAgentProfile, overwriteExisting: Bool) async throws {
+        let encoder = JSONEncoder()
+        let bundlesData = try encoder.encode(profile.toolBundles.map(\.rawValue))
+        let scopesData = try encoder.encode(profile.contextScopes.map(\.rawValue))
+        let seedPromptsData = try encoder.encode(profile.seedPrompts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        let bundlesJSON = String(data: bundlesData, encoding: .utf8) ?? "[]"
+        let scopesJSON = String(data: scopesData, encoding: .utf8) ?? "[]"
+        let seedPromptsJSON = String(data: seedPromptsData, encoding: .utf8) ?? "[]"
+        let createdAt = isoFormatter.string(from: profile.createdAt)
+        let updatedAt = isoFormatter.string(from: profile.updatedAt)
+        let preferredTier = profile.preferredModelTier?.rawValue
+
+        try await CosmoDatabase.shared.asyncWrite { db in
+            if overwriteExisting {
+                try db.execute(
+                    sql: """
+                        INSERT INTO custom_agent_profiles (
+                            id, name, icon, summary, runtime_prompt, seed_prompts, tool_bundles, context_scopes,
+                            preferred_model_tier, is_enabled, is_builtin, created_at, updated_at, is_deleted, _local_pending
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1)
+                        ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            icon = excluded.icon,
+                            summary = excluded.summary,
+                            runtime_prompt = excluded.runtime_prompt,
+                            seed_prompts = excluded.seed_prompts,
+                            tool_bundles = excluded.tool_bundles,
+                            context_scopes = excluded.context_scopes,
+                            preferred_model_tier = excluded.preferred_model_tier,
+                            is_enabled = excluded.is_enabled,
+                            updated_at = excluded.updated_at,
+                            is_deleted = 0,
+                            _local_pending = 1,
+                            _local_version = COALESCE(custom_agent_profiles._local_version, 1) + 1
+                    """,
+                    arguments: [
+                        profile.id, profile.name, profile.icon, profile.summary, profile.runtimePrompt,
+                        seedPromptsJSON, bundlesJSON, scopesJSON, preferredTier, profile.isEnabled ? 1 : 0,
+                        profile.isBuiltin ? 1 : 0, createdAt, updatedAt
+                    ]
+                )
+            } else {
+                try db.execute(
+                    sql: """
+                        INSERT OR IGNORE INTO custom_agent_profiles (
+                            id, name, icon, summary, runtime_prompt, seed_prompts, tool_bundles, context_scopes,
+                            preferred_model_tier, is_enabled, is_builtin, created_at, updated_at, is_deleted
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    arguments: [
+                        profile.id, profile.name, profile.icon, profile.summary, profile.runtimePrompt,
+                        seedPromptsJSON, bundlesJSON, scopesJSON, preferredTier, profile.isEnabled ? 1 : 0,
+                        profile.isBuiltin ? 1 : 0, createdAt, updatedAt
+                    ]
+                )
+            }
+        }
+    }
+
+    private static func profile(from row: Row) -> CustomAgentProfile? {
+        let decoder = JSONDecoder()
+        let bundleRaw = decodeStringArray(row["tool_bundles"] as? String, decoder: decoder)
+        let scopeRaw = decodeStringArray(row["context_scopes"] as? String, decoder: decoder)
+        let storedSeedPrompts = decodeStringArray(row["seed_prompts"] as? String, decoder: decoder)
+        let formatter = ISO8601DateFormatter()
+        let createdAt = formatter.date(from: row["created_at"] as? String ?? "") ?? Date()
+        let updatedAt = formatter.date(from: row["updated_at"] as? String ?? "") ?? createdAt
+
+        guard
+            let id = row["id"] as? String,
+            let name = row["name"] as? String,
+            let icon = row["icon"] as? String,
+            let summary = row["summary"] as? String,
+            let runtimePrompt = row["runtime_prompt"] as? String
+        else {
+            return nil
+        }
+
+        return CustomAgentProfile(
+            id: id,
+            name: name,
+            icon: icon,
+            summary: summary,
+            runtimePrompt: runtimePrompt,
+            seedPrompts: storedSeedPrompts.isEmpty ? defaultSeedPrompts(for: id) : storedSeedPrompts,
+            toolBundles: bundleRaw.compactMap(AgentToolBundle.init(rawValue:)),
+            contextScopes: scopeRaw.compactMap(CustomAgentContextScope.init(rawValue:)),
+            preferredModelTier: (row["preferred_model_tier"] as? String).flatMap(AgentModelTier.init(rawValue:)),
+            isEnabled: (row["is_enabled"] as? Int64 ?? 1) != 0,
+            isBuiltin: (row["is_builtin"] as? Int64 ?? 0) != 0,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+
+    private static func decodeStringArray(_ json: String?, decoder: JSONDecoder) -> [String] {
+        guard let json, let data = json.data(using: .utf8) else { return [] }
+        return (try? decoder.decode([String].self, from: data)) ?? []
+    }
+
+    private static func defaultSeedPrompts(for id: String) -> [String] {
+        switch id {
+        case "idea-collaborator":
+            return [
+                "Help me develop this idea",
+                "Find the strongest angle here",
+                "What question should I answer next?"
+            ]
+        case "researcher":
+            return [
+                "Research this online and find current stats",
+                "Find sources that support or challenge this",
+                "Compare this against recent examples"
+            ]
+        case "canvas-organizer":
+            return [
+                "Organize this thinkspace",
+                "Create a canvas plan from this context",
+                "Place the most relevant supporting ideas"
+            ]
+        case "writing-editor":
+            return [
+                "Polish this without losing the voice",
+                "Find the strongest hook",
+                "Turn this into a sharper outline"
+            ]
+        default:
+            return [
+                "Help me think through this",
+                "Summarize what matters here",
+                "Turn this into next steps"
+            ]
+        }
+    }
+
+    private static var defaultProfiles: [CustomAgentProfile] {
+        let now = Date()
+        return [
+            CustomAgentProfile(
+                id: "idea-collaborator",
+                name: "Idea Collaborator",
+                icon: "lightbulb.max",
+                summary: "Sharpen raw thoughts, find patterns, and develop ideas inline.",
+                runtimePrompt: CollaboratorPromptLibrary.runtimePrompt(for: .dockedExistingArtifact),
+                seedPrompts: defaultSeedPrompts(for: "idea-collaborator"),
+                toolBundles: [.contentSearch, .swipes, .writing, .strategy, .clientProfiles],
+                contextScopes: [.activeContext, .mentions, .database, .swipes, .clients],
+                preferredModelTier: .strategist,
+                isEnabled: true,
+                isBuiltin: true,
+                createdAt: now,
+                updatedAt: now
+            ),
+            CustomAgentProfile(
+                id: "researcher",
+                name: "Researcher",
+                icon: "globe.americas",
+                summary: "Research online, find stats, and connect sources back to your database.",
+                runtimePrompt: """
+                You are Cosmo's research specialist. Search externally when the user asks for current facts, stats, market signals, examples, or citations. Cross-check findings against available Cosmo context, keep sourcing explicit, and separate verified facts from inference.
+                """,
+                seedPrompts: defaultSeedPrompts(for: "researcher"),
+                toolBundles: [.webResearch, .contentSearch, .clientProfiles, .swipes, .strategy],
+                contextScopes: [.activeContext, .mentions, .database, .web, .clients, .swipes],
+                preferredModelTier: .strategist,
+                isEnabled: true,
+                isBuiltin: true,
+                createdAt: now,
+                updatedAt: now
+            ),
+            CustomAgentProfile(
+                id: "canvas-organizer",
+                name: "Canvas Organizer",
+                icon: "square.grid.3x3",
+                summary: "Plans spatial changes for the current thinkspace and waits for approval.",
+                runtimePrompt: """
+                You are Cosmo's thinkspace organizer. Read the current canvas context, infer a clean spatial structure, and propose a pending canvas plan instead of mutating immediately. Group related items, reduce clutter, preserve user intent, and explain the spatial rationale briefly.
+                """,
+                seedPrompts: defaultSeedPrompts(for: "canvas-organizer"),
+                toolBundles: [.canvasSpatial, .contentSearch, .swipes, .clientProfiles, .strategy],
+                contextScopes: [.activeContext, .mentions, .database, .canvas, .clients, .swipes],
+                preferredModelTier: .strategist,
+                isEnabled: true,
+                isBuiltin: true,
+                createdAt: now,
+                updatedAt: now
+            ),
+            CustomAgentProfile(
+                id: "writing-editor",
+                name: "Writing Editor",
+                icon: "pencil.and.scribble",
+                summary: "Improves drafts with voice, structure, swipe, and client context.",
+                runtimePrompt: """
+                You are Cosmo's writing editor. Improve structure, clarity, hooks, rhythm, and platform fit. Use writing tools for substantive drafts, preserve client voice, and make edits feel native to the user's existing work.
+                """,
+                seedPrompts: defaultSeedPrompts(for: "writing-editor"),
+                toolBundles: [.writing, .swipes, .clientProfiles, .clientMemory, .contentSearch, .strategy],
+                contextScopes: [.activeContext, .mentions, .database, .clients, .swipes],
+                preferredModelTier: .writer,
+                isEnabled: true,
+                isBuiltin: true,
+                createdAt: now,
+                updatedAt: now
+            )
+        ]
     }
 }
 

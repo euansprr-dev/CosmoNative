@@ -39,6 +39,7 @@ struct IdeaFocusModeView: View {
     @State private var showFrameworkSheet: Bool = false
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
+    @FocusState private var isNewHookFocused: Bool
     @FocusState private var focusedOutlineSlideID: UUID?
 
     // MARK: - Constants
@@ -422,6 +423,24 @@ extension IdeaFocusModeView {
                 .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(manuscriptWhitespaceBlurLayer)
+    }
+
+    private var manuscriptWhitespaceBlurLayer: some View {
+        DS.bg.opacity(0.001)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                clearManuscriptEditingFocus()
+            }
+            .accessibilityHidden(true)
+    }
+
+    private func clearManuscriptEditingFocus() {
+        isTitleFocused = false
+        isContextFocused = false
+        isNewHookFocused = false
+        focusedOutlineSlideID = nil
+        NSApp.keyWindow?.makeFirstResponder(nil)
     }
 
     // MARK: Title hero
@@ -664,6 +683,7 @@ extension IdeaFocusModeView {
                 .font(DS.callout)
                 .italic()
                 .foregroundStyle(DS.inkFaded)
+                .focused($isNewHookFocused)
                 .onSubmit { addHook() }
                 .accessibilityLabel("New hook text")
         }

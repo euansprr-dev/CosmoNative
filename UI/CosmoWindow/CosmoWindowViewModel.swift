@@ -40,6 +40,9 @@ final class CosmoWindowViewModel: ObservableObject {
     @Published var showMentionOverlay = false
     @Published var mentionSearchText = ""
     @Published var modelOverride: AgentModelTier? = nil
+    @Published var selectedAgentProfileID: String? = nil
+    @Published private(set) var agentProfiles: [CustomAgentProfile] = []
+    @Published var pendingCanvasPlan: PendingCanvasPlan? = nil
 
     // MARK: - Edit State
 
@@ -52,6 +55,7 @@ final class CosmoWindowViewModel: ObservableObject {
     private let conversationMemory = ConversationMemoryService.shared
     private let toolRegistry = AgentToolRegistry.shared
     private let collaboratorSessions = CollaboratorSessionStore.shared
+    private let agentProfileStore = CustomAgentProfileStore.shared
 
     // MARK: - Chat History State
 
@@ -87,6 +91,7 @@ final class CosmoWindowViewModel: ObservableObject {
     private init() {
         conversationId = globalConversationId
         setupNotificationObservers()
+        Task { await loadAgentProfiles() }
     }
 
     // MARK: - Send Message (Unified Pipeline — matches Telegram routing)
@@ -209,10 +214,13 @@ final class CosmoWindowViewModel: ObservableObject {
         // 4. FlashLiteRouter for quick single-shot operations
         // Skip flash router when mentions are present — mentions signal contextual reasoning
         let bypassFlash: Bool
-        if !mentionedAtoms.isEmpty {
+        if !mentionedAtoms.isEmpty || selectedAgentProfile != nil || !forcedToolBundles(for: text).isEmpty {
             bypassFlash = true
         } else {
-            bypassFlash = await shouldBypassFlashRouter(text: text)
+            bypassFlash = Self.shouldBypassFlashRouter(
+                text: text,
+                recentAssistantContents: recentAssistantContentsForFlashBypass
+            )
         }
         if !bypassFlash, let (flashResponse, toolName) = await FlashLiteRouter.shared.tryRoute(text) {
             await saveFlashRouterResult(text: text, response: flashResponse, toolName: toolName)
@@ -280,21 +288,22 @@ final class CosmoWindowViewModel: ObservableObject {
 
     // MARK: - FlashLiteRouter Follow-Up Detection
 
-    /// Check if a message is a follow-up about already-captured content (should bypass FlashLiteRouter).
-    private func shouldBypassFlashRouter(text: String) async -> Bool {
-        guard let conversation = await conversationMemory.loadConversation(id: conversationId) else {
-            return false
-        }
-        guard !conversation.messages.isEmpty else { return false }
+    private var recentAssistantContentsForFlashBypass: [String] {
+        Array(messages.compactMap { message in
+            guard case .assistant = message.type else { return nil }
+            let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return content.isEmpty ? nil : content
+        }.suffix(3))
+    }
 
-        let recentAssistant = conversation.messages
-            .filter { $0.role == .assistant }
-            .suffix(3)
+    /// Check if a message is a follow-up about already-captured content (should bypass FlashLiteRouter).
+    nonisolated static func shouldBypassFlashRouter(text: String, recentAssistantContents: [String]) -> Bool {
+        guard !recentAssistantContents.isEmpty else { return false }
 
         let capturePatterns = ["captured", "saved idea", "saved research", "swipe",
                                "idea:", "task created", "content created"]
-        let hasCaptureHistory = recentAssistant.contains { msg in
-            let lower = msg.content.lowercased()
+        let hasCaptureHistory = recentAssistantContents.contains { content in
+            let lower = content.lowercased()
             return capturePatterns.contains(where: { lower.contains($0) })
         }
 
@@ -412,6 +421,9 @@ final class CosmoWindowViewModel: ObservableObject {
     }
 
     var currentPromptSuggestions: [String] {
+        if let selectedAgentProfile {
+            return agentSuggestions(for: selectedAgentProfile)
+        }
         if let collaboratorPreset {
             return collaboratorPreset.seedPrompts
         }
@@ -422,10 +434,26 @@ final class CosmoWindowViewModel: ObservableObject {
         if let collaboratorTarget {
             return "\(collaboratorTarget.displayTypeLabel) · \(collaboratorTarget.title)"
         }
+        if let selectedAgentProfile {
+            return selectedAgentProfile.summary
+        }
         if activeContext.type == .none {
             return "Global assistant"
         }
         return activeContext.type.displayName
+    }
+
+    var selectedAgentProfile: CustomAgentProfile? {
+        guard let selectedAgentProfileID else { return nil }
+        return agentProfiles.first(where: { $0.id == selectedAgentProfileID && $0.isEnabled })
+    }
+
+    var currentAgentLabel: String {
+        selectedAgentProfile?.name ?? "Auto Cosmo"
+    }
+
+    var currentAgentIcon: String {
+        selectedAgentProfile?.icon ?? "sparkles"
     }
 
     var isCurrentContextDockable: Bool {
@@ -514,6 +542,50 @@ final class CosmoWindowViewModel: ObservableObject {
         default:
             return .deepen
         }
+    }
+
+    func loadAgentProfiles() async {
+        await agentProfileStore.loadProfiles()
+        agentProfiles = agentProfileStore.profiles
+        if let selectedAgentProfileID,
+           !agentProfiles.contains(where: { $0.id == selectedAgentProfileID && $0.isEnabled }) {
+            self.selectedAgentProfileID = nil
+        }
+    }
+
+    func selectAgentProfile(_ profile: CustomAgentProfile?) {
+        selectedAgentProfileID = profile?.id
+        modelOverride = modelOverride ?? profile?.preferredModelTier
+    }
+
+    func saveAgentProfile(_ profile: CustomAgentProfile) async {
+        await agentProfileStore.save(profile)
+        await loadAgentProfiles()
+    }
+
+    func deleteAgentProfile(_ profile: CustomAgentProfile) async {
+        await agentProfileStore.delete(profile)
+        if selectedAgentProfileID == profile.id {
+            selectedAgentProfileID = nil
+        }
+        await loadAgentProfiles()
+    }
+
+    func cancelPendingCanvasPlan() {
+        pendingCanvasPlan = nil
+    }
+
+    func revisePendingCanvasPlan() {
+        guard let plan = pendingCanvasPlan else { return }
+        inputText = "Revise this canvas plan: \(plan.title). "
+        pendingCanvasPlan = nil
+    }
+
+    func applyPendingCanvasPlan() {
+        guard let plan = pendingCanvasPlan else { return }
+        let applied = applyCanvasOperations(plan.operations)
+        pendingCanvasPlan = nil
+        messages.append(.system("Applied \(applied) of \(plan.operations.count) canvas operations."))
     }
 
     // MARK: - Conversation Lifecycle
@@ -769,7 +841,13 @@ final class CosmoWindowViewModel: ObservableObject {
         // Use the agent service with context-enriched prompt
         var enrichedText: String
         if !contextBlock.isEmpty {
-            enrichedText = text  // Context is injected via system prompt by AgentContextAssembler
+            enrichedText = """
+            \(text)
+
+            <active_cosmo_context>
+            \(contextBlock)
+            </active_cosmo_context>
+            """
         } else {
             enrichedText = text
         }
@@ -792,13 +870,28 @@ final class CosmoWindowViewModel: ObservableObject {
                 self?.messages.append(.actionButtons(message, buttons: actionButtons))
             }
         }
+        toolExecutor.onCanvasPlan = { [weak self] plan in
+            Task { @MainActor in
+                self?.pendingCanvasPlan = plan
+            }
+        }
+
+        let activeProfile = selectedAgentProfile
+        let forcedBundles = forcedToolBundles(for: text)
+        let systemPromptOverride = runtimePromptLayer(
+            collaboratorPrompt: collaboratorPreset?.runtimePrompt,
+            agentProfile: activeProfile,
+            forcedBundles: forcedBundles
+        )
 
         let (response, trace) = await agentService.processMessage(
             enrichedText,
             conversationId: conversationId,
             source: .inApp,
-            tierOverride: modelOverride,
-            systemPromptOverride: collaboratorPreset?.runtimePrompt,
+            tierOverride: modelOverride ?? activeProfile?.preferredModelTier,
+            systemPromptOverride: systemPromptOverride,
+            profileToolBundles: activeProfile?.toolBundles ?? [],
+            forcedToolBundles: forcedBundles,
             onToolActivity: { [weak self] event in
                 Task { @MainActor in
                     self?.handleToolActivity(event)
@@ -808,6 +901,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
         // Clear the action buttons callback after processing
         toolExecutor.onActionButtons = nil
+        toolExecutor.onCanvasPlan = nil
 
         pendingContextTraceSections = trace.hasContent ? CosmoWindowMessage.contextTraceSections(from: trace) : []
 
@@ -876,6 +970,201 @@ final class CosmoWindowViewModel: ObservableObject {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    private func runtimePromptLayer(
+        collaboratorPrompt: String?,
+        agentProfile: CustomAgentProfile?,
+        forcedBundles: Set<AgentToolBundle>
+    ) -> String? {
+        var sections: [String] = []
+
+        if let collaboratorPrompt,
+           !collaboratorPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sections.append(collaboratorPrompt)
+        }
+
+        if let agentProfile {
+            sections.append(agentProfile.routingPromptLayer)
+        }
+
+        if !forcedBundles.isEmpty {
+            let bundleList = forcedBundles
+                .map(\.displayName)
+                .sorted()
+                .joined(separator: ", ")
+            sections.append("""
+            ## Request-Forced Capabilities
+            The user's wording or active context explicitly requires these capability bundles: \(bundleList).
+            Prefer these tools when they are relevant before answering from memory.
+            """)
+        }
+
+        return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
+    }
+
+    private func forcedToolBundles(for text: String) -> Set<AgentToolBundle> {
+        let lower = text.lowercased()
+        var bundles: Set<AgentToolBundle> = []
+
+        if containsAny(lower, ["research online", "search online", "look up", "latest", "current", "find stats", "statistics", "sources", "citations"]) {
+            bundles.insert(.webResearch)
+        }
+        if containsAny(lower, ["client profile", "client voice", "client memory", "for client", "brand profile"]) {
+            bundles.insert(.clientProfiles)
+            bundles.insert(.clientMemory)
+        }
+        if containsAny(lower, ["swipe", "swipes", "examples", "reference ads", "hooks", "frameworks"]) {
+            bundles.insert(.swipes)
+        }
+        if containsAny(lower, ["canvas", "thinkspace", "move", "organize", "reorganize", "spatial", "cluster", "arrange", "place this"]) {
+            bundles.insert(.canvasSpatial)
+        }
+        if containsAny(lower, ["docs", "notes", "database", "db", "content from", "reference docs", "library"]) {
+            bundles.insert(.contentSearch)
+        }
+        if containsAny(lower, ["draft", "write", "rewrite", "edit", "polish", "outline"]) {
+            bundles.insert(.writing)
+        }
+
+        if activeContext.type == .thinkspaceCanvas {
+            bundles.insert(.canvasSpatial)
+        }
+        if activeContext.type == .contentFocusMode || activeContext.type == .noteFocusMode || activeContext.type == .ideaFocusMode {
+            bundles.insert(.contentSearch)
+        }
+        if activeContext.type == .swipeGallery || activeContext.type == .swipeStudy {
+            bundles.insert(.swipes)
+        }
+
+        return bundles
+    }
+
+    private func containsAny(_ text: String, _ needles: [String]) -> Bool {
+        needles.contains { text.contains($0) }
+    }
+
+    private func agentSuggestions(for profile: CustomAgentProfile) -> [String] {
+        let prompts = profile.seedPrompts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return prompts.isEmpty ? defaultPromptSuggestions : Array(prompts.prefix(3))
+    }
+
+    private func applyCanvasOperations(_ operations: [PendingCanvasOperation]) -> Int {
+        var applied = 0
+        for operation in operations {
+            if applyCanvasOperation(operation) {
+                applied += 1
+            }
+        }
+        return applied
+    }
+
+    private func applyCanvasOperation(_ operation: PendingCanvasOperation) -> Bool {
+        let payload = operation.payload
+
+        switch operation.kind {
+        case .arrange:
+            NotificationCenter.default.post(
+                name: .arrangeCanvasBlocks,
+                object: nil,
+                userInfo: ["style": payload["style"] ?? payload["layout"] ?? "orbital"]
+            )
+            return true
+
+        case .placeSearch:
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.placeBlocksOnCanvas,
+                object: nil,
+                userInfo: [
+                    "query": payload["query"] ?? "",
+                    "entityType": payload["entityType"] ?? "idea",
+                    "quantity": Int(payload["quantity"] ?? "") ?? 5,
+                    "layout": payload["layout"] ?? "orbital"
+                ]
+            )
+            return true
+
+        case .createEntity:
+            guard let entityType = entityType(from: payload["entityType"]) else { return false }
+            var userInfo: [AnyHashable: Any] = ["type": entityType]
+            if let title = payload["title"] { userInfo["title"] = title }
+            if let content = payload["content"] { userInfo["content"] = content }
+            if let position = canvasPosition(from: payload) { userInfo["position"] = position }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.createEntityAtPosition,
+                object: nil,
+                userInfo: userInfo
+            )
+            return true
+
+        case .placeExistingAtom:
+            guard let entityType = entityType(from: payload["entityType"]),
+                  let uuid = payload["existingAtomUUID"], !uuid.isEmpty else { return false }
+            var userInfo: [AnyHashable: Any] = ["type": entityType, "existingAtomUUID": uuid]
+            if let position = canvasPosition(from: payload) { userInfo["position"] = position }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.createEntityAtPosition,
+                object: nil,
+                userInfo: userInfo
+            )
+            return true
+
+        case .moveSelection:
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.moveCanvasBlocks,
+                object: nil,
+                userInfo: [
+                    "direction": payload["direction"] ?? "right",
+                    "distance": CGFloat(Double(payload["distance"] ?? "") ?? 160)
+                ]
+            )
+            return true
+
+        case .resizeSelection:
+            var userInfo: [AnyHashable: Any] = [:]
+            if let width = payload["width"].flatMap(Double.init) { userInfo["width"] = CGFloat(width) }
+            if let height = payload["height"].flatMap(Double.init) { userInfo["height"] = CGFloat(height) }
+            if let scale = payload["scale"].flatMap(Double.init) { userInfo["scale"] = CGFloat(scale) }
+            guard !userInfo.isEmpty else { return false }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.resizeSelectedBlock,
+                object: nil,
+                userInfo: userInfo
+            )
+            return true
+
+        case .createAIBlock:
+            var userInfo: [AnyHashable: Any] = [:]
+            if let query = payload["query"] { userInfo["query"] = query }
+            if let mode = payload["mode"] { userInfo["mode"] = mode }
+            if let position = canvasPosition(from: payload) { userInfo["position"] = position }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.createCosmoAIBlock,
+                object: nil,
+                userInfo: userInfo
+            )
+            return true
+
+        case .unsupported:
+            return false
+        }
+    }
+
+    private func entityType(from rawValue: String?) -> EntityType? {
+        guard let rawValue else { return .idea }
+        return EntityType(rawValue: rawValue)
+            ?? EntityType(rawValue: rawValue.replacingOccurrences(of: " ", with: "_"))
+            ?? .idea
+    }
+
+    private func canvasPosition(from payload: [String: String]) -> CGPoint? {
+        guard let xRaw = payload["x"], let yRaw = payload["y"],
+              let x = Double(xRaw), let y = Double(yRaw) else {
+            return nil
+        }
+        return CGPoint(x: x, y: y)
     }
 
     // MARK: - Live Tool Activity Handling (WP5)

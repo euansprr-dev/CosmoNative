@@ -4,6 +4,25 @@
 import SwiftUI
 import AppKit
 
+final class MainRightClickRoutingState: ObservableObject {
+    private var sidebarIsHidden = true
+    private var sidebarInteractionWidth: CGFloat = 0
+    private let sidebarRightClickSlop: CGFloat
+
+    init(sidebarRightClickSlop: CGFloat = 20) {
+        self.sidebarRightClickSlop = sidebarRightClickSlop
+    }
+
+    func updateSidebar(isHidden: Bool, interactionWidth: CGFloat) {
+        sidebarIsHidden = isHidden
+        sidebarInteractionWidth = max(0, interactionWidth)
+    }
+
+    func shouldBypassCanvasMenuForSidebar(windowPoint: CGPoint) -> Bool {
+        !sidebarIsHidden && windowPoint.x < sidebarInteractionWidth + sidebarRightClickSlop
+    }
+}
+
 struct MainView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var database: CosmoDatabase
@@ -19,6 +38,7 @@ struct MainView: View {
     @State private var rightClickMonitor: Any?
     @State private var keyMonitor: Any?
     @State private var inAppVoiceHotkeyActive = false
+    @StateObject private var rightClickRoutingState = MainRightClickRoutingState()
 
     // Command-K (constellation-based search)
     @State private var showCommandK = false
@@ -50,6 +70,10 @@ struct MainView: View {
     @State private var sidebarPanelWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
     @State private var sidebarInteractionWidth: CGFloat = 0
     @State private var sidebarReservedWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
+    @State private var isSidebarHoverRevealed = false
+    @State private var isHoveringSidebarRevealTrigger = false
+    @State private var isHoveringSidebarPanel = false
+    @State private var sidebarHoverCloseTask: Task<Void, Never>?
     @State private var canvasSceneTint: CosmoGlassSceneTint = .fallback
     @State private var canvasSceneMaterial: CosmoGlassSceneMaterial = .fallback
     @State private var routeSceneSignals: [CosmoGlassSceneSignal] = []
@@ -470,6 +494,13 @@ struct MainView: View {
             handleOpenCollaboratorPane(atomUUID: payload.atomUUID, presetId: payload.presetId)
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
+            if newValue != nil {
+                cancelSidebarHoverClose()
+                isHoveringSidebarRevealTrigger = false
+                isHoveringSidebarPanel = false
+                isSidebarHoverRevealed = false
+            }
+
             // When focus mode closes, reveal Command-K if it was kept alive behind focus mode
             if newValue == nil, commandKBehindFocusMode {
                 // CMD+K view is still in the tree — just reveal it (no delay, no recreation)
@@ -703,12 +734,12 @@ struct MainView: View {
             let sidebarLayout = sidebarLayoutMetrics(for: geo.size)
             let contentLeadingInset = MainSidebarContentLayoutPolicy.contentLeadingInset(
                 for: currentDestination,
-                isSidebarHidden: isSidebarHidden,
+                isSidebarVisible: isSidebarVisible,
                 isFocusModeActive: appState.focusedEntity != nil,
                 sidebarReservedWidth: sidebarLayout.reservedWidth
             )
 
-            ZStack(alignment: .leading) {
+            ZStack(alignment: .topLeading) {
                 SplitPaneContainer(paneManager: paneManager) {
                     ZStack {
                         destinationContent(contentLeadingInset: contentLeadingInset)
@@ -718,9 +749,9 @@ struct MainView: View {
                 .frame(width: geo.size.width, height: geo.size.height)
                 .zIndex(appState.focusedEntity != nil ? 195 : 10)
                 .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
-                .animation(routeContentTransitionAnimation, value: contentLeadingInset)
+                .animation(sidebarAnimation, value: contentLeadingInset)
 
-                if !isSidebarHidden {
+                if isSidebarVisible {
                     sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
                         .padding(.leading, sidebarLayout.leadingInset)
                         .padding(.trailing, sidebarLayout.trailingInset)
@@ -731,12 +762,18 @@ struct MainView: View {
                             alignment: .leading
                         )
                         .transition(.move(edge: .leading).combined(with: .opacity))
+                        .onHover { handleSidebarPanelHover($0) }
                         .zIndex(20)
                 }
 
                 if isSidebarHidden && appState.focusedEntity == nil {
-                    sidebarToggleButton
-                        .zIndex(201)
+                    sidebarHoverRevealTrigger(height: geo.size.height)
+                        .zIndex(200)
+
+                    if !isSidebarHoverRevealed {
+                        sidebarToggleButton
+                            .zIndex(202)
+                    }
                 }
 
                 if crossDragManager.isOverSidebar || crossDragManager.hasThinkspaceSwitched,
@@ -753,6 +790,7 @@ struct MainView: View {
             }
             .coordinateSpace(name: CosmoGlassSceneMaterial.coordinateSpaceName)
             .animation(sidebarAnimation, value: isSidebarHidden)
+            .animation(sidebarAnimation, value: isSidebarHoverRevealed)
             .animation(sidebarAnimation, value: sidebarPanelWidth)
             .animation(routeContentTransitionAnimation, value: currentDestination)
             .animation(sceneTintAnimation, value: sidebarSceneTintAnimationKey)
@@ -762,12 +800,22 @@ struct MainView: View {
                 setupCrossThinkspaceDragCallbacks()
                 updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
             }
+            .onDisappear {
+                cancelSidebarHoverClose()
+            }
             .onChange(of: geo.size) { _, newSize in
                 updateSidebarInteractionWidth(
                     reservedWidth: sidebarLayoutMetrics(for: newSize).reservedWidth
                 )
             }
             .onChange(of: isSidebarHidden) { _, _ in
+                if !isSidebarHidden {
+                    cancelSidebarHoverClose()
+                    isSidebarHoverRevealed = false
+                }
+                updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
+            }
+            .onChange(of: isSidebarHoverRevealed) { _, _ in
                 updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
             }
             .onChange(of: sidebarPanelWidth) { _, _ in
@@ -818,16 +866,25 @@ struct MainView: View {
             sceneTint: activeSidebarSceneTint,
             sceneMaterial: activeSidebarSceneMaterial,
             cornerRadius: cornerRadius,
-            onClose: { closeSidebar() }
+            sidebarButtonTitle: sidebarButtonTitle,
+            sidebarButtonHelp: sidebarButtonHelp,
+            onClose: { handleSidebarButtonPress() }
         )
         .environmentObject(crossDragManager)
     }
 
+    private func sidebarHoverRevealTrigger(height: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.001))
+            .contentShape(Rectangle())
+            .frame(width: UnifiedSidebarMetrics.hoverRevealTriggerWidth, height: height)
+            .onHover { handleSidebarRevealTriggerHover($0) }
+            .accessibilityHidden(true)
+    }
+
     private var sidebarToggleButton: some View {
         Button("Show sidebar", systemImage: "sidebar.left") {
-            withAnimation(sidebarAnimation) {
-                isSidebarHidden = false
-            }
+            openSidebarPersistently()
         }
         .labelStyle(.iconOnly)
         .font(.system(size: 14, weight: .medium))
@@ -837,9 +894,16 @@ struct MainView: View {
         .buttonStyle(.plain)
         .padding(.top, 4)
         .padding(.leading, 4)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .help("Show sidebar (Cmd+\\)")
+        .onHover { handleSidebarRevealTriggerHover($0) }
+        .help(isSidebarHoverRevealed ? "Keep sidebar open (Cmd+\\)" : "Show sidebar (Cmd+\\)")
         .accessibilityLabel("Show sidebar")
+    }
+
+    private var isSidebarVisible: Bool {
+        MainSidebarHoverRevealPolicy.isSidebarVisible(
+            isSidebarHidden: isSidebarHidden,
+            isHoverRevealed: isSidebarHoverRevealed
+        )
     }
 
     private var sidebarAnimation: Animation? {
@@ -857,8 +921,35 @@ struct MainView: View {
     }
 
     private func closeSidebar() {
+        cancelSidebarHoverClose()
+        isHoveringSidebarRevealTrigger = false
+        isHoveringSidebarPanel = false
         withAnimation(sidebarAnimation) {
             isSidebarHidden = true
+            isSidebarHoverRevealed = false
+        }
+    }
+
+    private var isSidebarTransientlyRevealed: Bool {
+        MainSidebarButtonPolicy.shouldPersistTransientReveal(
+            isSidebarHidden: isSidebarHidden,
+            isHoverRevealed: isSidebarHoverRevealed
+        )
+    }
+
+    private var sidebarButtonTitle: String {
+        isSidebarTransientlyRevealed ? "Keep sidebar open" : "Close sidebar"
+    }
+
+    private var sidebarButtonHelp: String {
+        isSidebarTransientlyRevealed ? "Keep sidebar open (Cmd+\\)" : "Close sidebar (Cmd+\\)"
+    }
+
+    private func handleSidebarButtonPress() {
+        if isSidebarTransientlyRevealed {
+            openSidebarPersistently()
+        } else {
+            closeSidebar()
         }
     }
 
@@ -887,14 +978,101 @@ struct MainView: View {
         if let reservedWidth {
             sidebarReservedWidth = reservedWidth
         }
-        sidebarInteractionWidth = isSidebarHidden ? 0 : sidebarReservedWidth
+        sidebarInteractionWidth = isSidebarVisible ? sidebarReservedWidth : 0
         crossDragManager.sidebarWidth = sidebarInteractionWidth
+        rightClickRoutingState.updateSidebar(
+            isHidden: !isSidebarVisible,
+            interactionWidth: sidebarInteractionWidth
+        )
     }
 
     private func toggleSidebarFromKeyboard() {
+        cancelSidebarHoverClose()
+        isHoveringSidebarRevealTrigger = false
+        isHoveringSidebarPanel = false
         withAnimation(sidebarAnimation) {
             isSidebarHidden.toggle()
+            isSidebarHoverRevealed = false
         }
+    }
+
+    private func openSidebarPersistently() {
+        cancelSidebarHoverClose()
+        isHoveringSidebarRevealTrigger = false
+        isHoveringSidebarPanel = false
+        withAnimation(sidebarAnimation) {
+            isSidebarHidden = false
+            isSidebarHoverRevealed = false
+        }
+    }
+
+    private func handleSidebarRevealTriggerHover(_ hovering: Bool) {
+        isHoveringSidebarRevealTrigger = hovering
+
+        guard isSidebarHidden, appState.focusedEntity == nil else {
+            if !isSidebarHidden {
+                cancelSidebarHoverClose()
+            }
+            return
+        }
+
+        if hovering {
+            revealSidebarForHover()
+        } else {
+            scheduleSidebarHoverCloseIfNeeded()
+        }
+    }
+
+    private func handleSidebarPanelHover(_ hovering: Bool) {
+        isHoveringSidebarPanel = hovering
+
+        if hovering {
+            cancelSidebarHoverClose()
+        } else {
+            scheduleSidebarHoverCloseIfNeeded()
+        }
+    }
+
+    private func revealSidebarForHover() {
+        cancelSidebarHoverClose()
+
+        guard isSidebarHidden, !isSidebarHoverRevealed else { return }
+
+        withAnimation(sidebarAnimation) {
+            isSidebarHoverRevealed = true
+        }
+    }
+
+    private func scheduleSidebarHoverCloseIfNeeded() {
+        cancelSidebarHoverClose()
+
+        guard MainSidebarHoverRevealPolicy.shouldCloseTransientReveal(
+            isSidebarHidden: isSidebarHidden,
+            isHoverRevealed: isSidebarHoverRevealed,
+            isHoveringRevealTrigger: isHoveringSidebarRevealTrigger,
+            isHoveringSidebarPanel: isHoveringSidebarPanel
+        ) else { return }
+
+        sidebarHoverCloseTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled else { return }
+
+            guard MainSidebarHoverRevealPolicy.shouldCloseTransientReveal(
+                isSidebarHidden: isSidebarHidden,
+                isHoverRevealed: isSidebarHoverRevealed,
+                isHoveringRevealTrigger: isHoveringSidebarRevealTrigger,
+                isHoveringSidebarPanel: isHoveringSidebarPanel
+            ) else { return }
+
+            withAnimation(sidebarAnimation) {
+                isSidebarHoverRevealed = false
+            }
+        }
+    }
+
+    private func cancelSidebarHoverClose() {
+        sidebarHoverCloseTask?.cancel()
+        sidebarHoverCloseTask = nil
     }
 
     private func syncSidebarContext(with destination: SidebarDestination) {
@@ -1611,7 +1789,7 @@ struct MainView: View {
             )
 
             // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
-            if !isSidebarHidden, windowPoint.x < sidebarInteractionWidth + 20 {
+            if rightClickRoutingState.shouldBypassCanvasMenuForSidebar(windowPoint: windowPoint) {
                 return event
             }
 

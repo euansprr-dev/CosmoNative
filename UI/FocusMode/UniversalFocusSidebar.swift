@@ -16,7 +16,7 @@ struct UniversalFocusSidebar<Content: View>: View {
     @State private var isHovering: Bool = false
     @State private var closeTimer: Timer?
 
-    private let sidebarWidth: CGFloat = 280
+    private let sidebarWidth: CGFloat = 340
 
     /// Whether sidebar should be visible
     /// Stays open if locked, visible via trigger, or being hovered

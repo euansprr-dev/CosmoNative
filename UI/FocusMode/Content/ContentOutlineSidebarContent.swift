@@ -33,7 +33,6 @@ struct ContentOutlineSidebarContent: View {
     @State private var metaPatternReport: MetaPatternReport?
     @State private var isLoadingMetaPattern = false
     @StateObject private var ambientEngine = AmbientFieldEngine()
-    @State private var showAllSwipes = false
     @State private var showIntelligence = false
     @State private var isLoadingContext = true
     @State private var showSwipeAttachmentEditor = false
@@ -58,40 +57,37 @@ struct ContentOutlineSidebarContent: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Creation tools
-                coreIdeaSection
-                hooksSection
-                outlineSection
-                clientPickerSection
+        VStack(alignment: .leading, spacing: 20) {
+            // Creation tools
+            coreIdeaSection
+            hooksSection
+            outlineSection
+            clientPickerSection
 
-                // Context divider
-                if hasAnyContext {
-                    contextDivider
-                }
-
-                // Inherited context sections
-                sourceIdeaSection
-                matchedSwipesSection
-                inheritedConnectionsSection
-                frameworkSection
-                inheritedHooksSection
-
-                // Codex-era panels (collapsible)
-                // codexOutlinePanel removed — outlineSection handles both simple + advanced
-                codexResearchPanel
-                codexArcPanel
-                codexContextDirectionPanel
-                codexChatHistoryPanel
-                codexQuickRefPanel
-
-                intelligenceSection
+            // Context divider
+            if hasAnyContext {
+                contextDivider
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+
+            // Inherited context sections
+            sourceIdeaSection
+            matchedSwipesSection
+            inheritedConnectionsSection
+            frameworkSection
+            inheritedHooksSection
+
+            // Codex-era panels (collapsible)
+            // codexOutlinePanel removed — outlineSection handles both simple + advanced
+            codexResearchPanel
+            codexArcPanel
+            codexContextDirectionPanel
+            codexChatHistoryPanel
+            codexQuickRefPanel
+
+            intelligenceSection
         }
-        .scrollIndicators(.hidden)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .onAppear {
             Task { await loadInheritedContext() }
             Task { await loadClientProfiles() }
@@ -252,7 +248,7 @@ struct ContentOutlineSidebarContent: View {
                 .lineSpacing(4)
                 .scrollContentBackground(.hidden)
                 .focused($coreIdeaFocused)
-                .frame(minHeight: 48, maxHeight: 100)
+                .frame(minHeight: sidebarEditorHeight(for: coreIdeaBinding.wrappedValue, minimum: 72))
                 .padding(10)
                 .background(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
@@ -271,6 +267,19 @@ struct ContentOutlineSidebarContent: View {
                     state.lastModified = Date()
                     state.save()
                 }
+        }
+    }
+
+    private func sidebarEditorHeight(for text: String, minimum: CGFloat) -> CGFloat {
+        let visualLines = estimatedWrappedLineCount(for: text, charactersPerLine: 34)
+        return max(minimum, CGFloat(visualLines) * 19 + 28)
+    }
+
+    private func estimatedWrappedLineCount(for text: String, charactersPerLine: Int) -> Int {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard !lines.isEmpty else { return 1 }
+        return lines.reduce(0) { total, line in
+            total + max(1, Int(ceil(Double(line.count) / Double(charactersPerLine))))
         }
     }
 
@@ -548,13 +557,13 @@ struct ContentOutlineSidebarContent: View {
                 Text(idea.title ?? "Untitled Idea")
                     .font(DS.caption)
                     .foregroundStyle(DS.text)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if let body = idea.body, !body.isEmpty {
-                    Text(String(body.prefix(60)))
+                    Text(body)
                         .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let ideaMeta = idea.ideaMetadata,
@@ -632,8 +641,7 @@ struct ContentOutlineSidebarContent: View {
     @ViewBuilder
     private func supportingSwipesContent(_ swipes: [Atom]) -> some View {
         VStack(spacing: 4) {
-            let displaySwipes = showAllSwipes ? swipes : Array(swipes.prefix(3))
-            ForEach(displaySwipes, id: \.uuid) { swipe in
+            ForEach(swipes, id: \.uuid) { swipe in
                 swipeCard(swipe, removeLabel: "Remove swipe \(swipe.title ?? "untitled")") {
                     Task {
                         let remaining = matchedSwipeAtoms.filter { $0.uuid != swipe.uuid }.map(\.uuid)
@@ -642,17 +650,6 @@ struct ContentOutlineSidebarContent: View {
                         await loadInheritedContext()
                     }
                 }
-            }
-
-            if swipes.count > 3 {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        showAllSwipes.toggle()
-                    }
-                } label: {
-                    showAllSwipesLabel
-                }
-                .buttonStyle(.plain)
             }
         }
         .padding(8)
@@ -664,19 +661,6 @@ struct ContentOutlineSidebarContent: View {
                         .stroke(DS.border, lineWidth: 1)
                 )
         )
-    }
-
-    @ViewBuilder
-    private var showAllSwipesLabel: some View {
-        HStack(spacing: 4) {
-            Text(showAllSwipes ? "Show less" : "Show all \(matchedSwipeAtoms.count)")
-                .font(DS.caption2)
-            Image(systemName: showAllSwipes ? "chevron.up" : "chevron.down")
-                .font(DS.caption2)
-        }
-        .foregroundStyle(DS.textMuted)
-        .frame(maxWidth: .infinity)
-        .padding(.top, 2)
     }
 
     private func swipeCard(
@@ -719,7 +703,7 @@ struct ContentOutlineSidebarContent: View {
             Text(swipe.title ?? "Untitled Swipe")
                 .font(DS.caption)
                 .foregroundStyle(DS.text)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
 
@@ -754,7 +738,7 @@ struct ContentOutlineSidebarContent: View {
     @ViewBuilder
     private var connectionsContent: some View {
         VStack(spacing: 4) {
-            ForEach(inheritedConnectionAtoms.prefix(3), id: \.uuid) { conn in
+            ForEach(inheritedConnectionAtoms, id: \.uuid) { conn in
                 connectionCard(conn)
             }
         }
@@ -789,7 +773,7 @@ struct ContentOutlineSidebarContent: View {
             Text(conn.title ?? "Connection")
                 .font(DS.caption)
                 .foregroundStyle(DS.text)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
 
@@ -872,7 +856,7 @@ struct ContentOutlineSidebarContent: View {
             Text(hook)
                 .font(DS.caption2)
                 .foregroundStyle(DS.textSecondary)
-                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 2)
 
@@ -1023,7 +1007,7 @@ struct ContentOutlineSidebarContent: View {
                         Text(rec.explanation)
                             .font(DS.caption2)
                             .foregroundStyle(DS.textSecondary)
-                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(8)
                     .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusXSmall))
@@ -1047,24 +1031,50 @@ struct ContentOutlineSidebarContent: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Idea Context")
                             .dsSmallCapsLabel()
-                        Text(state.inheritedIdeaContext)
+                        TextField("Idea context", text: inheritedIdeaContextBinding, axis: .vertical)
+                            .textFieldStyle(.plain)
                             .font(DS.caption2)
                             .foregroundStyle(DS.textSecondary)
                             .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 if hasDirection {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Creative Direction")
                             .dsSmallCapsLabel()
-                        Text(state.inheritedCreativeDirection)
+                        TextField("Creative direction", text: inheritedCreativeDirectionBinding, axis: .vertical)
+                            .textFieldStyle(.plain)
                             .font(DS.caption2)
                             .foregroundStyle(DS.textSecondary)
                             .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
         }
+    }
+
+    private var inheritedIdeaContextBinding: Binding<String> {
+        Binding(
+            get: { state.inheritedIdeaContext },
+            set: { newValue in
+                state.inheritedIdeaContext = newValue
+                state.lastModified = Date()
+                state.save()
+            }
+        )
+    }
+
+    private var inheritedCreativeDirectionBinding: Binding<String> {
+        Binding(
+            get: { state.inheritedCreativeDirection },
+            set: { newValue in
+                state.inheritedCreativeDirection = newValue
+                state.lastModified = Date()
+                state.save()
+            }
+        )
     }
 
     @ViewBuilder
@@ -1092,7 +1102,7 @@ struct ContentOutlineSidebarContent: View {
                             .foregroundStyle(
                                 msg.role == "user" ? DS.textSecondary : DS.text
                             )
-                            .lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -1249,7 +1259,7 @@ struct ContentOutlineSidebarContent: View {
             Text("\(report.platform.capitalized) \(report.format) — \(report.niche)")
                 .font(DS.caption2)
                 .foregroundStyle(DS.green)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
             Text("\(report.sampleSize)")
                 .font(DS.caption2)
@@ -1427,7 +1437,7 @@ struct ContentOutlineSidebarContent: View {
             Text(ref.title)
                 .font(DS.caption2)
                 .foregroundStyle(DS.text)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
 
@@ -1540,7 +1550,7 @@ struct ContentOutlineSidebarContent: View {
 
         // Load matched swipes
         if let swipeUUIDs = metadata.inheritedSwipeUUIDs {
-            for uuid in swipeUUIDs.prefix(5) {
+            for uuid in swipeUUIDs {
                 if let swipe = try? await AtomRepository.shared.fetch(uuid: uuid) {
                     matchedSwipeAtoms.append(swipe)
                 }
@@ -1549,7 +1559,7 @@ struct ContentOutlineSidebarContent: View {
 
         // Load inherited connections
         if let connectionUUIDs = metadata.inheritedConnectionIds {
-            for uuid in connectionUUIDs.prefix(5) {
+            for uuid in connectionUUIDs {
                 if let conn = try? await AtomRepository.shared.fetch(uuid: uuid) {
                     inheritedConnectionAtoms.append(conn)
                 }
@@ -1775,10 +1785,7 @@ private struct SidebarHookRow: View {
     let onUpdate: (String) -> Void
     let onDelete: () -> Void
 
-    @State private var isEditing = false
-    @State private var editText = ""
     @State private var isHovered = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -1786,26 +1793,14 @@ private struct SidebarHookRow: View {
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
                 .frame(width: 16, alignment: .trailing)
-                .padding(.top, isEditing ? 4 : 0)
+                .padding(.top, 2)
 
-            if isEditing {
-                MultilineHookEditor(
-                    text: $editText,
-                    isFocused: $isFocused,
-                    fontSize: 12,
-                    onCommit: { commitEdit() }
-                )
-            } else {
-                Text(hook)
-                    .font(DS.buttonText)
-                    .foregroundStyle(DS.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onTapGesture(count: 2) {
-                        editText = hook
-                        isEditing = true
-                        isFocused = true
-                    }
-            }
+            TextField("Hook", text: hookBinding, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(DS.buttonText)
+                .foregroundStyle(DS.text)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 2)
 
@@ -1835,10 +1830,11 @@ private struct SidebarHookRow: View {
         }
     }
 
-    private func commitEdit() {
-        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { onUpdate(trimmed) }
-        isEditing = false
+    private var hookBinding: Binding<String> {
+        Binding(
+            get: { hook },
+            set: { onUpdate($0) }
+        )
     }
 }
 
@@ -1850,13 +1846,10 @@ private struct SidebarOutlineRow: View {
     let onUpdateTitle: (String) -> Void
     let onDelete: () -> Void
 
-    @State private var isEditing = false
-    @State private var editTitle = ""
     @State private var isHovered = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             // Checkbox
             Button(action: onToggle) {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
@@ -1864,30 +1857,16 @@ private struct SidebarOutlineRow: View {
                     .foregroundStyle(item.isCompleted ? DS.accent : DS.textMuted)
             }
             .buttonStyle(.plain)
+            .padding(.top, 1)
 
             // Title
-            if isEditing {
-                TextField("", text: $editTitle)
-                    .textFieldStyle(.plain)
-                    .font(DS.subheadline)
-                    .foregroundStyle(DS.text)
-                    .focused($isFocused)
-                    .onSubmit { commitEdit() }
-                    .onChange(of: isFocused) { _, focused in
-                        if !focused { commitEdit() }
-                    }
-            } else {
-                Text(item.title)
-                    .font(DS.subheadline)
-                    .foregroundStyle(item.isCompleted ? DS.textMuted : DS.textSecondary)
-                    .strikethrough(item.isCompleted, color: DS.textMuted)
-                    .lineLimit(2)
-                    .onTapGesture(count: 2) {
-                        editTitle = item.title
-                        isEditing = true
-                        isFocused = true
-                    }
-            }
+            TextField("Outline item", text: titleBinding, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(DS.subheadline)
+                .foregroundStyle(item.isCompleted ? DS.textMuted : DS.textSecondary)
+                .strikethrough(item.isCompleted, color: DS.textMuted)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 2)
 
@@ -1910,10 +1889,11 @@ private struct SidebarOutlineRow: View {
         }
     }
 
-    private func commitEdit() {
-        let trimmed = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { onUpdateTitle(trimmed) }
-        isEditing = false
+    private var titleBinding: Binding<String> {
+        Binding(
+            get: { item.title },
+            set: { onUpdateTitle($0) }
+        )
     }
 }
 
@@ -1972,18 +1952,18 @@ private struct ExpandableResearchCard: View {
                 .font(DS.caption)
                 .fontWeight(.medium)
                 .foregroundStyle(DS.text)
-                .lineLimit(isExpanded ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
 
             Text(result.snippet)
                 .font(DS.caption2)
                 .foregroundStyle(DS.textSecondary)
-                .lineLimit(isExpanded ? nil : 3)
+                .fixedSize(horizontal: false, vertical: true)
 
             if isExpanded, let url = result.url, !url.isEmpty {
                 Text(url)
                     .font(.system(size: 9))
                     .foregroundStyle(DS.info)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 6) {

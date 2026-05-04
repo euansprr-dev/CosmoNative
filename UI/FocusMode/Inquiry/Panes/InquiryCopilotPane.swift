@@ -14,6 +14,7 @@ struct InquiryCopilotPane: View {
                     threadHeader
                     contextStrip
                     quickActions
+                    routeReceipts
                     routingCards
                     questionInspector
                     answerForming
@@ -23,8 +24,6 @@ struct InquiryCopilotPane: View {
                 .padding(.horizontal, DS.space12)
                 .padding(.vertical, DS.space12)
             }
-            Divider().background(DS.borderSubtle)
-            askInput
         }
     }
 
@@ -76,17 +75,17 @@ struct InquiryCopilotPane: View {
         VStack(alignment: .leading, spacing: DS.space8) {
             sectionLabel("QUICK ACTIONS")
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
-                quickAction("Summarize source", icon: "doc.text.magnifyingglass")
-                quickAction("Challenge evidence", icon: "exclamationmark.triangle")
-                quickAction("Create branch", icon: "arrow.triangle.branch")
-                quickAction("Find related", icon: "point.3.connected.trianglepath.dotted")
+                quickAction("Summarize source", icon: "doc.text.magnifyingglass", command: "/summarize")
+                quickAction("Challenge evidence", icon: "exclamationmark.triangle", command: "/challenge")
+                quickAction("Create branch", icon: "arrow.triangle.branch", command: "branch: What is one precise sub-question inside \(viewModel.activeQuestionTitle)?")
+                quickAction("Find related", icon: "point.3.connected.trianglepath.dotted", command: "/sources")
             }
         }
     }
 
-    private func quickAction(_ title: String, icon: String) -> some View {
+    private func quickAction(_ title: String, icon: String, command: String) -> some View {
         Button {
-            viewModel.aiPromptDraft = title
+            Task { await viewModel.submitDockText(command) }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -103,6 +102,66 @@ struct InquiryCopilotPane: View {
             .foregroundStyle(CosmoColors.textSecondary)
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Route receipts
+
+    @ViewBuilder
+    private var routeReceipts: some View {
+        let receipts = Array(viewModel.structured.routeReceipts.suffix(4).reversed())
+        if !receipts.isEmpty {
+            VStack(alignment: .leading, spacing: DS.space8) {
+                sectionLabel("ROUTED")
+                ForEach(receipts, id: \.id) { receipt in
+                    routeReceiptRow(receipt)
+                }
+            }
+        }
+    }
+
+    private func routeReceiptRow(_ receipt: InquiryRouteReceipt) -> some View {
+        HStack(alignment: .top, spacing: DS.space8) {
+            Image(systemName: receiptIcon(for: receipt.kind))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(receiptTint(for: receipt.kind))
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(receipt.message)
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textPrimary)
+                    .lineLimit(1)
+                if let detail = receipt.detail {
+                    Text(detail)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, 7)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+    }
+
+    private func receiptIcon(for kind: InquiryRouteReceipt.Kind) -> String {
+        switch kind {
+        case .noteSaved: return "note.text"
+        case .extractSaved: return "checkmark.seal"
+        case .branchCreated: return "arrow.triangle.branch"
+        case .sourceOpened, .sourceImported: return "doc.badge.plus"
+        case .sourceQueued: return "tray.and.arrow.down"
+        case .sourceRefreshed: return "scope"
+        case .aiAsked: return "sparkles"
+        }
+    }
+
+    private func receiptTint(for kind: InquiryRouteReceipt.Kind) -> Color {
+        switch kind {
+        case .sourceQueued: return DS.orange
+        default: return DS.accent
+        }
     }
 
     // MARK: - Routing cards
@@ -293,13 +352,17 @@ struct InquiryCopilotPane: View {
             }
             HStack(spacing: DS.space8) {
                 Button("Ask") {
-                    viewModel.aiPromptDraft = "Help me think through \(viewModel.activeQuestionTitle)."
+                    Task {
+                        await viewModel.runAIPrompt("Help me think through \(viewModel.activeQuestionTitle).")
+                    }
                 }
                 .buttonStyle(.plain)
                 .font(CosmoTypography.caption)
                 .foregroundStyle(DS.accent)
                 Button("Branch") {
-                    viewModel.aiPromptDraft = "Suggest one branch question under: \(viewModel.activeQuestionTitle)"
+                    Task {
+                        await viewModel.runAIPrompt("Suggest one branch question under: \(viewModel.activeQuestionTitle)")
+                    }
                 }
                 .buttonStyle(.plain)
                 .font(CosmoTypography.caption)
@@ -529,56 +592,6 @@ struct InquiryCopilotPane: View {
         default:
             return DS.accent
         }
-    }
-
-    // MARK: - Ask input
-
-    private var askInput: some View {
-        VStack(spacing: 4) {
-            HStack {
-                TextField("Ask, route, branch, or update...", text: $viewModel.aiPromptDraft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(CosmoTypography.body)
-                    .padding(DS.space10)
-                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .stroke(DS.borderSubtle, lineWidth: 1)
-                    )
-                Button {
-                    let prompt = viewModel.aiPromptDraft
-                    Task { await viewModel.runAIPrompt(prompt) }
-                } label: {
-                    Image(systemName: viewModel.aiBusy ? "ellipsis" : "arrow.up.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(DS.accent)
-                }
-                .buttonStyle(.plain)
-                .disabled(viewModel.aiBusy || viewModel.aiPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            HStack(spacing: 6) {
-                quickPromptChip("Explain simply")
-                quickPromptChip("What does this contradict?")
-                quickPromptChip("Create a branch")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space10)
-    }
-
-    private func quickPromptChip(_ text: String) -> some View {
-        Button {
-            viewModel.aiPromptDraft = text
-        } label: {
-            Text(text)
-                .font(CosmoTypography.caption)
-                .foregroundStyle(CosmoColors.textSecondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Helpers

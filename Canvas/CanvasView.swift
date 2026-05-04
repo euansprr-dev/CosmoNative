@@ -147,10 +147,10 @@ struct CanvasView: View {
         CanvasVisibilityIndex(transform: viewportTransform)
     }
 
-    private var renderSnapshot: CanvasRenderSnapshot {
+    private func renderSnapshot(for blocks: [CanvasBlock]) -> CanvasRenderSnapshot {
         let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-snapshot")
         let snapshot = CanvasRenderSnapshotBuilder.build(
-            blocks: renderedBlocks,
+            blocks: blocks,
             transform: viewportTransform,
             userClusters: clusterEngine.userClusters,
             selectedBlockId: selectedBlockId,
@@ -167,6 +167,8 @@ struct CanvasView: View {
     private var canvasContent: some View {
         GeometryReader { geo in
             let screenCenter = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            let currentRenderedBlocks = renderedBlocks
+            let snapshot = renderSnapshot(for: currentRenderedBlocks)
 
             ZStack {
                 // Background always fills the screen (infinite canvas)
@@ -267,7 +269,7 @@ struct CanvasView: View {
                     )
 
                     canvasClusterDropPreviewLayer
-                    blocksLayer
+                    blocksLayer(snapshot: snapshot)
                     inboxBlocksLayer
 
                     // Drag-to-connect overlay (canvas coordinates, inside scaled container
@@ -291,7 +293,7 @@ struct CanvasView: View {
                 // Connection lines layer (screen coordinates, outside scaled container
                 // to prevent frame clipping at non-100% zoom levels)
                 CanvasConnectionLinesLayer(
-                    blocks: renderedBlocks,
+                    blocks: currentRenderedBlocks,
                     transform: viewportTransform,
                     activeBlockDrag: blockDragState,
                     isActive: canvasIsActive
@@ -359,7 +361,7 @@ struct CanvasView: View {
                 CanvasPerformanceOverlay(
                     transform: viewportTransform,
                     blockCount: spatialEngine.blocks.count,
-                    visibleBlockCount: renderSnapshot.visibleBlockCount,
+                    visibleBlockCount: snapshot.visibleBlockCount,
                     activeDragLabel: blockDragState.activeId ?? draggingClusterId?.uuidString
                 )
             }
@@ -569,7 +571,7 @@ struct CanvasView: View {
 
     private var selectedInspectableBlock: CanvasBlock? {
         guard let selectedBlockId,
-              let block = renderSnapshot.blocksById[selectedBlockId],
+              let block = spatialEngine.blocks.first(where: { $0.id == selectedBlockId }),
               !block.entityUuid.isEmpty,
               block.entityType != .cosmoAI else {
             return nil
@@ -853,7 +855,8 @@ struct CanvasView: View {
     }
 
     private var renderedBlocks: [CanvasBlock] {
-        spatialEngine.blocks.map(renderedBlock(for:))
+        guard clusterResizeSession != nil else { return spatialEngine.blocks }
+        return spatialEngine.blocks.map(renderedBlock(for:))
     }
 
     private func renderedBlock(for block: CanvasBlock) -> CanvasBlock {
@@ -867,9 +870,8 @@ struct CanvasView: View {
         return rendered
     }
 
-    private var blocksLayer: some View {
-        let snapshot = renderSnapshot
-        return ForEach(snapshot.renderableBlocks, id: \.id) { block in
+    private func blocksLayer(snapshot: CanvasRenderSnapshot) -> some View {
+        ForEach(snapshot.renderableBlocks, id: \.id) { block in
             CanvasBlockTransformHost(
                 block: block,
                 transform: viewportTransform,
@@ -922,7 +924,9 @@ struct CanvasView: View {
 
     /// Block UUIDs consumed by non-canvas clusters (list/board) — hidden from normal blocksLayer
     private var clusterConsumedBlockUUIDs: Set<String> {
-        renderSnapshot.clusterConsumedBlockUUIDs
+        Set(clusterEngine.userClusters
+            .filter { $0.viewMode != .canvas }
+            .flatMap(\.blockUUIDs))
     }
 
     /// Block hit testing only needs to be suppressed while the cluster itself is actively
@@ -1202,68 +1206,28 @@ struct CanvasView: View {
         )
     }
 
-    private typealias SceneColorSignal = (id: String, color: Color, rect: CGRect, isNearSidebar: Bool)
+    private typealias SceneColorSignal = CanvasSceneColorSignal
 
     private func visibleClusterSignals() -> [SceneColorSignal] {
-        let viewport = CGRect(origin: .zero, size: canvasSize).insetBy(dx: -120, dy: -120)
-        let nearLimit: CGFloat = 740
-
-        return clusterEngine.allClusters.compactMap { cluster in
-            let rect = viewportTransform.canvasRectToScreen(liveSceneRect(for: cluster))
-            guard rect.width > 1, rect.height > 1, rect.intersects(viewport) else { return nil }
-            return ("\(cluster.id)", cluster.color, rect, rect.minX <= nearLimit)
-        }
+        CanvasSceneSignalBuilder.clusterSignals(
+            clusters: clusterEngine.allClusters,
+            transform: viewportTransform,
+            viewportSize: canvasSize,
+            draggingClusterId: draggingClusterId,
+            clusterDragTranslation: clusterDragTranslation
+        )
     }
 
     private func visibleBlockSignals() -> [SceneColorSignal] {
-        let viewport = CGRect(origin: .zero, size: canvasSize).insetBy(dx: -120, dy: -120)
-        let nearLimit: CGFloat = 740
-
-        return renderSnapshot.renderableBlocks.compactMap { block in
-            let rect = screenRect(for: block, position: liveScenePosition(for: block))
-            guard rect.intersects(viewport) else { return nil }
-            return (block.id, block.entityType.color, rect, rect.minX <= nearLimit)
-        }
-    }
-
-    private func liveSceneRect(for cluster: CanvasCluster) -> CGRect {
-        guard draggingClusterId == cluster.id else { return cluster.boundingRect }
-        return cluster.boundingRect.offsetBy(
-            dx: clusterDragTranslation.width,
-            dy: clusterDragTranslation.height
-        )
-    }
-
-    private func liveScenePosition(for block: CanvasBlock) -> CGPoint {
-        if blockDragState.activeId == block.id {
-            return CGPoint(
-                x: block.position.x + blockDragState.translation.width,
-                y: block.position.y + blockDragState.translation.height
-            )
-        }
-
-        if draggingClusterId != nil, draggingClusterMemberUUIDs.contains(block.entityUuid) {
-            return CGPoint(
-                x: block.position.x + clusterDragTranslation.width,
-                y: block.position.y + clusterDragTranslation.height
-            )
-        }
-
-        return block.position
-    }
-
-    private func screenRect(for block: CanvasBlock, position: CGPoint? = nil) -> CGRect {
-        let center = viewportTransform.canvasToScreen(position ?? block.position)
-        let scale = viewportTransform.effectiveScale
-        let size = CGSize(
-            width: block.size.width * scale,
-            height: block.size.height * scale
-        )
-        return CGRect(
-            x: center.x - size.width / 2,
-            y: center.y - size.height / 2,
-            width: size.width,
-            height: size.height
+        CanvasSceneSignalBuilder.blockSignals(
+            blocks: renderedBlocks,
+            transform: viewportTransform,
+            viewportSize: canvasSize,
+            activeBlockDrag: blockDragState,
+            draggingClusterId: draggingClusterId,
+            draggingClusterMemberUUIDs: draggingClusterMemberUUIDs,
+            clusterDragTranslation: clusterDragTranslation,
+            consumedBlockUUIDs: clusterConsumedBlockUUIDs
         )
     }
 
@@ -4706,12 +4670,19 @@ struct ThinkspaceLibraryItem: Identifiable, Equatable {
     let entityId: Int64
     let entityUuid: String
     let isOnCanvas: Bool
+    let block: CanvasBlock?
 }
 
 struct ThinkspaceLibraryFolder: Identifiable, Equatable {
     let id: UUID
     let title: String
+    let colorIndex: Int
     let items: [ThinkspaceLibraryItem]
+
+    var color: Color {
+        let index = ((colorIndex % CanvasCluster.palette.count) + CanvasCluster.palette.count) % CanvasCluster.palette.count
+        return CanvasCluster.palette[index]
+    }
 }
 
 struct ThinkspaceLibrarySnapshot: Equatable {
@@ -4732,7 +4703,8 @@ struct ThinkspaceLibrarySnapshot: Equatable {
                 entityType: doc.entityType,
                 entityId: doc.entityId,
                 entityUuid: doc.entityUuid,
-                isOnCanvas: false
+                isOnCanvas: false,
+                block: nil
             )
         }
 
@@ -4743,7 +4715,8 @@ struct ThinkspaceLibrarySnapshot: Equatable {
                 entityType: block.entityType,
                 entityId: block.entityId,
                 entityUuid: block.entityUuid,
-                isOnCanvas: true
+                isOnCanvas: true,
+                block: block
             )
         }
 
@@ -4754,10 +4727,12 @@ struct ThinkspaceLibrarySnapshot: Equatable {
         let folders = sortedClusters.map { cluster in
             let items = cluster.blockUUIDs
                 .compactMap { itemsByUUID[$0] }
-                .sorted { lhs, rhs in
-                    lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-                }
-            return ThinkspaceLibraryFolder(id: cluster.id, title: cluster.name, items: items)
+            return ThinkspaceLibraryFolder(
+                id: cluster.id,
+                title: cluster.name,
+                colorIndex: cluster.colorIndex,
+                items: items
+            )
         }
 
         let clusteredUUIDs = Set(clusters.flatMap(\.blockUUIDs))
@@ -4776,43 +4751,17 @@ private struct ThinkspaceLibraryModeView: View {
     let snapshot: ThinkspaceLibrarySnapshot
     let onOpenItem: (ThinkspaceLibraryItem) -> Void
 
+    @State private var selectedFolderID: UUID?
+    @State private var searchText = ""
+
     var body: some View {
         ZStack {
             DS.canvas
                 .ignoresSafeArea()
 
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(thinkspaceName)
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(DS.text)
-                        Text("\(itemCount) items")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(DS.textMuted)
-                    }
-                    Spacer()
-                }
-
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        if snapshot.folders.isEmpty && snapshot.looseItems.isEmpty {
-                            emptyState
-                        } else {
-                            ForEach(snapshot.folders) { folder in
-                                folderSection(folder)
-                            }
-
-                            if !snapshot.looseItems.isEmpty {
-                                looseSection
-                            }
-                        }
-                    }
-                    .padding(.bottom, 80)
-                }
-            }
-            .padding(.horizontal, 44)
-            .padding(.vertical, 34)
+            libraryContent
+                .padding(.horizontal, 44)
+                .padding(.vertical, 34)
         }
     }
 
@@ -4820,99 +4769,407 @@ private struct ThinkspaceLibraryModeView: View {
         snapshot.looseItems.count + snapshot.folders.reduce(0) { $0 + $1.items.count }
     }
 
+    private var selectedFolder: ThinkspaceLibraryFolder? {
+        selectedFolderID.flatMap { id in snapshot.folders.first { $0.id == id } }
+    }
+
+    private var visibleLooseItems: [ThinkspaceLibraryItem] {
+        filteredItems(snapshot.looseItems)
+    }
+
+    private var visibleFolders: [ThinkspaceLibraryFolder] {
+        guard selectedFolder == nil else { return [] }
+        guard !trimmedSearch.isEmpty else { return snapshot.folders }
+        return snapshot.folders.filter { folder in
+            matches(folder.title) || folder.items.contains(where: { matches($0.title) })
+        }
+    }
+
+    private var visibleFolderItems: [ThinkspaceLibraryItem] {
+        filteredItems(selectedFolder?.items ?? [])
+    }
+
+    private var trimmedSearch: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var libraryContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            ThinkspaceLibraryHeader(
+                title: selectedFolder?.title ?? thinkspaceName,
+                subtitle: subtitleText,
+                searchText: $searchText,
+                selectedFolder: selectedFolder,
+                onBack: { selectedFolderID = nil }
+            )
+
+            ScrollView {
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 28) {
+                    rootFolderTiles
+                    documentTiles
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 92)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .overlay {
+                if shouldShowEmptyState {
+                    emptyState
+                }
+            }
+        }
+    }
+
+    private var rootFolderTiles: some View {
+        ForEach(visibleFolders) { folder in
+            ThinkspaceLibraryFolderTile(folder: folder) {
+                selectedFolderID = folder.id
+            }
+        }
+    }
+
+    private var documentTiles: some View {
+        ForEach(currentVisibleItems) { item in
+            ThinkspaceLibraryDocumentTile(item: item) {
+                onOpenItem(item)
+            }
+        }
+    }
+
+    private var currentVisibleItems: [ThinkspaceLibraryItem] {
+        selectedFolder == nil ? visibleLooseItems : visibleFolderItems
+    }
+
+    private var gridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 156, maximum: 180), spacing: 28, alignment: .top)]
+    }
+
+    private var subtitleText: String {
+        if let folder = selectedFolder {
+            return "\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")"
+        }
+        return "\(itemCount) item\(itemCount == 1 ? "" : "s")"
+    }
+
+    private var shouldShowEmptyState: Bool {
+        if selectedFolder != nil {
+            return visibleFolderItems.isEmpty
+        }
+        return visibleFolders.isEmpty && visibleLooseItems.isEmpty
+    }
+
     private var emptyState: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "folder")
-                .font(.system(size: 15, weight: .medium))
-            Text("No items in this Thinkspace")
-                .font(.system(size: 13, weight: .medium))
-        }
-        .foregroundStyle(DS.textMuted)
-        .frame(maxWidth: .infinity, minHeight: 180)
+        ThinkspaceLibraryEmptyState(
+            icon: trimmedSearch.isEmpty ? "folder" : "magnifyingglass",
+            title: emptyTitle,
+            message: emptyMessage
+        )
+        .frame(maxWidth: .infinity, minHeight: 260)
     }
 
-    private func folderSection(_ folder: ThinkspaceLibraryFolder) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.textSecondary)
-                Text(folder.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.text)
-                Text("\(folder.items.count)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
-            }
+    private var emptyTitle: String {
+        if !trimmedSearch.isEmpty { return "No matches" }
+        if selectedFolder != nil { return "This cluster is empty" }
+        return "Your workspace is ready"
+    }
 
-            VStack(spacing: 0) {
-                ForEach(folder.items) { item in
-                    itemRow(item)
-                }
-            }
-            .background(DS.surfaceElevated.opacity(0.62), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(DS.border.opacity(0.35), lineWidth: 1)
-            )
+    private var emptyMessage: String {
+        if !trimmedSearch.isEmpty {
+            return "Try a document, cluster, or phrase from this Thinkspace."
+        }
+        if selectedFolder != nil {
+            return "Drag documents into this cluster from the canvas to fill it."
+        }
+        return "Create a block or capture a thought to start building this library."
+    }
+
+    private func filteredItems(_ items: [ThinkspaceLibraryItem]) -> [ThinkspaceLibraryItem] {
+        guard !trimmedSearch.isEmpty else { return items }
+        return items.filter { item in
+            matches(item.title) || matches(item.block?.subtitle ?? "") || matches(item.block?.metadata["content"] ?? "")
         }
     }
 
-    private var looseSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "tray")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.textSecondary)
-                Text("Root")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.text)
-                Text("\(snapshot.looseItems.count)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
-            }
-
-            VStack(spacing: 0) {
-                ForEach(snapshot.looseItems) { item in
-                    itemRow(item)
-                }
-            }
-            .background(DS.surfaceElevated.opacity(0.62), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(DS.border.opacity(0.35), lineWidth: 1)
-            )
-        }
+    private func matches(_ value: String) -> Bool {
+        value.localizedCaseInsensitiveContains(trimmedSearch)
     }
+}
 
-    private func itemRow(_ item: ThinkspaceLibraryItem) -> some View {
-        Button {
-            onOpenItem(item)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: item.entityType.icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(item.entityType.color)
-                    .frame(width: 18)
+private struct ThinkspaceLibraryHeader: View {
+    let title: String
+    let subtitle: String
+    @Binding var searchText: String
+    let selectedFolder: ThinkspaceLibraryFolder?
+    let onBack: () -> Void
 
-                Text(item.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            breadcrumb
+            HStack(alignment: .firstTextBaseline) {
+                titleBlock
                 Spacer()
-
-                if !item.isOnCanvas {
-                    Text("Stored")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
-                }
+                searchField
             }
-            .padding(.horizontal, 12)
-            .frame(height: 34)
+        }
+    }
+
+    private var breadcrumb: some View {
+        Group {
+            if let selectedFolder {
+                Button(action: onBack) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Library")
+                        Text("/")
+                            .foregroundStyle(DS.textMuted)
+                        Text(selectedFolder.title)
+                            .foregroundStyle(DS.text)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+            Text(subtitle)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+            TextField("Search anything...", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 260)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 34)
+        .background(DS.surfaceElevated.opacity(0.72), in: Capsule())
+        .overlay(Capsule().stroke(DS.border.opacity(0.42), lineWidth: 1))
+    }
+}
+
+private struct ThinkspaceLibraryFolderTile: View {
+    let folder: ThinkspaceLibraryFolder
+    let onOpen: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(spacing: 10) {
+                previewWell
+                label
+            }
+            .frame(width: 156)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.gentle) {
+                isHovered = hovering
+            }
+        }
+        .accessibilityLabel("\(folder.title), \(folder.items.count) items")
+    }
+
+    private var previewWell: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DS.surfaceCard.opacity(isHovered ? 0.94 : 0.72))
+            ThinkspaceLibraryFolderGlyph(color: folder.color)
+                .frame(width: 92, height: 70)
+        }
+        .frame(width: 156, height: 132)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isHovered ? folder.color.opacity(0.34) : DS.border.opacity(0.3), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.08 : 0.035), radius: isHovered ? 14 : 6, y: isHovered ? 8 : 3)
+        .scaleEffect(isHovered ? 1.015 : 1)
+    }
+
+    private var label: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(folder.color.opacity(0.82))
+                    .frame(width: 12, height: 9)
+                Text(folder.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+            }
+            Text("\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+        .frame(width: 156, height: 44, alignment: .top)
+    }
+}
+
+private struct ThinkspaceLibraryDocumentTile: View {
+    let item: ThinkspaceLibraryItem
+    let onOpen: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(spacing: 10) {
+                previewWell
+                label
+            }
+            .frame(width: 156)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.gentle) {
+                isHovered = hovering
+            }
+        }
+        .accessibilityLabel(item.title)
+    }
+
+    private var previewWell: some View {
+        ZStack(alignment: .topTrailing) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DS.surfaceCard.opacity(isHovered ? 0.98 : 0.78))
+            previewContent
+            typeBadge
+        }
+        .frame(width: 116, height: 132)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isHovered ? item.entityType.color.opacity(0.3) : DS.border.opacity(0.28), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.08 : 0.035), radius: isHovered ? 14 : 6, y: isHovered ? 8 : 3)
+        .scaleEffect(isHovered ? 1.015 : 1)
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if let thumbnail = thumbnailPath {
+            SpotlightImageContent(urlString: thumbnail)
+        } else if item.entityType == .connection {
+            SpotlightConnectionPreview(preview: previewText, accentColor: item.entityType.color)
+        } else if let previewText, !previewText.isEmpty {
+            SpotlightPageContent(text: previewText, accentColor: item.entityType.color)
+        } else {
+            SpotlightFauxPage(accentColor: item.entityType.color)
+        }
+    }
+
+    private var typeBadge: some View {
+        Image(systemName: item.entityType.icon)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(item.entityType.color)
+            .frame(width: 22, height: 22)
+            .background(Circle().fill(DS.surfaceElevated.opacity(0.92)))
+            .overlay(Circle().stroke(DS.border.opacity(0.32), lineWidth: 1))
+            .padding(7)
+    }
+
+    private var label: some View {
+        VStack(spacing: 4) {
+            Text(item.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.text)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+            Text(item.isOnCanvas ? "On canvas" : "Stored")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+        .frame(width: 156, height: 44, alignment: .top)
+    }
+
+    private var previewText: String? {
+        item.block?.metadata["content"] ?? item.block?.subtitle ?? item.title
+    }
+
+    private var thumbnailPath: String? {
+        item.block?.metadata["thumbnail"] ?? item.block?.metadata["imagePath"]
+    }
+}
+
+private struct ThinkspaceLibraryFolderGlyph: View {
+    let color: Color
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            tab
+            bodyShape
+            highlight
+        }
+    }
+
+    private var tab: some View {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(color.opacity(0.72))
+            .frame(width: 45, height: 17)
+            .offset(x: -24, y: -37)
+    }
+
+    private var bodyShape: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(color.opacity(0.88))
+            .frame(width: 92, height: 56)
+            .overlay(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.24), Color.clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .clipShape(.rect(cornerRadius: 8))
+            )
+    }
+
+    private var highlight: some View {
+        RoundedRectangle(cornerRadius: 3, style: .continuous)
+            .fill(Color.white.opacity(0.34))
+            .frame(width: 72, height: 4)
+            .offset(y: -45)
+    }
+}
+
+private struct ThinkspaceLibraryEmptyState: View {
+    let icon: String
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 34, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(DS.text)
+            Text(message)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
+        }
     }
 }
 

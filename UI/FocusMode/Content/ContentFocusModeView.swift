@@ -88,7 +88,6 @@ struct ContentFocusModeView: View {
     @State private var inheritedFramework: String?
     @State private var clientProfileAtom: Atom?
     @State private var availableClientProfiles: [Atom] = []
-    @State private var coreIdeaExpanded: Bool = false
     @State private var hoveredSwipeUUID: String?
     @State private var showSwipeAttachmentEditor = false
 
@@ -230,7 +229,7 @@ struct ContentFocusModeView: View {
             return max(320, availableWidth - DS.space40)
         }
 
-        let sideAllowance: CGFloat = zenMode ? DS.space48 : 520
+        let sideAllowance: CGFloat = zenMode ? DS.space48 : 580
         let available = max(360, availableWidth - sideAllowance)
         return min(writingWidthMode.width, available)
     }
@@ -557,7 +556,7 @@ struct ContentFocusModeView: View {
                         HStack(alignment: .top, spacing: DS.space24) {
                             if !zenMode {
                                 scriptoriumLeftMargin
-                                    .frame(width: 200, alignment: .leading)
+                                    .frame(width: 260, alignment: .leading)
                                     .padding(.top, DS.space12)
                                     .opacity(sideRailOpacity)
                                     .atelierStaggerIn(delay: continuationStagger(0.28), appeared: hasAppeared)
@@ -979,15 +978,18 @@ struct ContentFocusModeView: View {
                     .foregroundStyle(DS.inkFaded.opacity(0.6))
             } else {
                 ForEach(Array(viewModel.state.outline.enumerated()), id: \.element.id) { idx, item in
-                    HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                    HStack(alignment: .top, spacing: DS.space8) {
                         Text(romanNumeral(for: idx + 1))
                             .font(.system(size: 11, weight: .regular, design: .monospaced))
                             .foregroundStyle(DS.giltMuted)
                             .frame(width: 24, alignment: .leading)
-                        Text(item.title)
+                            .padding(.top, 2)
+                        TextField("Outline item", text: marginaliaOutlineTitleBinding(for: item.id), axis: .vertical)
+                            .textFieldStyle(.plain)
                             .font(DS.callout)
                             .foregroundStyle(DS.text)
-                            .lineLimit(2)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -995,32 +997,44 @@ struct ContentFocusModeView: View {
     }
 
     private var coreIdeaMarginaliaSection: some View {
-        let desc = viewModel.state.contentDescription
-        let needsTruncation = desc.count > 140
-        return VStack(alignment: .leading, spacing: DS.space6) {
+        VStack(alignment: .leading, spacing: DS.space6) {
             MarginaliaLabel("CORE IDEA")
-            Text(desc)
+            TextField("Core idea", text: marginaliaCoreIdeaBinding, axis: .vertical)
+                .textFieldStyle(.plain)
                 .font(.system(size: 14, weight: .regular, design: .serif))
                 .italic()
                 .foregroundStyle(DS.text)
-                .lineLimit(coreIdeaExpanded ? nil : 4)
+                .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
-            if needsTruncation {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        coreIdeaExpanded.toggle()
-                    }
-                } label: {
-                    Text(coreIdeaExpanded ? "show less" : "show more…")
-                        .font(DS.dateSerif)
-                        .italic()
-                        .foregroundStyle(DS.gilt.opacity(0.75))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.top, DS.space2)
-            }
         }
+    }
+
+    private var marginaliaCoreIdeaBinding: Binding<String> {
+        Binding(
+            get: {
+                if !viewModel.state.contentDescription.isEmpty { return viewModel.state.contentDescription }
+                return viewModel.state.coreIdea
+            },
+            set: { newValue in
+                viewModel.state.coreIdea = newValue
+                viewModel.state.contentDescription = newValue
+                viewModel.state.lastModified = Date()
+                viewModel.state.save()
+            }
+        )
+    }
+
+    private func marginaliaOutlineTitleBinding(for id: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                viewModel.state.outline.first(where: { $0.id == id })?.title ?? ""
+            },
+            set: { newValue in
+                viewModel.state.updateOutlineItem(id: id, title: newValue)
+                viewModel.state.lastModified = Date()
+                viewModel.state.save()
+            }
+        )
     }
 
     private var scoreMarginaliaSection: some View {
@@ -1109,13 +1123,13 @@ struct ContentFocusModeView: View {
                             Text(idea.title ?? "untitled idea")
                                 .font(.system(size: 14, weight: .regular, design: .serif))
                                 .foregroundStyle(DS.text)
-                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
                             if let body = idea.body, !body.isEmpty {
-                                Text(String(body.prefix(80)))
+                                Text(body)
                                     .font(DS.dateSerif)
                                     .italic()
                                     .foregroundStyle(DS.inkFaded)
-                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                     }
@@ -1156,7 +1170,7 @@ struct ContentFocusModeView: View {
             if !supportingSwipeAtoms.isEmpty {
                 VStack(alignment: .leading, spacing: DS.space8) {
                     MarginaliaLabel("RELATED SWIPES", countText: "\(supportingSwipeAtoms.count)")
-                    ForEach(supportingSwipeAtoms.prefix(3), id: \.uuid) { swipe in
+                    ForEach(supportingSwipeAtoms, id: \.uuid) { swipe in
                         swipeMarginaliaRow(swipe, removeLabel: "Remove swipe \(swipe.title ?? "untitled")") {
                             Task {
                                 let remaining = matchedSwipeAtoms.filter { $0.uuid != swipe.uuid }.map(\.uuid)
@@ -1203,12 +1217,12 @@ struct ContentFocusModeView: View {
                         Text(swipe.title ?? "untitled")
                             .font(DS.callout)
                             .foregroundStyle(DS.text)
-                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                         if let hook = swipe.researchMetadata?.hook {
                             Text(hook)
                                 .font(DS.caption2)
                                 .foregroundStyle(DS.inkFaded)
-                                .lineLimit(1)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -1266,7 +1280,7 @@ struct ContentFocusModeView: View {
             Text(framework)
                 .font(.system(size: 14, weight: .regular, design: .serif))
                 .foregroundStyle(DS.text)
-                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1312,7 +1326,7 @@ struct ContentFocusModeView: View {
                 Text(brandMenuTitle)
                     .font(.system(size: 14, weight: .regular, design: .serif))
                     .foregroundStyle(DS.text)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(DS.gilt.opacity(0.7))
@@ -1334,19 +1348,20 @@ struct ContentFocusModeView: View {
 
     @ViewBuilder
     private func brandVoiceBullets(_ meta: ClientProfileMetadata) -> some View {
-        let bullets = collectBrandBullets(meta).prefix(3)
+        let bullets = collectBrandBullets(meta)
         if !bullets.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
-                    HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+                    HStack(alignment: .top, spacing: DS.space6) {
                         Text("·")
                             .font(.system(size: 11))
                             .foregroundStyle(DS.gilt.opacity(0.6))
+                            .padding(.top, 2)
                         Text(bullet)
                             .font(DS.dateSerif)
                             .italic()
                             .foregroundStyle(DS.text)
-                            .lineLimit(1)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -1369,13 +1384,13 @@ struct ContentFocusModeView: View {
         var bullets: [String] = []
         if let niche = meta.niche, !niche.isEmpty { bullets.append(niche) }
         if let voice = meta.voiceNotes, !voice.isEmpty {
-            bullets.append(String(voice.prefix(50)))
+            bullets.append(voice)
         }
         if let audience = meta.targetAudience, !audience.isEmpty {
-            bullets.append(String(audience.prefix(50)))
+            bullets.append(audience)
         }
-        if let story = meta.brandStory, !story.isEmpty, bullets.count < 3 {
-            bullets.append(String(story.prefix(50)))
+        if let story = meta.brandStory, !story.isEmpty {
+            bullets.append(story)
         }
         return bullets
     }
@@ -1383,19 +1398,37 @@ struct ContentFocusModeView: View {
     private var hooksMarginaliaSection: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             MarginaliaLabel("HOOKS", countText: "\(viewModel.state.hooks.count)")
-            ForEach(Array(viewModel.state.hooks.prefix(3).enumerated()), id: \.offset) { idx, hook in
-                HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+            ForEach(Array(viewModel.state.hooks.enumerated()), id: \.offset) { idx, _ in
+                HStack(alignment: .top, spacing: DS.space8) {
                     Text(romanNumeral(for: idx + 1) + ".")
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
                         .foregroundStyle(DS.giltMuted)
                         .frame(width: 22, alignment: .leading)
-                    Text(hook)
+                        .padding(.top, 2)
+                    TextField("Hook", text: marginaliaHookBinding(at: idx), axis: .vertical)
+                        .textFieldStyle(.plain)
                         .font(DS.caption)
                         .foregroundStyle(DS.text)
-                        .lineLimit(2)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
+    }
+
+    private func marginaliaHookBinding(at index: Int) -> Binding<String> {
+        Binding(
+            get: {
+                guard viewModel.state.hooks.indices.contains(index) else { return "" }
+                return viewModel.state.hooks[index]
+            },
+            set: { newValue in
+                guard viewModel.state.hooks.indices.contains(index) else { return }
+                viewModel.state.hooks[index] = newValue
+                viewModel.state.lastModified = Date()
+                viewModel.state.save()
+            }
+        )
     }
 
     // MARK: - Word & character counter (bottom-left overlay)
@@ -2259,10 +2292,10 @@ struct ContentFocusModeView: View {
             await MainActor.run { self.sourceIdeaAtom = idea }
         }
 
-        // Matched swipes — at most 5, we only show 3
+        // Matched swipes — keep every inherited reference visible in the margins.
         if let swipeUUIDs = metadata.inheritedSwipeUUIDs {
             var loaded: [Atom] = []
-            for uuid in swipeUUIDs.prefix(5) {
+            for uuid in swipeUUIDs {
                 if let swipe = try? await AtomRepository.shared.fetch(uuid: uuid) {
                     loaded.append(swipe)
                 }

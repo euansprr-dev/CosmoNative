@@ -29,6 +29,130 @@ struct CanvasRenderSnapshot: Equatable {
     var visibleBlockCount: Int { visibleBlockIds.count }
 }
 
+struct CanvasSceneColorSignal: Equatable {
+    let id: String
+    let color: Color
+    let rect: CGRect
+    let isNearSidebar: Bool
+
+    static func == (lhs: CanvasSceneColorSignal, rhs: CanvasSceneColorSignal) -> Bool {
+        lhs.id == rhs.id
+            && lhs.rect == rhs.rect
+            && lhs.isNearSidebar == rhs.isNearSidebar
+    }
+}
+
+enum CanvasSceneSignalBuilder {
+    private static let viewportInset: CGFloat = 120
+    private static let nearSidebarLimit: CGFloat = 740
+
+    static func clusterSignals(
+        clusters: [CanvasCluster],
+        transform: CanvasViewportTransform,
+        viewportSize: CGSize,
+        draggingClusterId: UUID?,
+        clusterDragTranslation: CGSize
+    ) -> [CanvasSceneColorSignal] {
+        let viewport = CGRect(origin: .zero, size: viewportSize).insetBy(dx: -viewportInset, dy: -viewportInset)
+
+        return clusters.compactMap { cluster in
+            let canvasRect: CGRect
+            if draggingClusterId == cluster.id {
+                canvasRect = cluster.boundingRect.offsetBy(
+                    dx: clusterDragTranslation.width,
+                    dy: clusterDragTranslation.height
+                )
+            } else {
+                canvasRect = cluster.boundingRect
+            }
+
+            let rect = transform.canvasRectToScreen(canvasRect)
+            guard rect.width > 1, rect.height > 1, rect.intersects(viewport) else { return nil }
+            return CanvasSceneColorSignal(
+                id: "\(cluster.id)",
+                color: cluster.color,
+                rect: rect,
+                isNearSidebar: rect.minX <= nearSidebarLimit
+            )
+        }
+    }
+
+    static func blockSignals(
+        blocks: [CanvasBlock],
+        transform: CanvasViewportTransform,
+        viewportSize: CGSize,
+        activeBlockDrag: ActiveCanvasDragState<String>,
+        draggingClusterId: UUID?,
+        draggingClusterMemberUUIDs: Set<String>,
+        clusterDragTranslation: CGSize,
+        consumedBlockUUIDs: Set<String>
+    ) -> [CanvasSceneColorSignal] {
+        let viewport = CGRect(origin: .zero, size: viewportSize).insetBy(dx: -viewportInset, dy: -viewportInset)
+
+        return blocks.compactMap { block in
+            let isDraggedClusterMember = draggingClusterId != nil && draggingClusterMemberUUIDs.contains(block.entityUuid)
+            guard !consumedBlockUUIDs.contains(block.entityUuid) || isDraggedClusterMember else { return nil }
+
+            let position = livePosition(
+                for: block,
+                activeBlockDrag: activeBlockDrag,
+                isDraggedClusterMember: isDraggedClusterMember,
+                clusterDragTranslation: clusterDragTranslation
+            )
+            let rect = screenRect(for: block, position: position, transform: transform)
+            guard rect.intersects(viewport) else { return nil }
+            return CanvasSceneColorSignal(
+                id: block.id,
+                color: block.entityType.color,
+                rect: rect,
+                isNearSidebar: rect.minX <= nearSidebarLimit
+            )
+        }
+    }
+
+    private static func livePosition(
+        for block: CanvasBlock,
+        activeBlockDrag: ActiveCanvasDragState<String>,
+        isDraggedClusterMember: Bool,
+        clusterDragTranslation: CGSize
+    ) -> CGPoint {
+        if activeBlockDrag.activeId == block.id {
+            return CGPoint(
+                x: block.position.x + activeBlockDrag.translation.width,
+                y: block.position.y + activeBlockDrag.translation.height
+            )
+        }
+
+        if isDraggedClusterMember {
+            return CGPoint(
+                x: block.position.x + clusterDragTranslation.width,
+                y: block.position.y + clusterDragTranslation.height
+            )
+        }
+
+        return block.position
+    }
+
+    private static func screenRect(
+        for block: CanvasBlock,
+        position: CGPoint,
+        transform: CanvasViewportTransform
+    ) -> CGRect {
+        let center = transform.canvasToScreen(position)
+        let scale = transform.effectiveScale
+        let size = CGSize(
+            width: block.size.width * scale,
+            height: block.size.height * scale
+        )
+        return CGRect(
+            x: center.x - size.width / 2,
+            y: center.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+}
+
 enum CanvasRenderSnapshotBuilder {
     static func build(
         blocks: [CanvasBlock],

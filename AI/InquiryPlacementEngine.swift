@@ -494,3 +494,1100 @@ struct InquiryPlacementEngine {
         return Set(tokens)
     }
 }
+
+enum InquiryDockRouteIntent: String, Sendable, Equatable {
+    case ask
+    case note
+    case question
+    case rootQuestion
+    case branchQuestion
+    case claim
+    case speculativeClaim
+    case evidence
+    case counterevidence
+    case source
+    case deepScout
+    case openSource
+    case term
+    case practice
+    case output
+    case challenge
+    case summarize
+    case refreshSources
+}
+
+struct InquiryDockParseResult: Sendable, Equatable {
+    var intent: InquiryDockRouteIntent
+    var body: String
+    var targetBranch: String?
+
+    var extractKind: ExtractKind? {
+        switch intent {
+        case .note: return .note
+        case .claim: return .claim
+        case .speculativeClaim: return .speculativeClaim
+        case .evidence: return .evidence
+        case .counterevidence: return .counterevidence
+        case .term: return .term
+        case .practice: return .practice
+        case .output: return .outputIdea
+        default: return nil
+        }
+    }
+}
+
+struct InquiryDockPrefixParser {
+    static func parse(_ raw: String) -> InquiryDockParseResult {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+
+        if lower == "/sources" {
+            return InquiryDockParseResult(intent: .refreshSources, body: "")
+        }
+        if lower.hasPrefix("/sources ") {
+            return InquiryDockParseResult(intent: .refreshSources, body: strippedCommandBody(trimmed))
+        }
+        if lower == "/scout" {
+            return InquiryDockParseResult(intent: .deepScout, body: "")
+        }
+        if lower.hasPrefix("/scout ") {
+            return InquiryDockParseResult(intent: .deepScout, body: strippedCommandBody(trimmed))
+        }
+        if lower == "/challenge" || lower.hasPrefix("/challenge ") {
+            return InquiryDockParseResult(intent: .challenge, body: strippedCommandBody(trimmed))
+        }
+        if lower == "/summarize" || lower.hasPrefix("/summarize ") {
+            return InquiryDockParseResult(intent: .summarize, body: strippedCommandBody(trimmed))
+        }
+        if let target = branchTarget(in: trimmed) {
+            let body = trimmed.replacingOccurrences(of: "@branch \(target)", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return InquiryDockParseResult(intent: .note, body: body, targetBranch: target)
+        }
+        if looksLikeURL(trimmed) {
+            return InquiryDockParseResult(intent: .openSource, body: trimmed)
+        }
+
+        let prefixes: [(String, InquiryDockRouteIntent)] = [
+            ("root:", .rootQuestion),
+            ("branch:", .branchQuestion),
+            ("claim:", .claim),
+            ("maybe:", .speculativeClaim),
+            ("evidence:", .evidence),
+            ("counter:", .counterevidence),
+            ("scout:", .deepScout),
+            ("source:", .source),
+            ("term:", .term),
+            ("practice:", .practice),
+            ("output:", .output),
+            ("note:", .note),
+            ("q:", .question)
+        ]
+
+        for (prefix, intent) in prefixes where lower.hasPrefix(prefix) {
+            return InquiryDockParseResult(
+                intent: intent,
+                body: String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+
+        return InquiryDockParseResult(intent: .ask, body: trimmed)
+    }
+
+    private static func strippedCommandBody(_ text: String) -> String {
+        guard let firstSpace = text.firstIndex(where: { $0.isWhitespace }) else { return "" }
+        return String(text[text.index(after: firstSpace)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func branchTarget(in text: String) -> String? {
+        guard let range = text.range(of: "@branch ", options: [.caseInsensitive]) else { return nil }
+        let suffix = text[range.upperBound...]
+        let parts = suffix.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        return parts.first.map(String.init)
+    }
+
+    static func looksLikeURL(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.hasPrefix("http://")
+            || lower.hasPrefix("https://")
+            || lower.hasPrefix("www.")
+    }
+}
+
+struct InquiryBranchResearchProfile: Sendable, Equatable {
+    var deepDiveTitle: String?
+    var activeQuestionTitle: String
+    var activeQuestionUUID: String?
+    var branchNodeId: String
+    var ancestorTitles: [String]
+    var claims: [String]
+    var evidence: [String]
+    var sourceQuery: String? = nil
+
+    var query: String {
+        var rawPieces: [String] = []
+        if let sourceQuery {
+            rawPieces.append(sourceQuery)
+        }
+        if let deepDiveTitle { rawPieces.append(deepDiveTitle) }
+        rawPieces.append(activeQuestionTitle)
+        rawPieces.append(contentsOf: ancestorTitles)
+        if sourceQuery == nil {
+            rawPieces.append(contentsOf: claims.prefix(3))
+        }
+        let pieces = rawPieces
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return pieces.joined(separator: " ")
+    }
+
+    var tokens: Set<String> {
+        var rawPieces: [String] = []
+        if let deepDiveTitle { rawPieces.append(deepDiveTitle) }
+        rawPieces.append(activeQuestionTitle)
+        if let sourceQuery { rawPieces.append(sourceQuery) }
+        rawPieces.append(contentsOf: ancestorTitles)
+        rawPieces.append(contentsOf: claims)
+        rawPieces.append(contentsOf: evidence)
+        return InquirySourceRecommendationEngine.significantTokens(rawPieces.joined(separator: " "))
+    }
+}
+
+final class InquirySourceRecommendationEngine: @unchecked Sendable {
+    static let shared = InquirySourceRecommendationEngine()
+
+    func recommend(
+        profile: InquiryBranchResearchProfile,
+        existingSourceRefs: [InquirySourceRef],
+        localSources: [Atom],
+        searchMode: InquirySourceSearchMode = .quick
+    ) async -> InquiryRecommendationBatch {
+        let localCandidates = Self.localCandidates(from: localSources, profile: profile)
+
+        let queries = searchMode == .deepScout ? Self.scoutQueries(for: profile) : [profile.query]
+        let academicQueries = Array(queries.prefix(searchMode == .deepScout ? 4 : 1))
+
+        let (openAlexStatus, openAlexCandidates) = await Self.fetchOpenAlexAcross(queries: academicQueries, profile: profile)
+        let (crossrefStatus, crossrefCandidates) = await Self.fetchCrossrefAcross(queries: academicQueries, profile: profile)
+
+        var rawCandidates = localCandidates + openAlexCandidates + crossrefCandidates
+        var statuses = [
+            InquiryProviderStatus(provider: .local, state: .succeeded, count: localCandidates.count),
+            openAlexStatus,
+            crossrefStatus
+        ]
+
+        if searchMode == .deepScout {
+            let (semanticStatus, semanticCandidates) = await Self.fetchSemanticScholarAcross(queries: academicQueries, profile: profile)
+            let (pubMedStatus, pubMedCandidates) = await Self.fetchEuropePMCAcross(queries: academicQueries, profile: profile)
+            let videoQuery = queries.first { $0.localizedCaseInsensitiveContains("youtube") || $0.localizedCaseInsensitiveContains("video") } ?? profile.query
+            let (youtubeStatus, youtubeCandidates) = await Self.fetchYouTube(query: videoQuery, profile: profile)
+            let (webStatus, webCandidates) = await Self.fetchWebResearch(query: profile.query, profile: profile)
+            rawCandidates += semanticCandidates + pubMedCandidates + youtubeCandidates + webCandidates
+            statuses += [semanticStatus, pubMedStatus, youtubeStatus, webStatus]
+        }
+
+        let merged = Self.mergeCandidates(rawCandidates)
+        let ranked = Self.rankCandidates(merged, profile: profile, existingSourceRefs: existingSourceRefs)
+
+        statuses = statuses.map { status in
+            var copy = status
+            copy.count = ranked.filter { $0.provider == status.provider }.count
+            return copy
+        }
+        statuses = statuses.sorted { $0.provider.displayName < $1.provider.displayName }
+
+        return InquiryRecommendationBatch(
+            questionUUID: profile.activeQuestionUUID,
+            branchNodeId: profile.branchNodeId,
+            query: profile.query,
+            searchMode: searchMode,
+            providerStatuses: statuses,
+            scoutSteps: Self.scoutSteps(for: searchMode, queryCount: queries.count, candidateCount: rawCandidates.count, rankedCount: ranked.count),
+            candidates: Array(ranked.prefix(12))
+        )
+    }
+
+    static func scoutQueries(for profile: InquiryBranchResearchProfile) -> [String] {
+        let focus = (profile.sourceQuery ?? profile.activeQuestionTitle)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let anchor = [
+            profile.deepDiveTitle,
+            profile.activeQuestionTitle
+        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }
+            .joined(separator: " ")
+        let base = [focus.nilIfEmpty, anchor.nilIfEmpty]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let rawQueries = [
+            base,
+            "\(base) systematic review meta-analysis randomized controlled trial",
+            "\(base) mechanism physiology evidence",
+            "\(base) recent peer reviewed study",
+            "\(base) expert lecture video youtube",
+            "\(base) limitations contraindications adverse effects"
+        ]
+
+        var seen: Set<String> = []
+        return rawQueries.compactMap { query in
+            let normalized = InquiryPlacementEngine.normalized(query)
+            guard !normalized.isEmpty, !seen.contains(normalized) else { return nil }
+            seen.insert(normalized)
+            return query
+        }
+    }
+
+    static func activityPlan(
+        for profile: InquiryBranchResearchProfile,
+        mode: InquirySourceSearchMode
+    ) -> [String] {
+        let subject = clippedActivitySubject(profile.sourceQuery ?? profile.activeQuestionTitle)
+        switch mode {
+        case .quick:
+            return [
+                "Searching your library for \(subject)",
+                "Searching OpenAlex for branch-matched papers",
+                "Checking Crossref for publisher-indexed sources",
+                "Filtering off-topic results",
+                "Ranking the strongest candidates"
+            ]
+        case .deepScout:
+            return [
+                "Expanding \(subject) into branch-anchored search angles",
+                "Searching your local library",
+                "Searching OpenAlex and Crossref",
+                "Checking Semantic Scholar for stronger papers",
+                "Checking Europe PMC and PubMed-style biomedical results",
+                "Looking for relevant YouTube explainers",
+                "Running web research for sources outside academic APIs",
+                "Filtering off-topic and weak matches",
+                "Ranking the best sources for this branch"
+            ]
+        }
+    }
+
+    private static func clippedActivitySubject(_ raw: String) -> String {
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "this branch" }
+        guard cleaned.count > 54 else { return cleaned }
+        return "\(cleaned.prefix(51))..."
+    }
+
+    static func rankCandidates(
+        _ candidates: [InquirySourceCandidate],
+        profile: InquiryBranchResearchProfile,
+        existingSourceRefs: [InquirySourceRef]
+    ) -> [InquirySourceCandidate] {
+        candidates
+            .compactMap { candidate -> InquirySourceCandidate? in
+                var copy = candidate
+                let text = candidateText(for: candidate)
+                let anchorGate = relevanceGate(candidateText: text, profile: profile)
+                guard anchorGate.passed else { return nil }
+
+                let candidateTokens = significantTokens(text)
+                let matchedTokens = Array(candidateTokens.intersection(profile.tokens)).sorted()
+                let overlap = Double(matchedTokens.count)
+                let overlapScore = min(0.36, overlap * 0.06)
+                let anchorScore = min(0.22, Double(anchorGate.matches.count) * 0.09)
+                let providerBoost = providerBoost(for: candidate.provider)
+                let roleBoost = roleBoost(for: candidate.evidenceRole)
+                let kindBoost = kindBoost(for: candidate.sourceKind)
+                let qualityBoost = qualityBoost(for: candidate)
+                let recencyBoost = recencyBoost(for: candidate.publishedDate)
+                let importedPenalty = alreadyImported(candidate, existingSourceRefs: existingSourceRefs) ? -0.18 : 0
+                copy.importStatus = alreadyImported(candidate, existingSourceRefs: existingSourceRefs) ? .imported : candidate.importStatus
+                copy.score = max(0.05, min(0.99, 0.16 + overlapScore + anchorScore + providerBoost + roleBoost + kindBoost + qualityBoost + recencyBoost + importedPenalty))
+                if candidate.reason.isEmpty || isGenericProviderReason(candidate.reason) {
+                    copy.reason = reason(for: copy, matchedTokens: matchedTokens, anchorMatches: anchorGate.matches)
+                }
+                return copy
+            }
+            .sorted {
+                if $0.score == $1.score {
+                    return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+                }
+                return $0.score > $1.score
+            }
+    }
+
+    static func significantTokens(_ text: String) -> Set<String> {
+        let stop: Set<String> = [
+            "what", "does", "from", "with", "have", "this", "that", "into", "about", "after",
+            "before", "while", "where", "when", "which", "there", "their", "would", "could",
+            "should", "study", "paper", "research", "source", "effect", "effects", "body"
+        ]
+        let tokens = text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 3 && !stop.contains($0) }
+        return Set(tokens)
+    }
+
+    private static func candidateText(for candidate: InquirySourceCandidate) -> String {
+        [
+            candidate.title,
+            candidate.subtitle,
+            candidate.abstract,
+            candidate.authors.joined(separator: " "),
+            candidate.qualitySignals.joined(separator: " ")
+        ].compactMap { $0 }.joined(separator: " ")
+    }
+
+    private static func relevanceGate(
+        candidateText: String,
+        profile: InquiryBranchResearchProfile
+    ) -> (passed: Bool, matches: [String]) {
+        let lower = candidateText.lowercased()
+        let anchors = anchorTerms(for: profile)
+        let requiredAnchors = requiredAnchorTerms(for: profile)
+        if !requiredAnchors.isEmpty {
+            let requiredMatches = requiredAnchors.filter { anchor in
+                containsAnchor(anchor, in: lower)
+            }
+            guard !requiredMatches.isEmpty else { return (false, []) }
+            let optionalMatches = anchors.filter { anchor in
+                containsAnchor(anchor, in: lower)
+            }
+            return (true, Array(Set(requiredMatches + optionalMatches)).sorted())
+        }
+        guard !anchors.isEmpty else {
+            return (!significantTokens(candidateText).intersection(profile.tokens).isEmpty, [])
+        }
+        let matches = anchors.filter { anchor in
+            containsAnchor(anchor, in: lower)
+        }
+        return (!matches.isEmpty, matches)
+    }
+
+    private static func anchorTerms(for profile: InquiryBranchResearchProfile) -> [String] {
+        let raw = [
+            profile.deepDiveTitle,
+            profile.activeQuestionTitle,
+            profile.sourceQuery,
+            profile.ancestorTitles.joined(separator: " ")
+        ].compactMap { $0 }.joined(separator: " ").lowercased()
+
+        var anchors: Set<String> = []
+        if rawRequiresBreathAnchor(raw) {
+            anchors.formUnion(breathAnchorTerms)
+        }
+
+        for token in significantTokens(raw) where !genericAnchorTokens.contains(token) {
+            anchors.insert(token)
+        }
+
+        return anchors.sorted {
+            if $0.count == $1.count { return $0 < $1 }
+            return $0.count > $1.count
+        }
+    }
+
+    private static func requiredAnchorTerms(for profile: InquiryBranchResearchProfile) -> [String] {
+        let raw = [
+            profile.deepDiveTitle,
+            profile.activeQuestionTitle,
+            profile.sourceQuery,
+            profile.ancestorTitles.joined(separator: " ")
+        ].compactMap { $0 }.joined(separator: " ").lowercased()
+
+        guard rawRequiresBreathAnchor(raw) else { return [] }
+        return Array(breathAnchorTerms).sorted {
+            if $0.count == $1.count { return $0 < $1 }
+            return $0.count > $1.count
+        }
+    }
+
+    private static func rawRequiresBreathAnchor(_ raw: String) -> Bool {
+        raw.contains("breath") || raw.contains("respirat") || raw.contains("pranayama") || raw.contains("co2") || raw.contains("carbon dioxide")
+    }
+
+    private static var breathAnchorTerms: Set<String> {
+        [
+            "breathwork",
+            "breath work",
+            "breathing",
+            "breathing exercise",
+            "breathing exercises",
+            "breath exercise",
+            "breath training",
+            "paced breathing",
+            "slow breathing",
+            "diaphragmatic breathing",
+            "controlled breathing",
+            "voluntary breathing",
+            "pranayama",
+            "respiration",
+            "respiratory",
+            "ventilation",
+            "hyperventilation",
+            "hypoventilation",
+            "carbon dioxide",
+            "co2"
+        ]
+    }
+
+    private static var genericAnchorTokens: Set<String> {
+        [
+            "affect", "affects", "affected", "answer", "answers", "branch", "branches",
+            "main", "question", "questions", "within", "under", "source", "sources",
+            "find", "best", "strong", "stronger", "evidence", "study", "studies",
+            "review", "paper", "papers"
+        ]
+    }
+
+    private static func containsAnchor(_ anchor: String, in lowerText: String) -> Bool {
+        if anchor.contains(" ") {
+            return lowerText.contains(anchor)
+        }
+        let pattern = #"(?<![a-z0-9])\#(NSRegularExpression.escapedPattern(for: anchor))(s|es|ed|ing)?(?![a-z0-9])"#
+        return lowerText.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private static func isGenericProviderReason(_ reason: String) -> Bool {
+        reason == "Academic match for this branch from OpenAlex."
+            || reason == "Publisher-indexed source that may answer this branch."
+            || reason.hasPrefix("Deep Scout")
+    }
+
+    private static func localCandidates(from atoms: [Atom], profile: InquiryBranchResearchProfile) -> [InquirySourceCandidate] {
+        atoms.compactMap { atom in
+            let title = atom.title ?? atom.url ?? "Untitled source"
+            let summary = atom.researchMetadata?.summary ?? atom.body
+            let findings = atom.researchMetadata?.findings
+            let searchable = [title, summary, findings, atom.researchMetadata?.personalNotes].compactMap { $0 }.joined(separator: " ")
+            let matches = significantTokens(searchable).intersection(profile.tokens)
+            guard !matches.isEmpty else { return nil }
+
+            let kind = inferKind(title: title, url: atom.url, type: atom.researchType, body: searchable, local: true)
+            return InquirySourceCandidate(
+                id: "local-\(atom.uuid)",
+                provider: .local,
+                sourceKind: kind,
+                title: title,
+                subtitle: atom.url,
+                authors: [],
+                publishedDate: atom.createdAt,
+                url: atom.url,
+                abstract: summary,
+                evidenceRole: .localLibrary,
+                reason: "Already in your library and overlaps with \(Array(matches).sorted().prefix(3).joined(separator: ", ")).",
+                qualitySignals: ["Local library", atom.processingStatus ?? "Saved"],
+                branchQuestionUUID: profile.activeQuestionUUID,
+                branchNodeId: profile.branchNodeId,
+                importedSourceUUID: atom.uuid,
+                importStatus: .imported
+            )
+        }
+    }
+
+    private static func fetchOpenAlexAcross(
+        queries: [String],
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        var statuses: [InquiryProviderStatus] = []
+        var candidates: [InquirySourceCandidate] = []
+        for query in queries {
+            let (status, queryCandidates) = await fetchOpenAlex(query: query, profile: profile)
+            statuses.append(status)
+            candidates.append(contentsOf: queryCandidates)
+        }
+        return (rollupStatus(provider: .openAlex, statuses: statuses, candidateCount: candidates.count), candidates)
+    }
+
+    private static func fetchCrossrefAcross(
+        queries: [String],
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        var statuses: [InquiryProviderStatus] = []
+        var candidates: [InquirySourceCandidate] = []
+        for query in queries {
+            let (status, queryCandidates) = await fetchCrossref(query: query, profile: profile)
+            statuses.append(status)
+            candidates.append(contentsOf: queryCandidates)
+        }
+        return (rollupStatus(provider: .crossref, statuses: statuses, candidateCount: candidates.count), candidates)
+    }
+
+    private static func fetchSemanticScholarAcross(
+        queries: [String],
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        var statuses: [InquiryProviderStatus] = []
+        var candidates: [InquirySourceCandidate] = []
+        for query in queries.prefix(3) {
+            let (status, queryCandidates) = await fetchSemanticScholar(query: query, profile: profile)
+            statuses.append(status)
+            candidates.append(contentsOf: queryCandidates)
+        }
+        return (rollupStatus(provider: .semanticScholar, statuses: statuses, candidateCount: candidates.count), candidates)
+    }
+
+    private static func fetchEuropePMCAcross(
+        queries: [String],
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        var statuses: [InquiryProviderStatus] = []
+        var candidates: [InquirySourceCandidate] = []
+        for query in queries.prefix(3) {
+            let (status, queryCandidates) = await fetchEuropePMC(query: query, profile: profile)
+            statuses.append(status)
+            candidates.append(contentsOf: queryCandidates)
+        }
+        return (rollupStatus(provider: .pubMed, statuses: statuses, candidateCount: candidates.count), candidates)
+    }
+
+    private static func rollupStatus(
+        provider: InquirySourceProvider,
+        statuses: [InquiryProviderStatus],
+        candidateCount: Int
+    ) -> InquiryProviderStatus {
+        if statuses.contains(where: { $0.state == .succeeded }) {
+            return InquiryProviderStatus(provider: provider, state: .succeeded, count: candidateCount)
+        }
+        if let first = statuses.first {
+            return InquiryProviderStatus(provider: provider, state: first.state, message: first.message, count: candidateCount)
+        }
+        return InquiryProviderStatus(provider: provider, state: .idle, count: candidateCount)
+    }
+
+    private static func scoutSteps(
+        for mode: InquirySourceSearchMode,
+        queryCount: Int,
+        candidateCount: Int,
+        rankedCount: Int
+    ) -> [String] {
+        guard mode == .deepScout else { return [] }
+        return [
+            "Expanded into \(queryCount) branch-anchored search angles",
+            "Searched academic indexes, video, web, and local library",
+            "Screened \(candidateCount) raw hits for topic fit",
+            "Ranked \(rankedCount) candidates by relevance, evidence role, quality, and freshness"
+        ]
+    }
+
+    private static func fetchOpenAlex(
+        query: String,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        guard let url = searchURL(base: "https://api.openalex.org/works", queryItems: [
+            URLQueryItem(name: "search", value: query),
+            URLQueryItem(name: "per-page", value: "8"),
+            URLQueryItem(name: "sort", value: "relevance_score:desc")
+        ]) else {
+            return (InquiryProviderStatus(provider: .openAlex, state: .failed, message: "Invalid query"), [])
+        }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let results = object?["results"] as? [[String: Any]] ?? []
+            let candidates = results.compactMap { item -> InquirySourceCandidate? in
+                let title = (item["display_name"] as? String) ?? (item["title"] as? String)
+                guard let title, !title.isEmpty else { return nil }
+                let authorships = item["authorships"] as? [[String: Any]] ?? []
+                let authors = authorships.compactMap { authorship -> String? in
+                    let author = authorship["author"] as? [String: Any]
+                    return author?["display_name"] as? String
+                }
+                let ids = item["ids"] as? [String: Any]
+                let doi = (ids?["doi"] as? String) ?? (item["doi"] as? String)
+                let location = item["primary_location"] as? [String: Any]
+                let landingURL = location?["landing_page_url"] as? String
+                let openAccess = item["open_access"] as? [String: Any]
+                let url = (openAccess?["oa_url"] as? String) ?? landingURL ?? doi
+                let year = (item["publication_year"] as? Int).map(String.init)
+                let type = item["type"] as? String
+                let citedBy = item["cited_by_count"] as? Int
+                let abstract = abstractText(fromOpenAlex: item["abstract_inverted_index"] as? [String: [Int]])
+                let kind = inferKind(title: title, url: url, type: type, body: abstract ?? "", local: false)
+                let role = evidenceRole(for: kind, title: title, body: abstract ?? "", year: year)
+                let signals = [
+                    year.map { "Published \($0)" },
+                    citedBy.map { "\($0) citations" },
+                    doi == nil ? nil : "DOI"
+                ].compactMap { $0 }
+                return InquirySourceCandidate(
+                    id: stableID(provider: .openAlex, key: doi ?? url ?? title),
+                    provider: .openAlex,
+                    sourceKind: kind,
+                    title: title,
+                    authors: authors,
+                    publishedDate: year,
+                    url: url,
+                    doi: doi,
+                    abstract: abstract,
+                    evidenceRole: role,
+                    reason: "Academic match for this branch from OpenAlex.",
+                    qualitySignals: signals,
+                    branchQuestionUUID: profile.activeQuestionUUID,
+                    branchNodeId: profile.branchNodeId
+                )
+            }
+            return (InquiryProviderStatus(provider: .openAlex, state: .succeeded, count: candidates.count), candidates)
+        } catch {
+            return (InquiryProviderStatus(provider: .openAlex, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    private static func fetchCrossref(
+        query: String,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        guard let url = searchURL(base: "https://api.crossref.org/works", queryItems: [
+            URLQueryItem(name: "query", value: query),
+            URLQueryItem(name: "rows", value: "8")
+        ]) else {
+            return (InquiryProviderStatus(provider: .crossref, state: .failed, message: "Invalid query"), [])
+        }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let message = object?["message"] as? [String: Any]
+            let items = message?["items"] as? [[String: Any]] ?? []
+            let candidates = items.compactMap { item -> InquirySourceCandidate? in
+                let titles = item["title"] as? [String]
+                guard let title = titles?.first, !title.isEmpty else { return nil }
+                let subtitles = item["subtitle"] as? [String]
+                let authors = (item["author"] as? [[String: Any]] ?? []).compactMap { author -> String? in
+                    let given = author["given"] as? String
+                    let family = author["family"] as? String
+                    return [given, family].compactMap { $0 }.joined(separator: " ").nilIfEmpty
+                }
+                let doi = item["DOI"] as? String
+                let url = (item["URL"] as? String) ?? doi.map { "https://doi.org/\($0)" }
+                let year = crossrefYear(from: item)
+                let type = item["type"] as? String
+                let subject = (item["subject"] as? [String])?.prefix(2).joined(separator: ", ")
+                let kind = inferKind(title: title, url: url, type: type, body: subject ?? "", local: false)
+                let role = evidenceRole(for: kind, title: title, body: subject ?? "", year: year)
+                let signals = [
+                    year.map { "Published \($0)" },
+                    doi == nil ? nil : "DOI",
+                    subject
+                ].compactMap { $0 }
+                return InquirySourceCandidate(
+                    id: stableID(provider: .crossref, key: doi ?? url ?? title),
+                    provider: .crossref,
+                    sourceKind: kind,
+                    title: title,
+                    subtitle: subtitles?.first,
+                    authors: authors,
+                    publishedDate: year,
+                    url: url,
+                    doi: doi,
+                    evidenceRole: role,
+                    reason: "Publisher-indexed source that may answer this branch.",
+                    qualitySignals: signals,
+                    branchQuestionUUID: profile.activeQuestionUUID,
+                    branchNodeId: profile.branchNodeId
+                )
+            }
+            return (InquiryProviderStatus(provider: .crossref, state: .succeeded, count: candidates.count), candidates)
+        } catch {
+            return (InquiryProviderStatus(provider: .crossref, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    private static func fetchSemanticScholar(
+        query: String,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        guard let url = searchURL(base: "https://api.semanticscholar.org/graph/v1/paper/search", queryItems: [
+            URLQueryItem(name: "query", value: query),
+            URLQueryItem(name: "limit", value: "8"),
+            URLQueryItem(name: "fields", value: "title,abstract,year,url,citationCount,authors,externalIds,publicationTypes,venue")
+        ]) else {
+            return (InquiryProviderStatus(provider: .semanticScholar, state: .failed, message: "Invalid query"), [])
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let http = response as? HTTPURLResponse, http.statusCode == 429 {
+                return (InquiryProviderStatus(provider: .semanticScholar, state: .rateLimited, message: "Semantic Scholar rate limited Deep Scout"), [])
+            }
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return (InquiryProviderStatus(provider: .semanticScholar, state: .failed, message: "Invalid response"), [])
+            }
+            let results = object["data"] as? [[String: Any]] ?? []
+            let candidates = results.compactMap { item -> InquirySourceCandidate? in
+                guard let title = item["title"] as? String, !title.isEmpty else { return nil }
+                let abstract = item["abstract"] as? String
+                let year = (item["year"] as? Int).map(String.init)
+                let url = item["url"] as? String
+                let citationCount = item["citationCount"] as? Int
+                let authors = (item["authors"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+                let externalIds = item["externalIds"] as? [String: Any]
+                let doi = externalIds?["DOI"] as? String
+                let publicationTypes = (item["publicationTypes"] as? [String])?.joined(separator: ", ")
+                let venue = item["venue"] as? String
+                let kind = inferKind(title: title, url: url, type: publicationTypes, body: abstract ?? "", local: false)
+                let role = evidenceRole(for: kind, title: title, body: abstract ?? "", year: year)
+                let signals = [
+                    year.map { "Published \($0)" },
+                    citationCount.map { "\($0) citations" },
+                    doi == nil ? nil : "DOI",
+                    venue
+                ].compactMap { $0 }
+                return InquirySourceCandidate(
+                    id: stableID(provider: .semanticScholar, key: doi ?? url ?? title),
+                    provider: .semanticScholar,
+                    sourceKind: kind,
+                    title: title,
+                    authors: authors,
+                    publishedDate: year,
+                    url: url ?? doi.map { "https://doi.org/\($0)" },
+                    doi: doi,
+                    abstract: abstract,
+                    evidenceRole: role,
+                    reason: "Deep Scout academic candidate from Semantic Scholar.",
+                    qualitySignals: signals,
+                    branchQuestionUUID: profile.activeQuestionUUID,
+                    branchNodeId: profile.branchNodeId
+                )
+            }
+            return (InquiryProviderStatus(provider: .semanticScholar, state: .succeeded, count: candidates.count), candidates)
+        } catch {
+            return (InquiryProviderStatus(provider: .semanticScholar, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    private static func fetchEuropePMC(
+        query: String,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        guard let url = searchURL(base: "https://www.ebi.ac.uk/europepmc/webservices/rest/search", queryItems: [
+            URLQueryItem(name: "query", value: query),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "pageSize", value: "8"),
+            URLQueryItem(name: "sort", value: "RELEVANCE")
+        ]) else {
+            return (InquiryProviderStatus(provider: .pubMed, state: .failed, message: "Invalid query"), [])
+        }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let resultList = object?["resultList"] as? [String: Any]
+            let results = resultList?["result"] as? [[String: Any]] ?? []
+            let candidates = results.compactMap { item -> InquirySourceCandidate? in
+                guard let title = item["title"] as? String, !title.isEmpty else { return nil }
+                let abstract = item["abstractText"] as? String
+                let year = item["pubYear"] as? String
+                let doi = item["doi"] as? String
+                let pmid = item["pmid"] as? String
+                let journal = item["journalTitle"] as? String
+                let authorString = item["authorString"] as? String
+                let citedBy = item["citedByCount"] as? Int
+                let url = doi.map { "https://doi.org/\($0)" }
+                    ?? pmid.map { "https://pubmed.ncbi.nlm.nih.gov/\($0)/" }
+                let kind = inferKind(title: title, url: url, type: item["pubType"] as? String, body: abstract ?? "", local: false)
+                let role = evidenceRole(for: kind, title: title, body: abstract ?? "", year: year)
+                let signals = [
+                    year.map { "Published \($0)" },
+                    citedBy.map { "\($0) citations" },
+                    doi == nil ? nil : "DOI",
+                    journal
+                ].compactMap { $0 }
+                return InquirySourceCandidate(
+                    id: stableID(provider: .pubMed, key: doi ?? pmid ?? title),
+                    provider: .pubMed,
+                    sourceKind: kind,
+                    title: title,
+                    subtitle: journal,
+                    authors: authorString.map { [$0] } ?? [],
+                    publishedDate: year,
+                    url: url,
+                    doi: doi,
+                    abstract: abstract,
+                    evidenceRole: role,
+                    reason: "Deep Scout biomedical candidate from Europe PMC/PubMed.",
+                    qualitySignals: signals,
+                    branchQuestionUUID: profile.activeQuestionUUID,
+                    branchNodeId: profile.branchNodeId
+                )
+            }
+            return (InquiryProviderStatus(provider: .pubMed, state: .succeeded, count: candidates.count), candidates)
+        } catch {
+            return (InquiryProviderStatus(provider: .pubMed, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    private static func fetchYouTube(
+        query: String,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        guard let apiKey = APIKeys.youtube, !apiKey.isEmpty else {
+            return (InquiryProviderStatus(provider: .youtube, state: .missingKey, message: "Add a YouTube API key to include videos"), [])
+        }
+        guard let url = searchURL(base: "https://www.googleapis.com/youtube/v3/search", queryItems: [
+            URLQueryItem(name: "part", value: "snippet"),
+            URLQueryItem(name: "type", value: "video"),
+            URLQueryItem(name: "maxResults", value: "10"),
+            URLQueryItem(name: "order", value: "relevance"),
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "key", value: apiKey)
+        ]) else {
+            return (InquiryProviderStatus(provider: .youtube, state: .failed, message: "Invalid query"), [])
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let http = response as? HTTPURLResponse, http.statusCode == 403 {
+                return (InquiryProviderStatus(provider: .youtube, state: .rateLimited, message: "YouTube quota or key rejected"), [])
+            }
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let items = object?["items"] as? [[String: Any]] ?? []
+            let candidates = items.compactMap { item -> InquirySourceCandidate? in
+                guard let id = item["id"] as? [String: Any],
+                      let videoId = id["videoId"] as? String,
+                      let snippet = item["snippet"] as? [String: Any],
+                      let title = snippet["title"] as? String,
+                      !title.isEmpty else { return nil }
+                let description = snippet["description"] as? String
+                let channel = snippet["channelTitle"] as? String
+                let publishedAt = snippet["publishedAt"] as? String
+                let year = publishedAt.map { String($0.prefix(4)) }
+                return InquirySourceCandidate(
+                    id: stableID(provider: .youtube, key: videoId),
+                    provider: .youtube,
+                    sourceKind: .video,
+                    title: decodeHTMLEntities(title),
+                    subtitle: channel,
+                    publishedDate: year,
+                    url: "https://www.youtube.com/watch?v=\(videoId)",
+                    abstract: description,
+                    evidenceRole: .videoExplainer,
+                    reason: "Deep Scout video candidate from YouTube.",
+                    qualitySignals: [
+                        channel,
+                        year.map { "Published \($0)" },
+                        "Video"
+                    ].compactMap { $0 },
+                    branchQuestionUUID: profile.activeQuestionUUID,
+                    branchNodeId: profile.branchNodeId
+                )
+            }
+            return (InquiryProviderStatus(provider: .youtube, state: .succeeded, count: candidates.count), candidates)
+        } catch {
+            return (InquiryProviderStatus(provider: .youtube, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    @MainActor
+    private static func fetchWebResearch(
+        query: String,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        guard APIKeys.hasOpenRouter else {
+            return (InquiryProviderStatus(provider: .web, state: .missingKey, message: "Add OpenRouter to include agentic web search"), [])
+        }
+
+        do {
+            let result = try await ResearchService.shared.performResearch(query: query, searchType: .web, maxResults: 8)
+            let candidates = result.findings.compactMap { finding -> InquirySourceCandidate? in
+                guard !finding.title.isEmpty else { return nil }
+                return InquirySourceCandidate(
+                    id: stableID(provider: .web, key: finding.url ?? finding.title),
+                    provider: .web,
+                    sourceKind: .web,
+                    title: finding.title,
+                    subtitle: finding.source,
+                    url: finding.url,
+                    abstract: finding.snippet,
+                    evidenceRole: .webContext,
+                    reason: "Deep Scout web candidate from grounded research.",
+                    qualitySignals: [
+                        finding.source,
+                        finding.confidence.capitalized
+                    ],
+                    branchQuestionUUID: profile.activeQuestionUUID,
+                    branchNodeId: profile.branchNodeId
+                )
+            }
+            return (InquiryProviderStatus(provider: .web, state: .succeeded, count: candidates.count), candidates)
+        } catch ResearchError.noAPIKey {
+            return (InquiryProviderStatus(provider: .web, state: .missingKey, message: "Add OpenRouter to include agentic web search"), [])
+        } catch {
+            return (InquiryProviderStatus(provider: .web, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    private static func mergeCandidates(_ candidates: [InquirySourceCandidate]) -> [InquirySourceCandidate] {
+        var merged: [String: InquirySourceCandidate] = [:]
+        for candidate in candidates {
+            let key = mergeKey(for: candidate)
+            if let existing = merged[key], existing.provider == .local {
+                continue
+            }
+            if let existing = merged[key], existing.qualitySignals.count >= candidate.qualitySignals.count {
+                continue
+            }
+            merged[key] = candidate
+        }
+        return Array(merged.values)
+    }
+
+    private static func mergeKey(for candidate: InquirySourceCandidate) -> String {
+        if let doi = candidate.doi?.lowercased(), !doi.isEmpty { return "doi:\(doi)" }
+        if let url = candidate.url?.lowercased(), !url.isEmpty { return "url:\(url)" }
+        return "title:\(InquiryPlacementEngine.normalized(candidate.title))"
+    }
+
+    private static func alreadyImported(_ candidate: InquirySourceCandidate, existingSourceRefs: [InquirySourceRef]) -> Bool {
+        if candidate.importStatus == .imported || candidate.importedSourceUUID != nil {
+            return true
+        }
+        guard let candidateURL = candidate.url?.lowercased() else { return false }
+        return existingSourceRefs.contains { ref in
+            ref.url?.lowercased() == candidateURL || ref.sourceUUID == candidate.importedSourceUUID
+        }
+    }
+
+    private static func providerBoost(for provider: InquirySourceProvider) -> Double {
+        switch provider {
+        case .local: return 0.13
+        case .openAlex: return 0.10
+        case .crossref: return 0.07
+        case .semanticScholar, .pubMed: return 0.11
+        case .arxiv: return 0.08
+        case .youtube: return 0.04
+        case .web: return 0.03
+        }
+    }
+
+    private static func roleBoost(for role: InquiryEvidenceRole) -> Double {
+        switch role {
+        case .review, .metaAnalysis: return 0.12
+        case .foundational, .mechanism, .counterevidence: return 0.08
+        case .recent, .localLibrary: return 0.07
+        case .practicalGuide, .videoExplainer, .webContext: return 0.04
+        }
+    }
+
+    private static func kindBoost(for kind: InquirySourceKind) -> Double {
+        switch kind {
+        case .review, .metaAnalysis: return 0.10
+        case .paper, .localResearch, .book: return 0.06
+        case .web, .video, .localNote: return 0.02
+        case .unknown: return 0
+        }
+    }
+
+    private static func recencyBoost(for date: String?) -> Double {
+        guard let date,
+              let year = Int(date.prefix(4)) else { return 0 }
+        if year >= 2021 { return 0.05 }
+        if year >= 2015 { return 0.03 }
+        return 0
+    }
+
+    private static func qualityBoost(for candidate: InquirySourceCandidate) -> Double {
+        let text = candidate.qualitySignals.joined(separator: " ").lowercased()
+        var boost = 0.0
+        if candidate.doi != nil || text.contains("doi") { boost += 0.025 }
+        if text.contains("citations") {
+            boost += 0.035
+        }
+        if candidate.sourceKind == .metaAnalysis || candidate.sourceKind == .review {
+            boost += 0.02
+        }
+        if candidate.provider == .youtube && candidate.sourceKind == .video {
+            boost += 0.01
+        }
+        return min(boost, 0.07)
+    }
+
+    private static func reason(
+        for candidate: InquirySourceCandidate,
+        matchedTokens: [String],
+        anchorMatches: [String]
+    ) -> String {
+        if !anchorMatches.isEmpty {
+            let anchors = anchorMatches.prefix(2).joined(separator: ", ")
+            let supporting = matchedTokens.filter { !anchorMatches.contains($0) }.prefix(2).joined(separator: ", ")
+            if supporting.isEmpty {
+                return "Mentions \(anchors) and fills a \(candidate.evidenceRole.displayName.lowercased()) role."
+            }
+            return "Mentions \(anchors), also matches \(supporting), and fills a \(candidate.evidenceRole.displayName.lowercased()) role."
+        }
+        if matchedTokens.isEmpty {
+            return "\(candidate.evidenceRole.displayName) source for the active branch."
+        }
+        return "Matches \(matchedTokens.prefix(3).joined(separator: ", ")) and fills a \(candidate.evidenceRole.displayName.lowercased()) role."
+    }
+
+    private static func evidenceRole(for kind: InquirySourceKind, title: String, body: String, year: String?) -> InquiryEvidenceRole {
+        let lower = "\(title) \(body)".lowercased()
+        if kind == .metaAnalysis { return .metaAnalysis }
+        if kind == .review { return .review }
+        if lower.contains("contradict") || lower.contains("adverse") || lower.contains("limitation") { return .counterevidence }
+        if lower.contains("mechanism") || lower.contains("physiology") || lower.contains("neural") || lower.contains("biochemical") { return .mechanism }
+        if let year, let intYear = Int(year), intYear >= 2021 { return .recent }
+        return .foundational
+    }
+
+    private static func inferKind(title: String, url: String?, type: String?, body: String, local: Bool) -> InquirySourceKind {
+        let lower = "\(title) \(type ?? "") \(body) \(url ?? "")".lowercased()
+        if lower.contains("youtube.com") || lower.contains("youtu.be") { return .video }
+        if lower.contains("meta-analysis") || lower.contains("metaanalysis") { return .metaAnalysis }
+        if lower.contains("review") || lower.contains("systematic") { return .review }
+        if local { return .localResearch }
+        if lower.contains("journal") || lower.contains("article") || lower.contains("paper") { return .paper }
+        return url == nil ? .unknown : .web
+    }
+
+    private static func searchURL(base: String, queryItems: [URLQueryItem]) -> URL? {
+        var components = URLComponents(string: base)
+        components?.queryItems = queryItems
+        return components?.url
+    }
+
+    private static func decodeHTMLEntities(_ text: String) -> String {
+        guard let data = text.data(using: .utf8),
+              let decoded = try? NSAttributedString(
+                data: data,
+                options: [
+                    .documentType: NSAttributedString.DocumentType.html,
+                    .characterEncoding: String.Encoding.utf8.rawValue
+                ],
+                documentAttributes: nil
+              ).string else {
+            return text
+        }
+        return decoded
+    }
+
+    private static func stableID(provider: InquirySourceProvider, key: String) -> String {
+        var hash: UInt64 = 5381
+        for scalar in key.lowercased().unicodeScalars {
+            hash = ((hash << 5) &+ hash) &+ UInt64(scalar.value)
+        }
+        return "\(provider.rawValue)-\(String(hash, radix: 16))"
+    }
+
+    private static func abstractText(fromOpenAlex inverted: [String: [Int]]?) -> String? {
+        guard let inverted else { return nil }
+        let pairs = inverted.flatMap { word, positions in positions.map { ($0, word) } }
+        let words = pairs.sorted { $0.0 < $1.0 }.map(\.1)
+        let text = words.prefix(80).joined(separator: " ")
+        return text.isEmpty ? nil : text
+    }
+
+    private static func crossrefYear(from item: [String: Any]) -> String? {
+        for key in ["published-print", "published-online", "published", "issued"] {
+            guard let published = item[key] as? [String: Any],
+                  let dateParts = published["date-parts"] as? [[Int]],
+                  let year = dateParts.first?.first else { continue }
+            return String(year)
+        }
+        return nil
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}

@@ -11,6 +11,8 @@ struct CosmoWindowView: View {
     @Environment(\.cosmoWindowIsFloating) private var isFloating
     @State private var isComposerFocused = false
     @State private var showModelPicker = false
+    @State private var showAgentPicker = false
+    @State private var showAgentManager = false
 
     @State private var bottomAnchorID = "bottom"
     @State private var pendingScrollWorkItem: DispatchWorkItem?
@@ -192,6 +194,17 @@ struct CosmoWindowView: View {
                             }
                         }
 
+                        if let plan = viewModel.pendingCanvasPlan {
+                            CosmoCanvasPlanReviewCard(
+                                plan: plan,
+                                onApply: viewModel.applyPendingCanvasPlan,
+                                onRevise: viewModel.revisePendingCanvasPlan,
+                                onCancel: viewModel.cancelPendingCanvasPlan
+                            )
+                            .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        }
+
                         if viewModel.isProcessing {
                             CosmoThinkingCard(
                                 activeLabel: viewModel.activeToolLabel ?? "Thinking",
@@ -289,6 +302,7 @@ struct CosmoWindowView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .onChange(of: viewModel.inputText) { syncMentionSearch() }
 
+                agentSelector
                 modelSelector
 
                 Button {
@@ -333,6 +347,59 @@ struct CosmoWindowView: View {
             )
             .allowsHitTesting(false)
         )
+    }
+
+    private var agentSelector: some View {
+        Button {
+            showAgentPicker.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: viewModel.currentAgentIcon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(viewModel.selectedAgentProfile == nil ? DS.textSecondary : DS.accent)
+
+                Text(viewModel.currentAgentLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .cosmoWindowChip(isActive: viewModel.selectedAgentProfile != nil)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showAgentPicker, arrowEdge: .bottom) {
+            CosmoAgentPickerPopover(
+                profiles: viewModel.agentProfiles.filter(\.isEnabled),
+                selectedID: viewModel.selectedAgentProfileID,
+                onSelect: { profile in
+                    viewModel.selectAgentProfile(profile)
+                    showAgentPicker = false
+                },
+                onManage: {
+                    showAgentPicker = false
+                    showAgentManager = true
+                }
+            )
+        }
+        .sheet(isPresented: $showAgentManager) {
+            CosmoAgentManagerSheet(
+                profiles: viewModel.agentProfiles,
+                onSave: { profile in
+                    Task { await viewModel.saveAgentProfile(profile) }
+                },
+                onDelete: { profile in
+                    Task { await viewModel.deleteAgentProfile(profile) }
+                },
+                onClose: {
+                    showAgentManager = false
+                }
+            )
+        }
     }
 
     private var modelSelector: some View {
@@ -571,7 +638,10 @@ struct CosmoWindowView: View {
     }
 
     private func handleAppear() {
-        Task { await viewModel.loadConversation() }
+        Task {
+            await viewModel.loadAgentProfiles()
+            await viewModel.loadConversation()
+        }
         DispatchQueue.main.async { focusComposer() }
     }
 
@@ -706,6 +776,432 @@ struct CosmoWindowGroupChromeModifier: ViewModifier {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(DS.glassBorder, lineWidth: 1)
             )
+    }
+}
+
+private struct CosmoCanvasPlanReviewCard: View {
+    let plan: PendingCanvasPlan
+    let onApply: () -> Void
+    let onRevise: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "square.grid.3x3")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 32, height: 32)
+                    .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plan.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+
+                    Text("\(plan.affectedObjectCount) proposed operations")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.textSecondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            Text(plan.rationale)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(plan.operations.prefix(5)) { operation in
+                    HStack(spacing: 8) {
+                        Text(operation.kind.displayName)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(DS.accent)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .cosmoWindowChip(isActive: true)
+
+                        Text(operation.summary)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                    }
+                }
+
+                if plan.operations.count > 5 {
+                    Text("+ \(plan.operations.count - 5) more")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button("Apply", action: onApply)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textOnAccent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.accent, in: Capsule())
+
+                Button("Revise", action: onRevise)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .cosmoWindowChip(isActive: true)
+
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .cosmoWindowChip()
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(14)
+        .cosmoWindowSectionChrome(cornerRadius: 16)
+    }
+}
+
+private struct CosmoAgentPickerPopover: View {
+    let profiles: [CustomAgentProfile]
+    let selectedID: String?
+    let onSelect: (CustomAgentProfile?) -> Void
+    let onManage: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Agent")
+                .dsSmallCapsLabel()
+                .padding(.horizontal, 4)
+
+            agentRow(nil)
+
+            ForEach(profiles) { profile in
+                agentRow(profile)
+            }
+
+            Divider()
+
+            Button(action: onManage) {
+                Label("Manage Agents", systemImage: "slider.horizontal.3")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 9)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .frame(width: 292)
+        .cosmoGlassPanel(sceneMaterial: .neutral, role: .floatingAssistant, cornerRadius: 16)
+    }
+
+    private func agentRow(_ profile: CustomAgentProfile?) -> some View {
+        let isSelected = profile?.id == selectedID || (profile == nil && selectedID == nil)
+        let icon = profile?.icon ?? "sparkles"
+        let title = profile?.name ?? "Auto Cosmo"
+        let subtitle = profile?.summary ?? "Let Cosmo choose the prompt, tools, and model"
+
+        return Button {
+            onSelect(profile)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(isSelected ? DS.accentSoft : DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(DS.accent)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(isSelected ? DS.accentSoft.opacity(0.68) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct CosmoAgentManagerSheet: View {
+    let profiles: [CustomAgentProfile]
+    let onSave: (CustomAgentProfile) -> Void
+    let onDelete: (CustomAgentProfile) -> Void
+    let onClose: () -> Void
+
+    @State private var draft: CustomAgentProfile
+
+    init(
+        profiles: [CustomAgentProfile],
+        onSave: @escaping (CustomAgentProfile) -> Void,
+        onDelete: @escaping (CustomAgentProfile) -> Void,
+        onClose: @escaping () -> Void
+    ) {
+        self.profiles = profiles
+        self.onSave = onSave
+        self.onDelete = onDelete
+        self.onClose = onClose
+        _draft = State(initialValue: profiles.first ?? .blankCustom)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Custom Agents")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(DS.text)
+                    Text("Prompts, tools, context scopes, and model preference")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DS.textSecondary)
+                }
+                Spacer(minLength: 0)
+                Button("Done", action: onClose)
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(18)
+
+            Divider()
+
+            HStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        Button {
+                            draft = .blankCustom
+                        } label: {
+                            Label("New Agent", systemImage: "plus")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .cosmoWindowChip(isActive: true)
+                        }
+                        .buttonStyle(.plain)
+
+                        ForEach(profiles) { profile in
+                            Button {
+                                draft = profile
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: profile.icon)
+                                    Text(profile.name).lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(draft.id == profile.id ? DS.accent : DS.text)
+                                .padding(10)
+                                .background(draft.id == profile.id ? DS.accentSoft : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(14)
+                }
+                .frame(width: 190)
+
+                Divider()
+
+                agentEditor
+                    .padding(18)
+            }
+        }
+        .frame(width: 760, height: 560)
+        .background(DS.surface)
+    }
+
+    private var agentEditor: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    TextField("Name", text: $draft.name)
+                    TextField("SF Symbol", text: $draft.icon)
+                        .frame(width: 130)
+                }
+                .textFieldStyle(.roundedBorder)
+
+                TextField("Summary", text: $draft.summary)
+                    .textFieldStyle(.roundedBorder)
+
+                Picker("Model", selection: Binding(
+                    get: { draft.preferredModelTier?.rawValue ?? "auto" },
+                    set: { draft.preferredModelTier = $0 == "auto" ? nil : AgentModelTier(rawValue: $0) }
+                )) {
+                    Text("Auto").tag("auto")
+                    Text("Haiku").tag(AgentModelTier.sensor.rawValue)
+                    Text("Sonnet").tag(AgentModelTier.strategist.rawValue)
+                    Text("Opus").tag(AgentModelTier.writer.rawValue)
+                }
+                .pickerStyle(.segmented)
+
+                Text("Prompt")
+                    .dsSmallCapsLabel()
+                TextEditor(text: $draft.runtimePrompt)
+                    .font(.system(size: 12))
+                    .frame(minHeight: 140)
+                    .padding(8)
+                    .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                suggestedPromptEditor
+
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Access")
+                            .dsSmallCapsLabel()
+                        Text("Hover a chip to see exactly what it unlocks")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        draft.toolBundles = AgentToolBundle.allCases
+                        draft.contextScopes = CustomAgentContextScope.allCases
+                    } label: {
+                        Label("Full Access", systemImage: "checkmark.seal")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .cosmoWindowChip(isActive: hasFullAccess)
+                    .help("Enable every tool bundle and every context scope for this agent.")
+                }
+
+                toggleGrid(title: "Tools", items: AgentToolBundle.allCases, selection: $draft.toolBundles)
+                toggleGrid(title: "Context", items: CustomAgentContextScope.allCases, selection: $draft.contextScopes)
+
+                HStack {
+                    Toggle("Enabled", isOn: $draft.isEnabled)
+                    Spacer(minLength: 0)
+                    if !draft.isBuiltin {
+                        Button("Delete") { onDelete(draft) }
+                            .foregroundStyle(DS.red)
+                    }
+                    Button("Save") { onSave(draft) }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+    }
+
+    private var hasFullAccess: Bool {
+        Set(draft.toolBundles) == Set(AgentToolBundle.allCases)
+            && Set(draft.contextScopes) == Set(CustomAgentContextScope.allCases)
+    }
+
+    private var suggestedPromptEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Suggested Prompts")
+                    .dsSmallCapsLabel()
+                Spacer(minLength: 0)
+                Text("Shown in the ready state")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            VStack(spacing: 8) {
+                promptField(index: 0, placeholder: "First suggestion")
+                promptField(index: 1, placeholder: "Second suggestion")
+                promptField(index: 2, placeholder: "Third suggestion")
+            }
+        }
+    }
+
+    private func promptField(index: Int, placeholder: String) -> some View {
+        TextField(placeholder, text: promptBinding(index: index))
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, weight: .semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(DS.glassBorder, lineWidth: 1)
+            )
+    }
+
+    private func promptBinding(index: Int) -> Binding<String> {
+        Binding(
+            get: {
+                guard draft.seedPrompts.indices.contains(index) else { return "" }
+                return draft.seedPrompts[index]
+            },
+            set: { newValue in
+                while draft.seedPrompts.count <= index {
+                    draft.seedPrompts.append("")
+                }
+                draft.seedPrompts[index] = newValue
+            }
+        )
+    }
+
+    private func toggleGrid<T: Identifiable & Hashable>(
+        title: String,
+        items: [T],
+        selection: Binding<[T]>
+    ) -> some View where T.ID == String {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).dsSmallCapsLabel()
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 8)], spacing: 8) {
+                ForEach(items) { item in
+                    let isOn = selection.wrappedValue.contains(item)
+                    Button {
+                        if isOn {
+                            selection.wrappedValue.removeAll { $0 == item }
+                        } else {
+                            selection.wrappedValue.append(item)
+                        }
+                    } label: {
+                        Text(displayName(for: item))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(isOn ? DS.accent : DS.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .cosmoWindowChip(isActive: isOn)
+                    }
+                    .buttonStyle(.plain)
+                    .help(accessDescription(for: item))
+                }
+            }
+        }
+    }
+
+    private func displayName<T>(for item: T) -> String {
+        if let item = item as? AgentToolBundle { return item.displayName }
+        if let item = item as? CustomAgentContextScope { return item.displayName }
+        return String(describing: item)
+    }
+
+    private func accessDescription<T>(for item: T) -> String {
+        if let item = item as? AgentToolBundle { return item.accessDescription }
+        if let item = item as? CustomAgentContextScope { return item.accessDescription }
+        return ""
     }
 }
 

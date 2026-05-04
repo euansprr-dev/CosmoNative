@@ -444,16 +444,17 @@ public final class NodeGraphEngine: ObservableObject {
 
     /// Record an access event for a node (for usage-based ranking)
     public func recordAccess(atomUUID: String, type: AccessType = .view) async throws {
+        let now = ISO8601DateFormatter().string(from: Date())
         try await database.asyncWrite { db in
             try db.execute(
                 sql: """
                     UPDATE graph_nodes
                     SET access_count = access_count + 1,
-                        last_accessed_at = datetime('now'),
-                        updated_at = datetime('now')
+                        last_accessed_at = ?,
+                        updated_at = ?
                     WHERE atom_uuid = ?
                 """,
-                arguments: [atomUUID]
+                arguments: [now, now, atomUUID]
             )
         }
 
@@ -661,4 +662,3 @@ private extension Array {
         }
     }
 }
-

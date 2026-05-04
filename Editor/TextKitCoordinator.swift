@@ -104,6 +104,11 @@ final class CosmoTextView: NSTextView {
             return
         }
 
+        if let pasteboardString = NSPasteboard.general.string(forType: .string) {
+            insertText(pasteboardString, replacementRange: selectedRange)
+            return
+        }
+
         super.paste(sender)
     }
 

@@ -9,6 +9,38 @@ import AppKit
 
 // MARK: - Content Focus Mode View
 
+enum ContentFocusLayoutPolicy {
+    static func showsMarginaliaRails(
+        isPaneContext: Bool,
+        zenMode: Bool,
+        layoutMode: ContentFocusModeView.ContentLayoutMode,
+        availableWidth: CGFloat
+    ) -> Bool {
+        guard !isPaneContext, !zenMode, layoutMode != .compact else { return false }
+        return availableWidth >= 980
+    }
+
+    static func manuscriptWidth(
+        availableWidth: CGFloat,
+        preferredWritingWidth: CGFloat,
+        isPaneContext: Bool,
+        zenMode: Bool,
+        layoutMode: ContentFocusModeView.ContentLayoutMode
+    ) -> CGFloat {
+        if isPaneContext {
+            return min(preferredWritingWidth, max(320, availableWidth - 48))
+        }
+
+        if layoutMode == .compact {
+            return max(320, availableWidth - DS.space40)
+        }
+
+        let sideAllowance: CGFloat = zenMode ? DS.space48 : 580
+        let available = max(360, availableWidth - sideAllowance)
+        return min(preferredWritingWidth, available)
+    }
+}
+
 /// Unified single-page Content Focus Mode.
 /// Left sidebar (outline/hooks/core idea) + center editor + right sidebar (context OR polish).
 struct ContentFocusModeView: View {
@@ -225,13 +257,33 @@ struct ContentFocusModeView: View {
     }
 
     private func manuscriptWidth(availableWidth: CGFloat) -> CGFloat {
-        if layoutMode == .compact {
-            return max(320, availableWidth - DS.space40)
-        }
+        ContentFocusLayoutPolicy.manuscriptWidth(
+            availableWidth: availableWidth,
+            preferredWritingWidth: writingWidthMode.width,
+            isPaneContext: isPaneContext,
+            zenMode: zenMode,
+            layoutMode: layoutMode
+        )
+    }
 
-        let sideAllowance: CGFloat = zenMode ? DS.space48 : 580
-        let available = max(360, availableWidth - sideAllowance)
-        return min(writingWidthMode.width, available)
+    private func estimatedDraftEditorHeight(availableWidth: CGFloat) -> CGFloat {
+        let text = localDraftContent.isEmpty ? draftDocument.plainText : localDraftContent
+        guard !text.isEmpty else { return 400 }
+
+        let writingWidth = manuscriptWidth(availableWidth: availableWidth)
+        let textWidth = max(260, writingWidth - 32)
+        let averageCharacterWidth: CGFloat = 8.5
+        let charactersPerLine = max(24, Int(textWidth / averageCharacterWidth))
+        let visualLineCount = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .reduce(0) { total, line in
+                total + max(1, Int(ceil(Double(line.count + 1) / Double(charactersPerLine))))
+            }
+
+        let lineHeight: CGFloat = 29
+        let paragraphSpacing: CGFloat = 12
+        let paragraphCount = max(1, text.components(separatedBy: "\n\n").count)
+        return CGFloat(visualLineCount) * lineHeight + CGFloat(paragraphCount - 1) * paragraphSpacing + 80
     }
 
     // MARK: - Initialization
@@ -547,14 +599,21 @@ struct ContentFocusModeView: View {
             .opacity(zenMode ? 0 : 1)
 
             GeometryReader { geo in
+                let showMarginaliaRails = ContentFocusLayoutPolicy.showsMarginaliaRails(
+                    isPaneContext: isPaneContext,
+                    zenMode: zenMode,
+                    layoutMode: layoutMode,
+                    availableWidth: geo.size.width
+                )
+
                 ZStack(alignment: .topLeading) {
                     // Margins are outside the scroll view so they stay pinned
                     // while only the center manuscript column scrolls.
                     HStack(spacing: 0) {
                         Spacer(minLength: DS.space24)
 
-                        HStack(alignment: .top, spacing: DS.space24) {
-                            if !zenMode {
+                        HStack(alignment: .top, spacing: showMarginaliaRails ? DS.space24 : 0) {
+                            if showMarginaliaRails {
                                 scriptoriumLeftMargin
                                     .frame(width: 260, alignment: .leading)
                                     .padding(.top, DS.space12)
@@ -579,8 +638,9 @@ struct ContentFocusModeView: View {
                                     .padding(.trailing, DS.space4)
                                     .padding(.vertical, DS.space8)
                             }
+                            .frame(height: max(0, geo.size.height - DS.space4), alignment: .top)
 
-                            if !zenMode {
+                            if showMarginaliaRails {
                                 scriptoriumRightMargin
                                     .frame(width: 220, alignment: .leading)
                                     .padding(.top, DS.space12)
@@ -592,6 +652,7 @@ struct ContentFocusModeView: View {
 
                         Spacer(minLength: DS.space24)
                     }
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
                     .padding(.top, DS.space4)
 
                     // Inline AI Result Popover — preserved verbatim
@@ -714,7 +775,14 @@ struct ContentFocusModeView: View {
                     if isPolishModeActive { debouncedPolishUpdate() }
                 }
             )
-            .frame(minHeight: max(textContentHeight, height - 200), alignment: .top)
+            .frame(
+                minHeight: max(
+                    textContentHeight,
+                    estimatedDraftEditorHeight(availableWidth: availableWidth),
+                    height - 200
+                ),
+                alignment: .top
+            )
             .background(
                 GeometryReader { proxy in
                     Color.clear

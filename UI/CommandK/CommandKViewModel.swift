@@ -1089,12 +1089,12 @@ public final class CommandKViewModel: ObservableObject {
         isShowingRecents = true
 
         do {
-            // Fetch 8 most recent user-facing atoms
-            let recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 8)
+            let recentAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 8)
 
             // Build results from actual atoms
             var combinedResults: [RankedResult] = []
-            for atom in recentAtoms {
+            for recent in recentAtoms {
+                let atom = recent.atom
                 combinedResults.append(RankedResult(
                     atomUUID: atom.uuid,
                     atomType: atom.type,
@@ -1102,10 +1102,10 @@ public final class CommandKViewModel: ObservableObject {
                     snippet: atom.body?.prefix(100).description,
                     semanticWeight: 0.0,
                     structuralWeight: 0.5,
-                    recencyWeight: WeightCalculator.recencyWeight(fromISO8601: atom.updatedAt),
+                    recencyWeight: WeightCalculator.recencyWeight(fromISO8601: recent.openedAt),
                     usageWeight: 0.5,
-                    updatedAt: atom.updatedAt,
-                    accessCount: 0
+                    updatedAt: recent.openedAt,
+                    accessCount: recent.accessCount
                 ))
             }
 
@@ -1339,8 +1339,9 @@ public final class CommandKViewModel: ObservableObject {
     public func loadRecentsForCompact() async {
         guard isSurfaceActive else { return }
         do {
-            let recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 12)
-            recentItems = recentAtoms.filter { $0.type != .task }.prefix(8).map { atom in
+            let recentAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 12)
+            recentItems = recentAtoms.filter { $0.atom.type != .task }.prefix(8).map { recent in
+                let atom = recent.atom
                 let researchMeta = atom.metadata.flatMap { metaStr -> ResearchMetadata? in
                     guard let data = metaStr.data(using: .utf8) else { return nil }
                     return try? JSONDecoder().decode(ResearchMetadata.self, from: data)
@@ -1350,7 +1351,7 @@ public final class CommandKViewModel: ObservableObject {
                     title: atom.title ?? "Untitled",
                     type: atom.type,
                     entityId: atom.id ?? 0,
-                    relativeDate: Self.relativeTimeString(from: atom.updatedAt),
+                    relativeDate: Self.relativeTimeString(from: recent.openedAt),
                     thumbnailURL: researchMeta?.thumbnailUrl,
                     preview: atom.body
                 )
@@ -1429,15 +1430,26 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
-    /// Relative time string from ISO8601
+    /// Relative time string from stored access timestamps.
     private static func relativeTimeString(from iso: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: iso) else { return "" }
+        guard let date = date(fromTimestamp: iso) else { return "" }
         let interval = Date().timeIntervalSince(date)
         if interval < 3600 { return "\(max(1, Int(interval / 60)))m" }
         if interval < 86400 { return "\(Int(interval / 3600))h" }
         if interval < 604800 { return "\(Int(interval / 86400))d" }
         return "\(Int(interval / 604800))w"
+    }
+
+    private static func date(fromTimestamp timestamp: String) -> Date? {
+        if let date = ISO8601DateFormatter().date(from: timestamp) {
+            return date
+        }
+
+        let sqliteFormatter = DateFormatter()
+        sqliteFormatter.locale = Locale(identifier: "en_US_POSIX")
+        sqliteFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        sqliteFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return sqliteFormatter.date(from: timestamp)
     }
 
     /// Navigate selection up

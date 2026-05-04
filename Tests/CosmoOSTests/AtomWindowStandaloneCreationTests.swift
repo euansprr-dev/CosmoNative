@@ -117,6 +117,32 @@ final class AtomWindowStandaloneCreationTests: XCTestCase {
         XCTAssertTrue(recents.contains(where: { $0.uuid == created.uuid }))
     }
 
+    func testFetchRecentlyOpenedUsesGraphAccessInsteadOfUpdatedAt() async throws {
+        let opened = try await AtomRepository.shared.create(type: .note, title: "Actually opened note")
+        let merelyUpdated = try await AtomRepository.shared.create(type: .note, title: "Recently updated note")
+        createdUUIDs.append(opened.uuid)
+        createdUUIDs.append(merelyUpdated.uuid)
+
+        let oldUpdate = "2026-01-01T00:00:00Z"
+        let newUpdate = "2026-02-01T00:00:00Z"
+        let accessTime = "2099-01-15 12:00:00"
+
+        try await CosmoDatabase.shared.asyncWrite { db in
+            try db.execute(sql: "UPDATE atoms SET updated_at = ? WHERE uuid = ?", arguments: [oldUpdate, opened.uuid])
+            try db.execute(sql: "UPDATE atoms SET updated_at = ? WHERE uuid = ?", arguments: [newUpdate, merelyUpdated.uuid])
+            try db.execute(
+                sql: "UPDATE graph_nodes SET last_accessed_at = ?, access_count = access_count + 1 WHERE atom_uuid = ?",
+                arguments: [accessTime, opened.uuid]
+            )
+        }
+
+        let recents = try await AtomRepository.shared.fetchRecentlyOpened(limit: 10)
+
+        XCTAssertEqual(recents.first?.atom.uuid, opened.uuid)
+        XCTAssertEqual(recents.first?.openedAt, accessTime)
+        XCTAssertFalse(recents.contains { $0.atom.uuid == merelyUpdated.uuid })
+    }
+
     private func canvasBlockCount(for atomUUID: String) async throws -> Int {
         try await CosmoDatabase.shared.asyncRead { db in
             try Int.fetchOne(

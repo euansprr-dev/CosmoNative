@@ -10,6 +10,12 @@ import Combine
 class AtomRepository: ObservableObject {
     static let shared = AtomRepository()
 
+    struct RecentlyOpenedAtom: Sendable {
+        let atom: Atom
+        let openedAt: String
+        let accessCount: Int
+    }
+
     private let database = CosmoDatabase.shared
     private let changeTracker = ChangeTracker.shared
 
@@ -271,6 +277,39 @@ class AtomRepository: ObservableObject {
                 .order(Atom.CodingKeys.updatedAt.desc)
                 .limit(limit)
                 .fetchAll(db)
+        }
+    }
+
+    /// Fetch atoms the user has actually opened, ordered by graph access time.
+    func fetchRecentlyOpened(limit: Int = 25) async throws -> [RecentlyOpenedAtom] {
+        let userTypes: [AtomType] = [.idea, .note, .task, .research, .content, .connection, .project, .journalEntry, .image]
+        let typeStrings = userTypes.map(\.rawValue)
+        let placeholders = typeStrings.map { _ in "?" }.joined(separator: ", ")
+        let limitValue = limit
+
+        return try await database.asyncRead { [typeStrings, placeholders, limitValue] db in
+            var arguments = StatementArguments(typeStrings)
+            arguments += [limitValue]
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT atoms.*, graph_nodes.last_accessed_at AS opened_at, graph_nodes.access_count AS graph_access_count
+                FROM atoms
+                JOIN graph_nodes ON graph_nodes.atom_uuid = atoms.uuid
+                WHERE atoms.type IN (\(placeholders))
+                  AND atoms.is_deleted = 0
+                  AND graph_nodes.last_accessed_at IS NOT NULL
+                ORDER BY unixepoch(graph_nodes.last_accessed_at) DESC, graph_nodes.last_accessed_at DESC
+                LIMIT ?
+                """, arguments: arguments)
+
+            return rows.compactMap { row in
+                guard let openedAt = row["opened_at"] as String? else { return nil }
+                guard let atom = try? Atom(row: row) else { return nil }
+                return RecentlyOpenedAtom(
+                    atom: atom,
+                    openedAt: openedAt,
+                    accessCount: row["graph_access_count"] as Int? ?? 0
+                )
+            }
         }
     }
 

@@ -186,10 +186,22 @@ public struct WeightCalculator: Sendable {
 
     /// Calculate recency weight from ISO8601 string
     public static func recencyWeight(fromISO8601 dateString: String) -> Double {
-        guard let date = ISO8601DateFormatter().date(from: dateString) else {
+        guard let date = date(fromTimestamp: dateString) else {
             return recencyFloor
         }
         return recencyWeight(from: date)
+    }
+
+    private static func date(fromTimestamp dateString: String) -> Date? {
+        if let date = ISO8601DateFormatter().date(from: dateString) {
+            return date
+        }
+
+        let sqliteFormatter = DateFormatter()
+        sqliteFormatter.locale = Locale(identifier: "en_US_POSIX")
+        sqliteFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        sqliteFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return sqliteFormatter.date(from: dateString)
     }
 
     // MARK: - Usage Weight

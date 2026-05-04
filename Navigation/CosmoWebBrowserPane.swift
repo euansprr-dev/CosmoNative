@@ -322,13 +322,14 @@ private struct CosmoBrowserWebView: NSViewRepresentable {
         config.websiteDataStore = .default()
         config.mediaTypesRequiringUserActionForPlayback = []
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = CosmoBrowserWKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         context.coordinator.webView = webView
+        context.coordinator.installDeleteKeyMonitor(for: webView)
         state.attach(webView)
         webView.load(URLRequest(url: url))
         return webView
@@ -345,10 +346,35 @@ private struct CosmoBrowserWebView: NSViewRepresentable {
         let state: CosmoWebBrowserState
         var initialURL: URL
         weak var webView: WKWebView?
+        private var deleteKeyMonitor: Any?
 
         init(state: CosmoWebBrowserState, initialURL: URL) {
             self.state = state
             self.initialURL = initialURL
+        }
+
+        deinit {
+            if let deleteKeyMonitor {
+                NSEvent.removeMonitor(deleteKeyMonitor)
+            }
+        }
+
+        func installDeleteKeyMonitor(for webView: WKWebView) {
+            if let deleteKeyMonitor {
+                NSEvent.removeMonitor(deleteKeyMonitor)
+            }
+
+            deleteKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak webView] event in
+                guard let webView,
+                      Self.isPlainDeleteKey(event),
+                      Self.browserOwnsFirstResponder(in: event.window, webView: webView)
+                else {
+                    return event
+                }
+
+                event.window?.firstResponder?.keyDown(with: event)
+                return nil
+            }
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -429,5 +455,34 @@ private struct CosmoBrowserWebView: NSViewRepresentable {
                 state.fail(with: NSError(domain: "CosmoWebBrowserPane", code: 0, userInfo: [NSLocalizedDescriptionKey: message]))
             }
         }
+
+        private static func isPlainDeleteKey(_ event: NSEvent) -> Bool {
+            guard event.keyCode == 51 || event.keyCode == 117 else { return false }
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            return !modifiers.contains(.command) && !modifiers.contains(.control)
+        }
+
+        private static func browserOwnsFirstResponder(in window: NSWindow?, webView: WKWebView) -> Bool {
+            guard let responder = window?.firstResponder else { return false }
+
+            if responder === webView {
+                return true
+            }
+
+            if let responderView = responder as? NSView {
+                return responderView === webView || responderView.isDescendant(of: webView)
+            }
+
+            return String(describing: type(of: responder)).contains("WK")
+        }
+    }
+}
+
+private final class CosmoBrowserWKWebView: WKWebView {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 }

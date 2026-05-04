@@ -45,6 +45,16 @@ struct InquiryWorkspaceView: View {
         .onDisappear {
             Task { await viewModel.pauseAndPersist() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.layoutRequested)) { notification in
+            guard let payload = CosmoNotification.Inquiry.LayoutPayload(from: notification) else { return }
+            viewModel.setLayout(payload.mode)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.focusThinkingDock)) { _ in
+            dockFocused = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.refreshSources)) { _ in
+            Task { await viewModel.refreshSourceRecommendations() }
+        }
         .background(layoutShortcuts)
     }
 

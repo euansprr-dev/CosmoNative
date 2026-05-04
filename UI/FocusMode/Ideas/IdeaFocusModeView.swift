@@ -10,6 +10,16 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
+enum IdeaOutlineLayoutMetrics {
+    static let minimumEditorHeight: CGFloat = 22
+    static let maximumEditorHeight: CGFloat = 88
+    static let normalRowSpacing: CGFloat = 8
+
+    static func editorHeight(forMeasuredHeight measuredHeight: CGFloat) -> CGFloat {
+        min(max(minimumEditorHeight, ceil(measuredHeight)), maximumEditorHeight)
+    }
+}
+
 // MARK: - Idea Focus Mode View
 
 /// Full-screen thinking surface for an idea.
@@ -779,7 +789,7 @@ extension IdeaFocusModeView {
     // MARK: Normal Mode — floating stanzas, no cards
 
     private func normalOutlineSlides(_ outline: CodexOutlineModel) -> some View {
-        VStack(alignment: .leading, spacing: DS.space20) {
+        VStack(alignment: .leading, spacing: IdeaOutlineLayoutMetrics.normalRowSpacing) {
             ForEach(outline.slides) { slide in
                 normalSlideCard(slide)
             }
@@ -788,11 +798,11 @@ extension IdeaFocusModeView {
     }
 
     private func normalSlideCard(_ slide: CodexOutlineSlide) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.space16) {
+        HStack(alignment: .top, spacing: DS.space16) {
             Text(romanNumeral(for: slide.position))
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
                 .foregroundStyle(DS.giltMuted)
-                .frame(width: 36, alignment: .leading)
+                .frame(width: 36, height: IdeaOutlineLayoutMetrics.minimumEditorHeight, alignment: .topLeading)
 
             OutlineSlideNoteEditor(
                 text: slideNoteBinding(for: slide.id),
@@ -802,7 +812,8 @@ extension IdeaFocusModeView {
                 onReturn: { insertSlideAfterFocusedSlide(slide.id) },
                 onDeleteEmpty: { handleDeleteOnSlide(slide.id) == .handled }
             )
-            .frame(minHeight: 22, maxHeight: 88)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
 
             Button { removeSlide(slide.id) } label: {
                 Image(systemName: "xmark")
@@ -1070,8 +1081,8 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
-        textView.minSize = NSSize(width: 0, height: 22)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: 88)
+        textView.minSize = NSSize(width: 0, height: IdeaOutlineLayoutMetrics.minimumEditorHeight)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: IdeaOutlineLayoutMetrics.maximumEditorHeight)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -1094,12 +1105,8 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
             textView.invalidateIntrinsicContentSize()
         }
 
-        if focusedSlideID == slideID,
-           textView.window?.firstResponder !== textView {
-            DispatchQueue.main.async {
-                textView.window?.makeFirstResponder(textView)
-                textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
-            }
+        if focusedSlideID == slideID {
+            textView.requestFocusWhenReady()
         }
     }
 
@@ -1110,7 +1117,7 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: OutlineSlideNoteTextView, context: Context) -> CGSize? {
         let width = proposal.width ?? nsView.frame.width
         let measured = nsView.measuredHeight(for: width)
-        return CGSize(width: width, height: min(max(22, measured), 88))
+        return CGSize(width: width, height: IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: measured))
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -1136,15 +1143,46 @@ private final class OutlineSlideNoteTextView: NSTextView {
     var placeholder: String = ""
     var onReturn: (() -> Void)?
     var onDeleteEmpty: (() -> Bool)?
+    private var shouldFocusWhenAttached = false
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: measuredHeight(for: bounds.width))
+        NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: measuredHeight(for: bounds.width))
+        )
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyPendingFocusIfPossible()
+    }
+
+    func requestFocusWhenReady() {
+        shouldFocusWhenAttached = true
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPendingFocusIfPossible()
+        }
+    }
+
+    private func applyPendingFocusIfPossible() {
+        guard shouldFocusWhenAttached, let window else { return }
+        shouldFocusWhenAttached = false
+        guard window.firstResponder !== self else { return }
+
+        window.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: string.count, length: 0))
     }
 
     override func keyDown(with event: NSEvent) {
         let isPlainReturn = event.keyCode == 36 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
         if isPlainReturn {
             onReturn?()
+            return
+        }
+
+        let isShiftReturn = event.keyCode == 36 && event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .shift
+        if isShiftReturn {
+            insertText("\n", replacementRange: selectedRange())
             return
         }
 
@@ -1178,7 +1216,7 @@ private final class OutlineSlideNoteTextView: NSTextView {
     }
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
-        guard width > 0 else { return 22 }
+        guard width > 0 else { return IdeaOutlineLayoutMetrics.minimumEditorHeight }
         let storage = NSTextStorage(string: string.isEmpty ? " " : string)
         let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
         let manager = NSLayoutManager()

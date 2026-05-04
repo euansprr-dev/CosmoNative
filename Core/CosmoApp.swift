@@ -619,6 +619,63 @@ struct CosmoCommands: Commands {
             .keyboardShortcut("a", modifiers: [.option])
         }
 
+        // Native macOS View menu entries for the active Inquiry Workspace.
+        CommandGroup(after: .toolbar) {
+            Divider()
+
+            Button("Inquiry: Research") {
+                NotificationCenter.default.post(
+                    CosmoNotification.Inquiry.layoutRequested,
+                    payload: CosmoNotification.Inquiry.LayoutPayload(mode: .research)
+                )
+            }
+
+            Button("Inquiry: Read") {
+                NotificationCenter.default.post(
+                    CosmoNotification.Inquiry.layoutRequested,
+                    payload: CosmoNotification.Inquiry.LayoutPayload(mode: .read)
+                )
+            }
+
+            Button("Inquiry: Write") {
+                NotificationCenter.default.post(
+                    CosmoNotification.Inquiry.layoutRequested,
+                    payload: CosmoNotification.Inquiry.LayoutPayload(mode: .write)
+                )
+            }
+
+            Button("Inquiry: Map") {
+                NotificationCenter.default.post(
+                    CosmoNotification.Inquiry.layoutRequested,
+                    payload: CosmoNotification.Inquiry.LayoutPayload(mode: .map)
+                )
+            }
+
+            Button("Inquiry: Review") {
+                NotificationCenter.default.post(
+                    CosmoNotification.Inquiry.layoutRequested,
+                    payload: CosmoNotification.Inquiry.LayoutPayload(mode: .review)
+                )
+            }
+
+            Divider()
+
+            Button("Focus Inquiry Thinking Dock") {
+                NotificationCenter.default.post(name: CosmoNotification.Inquiry.focusThinkingDock, object: nil)
+            }
+            .keyboardShortcut("l", modifiers: [.command, .option])
+
+            Button("Refresh Inquiry Sources") {
+                NotificationCenter.default.post(name: CosmoNotification.Inquiry.refreshSources, object: nil)
+            }
+            .keyboardShortcut("r", modifiers: [.command, .option])
+
+            Button("Crystallize Inquiry Session") {
+                NotificationCenter.default.post(name: CosmoNotification.Inquiry.crystallizeActive, object: nil)
+            }
+            .keyboardShortcut(.return, modifiers: [.command])
+        }
+
         // Pasteboard commands (⌘C / ⌘X / ⌘V / ⌘A)
         // When an NSTextView is first responder, route to the responder chain.
         // Otherwise, Paste posts a notification so the canvas can handle image/URL paste.

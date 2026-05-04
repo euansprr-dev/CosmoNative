@@ -349,8 +349,8 @@ class IdeaFocusModeViewModel: ObservableObject {
                 idea = try await AtomRepository.shared.update(analysisAtom)
             }
 
-            // Create content atom with empty body — the idea text goes into contentDescription,
-            // not into draftContent (which maps to atom.body).
+            // Create content atom. The idea text goes into contentDescription; draftContent
+            // starts as a slide workspace only when the user composed a multi-slide outline.
             let contentAtom = try await AtomRepository.shared.createContent(
                 title: editableTitle,
                 body: nil,
@@ -402,6 +402,12 @@ class IdeaFocusModeViewModel: ObservableObject {
             focusState.contentDescription = enrichedBody
             focusState.coreIdea = enrichedBody
             focusState.hooks = inheritedHooks
+
+            if let codexOutline,
+               let draftTemplate = CodexOutlineDraftTemplate.make(from: codexOutline) {
+                focusState.draftContent = draftTemplate
+                focusState.richDraftDocument = RichDocument.migrateLegacy(draftTemplate)
+            }
 
             // Convert user's codex outline notes to focusState.outline for display
             // Cloud engine handles full physics plan during writing — no local AI generation
@@ -472,7 +478,7 @@ class IdeaFocusModeViewModel: ObservableObject {
 
             var updatedContent = contentAtom.addingLink(.contentToIdea(idea.uuid))
             updatedContent.metadata = focusFields.metadata
-            updatedContent.body = focusFields.body  // nil — draftContent starts empty
+            updatedContent.body = focusFields.body
             updatedContent.updatedAt = nowISO
             updatedContent.localVersion += 1
             _ = try await AtomRepository.shared.update(updatedContent)

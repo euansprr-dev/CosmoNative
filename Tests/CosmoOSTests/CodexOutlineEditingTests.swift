@@ -61,6 +61,43 @@ final class CodexOutlineEditingTests: XCTestCase {
         XCTAssertEqual(outline.slides.map(\.id), [firstID, secondID])
     }
 
+    func testDraftTemplateRepeatsSlideWorkspaceForEachOutlineSlide() {
+        let outline = CodexOutlineModel(arcShape: nil, slides: [
+            makeSlide(id: UUID(), position: 1, note: "Hook"),
+            makeSlide(id: UUID(), position: 2, note: "Build tension"),
+            makeSlide(id: UUID(), position: 3, note: "CTA")
+        ])
+
+        XCTAssertEqual(
+            CodexOutlineDraftTemplate.make(from: outline),
+            """
+            SLIDE 1
+
+
+
+            --
+            SLIDE 2
+
+
+
+            --
+            SLIDE 3
+
+
+
+            --
+            """
+        )
+    }
+
+    func testDraftTemplateRequiresMultipleSlides() {
+        let outline = CodexOutlineModel(arcShape: nil, slides: [
+            makeSlide(id: UUID(), position: 1, note: "Hook")
+        ])
+
+        XCTAssertNil(CodexOutlineDraftTemplate.make(from: outline))
+    }
+
     private func makeSlide(id: UUID, position: Int, note: String?) -> CodexOutlineSlide {
         CodexOutlineSlide(
             id: id,

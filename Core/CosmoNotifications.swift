@@ -505,10 +505,36 @@ enum CosmoNotification {
         static let maturityProgressed = Notification.Name("com.cosmo.inquiry.maturityProgressed")
         /// Crystallize the active session — no payload
         static let crystallizeActive = Notification.Name("com.cosmo.inquiry.crystallizeActive")
+        /// Switch the active Inquiry Workspace layout — userInfo: LayoutPayload
+        static let layoutRequested = Notification.Name("com.cosmo.inquiry.layoutRequested")
+        /// Focus the active Inquiry Workspace thinking dock — no payload
+        static let focusThinkingDock = Notification.Name("com.cosmo.inquiry.focusThinkingDock")
+        /// Refresh Source Radar for the active Inquiry Workspace — no payload
+        static let refreshSources = Notification.Name("com.cosmo.inquiry.refreshSources")
     }
 }
 
 // MARK: - Type-Safe Payloads
+
+extension CosmoNotification.Inquiry {
+    struct LayoutPayload {
+        let mode: InquiryLayoutMode
+
+        var userInfo: [AnyHashable: Any] {
+            ["mode": mode.rawValue]
+        }
+
+        init(mode: InquiryLayoutMode) {
+            self.mode = mode
+        }
+
+        init?(from notification: Notification) {
+            guard let rawMode = notification.userInfo?["mode"] as? String,
+                  let mode = InquiryLayoutMode(rawValue: rawMode) else { return nil }
+            self.mode = mode
+        }
+    }
+}
 
 extension CosmoNotification.Canvas {
 
@@ -743,6 +769,7 @@ extension CosmoNotification.Canvas.PlaceBlocksPayload: NotificationPayload {}
 extension CosmoNotification.Canvas.ToggleBlockPinPayload: NotificationPayload {}
 extension CosmoNotification.Navigation.EntityPayload: NotificationPayload {}
 extension CosmoNotification.Navigation.FocusModePayload: NotificationPayload {}
+extension CosmoNotification.Inquiry.LayoutPayload: NotificationPayload {}
 extension CosmoNotification.Voice.RecordingStatePayload: NotificationPayload {}
 extension CosmoNotification.Voice.TranscriptPayload: NotificationPayload {}
 

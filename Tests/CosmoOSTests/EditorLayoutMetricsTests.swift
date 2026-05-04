@@ -85,6 +85,25 @@ final class EditorLayoutMetricsTests: XCTestCase {
         XCTAssertGreaterThan(tripleLine, singleLine)
     }
 
+    func testOutlineSlideEditorKeepsSingleLineRowsCompact() {
+        XCTAssertEqual(
+            IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: 17),
+            IdeaOutlineLayoutMetrics.minimumEditorHeight
+        )
+    }
+
+    func testOutlineSlideEditorAllowsIntentionalMultilineRows() {
+        XCTAssertEqual(
+            IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: 52),
+            52
+        )
+
+        XCTAssertEqual(
+            IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: 140),
+            IdeaOutlineLayoutMetrics.maximumEditorHeight
+        )
+    }
+
     private func expectedSingleLineHeight(
         fontSize: CGFloat,
         compact: Bool,

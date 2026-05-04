@@ -48,3 +48,20 @@ enum CodexOutlineEditing {
         }
     }
 }
+
+enum CodexOutlineDraftTemplate {
+    private static let linesPerSlide = 3
+
+    static func make(from outline: CodexOutlineModel) -> String? {
+        guard outline.slides.count > 1 else { return nil }
+
+        return outline.slides.enumerated()
+            .map { index, _ in slideSection(number: index + 1) }
+            .joined(separator: "\n")
+    }
+
+    private static func slideSection(number: Int) -> String {
+        let writingSpace = Array(repeating: "", count: linesPerSlide).joined(separator: "\n")
+        return "SLIDE \(number)\n\(writingSpace)\n--"
+    }
+}

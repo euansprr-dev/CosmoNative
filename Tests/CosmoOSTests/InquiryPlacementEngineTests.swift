@@ -80,6 +80,19 @@ final class InquiryPlacementEngineTests: XCTestCase {
         XCTAssertEqual(parsed.body, "best sources on nasal breathing and HRV")
     }
 
+    func testInquiryLayoutPayloadRoundTripsFromMenuNotification() {
+        let payload = CosmoNotification.Inquiry.LayoutPayload(mode: .write)
+        let notification = Notification(
+            name: CosmoNotification.Inquiry.layoutRequested,
+            object: nil,
+            userInfo: payload.userInfo
+        )
+
+        let decoded = CosmoNotification.Inquiry.LayoutPayload(from: notification)
+
+        XCTAssertEqual(decoded?.mode, .write)
+    }
+
     func testDeepScoutQueryExpansionKeepsBranchAnchorAndAddsSourceAngles() {
         let profile = InquiryBranchResearchProfile(
             deepDiveTitle: "Breathwork",

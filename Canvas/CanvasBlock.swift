@@ -304,6 +304,27 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         )
     }
 
+    /// Rebuild this canvas block around a saved atom while preserving canvas identity and layout.
+    /// Use this when a provisional/freeform block becomes atom-backed.
+    func relinked(to atom: Atom) -> CanvasBlock {
+        let atomBlock = CanvasBlock.fromAtom(atom, position: position)
+        return CanvasBlock(
+            id: id,
+            position: position,
+            size: size,
+            scale: scale,
+            rotation: rotation,
+            isPinned: isPinned,
+            zIndex: zIndex,
+            entityType: atomBlock.entityType,
+            entityId: atomBlock.entityId,
+            entityUuid: atomBlock.entityUuid,
+            title: atomBlock.title,
+            subtitle: atomBlock.subtitle,
+            metadata: atomBlock.metadata
+        )
+    }
+
     /// Map AtomType to EntityType, handling cases where raw values differ
     private static func entityType(for atomType: AtomType) -> EntityType {
         switch atomType {

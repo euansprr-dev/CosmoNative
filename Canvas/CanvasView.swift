@@ -2464,6 +2464,7 @@ struct CanvasView: View {
 
             spatialEngine.blocks[blockIndex].entityId = entityId
             spatialEngine.blocks[blockIndex].entityUuid = entityUuid
+            await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
         }
     }
 
@@ -2733,7 +2734,8 @@ struct CanvasView: View {
             createDeepDiveBlock(at: position, prefillTitle: prefillTitle)
             return
         case .note:
-            block = CanvasBlock.noteBlock(position: position)
+            createAtomBackedNoteBlock(at: position, prefillTitle: prefillTitle, prefillBody: prefillContent)
+            return
         case .stickyNote:
             block = CanvasBlock.stickyNoteBlock(position: position)
         case .cosmoAI:
@@ -2758,6 +2760,36 @@ struct CanvasView: View {
         }
 
         print("✨ Created \(entityType) block at \(position)")
+    }
+
+    private func createAtomBackedNoteBlock(
+        at position: CGPoint,
+        prefillTitle: String? = nil,
+        prefillBody: String? = nil
+    ) {
+        Task {
+            do {
+                let snapshot = RichDocumentPersistence.noteSnapshot(
+                    existingMetadata: nil,
+                    titleDocument: RichDocument.migrateLegacy(prefillTitle ?? ""),
+                    bodyDocument: RichDocument.migrateLegacy(prefillBody ?? ""),
+                    plainBodyText: prefillBody ?? ""
+                )
+                let createdAtom = try await AtomRepository.shared.create(
+                    type: .note,
+                    title: snapshot.atomTitle,
+                    body: snapshot.atomBody,
+                    metadata: snapshot.metadata
+                )
+                let block = CanvasBlock.fromAtom(createdAtom, position: position)
+                await spatialEngine.addBlock(block, persist: true)
+                print("📝 Created atom-backed note block at \(position) with atom \(createdAtom.uuid)")
+            } catch {
+                let block = CanvasBlock.noteBlock(position: position, content: prefillBody ?? "")
+                await spatialEngine.addBlock(block, persist: true)
+                print("📝 Created note block at \(position) without backing atom: \(error)")
+            }
+        }
     }
 
     // MARK: - Gesture Handlers (Optimized)
@@ -3283,24 +3315,7 @@ struct CanvasView: View {
         // Convert screen position to canvas position (accounting for zoom)
         let canvasPosition = screenToCanvasPosition(screenPosition)
 
-        Task {
-            do {
-                // Always create a backing atom through the repository so sync insert tracking runs.
-                let createdAtom = try await AtomRepository.shared.create(type: .note)
-
-                var block = CanvasBlock.noteBlock(position: canvasPosition)
-                block.entityId = createdAtom.id ?? -1
-                block.entityUuid = createdAtom.uuid
-
-                await spatialEngine.addBlock(block, persist: true)
-                print("📝 Created note block at \(canvasPosition) with atom \(createdAtom.uuid)")
-            } catch {
-                // Fallback: create without atom (legacy behavior)
-                let block = CanvasBlock.noteBlock(position: canvasPosition)
-                await spatialEngine.addBlock(block, persist: true)
-                print("📝 Created note block at \(canvasPosition) (no atom: \(error))")
-            }
-        }
+        createAtomBackedNoteBlock(at: canvasPosition)
     }
 
     // MARK: - Block Removal

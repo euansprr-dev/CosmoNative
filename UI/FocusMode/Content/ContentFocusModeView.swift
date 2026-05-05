@@ -299,7 +299,12 @@ struct ContentFocusModeView: View {
 
     var body: some View {
         ZStack {
-            DS.bg.ignoresSafeArea()
+            DS.bg
+                .ignoresSafeArea()
+                .overlay {
+                    FocusModeEditorBlurTapLayer()
+                        .ignoresSafeArea()
+                }
             DS.inkWash
                 .opacity(zenMode ? 0.16 : 0)
                 .ignoresSafeArea()
@@ -596,6 +601,7 @@ struct ContentFocusModeView: View {
             .frame(maxWidth: .infinity)
             .padding(.top, DS.space12)
             .padding(.bottom, DS.space24)
+            .background(FocusModeEditorBlurTapLayer())
             .opacity(zenMode ? 0 : 1)
 
             GeometryReader { geo in
@@ -654,6 +660,7 @@ struct ContentFocusModeView: View {
                     }
                     .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
                     .padding(.top, DS.space4)
+                    .background(FocusModeEditorBlurTapLayer())
 
                     // Inline AI Result Popover — preserved verbatim
                     if case .processing = inlineAIState {
@@ -857,6 +864,7 @@ struct ContentFocusModeView: View {
         }
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space12)
+        .background(FocusModeEditorBlurTapLayer())
     }
 
     private var writingSurfaceControls: some View {

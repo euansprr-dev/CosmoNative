@@ -22,6 +22,8 @@ export function parseCaptureLanePrefix(
   const trimmed = text.trim();
   const colonIndex = trimmed.indexOf(':');
   if (colonIndex <= 0) return null;
+  const firstLineBreak = trimmed.search(/[\r\n]/);
+  if (firstLineBreak >= 0 && colonIndex > firstLineBreak) return null;
 
   const prefix = trimmed.slice(0, colonIndex).trim();
   const body = trimmed.slice(colonIndex + 1).trim();
@@ -39,6 +41,13 @@ export function parseCaptureLanePrefix(
   const normalizedDestination = normalizeAlias(destinationName);
   const normalizedPrefix = normalizeAlias(prefix);
   const urlSchemes = new Set(['http', 'https', 'ftp', 'mailto', 'tel', 'file']);
+  const prefixTokens = normalizedPrefix.split(' ');
+  const trailingPrefixToken = prefixTokens[prefixTokens.length - 1];
+  if (
+    prefixTokens.length > 1 &&
+    ['http', 'https', 'ftp'].includes(trailingPrefixToken) &&
+    body.startsWith('//')
+  ) return null;
   if (urlSchemes.has(normalizedPrefix) || urlSchemes.has(normalizedDestination)) return null;
 
   const reservedPrefixes = new Set([

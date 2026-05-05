@@ -33,9 +33,11 @@ struct NoteFocusModeView: View {
     @State private var createdAt: Date = Date()
     @State private var showTagEditor = false
     @State private var autoSaveTask: Task<Void, Never>?
+    @State private var editingLockRefreshTask: Task<Void, Never>?
     @State private var saveClosed = false
     @State private var observationCancellable: AnyCancellable?
     @State private var isInitialLoad = true
+    @State private var hasLocalBodyEdits = false
 
     // Sidebar state
     @State private var sidebarVisible = false
@@ -94,6 +96,10 @@ struct NoteFocusModeView: View {
             // Warm parchment background with a faint sepia wash at the edges
             backgroundSurface
                 .ignoresSafeArea()
+                .overlay {
+                    FocusModeEditorBlurTapLayer()
+                        .ignoresSafeArea()
+                }
 
             // Main three-rail layout
             VStack(spacing: 0) {
@@ -152,6 +158,8 @@ struct NoteFocusModeView: View {
         )
         .focusBlockInspector(manager: floatingBlocksManager)
         .onAppear {
+            AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
+            startEditingLockRefresh()
             startObservingAtom()
             loadLinkedAtoms()
             listenForAtomPicker()
@@ -184,6 +192,7 @@ struct NoteFocusModeView: View {
         .onDisappear {
             print("[FOCUS-NOTE] onDisappear — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
             autoSaveTask?.cancel()
+            stopEditingLockRefresh()
             observationCancellable?.cancel()
             // Defer save by one frame so CosmoDocumentEditor's flushPendingSync()
             // can propagate the latest text via onDocumentChange first.
@@ -192,12 +201,15 @@ struct NoteFocusModeView: View {
                 saveClosed = true
                 saveAtomImmediately()
                 floatingBlocksManager.saveImmediately()
+                AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
             autoSaveTask?.cancel()
+            stopEditingLockRefresh()
             saveClosed = true
             saveAtomImmediately()
+            AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
         }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
             isEditingTitle = false
@@ -292,7 +304,11 @@ struct NoteFocusModeView: View {
         }
         .padding(.horizontal, DS.space24)
         .padding(.vertical, DS.space12)
-        .background(topBarBackground)
+        .background {
+            FocusModeEditorBlurTapLayer()
+            topBarBackground
+                .allowsHitTesting(false)
+        }
     }
 
     private var backButton: some View {
@@ -443,7 +459,10 @@ struct NoteFocusModeView: View {
                         print("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                         plainContent = plainText
                         refreshHeadings()
-                        if !isInitialLoad { triggerAutoSave() }
+                        if !isInitialLoad {
+                            if changed { hasLocalBodyEdits = true }
+                            triggerAutoSave()
+                        }
                     }
                 )
                 .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
@@ -456,7 +475,9 @@ struct NoteFocusModeView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, DS.space40)
+            .background(FocusModeEditorBlurTapLayer())
         }
+        .background(FocusModeEditorBlurTapLayer())
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
         } action: { newValue in
@@ -1172,8 +1193,26 @@ struct NoteFocusModeView: View {
 
     // MARK: - Auto-Save
 
+    private func startEditingLockRefresh() {
+        editingLockRefreshTask?.cancel()
+        let uuid = atom.uuid
+        editingLockRefreshTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled else { return }
+                AtomRepository.shared.refreshEditingLock(uuid: uuid)
+            }
+        }
+    }
+
+    private func stopEditingLockRefresh() {
+        editingLockRefreshTask?.cancel()
+        editingLockRefreshTask = nil
+    }
+
     private func triggerAutoSave() {
         print("[FOCUS-NOTE] triggerAutoSave() — \(autoSaveDelay)s debounce starting uuid=\(atom.uuid)")
+        AtomRepository.shared.refreshEditingLock(uuid: atom.uuid)
         autoSaveTask?.cancel()
         autoSaveTask = Task {
             do {
@@ -1224,12 +1263,16 @@ struct NoteFocusModeView: View {
         let plainContentCopy = plainContent
         let tagsCopy = tags
         let uuid = atom.uuid
+        let hasLocalBodyEditsCopy = hasLocalBodyEdits
+        AtomRepository.shared.refreshEditingLock(uuid: uuid)
 
         do {
             let snapshot = try database.write { db -> NoteDocumentSnapshot in
                 var existingMetadata: String?
-                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                var existingBody: String?
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid]) {
                     existingMetadata = row["metadata"]
+                    existingBody = row["body"]
                 }
 
                 let snapshot = RichDocumentPersistence.noteSnapshot(
@@ -1238,6 +1281,13 @@ struct NoteFocusModeView: View {
                     bodyDocument: bodyDocumentCopy,
                     plainBodyText: plainContentCopy
                 )
+                guard NoteWritePolicy.allowsBodyWrite(
+                    existingBody: existingBody,
+                    proposedBody: snapshot.bodyPlainText,
+                    hasLocalEdits: hasLocalBodyEditsCopy
+                ) else {
+                    throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
+                }
                 let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
 
                 try db.execute(
@@ -1260,6 +1310,9 @@ struct NoteFocusModeView: View {
                     ]
                 )
                 return snapshot
+            }
+            if plainContent == plainContentCopy {
+                hasLocalBodyEdits = false
             }
             postNoteFocusState(snapshot: snapshot, atomUUID: uuid, notifyRichDocumentObservers: false)
             // Sync: queue for Supabase push
@@ -1284,6 +1337,8 @@ struct NoteFocusModeView: View {
         let contentCopy = plainContent
         let tagsCopy = tags
         let uuid = atom.uuid
+        let hasLocalBodyEditsCopy = hasLocalBodyEdits
+        AtomRepository.shared.refreshEditingLock(uuid: uuid)
         print("[FOCUS-NOTE] performSave() — uuid=\(uuid) titleLen=\(titleCopy.count) bodyLen=\(contentCopy.count) bodyPreview=\"\(String(contentCopy.prefix(80)))\"")
 
         Task {
@@ -1297,8 +1352,10 @@ struct NoteFocusModeView: View {
             do {
                 let snapshot = try await database.asyncWrite { db -> NoteDocumentSnapshot in
                     var existingMetadata: String?
-                    if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                    var existingBody: String?
+                    if let row = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid]) {
                         existingMetadata = row["metadata"]
+                        existingBody = row["body"]
                     }
 
                     let snapshot = RichDocumentPersistence.noteSnapshot(
@@ -1307,6 +1364,13 @@ struct NoteFocusModeView: View {
                         bodyDocument: bodyDocumentCopy,
                         plainBodyText: contentCopy
                     )
+                    guard NoteWritePolicy.allowsBodyWrite(
+                        existingBody: existingBody,
+                        proposedBody: snapshot.bodyPlainText,
+                        hasLocalEdits: hasLocalBodyEditsCopy
+                    ) else {
+                        throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
+                    }
                     let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
 
                     try db.execute(
@@ -1332,6 +1396,9 @@ struct NoteFocusModeView: View {
                 }
                 // Notify floating blocks to reload immediately (GRDB observation is backup)
                 await MainActor.run {
+                    if plainContent == contentCopy {
+                        hasLocalBodyEdits = false
+                    }
                     postNoteFocusState(snapshot: snapshot, atomUUID: uuid)
                 }
                 // Sync: queue for Supabase push so notes sync to cloud
@@ -1359,7 +1426,7 @@ struct NoteFocusModeView: View {
         titleUnderlineProgress = titlePlainText.isEmpty ? 0.28 : 1
     }
 
-    private static func metadataString(for snapshot: NoteDocumentSnapshot, tags: [String]) -> String? {
+    nonisolated private static func metadataString(for snapshot: NoteDocumentSnapshot, tags: [String]) -> String? {
         var metadataDict: [String: Any] = [:]
         if let metadata = snapshot.metadata,
            let data = metadata.data(using: .utf8),
@@ -1411,6 +1478,17 @@ fileprivate struct NoteBacklinkPreview: Equatable, Identifiable {
     let title: String
     let type: AtomType
     let excerpt: String
+}
+
+private enum NoteSaveError: LocalizedError {
+    case rejectedEmptyOverwrite(uuid: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .rejectedEmptyOverwrite(let uuid):
+            return "Rejected empty note overwrite for \(uuid) because the persisted body is non-empty and no local body edit was recorded."
+        }
+    }
 }
 
 // MARK: - Backlink Card

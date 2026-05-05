@@ -24,6 +24,14 @@ assert.deepEqual(mediaOnly, {
 assert.equal(parseCaptureLanePrefix('books:'), null);
 assert.equal(parseCaptureLanePrefix('https://example.com: thing'), null);
 assert.equal(parseCaptureLanePrefix('idea: already handled by idea capture'), null);
+assert.equal(
+  parseCaptureLanePrefix('Swipe this\n\nhttps://www.instagram.com/p/DWrp-7BiKny/'),
+  null,
+);
+assert.equal(
+  parseCaptureLanePrefix('Swipe this https://www.instagram.com/p/DWrp-7BiKny/'),
+  null,
+);
 
 const subroute = parseCaptureLanePrefix('books/source: ISBN note');
 assert.deepEqual(subroute, {

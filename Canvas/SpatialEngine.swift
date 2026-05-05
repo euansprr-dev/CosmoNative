@@ -186,6 +186,38 @@ class SpatialEngine: ObservableObject {
                     ? block.metadata["content"]
                     : nil
 
+                let atomUUID: String? = block.entityType == .note ? block.entityUuid : nil
+
+                let existingBlockId = try String.fetchOne(
+                    db,
+                    sql: """
+                        SELECT id FROM canvas_blocks
+                        WHERE id = ? AND is_deleted = 0
+                        LIMIT 1
+                    """,
+                    arguments: [block.id]
+                )
+
+                if existingBlockId != nil {
+                    try db.execute(
+                        sql: """
+                            UPDATE canvas_blocks
+                            SET entity_type = ?, entity_id = ?, entity_uuid = ?, atom_uuid = ?, entity_title = ?,
+                                position_x = ?, position_y = ?, width = ?, height = ?,
+                                z_index = ?, note_content = ?, is_pinned = ?, thinkspace_id = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        """,
+                        arguments: [
+                            block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID, block.title,
+                            Int(block.position.x), Int(block.position.y),
+                            Int(block.size.width), Int(block.size.height),
+                            block.zIndex, noteContent, block.isPinned, tsId,
+                            block.id
+                        ]
+                    )
+                    return
+                }
+
                 // For blocks with a real entity, check for existing row to prevent duplicates
                 if !block.entityUuid.isEmpty {
                     let existingId = try String.fetchOne(db,
@@ -202,13 +234,13 @@ class SpatialEngine: ObservableObject {
                         try db.execute(
                             sql: """
                                 UPDATE canvas_blocks
-                                SET entity_type = ?, entity_id = ?, entity_title = ?,
+                                SET entity_type = ?, entity_id = ?, entity_uuid = ?, atom_uuid = ?, entity_title = ?,
                                     position_x = ?, position_y = ?, width = ?, height = ?,
                                     z_index = ?, note_content = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP
                                 WHERE id = ?
                             """,
                             arguments: [
-                                block.entityType.rawValue, block.entityId, block.title,
+                                block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID, block.title,
                                 Int(block.position.x), Int(block.position.y),
                                 Int(block.size.width), Int(block.size.height),
                                 block.zIndex, noteContent, block.isPinned,
@@ -223,9 +255,9 @@ class SpatialEngine: ObservableObject {
                 try db.execute(
                     sql: """
                     INSERT OR REPLACE INTO canvas_blocks
-                    (id, document_type, document_id, entity_type, entity_id, entity_uuid, entity_title,
+                    (id, document_type, document_id, entity_type, entity_id, entity_uuid, atom_uuid, entity_title,
                      position_x, position_y, width, height, z_index, note_content, is_pinned, thinkspace_id, is_deleted, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """,
                     arguments: [
                         block.id,
@@ -234,6 +266,7 @@ class SpatialEngine: ObservableObject {
                         block.entityType.rawValue,
                         block.entityId,
                         block.entityUuid,
+                        atomUUID,
                         block.title,
                         Int(block.position.x),
                         Int(block.position.y),

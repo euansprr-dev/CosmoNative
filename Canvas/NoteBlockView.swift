@@ -857,12 +857,15 @@ struct NoteBlockView: View {
                     bodyDocument: noteBodyDocument,
                     plainBodyText: noteText
                 )
-                let newAtom = Atom.new(
+                var newAtom = Atom.new(
                     type: .note,
                     title: snapshot.atomTitle,
                     body: snapshot.atomBody,
                     metadata: snapshot.metadata
                 )
+                if !trackedEntityUuid.isEmpty {
+                    newAtom.uuid = trackedEntityUuid
+                }
                 let created = try await AtomRepository.shared.create(newAtom)
                 let atomId = created.id ?? -1
                 // Update canvas block record to link to new atom

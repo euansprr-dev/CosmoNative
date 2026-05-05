@@ -305,9 +305,7 @@ struct PaneCanvasView: View {
         Task { @MainActor in
             do {
                 let createdAtom = try await AtomRepository.shared.create(type: .note)
-                var block = CanvasBlock.noteBlock(position: position)
-                block.entityId = createdAtom.id ?? -1
-                block.entityUuid = createdAtom.uuid
+                let block = CanvasBlock.fromAtom(createdAtom, position: position)
                 await spatialEngine.addBlock(block, persist: true)
             } catch {
                 // Fallback without DB

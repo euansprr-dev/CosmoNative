@@ -86,21 +86,30 @@ struct PaneCanvasView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let screenCenter = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            let viewportTransform = CanvasViewportTransform(
+                viewportSize: geo.size,
+                committedOffset: canvasOffset,
+                gesturePanOffset: CGSize(
+                    width: panOffset.width + spacePanOffset.width,
+                    height: panOffset.height + spacePanOffset.height
+                ),
+                committedScale: canvasScale,
+                gestureMagnification: magnificationState,
+                minScale: minScale,
+                maxScale: maxScale
+            )
+            let compositorTransform = CanvasCompositorTransform(viewportTransform: viewportTransform)
 
             ZStack {
                 // Background + pan/zoom gesture capture
-                canvasBackground
+                canvasBackground(transform: viewportTransform)
 
-                // Blocks container — scaled as a unit around screen center
+                // Blocks container — offset and scaled as a single canvas world.
                 ZStack {
                     // Cluster zones (behind blocks)
                     CanvasClusterLayer(
                         clusters: clusterEngine.allClusters,
                         blocks: spatialEngine.blocks,
-                        canvasSize: geo.size,
-                        canvasOffset: canvasOffset,
-                        scaledPanOffset: scaledPanOffset,
                         effectiveScale: effectiveScale,
                         onOpenFocusMode: { uuid in
                             if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
@@ -114,12 +123,13 @@ struct PaneCanvasView: View {
                         }
                     )
 
-                    blocksLayer(screenCenter: screenCenter)
+                    blocksLayer
                 }
-                .scaleEffect(effectiveScale, anchor: UnitPoint(
-                    x: screenCenter.x / max(geo.size.width, 1),
-                    y: screenCenter.y / max(geo.size.height, 1)
-                ))
+                .offset(
+                    x: compositorTransform.contentOffset.width,
+                    y: compositorTransform.contentOffset.height
+                )
+                .scaleEffect(compositorTransform.effectiveScale, anchor: compositorTransform.anchor)
 
                 // Space+drag pan overlay (hand tool)
                 if isSpaceHeld {
@@ -362,27 +372,17 @@ struct PaneCanvasView: View {
 
     // MARK: - Canvas Background
 
-    private var canvasBackground: some View {
+    private func canvasBackground(transform: CanvasViewportTransform) -> some View {
         ZStack {
             // Visual layers (GPU accelerated)
             ZStack {
                 CosmoColors.thinkspaceVoid
                     .ignoresSafeArea()
-
-                GridPatternView(
-                    transform: CanvasViewportTransform(
-                        viewportSize: .zero,
-                        committedOffset: canvasOffset,
-                        gesturePanOffset: panOffset,
-                        committedScale: canvasScale,
-                        gestureMagnification: magnificationState,
-                        minScale: minScale,
-                        maxScale: maxScale
-                    )
-                )
-                .ignoresSafeArea()
             }
             .drawingGroup()
+
+            GridPatternView(transform: transform)
+                .ignoresSafeArea()
 
             // Transparent hit area for pan/zoom gestures
             Color.clear
@@ -438,12 +438,12 @@ struct PaneCanvasView: View {
     // MARK: - Blocks Layer
 
     @ViewBuilder
-    private func blocksLayer(screenCenter: CGPoint) -> some View {
+    private var blocksLayer: some View {
         ForEach(spatialEngine.blocks.filter { !clusterConsumedBlockUUIDs.contains($0.entityUuid) }, id: \.id) { block in
             blockView(for: block)
                 .position(
-                    x: block.position.x + canvasOffset.width + scaledPanOffset.width + (blockDragOffsets[block.id]?.width ?? 0),
-                    y: block.position.y + canvasOffset.height + scaledPanOffset.height + (blockDragOffsets[block.id]?.height ?? 0)
+                    x: block.position.x + (blockDragOffsets[block.id]?.width ?? 0),
+                    y: block.position.y + (blockDragOffsets[block.id]?.height ?? 0)
                 )
                 .scaleEffect(block.scale)
                 .zIndex(draggingBlockId == block.id ? 1000 : Double(block.zIndex))

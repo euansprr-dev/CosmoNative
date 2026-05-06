@@ -13,9 +13,22 @@ struct CosmoCollaboratorPaneView: View {
         VStack(spacing: 0) {
             header
             divider
-            transcript
-            divider
-            composer
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    transcript
+                    divider
+                    composer
+                }
+
+                if viewModel.showMentionOverlay {
+                    collaboratorMentionOverlay
+                        .frame(maxHeight: CosmoWindowMetrics.mentionOverlayMaxHeight)
+                        .padding(.horizontal, DS.space16)
+                        .padding(.bottom, CosmoWindowMetrics.collaboratorMentionOverlayBottomPadding)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .layoutPriority(1)
         }
         .background(DS.bg)
         .task(id: taskKey) {
@@ -115,6 +128,8 @@ struct CosmoCollaboratorPaneView: View {
                 scrollToBottom(proxy)
             }
         }
+        .frame(minHeight: CosmoWindowMetrics.minimumMessageStageHeight)
+        .layoutPriority(1)
     }
 
     private var emptyState: some View {
@@ -222,25 +237,6 @@ struct CosmoCollaboratorPaneView: View {
 
     private var composer: some View {
         VStack(spacing: DS.space8) {
-            if viewModel.showMentionOverlay {
-                CosmoMentionOverlay(
-                    isVisible: $viewModel.showMentionOverlay,
-                    searchText: $viewModel.mentionSearchText,
-                    onSelect: { atom in
-                        viewModel.addMention(atom)
-                        if let atIndex = viewModel.inputText.lastIndex(of: "@") {
-                            let beforeAt = String(viewModel.inputText[viewModel.inputText.startIndex..<atIndex])
-                            let title = atom.title ?? "Untitled"
-                            viewModel.inputText = beforeAt + "@\(title) "
-                        }
-                    },
-                    onDismiss: {
-                        dismissMentionOverlay(trimMentionQuery: true)
-                    }
-                )
-                .transition(.opacity)
-            }
-
             HStack(alignment: .bottom, spacing: 10) {
                 Button {
                     openMentionOverlayFromComposer()
@@ -255,6 +251,7 @@ struct CosmoCollaboratorPaneView: View {
 
                 MentionComposerTextView(
                     text: $viewModel.inputText,
+                    selection: $viewModel.inputSelectionRange,
                     mentionedAtoms: viewModel.mentionedAtoms,
                     placeholder: "It can be messy. One sentence, a link, a half-formed question.",
                     isFocused: $isComposerFocused,
@@ -285,6 +282,19 @@ struct CosmoCollaboratorPaneView: View {
         .padding(.horizontal, DS.space16)
         .padding(.vertical, DS.space16)
         .background(DS.bg)
+    }
+
+    private var collaboratorMentionOverlay: some View {
+        CosmoMentionOverlay(
+            isVisible: $viewModel.showMentionOverlay,
+            searchText: $viewModel.mentionSearchText,
+            onSelect: { atom in
+                insertMention(atom)
+            },
+            onDismiss: {
+                dismissMentionOverlay(trimMentionQuery: true)
+            }
+        )
     }
 
     private var divider: some View {
@@ -331,42 +341,67 @@ struct CosmoCollaboratorPaneView: View {
     }
 
     private func openMentionOverlayFromComposer() {
-        if viewModel.inputText.lastIndex(of: "@") == nil {
-            if !viewModel.inputText.isEmpty && !viewModel.inputText.hasSuffix(" ") {
-                viewModel.inputText += " "
-            }
-            viewModel.inputText += "@"
+        if let activeMention = MentionComposerMentionParser.activeMention(
+            in: viewModel.inputText,
+            selectedRange: viewModel.inputSelectionRange
+        ) {
+            viewModel.mentionSearchText = activeMention.query
+        } else {
+            let replacement = MentionComposerMentionParser.insertingMentionTrigger(
+                in: viewModel.inputText,
+                selectedRange: viewModel.inputSelectionRange
+            )
+            viewModel.inputText = replacement.text
+            viewModel.inputSelectionRange = replacement.selection
+            viewModel.mentionSearchText = ""
         }
-        viewModel.mentionSearchText = ""
         viewModel.showMentionOverlay = true
         focusComposer()
     }
 
     private func dismissMentionOverlay(trimMentionQuery: Bool) {
-        if trimMentionQuery, let atIndex = viewModel.inputText.lastIndex(of: "@") {
-            viewModel.inputText = String(viewModel.inputText[..<atIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimMentionQuery,
+           let replacement = MentionComposerMentionParser.removingActiveMention(
+                in: viewModel.inputText,
+                selectedRange: viewModel.inputSelectionRange
+           ) {
+            viewModel.inputText = replacement.text
+            viewModel.inputSelectionRange = replacement.selection
         }
         viewModel.showMentionOverlay = false
         viewModel.mentionSearchText = ""
     }
 
     private func syncMentionSearch() {
-        if viewModel.inputText.hasSuffix("@") && !viewModel.showMentionOverlay {
-            withAnimation(ProMotionSprings.snappy) {
-                viewModel.showMentionOverlay = true
-                viewModel.mentionSearchText = ""
+        guard let activeMention = MentionComposerMentionParser.activeMention(
+            in: viewModel.inputText,
+            selectedRange: viewModel.inputSelectionRange
+        ) else {
+            if viewModel.showMentionOverlay {
+                dismissMentionOverlay(trimMentionQuery: false)
             }
-        }
-
-        guard viewModel.showMentionOverlay else { return }
-
-        guard let atIndex = viewModel.inputText.lastIndex(of: "@") else {
-            dismissMentionOverlay(trimMentionQuery: false)
             return
         }
 
-        let afterAt = String(viewModel.inputText[viewModel.inputText.index(after: atIndex)...])
-        viewModel.mentionSearchText = afterAt
+        if !viewModel.showMentionOverlay {
+            withAnimation(ProMotionSprings.snappy) {
+                viewModel.showMentionOverlay = true
+            }
+        }
+
+        viewModel.mentionSearchText = activeMention.query
+    }
+
+    private func insertMention(_ atom: Atom) {
+        viewModel.addMention(atom)
+        let replacement = MentionComposerMentionParser.replacingActiveMention(
+            in: viewModel.inputText,
+            selectedRange: viewModel.inputSelectionRange,
+            title: atom.title ?? "Untitled"
+        )
+        viewModel.inputText = replacement.text
+        viewModel.inputSelectionRange = replacement.selection
+        focusComposer()
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {

@@ -9,16 +9,12 @@ import AppKit
 /// patterns inline using entity-type colors from `CosmoMentionColors`.
 struct MentionComposerTextView: NSViewRepresentable {
     @Binding var text: String
+    @Binding var selection: NSRange
     let mentionedAtoms: [Atom]
     let placeholder: String
     var isFocused: Binding<Bool>
     var onSubmit: () -> Void
     var onTextChange: () -> Void
-
-    /// Maximum number of visible lines before scrolling kicks in.
-    private static let maxVisibleLines = 4
-    /// Approximate line height for the composer font.
-    fileprivate static let composerLineHeight: CGFloat = 20
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -49,6 +45,7 @@ struct MentionComposerTextView: NSViewRepresentable {
         textView.onSubmit = onSubmit
         textView.string = text
         textView.placeholderString = placeholder
+        textView.setSelectedRange(MentionComposerTextSelectionPolicy.clamped(selection, in: text))
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
@@ -66,10 +63,22 @@ struct MentionComposerTextView: NSViewRepresentable {
 
         // Sync text if it changed externally (e.g., mention insertion, clear on send)
         if textView.string != text {
+            let oldLength = (textView.string as NSString).length
+            let selectionWasAtOldEnd = selection.location == oldLength && selection.length == 0
             textView.string = text
-            // Place cursor at end when text is set externally
-            let end = (text as NSString).length
-            textView.setSelectedRange(NSRange(location: end, length: 0))
+
+            let newSelection: NSRange
+            if selectionWasAtOldEnd {
+                newSelection = NSRange(location: (text as NSString).length, length: 0)
+            } else {
+                newSelection = MentionComposerTextSelectionPolicy.clamped(selection, in: text)
+            }
+            textView.setSelectedRange(newSelection)
+        } else {
+            let clampedSelection = MentionComposerTextSelectionPolicy.clamped(selection, in: text)
+            if !MentionComposerTextSelectionPolicy.rangesEqual(textView.selectedRange(), clampedSelection) {
+                textView.setSelectedRange(clampedSelection)
+            }
         }
 
         // Apply mention highlighting
@@ -111,10 +120,19 @@ struct MentionComposerTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            parent.selection = textView.selectedRange()
             parent.text = textView.string
             parent.onTextChange()
             applyMentionHighlighting(textView)
             updateIntrinsicHeight(textView)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            let selectedRange = textView.selectedRange()
+            if !MentionComposerTextSelectionPolicy.rangesEqual(parent.selection, selectedRange) {
+                parent.selection = selectedRange
+            }
         }
 
         func textDidBeginEditing(_ notification: Notification) {
@@ -135,8 +153,7 @@ struct MentionComposerTextView: NSViewRepresentable {
             let usedRect = layoutManager.usedRect(for: textContainer)
             let textHeight = usedRect.height + textView.textContainerInset.height * 2
 
-            let maxHeight = MentionComposerTextView.composerLineHeight * CGFloat(MentionComposerTextView.maxVisibleLines) + 4
-            let clampedHeight = min(textHeight, maxHeight)
+            let clampedHeight = MentionComposerSizingPolicy.clampedHeight(forContentHeight: textHeight)
 
             // Only update if height actually changed to avoid layout loops
             if abs(scrollView.intrinsicHeight - clampedHeight) > 0.5 {
@@ -189,10 +206,180 @@ struct MentionComposerTextView: NSViewRepresentable {
 
 // MARK: - Custom ScrollView with intrinsic height
 
+enum MentionComposerSizingPolicy {
+    /// Maximum number of visible lines before scrolling kicks in.
+    static let maxVisibleLines = 4
+    /// Approximate line height for the composer font.
+    static let composerLineHeight: CGFloat = 20
+    static let minimumHeight: CGFloat = composerLineHeight + 4
+
+    static func clampedHeight(forContentHeight textHeight: CGFloat) -> CGFloat {
+        let maxHeight = composerLineHeight * CGFloat(maxVisibleLines) + 4
+        return max(minimumHeight, min(textHeight, maxHeight))
+    }
+}
+
+struct MentionComposerActiveMention: Equatable {
+    let query: String
+    let range: NSRange
+}
+
+struct MentionComposerTextReplacement: Equatable {
+    let text: String
+    let selection: NSRange
+}
+
+enum MentionComposerMentionParser {
+    static func activeMention(in text: String, selectedRange: NSRange) -> MentionComposerActiveMention? {
+        let nsText = text as NSString
+        let caret = MentionComposerTextSelectionPolicy.clamped(selectedRange, in: text).location
+        guard caret > 0 else { return nil }
+
+        var index = caret - 1
+        while index >= 0 {
+            let character = nsText.substring(with: NSRange(location: index, length: 1))
+            if character == "@" {
+                guard isMentionBoundaryBefore(index: index, in: nsText) else { return nil }
+
+                let queryRange = NSRange(location: index + 1, length: caret - index - 1)
+                let query = nsText.substring(with: queryRange)
+                guard query.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+
+                return MentionComposerActiveMention(
+                    query: query,
+                    range: NSRange(location: index, length: caret - index)
+                )
+            }
+
+            if character.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
+                return nil
+            }
+
+            index -= 1
+        }
+
+        return nil
+    }
+
+    static func replacingActiveMention(
+        in text: String,
+        selectedRange: NSRange,
+        title: String
+    ) -> MentionComposerTextReplacement {
+        if let activeMention = activeMention(in: text, selectedRange: selectedRange) {
+            return replacingRange(
+                activeMention.range,
+                in: text,
+                withMentionTitle: title
+            )
+        }
+
+        return insertingMentionTitle(title, in: text, selectedRange: selectedRange)
+    }
+
+    static func insertingMentionTrigger(
+        in text: String,
+        selectedRange: NSRange
+    ) -> MentionComposerTextReplacement {
+        let nsText = text as NSString
+        let selectedRange = MentionComposerTextSelectionPolicy.clamped(selectedRange, in: text)
+        let prefix = nsText.substring(to: selectedRange.location)
+        let needsLeadingSpace = !prefix.isEmpty && !prefix.hasSuffixWhitespace
+        let insertion = needsLeadingSpace ? " @" : "@"
+        let updated = nsText.replacingCharacters(in: selectedRange, with: insertion)
+        let cursor = selectedRange.location + (insertion as NSString).length
+
+        return MentionComposerTextReplacement(
+            text: updated,
+            selection: NSRange(location: cursor, length: 0)
+        )
+    }
+
+    static func removingActiveMention(
+        in text: String,
+        selectedRange: NSRange
+    ) -> MentionComposerTextReplacement? {
+        guard let activeMention = activeMention(in: text, selectedRange: selectedRange) else { return nil }
+        let nsText = text as NSString
+        let updated = nsText.replacingCharacters(in: activeMention.range, with: "")
+
+        return MentionComposerTextReplacement(
+            text: updated,
+            selection: NSRange(location: activeMention.range.location, length: 0)
+        )
+    }
+
+    private static func replacingRange(
+        _ range: NSRange,
+        in text: String,
+        withMentionTitle title: String
+    ) -> MentionComposerTextReplacement {
+        let nsText = text as NSString
+        var replacement = "@\(title)"
+        let suffixStart = range.location + range.length
+        let suffixStartsWithWhitespace = suffixStart < nsText.length
+            && nsText.substring(with: NSRange(location: suffixStart, length: 1)).hasPrefixWhitespace
+
+        if !suffixStartsWithWhitespace {
+            replacement += " "
+        }
+
+        let updated = nsText.replacingCharacters(in: range, with: replacement)
+        let replacementLength = (replacement as NSString).length
+        let separatorLength = suffixStartsWithWhitespace ? 1 : 0
+        let cursor = min(range.location + replacementLength + separatorLength, (updated as NSString).length)
+
+        return MentionComposerTextReplacement(
+            text: updated,
+            selection: NSRange(location: cursor, length: 0)
+        )
+    }
+
+    private static func insertingMentionTitle(
+        _ title: String,
+        in text: String,
+        selectedRange: NSRange
+    ) -> MentionComposerTextReplacement {
+        let trigger = insertingMentionTrigger(in: text, selectedRange: selectedRange)
+        return replacingActiveMention(in: trigger.text, selectedRange: trigger.selection, title: title)
+    }
+
+    private static func isMentionBoundaryBefore(index: Int, in text: NSString) -> Bool {
+        guard index > 0 else { return true }
+        let previous = text.substring(with: NSRange(location: index - 1, length: 1))
+        return previous.rangeOfCharacter(from: .alphanumerics) == nil && previous != "_"
+    }
+}
+
+enum MentionComposerTextSelectionPolicy {
+    static func clamped(_ range: NSRange, in text: String) -> NSRange {
+        let length = (text as NSString).length
+        let location = max(0, min(range.location, length))
+        let upperBound = max(location, min(range.location + range.length, length))
+        return NSRange(location: location, length: upperBound - location)
+    }
+
+    static func rangesEqual(_ lhs: NSRange, _ rhs: NSRange) -> Bool {
+        lhs.location == rhs.location && lhs.length == rhs.length
+    }
+}
+
+private extension String {
+    var hasSuffixWhitespace: Bool {
+        guard let last else { return false }
+        return last.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
+    }
+
+    var hasPrefixWhitespace: Bool {
+        guard let first else { return false }
+        return first.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
+    }
+}
+
 /// NSScrollView subclass that reports an intrinsic content size so SwiftUI
 /// can size the composer based on text content, capped at a maximum height.
 final class ComposerScrollView: NSScrollView {
-    var intrinsicHeight: CGFloat = MentionComposerTextView.composerLineHeight + 4
+    var intrinsicHeight: CGFloat = MentionComposerSizingPolicy.minimumHeight
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: intrinsicHeight)

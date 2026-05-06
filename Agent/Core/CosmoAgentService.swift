@@ -306,6 +306,7 @@ class CosmoAgentService: ObservableObject {
         source: MessageSource = .inApp,
         tierOverride: AgentModelTier? = nil,
         systemPromptOverride: String? = nil,
+        responseMode: AgentResponseMode = .automatic,
         profileToolBundles: [AgentToolBundle] = [],
         forcedToolBundles: Set<AgentToolBundle> = [],
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
@@ -385,6 +386,7 @@ class CosmoAgentService: ObservableObject {
             provider: provider,
             tierOverride: tierOverride,
             systemPromptOverride: systemPromptOverride,
+            responseMode: responseMode,
             profileToolBundles: profileToolBundles,
             forcedToolBundles: forcedToolBundles,
             onToolActivity: onToolActivity
@@ -400,6 +402,7 @@ class CosmoAgentService: ObservableObject {
         provider: LLMProvider,
         tierOverride: AgentModelTier? = nil,
         systemPromptOverride: String? = nil,
+        responseMode: AgentResponseMode = .automatic,
         profileToolBundles: [AgentToolBundle] = [],
         forcedToolBundles: Set<AgentToolBundle> = [],
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
@@ -433,12 +436,26 @@ class CosmoAgentService: ObservableObject {
         let preferences = await PreferenceLearningEngine.shared.getAllPreferences(scope: nil)
 
         // Get tools for intent (source-gated: Telegram vs in-app UX tools)
-        let tools = toolRegistry.toolsForIntent(
+        var tools = toolRegistry.toolsForIntent(
             intent,
             source: conversation.source,
             profileBundles: profileToolBundles,
             forcedBundles: forcedToolBundles
         )
+        tools = responseMode.filteredTools(tools)
+
+        let effectiveSystemPromptOverride = [
+            systemPromptOverride,
+            responseMode.promptOverride
+        ]
+        .compactMap { value -> String? in
+            guard let value,
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return value
+        }
+        .joined(separator: "\n\n")
 
         // Assemble system prompt with intent-aware context (cached/dynamic split)
         let systemPrompt = await contextAssembler.assembleSystemPrompt(
@@ -447,7 +464,7 @@ class CosmoAgentService: ObservableObject {
             tools: tools,
             intent: intent,
             activeItemsContext: activeItemsContext[conversation.id],
-            systemPromptOverride: systemPromptOverride
+            systemPromptOverride: effectiveSystemPromptOverride.isEmpty ? nil : effectiveSystemPromptOverride
         )
 
         // Build message array for LLM (no system message — passed separately for caching)
@@ -484,7 +501,7 @@ class CosmoAgentService: ObservableObject {
 
         // For draft intent, guide the agent to use writing tools (not inline text)
         // but let it decide whether to continue existing content or create new
-        if intent == .draft || intent == .brainstorm {
+        if !responseMode.shouldAnswerInline && (intent == .draft || intent == .brainstorm) {
             let linkedUUIDs = conversation.linkedAtomUUIDs
             var toolGuidance = "IMPORTANT: Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +
                 "Use generate_draft() or generate_outline() — the writing engine has full client context, swipe blueprints, and voice fingerprints that you lack."
@@ -538,6 +555,7 @@ class CosmoAgentService: ObservableObject {
                 modelTier: modelTier,
                 systemPrompt: systemPrompt,
                 intent: intent,
+                responseMode: responseMode,
                 conversation: &conversation,
                 contextTrace: &contextTrace,
                 onToolActivity: onToolActivity
@@ -551,9 +569,26 @@ class CosmoAgentService: ObservableObject {
             modelTier: modelTier,
             systemPrompt: systemPrompt,
             intent: intent,
+            responseMode: responseMode,
             conversation: &conversation,
             contextTrace: &contextTrace,
             onToolActivity: onToolActivity
+        )
+    }
+
+    private func systemPromptForToolFreeRetry(from systemPrompt: SystemPrompt) -> SystemPrompt {
+        let recoveryInstruction = """
+        ## Tool-Free Recovery
+        Your previous tool-enabled response could not be used. Answer directly in chat now without calling tools. Use the conversation, any completed tool results already present in the message history, and the expanded @mentioned context already provided. If a requested client/profile detail is unavailable, say that briefly and continue with the available context.
+        """
+
+        let dynamicParts = [systemPrompt.dynamic, recoveryInstruction]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return SystemPrompt(
+            cached: systemPrompt.cached,
+            dynamic: dynamicParts.joined(separator: "\n\n")
         )
     }
 
@@ -565,6 +600,7 @@ class CosmoAgentService: ObservableObject {
         modelTier: AgentModelTier,
         systemPrompt: SystemPrompt,
         intent: AgentIntent,
+        responseMode: AgentResponseMode,
         conversation: inout AgentConversation,
         contextTrace: inout AgentContextTrace,
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
@@ -573,6 +609,9 @@ class CosmoAgentService: ObservableObject {
         let iterationLimit = maxToolIterations(for: intent)
         var iterations = 0
         var finalResponse = ""
+        var activeTools = tools
+        var activeSystemPrompt = systemPrompt
+        var didRetryWithoutTools = false
 
         // Pass the activity callback to the tool executor so context-loading
         // sub-tools (load_client_profile, load_swipe, etc.) can stream progress.
@@ -587,14 +626,25 @@ class CosmoAgentService: ObservableObject {
             do {
                 let response = try await provider.complete(
                     messages: llmMessages,
-                    tools: tools.isEmpty ? nil : tools,
+                    tools: activeTools.isEmpty ? nil : activeTools,
                     model: selectedModel,
                     tier: modelTier,
-                    systemPrompt: systemPrompt
+                    systemPrompt: activeSystemPrompt
                 )
 
                 if response.toolCalls.isEmpty {
-                    finalResponse = response.content ?? "I couldn't generate a response."
+                    let trimmedContent = response.content?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let trimmedContent, !trimmedContent.isEmpty {
+                        finalResponse = response.content ?? trimmedContent
+                    } else if !didRetryWithoutTools,
+                              responseMode.shouldRetryWithoutToolsAfterEmptyResponse(tools: activeTools) {
+                        didRetryWithoutTools = true
+                        activeTools = []
+                        activeSystemPrompt = systemPromptForToolFreeRetry(from: systemPrompt)
+                        continue
+                    } else {
+                        finalResponse = "I couldn't generate a response."
+                    }
                     break
                 }
 
@@ -670,6 +720,14 @@ class CosmoAgentService: ObservableObject {
                 }
 
             } catch {
+                if !didRetryWithoutTools,
+                   responseMode.shouldRetryWithoutTools(after: error, tools: activeTools) {
+                    didRetryWithoutTools = true
+                    activeTools = []
+                    activeSystemPrompt = systemPromptForToolFreeRetry(from: systemPrompt)
+                    continue
+                }
+
                 lastError = error.localizedDescription
                 finalResponse = "Sorry, I encountered an error: \(error.localizedDescription)"
                 break

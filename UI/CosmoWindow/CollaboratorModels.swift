@@ -614,6 +614,7 @@ final class CustomAgentProfileStore: ObservableObject {
         let formatter = ISO8601DateFormatter()
         let createdAt = formatter.date(from: row["created_at"] as? String ?? "") ?? Date()
         let updatedAt = formatter.date(from: row["updated_at"] as? String ?? "") ?? createdAt
+        let isBuiltin = (row["is_builtin"] as? Int64 ?? 0) != 0
 
         guard
             let id = row["id"] as? String,
@@ -625,18 +626,25 @@ final class CustomAgentProfileStore: ObservableObject {
             return nil
         }
 
+        let displayName = isBuiltin && id == "writing-editor" && name == "Writing Editor"
+            ? "Writing Mode"
+            : name
+        let displaySummary = isBuiltin && id == "writing-editor" && summary == "Improves drafts with voice, structure, swipe, and client context."
+            ? "Uses Cosmo's dedicated writing engine for drafts, hooks, outlines, and revisions."
+            : summary
+
         return CustomAgentProfile(
             id: id,
-            name: name,
+            name: displayName,
             icon: icon,
-            summary: summary,
+            summary: displaySummary,
             runtimePrompt: runtimePrompt,
             seedPrompts: storedSeedPrompts.isEmpty ? defaultSeedPrompts(for: id) : storedSeedPrompts,
             toolBundles: bundleRaw.compactMap(AgentToolBundle.init(rawValue:)),
             contextScopes: scopeRaw.compactMap(CustomAgentContextScope.init(rawValue:)),
             preferredModelTier: (row["preferred_model_tier"] as? String).flatMap(AgentModelTier.init(rawValue:)),
             isEnabled: (row["is_enabled"] as? Int64 ?? 1) != 0,
-            isBuiltin: (row["is_builtin"] as? Int64 ?? 0) != 0,
+            isBuiltin: isBuiltin,
             createdAt: createdAt,
             updatedAt: updatedAt
         )
@@ -669,9 +677,9 @@ final class CustomAgentProfileStore: ObservableObject {
             ]
         case "writing-editor":
             return [
-                "Polish this without losing the voice",
-                "Find the strongest hook",
-                "Turn this into a sharper outline"
+                "Start a writing session",
+                "Draft with the writing engine",
+                "Revise the current draft"
             ]
         default:
             return [
@@ -736,11 +744,11 @@ final class CustomAgentProfileStore: ObservableObject {
             ),
             CustomAgentProfile(
                 id: "writing-editor",
-                name: "Writing Editor",
+                name: "Writing Mode",
                 icon: "pencil.and.scribble",
-                summary: "Improves drafts with voice, structure, swipe, and client context.",
+                summary: "Uses Cosmo's dedicated writing engine for drafts, hooks, outlines, and revisions.",
                 runtimePrompt: """
-                You are Cosmo's writing editor. Improve structure, clarity, hooks, rhythm, and platform fit. Use writing tools for substantive drafts, preserve client voice, and make edits feel native to the user's existing work.
+                You are Cosmo's dedicated writing mode. Use the writing engine for substantive drafts, hooks, outlines, and revisions. Preserve client voice, apply explicit swipe/context references, and make edits feel native to the user's existing work.
                 """,
                 seedPrompts: defaultSeedPrompts(for: "writing-editor"),
                 toolBundles: [.writing, .swipes, .clientProfiles, .clientMemory, .contentSearch, .strategy],

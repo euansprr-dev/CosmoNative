@@ -5,6 +5,7 @@
 
 import SwiftUI
 import Combine
+import AppKit
 
 // MARK: - CommandKTab
 
@@ -689,6 +690,15 @@ public final class CommandKViewModel: ObservableObject {
     /// Active #type prefix filter parsed from query
     @Published var activeTypePrefix: AtomType? = nil
 
+    /// Top fast action parsed from the current query, shown before search results.
+    @Published var primaryAction: CommandKAction? = nil
+
+    /// Whether a fast action is currently executing.
+    @Published var isExecutingAction: Bool = false
+
+    /// Inline status for the action preview row.
+    @Published var actionStatusMessage: String? = nil
+
     /// Monotonic request token so slower unified searches cannot overwrite newer ones.
     private var unifiedSearchRequestID: Int = 0
 
@@ -813,6 +823,32 @@ public final class CommandKViewModel: ObservableObject {
         let parsed = parseTypePrefix(query)
         let searchQuery = parsed.query
         let prefixType = parsed.typeFilter
+
+        if let action = CommandKActionParser.parse(query) {
+            primaryAction = action
+            actionStatusMessage = nil
+            activeTypePrefix = nil
+            selectedTypeFilters.removeAll()
+            results = []
+            unfilteredResults = []
+            groupedResults = []
+            flatNavigableResults = []
+            isUnifiedSearchActive = false
+            unifiedGroupedResults = []
+            unifiedFlatResults = []
+            unifiedCardItems = []
+            selectedNodeId = action.id
+            selectedResultIndex = 0
+            currentPhase = .idle
+            isShowingRecents = false
+            if cortexMode == .compact {
+                cortexMode = .searchResults
+            }
+            return
+        } else {
+            primaryAction = nil
+            actionStatusMessage = nil
+        }
 
         // Update prefix filter state
         if let pt = prefixType {
@@ -1248,6 +1284,11 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Open the selected result
     public func openSelected() {
+        if primaryAction != nil {
+            performPrimaryAction()
+            return
+        }
+
         // Intercept task creation mode
         if isTaskCreationMode {
             createTaskFromQuery()
@@ -1297,6 +1338,168 @@ public final class CommandKViewModel: ObservableObject {
 
         // Hide Command-K (keep alive behind focus mode)
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+    }
+
+    public func performPrimaryAction() {
+        guard let action = primaryAction, !isExecutingAction else { return }
+
+        if !action.isExecutable {
+            actionStatusMessage = "Add the missing detail first."
+            return
+        }
+
+        isExecutingAction = true
+        actionStatusMessage = "Working..."
+
+        Task { @MainActor in
+            do {
+                try await execute(action)
+                isExecutingAction = false
+            } catch {
+                isExecutingAction = false
+                actionStatusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func execute(_ action: CommandKAction) async throws {
+        switch action.kind {
+        case .captureSwipe:
+            guard let url = action.payload.url else { return }
+            _ = try await AgentToolExecutor.shared.execute(toolName: "capture_swipe", arguments: ["url": url])
+            finishAction()
+
+        case .captureSwipeWithIdea:
+            guard let url = action.payload.url else { return }
+            var arguments: [String: Any] = ["url": url]
+            if let title = action.payload.title { arguments["title"] = title }
+            if let clientName = action.payload.clientName { arguments["clientName"] = clientName }
+            if let ideaContext = action.payload.ideaContext { arguments["ideaContext"] = ideaContext }
+            if let hook = action.payload.hook { arguments["hook"] = hook }
+            _ = try await AgentToolExecutor.shared.execute(toolName: "capture_swipe_with_idea", arguments: arguments)
+            finishAction()
+
+        case .captureLane:
+            guard let rawText = action.payload.rawText else { return }
+            _ = await TelegramCaptureRouter.shared.routeTelegramCapture(
+                text: rawText,
+                chatId: "command-k",
+                messageId: nil,
+                sender: "Command-K"
+            )
+            finishAction()
+
+        case .createCaptureLane:
+            guard let destinationName = action.payload.destinationName else { return }
+            _ = try await CaptureDestinationRepository.shared.createLane(named: destinationName)
+            finishAction()
+
+        case .createIdea:
+            let title = action.payload.title ?? action.payload.body ?? ""
+            _ = try await AgentToolExecutor.shared.execute(toolName: "create_idea", arguments: ["title": title])
+            finishAction()
+
+        case .createTask:
+            let title = action.payload.title ?? action.payload.body ?? ""
+            _ = try await AgentToolExecutor.shared.execute(toolName: "create_task", arguments: ["title": title])
+            finishAction()
+
+        case .captureResearch:
+            let title = action.payload.title ?? action.payload.body ?? action.payload.url ?? "Research"
+            var arguments: [String: Any] = ["title": title]
+            if let url = action.payload.url { arguments["url"] = url }
+            if let body = action.payload.body { arguments["body"] = body }
+            _ = try await AgentToolExecutor.shared.execute(toolName: "capture_research", arguments: arguments)
+            finishAction()
+
+        case .createContent:
+            let title = action.payload.title ?? action.payload.body ?? ""
+            _ = try await AgentToolExecutor.shared.execute(toolName: "create_content", arguments: ["title": title])
+            finishAction()
+
+        case .createThinkspace:
+            let title = action.payload.title ?? action.payload.body ?? ""
+            _ = try await AgentToolExecutor.shared.execute(toolName: "create_thinkspace", arguments: ["title": title])
+            finishAction()
+
+        case .navigateCommandCenter:
+            NotificationCenter.default.post(name: CosmoNotification.Navigation.navigateToCommandCenter, object: nil)
+            finishAction()
+
+        case .navigateLastThinkspace:
+            NotificationCenter.default.post(
+                name: .voiceNavigationRequested,
+                object: nil,
+                userInfo: ["destination": "thinkspace"]
+            )
+            finishAction()
+
+        case .openDomain:
+            if let domain = action.payload.domain,
+               let tab = CommandKTab(rawValue: domain) {
+                transitionToExpanded(tab)
+                query = ""
+                primaryAction = nil
+                actionStatusMessage = nil
+            }
+
+        case .openApp:
+            guard let appName = action.payload.title else { return }
+            try openApplication(named: appName)
+            finishAction()
+
+        case .askCosmo:
+            guard let body = action.payload.body else { return }
+            CosmoWindowPanelController.shared.show()
+            await CosmoWindowViewModel.shared.sendMessage(body)
+            finishAction()
+        }
+    }
+
+    private func openApplication(named appName: String) throws {
+        let workspace = NSWorkspace.shared
+        let normalizedName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { return }
+
+        let searchRoots = [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications/Utilities", isDirectory: true),
+            URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications", isDirectory: true)
+        ]
+
+        for root in searchRoots {
+            let directURL = root.appendingPathComponent("\(normalizedName).app", isDirectory: true)
+            if FileManager.default.fileExists(atPath: directURL.path) {
+                workspace.openApplication(at: directURL, configuration: NSWorkspace.OpenConfiguration())
+                return
+            }
+        }
+
+        for root in searchRoots {
+            guard let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+
+            for case let candidate as URL in enumerator where candidate.pathExtension == "app" {
+                let displayName = candidate.deletingPathExtension().lastPathComponent
+                if displayName.localizedCaseInsensitiveContains(normalizedName) {
+                    workspace.openApplication(at: candidate, configuration: NSWorkspace.OpenConfiguration())
+                    return
+                }
+            }
+        }
+
+        throw CommandKActionExecutionError.appNotFound(normalizedName)
+    }
+
+    private func finishAction() {
+        actionStatusMessage = nil
+        query = ""
+        primaryAction = nil
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 
     // MARK: - Cortex Mode Transitions
@@ -2184,6 +2387,9 @@ public final class CommandKViewModel: ObservableObject {
         flatNavigableResults = []
         selectedResultIndex = -1
         activeTypePrefix = nil
+        primaryAction = nil
+        isExecutingAction = false
+        actionStatusMessage = nil
         isUnifiedSearchActive = false
         unifiedGroupedResults = []
         unifiedFlatResults = []

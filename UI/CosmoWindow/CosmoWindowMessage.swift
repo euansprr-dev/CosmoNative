@@ -242,7 +242,7 @@ enum MentionContextHelper {
     /// Expands `@Title` mentions inline in the message text with the atom's full context.
     /// Each mention is expanded with XML-style tags so the AI sees context at the mention's position.
     /// Any atoms whose `@Title` was not found inline are appended as a trailing context block.
-    static func expandMentionsInline(text: String, atoms: [Atom], bodyLimit: Int = 2000) -> String {
+    static func expandMentionsInline(text: String, atoms: [Atom], bodyLimit: Int? = nil) -> String {
         var result = text
         var usedUUIDs: Set<String> = []
 
@@ -252,9 +252,14 @@ enum MentionContextHelper {
 
             if let range = result.range(of: pattern) {
                 let typeLabel = atom.type.rawValue.lowercased()
-                let body = String((atom.body ?? "").prefix(bodyLimit))
+                let body = contextBody(for: atom, limit: bodyLimit)
 
                 var contextBlock = "@\(title)\n<referenced_\(typeLabel) title=\"\(title)\" uuid=\"\(atom.uuid)\">\n\(body)"
+
+                let imageBlock = referencedImagesBlock(for: atom)
+                if !imageBlock.isEmpty {
+                    contextBlock += "\n\(imageBlock)"
+                }
 
                 if atom.isSwipeFileAtom, let analysis = atom.swipeAnalysis {
                     let summary = swipeAnalysisSummary(analysis)
@@ -280,13 +285,18 @@ enum MentionContextHelper {
 
     /// Builds a full `## Referenced Context` block from mentioned atoms,
     /// including UUIDs, extended body text, and swipe analysis summaries.
-    static func buildMentionBlock(atoms: [Atom], bodyLimit: Int = 2000) -> String {
+    static func buildMentionBlock(atoms: [Atom], bodyLimit: Int? = nil) -> String {
         var mentionBlock = "## Referenced Context\n"
         for atom in atoms {
             let typeLabel = atom.type.rawValue.uppercased()
             let title = atom.title ?? "Untitled"
-            let body = String((atom.body ?? "").prefix(bodyLimit))
+            let body = contextBody(for: atom, limit: bodyLimit)
             mentionBlock += "[\(typeLabel): \"\(title)\"] (UUID: \(atom.uuid))\n\(body)\n"
+
+            let imageBlock = referencedImagesBlock(for: atom)
+            if !imageBlock.isEmpty {
+                mentionBlock += "\(imageBlock)\n"
+            }
 
             // Include swipe analysis summary if available
             if atom.isSwipeFileAtom, let analysis = atom.swipeAnalysis {
@@ -306,7 +316,7 @@ enum MentionContextHelper {
     /// Expands @-mentioned atoms for the writing engine with richer context.
     /// Connections include their full structured section data (Goal, Problems, Examples, etc.)
     /// so the writer can map sections to blueprint physics.
-    static func expandMentionsForWritingEngine(text: String, atoms: [Atom], bodyLimit: Int = 3000) -> String {
+    static func expandMentionsForWritingEngine(text: String, atoms: [Atom], bodyLimit: Int? = nil) -> String {
         var result = text
         var usedUUIDs: Set<String> = []
 
@@ -318,9 +328,14 @@ enum MentionContextHelper {
             var contextBlock = "@\(title)\n<referenced_\(typeLabel) title=\"\(title)\" uuid=\"\(atom.uuid)\">"
 
             // Body content
-            let body = String((atom.body ?? "").prefix(bodyLimit))
+            let body = contextBody(for: atom, limit: bodyLimit)
             if !body.isEmpty {
                 contextBlock += "\n\(body)"
+            }
+
+            let imageBlock = referencedImagesBlock(for: atom)
+            if !imageBlock.isEmpty {
+                contextBlock += "\n\(imageBlock)"
             }
 
             // Connection-specific: include all structured sections
@@ -368,14 +383,19 @@ enum MentionContextHelper {
     }
 
     /// Builds a full referenced context block for the writing engine, with rich connection data.
-    private static func buildWritingEngineBlock(atoms: [Atom], bodyLimit: Int = 3000) -> String {
+    private static func buildWritingEngineBlock(atoms: [Atom], bodyLimit: Int? = nil) -> String {
         var block = "## Referenced Context\n"
         for atom in atoms {
             let typeLabel = atom.type.rawValue.uppercased()
             let title = atom.title ?? "Untitled"
-            let body = String((atom.body ?? "").prefix(bodyLimit))
+            let body = contextBody(for: atom, limit: bodyLimit)
             block += "[\(typeLabel): \"\(title)\"] (UUID: \(atom.uuid))\n"
             if !body.isEmpty { block += "\(body)\n" }
+
+            let imageBlock = referencedImagesBlock(for: atom)
+            if !imageBlock.isEmpty {
+                block += "\(imageBlock)\n"
+            }
 
             // Connection structured sections
             if atom.type == .connection,
@@ -407,6 +427,247 @@ enum MentionContextHelper {
         }
         return block
     }
+
+    private static func contextBody(for atom: Atom, limit: Int?) -> String {
+        let body = atom.body ?? ""
+        guard let limit, body.count > limit else {
+            return body
+        }
+        return String(body.prefix(limit))
+    }
+
+    private static func referencedImagesBlock(for atom: Atom) -> String {
+        let references = referencedImageReferences(for: atom)
+        guard !references.isEmpty else { return "" }
+
+        var lines = ["Referenced Images:"]
+        for reference in references {
+            let details = reference.details.map { " (\($0))" } ?? ""
+            lines.append("- \(reference.label): \(reference.value)\(details)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func referencedImageReferences(for atom: Atom) -> [MentionContextImageReference] {
+        var references: [MentionContextImageReference] = []
+        var seenValues: Set<String> = []
+
+        if let imageMetadata = atom.imageMetadata {
+            appendImageReference(
+                label: "Image path",
+                value: imageMetadata.imagePath,
+                details: imageMetadataDetails(imageMetadata),
+                references: &references,
+                seenValues: &seenValues
+            )
+        }
+
+        if let body = atom.body {
+            collectImageReferences(
+                fromText: body,
+                label: "Body image",
+                references: &references,
+                seenValues: &seenValues
+            )
+        }
+
+        collectImageReferences(
+            fromJSONText: atom.metadata,
+            label: "Metadata",
+            references: &references,
+            seenValues: &seenValues
+        )
+        collectImageReferences(
+            fromJSONText: atom.structured,
+            label: "Structured content",
+            references: &references,
+            seenValues: &seenValues
+        )
+        collectImageReferences(
+            fromJSONText: atom.links,
+            label: "Linked content",
+            references: &references,
+            seenValues: &seenValues
+        )
+
+        return references
+    }
+
+    private static func collectImageReferences(
+        fromJSONText text: String?,
+        label: String,
+        references: inout [MentionContextImageReference],
+        seenValues: inout Set<String>
+    ) {
+        guard let text, let data = text.data(using: .utf8) else { return }
+
+        if let json = try? JSONSerialization.jsonObject(with: data) {
+            collectImageReferences(
+                fromJSON: json,
+                label: label,
+                references: &references,
+                seenValues: &seenValues
+            )
+        } else {
+            collectImageReferences(
+                fromText: text,
+                label: label,
+                references: &references,
+                seenValues: &seenValues
+            )
+        }
+    }
+
+    private static func collectImageReferences(
+        fromJSON value: Any,
+        label: String,
+        references: inout [MentionContextImageReference],
+        seenValues: inout Set<String>
+    ) {
+        switch value {
+        case let dict as [String: Any]:
+            for (key, nestedValue) in dict {
+                let nestedLabel = "\(label).\(key)"
+                if shouldSkipImageReferenceKey(key) { continue }
+                collectImageReferences(
+                    fromJSON: nestedValue,
+                    label: nestedLabel,
+                    references: &references,
+                    seenValues: &seenValues
+                )
+            }
+
+        case let array as [Any]:
+            for (index, nestedValue) in array.enumerated() {
+                collectImageReferences(
+                    fromJSON: nestedValue,
+                    label: "\(label)[\(index)]",
+                    references: &references,
+                    seenValues: &seenValues
+                )
+            }
+
+        case let string as String:
+            collectImageReferences(
+                fromText: string,
+                label: label,
+                references: &references,
+                seenValues: &seenValues
+            )
+
+        default:
+            break
+        }
+    }
+
+    private static func collectImageReferences(
+        fromText text: String,
+        label: String,
+        references: inout [MentionContextImageReference],
+        seenValues: inout Set<String>
+    ) {
+        let lines = text.components(separatedBy: .newlines)
+        for line in lines {
+            appendImageReferenceIfNeeded(
+                label: label,
+                value: line,
+                references: &references,
+                seenValues: &seenValues
+            )
+        }
+
+        let tokens = text.components(separatedBy: .whitespacesAndNewlines)
+        for token in tokens {
+            appendImageReferenceIfNeeded(
+                label: label,
+                value: token,
+                references: &references,
+                seenValues: &seenValues
+            )
+        }
+    }
+
+    private static func appendImageReferenceIfNeeded(
+        label: String,
+        value: String,
+        references: inout [MentionContextImageReference],
+        seenValues: inout Set<String>
+    ) {
+        guard let normalized = normalizedImageReference(value) else { return }
+        appendImageReference(
+            label: label,
+            value: normalized,
+            details: nil,
+            references: &references,
+            seenValues: &seenValues
+        )
+    }
+
+    private static func appendImageReference(
+        label: String,
+        value: String,
+        details: String?,
+        references: inout [MentionContextImageReference],
+        seenValues: inout Set<String>
+    ) {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, seenValues.insert(normalized).inserted else { return }
+        references.append(MentionContextImageReference(label: label, value: normalized, details: details))
+    }
+
+    private static func normalizedImageReference(_ value: String) -> String? {
+        let trimCharacters = CharacterSet.whitespacesAndNewlines
+            .union(CharacterSet(charactersIn: "\"'`“”‘’()[]{}<>.,;"))
+        let candidate = value.trimmingCharacters(in: trimCharacters)
+        guard !candidate.isEmpty else { return nil }
+
+        let lowercased = candidate.lowercased()
+        let imageExtensions = [".png", ".jpg", ".jpeg", ".heic", ".heif", ".gif", ".tif", ".tiff", ".webp"]
+        guard imageExtensions.contains(where: { imageExtension in
+            lowercased.hasSuffix(imageExtension)
+                || lowercased.contains("\(imageExtension)?")
+                || lowercased.contains("\(imageExtension)#")
+        }) else {
+            return nil
+        }
+
+        return candidate
+    }
+
+    private static func shouldSkipImageReferenceKey(_ key: String) -> Bool {
+        let lowercased = key.lowercased()
+        return lowercased.contains("filename") || lowercased == "alt" || lowercased == "caption"
+    }
+
+    private static func imageMetadataDetails(_ metadata: ImageMetadata) -> String? {
+        var details: [String] = []
+
+        if let originalFilename = metadata.originalFilename, !originalFilename.isEmpty {
+            details.append("filename: \(originalFilename)")
+        }
+        if let width = metadata.width, let height = metadata.height {
+            details.append("\(dimensionString(width))x\(dimensionString(height))")
+        }
+        if let fileSize = metadata.fileSize {
+            details.append("file size: \(fileSize) bytes")
+        }
+
+        return details.isEmpty ? nil : details.joined(separator: ", ")
+    }
+
+    private static func dimensionString(_ value: CGFloat) -> String {
+        let double = Double(value)
+        if double.rounded() == double {
+            return String(Int(double))
+        }
+        return String(format: "%.1f", double)
+    }
+}
+
+private struct MentionContextImageReference {
+    let label: String
+    let value: String
+    let details: String?
 }
 
 // MARK: - Message

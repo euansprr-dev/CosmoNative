@@ -53,23 +53,21 @@ struct CosmoWindowView: View {
 
             ZStack(alignment: .bottom) {
                 messageStage
+                    .frame(minHeight: CosmoWindowMetrics.minimumMessageStageHeight)
+                    .layoutPriority(1)
 
                 if viewModel.showMentionOverlay {
                     CosmoMentionOverlay(
                         isVisible: $viewModel.showMentionOverlay,
                         searchText: $viewModel.mentionSearchText,
                         onSelect: { atom in
-                            viewModel.addMention(atom)
-                            if let atIndex = viewModel.inputText.lastIndex(of: "@") {
-                                let beforeAt = String(viewModel.inputText[viewModel.inputText.startIndex..<atIndex])
-                                let title = atom.title ?? "Untitled"
-                                viewModel.inputText = beforeAt + "@\(title) "
-                            }
+                            insertMention(atom)
                         },
                         onDismiss: {
                             dismissMentionOverlay(trimMentionQuery: true)
                         }
                     )
+                    .frame(maxHeight: CosmoWindowMetrics.mentionOverlayMaxHeight)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .padding(.bottom, 4)
                 }
@@ -292,6 +290,7 @@ struct CosmoWindowView: View {
 
                 MentionComposerTextView(
                     text: $viewModel.inputText,
+                    selection: $viewModel.inputSelectionRange,
                     mentionedAtoms: viewModel.mentionedAtoms,
                     placeholder: "Ask Cosmo anything...",
                     isFocused: $isComposerFocused,
@@ -646,42 +645,67 @@ struct CosmoWindowView: View {
     }
 
     private func openMentionOverlayFromComposer() {
-        if viewModel.inputText.lastIndex(of: "@") == nil {
-            if !viewModel.inputText.isEmpty && !viewModel.inputText.hasSuffix(" ") {
-                viewModel.inputText += " "
-            }
-            viewModel.inputText += "@"
+        if let activeMention = MentionComposerMentionParser.activeMention(
+            in: viewModel.inputText,
+            selectedRange: viewModel.inputSelectionRange
+        ) {
+            viewModel.mentionSearchText = activeMention.query
+        } else {
+            let replacement = MentionComposerMentionParser.insertingMentionTrigger(
+                in: viewModel.inputText,
+                selectedRange: viewModel.inputSelectionRange
+            )
+            viewModel.inputText = replacement.text
+            viewModel.inputSelectionRange = replacement.selection
+            viewModel.mentionSearchText = ""
         }
-        viewModel.mentionSearchText = ""
         viewModel.showMentionOverlay = true
         focusComposer()
     }
 
     private func dismissMentionOverlay(trimMentionQuery: Bool) {
-        if trimMentionQuery, let atIndex = viewModel.inputText.lastIndex(of: "@") {
-            viewModel.inputText = String(viewModel.inputText[..<atIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimMentionQuery,
+           let replacement = MentionComposerMentionParser.removingActiveMention(
+                in: viewModel.inputText,
+                selectedRange: viewModel.inputSelectionRange
+           ) {
+            viewModel.inputText = replacement.text
+            viewModel.inputSelectionRange = replacement.selection
         }
         viewModel.showMentionOverlay = false
         viewModel.mentionSearchText = ""
     }
 
     private func syncMentionSearch() {
-        if viewModel.inputText.hasSuffix("@") && !viewModel.showMentionOverlay {
-            withAnimation(ProMotionSprings.snappy) {
-                viewModel.showMentionOverlay = true
-                viewModel.mentionSearchText = ""
+        guard let activeMention = MentionComposerMentionParser.activeMention(
+            in: viewModel.inputText,
+            selectedRange: viewModel.inputSelectionRange
+        ) else {
+            if viewModel.showMentionOverlay {
+                dismissMentionOverlay(trimMentionQuery: false)
             }
-        }
-
-        guard viewModel.showMentionOverlay else { return }
-
-        guard let atIndex = viewModel.inputText.lastIndex(of: "@") else {
-            dismissMentionOverlay(trimMentionQuery: false)
             return
         }
 
-        let afterAt = String(viewModel.inputText[viewModel.inputText.index(after: atIndex)...])
-        viewModel.mentionSearchText = afterAt
+        if !viewModel.showMentionOverlay {
+            withAnimation(ProMotionSprings.snappy) {
+                viewModel.showMentionOverlay = true
+            }
+        }
+
+        viewModel.mentionSearchText = activeMention.query
+    }
+
+    private func insertMention(_ atom: Atom) {
+        viewModel.addMention(atom)
+        let replacement = MentionComposerMentionParser.replacingActiveMention(
+            in: viewModel.inputText,
+            selectedRange: viewModel.inputSelectionRange,
+            title: atom.title ?? "Untitled"
+        )
+        viewModel.inputText = replacement.text
+        viewModel.inputSelectionRange = replacement.selection
+        focusComposer()
     }
 
     private func debouncedScrollToBottom(proxy: ScrollViewProxy) {
@@ -713,6 +737,21 @@ enum CosmoWindowMetrics {
     static let composerCornerRadius: CGFloat = 16
     static let maxMessageWidth: CGFloat = 332
     static let readyStateMaxWidth: CGFloat = 358
+    static let minimumMessageStageHeight: CGFloat = 180
+    static let mentionOverlayMaxHeight: CGFloat = 320
+    static let collaboratorMentionOverlayBottomPadding: CGFloat = 104
+}
+
+enum CosmoWindowLayoutPolicy {
+    static func readableTranscriptHeight(
+        availableHeight: CGFloat,
+        headerHeight: CGFloat,
+        composerHeight: CGFloat,
+        dividerHeight: CGFloat
+    ) -> CGFloat {
+        let remainingHeight = availableHeight - headerHeight - composerHeight - dividerHeight
+        return max(CosmoWindowMetrics.minimumMessageStageHeight, remainingHeight)
+    }
 }
 
 struct CosmoWindowSectionChromeModifier: ViewModifier {

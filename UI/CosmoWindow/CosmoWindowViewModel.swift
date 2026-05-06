@@ -6,6 +6,10 @@
 import SwiftUI
 import Combine
 
+private enum CosmoWindowAgentIDs {
+    static let writingMode = "writing-editor"
+}
+
 @MainActor
 final class CosmoWindowViewModel: ObservableObject {
     static let shared = CosmoWindowViewModel()
@@ -20,6 +24,7 @@ final class CosmoWindowViewModel: ObservableObject {
             collaboratorSessions.saveDraft(inputText, for: collaboratorSessionKey)
         }
     }
+    @Published var inputSelectionRange = NSRange(location: 0, length: 0)
     @Published var error: String? = nil
     @Published var processingStartedAt: Date?
     @Published private(set) var collaboratorSessionKey: CollaboratorSessionKey?
@@ -76,10 +81,6 @@ final class CosmoWindowViewModel: ObservableObject {
     private weak var contextProvider: (any CosmoContextProvider)?
     private var previousContextType: CosmoContextType = .none
 
-    // MARK: - Writing Engine Sessions (per-content keyed by atom UUID)
-
-    private var writingEngineSessions: [String: UnifiedWritingEngine] = [:]
-
     // MARK: - Cancellation
 
     private var currentTask: Task<Void, Never>?
@@ -97,7 +98,7 @@ final class CosmoWindowViewModel: ObservableObject {
     // MARK: - Send Message (Unified Pipeline — matches Telegram routing)
 
     /// Main entry point for user messages. Routes through the same pipeline as Telegram:
-    /// writing mode → inline capture → fast URL capture → FlashLiteRouter → full agent
+    /// fast URL capture → FlashLiteRouter → full agent
     func sendMessage(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -169,41 +170,15 @@ final class CosmoWindowViewModel: ObservableObject {
 
     // MARK: - Unified Routing Pipeline
 
-    /// Routes a message through the same pipeline as Telegram's processBufferedMessage:
-    /// 1. Writing mode entry  2. Active writing session (exit/commit/inline-capture/route)
-    /// 3. Fast URL capture  4. FlashLiteRouter  5. Full agent
-    /// Returns nil if the response was already set on the assistant message (e.g. autoCreateContentAndRoute).
+    /// Routes a message through the in-app pipeline:
+    /// fast URL capture -> FlashLiteRouter -> full agent.
+    /// Returns nil if a route handled the assistant message directly.
     private func routeUnified(text: String, assistantId: UUID) async -> String? {
-        let writingManager = TelegramWritingSessionManager.shared
-
-        // 1. Writing mode entry ("opus mode", etc.)
-        if writingManager.isWritingTrigger(text) {
-            let response = await writingManager.startSession(chatId: conversationId, text: text)
-            return response
+        if Self.isNoReplyComplaint(text) {
+            return "You're right -- that last turn came back without usable text. I won't turn that into a database search; resend the prompt and I'll answer it directly."
         }
 
-        // 2. Active writing session
-        if writingManager.hasActiveSession(for: conversationId) {
-            // 2a. Exit command
-            if writingManager.isExitCommand(text) {
-                let response = await writingManager.endSession(chatId: conversationId)
-                return response
-            }
-            // 2b. Commit command
-            if writingManager.isCommitCommand(text) {
-                let response = await writingManager.commitSession(chatId: conversationId)
-                return response
-            }
-            // 2c. Inline capture escape (!idea:, !task:, !swipe:, bare URL)
-            if let captureResult = await tryInlineCaptureEscape(text: text) {
-                return captureResult + "\n\n_(back in writing mode)_"
-            }
-            // 2d. Route to writing engine
-            let response = await writingManager.routeMessage(chatId: conversationId, text: text)
-            return response
-        }
-
-        // 3. Fast URL capture
+        // 1. Fast URL capture
         if text.range(of: "https?://[^\\s]+", options: .regularExpression) != nil {
             if let captureResult = await tryFastURLCapture(text: text) {
                 await saveFlashRouterResult(text: text, response: captureResult, toolName: "capture_swipe")
@@ -211,7 +186,7 @@ final class CosmoWindowViewModel: ObservableObject {
             }
         }
 
-        // 4. FlashLiteRouter for quick single-shot operations
+        // 2. FlashLiteRouter for quick single-shot operations
         // Skip flash router when mentions are present — mentions signal contextual reasoning
         let bypassFlash: Bool
         if !mentionedAtoms.isEmpty || selectedAgentProfile != nil || !forcedToolBundles(for: text).isEmpty {
@@ -227,52 +202,9 @@ final class CosmoWindowViewModel: ObservableObject {
             return flashResponse
         }
 
-        // 5. Full agent — route to CosmoAgentService (same as Telegram fallback)
+        // 3. Full agent — route to CosmoAgentService (same as Telegram fallback)
         let response = await routeToAgentService(text: text)
         return response
-    }
-
-    // MARK: - Inline Capture Escape (WP4 — shared with Telegram)
-
-    /// Detects inline capture patterns during writing sessions: !idea:, !task:, !swipe:, bare URLs
-    private func tryInlineCaptureEscape(text: String) async -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // !idea: prefix
-        if trimmed.lowercased().hasPrefix("!idea:") {
-            let content = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !content.isEmpty else { return nil }
-            let result = (try? await AgentToolExecutor.shared.execute(toolName: "create_idea", arguments: ["title": content])) ?? "Created"
-            return "Captured idea: \(content)\n\(result)"
-        }
-
-        // !task: prefix
-        if trimmed.lowercased().hasPrefix("!task:") {
-            let content = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !content.isEmpty else { return nil }
-            let result = (try? await AgentToolExecutor.shared.execute(toolName: "create_task", arguments: ["title": content])) ?? "Created"
-            return "Captured task: \(content)\n\(result)"
-        }
-
-        // !swipe: prefix
-        if trimmed.lowercased().hasPrefix("!swipe:") {
-            let content = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !content.isEmpty else { return nil }
-            if let captureResult = await tryFastURLCapture(text: content) {
-                return captureResult
-            }
-            return nil
-        }
-
-        // Bare URL (< 120 chars, in writing mode only)
-        if trimmed.count < 120,
-           trimmed.range(of: "^https?://[^\\s]+$", options: .regularExpression) != nil {
-            if let captureResult = await tryFastURLCapture(text: trimmed) {
-                return captureResult
-            }
-        }
-
-        return nil
     }
 
     // MARK: - Fast URL Capture (local version for CosmoWindow)
@@ -628,7 +560,6 @@ final class CosmoWindowViewModel: ObservableObject {
         messages.removeAll()
         linkedAtomUUIDs.removeAll()
         error = nil
-        writingEngineSessions.removeAll()
         processingStartedAt = nil
         pendingContextTraceSections = []
 
@@ -772,7 +703,6 @@ final class CosmoWindowViewModel: ObservableObject {
         // Clear all state
         messages.removeAll()
         linkedAtomUUIDs.removeAll()
-        writingEngineSessions.removeAll()
         error = nil
         historySearchText = ""
         processingStartedAt = nil
@@ -835,6 +765,20 @@ final class CosmoWindowViewModel: ObservableObject {
 
     /// Routes a message through the general CosmoAgentService.
     private func routeToAgentService(text: String) async -> String {
+        let hasMentionedAtoms = !mentionedAtoms.isEmpty
+        let activeProfile = selectedAgentProfile
+        let writingModeAgentSelected = Self.allowsWritingModeAgentRoute(
+            selectedAgentProfileID: activeProfile?.id
+        )
+        let responseMode: AgentResponseMode
+        if writingModeAgentSelected {
+            responseMode = .automatic
+        } else if Self.shouldUseInlineMentionDraftResponse(text: text, hasMentionedAtoms: hasMentionedAtoms) {
+            responseMode = .inlineMentionDraftReference
+        } else {
+            responseMode = .directChat
+        }
+
         // Inject current context into the message if available
         let contextBlock = buildContextBlock()
 
@@ -853,7 +797,7 @@ final class CosmoWindowViewModel: ObservableObject {
         }
 
         // Inject @-mentioned atom context inline at mention positions
-        if !mentionedAtoms.isEmpty {
+        if hasMentionedAtoms {
             enrichedText = MentionContextHelper.expandMentionsInline(
                 text: enrichedText,
                 atoms: mentionedAtoms
@@ -876,8 +820,16 @@ final class CosmoWindowViewModel: ObservableObject {
             }
         }
 
-        let activeProfile = selectedAgentProfile
-        let forcedBundles = forcedToolBundles(for: text)
+        var forcedBundles = forcedToolBundles(for: text)
+        if !writingModeAgentSelected {
+            forcedBundles.remove(.writing)
+        }
+        if responseMode == .inlineMentionDraftReference {
+            forcedBundles.subtract([.contentSearch, .swipes, .writing, .strategy])
+        }
+        let profileToolBundles = activeProfile?.toolBundles.filter { bundle in
+            writingModeAgentSelected || bundle != .writing
+        } ?? []
         let systemPromptOverride = runtimePromptLayer(
             collaboratorPrompt: collaboratorPreset?.runtimePrompt,
             agentProfile: activeProfile,
@@ -890,7 +842,8 @@ final class CosmoWindowViewModel: ObservableObject {
             source: .inApp,
             tierOverride: modelOverride ?? activeProfile?.preferredModelTier,
             systemPromptOverride: systemPromptOverride,
-            profileToolBundles: activeProfile?.toolBundles ?? [],
+            responseMode: responseMode,
+            profileToolBundles: profileToolBundles,
             forcedToolBundles: forcedBundles,
             onToolActivity: { [weak self] event in
                 Task { @MainActor in
@@ -906,48 +859,6 @@ final class CosmoWindowViewModel: ObservableObject {
         pendingContextTraceSections = trace.hasContent ? CosmoWindowMessage.contextTraceSections(from: trace) : []
 
         return response
-    }
-
-    /// Routes a writing-specific request to a per-content UnifiedWritingEngine session.
-    private func routeToWritingEngine(text: String, atomUUID: String) async -> String {
-        // Get or create writing engine for this content atom
-        let engine: UnifiedWritingEngine
-        if let existing = writingEngineSessions[atomUUID] {
-            engine = existing
-        } else {
-            let newEngine = UnifiedWritingEngine()
-            // Wire context activity callback so thinking UI shows during writing
-            newEngine.onContextActivity = { [weak self] event in
-                Task { @MainActor in
-                    self?.handleToolActivity(event)
-                }
-            }
-            // Load the content atom and initialize the engine
-            if let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
-                await newEngine.initialize(contentAtom: atom)
-            }
-            writingEngineSessions[atomUUID] = newEngine
-            engine = newEngine
-        }
-
-        // Determine the current content step from context data
-        // ContentContextProvider stores "step", fallback to "contentStep" for compat
-        let stepRaw = activeContext.data.viewSpecificData["step"]
-            ?? activeContext.data.viewSpecificData["contentStep"]
-            ?? "brainstorm"
-        let step: ContentStep
-        switch stepRaw {
-        case "brainstorm": step = .brainstorm
-        case "polish": step = .polish
-        default: step = .draft
-        }
-
-        // Send the message through the writing engine
-        if let response = await engine.sendMessage(text, phase: step) {
-            return response.content
-        }
-
-        return "I processed your writing request but didn't generate a response."
     }
 
     /// Builds the dynamic context block for system prompt injection.
@@ -1038,6 +949,79 @@ final class CosmoWindowViewModel: ObservableObject {
         }
 
         return bundles
+    }
+
+    nonisolated static func shouldUseInlineMentionDraftResponse(text: String, hasMentionedAtoms: Bool) -> Bool {
+        guard hasMentionedAtoms else { return false }
+
+        let lower = normalizedPolicyText(text)
+        let explicitWorkflowSignals = [
+            "writing mode",
+            "draft mode",
+            "create content",
+            "create a content",
+            "new content atom",
+            "save to draft",
+            "put it in draft",
+            "open in focus mode",
+            "generate in the editor"
+        ]
+        guard !containsAny(lower, explicitWorkflowSignals) else { return false }
+
+        let draftSignals = [
+            "write",
+            "draft",
+            "reel",
+            "thread",
+            "carousel",
+            "script",
+            "content piece"
+        ]
+        let inlineReferenceSignals = [
+            "give me every detail",
+            "every detail",
+            "as reference",
+            "output as reference",
+            "while writing",
+            "first draft",
+            "1st draft",
+            "reply with",
+            "in chat",
+            "right here",
+            "based on @",
+            "use @"
+        ]
+
+        return containsAny(lower, draftSignals) && containsAny(lower, inlineReferenceSignals)
+    }
+
+    nonisolated static func allowsWritingModeAgentRoute(selectedAgentProfileID: String?) -> Bool {
+        selectedAgentProfileID == CosmoWindowAgentIDs.writingMode
+    }
+
+    nonisolated static func isNoReplyComplaint(_ text: String) -> Bool {
+        let lower = normalizedPolicyText(text)
+        let noReplySignals = [
+            "you didn't reply",
+            "you didnt reply",
+            "didn't reply",
+            "didnt reply",
+            "you didn't answer",
+            "you didnt answer",
+            "no reply",
+            "no response"
+        ]
+        return lower.count <= 120 && containsAny(lower, noReplySignals)
+    }
+
+    private nonisolated static func normalizedPolicyText(_ text: String) -> String {
+        text.lowercased()
+            .replacingOccurrences(of: "’", with: "'")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private nonisolated static func containsAny(_ text: String, _ needles: [String]) -> Bool {
+        needles.contains { text.contains($0) }
     }
 
     private func containsAny(_ text: String, _ needles: [String]) -> Bool {
@@ -1230,123 +1214,6 @@ final class CosmoWindowViewModel: ObservableObject {
         if toolName == "web_search" { return "globe" }
         if toolName.hasPrefix("score_") || toolName.hasPrefix("evaluate_") { return "chart.bar" }
         return "gearshape"
-    }
-
-    // MARK: - Auto-Create Content from Writing Requests
-
-    /// Extracts swipe-related context from the current @-mentioned atoms.
-    private func extractSwipeContext() -> (swipeUUIDs: [String], clientUUID: String?, framework: String?, hooks: [String], titleHint: String?) {
-        var swipeUUIDs: [String] = []
-        var clientUUID: String?
-        var framework: String?
-        var hooks: [String] = []
-        var titleHint: String?
-
-        for atom in mentionedAtoms {
-            if titleHint == nil {
-                titleHint = atom.title
-            }
-            if let analysis = atom.swipeAnalysis {
-                swipeUUIDs.append(atom.uuid)
-                if clientUUID == nil { clientUUID = analysis.clientUUID }
-                if framework == nil { framework = analysis.frameworkType?.rawValue }
-                if let hook = analysis.hookText { hooks.append(hook) }
-            }
-        }
-
-        return (swipeUUIDs, clientUUID, framework, hooks, titleHint)
-    }
-
-    /// Derives a content title from the user's request text, falling back to a swipe title hint.
-    private func deriveTitleFromRequest(_ text: String, fallback: String?) -> String {
-        let lower = text.lowercased()
-        // Match patterns like "draft a reel about X", "write a carousel on Y"
-        let prepositions = ["about ", "on ", "for ", "titled ", "called "]
-        for prep in prepositions {
-            if let range = lower.range(of: prep) {
-                let afterPrep = String(text[range.upperBound...])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !afterPrep.isEmpty {
-                    // Take up to first punctuation or end
-                    let cleaned = afterPrep.components(separatedBy: CharacterSet(charactersIn: ".!?")).first ?? afterPrep
-                    let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty && trimmed.count <= 100 {
-                        return trimmed
-                    }
-                }
-            }
-        }
-        return fallback ?? "New Content"
-    }
-
-    /// Auto-creates a content atom with inherited swipe context, opens Content Focus Mode,
-    /// and routes the message through the UnifiedWritingEngine.
-    private func autoCreateContentAndRoute(text: String, assistantId: UUID) async {
-        // 1. Extract context from @-mentioned atoms
-        let ctx = extractSwipeContext()
-
-        // 2. Build mention block before clearing mentions
-        var enrichedText = text
-        if !mentionedAtoms.isEmpty {
-            let mentionBlock = MentionContextHelper.buildMentionBlock(atoms: mentionedAtoms)
-            enrichedText = mentionBlock + "\n---\n" + text
-            clearMentions()
-        }
-
-        // 3. Create content atom
-        let title = deriveTitleFromRequest(text, fallback: ctx.titleHint)
-        let pipelineService = ContentPipelineService()
-        guard let contentAtom = try? await pipelineService.createContent(
-            title: title,
-            clientUUID: ctx.clientUUID
-        ) else {
-            updateAssistantMessage(id: assistantId, content: "Failed to create content atom.", isStreaming: false)
-            return
-        }
-
-        // 4. Update metadata with inherited swipe context
-        if !ctx.swipeUUIDs.isEmpty || ctx.framework != nil || !ctx.hooks.isEmpty {
-            _ = try? await AtomRepository.shared.update(uuid: contentAtom.uuid) { atom in
-                var meta = atom.metadataValue(as: ContentAtomMetadata.self) ?? ContentAtomMetadata(phase: .ideation, wordCount: 0)
-                meta.inheritedSwipeUUIDs = ctx.swipeUUIDs.isEmpty ? nil : ctx.swipeUUIDs
-                meta.inheritedFramework = ctx.framework
-                meta.inheritedHooks = ctx.hooks.isEmpty ? nil : ctx.hooks
-                meta.activatedAt = ISO8601DateFormatter().string(from: Date())
-                atom = atom.withMetadata(meta)
-            }
-        }
-
-        // 5. Open Content Focus Mode (renders behind CosmoWindow at lower zIndex)
-        NotificationCenter.default.post(
-            name: CosmoNotification.Navigation.openBlockInFocusMode,
-            object: nil,
-            userInfo: ["atomUUID": contentAtom.uuid]
-        )
-
-        // 6. System message
-        messages.append(.system("Created new content: '\(title)' and opened in Focus Mode."))
-
-        // 7. Wait for focus mode to mount (~800ms for MainView handler delays + view mount)
-        try? await Task.sleep(nanoseconds: 800_000_000)
-
-        // 8. Route to writing engine with the new content atom UUID
-        let response = await routeToWritingEngine(text: enrichedText, atomUUID: contentAtom.uuid)
-        let frozenGroups = liveToolActivity.isEmpty ? nil : liveToolActivity
-        updateAssistantMessage(id: assistantId, content: response, isStreaming: false, toolActivityGroups: frozenGroups)
-        liveToolActivity = []
-        activeToolLabel = nil
-    }
-
-    /// Heuristic check for writing-specific requests in content context.
-    private func isContentWritingRequest(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        let writingKeywords = [
-            "write", "draft", "generate", "rewrite", "expand", "condense",
-            "rephrase", "hook", "outline", "section", "slide", "carousel",
-            "caption", "cta", "call to action", "body copy", "opening line",
-            "brainstorm"
-        ]
-        return writingKeywords.contains { lower.contains($0) }
     }
 
     /// Updates an existing assistant message in the messages array (for streaming).

@@ -13,6 +13,16 @@ struct CortexSearchResultsView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: DS.space20) {
+                    if let action = viewModel.primaryAction {
+                        CommandKActionPreviewRow(
+                            action: action,
+                            isExecuting: viewModel.isExecutingAction,
+                            statusMessage: viewModel.actionStatusMessage
+                        ) {
+                            viewModel.performPrimaryAction()
+                        }
+                    }
+
                     ForEach(Array(viewModel.unifiedGroupedResults.enumerated()), id: \.element.source) { _, group in
                         if !group.results.isEmpty {
                             CortexSearchSection(
@@ -30,7 +40,8 @@ struct CortexSearchResultsView: View {
 
                     if viewModel.currentPhase == .searching {
                         loadingState
-                    } else if viewModel.unifiedGroupedResults.allSatisfy({ $0.results.isEmpty }) && viewModel.currentPhase == .complete {
+                    } else if viewModel.primaryAction == nil,
+                              viewModel.unifiedGroupedResults.allSatisfy({ $0.results.isEmpty }) && viewModel.currentPhase == .complete {
                         emptyState
                     }
                 }
@@ -90,6 +101,132 @@ struct CortexSearchResultsView: View {
             viewModel.selectedResultIndex = idx
         }
         viewModel.openSelected()
+    }
+}
+
+// MARK: - Fast Action Preview
+
+private struct CommandKActionPreviewRow: View {
+    let action: CommandKAction
+    let isExecuting: Bool
+    let statusMessage: String?
+    let onRun: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onRun) {
+            HStack(spacing: 14) {
+                actionIcon
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: DS.space8) {
+                        Text(action.title)
+                            .font(DS.headline)
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+
+                        if !action.isExecutable {
+                            Text("Needs input")
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(DS.orangeSoft, in: Capsule())
+                        }
+                    }
+
+                    if let message = statusMessage, !message.isEmpty {
+                        Text(message)
+                            .font(DS.caption)
+                            .foregroundStyle(message == "Working..." ? DS.textMuted : DS.red)
+                            .lineLimit(1)
+                    } else if let subtitle = action.subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.textMuted)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: DS.space16)
+
+                trailingControl
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, DS.space12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isHovered ? DS.glassInputFillFocused : DS.glassCardFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isHovered ? DS.glassBorderFocused : DS.glassBorder, lineWidth: 0.5)
+            )
+            .shadow(color: DS.sidebarMaterialShadow.opacity(isHovered ? 0.45 : 0.25), radius: isHovered ? 14 : 8, y: isHovered ? 6 : 3)
+        }
+        .buttonStyle(.plain)
+        .disabled(isExecuting)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                isHovered = hovering
+            }
+        }
+        .accessibilityLabel(action.title)
+        .accessibilityHint(action.isExecutable ? "Run action" : "Add the missing detail first")
+    }
+
+    private var actionIcon: some View {
+        Image(systemName: action.icon)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(accentColor)
+            .frame(width: 34, height: 34)
+            .background(accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(accentColor.opacity(0.22), lineWidth: 0.5)
+            )
+    }
+
+    @ViewBuilder
+    private var trailingControl: some View {
+        if isExecuting {
+            ProgressView()
+                .scaleEffect(0.75)
+                .tint(DS.textMuted)
+        } else {
+            HStack(spacing: DS.space6) {
+                Text(action.isExecutable ? "Run" : "Waiting")
+                    .font(DS.caption)
+                Text("Return")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+            .foregroundStyle(action.isExecutable ? accentColor : DS.textMuted)
+        }
+    }
+
+    private var accentColor: Color {
+        switch action.kind {
+        case .captureSwipe, .captureSwipeWithIdea:
+            return DS.entitySwipe
+        case .createIdea:
+            return DS.entityIdea
+        case .createTask:
+            return DS.entityTask
+        case .captureResearch, .captureLane, .createCaptureLane:
+            return DS.entityResearch
+        case .createContent:
+            return DS.entityContent
+        case .createThinkspace, .navigateLastThinkspace:
+            return DS.entityConnection
+        case .navigateCommandCenter, .openDomain, .openApp:
+            return DS.accent
+        case .askCosmo:
+            return DS.gilt
+        }
     }
 }
 

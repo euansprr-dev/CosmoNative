@@ -396,7 +396,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             var enrichedBody = editableBody
             if !mentionedAtoms.isEmpty {
                 enrichedBody = MentionContextHelper.expandMentionsForWritingEngine(
-                    text: editableBody, atoms: mentionedAtoms, bodyLimit: 3000
+                    text: editableBody, atoms: mentionedAtoms
                 )
             }
             focusState.contentDescription = enrichedBody

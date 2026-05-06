@@ -85,6 +85,85 @@ enum AgentIntent: String, Codable, Sendable {
     case analyze      // Deep analysis (persuasion, performance, audience)
 }
 
+// MARK: - Agent Response Mode
+
+enum AgentResponseMode: String, Codable, Sendable {
+    case automatic
+    case directChat
+    case inlineMentionDraftReference
+
+    var shouldAnswerInline: Bool {
+        self == .directChat || self == .inlineMentionDraftReference
+    }
+
+    var promptOverride: String? {
+        switch self {
+        case .automatic:
+            return nil
+        case .directChat:
+            return """
+            ## Direct Chat Mode
+            Answer directly in chat through the normal agent path. Do not start a writing session, create a content atom, or use writing-engine generation/revision tools. If the user asks for writing, drafting, or editing while Writing Mode is not selected as the active agent, produce the response inline.
+            """
+        case .inlineMentionDraftReference:
+            return """
+            ## Inline Mention Draft Reference Mode
+            Answer directly in the chat. The user wants a reference answer and/or first draft, not a new content atom, writing session, or background generation workflow.
+
+            Treat the expanded @-mentioned context blocks as the authoritative source material. Do not broaden the request by searching additional swipes, ideas, or content unless the user explicitly asks to find additional items beyond the @mentions. If a needed detail is missing from the provided context, say what is missing plainly instead of inventing it.
+            """
+        }
+    }
+
+    func filteredTools(_ tools: [LLMToolDefinition]) -> [LLMToolDefinition] {
+        switch self {
+        case .automatic:
+            return tools
+        case .directChat:
+            return tools.filter { !Self.writingEngineToolNames.contains($0.name) }
+        case .inlineMentionDraftReference:
+            let allowedToolNames: Set<String> = [
+                "get_client_profile",
+                "list_client_profiles",
+                "get_preferences",
+                "list_client_memory"
+            ]
+            return tools.filter { allowedToolNames.contains($0.name) }
+        }
+    }
+
+    func shouldRetryWithoutTools(after error: Error, tools: [LLMToolDefinition]) -> Bool {
+        guard canAttemptToolFreeRetry(with: tools),
+              let providerError = error as? LLMProviderError else {
+            return false
+        }
+
+        if case .invalidResponse = providerError {
+            return true
+        }
+
+        return false
+    }
+
+    func shouldRetryWithoutToolsAfterEmptyResponse(tools: [LLMToolDefinition]) -> Bool {
+        canAttemptToolFreeRetry(with: tools)
+    }
+
+    private func canAttemptToolFreeRetry(with tools: [LLMToolDefinition]) -> Bool {
+        shouldAnswerInline && !tools.isEmpty
+    }
+
+    private static let writingEngineToolNames: Set<String> = [
+        "get_beat_patterns",
+        "score_draft",
+        "generate_outline",
+        "generate_draft",
+        "read_draft",
+        "generate_hooks",
+        "revise_draft"
+    ]
+}
+
 // MARK: - Request Complexity
 
 /// Determines whether a request needs single tool execution or multi-step workflow

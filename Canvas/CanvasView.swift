@@ -156,7 +156,10 @@ struct CanvasView: View {
     }
 
     private var renderSnapshotTransform: CanvasViewportTransform {
-        hasLiveViewportGesture ? viewportTransform.committedOnly() : viewportTransform
+        CanvasViewportSnapshotPolicy.snapshotTransform(
+            for: viewportTransform,
+            isLiveGesture: hasLiveViewportGesture
+        )
     }
 
     private var visibilityIndex: CanvasVisibilityIndex {
@@ -169,6 +172,11 @@ struct CanvasView: View {
             blocks: blocks,
             blockDataRevision: clusterResizeSession == nil ? spatialEngine.blocksDataRevision : nil,
             transform: renderSnapshotTransform,
+            preloadInset: CanvasViewportSnapshotPolicy.preloadInset(
+                viewportSize: canvasSize,
+                isLiveGesture: hasLiveViewportGesture,
+                blockCount: blocks.count
+            ),
             userClusters: clusterEngine.userClusters,
             clusterDataRevision: clusterEngine.userClustersDataRevision,
             selectedBlockId: selectedBlockId,

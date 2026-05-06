@@ -201,6 +201,7 @@ private struct CanvasRenderDataRevisionSignature: Equatable {
 
 private struct CanvasRenderViewportSignature: Equatable {
     let transform: CanvasViewportTransform
+    let preloadInset: CGFloat
     let selectedBlockId: String?
     let selectedClusterId: UUID?
     let draggingClusterId: UUID?
@@ -224,6 +225,7 @@ final class CanvasRenderPipeline: ObservableObject {
         blocks: [CanvasBlock],
         blockDataRevision: Int? = nil,
         transform: CanvasViewportTransform,
+        preloadInset: CGFloat = 320,
         userClusters: [CanvasCluster],
         clusterDataRevision: Int? = nil,
         selectedBlockId: String?,
@@ -261,6 +263,7 @@ final class CanvasRenderPipeline: ObservableObject {
 
         let nextViewportSignature = CanvasRenderViewportSignature(
             transform: transform,
+            preloadInset: preloadInset,
             selectedBlockId: selectedBlockId,
             selectedClusterId: selectedClusterId,
             draggingClusterId: draggingClusterId,
@@ -273,7 +276,8 @@ final class CanvasRenderPipeline: ObservableObject {
                 selectedBlockId: selectedBlockId,
                 selectedClusterId: selectedClusterId,
                 draggingClusterId: draggingClusterId,
-                resizingClusterId: resizingClusterId
+                resizingClusterId: resizingClusterId,
+                preloadInset: preloadInset
             )
             viewportSignature = nextViewportSignature
             lastRenderableBlocks = viewportSnapshot.renderableBlocks

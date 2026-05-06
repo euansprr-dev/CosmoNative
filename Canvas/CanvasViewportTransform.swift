@@ -200,3 +200,82 @@ struct CanvasGridPatternMetrics: Equatable {
         }
     }
 }
+
+enum CanvasViewportSnapshotPolicy {
+    private static let livePanBucketSize: CGFloat = 640
+    private static let liveScaleBucketSize: CGFloat = 0.125
+    private static let idleMinimumPreloadInset: CGFloat = 640
+    private static let liveMinimumPreloadInset: CGFloat = 1_500
+
+    static func snapshotTransform(
+        for transform: CanvasViewportTransform,
+        isLiveGesture: Bool
+    ) -> CanvasViewportTransform {
+        guard isLiveGesture else { return transform }
+
+        return CanvasViewportTransform(
+            viewportSize: transform.viewportSize,
+            committedOffset: quantizedOffset(transform.contentOffset, bucketSize: livePanBucketSize),
+            gesturePanOffset: .zero,
+            committedScale: quantizedScale(
+                transform.effectiveScale,
+                bucketSize: liveScaleBucketSize,
+                minScale: transform.minScale,
+                maxScale: transform.maxScale
+            ),
+            gestureMagnification: 1,
+            minScale: transform.minScale,
+            maxScale: transform.maxScale
+        )
+    }
+
+    static func preloadInset(
+        viewportSize: CGSize,
+        isLiveGesture: Bool,
+        blockCount: Int
+    ) -> CGFloat {
+        let maxViewportDimension = max(viewportSize.width, viewportSize.height)
+        let fallbackInset = isLiveGesture ? liveMinimumPreloadInset : idleMinimumPreloadInset
+        guard maxViewportDimension.isFinite, maxViewportDimension > 0 else {
+            return fallbackInset
+        }
+
+        let requestedInset = isLiveGesture
+            ? max(maxViewportDimension * 1.5, liveMinimumPreloadInset)
+            : max(maxViewportDimension * 0.75, idleMinimumPreloadInset)
+
+        return min(requestedInset, preloadCap(forBlockCount: blockCount))
+    }
+
+    private static func preloadCap(forBlockCount blockCount: Int) -> CGFloat {
+        switch blockCount {
+        case ..<200:
+            return 3_200
+        case ..<600:
+            return 2_400
+        default:
+            return 1_600
+        }
+    }
+
+    private static func quantizedOffset(_ offset: CGSize, bucketSize: CGFloat) -> CGSize {
+        CGSize(
+            width: quantized(offset.width, bucketSize: bucketSize),
+            height: quantized(offset.height, bucketSize: bucketSize)
+        )
+    }
+
+    private static func quantizedScale(
+        _ scale: CGFloat,
+        bucketSize: CGFloat,
+        minScale: CGFloat,
+        maxScale: CGFloat
+    ) -> CGFloat {
+        min(max(quantized(scale, bucketSize: bucketSize), minScale), maxScale)
+    }
+
+    private static func quantized(_ value: CGFloat, bucketSize: CGFloat) -> CGFloat {
+        guard bucketSize > 0 else { return value }
+        return (value / bucketSize).rounded(.toNearestOrAwayFromZero) * bucketSize
+    }
+}

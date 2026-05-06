@@ -79,6 +79,115 @@ final class CanvasRenderSnapshotTests: XCTestCase {
         XCTAssertEqual(metrics.rawDotSize * transform.effectiveScale, 0.75, accuracy: 0.001)
     }
 
+    func testLiveViewportSnapshotPolicyUsesLargerPreloadWithoutPerFramePanBuckets() {
+        let baseTransform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: .zero,
+            gesturePanOffset: CGSize(width: 80, height: 0),
+            committedScale: 1
+        )
+        let nearbyTransform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: .zero,
+            gesturePanOffset: CGSize(width: 160, height: 0),
+            committedScale: 1
+        )
+        let farTransform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: .zero,
+            gesturePanOffset: CGSize(width: 760, height: 0),
+            committedScale: 1
+        )
+
+        let baseSnapshotTransform = CanvasViewportSnapshotPolicy.snapshotTransform(
+            for: baseTransform,
+            isLiveGesture: true
+        )
+        let nearbySnapshotTransform = CanvasViewportSnapshotPolicy.snapshotTransform(
+            for: nearbyTransform,
+            isLiveGesture: true
+        )
+        let farSnapshotTransform = CanvasViewportSnapshotPolicy.snapshotTransform(
+            for: farTransform,
+            isLiveGesture: true
+        )
+
+        XCTAssertGreaterThan(
+            CanvasViewportSnapshotPolicy.preloadInset(
+                viewportSize: baseTransform.viewportSize,
+                isLiveGesture: true,
+                blockCount: 100
+            ),
+            CanvasViewportSnapshotPolicy.preloadInset(
+                viewportSize: baseTransform.viewportSize,
+                isLiveGesture: false,
+                blockCount: 100
+            )
+        )
+        XCTAssertEqual(baseSnapshotTransform.contentOffset, nearbySnapshotTransform.contentOffset)
+        XCTAssertNotEqual(baseSnapshotTransform.contentOffset, farSnapshotTransform.contentOffset)
+    }
+
+    @MainActor
+    func testRenderPipelineRebuildsViewportWhenPreloadInsetChanges() {
+        let blocks = [
+            CanvasBlock(
+                id: "origin",
+                position: CGPoint(x: 500, y: 400),
+                size: CGSize(width: 200, height: 120),
+                entityType: .idea,
+                entityId: 1,
+                entityUuid: "origin-uuid",
+                title: "Origin"
+            ),
+            CanvasBlock(
+                id: "warm-belt",
+                position: CGPoint(x: 1_760, y: 400),
+                size: CGSize(width: 200, height: 120),
+                entityType: .idea,
+                entityId: 2,
+                entityUuid: "warm-belt-uuid",
+                title: "Warm Belt"
+            )
+        ]
+        let pipeline = CanvasRenderPipeline()
+        let transform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: .zero
+        )
+
+        let coldSnapshot = pipeline.snapshot(
+            blocks: blocks,
+            blockDataRevision: 1,
+            transform: transform,
+            preloadInset: 320,
+            userClusters: [],
+            clusterDataRevision: 1,
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+
+        let warmSnapshot = pipeline.snapshot(
+            blocks: blocks,
+            blockDataRevision: 1,
+            transform: transform,
+            preloadInset: 900,
+            userClusters: [],
+            clusterDataRevision: 1,
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+
+        XCTAssertFalse(coldSnapshot.visibleBlockIds.contains("warm-belt"))
+        XCTAssertTrue(warmSnapshot.visibleBlockIds.contains("warm-belt"))
+        XCTAssertEqual(pipeline.debugDataSnapshotBuildCount, 1)
+        XCTAssertEqual(pipeline.debugViewportSnapshotBuildCount, 2)
+    }
+
     @MainActor
     func testRenderPipelineDoesNotRebuildDataSnapshotForViewportOnlyPan() {
         let blocks = [

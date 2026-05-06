@@ -19,7 +19,10 @@ class CanvasClusterEngine: ObservableObject {
     @Published var clusters: [CanvasCluster] = []
 
     /// User-created clusters (persistent, loaded from ThinkspaceMetadata)
-    @Published var userClusters: [CanvasCluster] = []
+    @Published var userClusters: [CanvasCluster] = [] {
+        didSet { userClustersDataRevision &+= 1 }
+    }
+    private(set) var userClustersDataRevision = 0
 
     /// Combined clusters for rendering (user clusters take priority)
     var allClusters: [CanvasCluster] {

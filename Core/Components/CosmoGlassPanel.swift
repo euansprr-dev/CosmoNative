@@ -162,30 +162,77 @@ struct CosmoGlassSceneSignalPreferenceKey: PreferenceKey {
     }
 }
 
+private struct CosmoGlassSceneSignalsEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var cosmoGlassSceneSignalsEnabled: Bool {
+        get { self[CosmoGlassSceneSignalsEnabledKey.self] }
+        set { self[CosmoGlassSceneSignalsEnabledKey.self] = newValue }
+    }
+}
+
 extension View {
     func cosmoGlassSceneSignal(
         id: String,
         source: CosmoGlassSceneSignalSource,
         color: Color,
         intensity: Double = 1,
-        allowsDeepDiffusion: Bool = false
+        allowsDeepDiffusion: Bool = false,
+        isEnabled: Bool = true
     ) -> some View {
-        background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: CosmoGlassSceneSignalPreferenceKey.self,
-                    value: [
-                        CosmoGlassSceneSignal(
-                            id: id,
-                            color: color,
-                            rect: proxy.frame(in: .named(CosmoGlassSceneMaterial.coordinateSpaceName)),
-                            intensity: intensity,
-                            source: source,
-                            allowsDeepDiffusion: allowsDeepDiffusion
-                        )
-                    ]
-                )
+        modifier(CosmoGlassSceneSignalModifier(
+            id: id,
+            source: source,
+            color: color,
+            intensity: intensity,
+            allowsDeepDiffusion: allowsDeepDiffusion,
+            isEnabled: isEnabled
+        ))
+    }
+
+    func cosmoGlassSceneSignalsEnabled(_ isEnabled: Bool) -> some View {
+        environment(\.cosmoGlassSceneSignalsEnabled, isEnabled)
+    }
+}
+
+private struct CosmoGlassSceneSignalModifier: ViewModifier {
+    let id: String
+    let source: CosmoGlassSceneSignalSource
+    let color: Color
+    let intensity: Double
+    let allowsDeepDiffusion: Bool
+    let isEnabled: Bool
+
+    @Environment(\.cosmoGlassSceneSignalsEnabled) private var environmentEnabled
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled && environmentEnabled {
+            content.background {
+                sceneSignalPreference
             }
+        } else {
+            content
+        }
+    }
+
+    private var sceneSignalPreference: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: CosmoGlassSceneSignalPreferenceKey.self,
+                value: [
+                    CosmoGlassSceneSignal(
+                        id: id,
+                        color: color,
+                        rect: proxy.frame(in: .named(CosmoGlassSceneMaterial.coordinateSpaceName)),
+                        intensity: intensity,
+                        source: source,
+                        allowsDeepDiffusion: allowsDeepDiffusion
+                    )
+                ]
+            )
         }
     }
 }

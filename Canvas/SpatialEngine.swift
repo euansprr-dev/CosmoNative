@@ -7,8 +7,11 @@ import GRDB
 
 @MainActor
 class SpatialEngine: ObservableObject {
-    @Published var blocks: [CanvasBlock] = []
+    @Published var blocks: [CanvasBlock] = [] {
+        didSet { blocksDataRevision &+= 1 }
+    }
     @Published var isLoading = false
+    private(set) var blocksDataRevision = 0
 
     private let database: CosmoDatabase
     private let localLLM: LocalLLM

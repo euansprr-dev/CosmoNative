@@ -152,8 +152,10 @@ struct CanvasView: View {
         let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-snapshot")
         let snapshot = renderPipeline.snapshot(
             blocks: blocks,
+            blockDataRevision: clusterResizeSession == nil ? spatialEngine.blocksDataRevision : nil,
             transform: viewportTransform,
             userClusters: clusterEngine.userClusters,
+            clusterDataRevision: clusterEngine.userClustersDataRevision,
             selectedBlockId: selectedBlockId,
             selectedClusterId: clusterEngine.selectedClusterId,
             draggingClusterId: draggingClusterId,
@@ -268,9 +270,11 @@ struct CanvasView: View {
                         },
                         expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
                     )
+                    .cosmoGlassSceneSignalsEnabled(false)
 
                     canvasClusterDropPreviewLayer
                     blocksLayer(snapshot: snapshot)
+                        .cosmoGlassSceneSignalsEnabled(false)
                     inboxBlocksLayer
 
                     // Drag-to-connect overlay (canvas coordinates, inside scaled container
@@ -1085,7 +1089,7 @@ struct CanvasView: View {
         if sceneTintThrottleTask == nil {
             publishSceneTint()
             sceneTintThrottleTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(16))
+                try? await Task.sleep(for: .milliseconds(33))
                 sceneTintThrottleTask = nil
                 if sceneTintNeedsTrailingPublish {
                     sceneTintNeedsTrailingPublish = false

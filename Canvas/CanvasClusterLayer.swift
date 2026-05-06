@@ -11,9 +11,6 @@ struct CanvasClusterLayer: View {
 
     let clusters: [CanvasCluster]
     let blocks: [CanvasBlock]
-    let canvasSize: CGSize
-    let canvasOffset: CGSize
-    let scaledPanOffset: CGSize
     let effectiveScale: CGFloat
     var dropTargetClusterId: UUID?
     var selectedClusterId: UUID?
@@ -627,11 +624,7 @@ struct CanvasClusterLayer: View {
     private func clusterScreenRect(_ cluster: CanvasCluster) -> CGRect {
         let origin = cluster.boundingRect.origin
         let size = cluster.boundingRect.size
-
-        let screenX = origin.x + canvasOffset.width + scaledPanOffset.width
-        let screenY = origin.y + canvasOffset.height + scaledPanOffset.height
-
-        return CGRect(x: screenX, y: screenY, width: size.width, height: size.height)
+        return CGRect(x: origin.x, y: origin.y, width: size.width, height: size.height)
     }
 }
 

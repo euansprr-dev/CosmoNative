@@ -8,9 +8,6 @@ import SwiftUI
 struct DragToConnectOverlay: View {
     @ObservedObject var connectManager: DragToConnectManager
     let blocks: [CanvasBlock]
-    let canvasOffset: CGSize
-    let scaledPanOffset: CGSize
-    let effectiveScale: CGFloat
 
     // MARK: - Bezier Control Point (matches KnowledgePulseLineView / CanvasConnectionLinesLayer)
 
@@ -80,9 +77,6 @@ struct DragToConnectOverlay: View {
                 // Highlight ring around hovered target block (canvas coordinates)
                 if let targetId = connectManager.hoveredTargetBlockId,
                    let targetBlock = blocks.first(where: { $0.id == targetId }) {
-                    let blockX = targetBlock.position.x + canvasOffset.width + scaledPanOffset.width
-                    let blockY = targetBlock.position.y + canvasOffset.height + scaledPanOffset.height
-
                     let targetActualSize = BlockRenderedSizeCache.shared.renderedSize(for: targetBlock)
                     RoundedRectangle(cornerRadius: 14)
                         .stroke(DS.textMuted.opacity(0.4), lineWidth: 2)
@@ -91,7 +85,7 @@ struct DragToConnectOverlay: View {
                             height: targetActualSize.height * targetBlock.scale + 16
                         )
                         .shadow(color: DS.textMuted.opacity(0.2), radius: 8)
-                        .position(x: blockX, y: blockY)
+                        .position(x: targetBlock.position.x, y: targetBlock.position.y)
                 }
 
                 // Success flash

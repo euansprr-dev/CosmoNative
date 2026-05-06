@@ -144,6 +144,21 @@ struct CanvasView: View {
         )
     }
 
+    private var compositorTransform: CanvasCompositorTransform {
+        CanvasCompositorTransform(viewportTransform: viewportTransform)
+    }
+
+    private var hasLiveViewportGesture: Bool {
+        panOffset != .zero ||
+            spacePanOffset != .zero ||
+            abs(magnificationState - 1) > 0.0001 ||
+            abs(clusterMagnification - 1) > 0.0001
+    }
+
+    private var renderSnapshotTransform: CanvasViewportTransform {
+        hasLiveViewportGesture ? viewportTransform.committedOnly() : viewportTransform
+    }
+
     private var visibilityIndex: CanvasVisibilityIndex {
         CanvasVisibilityIndex(transform: viewportTransform)
     }
@@ -153,7 +168,7 @@ struct CanvasView: View {
         let snapshot = renderPipeline.snapshot(
             blocks: blocks,
             blockDataRevision: clusterResizeSession == nil ? spatialEngine.blocksDataRevision : nil,
-            transform: viewportTransform,
+            transform: renderSnapshotTransform,
             userClusters: clusterEngine.userClusters,
             clusterDataRevision: clusterEngine.userClustersDataRevision,
             selectedBlockId: selectedBlockId,
@@ -168,8 +183,7 @@ struct CanvasView: View {
     // MARK: - Canvas Content (broken out for type-checking performance)
 
     private var canvasContent: some View {
-        GeometryReader { geo in
-            let screenCenter = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+        GeometryReader { _ in
             let currentRenderedBlocks = renderedBlocks
             let snapshot = renderSnapshot(for: currentRenderedBlocks)
 
@@ -177,123 +191,15 @@ struct CanvasView: View {
                 // Background always fills the screen (infinite canvas)
                 canvasBackground
 
-                // Blocks container - scaled as a unit around screen center
-                // This keeps blocks at their relative positions while zooming
-                ZStack {
-                    // Cluster zones (auto-chunked + user-created, behind blocks)
-                    CanvasClusterLayer(
-                        clusters: clusterEngine.allClusters,
-                        blocks: spatialEngine.blocks,
-                        canvasSize: geo.size,
-                        canvasOffset: canvasOffset,
-                        scaledPanOffset: scaledPanOffset,
-                        effectiveScale: effectiveScale,
-                        dropTargetClusterId: clusterEngine.dropTargetClusterId,
-                        selectedClusterId: clusterEngine.selectedClusterId,
-                        resizingClusterId: clusterEngine.resizingClusterId,
-                        clusterDragOffset: draggingClusterId != nil ? clusterDragTranslation : nil,
-                        onRenameCluster: { id, newName in
-                            clusterEngine.renameUserCluster(id: id, to: newName)
-                        },
-                        onRemoveCluster: { id in
-                            clusterEngine.removeUserCluster(id: id)
-                        },
-                        onSelectCluster: { id in
-                            clusterEngine.selectCluster(id)
-                            // Deselect any selected block
-                            if id != nil { selectedBlockId = nil }
-                        },
-                        onDragCluster: { id, translation in
-                            handleClusterDrag(clusterId: id, translation: translation)
-                        },
-                        onDragEndCluster: { id, translation in
-                            handleClusterDragEnd(clusterId: id, translation: translation)
-                        },
-                        onResizeCluster: { id, delta, edge in
-                            handleClusterResize(clusterId: id, delta: delta, edge: edge)
-                        },
-                        onResizeEndCluster: { id in
-                            handleClusterResizeEnd(clusterId: id)
-                        },
-                        onChangeViewMode: { id, mode in
-                            clusterEngine.setViewMode(for: id, mode: mode, blocks: spatialEngine.blocks)
-                        },
-                        onChangeBoardGrouping: { id, grouping in
-                            clusterEngine.setBoardGrouping(for: id, grouping: grouping)
-                        },
-                        onChangeColor: { id, colorIndex in
-                            clusterEngine.changeClusterColor(id: id, colorIndex: colorIndex)
-                            scheduleSceneTintPublish()
-                        },
-                        onChangeSortOrder: { id, order in
-                            clusterEngine.setSortOrder(for: id, order: order)
-                        },
-                        onToggleListExpand: { clusterId, blockUUID in
-                            clusterEngine.toggleListExpand(clusterId: clusterId, blockUUID: blockUUID)
-                        },
-                        onBoardColumnDrop: { event in
-                            clusterEngine.applyBoardDrop(event: event, blocks: &spatialEngine.blocks)
-                        },
-                        onClusterViewDrop: { event in
-                            // Transfer block between clusters (grid/list drag-and-drop)
-                            let sourceClusterId = clusterEngine.allClusters
-                                .first(where: { $0.blockUUIDs.contains(event.blockUUID) && $0.id != event.targetClusterId })?.id
-                            clusterEngine.transferBlock(
-                                blockUUID: event.blockUUID,
-                                from: sourceClusterId,
-                                to: event.targetClusterId,
-                                blocks: spatialEngine.blocks
-                            )
-                        },
-                        onOpenFocusMode: { uuid in
-                            if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
-                               block.entityId > 0 {
-                                NotificationCenter.default.post(
-                                    name: .enterFocusMode,
-                                    object: nil,
-                                    userInfo: [
-                                        "type": block.entityType,
-                                        "id": block.entityId
-                                    ]
-                                )
-                            }
-                        },
-                        onMagnify: { magnification in
-                            clusterMagnification = magnification
-                            publishSceneTintImmediately()
-                        },
-                        onMagnifyEnd: { magnification in
-                            let newScale = canvasScale * magnification
-                            canvasScale = min(max(newScale, minScale), maxScale)
-                            clusterMagnification = 1.0
-                            publishSceneTintImmediately()
-                        },
-                        expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
+                canvasWorldLayer(snapshot: snapshot)
+                    .offset(
+                        x: compositorTransform.contentOffset.width,
+                        y: compositorTransform.contentOffset.height
                     )
-                    .cosmoGlassSceneSignalsEnabled(false)
-
-                    canvasClusterDropPreviewLayer
-                    blocksLayer(snapshot: snapshot)
-                        .cosmoGlassSceneSignalsEnabled(false)
-                    inboxBlocksLayer
-
-                    // Drag-to-connect overlay (canvas coordinates, inside scaled container
-                    // so it shares the same coordinate space as blocks and final connection lines)
-                    DragToConnectOverlay(
-                        connectManager: connectManager,
-                        blocks: spatialEngine.blocks,
-                        canvasOffset: canvasOffset,
-                        scaledPanOffset: scaledPanOffset,
-                        effectiveScale: effectiveScale
-                    )
-                }
-                .opacity(canvasContentOpacity)
-                .scaleEffect(canvasContentScale)
-                .blur(radius: canvasContentBlur)
-                .scaleEffect(effectiveScale, anchor: UnitPoint(
-                    x: screenCenter.x / geo.size.width,
-                    y: screenCenter.y / geo.size.height
-                ))
+                    .opacity(canvasContentOpacity)
+                    .scaleEffect(canvasContentScale)
+                    .blur(radius: canvasContentBlur)
+                    .scaleEffect(compositorTransform.effectiveScale, anchor: compositorTransform.anchor)
 
                 // Connection lines layer (screen coordinates, outside scaled container
                 // to prevent frame clipping at non-100% zoom levels)
@@ -335,7 +241,6 @@ struct CanvasView: View {
                             DragGesture(minimumDistance: 1)
                                 .onChanged { value in
                                     spacePanOffset = value.translation
-                                    publishSceneTintImmediately()
                                 }
                                 .onEnded { value in
                                     canvasOffset.width += value.translation.width / effectiveScale
@@ -415,24 +320,12 @@ struct CanvasView: View {
             }
             .onChange(of: canvasOffset) { _, _ in
                 scheduleFrameUpdate()
-                publishSceneTintImmediately()
+                scheduleSceneTintPublish(delay: .milliseconds(80))
                 debouncedSaveZoomPan()
-            }
-            .onChange(of: panOffset) { _, _ in
-                publishSceneTintImmediately()
-            }
-            .onChange(of: spacePanOffset) { _, _ in
-                publishSceneTintImmediately()
-            }
-            .onChange(of: magnificationState) { _, _ in
-                publishSceneTintImmediately()
-            }
-            .onChange(of: clusterMagnification) { _, _ in
-                publishSceneTintImmediately()
             }
             .onChange(of: canvasScale) { _, _ in
                 scheduleFrameUpdate()
-                publishSceneTintImmediately()
+                scheduleSceneTintPublish(delay: .milliseconds(80))
                 debouncedSaveZoomPan()
             }
             .onChange(of: selectedBlockId) { _, _ in
@@ -707,8 +600,8 @@ struct CanvasView: View {
                 }
             )
             .position(
-                x: block.x + viewportTransform.contentOffset.width + inboxBlockDragState.translation(for: blockId).width,
-                y: block.y + viewportTransform.contentOffset.height + inboxBlockDragState.translation(for: blockId).height
+                x: block.x + inboxBlockDragState.translation(for: blockId).width,
+                y: block.y + inboxBlockDragState.translation(for: blockId).height
             )
             .zIndex(inboxBlockDragState.activeId == blockId ? 1000 : Double(block.zIndex))
             .transition(.asymmetric(
@@ -720,7 +613,9 @@ struct CanvasView: View {
 
     private var canvasBackground: some View {
         ZStack {
-            // Visual background with GPU acceleration
+            // Static visual background with GPU acceleration. The moving grid stays
+            // outside this drawingGroup so pan/zoom does not re-rasterize the full
+            // viewport-sized background on every gesture tick.
             ZStack {
                 // Layer 1: Warm parchment canvas base
                 DS.canvas
@@ -729,21 +624,124 @@ struct CanvasView: View {
                 // Layer 2: Subtle aurora gradient zones (2-3% opacity)
                 ThinkspaceAuroraView()
                     .ignoresSafeArea()
-
-                // Layer 3: Infinite tiling grid — warm gray dots
-                GridPatternView(
-                    transform: viewportTransform
-                )
-                    .ignoresSafeArea()
-
-                // Layer 4: Film grain overlay — static pre-rendered texture (zero per-frame cost)
-                FilmGrainOverlay(opacity: 0.025)
-                    .ignoresSafeArea()
             }
-            .drawingGroup() // GPU-accelerate visual background (no interactive elements)
+            .drawingGroup()
+
+            // Layer 3: Infinite tiling grid — warm gray dots
+            GridPatternView(
+                transform: viewportTransform
+            )
+                .ignoresSafeArea()
+
+            // Layer 4: Film grain overlay — static pre-rendered texture (zero per-frame cost)
+            FilmGrainOverlay(opacity: 0.025)
+                .ignoresSafeArea()
 
             // Pan gesture layer - transparent but captures hits
             panGestureBackground
+        }
+    }
+
+    private func canvasWorldLayer(snapshot: CanvasRenderSnapshot) -> some View {
+        ZStack {
+            // Cluster zones (auto-chunked + user-created, behind blocks)
+            CanvasClusterLayer(
+                clusters: clusterEngine.allClusters,
+                blocks: spatialEngine.blocks,
+                effectiveScale: effectiveScale,
+                dropTargetClusterId: clusterEngine.dropTargetClusterId,
+                selectedClusterId: clusterEngine.selectedClusterId,
+                resizingClusterId: clusterEngine.resizingClusterId,
+                clusterDragOffset: draggingClusterId != nil ? clusterDragTranslation : nil,
+                onRenameCluster: { id, newName in
+                    clusterEngine.renameUserCluster(id: id, to: newName)
+                },
+                onRemoveCluster: { id in
+                    clusterEngine.removeUserCluster(id)
+                },
+                onSelectCluster: { id in
+                    clusterEngine.selectCluster(id)
+                    // Deselect any selected block
+                    if id != nil { selectedBlockId = nil }
+                },
+                onDragCluster: { id, translation in
+                    handleClusterDrag(clusterId: id, translation: translation)
+                },
+                onDragEndCluster: { id, translation in
+                    handleClusterDragEnd(clusterId: id, translation: translation)
+                },
+                onResizeCluster: { id, delta, edge in
+                    handleClusterResize(clusterId: id, delta: delta, edge: edge)
+                },
+                onResizeEndCluster: { id in
+                    handleClusterResizeEnd(clusterId: id)
+                },
+                onChangeViewMode: { id, mode in
+                    clusterEngine.setViewMode(for: id, mode: mode, blocks: spatialEngine.blocks)
+                },
+                onChangeBoardGrouping: { id, grouping in
+                    clusterEngine.setBoardGrouping(for: id, grouping: grouping)
+                },
+                onChangeColor: { id, colorIndex in
+                    clusterEngine.changeClusterColor(id: id, colorIndex: colorIndex)
+                    scheduleSceneTintPublish()
+                },
+                onChangeSortOrder: { id, order in
+                    clusterEngine.setSortOrder(for: id, order: order)
+                },
+                onToggleListExpand: { clusterId, blockUUID in
+                    clusterEngine.toggleListExpand(clusterId: clusterId, blockUUID: blockUUID)
+                },
+                onBoardColumnDrop: { event in
+                    clusterEngine.applyBoardDrop(event: event, blocks: &spatialEngine.blocks)
+                },
+                onClusterViewDrop: { event in
+                    // Transfer block between clusters (grid/list drag-and-drop)
+                    let sourceClusterId = clusterEngine.allClusters
+                        .first(where: { $0.blockUUIDs.contains(event.blockUUID) && $0.id != event.targetClusterId })?.id
+                    clusterEngine.transferBlock(
+                        blockUUID: event.blockUUID,
+                        from: sourceClusterId,
+                        to: event.targetClusterId,
+                        blocks: spatialEngine.blocks
+                    )
+                },
+                onOpenFocusMode: { uuid in
+                    if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
+                       block.entityId > 0 {
+                        NotificationCenter.default.post(
+                            name: .enterFocusMode,
+                            object: nil,
+                            userInfo: [
+                                "type": block.entityType,
+                                "id": block.entityId
+                            ]
+                        )
+                    }
+                },
+                onMagnify: { magnification in
+                    clusterMagnification = magnification
+                },
+                onMagnifyEnd: { magnification in
+                    let newScale = canvasScale * magnification
+                    canvasScale = min(max(newScale, minScale), maxScale)
+                    clusterMagnification = 1.0
+                    publishSceneTintImmediately()
+                },
+                expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
+            )
+            .cosmoGlassSceneSignalsEnabled(false)
+
+            canvasClusterDropPreviewLayer
+            blocksLayer(snapshot: snapshot)
+                .cosmoGlassSceneSignalsEnabled(false)
+            inboxBlocksLayer
+
+            // Drag-to-connect overlay shares the same raw canvas coordinates as blocks.
+            DragToConnectOverlay(
+                connectManager: connectManager,
+                blocks: spatialEngine.blocks
+            )
         }
     }
 
@@ -852,7 +850,6 @@ struct CanvasView: View {
             CanvasClusterDropPreviewView(
                 block: block,
                 clusterColor: cluster.color,
-                transform: viewportTransform,
                 previewPosition: preview.previewPosition
             )
             .allowsHitTesting(false)
@@ -879,7 +876,6 @@ struct CanvasView: View {
         ForEach(snapshot.renderableBlocks, id: \.id) { block in
             CanvasBlockTransformHost(
                 block: block,
-                transform: viewportTransform,
                 dragOffset: blockDragOffset(for: block),
                 isDragTarget: blockDragState.activeId == block.id,
                 isClusterMember: selectedClusterMemberUUIDs.contains(block.entityUuid),
@@ -894,8 +890,8 @@ struct CanvasView: View {
                 .equatable(),
                 onDragChanged: { translation in
                     if NSEvent.modifierFlags.contains(.option) {
-                        let blockCanvasX = block.position.x + viewportTransform.contentOffset.width
-                        let blockCanvasY = block.position.y + viewportTransform.contentOffset.height
+                        let blockCanvasX = block.position.x
+                        let blockCanvasY = block.position.y
                         if !connectManager.isActive {
                             connectManager.beginConnection(from: block, center: CGPoint(x: blockCanvasX, y: blockCanvasY))
                         }
@@ -904,8 +900,7 @@ struct CanvasView: View {
                             y: blockCanvasY + translation.height
                         ))
                         connectManager.checkTarget(
-                            blocks: spatialEngine.blocks,
-                            transform: viewportTransform
+                            blocks: spatialEngine.blocks
                         )
                     } else {
                         handleDragOptimized(blockId: block.id, translation: translation)
@@ -1803,9 +1798,7 @@ struct CanvasView: View {
                             let zoomFactor = 1.0 + (delta * zoomSensitivity)
                             let newScale = canvasScale * zoomFactor
 
-                            withAnimation(.easeOut(duration: 0.12)) {
-                                canvasScale = min(max(newScale, minScale), maxScale)
-                            }
+                            canvasScale = min(max(newScale, minScale), maxScale)
 
                             // Consume the event when zooming
                             return nil
@@ -4530,40 +4523,35 @@ struct GridPatternView: View {
     let transform: CanvasViewportTransform
 
     var body: some View {
-        let baseSpacing: CGFloat = 40
-        let spacing = max(baseSpacing * transform.effectiveScale, 1)
-        let dotSize = max(2.5 * transform.effectiveScale, 0.75)
-        let tileMultiplier = CanvasGridPatternCache.shared.tileMultiplier(for: spacing)
-        let tileSize = spacing * CGFloat(tileMultiplier)
-        let tileImage = CanvasGridPatternCache.shared.image(
-            spacing: spacing,
-            dotSize: dotSize,
-            tileMultiplier: tileMultiplier
-        )
+        GeometryReader { geometry in
+            let metrics = CanvasGridPatternMetrics(
+                transform: transform,
+                viewportSize: geometry.size
+            )
+            let tileImage = CanvasGridPatternCache.shared.image(
+                spacing: metrics.tileSize,
+                dotSize: metrics.rawDotSize,
+                tileMultiplier: 1
+            )
 
-        Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
-            let resolved = context.resolve(Image(nsImage: tileImage))
-            let gridOrigin = transform.canvasToScreen(.zero)
-            let offsetX = normalizedTileOffset(gridOrigin.x, tileSize: tileSize)
-            let offsetY = normalizedTileOffset(gridOrigin.y, tileSize: tileSize)
-            let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("grid-pattern")
-
-            for x in stride(from: offsetX - tileSize, through: size.width + tileSize, by: tileSize) {
-                for y in stride(from: offsetY - tileSize, through: size.height + tileSize, by: tileSize) {
-                    context.draw(
-                        resolved,
-                        in: CGRect(x: x, y: y, width: tileSize, height: tileSize)
+            ZStack(alignment: .topLeading) {
+                Image(nsImage: tileImage)
+                    .resizable(resizingMode: .tile)
+                    .interpolation(.none)
+                    .frame(
+                        width: metrics.planeSize.width,
+                        height: metrics.planeSize.height
                     )
-                }
+                    .position(
+                        x: metrics.planeOrigin.x + metrics.planeSize.width / 2,
+                        y: metrics.planeOrigin.y + metrics.planeSize.height / 2
+                    )
             }
-
-            CanvasPerformanceInstrumentation.signposter.endInterval("grid-pattern", signpost)
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .offset(x: transform.contentOffset.width, y: transform.contentOffset.height)
+            .scaleEffect(transform.effectiveScale, anchor: metrics.scaleAnchor)
         }
-    }
-
-    private func normalizedTileOffset(_ value: CGFloat, tileSize: CGFloat) -> CGFloat {
-        let remainder = value.truncatingRemainder(dividingBy: tileSize)
-        return remainder >= 0 ? remainder : remainder + tileSize
+        .allowsHitTesting(false)
     }
 }
 
@@ -5200,7 +5188,6 @@ private struct ThinkspaceLibraryEmptyState: View {
 // MARK: - Per-Block Transform Host
 struct CanvasBlockTransformHost<StaticContent: View>: View {
     let block: CanvasBlock
-    let transform: CanvasViewportTransform
     let dragOffset: CGSize
     let isDragTarget: Bool
     let isClusterMember: Bool
@@ -5217,8 +5204,8 @@ struct CanvasBlockTransformHost<StaticContent: View>: View {
     var body: some View {
         staticContent
             .position(
-                x: block.position.x + transform.contentOffset.width + dragOffset.width,
-                y: block.position.y + transform.contentOffset.height + dragOffset.height
+                x: block.position.x + dragOffset.width,
+                y: block.position.y + dragOffset.height
             )
             .scaleEffect(block.scale)
             .rotationEffect(.degrees(block.rotation))
@@ -5296,7 +5283,6 @@ private struct ClusterToCanvasDropDelegate: DropDelegate {
 private struct CanvasClusterDropPreviewView: View {
     let block: CanvasBlock
     let clusterColor: Color
-    let transform: CanvasViewportTransform
     let previewPosition: CGPoint
 
     var body: some View {
@@ -5323,8 +5309,8 @@ private struct CanvasClusterDropPreviewView: View {
             }
             .frame(width: block.size.width, height: block.size.height)
             .position(
-                x: previewPosition.x + transform.contentOffset.width,
-                y: previewPosition.y + transform.contentOffset.height
+                x: previewPosition.x,
+                y: previewPosition.y
             )
             .shadow(color: clusterColor.opacity(0.18), radius: 12, y: 6)
             .transition(.opacity)

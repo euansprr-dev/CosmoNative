@@ -121,11 +121,8 @@ final class DragToConnectManager: ObservableObject {
     }
 
     /// Hit-test current drag point against block frames to find hover target.
-    /// All coordinates are in canvas space (inside the scaleEffect container).
-    func checkTarget(
-        blocks: [CanvasBlock],
-        transform: CanvasViewportTransform
-    ) {
+    /// All coordinates are raw canvas space; the world layer applies pan/zoom.
+    func checkTarget(blocks: [CanvasBlock]) {
         guard isActive, let source = sourceBlock else { return }
 
         let threshold: CGFloat = 30
@@ -135,10 +132,7 @@ final class DragToConnectManager: ObservableObject {
         for block in blocks {
             guard block.id != source.id else { continue }
 
-            // Block center in canvas space
-            let blockCenterX = block.position.x + transform.contentOffset.width
-            let blockCenterY = block.position.y + transform.contentOffset.height
-            let blockCenter = CGPoint(x: blockCenterX, y: blockCenterY)
+            let blockCenter = block.position
 
             // Use actual rendered size for accurate hit-testing on autoHeight blocks
             let actualSize = BlockRenderedSizeCache.shared.renderedSize(for: block)

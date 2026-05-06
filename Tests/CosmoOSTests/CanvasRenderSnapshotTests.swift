@@ -2,6 +2,83 @@ import XCTest
 @testable import CosmoOS
 
 final class CanvasRenderSnapshotTests: XCTestCase {
+    func testCompositorTransformMatchesViewportScreenMapping() {
+        let transform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_200, height: 800),
+            committedOffset: CGSize(width: -240, height: 96),
+            gesturePanOffset: CGSize(width: 36, height: -18),
+            committedScale: 1.4,
+            gestureMagnification: 0.75
+        )
+        let compositor = CanvasCompositorTransform(viewportTransform: transform)
+        let canvasPoint = CGPoint(x: 420, y: 260)
+        let screenPoint = compositor.screenPoint(forCanvasPoint: canvasPoint)
+        let expected = transform.canvasToScreen(canvasPoint)
+
+        XCTAssertEqual(screenPoint.x, expected.x, accuracy: 0.001)
+        XCTAssertEqual(screenPoint.y, expected.y, accuracy: 0.001)
+        XCTAssertEqual(compositor.contentOffset, transform.contentOffset)
+        XCTAssertEqual(compositor.effectiveScale, transform.effectiveScale)
+    }
+
+    func testCommittedOnlyTransformStripsTransientGestureState() {
+        let liveTransform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_200, height: 800),
+            committedOffset: CGSize(width: -240, height: 96),
+            gesturePanOffset: CGSize(width: 36, height: -18),
+            committedScale: 1.4,
+            gestureMagnification: 0.75
+        )
+
+        let snapshotTransform = liveTransform.committedOnly()
+
+        XCTAssertEqual(snapshotTransform.viewportSize, liveTransform.viewportSize)
+        XCTAssertEqual(snapshotTransform.committedOffset, liveTransform.committedOffset)
+        XCTAssertEqual(snapshotTransform.gesturePanOffset, .zero)
+        XCTAssertEqual(snapshotTransform.committedScale, liveTransform.committedScale)
+        XCTAssertEqual(snapshotTransform.gestureMagnification, 1)
+        XCTAssertEqual(snapshotTransform.contentOffset, liveTransform.committedOffset)
+        XCTAssertEqual(snapshotTransform.effectiveScale, liveTransform.committedScale)
+    }
+
+    func testGridPatternPlaneAlignsToCanvasTileCoordinates() {
+        let transform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: CGSize(width: -123, height: 77),
+            committedScale: 1.25
+        )
+        let metrics = CanvasGridPatternMetrics(
+            transform: transform,
+            viewportSize: transform.viewportSize
+        )
+        let paddedVisibleRect = transform.visibleCanvasRect.insetBy(
+            dx: -metrics.tileSize * 2,
+            dy: -metrics.tileSize * 2
+        )
+
+        XCTAssertEqual(metrics.planeOrigin.x.truncatingRemainder(dividingBy: metrics.tileSize), 0, accuracy: 0.001)
+        XCTAssertEqual(metrics.planeOrigin.y.truncatingRemainder(dividingBy: metrics.tileSize), 0, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(metrics.planeOrigin.x, paddedVisibleRect.minX)
+        XCTAssertLessThanOrEqual(metrics.planeOrigin.y, paddedVisibleRect.minY)
+        XCTAssertGreaterThanOrEqual(metrics.planeOrigin.x + metrics.planeSize.width, paddedVisibleRect.maxX)
+        XCTAssertGreaterThanOrEqual(metrics.planeOrigin.y + metrics.planeSize.height, paddedVisibleRect.maxY)
+        XCTAssertEqual(metrics.rawDotSize, 2.5, accuracy: 0.001)
+    }
+
+    func testGridPatternKeepsMinimumScreenDotSizeAtLowZoom() {
+        let transform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: .zero,
+            committedScale: 0.25
+        )
+        let metrics = CanvasGridPatternMetrics(
+            transform: transform,
+            viewportSize: transform.viewportSize
+        )
+
+        XCTAssertEqual(metrics.rawDotSize * transform.effectiveScale, 0.75, accuracy: 0.001)
+    }
+
     @MainActor
     func testRenderPipelineDoesNotRebuildDataSnapshotForViewportOnlyPan() {
         let blocks = [

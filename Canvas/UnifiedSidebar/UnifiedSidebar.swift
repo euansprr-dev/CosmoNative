@@ -17,23 +17,24 @@ enum MainSidebarContentLayoutPolicy {
     static func contentLeadingInset(
         for destination: SidebarDestination,
         isSidebarVisible: Bool,
-        isSidebarHidden: Bool,
-        isHoverRevealed: Bool,
+        isSidebarHidden _: Bool,
+        isHoverRevealed _: Bool,
         isFocusModeActive: Bool,
         sidebarReservedWidth: CGFloat
     ) -> CGFloat {
         guard isSidebarVisible else { return 0 }
-
-        let isTransientHoverReveal = isSidebarHidden && isHoverRevealed
-        if isTransientHoverReveal {
-            return 0
-        }
 
         if case .thinkspace = destination, !isFocusModeActive {
             return 0
         }
 
         return sidebarReservedWidth
+    }
+}
+
+enum MainSidebarSceneSignalPolicy {
+    static func shouldAcceptRouteSceneSignals(isContentPushAnimating: Bool) -> Bool {
+        !isContentPushAnimating
     }
 }
 

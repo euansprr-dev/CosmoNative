@@ -74,6 +74,8 @@ struct MainView: View {
     @State private var isHoveringSidebarRevealTrigger = false
     @State private var isHoveringSidebarPanel = false
     @State private var sidebarHoverCloseTask: Task<Void, Never>?
+    @State private var isSidebarContentPushAnimating = false
+    @State private var sidebarContentPushAnimationTask: Task<Void, Never>?
     @State private var canvasSceneTint: CosmoGlassSceneTint = .fallback
     @State private var canvasSceneMaterial: CosmoGlassSceneMaterial = .fallback
     @State private var routeSceneSignals: [CosmoGlassSceneSignal] = []
@@ -819,6 +821,7 @@ struct MainView: View {
             }
             .onDisappear {
                 cancelSidebarHoverClose()
+                cancelSidebarContentPushFreeze()
             }
             .onChange(of: geo.size) { _, newSize in
                 updateSidebarInteractionWidth(
@@ -838,6 +841,10 @@ struct MainView: View {
             .onChange(of: sidebarPanelWidth) { _, _ in
                 updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
             }
+            .onChange(of: contentPushOffset) { oldValue, newValue in
+                guard oldValue != newValue else { return }
+                freezeRouteSceneSignalsDuringSidebarPush()
+            }
             .onReceive(NotificationCenter.default.publisher(for: .cosmoGlassSceneTintDidChange)) { notification in
                 guard let tint = notification.object as? CosmoGlassSceneTint else { return }
                 canvasSceneTint = tint
@@ -854,6 +861,10 @@ struct MainView: View {
                 }
             }
             .onPreferenceChange(CosmoGlassSceneSignalPreferenceKey.self) { signals in
+                guard MainSidebarSceneSignalPolicy.shouldAcceptRouteSceneSignals(
+                    isContentPushAnimating: isSidebarContentPushAnimating
+                ) else { return }
+
                 let visibleSignals = signals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
                 let cappedSignals = Array(
                     visibleSignals
@@ -941,6 +952,7 @@ struct MainView: View {
         cancelSidebarHoverClose()
         isHoveringSidebarRevealTrigger = false
         isHoveringSidebarPanel = false
+        freezeRouteSceneSignalsIfContentWillPush()
         withAnimation(sidebarAnimation) {
             isSidebarHidden = true
             isSidebarHoverRevealed = false
@@ -1007,6 +1019,7 @@ struct MainView: View {
         cancelSidebarHoverClose()
         isHoveringSidebarRevealTrigger = false
         isHoveringSidebarPanel = false
+        freezeRouteSceneSignalsIfContentWillPush()
         withAnimation(sidebarAnimation) {
             isSidebarHidden.toggle()
             isSidebarHoverRevealed = false
@@ -1017,6 +1030,7 @@ struct MainView: View {
         cancelSidebarHoverClose()
         isHoveringSidebarRevealTrigger = false
         isHoveringSidebarPanel = false
+        freezeRouteSceneSignalsIfContentWillPush()
         withAnimation(sidebarAnimation) {
             isSidebarHidden = false
             isSidebarHoverRevealed = false
@@ -1055,6 +1069,7 @@ struct MainView: View {
 
         guard isSidebarHidden, !isSidebarHoverRevealed else { return }
 
+        freezeRouteSceneSignalsIfContentWillPush()
         withAnimation(sidebarAnimation) {
             isSidebarHoverRevealed = true
         }
@@ -1081,6 +1096,7 @@ struct MainView: View {
                 isHoveringSidebarPanel: isHoveringSidebarPanel
             ) else { return }
 
+            freezeRouteSceneSignalsIfContentWillPush()
             withAnimation(sidebarAnimation) {
                 isSidebarHoverRevealed = false
             }
@@ -1090,6 +1106,33 @@ struct MainView: View {
     private func cancelSidebarHoverClose() {
         sidebarHoverCloseTask?.cancel()
         sidebarHoverCloseTask = nil
+    }
+
+    private func freezeRouteSceneSignalsIfContentWillPush() {
+        if case .thinkspace = currentDestination, appState.focusedEntity == nil {
+            return
+        }
+
+        freezeRouteSceneSignalsDuringSidebarPush()
+    }
+
+    private func freezeRouteSceneSignalsDuringSidebarPush() {
+        sidebarContentPushAnimationTask?.cancel()
+        isSidebarContentPushAnimating = true
+
+        sidebarContentPushAnimationTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 420_000_000)
+            guard !Task.isCancelled else { return }
+
+            isSidebarContentPushAnimating = false
+            sidebarContentPushAnimationTask = nil
+        }
+    }
+
+    private func cancelSidebarContentPushFreeze() {
+        sidebarContentPushAnimationTask?.cancel()
+        sidebarContentPushAnimationTask = nil
+        isSidebarContentPushAnimating = false
     }
 
     private func syncSidebarContext(with destination: SidebarDestination) {

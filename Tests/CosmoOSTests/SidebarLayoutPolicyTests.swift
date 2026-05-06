@@ -125,7 +125,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         }
     }
 
-    func testTransientHoverRevealDoesNotPushCommandCenterContent() {
+    func testTransientHoverRevealPushesCommandCenterContent() {
         let inset = MainSidebarContentLayoutPolicy.contentLeadingInset(
             for: .commandCenter,
             isSidebarVisible: true,
@@ -135,7 +135,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             sidebarReservedWidth: 320
         )
 
-        XCTAssertEqual(inset, 0)
+        XCTAssertEqual(inset, 320)
     }
 
     func testPersistentCommandCenterSidebarReservesContentSpace() {
@@ -176,6 +176,22 @@ final class SidebarLayoutPolicyTests: XCTestCase {
                 sidebarReservedWidth: 320
             ),
             320
+        )
+    }
+
+    func testRouteSceneSignalsFreezeDuringSidebarContentPush() {
+        XCTAssertFalse(
+            MainSidebarSceneSignalPolicy.shouldAcceptRouteSceneSignals(
+                isContentPushAnimating: true
+            )
+        )
+    }
+
+    func testRouteSceneSignalsUpdateWhenSidebarContentPushIsStable() {
+        XCTAssertTrue(
+            MainSidebarSceneSignalPolicy.shouldAcceptRouteSceneSignals(
+                isContentPushAnimating: false
+            )
         )
     }
 

@@ -99,6 +99,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         let inset = MainSidebarContentLayoutPolicy.contentLeadingInset(
             for: .thinkspace(id: "alpha"),
             isSidebarVisible: true,
+            isSidebarHidden: false,
+            isHoverRevealed: false,
             isFocusModeActive: false,
             sidebarReservedWidth: 320
         )
@@ -113,6 +115,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             let inset = MainSidebarContentLayoutPolicy.contentLeadingInset(
                 for: destination,
                 isSidebarVisible: true,
+                isSidebarHidden: false,
+                isHoverRevealed: false,
                 isFocusModeActive: false,
                 sidebarReservedWidth: 320
             )
@@ -121,10 +125,25 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         }
     }
 
-    func testHoverVisibleCommandCenterSidebarReservesContentSpace() {
+    func testTransientHoverRevealDoesNotPushCommandCenterContent() {
         let inset = MainSidebarContentLayoutPolicy.contentLeadingInset(
             for: .commandCenter,
             isSidebarVisible: true,
+            isSidebarHidden: true,
+            isHoverRevealed: true,
+            isFocusModeActive: false,
+            sidebarReservedWidth: 320
+        )
+
+        XCTAssertEqual(inset, 0)
+    }
+
+    func testPersistentCommandCenterSidebarReservesContentSpace() {
+        let inset = MainSidebarContentLayoutPolicy.contentLeadingInset(
+            for: .commandCenter,
+            isSidebarVisible: true,
+            isSidebarHidden: false,
+            isHoverRevealed: false,
             isFocusModeActive: false,
             sidebarReservedWidth: 320
         )
@@ -137,6 +156,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             MainSidebarContentLayoutPolicy.contentLeadingInset(
                 for: .commandCenter,
                 isSidebarVisible: false,
+                isSidebarHidden: true,
+                isHoverRevealed: false,
                 isFocusModeActive: false,
                 sidebarReservedWidth: 320
             ),
@@ -149,6 +170,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             MainSidebarContentLayoutPolicy.contentLeadingInset(
                 for: .thinkspace(id: "alpha"),
                 isSidebarVisible: true,
+                isSidebarHidden: false,
+                isHoverRevealed: false,
                 isFocusModeActive: true,
                 sidebarReservedWidth: 320
             ),

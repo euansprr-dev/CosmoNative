@@ -17,10 +17,17 @@ enum MainSidebarContentLayoutPolicy {
     static func contentLeadingInset(
         for destination: SidebarDestination,
         isSidebarVisible: Bool,
+        isSidebarHidden: Bool,
+        isHoverRevealed: Bool,
         isFocusModeActive: Bool,
         sidebarReservedWidth: CGFloat
     ) -> CGFloat {
         guard isSidebarVisible else { return 0 }
+
+        let isTransientHoverReveal = isSidebarHidden && isHoverRevealed
+        if isTransientHoverReveal {
+            return 0
+        }
 
         if case .thinkspace = destination, !isFocusModeActive {
             return 0

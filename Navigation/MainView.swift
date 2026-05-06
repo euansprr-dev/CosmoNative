@@ -750,6 +750,8 @@ struct MainView: View {
             let contentPushOffset = MainSidebarContentLayoutPolicy.contentLeadingInset(
                 for: currentDestination,
                 isSidebarVisible: isSidebarVisible,
+                isSidebarHidden: isSidebarHidden,
+                isHoverRevealed: isSidebarHoverRevealed,
                 isFocusModeActive: appState.focusedEntity != nil,
                 sidebarReservedWidth: sidebarLayout.reservedWidth
             )

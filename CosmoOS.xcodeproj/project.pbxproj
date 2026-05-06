@@ -200,6 +200,7 @@
 		462B146214FDD1079EAD2FCD /* ConversationMemoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A65A12758E70813B100C65 /* ConversationMemoryService.swift */; };
 		463FB9A8348CD5AF89C4B0F2 /* WeeklyStrategyReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = E466FDE1978C3D46D7B3269E /* WeeklyStrategyReview.swift */; };
 		4641A2F6F5544A48D9677766 /* AgentContextAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511D8ABEA86028198F618C2F /* AgentContextAssembler.swift */; };
+		CED50BAC7C8849A1A2B5D792 /* CosmoDefaultAgentPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFB65727C62E4B84AF9062CB /* CosmoDefaultAgentPrompt.swift */; };
 		467DE7DC2EDBFF45681097DC /* ContentPipelineMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 681554C47EC52A53784848E6 /* ContentPipelineMetadata.swift */; };
 		46968460B1B74076B0F66A08 /* CanvasRenderSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DE3C17B82342219B7C1ADB /* CanvasRenderSnapshot.swift */; };
 		47352522F9F291FF22C58A7A /* SwipePatternMiner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E128F1FB451CB1A016D313 /* SwipePatternMiner.swift */; };
@@ -981,6 +982,7 @@
 		50BDCC13C7F8B7915E8DE960 /* CosmoAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAction.swift; sourceTree = "<group>"; };
 		510127420EC790D32FECDB2F /* VisualEffectBlur.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualEffectBlur.swift; sourceTree = "<group>"; };
 		511D8ABEA86028198F618C2F /* AgentContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentContextAssembler.swift; sourceTree = "<group>"; };
+		BFB65727C62E4B84AF9062CB /* CosmoDefaultAgentPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoDefaultAgentPrompt.swift; sourceTree = "<group>"; };
 		512FCBE75880721AE01DB134 /* LibraryGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryGridView.swift; sourceTree = "<group>"; };
 		516AC79D42E94B1AA1C5C409 /* CaptureMediaStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureMediaStorage.swift; sourceTree = "<group>"; };
 		524F3BAAB06A19C91E38D6A4 /* SwipeURLClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeURLClassifier.swift; sourceTree = "<group>"; };
@@ -2829,6 +2831,7 @@
 			isa = PBXGroup;
 			children = (
 				511D8ABEA86028198F618C2F /* AgentContextAssembler.swift */,
+				BFB65727C62E4B84AF9062CB /* CosmoDefaultAgentPrompt.swift */,
 				A643AE3350A54AC55C166A1F /* AgentToolExecutor.swift */,
 				0472097BDAA818AA65ADDDC4 /* AgentToolRegistry.swift */,
 				ED030EBFD094A113DA20DEBE /* AgentWorkflowPlanner.swift */,
@@ -3178,6 +3181,7 @@
 				8CA2902A87080BBFEF1CCE81 /* AdvancedElementBrowser.swift in Sources */,
 				30FF84AB025FB2701FB377A3 /* AgentBriefGenerator.swift in Sources */,
 				4641A2F6F5544A48D9677766 /* AgentContextAssembler.swift in Sources */,
+				CED50BAC7C8849A1A2B5D792 /* CosmoDefaultAgentPrompt.swift in Sources */,
 				EDF12CD9D90F4EE7157BCC4F /* AgentOutcomeTracker.swift in Sources */,
 				8DB6722D8546384A2AB3C15B /* AgentPreference.swift in Sources */,
 				09109CF784C9CBCCCD1BDF7F /* AgentProactiveScheduler.swift in Sources */,

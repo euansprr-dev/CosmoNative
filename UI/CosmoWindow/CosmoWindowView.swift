@@ -118,6 +118,8 @@ struct CosmoWindowView: View {
             }
 
             HStack(spacing: 6) {
+                agentSelector
+
                 if !viewModel.isCollaboratorActive {
                     headerControlButton("plus.message") {
                         Task { await viewModel.startNewChat() }
@@ -301,7 +303,6 @@ struct CosmoWindowView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .onChange(of: viewModel.inputText) { syncMentionSearch() }
 
-                agentSelector
                 modelSelector
 
                 Button {
@@ -361,6 +362,8 @@ struct CosmoWindowView: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: CosmoWindowMetrics.headerAgentLabelMaxWidth, alignment: .leading)
 
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
@@ -371,7 +374,8 @@ struct CosmoWindowView: View {
             .cosmoWindowChip(isActive: viewModel.selectedAgentProfile != nil)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showAgentPicker, arrowEdge: .bottom) {
+        .help("Agent")
+        .popover(isPresented: $showAgentPicker, arrowEdge: .top) {
             CosmoAgentPickerPopover(
                 profiles: viewModel.agentProfiles.filter(\.isEnabled),
                 selectedID: viewModel.selectedAgentProfileID,
@@ -733,6 +737,7 @@ enum CosmoWindowMetrics {
     static let contentPadding: CGFloat = 18
     static let messageSpacing: CGFloat = 12
     static let controlSize: CGFloat = 32
+    static let headerAgentLabelMaxWidth: CGFloat = 88
     static let cardCornerRadius: CGFloat = 14
     static let composerCornerRadius: CGFloat = 16
     static let maxMessageWidth: CGFloat = 332
@@ -1244,45 +1249,6 @@ private struct CosmoAgentManagerSheet: View {
     }
 }
 
-private struct CosmoModelOption: Identifiable {
-    let id: String
-    let tier: AgentModelTier?
-    let title: String
-    let detail: String
-    let icon: String
-
-    static let all: [CosmoModelOption] = [
-        CosmoModelOption(
-            id: "auto",
-            tier: nil,
-            title: "Auto",
-            detail: "Route to the best model for this request",
-            icon: "wand.and.stars"
-        ),
-        CosmoModelOption(
-            id: "haiku",
-            tier: .sensor,
-            title: "Haiku",
-            detail: "Fast capture, classification, and lightweight help",
-            icon: "bolt"
-        ),
-        CosmoModelOption(
-            id: "sonnet",
-            tier: .strategist,
-            title: "Sonnet",
-            detail: "Balanced planning, reasoning, and conversation",
-            icon: "brain.head.profile"
-        ),
-        CosmoModelOption(
-            id: "opus",
-            tier: .writer,
-            title: "Opus",
-            detail: "Deep writing, synthesis, and polish",
-            icon: "sparkles"
-        )
-    ]
-}
-
 private struct CosmoModelPickerPopover: View {
     let selectedTier: AgentModelTier?
     let onSelect: (AgentModelTier?) -> Void
@@ -1309,7 +1275,7 @@ private struct CosmoModelPickerPopover: View {
     }
 
     private func modelRow(_ option: CosmoModelOption) -> some View {
-        let isSelected = option.tier?.rawValue == selectedTier?.rawValue
+        let isSelected = option.tier?.rawValue == selectedTier?.rawValue || (option.tier == nil && selectedTier == nil)
 
         return Button {
             onSelect(option.tier)

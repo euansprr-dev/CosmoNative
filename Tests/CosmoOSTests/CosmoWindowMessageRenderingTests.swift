@@ -3,6 +3,22 @@ import CoreGraphics
 @testable import CosmoOS
 
 final class CosmoWindowMessageRenderingTests: XCTestCase {
+    func testDefaultAgentPromptIncludesGeneralCollaboratorBehavior() {
+        let prompt = CosmoDefaultAgentPrompt.text
+
+        XCTAssertTrue(prompt.contains("general collaborator for knowledge work"))
+        XCTAssertTrue(prompt.contains("brainstorm with concrete options"))
+        XCTAssertTrue(prompt.contains("retrieve information before answering"))
+    }
+
+    func testDefaultAgentPromptIncludesCostDiscipline() {
+        let prompt = CosmoDefaultAgentPrompt.text
+
+        XCTAssertTrue(prompt.contains("Cost discipline"))
+        XCTAssertTrue(prompt.contains("Use cheaper models"))
+        XCTAssertTrue(prompt.contains("Escalate only when"))
+    }
+
     func testTimelineTextSelectionIsDisabledToAvoidSelectionOverlayLayoutLoop() {
         XCTAssertFalse(CosmoWindowMessageRenderingPolicy.allowsTimelineTextSelection)
     }

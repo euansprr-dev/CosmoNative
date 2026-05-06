@@ -487,7 +487,9 @@ final class CosmoWindowViewModel: ObservableObject {
 
     func selectAgentProfile(_ profile: CustomAgentProfile?) {
         selectedAgentProfileID = profile?.id
-        modelOverride = modelOverride ?? profile?.preferredModelTier
+        if modelOverride == nil {
+            modelOverride = profile?.preferredModelTier
+        }
     }
 
     func saveAgentProfile(_ profile: CustomAgentProfile) async {
@@ -608,12 +610,7 @@ final class CosmoWindowViewModel: ObservableObject {
     }
 
     var currentModelLabel: String {
-        switch modelOverride {
-        case nil: return "Auto"
-        case .sensor: return "Haiku"
-        case .strategist: return "Sonnet"
-        case .writer: return "Opus"
-        }
+        modelOverride?.displayLabel ?? "Auto"
     }
 
     var filteredChatHistoryEntries: [ChatHistoryEntry] {
@@ -1356,6 +1353,75 @@ final class CosmoWindowViewModel: ObservableObject {
 
         return true
     }
+}
+
+// MARK: - Model Picker
+
+struct CosmoModelOption: Identifiable {
+    let id: String
+    let tier: AgentModelTier?
+    let title: String
+    let detail: String
+    let icon: String
+
+    static let all: [CosmoModelOption] = [
+        CosmoModelOption(
+            id: "auto",
+            tier: nil,
+            title: "Auto",
+            detail: "Route by task and cost",
+            icon: "wand.and.stars"
+        ),
+        CosmoModelOption(
+            id: "gptChatLatest",
+            tier: .gptChatLatest,
+            title: "GPT Chat Latest",
+            detail: "Best everyday collaborator",
+            icon: "bubble.left.and.bubble.right"
+        ),
+        CosmoModelOption(
+            id: "geminiFlashLatest",
+            tier: .geminiFlashLatest,
+            title: "Gemini Flash",
+            detail: "Fast and cheaper general work",
+            icon: "bolt"
+        ),
+        CosmoModelOption(
+            id: "gpt55Thinking",
+            tier: .gpt55Thinking,
+            title: "GPT 5.5 Thinking",
+            detail: "Deep reasoning and hard planning",
+            icon: "brain.head.profile"
+        ),
+        CosmoModelOption(
+            id: "opus47",
+            tier: .opus47,
+            title: "Opus 4.7",
+            detail: "Deep writing and synthesis",
+            icon: "sparkles"
+        ),
+        CosmoModelOption(
+            id: "haiku",
+            tier: .sensor,
+            title: "Haiku",
+            detail: "Fast capture and lightweight help",
+            icon: "speedometer"
+        ),
+        CosmoModelOption(
+            id: "sonnet",
+            tier: .strategist,
+            title: "Sonnet",
+            detail: "Balanced planning and analysis",
+            icon: "point.3.connected.trianglepath.dotted"
+        ),
+        CosmoModelOption(
+            id: "opus",
+            tier: .writer,
+            title: "Opus 4.6",
+            detail: "Legacy premium writing route",
+            icon: "text.badge.star"
+        )
+    ]
 }
 
 // MARK: - Chat History Entry

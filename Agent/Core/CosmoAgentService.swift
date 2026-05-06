@@ -170,6 +170,19 @@ class CosmoAgentService: ObservableObject {
     /// Maximum tool call iterations for simple intents (queries, captures, corrections)
     private let baseMaxToolIterations = 12
 
+    nonisolated static func defaultModelTier(for intent: AgentIntent) -> AgentModelTier {
+        switch intent {
+        case .capture, .plan, .query, .correct:
+            return .sensor
+        case .brainstorm:
+            return .gptChatLatest
+        case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
+            return .strategist
+        case .draft:
+            return .writer
+        }
+    }
+
     /// Returns the max tool iterations for a given intent. Creative/analytical
     /// intents that chain many tools (profile → swipes → beats → draft → score)
     /// get a higher ceiling to avoid "ran out of processing steps" on complex requests.
@@ -489,14 +502,7 @@ class CosmoAgentService: ObservableObject {
         if let override = tierOverride {
             modelTier = override
         } else {
-            switch intent {
-            case .capture, .plan, .query, .correct:
-                modelTier = .sensor      // Haiku — data operations, lookups, captures
-            case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
-                modelTier = .strategist  // Sonnet — analytical reasoning, strategy
-            case .brainstorm, .draft:
-                modelTier = .writer      // Opus — creative writing coordination needs full reasoning to follow tool-use instructions precisely
-            }
+            modelTier = Self.defaultModelTier(for: intent)
         }
 
         // For draft intent, guide the agent to use writing tools (not inline text)

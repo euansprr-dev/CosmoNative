@@ -537,6 +537,17 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
         self.baseURL = baseURL
     }
 
+    private func maxTokens(for model: String) -> Int {
+        let lower = model.lowercased()
+        if lower.contains("gpt-5.5") { return 16384 }
+        if lower.contains("gpt-chat-latest") { return 8192 }
+        if lower.contains("opus") { return 16384 }
+        if lower.contains("sonnet") { return 8192 }
+        if lower.contains("gemini-flash-latest") { return 8192 }
+        if lower.contains("gemini-3") { return 8192 }
+        return 4096
+    }
+
     func complete(
         messages: [AgentMessage],
         tools: [LLMToolDefinition]?,
@@ -580,15 +591,7 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
             openAIMessages.append(msgDict)
         }
 
-        // Resolve max_tokens based on model tier
-        let baseMaxTokens: Int
-        if resolvedModel.contains("opus") {
-            baseMaxTokens = 16384
-        } else if resolvedModel.contains("sonnet") {
-            baseMaxTokens = 8192
-        } else {
-            baseMaxTokens = 4096
-        }
+        let baseMaxTokens = maxTokens(for: resolvedModel)
 
         var body: [String: Any] = [
             "model": resolvedModel,
@@ -1100,10 +1103,7 @@ extension OpenAIProvider {
             openAIMessages.append(msgDict)
         }
 
-        // Resolve max_tokens based on model tier (detected from model ID)
-        let isOpus = resolvedModel.contains("opus")
-        let isSonnet = resolvedModel.contains("sonnet")
-        let resolvedMaxTokens = isOpus ? 16384 : (isSonnet ? 8192 : 4096)
+        let resolvedMaxTokens = maxTokens(for: resolvedModel)
 
         var body: [String: Any] = [
             "model": resolvedModel,
@@ -1181,10 +1181,7 @@ extension OpenAIProvider: StreamingLLMProvider {
             openAIMessages.append(msgDict)
         }
 
-        let resolvedMaxTokens: Int
-        if resolvedModel.contains("opus") { resolvedMaxTokens = 16384 }
-        else if resolvedModel.contains("sonnet") { resolvedMaxTokens = 8192 }
-        else { resolvedMaxTokens = 4096 }
+        let resolvedMaxTokens = maxTokens(for: resolvedModel)
 
         var body: [String: Any] = [
             "model": resolvedModel,

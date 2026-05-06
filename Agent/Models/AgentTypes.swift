@@ -52,11 +52,15 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
 
     /// Popular models available on OpenRouter
     static let openRouterModels: [(id: String, label: String)] = [
+        ("openai/gpt-5.5:thinking", "GPT 5.5 Thinking"),
+        ("anthropic/claude-opus-4.7", "Claude Opus 4.7"),
+        ("openai/gpt-chat-latest", "GPT Chat Latest"),
+        ("~google/gemini-flash-latest", "Gemini Flash Latest"),
         ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
         ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
         ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
-        ("openai/gpt-4o", "GPT-4o"),
-        ("openai/gpt-4o-mini", "GPT-4o Mini"),
+        ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite"),
+        ("google/gemini-3-flash-preview", "Gemini 3 Flash Preview"),
         ("google/gemini-2.0-flash-001", "Gemini 2.0 Flash"),
         ("google/gemini-2.5-pro-preview", "Gemini 2.5 Pro"),
         ("deepseek/deepseek-chat", "DeepSeek V3"),
@@ -363,12 +367,32 @@ enum AgentModelTier: String, Codable, Sendable {
     case sensor      // Haiku 4.5 — cheap bulk analysis, classification, scoring
     case strategist  // Sonnet 4.5 — conversations, outlines, re-ranking, strategy
     case writer      // Opus 4.6 — full drafts, hook generation, polish passes
+    case gpt55Thinking
+    case opus47
+    case gptChatLatest
+    case geminiFlashLatest
 
     var modelId: String {
         switch self {
         case .sensor: return "anthropic/claude-haiku-4.5"
         case .strategist: return "anthropic/claude-sonnet-4.5"
         case .writer: return "anthropic/claude-opus-4.6"
+        case .gpt55Thinking: return "openai/gpt-5.5:thinking"
+        case .opus47: return "anthropic/claude-opus-4.7"
+        case .gptChatLatest: return "openai/gpt-chat-latest"
+        case .geminiFlashLatest: return "~google/gemini-flash-latest"
+        }
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .sensor: return "Haiku"
+        case .strategist: return "Sonnet"
+        case .writer: return "Opus"
+        case .gpt55Thinking: return "GPT 5.5 Thinking"
+        case .opus47: return "Opus 4.7"
+        case .gptChatLatest: return "GPT Chat Latest"
+        case .geminiFlashLatest: return "Gemini Flash"
         }
     }
 
@@ -377,6 +401,10 @@ enum AgentModelTier: String, Codable, Sendable {
         case .sensor: return 4096
         case .strategist: return 8192
         case .writer: return 16384
+        case .gpt55Thinking: return 16384
+        case .opus47: return 16384
+        case .gptChatLatest: return 8192
+        case .geminiFlashLatest: return 8192
         }
     }
 
@@ -385,6 +413,10 @@ enum AgentModelTier: String, Codable, Sendable {
         case .sensor: return 200_000
         case .strategist: return 200_000
         case .writer: return 1_000_000
+        case .gpt55Thinking: return 1_050_000
+        case .opus47: return 1_000_000
+        case .gptChatLatest: return 400_000
+        case .geminiFlashLatest: return 1_048_576
         }
     }
 }
@@ -732,13 +764,34 @@ struct ModelFailoverChain: Sendable {
     static let defaultChain = ModelFailoverChain(models: [
         FailoverModel(modelId: "anthropic/claude-sonnet-4.5", maxRetries: 1, label: "Sonnet"),
         FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
-        FailoverModel(modelId: "google/gemini-2.0-flash-001", maxRetries: 1, label: "Gemini Flash"),
+        FailoverModel(modelId: "~google/gemini-flash-latest", maxRetries: 1, label: "Gemini Flash"),
     ])
 
     /// Sensor chain: Haiku → Gemini Flash
     static let sensorChain = ModelFailoverChain(models: [
         FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
-        FailoverModel(modelId: "google/gemini-2.0-flash-001", maxRetries: 1, label: "Gemini Flash"),
+        FailoverModel(modelId: "~google/gemini-flash-latest", maxRetries: 1, label: "Gemini Flash"),
+    ])
+
+    static let gpt55ThinkingChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "openai/gpt-5.5:thinking", maxRetries: 1, label: "GPT 5.5 Thinking"),
+        FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
+    ])
+
+    static let opus47Chain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "anthropic/claude-opus-4.7", maxRetries: 2, label: "Opus 4.7"),
+        FailoverModel(modelId: "anthropic/claude-opus-4.6", maxRetries: 1, label: "Opus 4.6"),
+        FailoverModel(modelId: "openai/gpt-5.5:thinking", maxRetries: 1, label: "GPT 5.5 Thinking"),
+    ])
+
+    static let gptChatLatestChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
+        FailoverModel(modelId: "~google/gemini-flash-latest", maxRetries: 1, label: "Gemini Flash"),
+    ])
+
+    static let geminiFlashLatestChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "~google/gemini-flash-latest", maxRetries: 1, label: "Gemini Flash"),
+        FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
     ])
 
     /// Get the appropriate failover chain for a model tier
@@ -747,6 +800,10 @@ struct ModelFailoverChain: Sendable {
         case .writer: return .writerChain
         case .strategist: return .defaultChain
         case .sensor: return .sensorChain
+        case .gpt55Thinking: return .gpt55ThinkingChain
+        case .opus47: return .opus47Chain
+        case .gptChatLatest: return .gptChatLatestChain
+        case .geminiFlashLatest: return .geminiFlashLatestChain
         }
     }
 }

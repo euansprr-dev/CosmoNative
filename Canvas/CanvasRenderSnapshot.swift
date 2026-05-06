@@ -194,6 +194,11 @@ private struct CanvasRenderDataSignature: Equatable {
     }
 }
 
+private struct CanvasRenderDataRevisionSignature: Equatable {
+    let blockDataRevision: Int
+    let clusterDataRevision: Int
+}
+
 private struct CanvasRenderViewportSignature: Equatable {
     let transform: CanvasViewportTransform
     let selectedBlockId: String?
@@ -205,28 +210,52 @@ private struct CanvasRenderViewportSignature: Equatable {
 @MainActor
 final class CanvasRenderPipeline: ObservableObject {
     private var dataSignature: CanvasRenderDataSignature?
+    private var dataRevisionSignature: CanvasRenderDataRevisionSignature?
     private var dataSnapshot: CanvasRenderDataSnapshot = .empty
     private var viewportSignature: CanvasRenderViewportSignature?
     private var viewportSnapshot: CanvasRenderSnapshot = .empty
 
     private(set) var lastRenderableBlocks: [CanvasBlock] = []
     private(set) var hasResolvedSnapshot = false
+    private(set) var debugDataSnapshotBuildCount = 0
+    private(set) var debugViewportSnapshotBuildCount = 0
 
     func snapshot(
         blocks: [CanvasBlock],
+        blockDataRevision: Int? = nil,
         transform: CanvasViewportTransform,
         userClusters: [CanvasCluster],
+        clusterDataRevision: Int? = nil,
         selectedBlockId: String?,
         selectedClusterId: UUID?,
         draggingClusterId: UUID?,
         resizingClusterId: UUID?
     ) -> CanvasRenderSnapshot {
-        let nextDataSignature = CanvasRenderDataSignature(blocks: blocks, userClusters: userClusters)
-        if dataSignature != nextDataSignature {
+        let shouldRebuildData: Bool
+        if let blockDataRevision, let clusterDataRevision {
+            let nextRevisionSignature = CanvasRenderDataRevisionSignature(
+                blockDataRevision: blockDataRevision,
+                clusterDataRevision: clusterDataRevision
+            )
+            shouldRebuildData = dataRevisionSignature != nextRevisionSignature
+            if shouldRebuildData {
+                dataRevisionSignature = nextRevisionSignature
+                dataSignature = nil
+            }
+        } else {
+            let nextDataSignature = CanvasRenderDataSignature(blocks: blocks, userClusters: userClusters)
+            shouldRebuildData = dataSignature != nextDataSignature
+            if shouldRebuildData {
+                dataSignature = nextDataSignature
+                dataRevisionSignature = nil
+            }
+        }
+
+        if shouldRebuildData {
             let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-data-snapshot")
             dataSnapshot = CanvasRenderDataSnapshot.build(blocks: blocks, userClusters: userClusters)
-            dataSignature = nextDataSignature
             viewportSignature = nil
+            debugDataSnapshotBuildCount += 1
             CanvasPerformanceInstrumentation.signposter.endInterval("render-data-snapshot", signpost)
         }
 
@@ -249,6 +278,7 @@ final class CanvasRenderPipeline: ObservableObject {
             viewportSignature = nextViewportSignature
             lastRenderableBlocks = viewportSnapshot.renderableBlocks
             hasResolvedSnapshot = true
+            debugViewportSnapshotBuildCount += 1
             CanvasPerformanceInstrumentation.signposter.endInterval("render-viewport-snapshot", signpost)
         }
 

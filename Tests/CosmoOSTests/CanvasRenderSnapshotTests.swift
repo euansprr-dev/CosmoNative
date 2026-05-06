@@ -2,6 +2,94 @@ import XCTest
 @testable import CosmoOS
 
 final class CanvasRenderSnapshotTests: XCTestCase {
+    @MainActor
+    func testRenderPipelineDoesNotRebuildDataSnapshotForViewportOnlyPan() {
+        let blocks = [
+            CanvasBlock(
+                id: "origin",
+                position: CGPoint(x: 500, y: 400),
+                size: CGSize(width: 200, height: 120),
+                zIndex: 2,
+                entityType: .research,
+                entityId: 1,
+                entityUuid: "origin-uuid",
+                title: "Origin",
+                metadata: ["url": "https://youtu.be/abc"]
+            ),
+            CanvasBlock(
+                id: "after-pan",
+                position: CGPoint(x: 1_800, y: 400),
+                size: CGSize(width: 200, height: 120),
+                zIndex: 1,
+                entityType: .idea,
+                entityId: 2,
+                entityUuid: "after-pan-uuid",
+                title: "After pan"
+            )
+        ]
+        let pipeline = CanvasRenderPipeline()
+
+        _ = pipeline.snapshot(
+            blocks: blocks,
+            blockDataRevision: 1,
+            transform: CanvasViewportTransform(
+                viewportSize: CGSize(width: 1_000, height: 800),
+                committedOffset: .zero
+            ),
+            userClusters: [],
+            clusterDataRevision: 1,
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+
+        _ = pipeline.snapshot(
+            blocks: blocks,
+            blockDataRevision: 1,
+            transform: CanvasViewportTransform(
+                viewportSize: CGSize(width: 1_000, height: 800),
+                committedOffset: CGSize(width: -1_300, height: 0)
+            ),
+            userClusters: [],
+            clusterDataRevision: 1,
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+
+        XCTAssertEqual(pipeline.debugDataSnapshotBuildCount, 1)
+        XCTAssertEqual(pipeline.debugViewportSnapshotBuildCount, 2)
+    }
+
+    func testConnectionGeometrySignatureUsesNumericBlockKeys() {
+        let block = CanvasBlock(
+            id: "block",
+            position: CGPoint(x: 10.1254, y: 20.9876),
+            size: CGSize(width: 220.25, height: 310.75),
+            scale: 1.25,
+            entityType: .idea,
+            entityId: 1,
+            entityUuid: "block-uuid",
+            title: "Block"
+        )
+        var moved = block
+        moved.position.x += 1
+
+        let signature = CanvasConnectionGeometrySignature(blocks: [block])
+        let sameSignature = CanvasConnectionGeometrySignature(blocks: [block])
+        let movedSignature = CanvasConnectionGeometrySignature(blocks: [moved])
+
+        XCTAssertEqual(signature, sameSignature)
+        XCTAssertNotEqual(signature, movedSignature)
+        XCTAssertEqual(signature.blockKeys.first?.positionX, 10_125)
+        XCTAssertEqual(signature.blockKeys.first?.positionY, 20_988)
+        XCTAssertEqual(signature.blockKeys.first?.width, 220_250)
+        XCTAssertEqual(signature.blockKeys.first?.height, 310_750)
+        XCTAssertEqual(signature.blockKeys.first?.scale, 1_250)
+    }
+
     func testRenderDataSnapshotReusesDataAcrossViewportFiltering() {
         let visibleAtOrigin = CanvasBlock(
             id: "origin",

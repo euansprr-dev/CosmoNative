@@ -4,6 +4,41 @@
 // PERF: Throttled 15fps animation, cached endpoints, single-pass edge filtering
 
 import SwiftUI
+import AppKit
+
+struct CanvasConnectionGeometrySignature: Equatable {
+    let blockKeys: [BlockKey]
+
+    init(blocks: [CanvasBlock]) {
+        self.blockKeys = blocks.map(BlockKey.init)
+    }
+
+    struct BlockKey: Equatable {
+        let entityUuid: String
+        let positionX: Int
+        let positionY: Int
+        let width: Int
+        let height: Int
+        let scale: Int
+
+        init(block: CanvasBlock) {
+            self.entityUuid = block.entityUuid
+            self.positionX = Self.quantize(block.position.x)
+            self.positionY = Self.quantize(block.position.y)
+            self.width = Self.quantize(block.size.width)
+            self.height = Self.quantize(block.size.height)
+            self.scale = Self.quantize(block.scale)
+        }
+
+        private static func quantize(_ value: CGFloat) -> Int {
+            Int((value * 1000).rounded())
+        }
+
+        private static func quantize(_ value: Double) -> Int {
+            Int((value * 1000).rounded())
+        }
+    }
+}
 
 /// Renders knowledge pulse lines between related blocks on the canvas.
 /// Queries the graph for edges where both source and target are visible, then
@@ -54,17 +89,8 @@ struct CanvasConnectionLinesLayer: View {
         static let pulseFrameRate: TimeInterval = 1.0 / 15.0
     }
 
-    private var blockGeometrySignature: [String] {
-        blocks.map {
-            [
-                $0.entityUuid,
-                "\(Int(($0.position.x * 1000).rounded()))",
-                "\(Int(($0.position.y * 1000).rounded()))",
-                "\(Int(($0.size.width * 1000).rounded()))",
-                "\(Int(($0.size.height * 1000).rounded()))",
-                "\(Int(($0.scale * 1000).rounded()))",
-            ].joined(separator: "|")
-        }
+    private var blockGeometrySignature: CanvasConnectionGeometrySignature {
+        CanvasConnectionGeometrySignature(blocks: blocks)
     }
 
     /// Affine transform from raw canvas space to screen space.
@@ -78,33 +104,27 @@ struct CanvasConnectionLinesLayer: View {
 
     var body: some View {
         let xform = screenTransform
-        // Pre-compute screen-space paths and endpoints for rendering + hit testing
-        let screenPaths = cachedCanvasPaths.mapValues { $0.applying(xform) }
-        let screenEndpoints = cachedCanvasEndpoints.mapValues { ep in
-            (
-                start: ep.start.applying(xform),
-                end: ep.end.applying(xform)
-            )
-        }
 
         ZStack {
             // Visual layer (no hit testing — decorative animated lines)
             CanvasConnectionVisualRenderer(
                 edges: cachedVisibleEdges,
-                cachedPaths: screenPaths,
+                cachedPaths: cachedCanvasPaths,
+                screenTransform: xform,
                 animationPhase: animationPhase,
-                effectiveScale: transform.effectiveScale,
                 selectedEdgeKey: selectedEdgeKey
             )
             .allowsHitTesting(false)
 
-            // Hit-test layer — invisible wide paths that respond to taps
-            // PERF: Uses same endpoints as visual layer
-            ForEach(cachedVisibleEdges, id: \.deduplicationKey) { edge in
-                if let endpoints = screenEndpoints[edge.deduplicationKey] {
-                    connectionHitArea(edge: edge, from: endpoints.start, to: endpoints.end)
-                }
-            }
+            // Hit-test layer. The backing NSView returns nil from hitTest unless
+            // the pointer is over a cached path, so panning still falls through.
+            ConnectionHitTestLayer(
+                edges: cachedVisibleEdges,
+                cachedCanvasEndpoints: cachedCanvasEndpoints,
+                transform: transform,
+                hitTestWidth: Constants.hitTestWidth,
+                onSelect: selectConnection
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Dismiss overlay — when a connection is selected, tapping anywhere
@@ -113,18 +133,14 @@ struct CanvasConnectionLinesLayer: View {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        withAnimation(ProMotionSprings.snappy) {
-                            selectedEdgeKey = nil
-                        }
-                        // Also deselect any selected blocks
-                        NotificationCenter.default.post(name: .blurAllBlocks, object: nil)
+                        dismissConnectionSelection()
                     }
             }
 
             // Delete button for selected connection
             if let selectedKey = selectedEdgeKey,
                let edge = cachedVisibleEdges.first(where: { $0.deduplicationKey == selectedKey }),
-               let endpoints = screenEndpoints[edge.deduplicationKey] {
+               let endpoints = screenEndpoints(for: edge) {
                 connectionDeleteButton(edge: edge, from: endpoints.start, to: endpoints.end)
             }
         }
@@ -184,6 +200,35 @@ struct CanvasConnectionLinesLayer: View {
                 pulseTimer = nil
             }
         }
+    }
+
+    // MARK: - Selection
+
+    private func selectConnection(_ edge: GraphEdge) {
+        withAnimation(ProMotionSprings.snappy) {
+            if selectedEdgeKey == edge.deduplicationKey {
+                selectedEdgeKey = nil
+            } else {
+                selectedEdgeKey = edge.deduplicationKey
+            }
+        }
+    }
+
+    private func dismissConnectionSelection() {
+        withAnimation(ProMotionSprings.snappy) {
+            selectedEdgeKey = nil
+        }
+        // Also deselect any selected blocks.
+        NotificationCenter.default.post(name: .blurAllBlocks, object: nil)
+    }
+
+    private func screenEndpoints(for edge: GraphEdge) -> (start: CGPoint, end: CGPoint)? {
+        guard let endpoints = cachedCanvasEndpoints[edge.deduplicationKey] else { return nil }
+        let xform = screenTransform
+        return (
+            start: endpoints.start.applying(xform),
+            end: endpoints.end.applying(xform)
+        )
     }
 
     // MARK: - Pulse Timer
@@ -293,30 +338,6 @@ struct CanvasConnectionLinesLayer: View {
             from: fromPos, fromSize: fromRendered,
             to: toPos, toSize: toRendered
         )
-    }
-
-    // MARK: - Hit Area
-
-    /// Invisible wide bezier path that accepts taps to select a connection
-    @ViewBuilder
-    private func connectionHitArea(edge: GraphEdge, from: CGPoint, to: CGPoint) -> some View {
-        let control = bezierControl(from: from, to: to)
-        let hitPath = Path { path in
-            path.move(to: from)
-            path.addQuadCurve(to: to, control: control)
-        }.strokedPath(StrokeStyle(lineWidth: Constants.hitTestWidth, lineCap: .round))
-
-        hitPath
-            .fill(Color.white.opacity(0.001))
-            .onTapGesture {
-                withAnimation(ProMotionSprings.snappy) {
-                    if selectedEdgeKey == edge.deduplicationKey {
-                        selectedEdgeKey = nil
-                    } else {
-                        selectedEdgeKey = edge.deduplicationKey
-                    }
-                }
-            }
     }
 
     // MARK: - Delete Button
@@ -528,13 +549,14 @@ private struct EdgeStyle {
     }
 }
 
-/// Renders connection lines using SwiftUI Path shapes in screen coordinates.
-/// Paths are pre-transformed from canvas space via CGAffineTransform.
+/// Renders connection lines with cached canvas-space paths moved by one
+/// container transform. Pan changes the transform instead of rebuilding a
+/// screen-space path dictionary.
 private struct CanvasConnectionVisualRenderer: View {
     let edges: [GraphEdge]
     let cachedPaths: [String: Path]
+    let screenTransform: CGAffineTransform
     let animationPhase: Double
-    let effectiveScale: CGFloat
     let selectedEdgeKey: String?
 
     var body: some View {
@@ -545,14 +567,123 @@ private struct CanvasConnectionVisualRenderer: View {
                         edge: edge,
                         path: path,
                         animationPhase: animationPhase,
-                        effectiveScale: effectiveScale,
+                        effectiveScale: 1,
                         isSelected: selectedEdgeKey == edge.deduplicationKey,
                         isDimmed: selectedEdgeKey != nil && selectedEdgeKey != edge.deduplicationKey
                     )
                 }
             }
         }
+        .transformEffect(screenTransform)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct ConnectionHitTestLayer: NSViewRepresentable {
+    let edges: [GraphEdge]
+    let cachedCanvasEndpoints: [String: (start: CGPoint, end: CGPoint)]
+    let transform: CanvasViewportTransform
+    let hitTestWidth: CGFloat
+    let onSelect: (GraphEdge) -> Void
+
+    func makeNSView(context: Context) -> ConnectionHitTestNSView {
+        let view = ConnectionHitTestNSView()
+        view.update(
+            edges: edges,
+            cachedCanvasEndpoints: cachedCanvasEndpoints,
+            transform: transform,
+            hitTestWidth: hitTestWidth,
+            onSelect: onSelect
+        )
+        return view
+    }
+
+    func updateNSView(_ nsView: ConnectionHitTestNSView, context: Context) {
+        nsView.update(
+            edges: edges,
+            cachedCanvasEndpoints: cachedCanvasEndpoints,
+            transform: transform,
+            hitTestWidth: hitTestWidth,
+            onSelect: onSelect
+        )
+    }
+}
+
+@MainActor
+private final class ConnectionHitTestNSView: NSView {
+    private var edges: [GraphEdge] = []
+    private var cachedCanvasEndpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
+    private var transform = CanvasViewportTransform(viewportSize: .zero, committedOffset: .zero)
+    private var hitTestWidth: CGFloat = 24
+    private var onSelect: ((GraphEdge) -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    func update(
+        edges: [GraphEdge],
+        cachedCanvasEndpoints: [String: (start: CGPoint, end: CGPoint)],
+        transform: CanvasViewportTransform,
+        hitTestWidth: CGFloat,
+        onSelect: @escaping (GraphEdge) -> Void
+    ) {
+        self.edges = edges
+        self.cachedCanvasEndpoints = cachedCanvasEndpoints
+        self.transform = transform
+        self.hitTestWidth = hitTestWidth
+        self.onSelect = onSelect
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        edge(at: point) == nil ? nil : self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let edge = edge(at: point) else { return }
+        onSelect?(edge)
+    }
+
+    private func edge(at screenPoint: CGPoint) -> GraphEdge? {
+        let canvasPoint = transform.screenToCanvas(screenPoint)
+        let lineWidth = hitTestWidth / max(transform.effectiveScale, 0.001)
+
+        for edge in edges.reversed() {
+            guard let endpoints = cachedCanvasEndpoints[edge.deduplicationKey] else { continue }
+            let path = canvasPath(from: endpoints.start, to: endpoints.end)
+                .strokedPath(StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+            if path.contains(canvasPoint) {
+                return edge
+            }
+        }
+
+        return nil
+    }
+
+    private func canvasPath(from: CGPoint, to: CGPoint) -> Path {
+        let control = bezierControl(from: from, to: to)
+        return Path { path in
+            path.move(to: from)
+            path.addQuadCurve(to: to, control: control)
+        }
+    }
+
+    private func bezierControl(from: CGPoint, to: CGPoint) -> CGPoint {
+        let midX = (from.x + to.x) / 2
+        let midY = (from.y + to.y) / 2
+        let dx = to.x - from.x
+        let dy = to.y - from.y
+        let length = sqrt(dx * dx + dy * dy)
+        guard length > 0 else { return CGPoint(x: midX, y: midY) }
+
+        let perpX = -dy / length
+        let perpY = dx / length
+        let offset = length * 0.15
+        let direction: CGFloat = from.x + from.y < to.x + to.y ? 1 : -1
+
+        return CGPoint(
+            x: midX + perpX * offset * direction,
+            y: midY + perpY * offset * direction
+        )
     }
 }
 

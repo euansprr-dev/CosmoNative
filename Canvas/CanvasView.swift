@@ -657,7 +657,7 @@ struct CanvasView: View {
                     clusterEngine.renameUserCluster(id: id, to: newName)
                 },
                 onRemoveCluster: { id in
-                    clusterEngine.removeUserCluster(id)
+                    clusterEngine.removeUserCluster(id: id)
                 },
                 onSelectCluster: { id in
                     clusterEngine.selectCluster(id)

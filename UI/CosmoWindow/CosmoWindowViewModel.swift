@@ -74,6 +74,7 @@ final class CosmoWindowViewModel: ObservableObject {
     private var globalConversationId: String = UserDefaults.standard.string(forKey: "cosmoWindow.lastConversationId") ?? "cosmo-global-window"
     private var conversationId: String = UserDefaults.standard.string(forKey: "cosmoWindow.lastConversationId") ?? "cosmo-global-window"
     private var linkedAtomUUIDs: Set<String> = []
+    private var pinnedContextSourceIDs: [String] = []
     private let messageArchiveKeyPrefix = "cosmoWindow.messageArchive."
 
     // MARK: - Context Tracking
@@ -280,6 +281,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
         // Track linked atom UUID for conversation persistence
         linkedAtomUUIDs.insert(atom.uuid)
+        pinContextSource(for: atom)
     }
 
     /// Removes a previously @-mentioned atom.
@@ -290,6 +292,70 @@ final class CosmoWindowViewModel: ObservableObject {
     /// Clears all @-mentioned atoms after sending.
     func clearMentions() {
         mentionedAtoms.removeAll()
+    }
+
+    private func pinContextSource(for atom: Atom) {
+        let source = Self.contextSource(for: atom)
+        if !pinnedContextSourceIDs.contains(source.id) {
+            pinnedContextSourceIDs.append(source.id)
+        }
+
+        let body = ContextIndexStore.indexableBody(for: atom)
+        let chunks = ContextChunker.chunk(
+            sourceID: source.id,
+            title: source.title,
+            body: body,
+            bodyHash: source.bodyHash
+        )
+
+        Task {
+            try? await ContextIndexStore.shared.upsert(source: source, chunks: chunks)
+            await self.persistContextSession()
+        }
+    }
+
+    nonisolated static func contextSource(for atom: Atom) -> ContextSource {
+        ContextIndexStore.source(for: atom, pinState: .pinned)
+    }
+
+    nonisolated static func contextRetrievalRequest(
+        text: String,
+        conversationId: String,
+        pinnedSourceIDs: [String],
+        activeAtomUUID: String?,
+        activeClientUUID: String?
+    ) -> ContextRetrievalRequest {
+        ContextRetrievalRequest(
+            query: text,
+            conversationID: conversationId,
+            surface: .cosmoWindow,
+            purpose: retrievalPurpose(for: text),
+            pinnedSourceIDs: pinnedSourceIDs,
+            activeAtomUUID: activeAtomUUID,
+            activeClientUUID: activeClientUUID,
+            maxChunks: 8,
+            tokenBudget: 3_500
+        )
+    }
+
+    private nonisolated static func retrievalPurpose(for text: String) -> RetrievalPurpose {
+        let lower = normalizedPolicyText(text)
+        if containsAny(lower, ["mention", "does it say", "does the doc", "does this doc", "where does", "find", "quote", "locks on doors"]) {
+            return .factLookup
+        }
+        if containsAny(lower, ["draft", "write", "revise", "slide", "script", "post", "carousel"]) {
+            return .writing
+        }
+        if containsAny(lower, ["remember", "what did we decide", "last time", "previously"]) {
+            return .memory
+        }
+        if containsAny(lower, ["themes", "across", "summarize all", "patterns"]) {
+            return .globalSynthesis
+        }
+        if containsAny(lower, ["brainstorm", "ideas", "think through", "angles"]) {
+            return .brainstorm
+        }
+        return .general
     }
 
     // MARK: - Context Management
@@ -432,6 +498,7 @@ final class CosmoWindowViewModel: ObservableObject {
         collaboratorPreset = preset
         inputText = collaboratorSessions.draft(for: key)
         linkedAtomUUIDs.insert(target.atomUUID)
+        await rebuildPinnedContextSourcesFromLinkedAtoms()
         await loadConversation()
     }
 
@@ -555,12 +622,55 @@ final class CosmoWindowViewModel: ObservableObject {
         } else {
             messages = []
         }
+
+        pinnedContextSourceIDs.removeAll()
+        if let session = try? await ContextIndexStore.shared.session(id: conversationId) {
+            mergePinnedContextSourceIDs(session.pinnedSourceIDs)
+        }
+        await rebuildPinnedContextSourcesFromLinkedAtoms(reset: false)
+    }
+
+    private func rebuildPinnedContextSourcesFromLinkedAtoms(reset: Bool = true) async {
+        if reset {
+            pinnedContextSourceIDs.removeAll()
+        }
+        for uuid in linkedAtomUUIDs {
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid) else { continue }
+            let source = Self.contextSource(for: atom)
+            if !pinnedContextSourceIDs.contains(source.id) {
+                pinnedContextSourceIDs.append(source.id)
+            }
+            _ = try? await ContextIndexStore.shared.upsert(atom: atom, pinState: .pinned)
+        }
+    }
+
+    private func ensurePinnedContextForCurrentTurn() async {
+        for atom in mentionedAtoms {
+            let source = Self.contextSource(for: atom)
+            if !pinnedContextSourceIDs.contains(source.id) {
+                pinnedContextSourceIDs.append(source.id)
+            }
+            linkedAtomUUIDs.insert(atom.uuid)
+            _ = try? await ContextIndexStore.shared.upsert(atom: atom, pinState: .pinned)
+        }
+
+        if let activeUUID = activeContext.data.currentAtomUUID,
+           !activeUUID.isEmpty,
+           let atom = try? await AtomRepository.shared.fetch(uuid: activeUUID) {
+            let source = Self.contextSource(for: atom)
+            if !pinnedContextSourceIDs.contains(source.id) {
+                pinnedContextSourceIDs.append(source.id)
+            }
+            _ = try? await ContextIndexStore.shared.upsert(atom: atom, pinState: .active)
+        }
+        await persistContextSession()
     }
 
     /// Clears the conversation history.
     func clearConversation() async {
         messages.removeAll()
         linkedAtomUUIDs.removeAll()
+        pinnedContextSourceIDs.removeAll()
         error = nil
         processingStartedAt = nil
         pendingContextTraceSections = []
@@ -700,6 +810,7 @@ final class CosmoWindowViewModel: ObservableObject {
         // Clear all state
         messages.removeAll()
         linkedAtomUUIDs.removeAll()
+        pinnedContextSourceIDs.removeAll()
         error = nil
         historySearchText = ""
         processingStartedAt = nil
@@ -776,6 +887,8 @@ final class CosmoWindowViewModel: ObservableObject {
             responseMode = .directChat
         }
 
+        await ensurePinnedContextForCurrentTurn()
+
         // Inject current context into the message if available
         let contextBlock = buildContextBlock()
 
@@ -827,18 +940,46 @@ final class CosmoWindowViewModel: ObservableObject {
         let profileToolBundles = activeProfile?.toolBundles.filter { bundle in
             writingModeAgentSelected || bundle != .writing
         } ?? []
-        let systemPromptOverride = runtimePromptLayer(
+        let retrievalRequest = Self.contextRetrievalRequest(
+            text: text,
+            conversationId: conversationId,
+            pinnedSourceIDs: pinnedContextSourceIDs,
+            activeAtomUUID: activeContext.data.currentAtomUUID,
+            activeClientUUID: nil
+        )
+        let retrievalResults = (try? await CosmoRetrievalService.shared.retrieve(retrievalRequest)) ?? []
+        let coreMemory = (try? await CosmoMemoryService.shared.coreMemory()) ?? []
+        let workingMemory = (try? await CosmoMemoryService.shared.workingMemory(conversationID: conversationId)) ?? []
+        let contextPack = ContextPackAssembler.assemble(
+            request: retrievalRequest,
+            retrievalResults: retrievalResults,
+            coreMemory: coreMemory,
+            workingMemory: workingMemory,
+            recallMemory: []
+        )
+        let hasContextPackContent = !contextPack.retrievedResults.isEmpty || !coreMemory.isEmpty || !workingMemory.isEmpty
+        let runtimePrompt = runtimePromptLayer(
             collaboratorPrompt: collaboratorPreset?.runtimePrompt,
             agentProfile: activeProfile,
             forcedBundles: forcedBundles
         )
+        let systemPromptOverride = [
+            hasContextPackContent ? contextPack.promptBlock : nil,
+            runtimePrompt
+        ]
+        .compactMap { $0 }
+        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        .joined(separator: "\n\n")
 
+        toolExecutor.contextAtomUUIDs = Array(linkedAtomUUIDs)
+        toolExecutor.contextSourceIDs = pinnedContextSourceIDs
+        toolExecutor.contextConversationID = conversationId
         let (response, trace) = await agentService.processMessage(
             enrichedText,
             conversationId: conversationId,
             source: .inApp,
             tierOverride: modelOverride ?? activeProfile?.preferredModelTier,
-            systemPromptOverride: systemPromptOverride,
+            systemPromptOverride: systemPromptOverride.isEmpty ? nil : systemPromptOverride,
             responseMode: responseMode,
             profileToolBundles: profileToolBundles,
             forcedToolBundles: forcedBundles,
@@ -850,12 +991,25 @@ final class CosmoWindowViewModel: ObservableObject {
         )
 
         // Clear the action buttons callback after processing
+        mergePinnedContextSourceIDs(toolExecutor.contextSourceIDs)
+        linkedAtomUUIDs.formUnion(toolExecutor.contextAtomUUIDs)
         toolExecutor.onActionButtons = nil
         toolExecutor.onCanvasPlan = nil
+        toolExecutor.contextAtomUUIDs = []
+        toolExecutor.contextSourceIDs = []
+        toolExecutor.contextConversationID = nil
 
-        pendingContextTraceSections = trace.hasContent ? CosmoWindowMessage.contextTraceSections(from: trace) : []
+        let retrievalTraceSections = hasContextPackContent ? CosmoWindowMessage.contextTraceSections(from: contextPack) : []
+        let toolTraceSections = trace.hasContent ? CosmoWindowMessage.contextTraceSections(from: trace) : []
+        pendingContextTraceSections = retrievalTraceSections + toolTraceSections
 
         return response
+    }
+
+    private func mergePinnedContextSourceIDs(_ sourceIDs: [String]) {
+        for sourceID in sourceIDs where !pinnedContextSourceIDs.contains(sourceID) {
+            pinnedContextSourceIDs.append(sourceID)
+        }
     }
 
     /// Builds the dynamic context block for system prompt injection.
@@ -1236,34 +1390,78 @@ final class CosmoWindowViewModel: ObservableObject {
     private func persistConversation() async {
         // Preserve original createdAt from existing conversation to avoid timestamp reset
         let existingConv = await conversationMemory.loadConversation(id: conversationId)
-        var conversation = AgentConversation(id: conversationId, source: .inApp, createdAt: existingConv?.createdAt ?? Date())
+        let conversation = Self.mergedConversationForPersistence(
+            existing: existingConv,
+            visibleMessages: messages,
+            conversationId: conversationId,
+            linkedAtomUUIDs: linkedAtomUUIDs
+        )
+        await conversationMemory.saveConversation(conversation)
+        saveStoredMessages(messages, for: conversationId)
+        await persistContextSession()
+    }
 
-        for msg in messages {
+    private func persistContextSession() async {
+        let session = ContextSession(
+            id: conversationId,
+            surface: .cosmoWindow,
+            activeAtomUUID: activeContext.data.currentAtomUUID,
+            activeClientUUID: nil,
+            pinnedSourceIDs: pinnedContextSourceIDs
+        )
+        try? await ContextIndexStore.shared.upsert(session: session)
+    }
+
+    nonisolated static func mergedConversationForPersistence(
+        existing: AgentConversation?,
+        visibleMessages: [CosmoWindowMessage],
+        conversationId: String,
+        linkedAtomUUIDs: Set<String>
+    ) -> AgentConversation {
+        var uiConversation = AgentConversation(
+            id: conversationId,
+            source: .inApp,
+            createdAt: existing?.createdAt ?? Date()
+        )
+
+        for msg in visibleMessages {
             switch msg.type {
             case .user:
-                conversation.append(.user(msg.content))
+                uiConversation.append(.user(msg.content))
             case .assistant:
-                conversation.append(.assistant(msg.content))
+                uiConversation.append(.assistant(msg.content))
             case .system:
-                conversation.append(.system(msg.content))
+                uiConversation.append(.system(msg.content))
             case .toolResult(let name, _, _):
-                conversation.append(.tool(callId: name, content: msg.content))
-            case .contextTrace:
-                // UI-only messages, not persisted to LLM context
-                break
-            case .contextChange:
-                // UI-only messages, not persisted to LLM context
+                uiConversation.append(.tool(callId: name, content: msg.content))
+            case .contextTrace, .contextChange:
                 break
             case .actionButtons:
-                // Action buttons are persisted as assistant messages (content has the button text)
-                conversation.append(.assistant(msg.content))
-                break
+                uiConversation.append(.assistant(msg.content))
             }
         }
 
-        conversation.linkedAtomUUIDs = Array(linkedAtomUUIDs)
-        await conversationMemory.saveConversation(conversation)
-        saveStoredMessages(messages, for: conversationId)
+        uiConversation.linkedAtomUUIDs = Array(linkedAtomUUIDs)
+
+        guard var merged = existing, existing?.containsAgentToolContext == true else {
+            return uiConversation
+        }
+
+        for message in uiConversation.messages where !merged.messages.containsEquivalentVisibleMessage(to: message) {
+            merged.append(message)
+        }
+
+        merged.linkedAtomUUIDs = orderedUnique(merged.linkedAtomUUIDs + Array(linkedAtomUUIDs))
+        return merged
+    }
+
+    nonisolated private static func orderedUnique(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for value in values where seen.insert(value).inserted {
+            result.append(value)
+        }
+        return result
     }
 
     // MARK: - Notification Observers
@@ -1432,6 +1630,36 @@ struct ChatHistoryEntry: Identifiable {
     let messageCount: Int
     let lastActivity: Date
     var isActive: Bool
+}
+
+private extension AgentConversation {
+    var containsAgentToolContext: Bool {
+        messages.contains { message in
+            message.role == .tool || !(message.toolCalls?.isEmpty ?? true)
+        }
+    }
+}
+
+private extension Array where Element == AgentMessage {
+    func containsEquivalentVisibleMessage(to message: AgentMessage) -> Bool {
+        contains { $0.isEquivalentVisibleMessage(to: message) }
+    }
+}
+
+private extension AgentMessage {
+    func isEquivalentVisibleMessage(to other: AgentMessage) -> Bool {
+        guard role == other.role else { return false }
+
+        if role == .tool {
+            return toolCallId == other.toolCallId && normalizedContent == other.normalizedContent
+        }
+
+        return normalizedContent == other.normalizedContent
+    }
+
+    var normalizedContent: String {
+        content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 // MARK: - Equatable Helpers

@@ -1,6 +1,7 @@
 import XCTest
 @testable import CosmoOS
 
+@MainActor
 final class ClusterMetadataNormalizationTests: XCTestCase {
     func testTaskCanonicalMappings() {
         XCTAssertEqual(CanvasClusterEngine.canonicalTaskStatus("pending"), "todo")

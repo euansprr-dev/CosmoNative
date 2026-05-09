@@ -149,7 +149,7 @@ final class CanvasVisibilityIndexTests: XCTestCase {
 
 @MainActor
 final class CanvasDrawingStrokeCacheTests: XCTestCase {
-    func testWidthChangesInvalidateCachedFreehandPath() {
+    func testWidthChangesInvalidateCachedFreehandPath() throws {
         let points = [
             CGPoint(x: 0, y: 0),
             CGPoint(x: 40, y: 0),

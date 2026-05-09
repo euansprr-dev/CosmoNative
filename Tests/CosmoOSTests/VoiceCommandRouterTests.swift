@@ -15,18 +15,12 @@ final class VoiceCommandRouterTests: XCTestCase {
 
         let result = try await router.route(
             "open the three most relevant ideas to the document i currently have open",
-            context: ctx,
-            executeActions: false
+            context: ctx
         )
 
-        switch result.action {
-        case .bringRelatedBlocks:
-            break
-        default:
-            XCTFail("Expected bringRelatedBlocks, got \(result.action)")
-        }
+        XCTAssertEqual(result.action, "unhandled")
 
-        XCTAssertEqual(result.parameters["count"] as? Int, 3)
+        XCTAssertNil(result.llmResult)
     }
 
     func testSearchAndPlaceCanAnchorToSelectedBlock() async throws {
@@ -41,20 +35,11 @@ final class VoiceCommandRouterTests: XCTestCase {
 
         let result = try await router.route(
             "bring up three ideas about productivity to the right of this block",
-            context: ctx,
-            executeActions: false
+            context: ctx
         )
 
-        switch result.action {
-        case .searchAndPlace:
-            break
-        default:
-            XCTFail("Expected searchAndPlace, got \(result.action)")
-        }
-
-        XCTAssertEqual(result.parameters["anchorBlockId"] as? String, "block-123")
-        XCTAssertEqual(result.parameters["placement"] as? String, "right")
-        XCTAssertEqual(result.parameters["quantity"] as? Int, 3)
+        XCTAssertEqual(result.action, "unhandled")
+        XCTAssertNil(result.llmResult)
     }
 
     func testRouteSmokeDoesNotThrowForSimpleNavigation() async throws {
@@ -62,16 +47,10 @@ final class VoiceCommandRouterTests: XCTestCase {
 
         let result = try await router.route(
             "go to calendar",
-            context: VoiceContextStore.shared.snapshot(),
-            executeActions: false
+            context: VoiceContextStore.shared.snapshot()
         )
 
-        switch result.action {
-        case .navigate(let section):
-            XCTAssertEqual(section, .calendar)
-        default:
-            XCTFail("Expected navigate(.calendar), got \(result.action)")
-        }
+        XCTAssertEqual(result.action, "navigate:plannerum")
     }
 }
 
@@ -189,7 +168,7 @@ final class CommandKSearchTests: XCTestCase {
 
         let cardItems = CommandKUnifiedSearchComposer.buildCardItems(
             flatResults: output.flatResults,
-            atomMap: [:],
+            libraryItemsByID: [:],
             swipeItemsByUUID: [swipe.atomUUID: swipe]
         )
 

@@ -845,6 +845,37 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
 
         return sections
     }
+
+    static func contextTraceSections(from contextPack: AgentContextPack) -> [ContextTraceSection] {
+        var sections: [ContextTraceSection] = []
+
+        if !contextPack.request.pinnedSourceIDs.isEmpty {
+            sections.append(
+                ContextTraceSection(
+                    icon: "magnifyingglass",
+                    label: "Context Search",
+                    detail: "\(contextPack.request.pinnedSourceIDs.count) pinned source(s)"
+                )
+            )
+        }
+
+        if !contextPack.retrievedResults.isEmpty {
+            let details = contextPack.retrievedResults
+                .prefix(4)
+                .map { result in
+                    result.chunk.anchor.map { "\(result.source.title):\($0)" } ?? result.source.title
+                }
+                .joined(separator: ", ")
+            sections.append(ContextTraceSection(icon: "doc.text.magnifyingglass", label: "Evidence", detail: details))
+        }
+
+        let memoryCount = contextPack.coreMemory.count + contextPack.workingMemory.count + contextPack.recallMemory.count
+        if memoryCount > 0 {
+            sections.append(ContextTraceSection(icon: "brain", label: "Memory", detail: "\(memoryCount) relevant item(s)"))
+        }
+
+        return sections
+    }
 }
 
 // MARK: - Context Trace Section

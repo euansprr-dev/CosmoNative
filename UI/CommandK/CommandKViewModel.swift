@@ -87,6 +87,146 @@ public struct RecentDisplayItem: Identifiable {
     let preview: String?
 }
 
+enum CommandKLibraryScope {
+    static let databaseAtomTypes: [AtomType] = [
+        .idea, .note, .task, .content, .research, .connection, .project, .image
+    ]
+
+    static func databaseItemCount(atoms: [Atom], thinkspaceCount: Int) -> Int {
+        atoms.filter { !$0.isDeleted && !$0.isSwipeFileAtom }.count + thinkspaceCount
+    }
+}
+
+enum CommandKRecentComposer {
+    struct OpenedAtom {
+        let atom: Atom
+        let openedAt: String
+        let accessCount: Int
+    }
+
+    private struct Candidate {
+        let atom: Atom
+        let timestamp: String
+        let accessCount: Int
+    }
+
+    static func compose(
+        opened: [OpenedAtom],
+        recentlyUpdated: [Atom],
+        limit: Int
+    ) -> [RecentDisplayItem] {
+        return sortedCandidates(opened: opened, recentlyUpdated: recentlyUpdated)
+            .prefix(limit)
+            .map { candidate in
+                let atom = candidate.atom
+                let researchMeta = atom.metadata.flatMap { metaStr -> ResearchMetadata? in
+                    guard let data = metaStr.data(using: .utf8) else { return nil }
+                    return try? JSONDecoder().decode(ResearchMetadata.self, from: data)
+                }
+
+                return RecentDisplayItem(
+                    id: atom.uuid,
+                    title: atom.title ?? "Untitled",
+                    type: atom.type,
+                    entityId: atom.id ?? 0,
+                    relativeDate: relativeTimeString(from: candidate.timestamp),
+                    thumbnailURL: researchMeta?.thumbnailUrl,
+                    preview: atom.body
+                )
+            }
+    }
+
+    static func rankedResults(
+        opened: [OpenedAtom],
+        recentlyUpdated: [Atom],
+        limit: Int
+    ) -> [RankedResult] {
+        sortedCandidates(opened: opened, recentlyUpdated: recentlyUpdated)
+            .prefix(limit)
+            .map { candidate in
+                let atom = candidate.atom
+                return RankedResult(
+                    atomUUID: atom.uuid,
+                    atomType: atom.type,
+                    title: atom.title ?? "Untitled",
+                    snippet: atom.body?.prefix(100).description,
+                    semanticWeight: 0.0,
+                    structuralWeight: 0.5,
+                    recencyWeight: WeightCalculator.recencyWeight(fromISO8601: candidate.timestamp),
+                    usageWeight: 0.5,
+                    updatedAt: candidate.timestamp,
+                    accessCount: candidate.accessCount
+                )
+            }
+    }
+
+    private static func sortedCandidates(
+        opened: [OpenedAtom],
+        recentlyUpdated: [Atom]
+    ) -> [Candidate] {
+        var candidates: [String: Candidate] = [:]
+
+        for atom in recentlyUpdated {
+            consider(atom: atom, timestamp: atom.updatedAt, accessCount: 0, candidates: &candidates)
+        }
+
+        for item in opened {
+            consider(atom: item.atom, timestamp: item.openedAt, accessCount: item.accessCount, candidates: &candidates)
+        }
+
+        return candidates.values.sorted { lhs, rhs in
+            let lhsDate = date(fromTimestamp: lhs.timestamp) ?? .distantPast
+            let rhsDate = date(fromTimestamp: rhs.timestamp) ?? .distantPast
+            if lhsDate != rhsDate {
+                return lhsDate > rhsDate
+            }
+            return lhs.accessCount > rhs.accessCount
+        }
+    }
+
+    private static func consider(
+        atom: Atom,
+        timestamp: String,
+        accessCount: Int,
+        candidates: inout [String: Candidate]
+    ) {
+        guard !atom.isDeleted, atom.type != .task else { return }
+
+        let next = Candidate(atom: atom, timestamp: timestamp, accessCount: accessCount)
+        guard let existing = candidates[atom.uuid] else {
+            candidates[atom.uuid] = next
+            return
+        }
+
+        let existingDate = date(fromTimestamp: existing.timestamp) ?? .distantPast
+        let nextDate = date(fromTimestamp: timestamp) ?? .distantPast
+        if nextDate > existingDate || (nextDate == existingDate && accessCount > existing.accessCount) {
+            candidates[atom.uuid] = next
+        }
+    }
+
+    private static func relativeTimeString(from timestamp: String) -> String {
+        guard let date = date(fromTimestamp: timestamp) else { return "" }
+        let interval = Date().timeIntervalSince(date)
+        if interval < 3600 { return "\(max(1, Int(interval / 60)))m" }
+        if interval < 86400 { return "\(Int(interval / 3600))h" }
+        if interval < 604800 { return "\(Int(interval / 86400))d" }
+        return "\(Int(interval / 604800))w"
+    }
+
+    private static func date(fromTimestamp timestamp: String) -> Date? {
+        if let date = ISO8601DateFormatter().date(from: timestamp) {
+            return date
+        }
+
+        let sqliteFormatter = DateFormatter()
+        sqliteFormatter.locale = Locale(identifier: "en_US_POSIX")
+        sqliteFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        sqliteFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return sqliteFormatter.date(from: timestamp)
+    }
+}
+
 // MARK: - SearchPhase
 /// Current phase of the search process
 public enum SearchPhase: Sendable {
@@ -708,6 +848,7 @@ public final class CommandKViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var searchTask: Task<Void, Never>?
     private var ideaGalleryReloadTask: Task<Void, Never>?
+    private var commandKRefreshTask: Task<Void, Never>?
     private let searchPipeline = CommandKSearchPipeline()
     private var searchIndex = CommandKSearchIndex()
     private var searchIndexLoaded = false
@@ -725,6 +866,7 @@ public final class CommandKViewModel: ObservableObject {
         setupSwipeFilterPipeline()
         setupSwipeRefreshListener()
         setupIdeaRefreshListener()
+        setupCommandKRefreshListener()
     }
 
     public func setSurfaceActive(_ active: Bool) {
@@ -736,6 +878,7 @@ public final class CommandKViewModel: ObservableObject {
         } else {
             searchTask?.cancel()
             ideaGalleryReloadTask?.cancel()
+            commandKRefreshTask?.cancel()
             searchIndexTask?.cancel()
             currentPhase = .idle
         }
@@ -901,6 +1044,7 @@ public final class CommandKViewModel: ObservableObject {
             unfilteredResults = instantIndexedResults
             computeFilterCounts()
             applyFiltersToResults()
+            await performInstantUnifiedSearch(query: queryForSearch)
             currentPhase = .instant
         }
 
@@ -1125,26 +1269,22 @@ public final class CommandKViewModel: ObservableObject {
         isShowingRecents = true
 
         do {
-            let recentAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 8)
-
-            // Build results from actual atoms
-            var combinedResults: [RankedResult] = []
-            for recent in recentAtoms {
-                let atom = recent.atom
-                combinedResults.append(RankedResult(
-                    atomUUID: atom.uuid,
-                    atomType: atom.type,
-                    title: atom.title ?? "Untitled",
-                    snippet: atom.body?.prefix(100).description,
-                    semanticWeight: 0.0,
-                    structuralWeight: 0.5,
-                    recencyWeight: WeightCalculator.recencyWeight(fromISO8601: recent.openedAt),
-                    usageWeight: 0.5,
-                    updatedAt: recent.openedAt,
-                    accessCount: recent.accessCount
-                ))
+            async let openedRequest = AtomRepository.shared.fetchRecentlyOpened(limit: 24)
+            async let updatedRequest = AtomRepository.shared.fetchRecent(limit: 24)
+            let (openedAtoms, updatedAtoms) = try await (openedRequest, updatedRequest)
+            let opened = openedAtoms.map {
+                CommandKRecentComposer.OpenedAtom(
+                    atom: $0.atom,
+                    openedAt: $0.openedAt,
+                    accessCount: $0.accessCount
+                )
             }
 
+            var combinedResults = CommandKRecentComposer.rankedResults(
+                opened: opened,
+                recentlyUpdated: updatedAtoms,
+                limit: 8
+            )
             combinedResults.sort()
             unfilteredResults = combinedResults
             computeFilterCounts()
@@ -1542,23 +1682,21 @@ public final class CommandKViewModel: ObservableObject {
     public func loadRecentsForCompact() async {
         guard isSurfaceActive else { return }
         do {
-            let recentAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 12)
-            recentItems = recentAtoms.filter { $0.atom.type != .task }.prefix(8).map { recent in
-                let atom = recent.atom
-                let researchMeta = atom.metadata.flatMap { metaStr -> ResearchMetadata? in
-                    guard let data = metaStr.data(using: .utf8) else { return nil }
-                    return try? JSONDecoder().decode(ResearchMetadata.self, from: data)
-                }
-                return RecentDisplayItem(
-                    id: atom.uuid,
-                    title: atom.title ?? "Untitled",
-                    type: atom.type,
-                    entityId: atom.id ?? 0,
-                    relativeDate: Self.relativeTimeString(from: recent.openedAt),
-                    thumbnailURL: researchMeta?.thumbnailUrl,
-                    preview: atom.body
+            async let openedRequest = AtomRepository.shared.fetchRecentlyOpened(limit: 24)
+            async let updatedRequest = AtomRepository.shared.fetchRecent(limit: 24)
+            let (openedAtoms, updatedAtoms) = try await (openedRequest, updatedRequest)
+            let opened = openedAtoms.map {
+                CommandKRecentComposer.OpenedAtom(
+                    atom: $0.atom,
+                    openedAt: $0.openedAt,
+                    accessCount: $0.accessCount
                 )
             }
+            recentItems = CommandKRecentComposer.compose(
+                opened: opened,
+                recentlyUpdated: updatedAtoms,
+                limit: 8
+            )
         } catch {
             recentItems = []
         }
@@ -1606,8 +1744,14 @@ public final class CommandKViewModel: ObservableObject {
     private func loadDatabaseCount() async {
         guard isSurfaceActive else { return }
         do {
-            let atoms = try await AtomRepository.shared.fetchRecent(limit: 500)
-            databaseTotalCount = atoms.count
+            if ThinkspaceManager.shared.thinkspaces.isEmpty {
+                await ThinkspaceManager.shared.loadThinkspaces()
+            }
+            let atoms = try await AtomRepository.shared.fetchAll(types: CommandKLibraryScope.databaseAtomTypes)
+            databaseTotalCount = CommandKLibraryScope.databaseItemCount(
+                atoms: atoms,
+                thinkspaceCount: ThinkspaceManager.shared.sidebarThinkspaces.count
+            )
             deepDiveTotalCount = (try? await InquiryRepository.shared.fetchAllDeepDives().count) ?? 0
         } catch {
             databaseTotalCount = 0
@@ -1957,6 +2101,59 @@ public final class CommandKViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
+    /// Keep compact recents, database counts, and the instant search index fresh while Command-K stays open.
+    private func setupCommandKRefreshListener() {
+        let refreshNotifications: [Notification.Name] = [
+            CosmoNotification.Entity.created,
+            CosmoNotification.Entity.updated,
+            CosmoNotification.Entity.deleted,
+            CosmoNotification.Entity.modified,
+            CosmoNotification.Sync.atomsPulled,
+            .atomsDidChange,
+            .researchCreated,
+            Self.legacyIdeaDeletedNotification,
+            Self.legacyIdeaActivatedNotification,
+            Notification.Name("swipeDeleted")
+        ]
+
+        for name in refreshNotifications {
+            NotificationCenter.default.publisher(for: name)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] notification in
+                    self?.scheduleCommandKRefresh(for: notification)
+                }
+                .store(in: &cancellables)
+        }
+    }
+
+    private func scheduleCommandKRefresh(for notification: Notification) {
+        guard isSurfaceActive else { return }
+
+        if Self.notificationTargetsType(notification, .research)
+            || notification.name == .researchCreated
+            || notification.name == Notification.Name("swipeDeleted") {
+            swipeGalleryLoaded = false
+        }
+
+        commandKRefreshTask?.cancel()
+        commandKRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard let self, !Task.isCancelled, self.isSurfaceActive else { return }
+
+            await self.loadDatabaseCount()
+            self.prewarmSearchIndexIfNeeded(force: true)
+
+            let trimmedQuery = self.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedQuery.isEmpty {
+                if self.cortexMode == .compact {
+                    await self.loadRecentsForCompact()
+                }
+            } else {
+                await self.performSearch(query: self.query)
+            }
+        }
+    }
+
     @MainActor
     private func handleIdeaGalleryNotification(_ notification: Notification) {
         guard isSurfaceActive else { return }
@@ -1997,6 +2194,22 @@ public final class CommandKViewModel: ObservableObject {
 
         if let type = notification.userInfo?["type"] as? String {
             return type == AtomType.idea.rawValue
+        }
+
+        return false
+    }
+
+    static func notificationTargetsType(_ notification: Notification, _ atomType: AtomType) -> Bool {
+        if let atom = notification.userInfo?["atom"] as? Atom {
+            return atom.type == atomType
+        }
+
+        if let type = notification.userInfo?["type"] as? AtomType {
+            return type == atomType
+        }
+
+        if let type = notification.userInfo?["type"] as? String {
+            return type == atomType.rawValue
         }
 
         return false
@@ -2156,8 +2369,29 @@ public final class CommandKViewModel: ObservableObject {
         requestID == unifiedSearchRequestID
     }
 
+    /// Publish a fast unified result set from already-loaded local data.
+    private func performInstantUnifiedSearch(query: String) async {
+        await updateUnifiedSearch(
+            query: query,
+            preloadSupportData: false,
+            includeThinkspaces: false
+        )
+    }
+
     /// Perform unified search across all libraries
     func performUnifiedSearch(query: String) async {
+        await updateUnifiedSearch(
+            query: query,
+            preloadSupportData: true,
+            includeThinkspaces: true
+        )
+    }
+
+    private func updateUnifiedSearch(
+        query: String,
+        preloadSupportData: Bool,
+        includeThinkspaces: Bool
+    ) async {
         guard isSurfaceActive else { return }
         let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("unified-search")
         defer {
@@ -2188,8 +2422,10 @@ public final class CommandKViewModel: ObservableObject {
         }
 
         isUnifiedSearchActive = true
-        await preloadUnifiedSearchSupportData()
-        if ThinkspaceManager.shared.thinkspaces.isEmpty {
+        if preloadSupportData {
+            await preloadUnifiedSearchSupportData()
+        }
+        if includeThinkspaces, ThinkspaceManager.shared.thinkspaces.isEmpty {
             await ThinkspaceManager.shared.loadThinkspaces()
         }
         guard isCurrentUnifiedSearchRequest(requestID) else { return }
@@ -2203,24 +2439,31 @@ public final class CommandKViewModel: ObservableObject {
         )
         guard isCurrentUnifiedSearchRequest(requestID) else { return }
 
-        let projectAtoms = (try? await AtomRepository.shared.fetchAll(type: .project)) ?? []
+        let projectAtoms = includeThinkspaces ? ((try? await AtomRepository.shared.fetchAll(type: .project)) ?? []) : []
         let projectsByUUID = Dictionary(uniqueKeysWithValues: projectAtoms.map { ($0.uuid, $0) })
-        let thinkspaceLibraryItems = ThinkspaceManager.shared.sidebarThinkspaces.map { thinkspace in
-            LibraryItem(
-                thinkspace: thinkspace,
-                project: thinkspace.projectUuid.flatMap { projectsByUUID[$0] },
-                nestedThinkspaceCount: ThinkspaceManager.shared.childThinkspaces(of: thinkspace.id).count
-            )
-        }
-        let matchingThinkspaceResults = thinkspaceLibraryItems
-            .filter { matchesUnifiedLibrarySearch($0, query: trimmed) }
-            .prefix(8)
-            .map { item in
-                CommandKUnifiedSearchComposer.thinkspaceResult(
-                    for: item,
-                    relevance: thinkspaceRelevance(for: item, query: trimmed)
+        let thinkspaceLibraryItems: [LibraryItem]
+        let matchingThinkspaceResults: [UnifiedSearchResult]
+        if includeThinkspaces {
+            thinkspaceLibraryItems = ThinkspaceManager.shared.sidebarThinkspaces.map { thinkspace in
+                LibraryItem(
+                    thinkspace: thinkspace,
+                    project: thinkspace.projectUuid.flatMap { projectsByUUID[$0] },
+                    nestedThinkspaceCount: ThinkspaceManager.shared.childThinkspaces(of: thinkspace.id).count
                 )
             }
+            matchingThinkspaceResults = thinkspaceLibraryItems
+                .filter { matchesUnifiedLibrarySearch($0, query: trimmed) }
+                .prefix(8)
+                .map { item in
+                    CommandKUnifiedSearchComposer.thinkspaceResult(
+                        for: item,
+                        relevance: thinkspaceRelevance(for: item, query: trimmed)
+                    )
+                }
+        } else {
+            thinkspaceLibraryItems = []
+            matchingThinkspaceResults = []
+        }
 
         let combinedResults = output.flatResults + matchingThinkspaceResults
         let atomUUIDs = combinedResults.compactMap { result -> String? in
@@ -2228,7 +2471,9 @@ public final class CommandKViewModel: ObservableObject {
                   result.source != .swipes else { return nil }
             return result.atomUUID
         }
-        let thinkspacesByID = Dictionary(uniqueKeysWithValues: ThinkspaceManager.shared.sidebarThinkspaces.map { ($0.id, $0) })
+        let thinkspacesByID = includeThinkspaces
+            ? Dictionary(uniqueKeysWithValues: ThinkspaceManager.shared.sidebarThinkspaces.map { ($0.id, $0) })
+            : [:]
         var libraryItemsByID = await buildUnifiedAtomLibraryItems(
             atomUUIDs: atomUUIDs,
             projectsByUUID: projectsByUUID,

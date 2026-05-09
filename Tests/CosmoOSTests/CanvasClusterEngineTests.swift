@@ -39,8 +39,8 @@ final class CanvasClusterEngineTests: XCTestCase {
             viewportInCanvas: nil
         )
 
-        XCTAssertEqual(fitted?.width, 360, accuracy: 0.001)
-        XCTAssertEqual(fitted?.height, 280, accuracy: 0.001)
+        assertEqualCGFloat(fitted?.width, 360, accuracy: 0.001)
+        assertEqualCGFloat(fitted?.height, 280, accuracy: 0.001)
     }
 
     func testFitClusterRectForListAppliesMaximumSize() {
@@ -62,8 +62,8 @@ final class CanvasClusterEngineTests: XCTestCase {
             viewportInCanvas: nil
         )
 
-        XCTAssertEqual(fitted?.width, 1_100, accuracy: 0.001)
-        XCTAssertEqual(fitted?.height, 1_200, accuracy: 0.001)
+        assertEqualCGFloat(fitted?.width, 1_100, accuracy: 0.001)
+        assertEqualCGFloat(fitted?.height, 1_200, accuracy: 0.001)
     }
 
     func testFitClusterRectRespectsManualOverrideWithinClamps() {
@@ -86,8 +86,8 @@ final class CanvasClusterEngineTests: XCTestCase {
             viewportInCanvas: nil
         )
 
-        XCTAssertEqual(fitted?.width, 900, accuracy: 0.001)
-        XCTAssertEqual(fitted?.height, 700, accuracy: 0.001)
+        assertEqualCGFloat(fitted?.width, 900, accuracy: 0.001)
+        assertEqualCGFloat(fitted?.height, 700, accuracy: 0.001)
 
         engine.userClusters[0].manualSizeOverride = CGSize(width: 5_000, height: 5_000)
         let clamped = engine.fitClusterRectForMode(
@@ -97,8 +97,8 @@ final class CanvasClusterEngineTests: XCTestCase {
             viewportInCanvas: nil
         )
 
-        XCTAssertEqual(clamped?.width, 1_600, accuracy: 0.001)
-        XCTAssertEqual(clamped?.height, 1_200, accuracy: 0.001)
+        assertEqualCGFloat(clamped?.width, 1_600, accuracy: 0.001)
+        assertEqualCGFloat(clamped?.height, 1_200, accuracy: 0.001)
     }
 
     func testSetViewModeCanvasClearsManualOverrideAndAutoFitsMembers() {
@@ -247,8 +247,8 @@ final class CanvasClusterEngineTests: XCTestCase {
             viewportInCanvas: CGRect(x: 0, y: 0, width: 1_000, height: 800)
         )
 
-        XCTAssertEqual(fitted?.origin.x, 24, accuracy: 0.001)
-        XCTAssertEqual(fitted?.origin.y, 24, accuracy: 0.001)
+        assertEqualCGFloat(fitted?.origin.x, 24, accuracy: 0.001)
+        assertEqualCGFloat(fitted?.origin.y, 24, accuracy: 0.001)
     }
 
     func testUserClusterContainingPrefersClosestOverlappingCluster() {
@@ -302,8 +302,8 @@ final class CanvasClusterEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(resolution?.clusterId, targetId)
-        XCTAssertEqual(resolution?.previewPosition.x, 530, accuracy: 0.001)
-        XCTAssertEqual(resolution?.previewPosition.y, 128, accuracy: 0.001)
+        assertEqualCGFloat(resolution?.previewPosition.x, 530, accuracy: 0.001)
+        assertEqualCGFloat(resolution?.previewPosition.y, 128, accuracy: 0.001)
     }
 
     func testUpdateUserClusterBoundsPreservesCanvasRectWhenMembersStayInside() {
@@ -328,10 +328,10 @@ final class CanvasClusterEngineTests: XCTestCase {
         engine.updateUserClusterBounds(blocks: [block])
 
         let rect = engine.userClusters.first(where: { $0.id == clusterId })?.boundingRect
-        XCTAssertEqual(rect?.origin.x, 0, accuracy: 0.001)
-        XCTAssertEqual(rect?.origin.y, 0, accuracy: 0.001)
-        XCTAssertEqual(rect?.width, 500, accuracy: 0.001)
-        XCTAssertEqual(rect?.height, 360, accuracy: 0.001)
+        assertEqualCGFloat(rect?.origin.x, 0, accuracy: 0.001)
+        assertEqualCGFloat(rect?.origin.y, 0, accuracy: 0.001)
+        assertEqualCGFloat(rect?.width, 500, accuracy: 0.001)
+        assertEqualCGFloat(rect?.height, 360, accuracy: 0.001)
     }
 
     func testUpdateUserClusterBoundsExpandsOnlyNeededEdgeWhenMemberLeavesCluster() {
@@ -356,10 +356,10 @@ final class CanvasClusterEngineTests: XCTestCase {
         engine.updateUserClusterBounds(blocks: [block])
 
         let rect = engine.userClusters.first(where: { $0.id == clusterId })?.boundingRect
-        XCTAssertEqual(rect?.origin.x, 0, accuracy: 0.001)
-        XCTAssertEqual(rect?.origin.y, 0, accuracy: 0.001)
-        XCTAssertEqual(rect?.width, 430, accuracy: 0.001)
-        XCTAssertEqual(rect?.height, 360, accuracy: 0.001)
+        assertEqualCGFloat(rect?.origin.x, 0, accuracy: 0.001)
+        assertEqualCGFloat(rect?.origin.y, 0, accuracy: 0.001)
+        assertEqualCGFloat(rect?.width, 430, accuracy: 0.001)
+        assertEqualCGFloat(rect?.height, 360, accuracy: 0.001)
     }
 
     func testRemoveBlockFromCanvasClusterKeepsContainerRect() {
@@ -394,10 +394,10 @@ final class CanvasClusterEngineTests: XCTestCase {
         )
 
         let rect = engine.userClusters.first(where: { $0.id == clusterId })?.boundingRect
-        XCTAssertEqual(rect?.origin.x, -30, accuracy: 0.001)
-        XCTAssertEqual(rect?.origin.y, -48, accuracy: 0.001)
-        XCTAssertEqual(rect?.width, 760, accuracy: 0.001)
-        XCTAssertEqual(rect?.height, 248, accuracy: 0.001)
+        assertEqualCGFloat(rect?.origin.x, -30, accuracy: 0.001)
+        assertEqualCGFloat(rect?.origin.y, -48, accuracy: 0.001)
+        assertEqualCGFloat(rect?.width, 760, accuracy: 0.001)
+        assertEqualCGFloat(rect?.height, 248, accuracy: 0.001)
     }
 
     func testAddBlockToGridClusterAppendsWithoutResizingContainer() {
@@ -641,10 +641,10 @@ final class CanvasClusterEngineTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(preview["block-1"]?.position.x, 150, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.position.y, 120, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.size.width, 270, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.size.height, 120, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.x, 150, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.y, 120, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.width, 270, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.height, 120, accuracy: 0.001)
     }
 
     func testCanvasClusterResizeMapperScalesVerticalEdgeFromOppositeAnchor() {
@@ -660,10 +660,10 @@ final class CanvasClusterEngineTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(preview["block-1"]?.position.x, 100, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.position.y, 30, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.size.width, 180, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.size.height, 180, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.x, 100, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.y, 30, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.width, 180, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.height, 180, accuracy: 0.001)
     }
 
     func testCanvasClusterResizeMapperScalesCornerFromOppositeAnchor() {
@@ -679,10 +679,10 @@ final class CanvasClusterEngineTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(preview["block-1"]?.position.x, -50, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.position.y, 30, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.size.width, 270, accuracy: 0.001)
-        XCTAssertEqual(preview["block-1"]?.size.height, 180, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.x, -50, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.y, 30, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.width, 270, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.height, 180, accuracy: 0.001)
     }
 
     func testThinkspaceLibrarySnapshotGroupsClusteredAndInventoryItems() {
@@ -729,6 +729,23 @@ final class CanvasClusterEngineTests: XCTestCase {
 }
 
 private extension CanvasClusterEngineTests {
+    func assertEqualCGFloat(
+        _ expression1: @autoclosure () throws -> CGFloat?,
+        _ expression2: @autoclosure () throws -> CGFloat,
+        accuracy: CGFloat,
+        _ message: @autoclosure () -> String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) rethrows {
+        guard let value = try expression1() else {
+            XCTFail("Expected non-nil CGFloat. \(message())", file: file, line: line)
+            return
+        }
+
+        let expected = try expression2()
+        XCTAssertEqual(value, expected, accuracy: accuracy, message(), file: file, line: line)
+    }
+
     func makeCluster(
         id: UUID,
         blockUUIDs: [String],

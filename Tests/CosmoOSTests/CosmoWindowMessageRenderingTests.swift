@@ -23,6 +23,44 @@ final class CosmoWindowMessageRenderingTests: XCTestCase {
         XCTAssertFalse(CosmoWindowMessageRenderingPolicy.allowsTimelineTextSelection)
     }
 
+    func testTimelineUsesEagerStackToAvoidLazyPlacementLayoutLoop() {
+        XCTAssertFalse(CosmoWindowMessageRenderingPolicy.usesLazyTimelineStack)
+    }
+
+    func testWindowPersistencePreservesAgentToolContext() {
+        let toolCall = AgentToolCall(
+            id: "call_profile",
+            name: "get_client_profile",
+            argumentsJSON: #"{"name":"Josh"}"#
+        )
+        var existing = AgentConversation(id: "conversation-1", source: .inApp)
+        existing.append(.user("Write this for Josh."))
+        existing.append(.assistant("", toolCalls: [toolCall]))
+        existing.append(.tool(callId: "call_profile", content: #"{"title":"Josh","strategy":"Use the sober living offer."}"#))
+        existing.append(.assistant("Use the sober living offer as the spine."))
+
+        let visibleMessages: [CosmoWindowMessage] = [
+            .user("Write this for Josh."),
+            .assistant("Use the sober living offer as the spine.")
+        ]
+
+        let merged = CosmoWindowViewModel.mergedConversationForPersistence(
+            existing: existing,
+            visibleMessages: visibleMessages,
+            conversationId: "conversation-1",
+            linkedAtomUUIDs: []
+        )
+
+        XCTAssertEqual(merged.messages.filter { $0.role == .tool }.count, 1)
+        XCTAssertTrue(merged.messages.contains { $0.toolCalls?.contains(where: { $0.name == "get_client_profile" }) == true })
+        XCTAssertEqual(merged.messages.filter { $0.role == .user }.count, 1)
+        XCTAssertEqual(merged.messages.filter { $0.role == .assistant && ($0.toolCalls?.isEmpty ?? true) }.count, 1)
+    }
+
+    func testAgentKeepsRecentToolResultsUncompressedForFollowUps() {
+        XCTAssertGreaterThanOrEqual(CosmoAgentService.recentToolResultsToKeepUncompressed, 8)
+    }
+
     func testMentionExpansionIncludesFullBodyByDefault() {
         let sentinel = "FINAL REVENUE: $14,400 revenue / $3,800 expenses / $10,600 cash flow"
         let longBody = String(repeating: "Deal context ", count: 230) + sentinel

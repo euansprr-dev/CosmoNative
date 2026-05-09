@@ -8,7 +8,7 @@ import AppKit
 
 // MARK: - Supporting Types (kept for cross-file usage)
 
-struct ContextSource: Identifiable {
+struct CosmoAIContextSource: Identifiable {
     let id: String
     let title: String
     let type: EntityType
@@ -296,7 +296,7 @@ struct CosmoAIBlockView: View {
 final class CosmoAIBlockChatState: ObservableObject {
     @Published var messages: [CosmoWindowMessage] = []
     @Published var isProcessing = false
-    @Published var contextSources: [ContextSource] = []
+    @Published var contextSources: [CosmoAIContextSource] = []
     @Published var activeToolLabel: String? = nil
     @Published var lastToolActivitySummary: String? = nil
     @Published var typingDotIndex: Int = 0
@@ -514,7 +514,7 @@ final class CosmoAIBlockChatState: ObservableObject {
     func loadConnectedContext(entityUuid: String) {
         Task {
             do {
-                var sources: [ContextSource] = []
+                var sources: [CosmoAIContextSource] = []
                 var uuids: [String] = []
 
                 // Check atom's direct links
@@ -523,7 +523,7 @@ final class CosmoAIBlockChatState: ObservableObject {
                         if let linkedAtom = try await AtomRepository.shared.fetch(uuid: link.uuid) {
                             let entityType = EntityType(rawValue: linkedAtom.type.rawValue) ?? .idea
                             if !uuids.contains(linkedAtom.uuid) {
-                                sources.append(ContextSource(
+                                sources.append(CosmoAIContextSource(
                                     id: linkedAtom.uuid,
                                     title: linkedAtom.title ?? "Untitled",
                                     type: entityType,
@@ -542,7 +542,7 @@ final class CosmoAIBlockChatState: ObservableObject {
                     if !uuids.contains(connectedUUID) {
                         if let connectedAtom = try await AtomRepository.shared.fetch(uuid: connectedUUID) {
                             let entityType = EntityType(rawValue: connectedAtom.type.rawValue) ?? .idea
-                            sources.append(ContextSource(
+                            sources.append(CosmoAIContextSource(
                                 id: connectedAtom.uuid,
                                 title: connectedAtom.title ?? "Untitled",
                                 type: entityType,

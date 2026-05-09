@@ -269,10 +269,10 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
             uuid: uuid,
             title: title,
             dueDate: dueDate,
-            scheduledStart: scheduledStart,
-            whenDate: whenDate,
             recurrenceParentUUID: recurrenceParentUUID,
             isRecurring: recurrenceParentUUID != nil,
+            scheduledStart: scheduledStart,
+            whenDate: whenDate,
             createdAt: createdAt ?? Date(timeIntervalSince1970: 0)
         )
     }

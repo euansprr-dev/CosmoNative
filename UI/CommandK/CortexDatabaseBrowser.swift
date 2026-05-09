@@ -25,11 +25,21 @@ struct CortexDatabaseBrowser: View {
         }
     }
 
+    private var visibleItems: [LibraryItem] {
+        CommandKDatabaseBrowserDataSource.visibleItems(
+            allItems: libraryVM.allItems,
+            displayItems: libraryVM.displayItems,
+            recentlyDeletedItems: libraryVM.recentlyDeletedItems,
+            isAtHome: libraryVM.isAtHome,
+            showingRecentlyDeleted: libraryVM.showingRecentlyDeleted
+        )
+    }
+
     @ViewBuilder
     private var content: some View {
         if libraryVM.isLoading {
             skeletonGrid
-        } else if libraryVM.displayItems.isEmpty {
+        } else if visibleItems.isEmpty {
             emptyState
         } else {
             thumbnailGrid
@@ -40,7 +50,7 @@ struct CortexDatabaseBrowser: View {
 
     private var filterBar: some View {
         HStack(spacing: DS.space8) {
-            Text("\(libraryVM.displayItems.count) items")
+            Text("\(visibleItems.count) items")
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
 
@@ -66,6 +76,9 @@ struct CortexDatabaseBrowser: View {
 
             Button {
                 libraryVM.showingRecentlyDeleted.toggle()
+                if libraryVM.showingRecentlyDeleted {
+                    Task { await libraryVM.loadRecentlyDeleted() }
+                }
             } label: {
                 Image(systemName: libraryVM.showingRecentlyDeleted ? "trash.fill" : "trash")
                     .font(DS.caption)
@@ -83,7 +96,7 @@ struct CortexDatabaseBrowser: View {
     private var thumbnailGrid: some View {
         ScrollView {
             LazyVGrid(columns: gridColumns, spacing: 14) {
-                ForEach(Array(libraryVM.displayItems.enumerated()), id: \.element.id) { index, item in
+                ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
                     SpotlightDocCard(item: item, onTap: { openItem(item) }, onDelete: { libraryVM.softDeleteItem(uuid: item.uuid) })
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 8)
@@ -138,12 +151,37 @@ struct CortexDatabaseBrowser: View {
             libraryVM.navigateIntoFolder(item)
             return
         }
+        if item.kind == .thinkspace {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                object: nil,
+                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: item.uuid).userInfo
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+            return
+        }
         Task { try? await NodeGraphEngine.shared.recordAccess(atomUUID: item.uuid, type: .view) }
         NotificationCenter.default.post(
             name: CosmoNotification.NodeGraph.openAtomFromCommandK,
             object: nil, userInfo: ["atomUUID": item.uuid]
         )
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+    }
+}
+
+enum CommandKDatabaseBrowserDataSource {
+    static func visibleItems(
+        allItems: [LibraryItem],
+        displayItems: [LibraryItem],
+        recentlyDeletedItems: [LibraryItem],
+        isAtHome: Bool,
+        showingRecentlyDeleted: Bool
+    ) -> [LibraryItem] {
+        if showingRecentlyDeleted {
+            return recentlyDeletedItems
+        }
+
+        return isAtHome ? allItems : displayItems
     }
 }
 

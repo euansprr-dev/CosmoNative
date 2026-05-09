@@ -1,0 +1,16 @@
+[
+  {
+    "name": "doors-locks-exact-fact",
+    "title": "Walking Beam brief",
+    "query": "Does the brief mention locks on doors?",
+    "body": "The sober living property should be staged before intake.\n\nSafety basics matter: each bedroom needs a clean bed, clear house rules, and locks on doors before residents arrive.\n\nDemand should be built before the lease is signed.",
+    "expectedPhrase": "locks on doors"
+  },
+  {
+    "name": "demand-before-signing",
+    "title": "Walking Beam brief",
+    "query": "What should happen before signing the lease?",
+    "body": "Build demand before you sign. Talk to hospitals, clinics, social services, and nonprofits in the months leading up to opening.",
+    "expectedPhrase": "Build demand before you sign"
+  }
+]

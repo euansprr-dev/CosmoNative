@@ -172,7 +172,7 @@ struct CosmoWindowView: View {
         ScrollViewReader { proxy in
             GeometryReader { stageProxy in
                 ScrollView {
-                    LazyVStack(spacing: CosmoWindowMetrics.messageSpacing) {
+                    VStack(spacing: CosmoWindowMetrics.messageSpacing) {
                         if viewModel.messages.isEmpty {
                             CosmoEmptyStateCard(
                                 context: viewModel.activeContext,

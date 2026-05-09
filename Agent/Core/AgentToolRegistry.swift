@@ -16,6 +16,58 @@ class AgentToolRegistry {
 
     // MARK: - Tool Groups
 
+    private var contextTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "retrieve_context",
+                description: "Search active pinned documents, profiles, swipes, content, and memory before answering. Use this for source-grounded questions, exact fact lookup, and references to attached @ context.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "Natural language or exact phrase query"] as [String: Any],
+                        "purpose": ["type": "string", "description": "factLookup, brainstorm, writing, memory, globalSynthesis, or general"] as [String: Any],
+                        "limit": ["type": "integer", "description": "Maximum chunks to return"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["query"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "inspect_pinned_sources",
+                description: "List active pinned context sources for the current conversation, including titles, types, and UUIDs.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [:] as [String: Any],
+                    "required": [] as [String]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "remember_context",
+                description: "Save durable memory only when the user states a stable preference, decision, client rule, or reusable fact. Do not save speculative brainstorm ideas as memory.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "key": ["type": "string", "description": "Stable memory key, such as user.style.directness or client.josh.voice"] as [String: Any],
+                        "value": ["type": "string", "description": "Memory value to save"] as [String: Any],
+                        "scope": ["type": "string", "description": "core, working, or archival"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["key", "value", "scope"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "search_memory",
+                description: "Search durable Cosmo memory and previous conversation recall for relevant prior context.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "Search query"] as [String: Any],
+                        "limit": ["type": "integer", "description": "Maximum memories to return"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["query"]
+                ]
+            ),
+        ]
+    }
+
     private var clientTools: [LLMToolDefinition] {
         [
             LLMToolDefinition(
@@ -1083,30 +1135,32 @@ class AgentToolRegistry {
     /// Source-gated: Telegram gets `send_telegram_buttons`, in-app gets `send_action_buttons`.
     func toolsForIntent(_ intent: AgentIntent, source: MessageSource = .inApp) -> [LLMToolDefinition] {
         let uxTools = interactiveUXTools(for: source)
+        let tools: [LLMToolDefinition]
         switch intent {
         case .capture:
-            return ideaTools + swipeTools + captureTools + scheduleTools + clientTools + clientProfileTools + clientMemoryTools + lessonTools + moduleManagementTools
+            tools = ideaTools + swipeTools + captureTools + scheduleTools + clientTools + clientProfileTools + clientMemoryTools + lessonTools + moduleManagementTools
         case .brainstorm:
-            return ideaTools + swipeTools + captureTools + clientTools + clientProfileTools + intelligenceTools + writingTools + clientMemoryTools + preferenceTools + scoringTools + lessonTools + moduleManagementTools + webSearchTools
+            tools = ideaTools + swipeTools + captureTools + clientTools + clientProfileTools + intelligenceTools + writingTools + clientMemoryTools + preferenceTools + scoringTools + lessonTools + moduleManagementTools + webSearchTools
         case .plan:
-            return scheduleTools + contentTools + strategyTools + clientProfileTools + lessonTools + moduleManagementTools
+            tools = scheduleTools + contentTools + strategyTools + clientProfileTools + lessonTools + moduleManagementTools
         case .query:
             return allTools
         case .correct:
-            return ideaTools + contentTools + scheduleTools + clientTools + clientProfileTools + moduleManagementTools
+            tools = ideaTools + contentTools + scheduleTools + clientTools + clientProfileTools + moduleManagementTools
         case .execute:
-            return contentTools + scheduleTools + writingTools + clientProfileTools + uxTools + lessonTools + moduleManagementTools
+            tools = contentTools + scheduleTools + writingTools + clientProfileTools + uxTools + lessonTools + moduleManagementTools
         case .debrief, .reflect:
-            return analyticsTools + lessonTools + moduleManagementTools
+            tools = analyticsTools + lessonTools + moduleManagementTools
         case .meta:
-            return preferenceTools + standingInstructionTools + clientMemoryTools + lessonTools + uxTools + moduleManagementTools
+            tools = preferenceTools + standingInstructionTools + clientMemoryTools + lessonTools + uxTools + moduleManagementTools
         case .strategy:
-            return strategyTools + swipeTools + contentTools + analyticsTools + intelligenceTools + writingTools + clientProfileTools + clientMemoryTools + insightMemoryTools + uxTools + lessonTools + moduleManagementTools + webSearchTools
+            tools = strategyTools + swipeTools + contentTools + analyticsTools + intelligenceTools + writingTools + clientProfileTools + clientMemoryTools + insightMemoryTools + uxTools + lessonTools + moduleManagementTools + webSearchTools
         case .draft:
-            return contentTools + swipeTools + ideaTools + intelligenceTools + writingTools + clientProfileTools + clientMemoryTools + preferenceTools + captureTools + scoringTools + insightMemoryTools + lessonTools + uxTools + moduleManagementTools + webSearchTools
+            tools = contentTools + swipeTools + ideaTools + intelligenceTools + writingTools + clientProfileTools + clientMemoryTools + preferenceTools + captureTools + scoringTools + insightMemoryTools + lessonTools + uxTools + moduleManagementTools + webSearchTools
         case .analyze:
-            return intelligenceTools + swipeTools + analyticsTools + contentTools + clientProfileTools + insightMemoryTools + lessonTools + moduleManagementTools + webSearchTools
+            tools = intelligenceTools + swipeTools + analyticsTools + contentTools + clientProfileTools + insightMemoryTools + lessonTools + moduleManagementTools + webSearchTools
         }
+        return deduplicated(contextTools + tools)
     }
 
     func toolsForIntent(
@@ -1157,7 +1211,7 @@ class AgentToolRegistry {
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = deduplicated(ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools)
+        allTools = deduplicated(contextTools + ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools)
     }
 
     private func deduplicated(_ tools: [LLMToolDefinition]) -> [LLMToolDefinition] {

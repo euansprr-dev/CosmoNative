@@ -389,8 +389,10 @@ final class CanvasRenderSnapshotTests: XCTestCase {
             id: UUID(),
             name: "List cluster",
             blockUUIDs: [block.entityUuid],
-            boundingRect: CGRect(x: 440, y: 340, width: 260, height: 180),
             colorIndex: 0,
+            boundingRect: CGRect(x: 440, y: 340, width: 260, height: 180),
+            isCollapsed: false,
+            isUserCreated: true,
             viewMode: .list
         )
 
@@ -426,8 +428,10 @@ final class CanvasRenderSnapshotTests: XCTestCase {
             id: clusterId,
             name: "Grid cluster",
             blockUUIDs: [block.entityUuid],
-            boundingRect: CGRect(x: 440, y: 340, width: 360, height: 280),
             colorIndex: 0,
+            boundingRect: CGRect(x: 440, y: 340, width: 360, height: 280),
+            isCollapsed: false,
+            isUserCreated: true,
             viewMode: .grid
         )
 
@@ -463,8 +467,10 @@ final class CanvasRenderSnapshotTests: XCTestCase {
             id: clusterId,
             name: "Canvas cluster",
             blockUUIDs: [block.entityUuid],
-            boundingRect: CGRect(x: 440, y: 340, width: 360, height: 280),
             colorIndex: 0,
+            boundingRect: CGRect(x: 440, y: 340, width: 360, height: 280),
+            isCollapsed: false,
+            isUserCreated: true,
             viewMode: .canvas
         )
 
@@ -482,6 +488,6 @@ final class CanvasRenderSnapshotTests: XCTestCase {
         )
 
         XCTAssertTrue(snapshot.clusterConsumedBlockUUIDs.isEmpty)
-        XCTAssertEqual(snapshot.renderableBlocks.map(\.id), [block.id])
+        XCTAssertEqual(snapshot.renderableBlocks.map { $0.id }, [block.id])
     }
 }

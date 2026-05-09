@@ -1,6 +1,7 @@
 import XCTest
 @testable import CosmoOS
 
+@MainActor
 final class WritingAIContextTests: XCTestCase {
     @MainActor
     func testContextBuilderBudgetsLongDraftAndRoutesWriterTier() async {
@@ -117,6 +118,36 @@ final class WritingAIContextTests: XCTestCase {
 
         XCTAssertTrue(selectedTextReplacement.canReplaceSelection)
         XCTAssertFalse(draftPreview.canReplaceSelection)
+    }
+
+    func testWritingRequestsCanCarrySharedContextPack() {
+        let request = ContextRetrievalRequest(
+            query: "draft from the brief",
+            conversationID: "conversation-1",
+            surface: .writingMode,
+            purpose: .writing,
+            pinnedSourceIDs: ["source-1"],
+            activeAtomUUID: "content-1",
+            activeClientUUID: "client-1",
+            maxChunks: 8,
+            tokenBudget: 5_000
+        )
+
+        XCTAssertEqual(request.surface, .writingMode)
+        XCTAssertEqual(request.purpose, .writing)
+        XCTAssertEqual(request.pinnedSourceIDs, ["source-1"])
+    }
+
+    func testWritingContextMergeKeepsUserDirectionFirst() {
+        let merged = AgentToolExecutor.mergeWritingContext(
+            "Make this sharper.",
+            contextBlock: "[COSMO CONTEXT PACK]\nRetrieved source evidence."
+        )
+
+        XCTAssertEqual(
+            merged,
+            "Make this sharper.\n\n[COSMO CONTEXT PACK]\nRetrieved source evidence."
+        )
     }
 
     private func makeRequest(

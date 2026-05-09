@@ -41,7 +41,7 @@ Append these tests to `CosmoWindowRoutingTests`:
 
 ```swift
 func testExpandedAgentModelTiersUseExactOpenRouterIds() {
-    XCTAssertEqual(AgentModelTier.gpt55Thinking.modelId, "openai/gpt-5.5:thinking")
+    XCTAssertEqual(AgentModelTier.gpt55Thinking.modelId, "openai/gpt-5.5")
     XCTAssertEqual(AgentModelTier.opus47.modelId, "anthropic/claude-opus-4.7")
     XCTAssertEqual(AgentModelTier.gptChatLatest.modelId, "openai/gpt-chat-latest")
     XCTAssertEqual(AgentModelTier.geminiFlashLatest.modelId, "~google/gemini-flash-latest")
@@ -84,7 +84,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .sensor: return "anthropic/claude-haiku-4.5"
         case .strategist: return "anthropic/claude-sonnet-4.5"
         case .writer: return "anthropic/claude-opus-4.6"
-        case .gpt55Thinking: return "openai/gpt-5.5:thinking"
+        case .gpt55Thinking: return "openai/gpt-5.5"
         case .opus47: return "anthropic/claude-opus-4.7"
         case .gptChatLatest: return "openai/gpt-chat-latest"
         case .geminiFlashLatest: return "~google/gemini-flash-latest"
@@ -151,7 +151,7 @@ Append:
 
 ```swift
 func testExplicitModelFailoverChainsStartWithSelectedModel() {
-    XCTAssertEqual(ModelFailoverChain.chain(for: .gpt55Thinking).models.first?.modelId, "openai/gpt-5.5:thinking")
+    XCTAssertEqual(ModelFailoverChain.chain(for: .gpt55Thinking).models.first?.modelId, "openai/gpt-5.5")
     XCTAssertEqual(ModelFailoverChain.chain(for: .opus47).models.first?.modelId, "anthropic/claude-opus-4.7")
     XCTAssertEqual(ModelFailoverChain.chain(for: .gptChatLatest).models.first?.modelId, "openai/gpt-chat-latest")
     XCTAssertEqual(ModelFailoverChain.chain(for: .geminiFlashLatest).models.first?.modelId, "~google/gemini-flash-latest")
@@ -190,14 +190,14 @@ static let sensorChain = ModelFailoverChain(models: [
 ])
 
 static let gpt55ThinkingChain = ModelFailoverChain(models: [
-    FailoverModel(modelId: "openai/gpt-5.5:thinking", maxRetries: 1, label: "GPT 5.5 Thinking"),
+    FailoverModel(modelId: "openai/gpt-5.5", maxRetries: 1, label: "GPT 5.5 Thinking"),
     FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
 ])
 
 static let opus47Chain = ModelFailoverChain(models: [
     FailoverModel(modelId: "anthropic/claude-opus-4.7", maxRetries: 2, label: "Opus 4.7"),
     FailoverModel(modelId: "anthropic/claude-opus-4.6", maxRetries: 1, label: "Opus 4.6"),
-    FailoverModel(modelId: "openai/gpt-5.5:thinking", maxRetries: 1, label: "GPT 5.5 Thinking"),
+    FailoverModel(modelId: "openai/gpt-5.5", maxRetries: 1, label: "GPT 5.5 Thinking"),
 ])
 
 static let gptChatLatestChain = ModelFailoverChain(models: [
@@ -247,7 +247,7 @@ Append:
 func testOpenRouterSettingsCatalogIncludesNewModels() {
     let ids = Set(AgentProvider.openRouterModels.map(\.id))
 
-    XCTAssertTrue(ids.contains("openai/gpt-5.5:thinking"))
+    XCTAssertTrue(ids.contains("openai/gpt-5.5"))
     XCTAssertTrue(ids.contains("anthropic/claude-opus-4.7"))
     XCTAssertTrue(ids.contains("openai/gpt-chat-latest"))
     XCTAssertTrue(ids.contains("~google/gemini-flash-latest"))
@@ -270,7 +270,7 @@ Change the start of the static list to:
 
 ```swift
 static let openRouterModels: [(id: String, label: String)] = [
-    ("openai/gpt-5.5:thinking", "GPT 5.5 Thinking"),
+    ("openai/gpt-5.5", "GPT 5.5 Thinking"),
     ("anthropic/claude-opus-4.7", "Claude Opus 4.7"),
     ("openai/gpt-chat-latest", "GPT Chat Latest"),
     ("~google/gemini-flash-latest", "Gemini Flash Latest"),

@@ -121,10 +121,10 @@ final class EditorLayoutMetricsTests: XCTestCase {
     ) -> CGFloat {
         let storage = NSTextStorage(attributedString: attributedString)
         let layoutManager = NSLayoutManager()
-        let textContainer = NSTextContainer(size: NSSize(width: 2000, height: .greatestFiniteMagnitude))
+        let textContainer = NSTextContainer(size: NSSize(width: 2000, height: CGFloat.greatestFiniteMagnitude))
         textContainer.lineFragmentPadding = 0
         textContainer.maximumNumberOfLines = 1
-        textContainer.lineBreakMode = .byClipping
+        textContainer.lineBreakMode = NSLineBreakMode.byClipping
 
         storage.addLayoutManager(layoutManager)
         layoutManager.addTextContainer(textContainer)

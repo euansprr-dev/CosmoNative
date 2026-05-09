@@ -14,12 +14,12 @@ final class AtomWindowStandaloneCreationTests: XCTestCase {
         originalLastAtomUUID = defaults.string(forKey: lastAtomKey)
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         let uuids = createdUUIDs.reversed()
         createdUUIDs.removeAll()
 
         for uuid in uuids {
-            try? AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
+            try? await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
         }
 
         if let originalLastAtomUUID {
@@ -27,7 +27,7 @@ final class AtomWindowStandaloneCreationTests: XCTestCase {
         } else {
             defaults.removeObject(forKey: lastAtomKey)
         }
-        super.tearDown()
+        try await super.tearDown()
     }
 
     func testCreateNewAtomPersistsStandaloneRecordsForSupportedTypes() async throws {

@@ -3,7 +3,7 @@ import XCTest
 
 final class CosmoWindowRoutingTests: XCTestCase {
     func testExpandedAgentModelTiersUseExactOpenRouterIds() {
-        XCTAssertEqual(AgentModelTier.gpt55Thinking.modelId, "openai/gpt-5.5:thinking")
+        XCTAssertEqual(AgentModelTier.gpt55Thinking.modelId, "openai/gpt-5.5")
         XCTAssertEqual(AgentModelTier.opus47.modelId, "anthropic/claude-opus-4.7")
         XCTAssertEqual(AgentModelTier.gptChatLatest.modelId, "openai/gpt-chat-latest")
         XCTAssertEqual(AgentModelTier.geminiFlashLatest.modelId, "~google/gemini-flash-latest")
@@ -17,7 +17,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
     }
 
     func testExplicitModelFailoverChainsStartWithSelectedModel() {
-        XCTAssertEqual(ModelFailoverChain.chain(for: .gpt55Thinking).models.first?.modelId, "openai/gpt-5.5:thinking")
+        XCTAssertEqual(ModelFailoverChain.chain(for: .gpt55Thinking).models.first?.modelId, "openai/gpt-5.5")
         XCTAssertEqual(ModelFailoverChain.chain(for: .opus47).models.first?.modelId, "anthropic/claude-opus-4.7")
         XCTAssertEqual(ModelFailoverChain.chain(for: .gptChatLatest).models.first?.modelId, "openai/gpt-chat-latest")
         XCTAssertEqual(ModelFailoverChain.chain(for: .geminiFlashLatest).models.first?.modelId, "~google/gemini-flash-latest")
@@ -26,10 +26,15 @@ final class CosmoWindowRoutingTests: XCTestCase {
     func testOpenRouterSettingsCatalogIncludesNewModels() {
         let ids = Set(AgentProvider.openRouterModels.map(\.id))
 
-        XCTAssertTrue(ids.contains("openai/gpt-5.5:thinking"))
+        XCTAssertTrue(ids.contains("openai/gpt-5.5"))
         XCTAssertTrue(ids.contains("anthropic/claude-opus-4.7"))
         XCTAssertTrue(ids.contains("openai/gpt-chat-latest"))
         XCTAssertTrue(ids.contains("~google/gemini-flash-latest"))
+    }
+
+    func testGPT55ThinkingUsesOpenRouterReasoningParameter() {
+        XCTAssertEqual(OpenAIProvider.reasoningEffort(for: AgentModelTier.gpt55Thinking.modelId), "high")
+        XCTAssertNil(OpenAIProvider.reasoningEffort(for: AgentModelTier.gptChatLatest.modelId))
     }
 
     func testCosmoModelPickerOptionsIncludeRequestedModels() {

@@ -12,7 +12,9 @@ Make the OPTION+A Cosmo Window model picker actually control the model used by t
 
 The current model picker is backed by `AgentModelTier?` on `CosmoWindowViewModel`. That gives the UI only four states: Auto, Haiku, Sonnet, and Opus. The selected value is passed to `CosmoAgentService.processMessage` as `tierOverride`, where it is collapsed into tier routing and OpenRouter failover chains.
 
-That design is fine for broad routing tiers, but it cannot express exact OpenRouter IDs such as `openai/gpt-5.5:thinking` or `~google/gemini-flash-latest`. It also makes the picker feel broken because the user is choosing a label, not a concrete model. The UI says "Opus" while routing still has failover and legacy defaults behind it.
+That design is fine for broad routing tiers, but it cannot express exact OpenRouter IDs such as `openai/gpt-5.5` or `~google/gemini-flash-latest`. It also makes the picker feel broken because the user is choosing a label, not a concrete model. The UI says "Opus" while routing still has failover and legacy defaults behind it.
+
+OpenRouter correction, 2026-05-06: the `openai/gpt-5.5:thinking` variant can surface in variant docs, but the live model catalog exposes the routable GPT-5.5 model as `openai/gpt-5.5`. The "GPT 5.5 Thinking" picker option should therefore call `openai/gpt-5.5` and send OpenRouter's `reasoning` parameter instead of using a `:thinking` model id.
 
 The default agent prompt already contains useful behavior, but it has grown into one large string. It mixes content ghostwriting rules, tool rules, personality, anti-hallucination behavior, swipe adaptation behavior, and source-specific formatting. That makes it harder to tune the normal OPTION+A experience without also affecting custom agents and specialized writing flows.
 
@@ -20,7 +22,7 @@ The default agent prompt already contains useful behavior, but it has grown into
 
 The implementation will add these exact model IDs:
 
-- `openai/gpt-5.5:thinking` for GPT 5.5 Thinking. OpenRouter supports the `:thinking` variant by appending it to a model ID.
+- `openai/gpt-5.5` for GPT 5.5 Thinking, with OpenRouter's `reasoning` request parameter.
 - `anthropic/claude-opus-4.7` for Claude Opus 4.7.
 - `openai/gpt-chat-latest` for OpenAI GPT Chat Latest.
 - `~google/gemini-flash-latest` for the rolling Gemini Flash family alias.
@@ -39,7 +41,7 @@ Reference links:
 
 Keep the existing `AgentModelTier` routing contract, but extend it to include explicit model presets for the OPTION+A picker. This avoids a large provider rewrite while still making model selection concrete and testable. Auto remains nil and continues to use intent-based routing. Any explicit picker choice becomes a concrete `AgentModelTier` case with an exact `modelId`.
 
-The failover chains will be updated so explicit model choices start with their selected model instead of being silently remapped into the old Sonnet/Haiku/Opus chain. For example, GPT 5.5 Thinking should call `openai/gpt-5.5:thinking` first and only use a compatible fallback if the selected model has a retryable provider failure.
+The failover chains will be updated so explicit model choices start with their selected model instead of being silently remapped into the old Sonnet/Haiku/Opus chain. For example, GPT 5.5 Thinking should call `openai/gpt-5.5` first and only use a compatible fallback if the selected model has a retryable provider failure.
 
 The normal agent prompt will be split into a dedicated default-agent prompt module. `AgentContextAssembler.defaultIdentityPrompt` will become a composed prompt built from named sections:
 

@@ -4,6 +4,11 @@
 
 import SwiftUI
 
+enum CosmoWindowMessageRenderingPolicy {
+    static let allowsTimelineTextSelection = false
+    static let usesLazyTimelineStack = false
+}
+
 struct CosmoMessageBubble: View {
     let message: CosmoWindowMessage
     var onEdit: ((CosmoWindowMessage) -> Void)? = nil
@@ -43,7 +48,7 @@ struct CosmoMessageBubble: View {
                     .font(DS.body)
                     .foregroundColor(DS.text)
                     .lineSpacing(5)
-                    .textSelection(.enabled)
+                    .cosmoWindowTimelineTextSelection()
 
                 HStack(spacing: 8) {
                     Text("You")
@@ -478,7 +483,18 @@ private struct CosmoMarkdownRenderer: View {
                 CosmoMarkdownBlockView(block: block)
             }
         }
-        .textSelection(.enabled)
+        .cosmoWindowTimelineTextSelection()
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func cosmoWindowTimelineTextSelection() -> some View {
+        if CosmoWindowMessageRenderingPolicy.allowsTimelineTextSelection {
+            self.textSelection(.enabled)
+        } else {
+            self
+        }
     }
 }
 

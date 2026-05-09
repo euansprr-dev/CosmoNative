@@ -1,6 +1,7 @@
 import XCTest
 @testable import CosmoOS
 
+@MainActor
 final class CommandKIdeaLifecycleTests: XCTestCase {
     private var isoNow: String {
         ISO8601DateFormatter().string(from: Date())

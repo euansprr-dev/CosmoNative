@@ -78,6 +78,13 @@ class AgentToolExecutor {
     /// so it can load full structured content (connections, research, etc.)
     var contextAtomUUIDs: [String] = []
 
+    /// Context source IDs from the shared Cosmo context subsystem.
+    /// These stay scoped to the active agent call and power retrieve_context.
+    var contextSourceIDs: [String] = []
+
+    /// Active conversation ID for shared working-memory tools.
+    var contextConversationID: String?
+
     // Writing engine cache removed — all writing now goes through CloudWritingClient.
     // The cloud engine manages its own session cache per contentUUID.
     // The getOrCreateEngine method has been replaced by cloud API calls in
@@ -87,6 +94,11 @@ class AgentToolExecutor {
 
     func execute(toolName: String, arguments: [String: Any]) async throws -> String {
         switch toolName {
+        // Shared context and memory
+        case "retrieve_context": return try await retrieveContext(arguments)
+        case "inspect_pinned_sources": return try await inspectPinnedSources(arguments)
+        case "remember_context": return try await rememberContext(arguments)
+        case "search_memory": return try await searchMemory(arguments)
         // Ideas
         case "search_ideas": return try await searchIdeas(arguments)
         case "get_idea": return try await getIdea(arguments)
@@ -189,6 +201,183 @@ class AgentToolExecutor {
         }
     }
 
+    // MARK: - Shared Context and Memory
+
+    private func retrieveContext(_ args: [String: Any]) async throws -> String {
+        guard let query = args["query"] as? String else {
+            return jsonError("Missing required parameter: query")
+        }
+
+        let purpose = (args["purpose"] as? String).flatMap(RetrievalPurpose.init(rawValue:)) ?? .general
+        let limit = args["limit"] as? Int ?? 8
+        let sourceIDs = await activeContextSourceIDs()
+
+        let request = ContextRetrievalRequest(
+            query: query,
+            conversationID: contextConversationID ?? "tool-context",
+            surface: .cosmoWindow,
+            purpose: purpose,
+            pinnedSourceIDs: sourceIDs,
+            activeAtomUUID: contextAtomUUIDs.last,
+            activeClientUUID: nil,
+            maxChunks: limit,
+            tokenBudget: 3_500
+        )
+        let results = try await CosmoRetrievalService.shared.retrieve(request)
+        let payload = results.map { result in
+            [
+                "sourceTitle": result.source.title,
+                "sourceId": result.source.id,
+                "atomUUID": result.source.atomUUID ?? "",
+                "anchor": result.chunk.anchor ?? "",
+                "matchType": result.matchType,
+                "score": result.score,
+                "text": result.chunk.rawText
+            ] as [String: Any]
+        }
+        return jsonEncode(["results": payload, "count": payload.count])
+    }
+
+    private func inspectPinnedSources(_ args: [String: Any]) async throws -> String {
+        let sourceIDs = await activeContextSourceIDs()
+        let sources = try await ContextIndexStore.shared.sources(ids: sourceIDs)
+        let payload = sources.map { source in
+            [
+                "id": source.id,
+                "title": source.title,
+                "kind": source.kind.rawValue,
+                "atomUUID": source.atomUUID ?? ""
+            ]
+        }
+        return jsonEncode(["sources": payload, "count": payload.count])
+    }
+
+    private func rememberContext(_ args: [String: Any]) async throws -> String {
+        guard let key = args["key"] as? String,
+              let value = args["value"] as? String,
+              let scope = args["scope"] as? String else {
+            return jsonError("Missing required parameters: key, value, scope")
+        }
+
+        switch scope {
+        case "core":
+            try await CosmoMemoryService.shared.upsertCoreMemory(value, key: key)
+        case "working":
+            try await CosmoMemoryService.shared.upsertWorkingMemory(contextConversationID ?? "tool-context", value: value)
+        case "archival":
+            try await CosmoMemoryService.shared.addArchivalMemory(value)
+        default:
+            return jsonError("Invalid scope: \(scope)")
+        }
+
+        return jsonEncode(["success": true, "scope": scope, "key": key])
+    }
+
+    private func searchMemory(_ args: [String: Any]) async throws -> String {
+        guard let query = args["query"] as? String else {
+            return jsonError("Missing required parameter: query")
+        }
+        let limit = args["limit"] as? Int ?? 5
+        let archival = try await CosmoMemoryService.shared.searchArchivalMemory(query: query, limit: limit)
+        let core = try await CosmoMemoryService.shared.coreMemory()
+        let working = try await CosmoMemoryService.shared.workingMemory(conversationID: contextConversationID ?? "tool-context")
+        let lower = query.lowercased()
+        let visible = (core + working).filter { lower.isEmpty || $0.lowercased().contains(lower) }
+        let results = Array((visible + archival).prefix(limit))
+        return jsonEncode(["results": results, "count": results.count])
+    }
+
+    private func activeContextSourceIDs() async -> [String] {
+        var ids = contextSourceIDs
+        for uuid in contextAtomUUIDs {
+            if let sourceID = await ContextIndexStore.shared.sourceID(atomUUID: uuid),
+               !ids.contains(sourceID) {
+                ids.append(sourceID)
+            }
+        }
+        return ids
+    }
+
+    private func rememberContextAtom(_ atom: Atom) async {
+        guard let sourceID = try? await ContextIndexStore.shared.upsert(atom: atom, pinState: .pinned) else { return }
+        if !contextSourceIDs.contains(sourceID) {
+            contextSourceIDs.append(sourceID)
+        }
+        if !contextAtomUUIDs.contains(atom.uuid) {
+            contextAtomUUIDs.append(atom.uuid)
+        }
+    }
+
+    private func rememberContextAtomUUIDs(_ uuids: [String]) async {
+        for uuid in uuids {
+            guard let atom = try? await atomRepo.fetch(uuid: uuid) else { continue }
+            await rememberContextAtom(atom)
+        }
+    }
+
+    private func rememberContextAtoms(_ atoms: [Atom]) async {
+        for atom in atoms {
+            await rememberContextAtom(atom)
+        }
+    }
+
+    private func sharedWritingContextBlock(
+        contentUUID: String,
+        prompt: String,
+        clientName: String?
+    ) async -> String? {
+        if let contentAtom = try? await atomRepo.fetch(uuid: contentUUID) {
+            await rememberContextAtom(contentAtom)
+        }
+        if let clientName, !clientName.isEmpty,
+           let clientAtom = try? await atomRepo.fuzzyFindClient(query: clientName) {
+            await rememberContextAtom(clientAtom)
+        }
+
+        let sourceIDs = await activeContextSourceIDs()
+        let coreMemory = (try? await CosmoMemoryService.shared.coreMemory()) ?? []
+        let workingMemory = (try? await CosmoMemoryService.shared.workingMemory(conversationID: contextConversationID ?? "writing-\(contentUUID)")) ?? []
+        let request = ContextRetrievalRequest(
+            query: prompt,
+            conversationID: contextConversationID ?? "writing-\(contentUUID)",
+            surface: .writingMode,
+            purpose: .writing,
+            pinnedSourceIDs: sourceIDs,
+            activeAtomUUID: contentUUID,
+            activeClientUUID: nil,
+            maxChunks: 10,
+            tokenBudget: 6_000
+        )
+        let retrievalResults = ((try? await CosmoRetrievalService.shared.retrieve(request)) ?? [])
+        guard !retrievalResults.isEmpty || !coreMemory.isEmpty || !workingMemory.isEmpty else {
+            return nil
+        }
+
+        let pack = ContextPackAssembler.assemble(
+            request: request,
+            retrievalResults: retrievalResults,
+            coreMemory: coreMemory,
+            workingMemory: workingMemory,
+            recallMemory: []
+        )
+        return pack.promptBlock
+    }
+
+    nonisolated static func mergeWritingContext(_ text: String?, contextBlock: String?) -> String? {
+        let trimmedText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedContext = contextBlock?.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch (trimmedText?.isEmpty == false ? trimmedText : nil, trimmedContext?.isEmpty == false ? trimmedContext : nil) {
+        case let (text?, context?):
+            return [text, context].joined(separator: "\n\n")
+        case let (text?, nil):
+            return text
+        case let (nil, context?):
+            return context
+        case (nil, nil):
+            return nil
+        }
+    }
+
     // MARK: - Ideas
 
     private func searchIdeas(_ args: [String: Any]) async throws -> String {
@@ -210,6 +399,7 @@ class AgentToolExecutor {
                     "preview": result.preview
                 ]
             }
+            await rememberContextAtomUUIDs(results.compactMap(\.entityUUID))
             return jsonEncode(["results": items, "count": items.count])
         } catch {
             // Fallback to AtomRepository keyword search + client match
@@ -245,6 +435,7 @@ class AgentToolExecutor {
         guard let atom = try await atomRepo.fetch(uuid: uuid) else {
             return jsonError("Idea not found: \(uuid)")
         }
+        await rememberContextAtom(atom)
         return jsonEncode(atomToDict(atom))
     }
 
@@ -510,7 +701,7 @@ class AgentToolExecutor {
             // Check if query matches a client name
             let clientAtom = try? await atomRepo.fuzzyFindClient(query: query)
 
-            let matching = swipes.filter { atom in
+            let matching = Array(swipes.filter { atom in
                 let title = (atom.title ?? "").lowercased()
                 let body = (atom.body ?? "").lowercased()
                 // Also search structured JSON (catches hookText, framework names, transcript for IG)
@@ -526,7 +717,8 @@ class AgentToolExecutor {
                     clientMatch = false
                 }
                 return textMatch || clientMatch
-            }.prefix(limit)
+            }.prefix(limit))
+            await rememberContextAtoms(matching)
 
             let items: [[String: Any]] = matching.map { atom in
                 var item: [String: Any] = [
@@ -554,6 +746,7 @@ class AgentToolExecutor {
         guard let atom = try await atomRepo.fetch(uuid: uuid) else {
             return jsonError("Swipe file not found: \(uuid)")
         }
+        await rememberContextAtom(atom)
 
         var result = atomToDict(atom)
 
@@ -586,6 +779,7 @@ class AgentToolExecutor {
                     "preview": result.preview
                 ]
             }
+            await rememberContextAtomUUIDs(results.compactMap(\.entityUUID))
             // Results are ordered by relevance (most similar first)
             return jsonEncode(["results": items, "count": items.count])
         } catch {
@@ -706,6 +900,7 @@ class AgentToolExecutor {
         let swipes = atoms.filter { $0.isSwipeFileAtom }
 
         let page = Array(swipes.dropFirst(offset).prefix(limit))
+        await rememberContextAtoms(page)
 
         let items: [[String: Any]] = page.map { atom in
             var item: [String: Any] = [
@@ -1499,6 +1694,7 @@ class AgentToolExecutor {
         guard let atom = try await atomRepo.fetch(uuid: uuid) else {
             return jsonError("Content not found: \(uuid)")
         }
+        await rememberContextAtom(atom)
         var result = atomToDict(atom)
         if let meta = atom.metadataValue(as: ContentAtomMetadata.self) {
             result["phase"] = meta.phase.rawValue
@@ -2065,6 +2261,12 @@ class AgentToolExecutor {
         print("☁️ [AgentToolExecutor] generate_outline → cloud engine for \(contentUUID)")
 
         do {
+            let notes = args["notes"] as? String
+            let sharedContext = await sharedWritingContextBlock(
+                contentUUID: contentUUID,
+                prompt: notes ?? "Generate an outline for this content.",
+                clientName: args["clientName"] as? String
+            )
             let result = try await CloudWritingClient.shared.generateOutline(
                 contentUUID: contentUUID,
                 blueprintTitles: args["blueprintTitles"] as? [String],
@@ -2075,7 +2277,7 @@ class AgentToolExecutor {
                     }
                     return uuids.isEmpty ? nil : uuids
                 }(),
-                notes: args["notes"] as? String,
+                notes: Self.mergeWritingContext(notes, contextBlock: sharedContext),
                 clientName: args["clientName"] as? String,
                 contentFormat: args["contentFormat"] as? String,
                 contextAtomUUIDs: contextAtomUUIDs.isEmpty ? nil : contextAtomUUIDs
@@ -2126,9 +2328,15 @@ class AgentToolExecutor {
             }
 
             do {
+                let userDirection = args["userDirection"] as? String
+                let sharedContext = await sharedWritingContextBlock(
+                    contentUUID: contentUUID,
+                    prompt: userDirection ?? "Generate a draft for this content.",
+                    clientName: args["clientName"] as? String
+                )
                 let result = try await CloudWritingClient.shared.runSession(
                     contentUUID: contentUUID,
-                    userDirection: args["userDirection"] as? String,
+                    userDirection: Self.mergeWritingContext(userDirection, contextBlock: sharedContext),
                     localMetadata: localMetadata
                 )
 
@@ -2155,9 +2363,15 @@ class AgentToolExecutor {
         print("☁️ [AgentToolExecutor] generate_draft → multi-phase pipeline for \(contentUUID)")
 
         do {
+            let userDirection = args["userDirection"] as? String
+            let sharedContext = await sharedWritingContextBlock(
+                contentUUID: contentUUID,
+                prompt: userDirection ?? "Generate a draft for this content.",
+                clientName: args["clientName"] as? String
+            )
             let result = try await CloudWritingClient.shared.generateDraft(
                 contentUUID: contentUUID,
-                userDirection: args["userDirection"] as? String,
+                userDirection: Self.mergeWritingContext(userDirection, contextBlock: sharedContext),
                 clientName: args["clientName"] as? String,
                 contentFormat: args["contentFormat"] as? String
             )
@@ -2299,9 +2513,14 @@ class AgentToolExecutor {
         print("☁️ [AgentToolExecutor] revise_draft → cloud engine for \(contentUUID)")
 
         do {
+            let sharedContext = await sharedWritingContextBlock(
+                contentUUID: contentUUID,
+                prompt: feedback,
+                clientName: args["clientName"] as? String
+            )
             let result = try await CloudWritingClient.shared.reviseDraft(
                 contentUUID: contentUUID,
-                feedback: feedback,
+                feedback: Self.mergeWritingContext(feedback, contextBlock: sharedContext) ?? feedback,
                 currentDraft: args["currentDraft"] as? String,
                 clientName: args["clientName"] as? String
             )
@@ -2323,8 +2542,14 @@ class AgentToolExecutor {
 
         // Route through cloud outline (hooks are generated as part of outline)
         do {
+            let sharedContext = await sharedWritingContextBlock(
+                contentUUID: contentUUID,
+                prompt: "Generate hooks for this content.",
+                clientName: args["clientName"] as? String
+            )
             let result = try await CloudWritingClient.shared.generateOutline(
                 contentUUID: contentUUID,
+                notes: sharedContext,
                 clientName: args["clientName"] as? String
             )
 
@@ -2836,6 +3061,7 @@ class AgentToolExecutor {
         guard let meta = clientAtom.metadataValue(as: ClientProfileMetadata.self) else {
             return jsonError("Client profile '\(clientName)' has no metadata")
         }
+        await rememberContextAtom(clientAtom)
 
         var result: [String: Any] = [
             "uuid": clientAtom.uuid,

@@ -1,6 +1,7 @@
 import XCTest
 @testable import CosmoOS
 
+@MainActor
 final class UnifiedWritingEngineCostTests: XCTestCase {
     func testApplyBlockBudgetsLeavesBlock1Untouched() {
         let longBlock1 = String(repeating: "A", count: 40_000)

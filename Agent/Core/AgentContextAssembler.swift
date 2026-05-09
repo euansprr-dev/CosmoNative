@@ -789,7 +789,10 @@ class AgentContextAssembler {
     func injectLinkedContext(atomUUIDs: [String]) async -> String {
         guard !atomUUIDs.isEmpty else { return "" }
 
-        var parts: [String] = ["[LINKED KNOWLEDGE CONTEXT]"]
+        var parts: [String] = [
+            "[LINKED KNOWLEDGE CONTEXT]",
+            "NOTE: Full pinned-source retrieval is provided in [COSMO CONTEXT PACK]. This linked summary is compatibility context only."
+        ]
         var seen = Set<String>()
 
         for uuid in atomUUIDs.prefix(5) {

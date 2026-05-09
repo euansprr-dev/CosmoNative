@@ -34,8 +34,101 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let older = await pipeline.nextRequestID()
         let newer = await pipeline.nextRequestID()
 
-        XCTAssertFalse(await pipeline.isCurrent(older))
-        XCTAssertTrue(await pipeline.isCurrent(newer))
+        let olderIsCurrent = await pipeline.isCurrent(older)
+        let newerIsCurrent = await pipeline.isCurrent(newer)
+
+        XCTAssertFalse(olderIsCurrent)
+        XCTAssertTrue(newerIsCurrent)
+    }
+
+    func testCommandKCanRepresentContextChunkResult() {
+        let source = ContextSource(
+            id: "source-1",
+            kind: .content,
+            title: "Walking Beam brief",
+            atomUUID: "content-1",
+            bodyHash: "body-hash",
+            metadataHash: "meta-hash",
+            pinState: .pinned,
+            updatedAt: ISO8601DateFormatter().date(from: "2026-05-06T10:00:00Z") ?? Date()
+        )
+        let chunk = ContextChunk(
+            id: "chunk-1",
+            sourceID: source.id,
+            ordinal: 0,
+            rawText: "All bedroom doors need working locks on doors before tenant intake.",
+            contextualHeader: "Source: Walking Beam brief.",
+            anchor: "chunk-1",
+            tokenCount: 20,
+            bodyHash: "body-hash"
+        )
+        let result = ContextRetrievalResult(
+            chunk: chunk,
+            source: source,
+            score: 10.0,
+            matchType: "keyword"
+        )
+
+        let ranked = CommandKContextChunkAdapter.rankedResult(from: result)
+
+        XCTAssertEqual(ranked.atomUUID, "content-1")
+        XCTAssertEqual(ranked.atomType, .content)
+        XCTAssertEqual(ranked.title, "Walking Beam brief")
+        XCTAssertTrue(ranked.snippet?.contains("locks on doors") == true)
+        XCTAssertGreaterThan(ranked.semanticWeight, 0.5)
+    }
+
+    func testCommandKDatabaseBrowserUsesGlobalItemsAtHome() {
+        let project = LibraryItem(atom: Atom.new(type: .project, title: "Client Project"))
+        let standalone = LibraryItem(atom: Atom.new(type: .idea, title: "Loose capture"))
+        let nested = LibraryItem(
+            atom: Atom.new(type: .content, title: "Nested draft"),
+            project: Atom.new(type: .project, title: "Client Project")
+        )
+
+        let visibleItems = CommandKDatabaseBrowserDataSource.visibleItems(
+            allItems: [project, standalone, nested],
+            displayItems: [project],
+            recentlyDeletedItems: [],
+            isAtHome: true,
+            showingRecentlyDeleted: false
+        )
+
+        XCTAssertEqual(visibleItems.map(\.title), ["Client Project", "Loose capture", "Nested draft"])
+    }
+
+    func testRecentComposerIncludesUpdatedAtomsThatWereNeverOpened() {
+        let openedAtom = Atom.new(type: .idea, title: "Opened idea")
+        let capturedAtom = Atom.new(type: .research, title: "Fresh capture")
+        let oldOpenedAt = "2026-05-01T10:00:00Z"
+        let freshUpdatedAt = "2026-05-06T10:00:00Z"
+
+        let items = CommandKRecentComposer.compose(
+            opened: [
+                CommandKRecentComposer.OpenedAtom(atom: openedAtom, openedAt: oldOpenedAt, accessCount: 3)
+            ],
+            recentlyUpdated: [
+                recentlyUpdated(capturedAtom, updatedAt: freshUpdatedAt),
+                recentlyUpdated(openedAtom, updatedAt: oldOpenedAt)
+            ],
+            limit: 8
+        )
+
+        XCTAssertEqual(items.map(\.id), [capturedAtom.uuid, openedAtom.uuid])
+        XCTAssertFalse(items.first?.relativeDate.isEmpty ?? true)
+
+        let ranked = CommandKRecentComposer.rankedResults(
+            opened: [
+                CommandKRecentComposer.OpenedAtom(atom: openedAtom, openedAt: oldOpenedAt, accessCount: 3)
+            ],
+            recentlyUpdated: [
+                recentlyUpdated(capturedAtom, updatedAt: freshUpdatedAt),
+                recentlyUpdated(openedAtom, updatedAt: oldOpenedAt)
+            ],
+            limit: 8
+        )
+
+        XCTAssertEqual(ranked.map(\.atomUUID), [capturedAtom.uuid, openedAtom.uuid])
     }
 
     func testActionParserParsesSwipeLinkAction() {
@@ -86,5 +179,11 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(action?.kind, .openApp)
         XCTAssertEqual(action?.title, "Open Safari")
         XCTAssertEqual(action?.payload.title, "Safari")
+    }
+
+    private func recentlyUpdated(_ atom: Atom, updatedAt: String) -> Atom {
+        var atom = atom
+        atom.updatedAt = updatedAt
+        return atom
     }
 }

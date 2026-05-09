@@ -1799,7 +1799,91 @@ class CosmoDatabase: ObservableObject {
             print("✅ custom_agent_profiles seed prompts migration complete")
         }
 
+        migrator.registerMigration("create_context_index_tables") { db in
+            print("🔨 Creating shared context index tables...")
+            try Self.createContextIndexSchema(db)
+            print("✅ shared context index tables created")
+        }
+
+        migrator.registerMigration("create_context_session_tables") { db in
+            print("🔨 Creating shared context session tables...")
+            try Self.createContextSessionSchema(db)
+            print("✅ shared context session tables created")
+        }
+
         return migrator
+    }
+
+    nonisolated static func createContextIndexSchema(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS context_sources (
+                id TEXT PRIMARY KEY NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                atom_uuid TEXT,
+                external_id TEXT,
+                body_hash TEXT NOT NULL,
+                metadata_hash TEXT NOT NULL,
+                client_uuid TEXT,
+                pin_state TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_context_sources_atom_uuid
+                ON context_sources(atom_uuid);
+            CREATE INDEX IF NOT EXISTS idx_context_sources_client_uuid
+                ON context_sources(client_uuid);
+
+            CREATE TABLE IF NOT EXISTS context_chunks (
+                id TEXT PRIMARY KEY NOT NULL,
+                source_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                raw_text TEXT NOT NULL,
+                contextual_header TEXT NOT NULL,
+                anchor TEXT,
+                token_count INTEGER NOT NULL,
+                body_hash TEXT NOT NULL,
+                FOREIGN KEY(source_id) REFERENCES context_sources(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_context_chunks_source_id
+                ON context_chunks(source_id, ordinal);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS context_chunks_fts USING fts5(
+                id UNINDEXED,
+                source_id UNINDEXED,
+                title,
+                searchable_text,
+                tokenize='porter unicode61 remove_diacritics 1'
+            );
+        """)
+        try createContextSessionSchema(db)
+    }
+
+    nonisolated static func createContextSessionSchema(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS context_sessions (
+                id TEXT PRIMARY KEY NOT NULL,
+                surface TEXT NOT NULL,
+                active_atom_uuid TEXT,
+                active_client_uuid TEXT,
+                recent_decision_summaries TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS context_session_sources (
+                session_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                PRIMARY KEY (session_id, source_id),
+                FOREIGN KEY(session_id) REFERENCES context_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY(source_id) REFERENCES context_sources(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_context_session_sources_source_id
+                ON context_session_sources(source_id);
+        """)
     }
 
     // MARK: - Minimal Schema Creation

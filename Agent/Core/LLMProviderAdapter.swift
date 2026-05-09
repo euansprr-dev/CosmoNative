@@ -548,6 +548,23 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
         return 4096
     }
 
+    static func reasoningEffort(for model: String) -> String? {
+        switch model.lowercased() {
+        case "openai/gpt-5.5":
+            return "high"
+        default:
+            return nil
+        }
+    }
+
+    private func reasoningPayload(for model: String) -> [String: Any]? {
+        guard let effort = Self.reasoningEffort(for: model) else { return nil }
+        return [
+            "effort": effort,
+            "exclude": true
+        ]
+    }
+
     func complete(
         messages: [AgentMessage],
         tools: [LLMToolDefinition]?,
@@ -598,6 +615,10 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
             "messages": openAIMessages,
             "max_tokens": baseMaxTokens
         ]
+
+        if let reasoning = reasoningPayload(for: resolvedModel) {
+            body["reasoning"] = reasoning
+        }
 
         if let tools = tools, !tools.isEmpty {
             body["tools"] = tools.map { $0.toOpenAIDict() }
@@ -1111,6 +1132,10 @@ extension OpenAIProvider {
             "max_tokens": resolvedMaxTokens
         ]
 
+        if let reasoning = reasoningPayload(for: resolvedModel) {
+            body["reasoning"] = reasoning
+        }
+
         if let tools = tools, !tools.isEmpty {
             var toolDicts = tools.map { $0.toOpenAIDict() }
             // Cache tool definitions — they're static across requests
@@ -1189,6 +1214,10 @@ extension OpenAIProvider: StreamingLLMProvider {
             "max_tokens": resolvedMaxTokens,
             "stream": true
         ]
+
+        if let reasoning = reasoningPayload(for: resolvedModel) {
+            body["reasoning"] = reasoning
+        }
 
         // Include tools in streaming — the SSE parser accumulates tool call deltas
         if let tools = tools, !tools.isEmpty {

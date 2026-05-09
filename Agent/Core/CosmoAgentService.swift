@@ -169,6 +169,7 @@ class CosmoAgentService: ObservableObject {
 
     /// Maximum tool call iterations for simple intents (queries, captures, corrections)
     private let baseMaxToolIterations = 12
+    nonisolated static let recentToolResultsToKeepUncompressed = 8
 
     nonisolated static func defaultModelTier(for intent: AgentIntent) -> AgentModelTier {
         switch intent {
@@ -1910,7 +1911,8 @@ class CosmoAgentService: ObservableObject {
     // MARK: - Tool Result Compression (WP2)
 
     /// Compress old tool results in conversation history to reduce token usage.
-    /// Keeps the 2 most recent tool result pairs intact, compresses older ones
+    /// Keeps recent tool results intact so follow-up turns can reuse loaded
+    /// profiles, swipes, and document context without re-calling tools.
     /// to compact summaries (title/type/count extraction from JSON).
     private func compressOldToolResults(_ conversation: inout AgentConversation) {
         let messages = conversation.messages
@@ -1923,9 +1925,8 @@ class CosmoAgentService: ObservableObject {
             }
         }
 
-        // Keep the last 2 tool results (approximately 1 tool call exchange) intact
-        guard toolResultIndices.count > 2 else { return }
-        let indicesToCompress = Set(toolResultIndices.dropLast(2))
+        guard toolResultIndices.count > Self.recentToolResultsToKeepUncompressed else { return }
+        let indicesToCompress = Set(toolResultIndices.dropLast(Self.recentToolResultsToKeepUncompressed))
 
         var newMessages: [AgentMessage] = []
         for (index, msg) in messages.enumerated() {

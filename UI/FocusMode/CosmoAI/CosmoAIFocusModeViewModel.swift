@@ -13,7 +13,7 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
     @Published var surfacedAtoms: [Atom] = []
     @Published var isProcessing = false
     @Published var connectedAtomUUIDs: [String] = []
-    @Published var contextSources: [ContextSource] = []
+    @Published var contextSources: [CosmoAIContextSource] = []
     @Published var inputText = ""
 
     // MARK: - Live Tool Activity (WP5)
@@ -30,6 +30,7 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
     let atom: Atom
     private let agentService = CosmoAgentService.shared
     private var conversationId: String
+    private var pinnedContextSourceIDs: [String] = []
 
     // MARK: - Init
     init(atom: Atom) {
@@ -58,8 +59,15 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
         liveToolActivity = []
         activeToolLabel = nil
 
-        // Build enriched text with connected context + mention context
-        let enrichedText = buildEnrichedText(query: query)
+        await ensureSharedContextForCurrentTurn()
+        let sharedContextBlock = await focusContextPackBlock(query: query)
+        let enrichedText = [
+            sharedContextBlock,
+            buildEnrichedText(query: query)
+        ]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
 
         // Clear mentions after capturing
         clearMentions()
@@ -141,6 +149,61 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
         return parts.joined(separator: "\n\n")
     }
 
+    // MARK: - Shared Context
+
+    private func ensureSharedContextForCurrentTurn() async {
+        var sourceIDs = pinnedContextSourceIDs
+        await pin(atom, into: &sourceIDs, pinState: .active)
+
+        for uuid in connectedAtomUUIDs {
+            guard let connectedAtom = try? await AtomRepository.shared.fetch(uuid: uuid) else { continue }
+            await pin(connectedAtom, into: &sourceIDs, pinState: .pinned)
+        }
+
+        for mentionedAtom in mentionedAtoms {
+            await pin(mentionedAtom, into: &sourceIDs, pinState: .pinned)
+        }
+
+        pinnedContextSourceIDs = sourceIDs
+    }
+
+    private func pin(_ atom: Atom, into sourceIDs: inout [String], pinState: ContextPinState) async {
+        guard let sourceID = try? await ContextIndexStore.shared.upsert(atom: atom, pinState: pinState) else { return }
+        if !sourceIDs.contains(sourceID) {
+            sourceIDs.append(sourceID)
+        }
+    }
+
+    private func focusContextPackBlock(query: String) async -> String? {
+        guard !pinnedContextSourceIDs.isEmpty else { return nil }
+        let request = ContextRetrievalRequest(
+            query: query,
+            conversationID: conversationId,
+            surface: .focusPanel,
+            purpose: .general,
+            pinnedSourceIDs: pinnedContextSourceIDs,
+            activeAtomUUID: atom.uuid,
+            activeClientUUID: atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID,
+            maxChunks: 8,
+            tokenBudget: 4_500
+        )
+        let retrievalResults = (try? await CosmoRetrievalService.shared.retrieve(request)) ?? []
+        let coreMemory = (try? await CosmoMemoryService.shared.coreMemory()) ?? []
+        let workingMemory = (try? await CosmoMemoryService.shared.workingMemory(conversationID: conversationId)) ?? []
+        guard !retrievalResults.isEmpty || !coreMemory.isEmpty || !workingMemory.isEmpty else {
+            return nil
+        }
+
+        let pack = ContextPackAssembler.assemble(
+            request: request,
+            retrievalResults: retrievalResults,
+            coreMemory: coreMemory,
+            workingMemory: workingMemory,
+            recallMemory: []
+        )
+        return pack.promptBlock
+    }
+
     // MARK: - Live Tool Activity Handling
 
     private func handleToolActivity(_ event: ToolActivityEvent) {
@@ -215,25 +278,31 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
         Task {
             do {
                 let edges = try await GraphQueryEngine().getEdges(for: atom.uuid)
-                var sources: [ContextSource] = []
+                var sources: [CosmoAIContextSource] = []
                 var uuids: [String] = []
+                var sourceIDs = pinnedContextSourceIDs
 
                 for edge in edges.prefix(10) {
                     let connectedUUID = edge.sourceUUID == atom.uuid ? edge.targetUUID : edge.sourceUUID
                     if let connectedAtom = try await AtomRepository.shared.fetch(uuid: connectedUUID) {
                         let entityType = EntityType(rawValue: connectedAtom.type.rawValue) ?? .idea
-                        sources.append(ContextSource(
+                        sources.append(CosmoAIContextSource(
                             id: connectedAtom.uuid,
                             title: connectedAtom.title ?? "Untitled",
                             type: entityType,
                             bodyPreview: String((connectedAtom.body ?? "").prefix(200))
                         ))
                         uuids.append(connectedUUID)
+                        if let sourceID = try? await ContextIndexStore.shared.upsert(atom: connectedAtom, pinState: .pinned),
+                           !sourceIDs.contains(sourceID) {
+                            sourceIDs.append(sourceID)
+                        }
                     }
                 }
 
                 self.contextSources = sources
                 self.connectedAtomUUIDs = uuids
+                self.pinnedContextSourceIDs = sourceIDs
             } catch {
                 print("Failed to load connected context: \(error)")
             }

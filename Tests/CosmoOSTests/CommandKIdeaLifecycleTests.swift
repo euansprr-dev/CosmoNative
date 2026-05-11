@@ -64,6 +64,70 @@ final class CommandKIdeaLifecycleTests: XCTestCase {
         XCTAssertEqual(sections[2].items.map(\.title), ["Loose idea"])
     }
 
+    func testIdeaGalleryItemPreservesIdeaFocusContextHooksAndOutline() throws {
+        let outline = CodexOutlineModel(
+            arcShape: nil,
+            slides: [
+                CodexOutlineSlide(
+                    id: UUID(),
+                    position: 1,
+                    speechAct: nil,
+                    readerDeltas: [],
+                    frame: nil,
+                    distance: nil,
+                    techniques: [],
+                    transition: nil,
+                    note: "Set up the rental gap"
+                ),
+                CodexOutlineSlide(
+                    id: UUID(),
+                    position: 2,
+                    speechAct: nil,
+                    readerDeltas: [],
+                    frame: "Show the offer mechanism",
+                    distance: nil,
+                    techniques: [],
+                    transition: nil,
+                    note: nil
+                ),
+            ]
+        )
+        let outlineJSON = try XCTUnwrap(String(data: JSONEncoder().encode(outline), encoding: .utf8))
+
+        var atom = Atom.new(
+            type: .idea,
+            title: "Rental angle",
+            body: "Use the local rent squeeze as the context for the claim.",
+            metadata: nil
+        )
+        atom = atom.withUpdatedIdeaMetadata { metadata in
+            metadata.context = "Creative direction: make the angle feel specific to renters."
+            metadata.hooks = ["Find a home for rent for XYZ", "Renters are missing this one path"]
+            metadata.codexOutline = outlineJSON
+        }
+
+        let item = try XCTUnwrap(atom.toIdeaGalleryItem())
+        XCTAssertEqual(item.body, "Use the local rent squeeze as the context for the claim.")
+        XCTAssertEqual(item.context, "Creative direction: make the angle feel specific to renters.")
+        XCTAssertEqual(item.hooks, ["Find a home for rent for XYZ", "Renters are missing this one path"])
+        XCTAssertEqual(item.outline, ["Set up the rental gap", "Show the offer mechanism"])
+    }
+
+    func testIdeaGalleryItemUsesBodyAsContextFallbackWhenMetadataContextIsEmpty() throws {
+        var atom = Atom.new(
+            type: .idea,
+            title: "Fallback context",
+            body: "The body should become preview context when metadata has no context.",
+            metadata: nil
+        )
+        atom = atom.withUpdatedIdeaMetadata { metadata in
+            metadata.context = "   "
+        }
+
+        let item = try XCTUnwrap(atom.toIdeaGalleryItem())
+        XCTAssertEqual(item.context, "The body should become preview context when metadata has no context.")
+    }
+
     func testMatchesIdeaCreationNotificationFromTelegramAgentPayload() {
         let atom = Atom.new(type: .idea, title: "TG capture", body: nil, metadata: nil)
         let notification = Notification(

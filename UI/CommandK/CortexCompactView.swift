@@ -8,20 +8,44 @@ struct CortexCompactView: View {
     var namespace: Namespace.ID
 
     var body: some View {
-        VStack(spacing: DS.space20) {
-            domainBubblesRow
+        VStack(alignment: .leading, spacing: DS.space24) {
+            header
+            domainCardsRow
+            Divider()
+                .foregroundStyle(DS.glassBorder.opacity(0.58))
             if !viewModel.recentItems.isEmpty {
                 recentsSection
             }
-            keyboardHintBar
         }
-        .padding(DS.space24)
+        .padding(.horizontal, DS.space32)
+        .padding(.vertical, DS.space24)
+    }
+
+    private var header: some View {
+        HStack {
+            Text("Open a space")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(DS.text)
+
+            Spacer()
+
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: 36, height: 36)
+                .background(DS.glassCardFill.opacity(0.56), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(DS.glassBorder.opacity(0.62), lineWidth: 0.5)
+                )
+                .accessibilityHidden(true)
+        }
     }
 
     // MARK: - Domain Bubbles
 
-    private var domainBubblesRow: some View {
-        HStack(spacing: DS.space32) {
+    private var domainCardsRow: some View {
+        HStack(spacing: DS.space20) {
             ForEach(CommandKTab.allCases, id: \.rawValue) { tab in
                 CortexDomainBubble(
                     tab: tab,
@@ -34,7 +58,7 @@ struct CortexCompactView: View {
                 }
             }
         }
-        .padding(.top, DS.space4)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     // MARK: - Recents Section
@@ -49,18 +73,15 @@ struct CortexCompactView: View {
     private var recentsHeader: some View {
         HStack {
             Text("Recents")
-                .font(DS.caption)
-                .fontWeight(.medium)
-                .foregroundStyle(DS.textMuted)
-                .textCase(.uppercase)
-                .tracking(0.5)
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(DS.text)
             Spacer()
         }
     }
 
     private var recentsGrid: some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: CommandKMetrics.recentCardMinWidth, maximum: 180), spacing: DS.space12)],
+            columns: [GridItem(.adaptive(minimum: CommandKMetrics.recentCardMinWidth, maximum: 214), spacing: DS.space12)],
             spacing: DS.space12
         ) {
             ForEach(Array(viewModel.recentItems.enumerated()), id: \.element.id) { index, item in
@@ -72,37 +93,6 @@ struct CortexCompactView: View {
                 .transition(.opacity.combined(with: .offset(y: 6)))
                 .animation(ProMotionSprings.staggered(index: index), value: viewModel.recentItems.count)
             }
-        }
-    }
-
-    // MARK: - Keyboard Hints
-
-    private var keyboardHintBar: some View {
-        HStack(spacing: DS.space16) {
-            keyHint(keys: "↑↓", label: "Navigate")
-            keyHint(keys: "↵", label: "Open")
-            keyHint(keys: "⎋", label: "Close")
-            Spacer()
-        }
-        .padding(.top, DS.space4)
-    }
-
-    private func keyHint(keys: String, label: String) -> some View {
-        HStack(spacing: DS.space4) {
-            Text(keys)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(DS.textMuted)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(DS.sepiaSubtle, lineWidth: 0.5)
-                )
-
-            Text(label)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
         }
     }
 }

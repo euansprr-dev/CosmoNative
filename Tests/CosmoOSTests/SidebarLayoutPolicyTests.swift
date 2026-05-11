@@ -196,9 +196,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
     }
 
     func testMainContentPushUsesTransformInsteadOfAnimatingLayoutPadding() throws {
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let mainView = try String(
-            contentsOf: root.appendingPathComponent("Navigation/MainView.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
             encoding: .utf8
         )
 
@@ -207,13 +206,12 @@ final class SidebarLayoutPolicyTests: XCTestCase {
     }
 
     func testContentFocusSidebarSurfacesDoNotHardTruncateWritingContext() throws {
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let contentFocusView = try String(
-            contentsOf: root.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
             encoding: .utf8
         )
         let sidebarContent = try String(
-            contentsOf: root.appendingPathComponent("UI/FocusMode/Content/ContentOutlineSidebarContent.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentOutlineSidebarContent.swift"),
             encoding: .utf8
         )
 
@@ -230,13 +228,12 @@ final class SidebarLayoutPolicyTests: XCTestCase {
     }
 
     func testFocusModeSwipeAndBlueprintClicksOpenPaneWhenRequested() throws {
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let mainView = try String(
-            contentsOf: root.appendingPathComponent("Navigation/MainView.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
             encoding: .utf8
         )
         let ideaFocusView = try String(
-            contentsOf: root.appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeView.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeView.swift"),
             encoding: .utf8
         )
 
@@ -245,5 +242,42 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(mainView.contains("if asPane {"))
         XCTAssertTrue(mainView.contains("paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))"))
         XCTAssertTrue(ideaFocusView.contains("openAtomInPane(blueprint.uuid)"))
+    }
+
+    func testContentFocusMarginaliaRailsUseIndependentSmallScrollbars() throws {
+        let contentFocusView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(contentFocusView.contains("@State private var leftMarginScrollMetrics = ManuscriptScrollMetrics()"))
+        XCTAssertTrue(contentFocusView.contains("@State private var rightMarginScrollMetrics = ManuscriptScrollMetrics()"))
+        XCTAssertTrue(contentFocusView.contains("private func scriptoriumMarginScroll<Content: View>("))
+        XCTAssertTrue(contentFocusView.contains("ScrollView {\n            content()"))
+        XCTAssertTrue(contentFocusView.contains("PremiumManuscriptScrollbar(metrics: metrics.wrappedValue)"))
+        XCTAssertTrue(contentFocusView.contains("scriptoriumMarginScroll(width: 260"))
+        XCTAssertTrue(contentFocusView.contains("scriptoriumMarginScroll(width: 220"))
+        XCTAssertTrue(contentFocusView.contains(".scrollIndicators(.hidden)"))
+    }
+
+    func testIdeaFocusHooksUseMultilineEditorsForSavedAndDraftHooks() throws {
+        let ideaFocusView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(ideaFocusView.contains("private struct HookLineEditor: NSViewRepresentable"))
+        XCTAssertTrue(ideaFocusView.contains("HookLineEditor("))
+        XCTAssertTrue(ideaFocusView.contains("let isShiftReturn"))
+        XCTAssertTrue(ideaFocusView.contains("insertText(\"\\n\", replacementRange: selectedRange())"))
+        XCTAssertFalse(ideaFocusView.contains("TextField(\"add another\", text: $newHookText)"))
+        XCTAssertFalse(ideaFocusView.contains("Text(hook)\n                .font(DS.callout)"))
+    }
+
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 }

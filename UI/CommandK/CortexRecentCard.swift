@@ -12,13 +12,26 @@ struct CortexRecentCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            VStack(spacing: DS.space4) {
+            HStack(spacing: DS.space12) {
                 thumbnailView
+                    .frame(width: 64, height: 74)
                 cardLabel
+                Spacer(minLength: 0)
             }
+            .padding(DS.space10)
+            .frame(height: 92)
+            .background(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(isHovered ? DS.glassInputFillFocused.opacity(0.72) : DS.glassCardFill.opacity(0.42))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .stroke(isHovered ? accentColor.opacity(0.30) : DS.glassBorder.opacity(0.62), lineWidth: 0.5)
+            )
+            .shadow(color: Color.black.opacity(isHovered ? 0.08 : 0.03), radius: isHovered ? 12 : 6, x: 0, y: isHovered ? 5 : 2)
         }
         .buttonStyle(.plain)
-        .contentShape(.rect(cornerRadius: 8))
+        .contentShape(.rect(cornerRadius: 13))
         .onHover { isHovered = $0 }
         .animation(ProMotionSprings.hover, value: isHovered)
         .accessibilityLabel(item.title)
@@ -88,16 +101,22 @@ struct CortexRecentCard: View {
     // MARK: - Label
 
     private var cardLabel: some View {
-        VStack(spacing: 1) {
+        VStack(alignment: .leading, spacing: DS.space8) {
             Text(item.title)
-                .font(DS.caption2)
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(DS.text)
                 .lineLimit(2)
-                .multilineTextAlignment(.center)
-            Text(item.relativeDate)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
+                .multilineTextAlignment(.leading)
+
+            HStack(spacing: DS.space4) {
+                Text(item.type.displayName)
+                Text("·")
+                Text(item.relativeDate)
+            }
+            .font(DS.caption)
+            .foregroundStyle(DS.textMuted)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Helpers

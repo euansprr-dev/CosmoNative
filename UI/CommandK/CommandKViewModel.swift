@@ -24,9 +24,9 @@ public enum CommandKTab: String, CaseIterable, Equatable {
     var title: String {
         switch self {
         case .database: return "Database"
-        case .swipeGallery: return "Swipe Gallery"
+        case .swipeGallery: return "Swipe File"
         case .ideas: return "Ideas"
-        case .readwise: return "Readwise"
+        case .readwise: return "Library"
         case .inquiry: return "Inquiry"
         }
     }
@@ -56,9 +56,197 @@ public enum CommandKTab: String, CaseIterable, Equatable {
         case .database: return "Search database..."
         case .swipeGallery: return "Search swipes..."
         case .ideas: return "Search ideas..."
-        case .readwise: return "Search books..."
+        case .readwise: return "Search library..."
         case .inquiry: return "Search Deep Dives, questions, lexicon..."
         }
+    }
+
+    var compactSubtitle: String {
+        switch self {
+        case .database: return "All objects"
+        case .swipeGallery: return "Captures & hooks"
+        case .ideas: return "Sparks & notes"
+        case .readwise: return "Books & sources"
+        case .inquiry: return "Questions & evidence"
+        }
+    }
+
+    var headerArtworkMode: CommandKHeaderArtworkMode {
+        .contentBackedMasthead
+    }
+
+    var headerPersonality: CommandKHeaderPersonality {
+        switch self {
+        case .database, .inquiry: return .objectIndex
+        case .swipeGallery: return .swipeThumbnails
+        case .ideas: return .ideaSnippets
+        case .readwise: return .libraryCovers
+        }
+    }
+
+    var expandedBodyStyle: CommandKExpandedBodyStyle {
+        switch self {
+        case .swipeGallery: return .adaptive
+        default: return .light
+        }
+    }
+}
+
+enum CommandKExpandedBodyStyle: Equatable {
+    case light
+    case adaptive
+}
+
+enum CommandKHeaderArtworkMode: Equatable {
+    case contentBackedMasthead
+}
+
+enum CommandKHeaderPersonality: Equatable {
+    case objectIndex
+    case swipeThumbnails
+    case ideaSnippets
+    case libraryCovers
+}
+
+struct CommandKHeaderPreviewContent: Equatable {
+    let tab: CommandKTab
+    let signal: CommandKHeaderPersonality
+    let items: [CommandKHeaderPreviewItem]
+    let metrics: [CommandKHeaderPreviewMetric]
+}
+
+struct CommandKHeaderPreviewItem: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let subtitle: String?
+    let detail: String?
+    let thumbnailURL: String?
+    let systemImage: String
+}
+
+struct CommandKHeaderPreviewMetric: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let value: String
+}
+
+enum CommandKHeaderPreviewComposer {
+    static func build(
+        recentItems: [RecentDisplayItem],
+        swipeItems: [SwipeGalleryItem],
+        ideaItems: [IdeaGalleryItem],
+        readwiseBooks: [ReadwiseLibraryBook]
+    ) -> [CommandKTab: CommandKHeaderPreviewContent] {
+        [
+            .database: databasePreview(from: recentItems),
+            .swipeGallery: swipePreview(from: swipeItems),
+            .ideas: ideaPreview(from: ideaItems),
+            .readwise: readwisePreview(from: readwiseBooks)
+        ]
+    }
+
+    static func fallback(for tab: CommandKTab) -> CommandKHeaderPreviewContent {
+        CommandKHeaderPreviewContent(
+            tab: tab,
+            signal: tab.headerPersonality,
+            items: [],
+            metrics: []
+        )
+    }
+
+    private static func databasePreview(from items: [RecentDisplayItem]) -> CommandKHeaderPreviewContent {
+        let previewItems = items.prefix(4).map { item in
+            CommandKHeaderPreviewItem(
+                id: item.id,
+                title: item.title,
+                subtitle: item.type.displayName,
+                detail: item.relativeDate,
+                thumbnailURL: item.thumbnailURL,
+                systemImage: item.type.iconName
+            )
+        }
+
+        return CommandKHeaderPreviewContent(
+            tab: .database,
+            signal: .objectIndex,
+            items: previewItems,
+            metrics: [
+                CommandKHeaderPreviewMetric(id: "recent", label: "Recent", value: "\(previewItems.count)")
+            ]
+        )
+    }
+
+    private static func swipePreview(from items: [SwipeGalleryItem]) -> CommandKHeaderPreviewContent {
+        let previewItems = items.prefix(5).map { item in
+            CommandKHeaderPreviewItem(
+                id: item.atomUUID,
+                title: item.title,
+                subtitle: item.author ?? item.creatorName ?? item.platformName,
+                detail: item.hookScore.map { String(format: "%.1f", $0) },
+                thumbnailURL: item.thumbnailUrl,
+                systemImage: item.platformIcon
+            )
+        }
+        let averageScore = average(items.compactMap(\.hookScore)).map { String(format: "%.1f", $0) }
+
+        return CommandKHeaderPreviewContent(
+            tab: .swipeGallery,
+            signal: .swipeThumbnails,
+            items: previewItems,
+            metrics: [
+                CommandKHeaderPreviewMetric(id: "score", label: "Avg score", value: averageScore ?? "-"),
+                CommandKHeaderPreviewMetric(id: "shown", label: "Showing", value: "\(previewItems.count)")
+            ]
+        )
+    }
+
+    private static func ideaPreview(from items: [IdeaGalleryItem]) -> CommandKHeaderPreviewContent {
+        let previewItems = items.prefix(4).map { item in
+            CommandKHeaderPreviewItem(
+                id: item.atomUUID,
+                title: item.title,
+                subtitle: item.clientName ?? item.status.displayName,
+                detail: item.contentFormat?.displayName ?? item.updatedAt,
+                thumbnailURL: nil,
+                systemImage: "text.badge.checkmark"
+            )
+        }
+
+        return CommandKHeaderPreviewContent(
+            tab: .ideas,
+            signal: .ideaSnippets,
+            items: previewItems,
+            metrics: [
+                CommandKHeaderPreviewMetric(id: "clients", label: "Clients", value: "\(Set(items.compactMap(\.clientName)).count)")
+            ]
+        )
+    }
+
+    private static func readwisePreview(from books: [ReadwiseLibraryBook]) -> CommandKHeaderPreviewContent {
+        let previewItems = books.prefix(5).map { book in
+            CommandKHeaderPreviewItem(
+                id: "\(book.id)",
+                title: book.title,
+                subtitle: book.author ?? book.category.displayName,
+                detail: "\(book.numHighlights) highlights",
+                thumbnailURL: book.coverImageUrl,
+                systemImage: book.category.icon
+            )
+        }
+
+        return CommandKHeaderPreviewContent(
+            tab: .readwise,
+            signal: .libraryCovers,
+            items: previewItems,
+            metrics: [
+                CommandKHeaderPreviewMetric(id: "highlights", label: "Highlights", value: "\(books.reduce(0) { $0 + $1.numHighlights })")
+            ]
+        )
+    }
+
+    private static func average(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
     }
 }
 
@@ -315,9 +503,9 @@ enum UnifiedSearchSource: String, CaseIterable {
     var displayName: String {
         switch self {
         case .atoms: return "Database"
-        case .swipes: return "Swipe Gallery"
+        case .swipes: return "Swipe File"
         case .ideas: return "Ideas"
-        case .readwise: return "Readwise"
+        case .readwise: return "Library"
         }
     }
 
@@ -1736,6 +1924,15 @@ public final class CommandKViewModel: ObservableObject {
             .readwise: ReadwiseBookStore.shared.books.count,
             .inquiry: deepDiveTotalCount
         ]
+    }
+
+    var headerPreviews: [CommandKTab: CommandKHeaderPreviewContent] {
+        CommandKHeaderPreviewComposer.build(
+            recentItems: recentItems,
+            swipeItems: swipeGalleryItems,
+            ideaItems: ideaGalleryItems,
+            readwiseBooks: ReadwiseBookStore.shared.books
+        )
     }
 
     @Published public var deepDiveTotalCount: Int = 0

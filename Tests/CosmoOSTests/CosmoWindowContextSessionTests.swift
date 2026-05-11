@@ -2,6 +2,31 @@ import XCTest
 @testable import CosmoOS
 
 final class CosmoWindowContextSessionTests: XCTestCase {
+    @MainActor
+    func testBeginNewGlobalChatSessionClearsVisibleStateSynchronously() {
+        let viewModel = CosmoWindowViewModel.shared
+        let previousMessages = [
+            CosmoWindowMessage.user("First prompt"),
+            CosmoWindowMessage.assistant("First response")
+        ]
+        viewModel.messages = previousMessages
+        viewModel.error = "Old error"
+        viewModel.isProcessing = true
+        viewModel.historySearchText = "old search"
+        viewModel.processingStartedAt = Date()
+
+        let transition = viewModel.beginNewGlobalChatSession(
+            newConversationId: "cosmo-window-test-new-chat"
+        )
+
+        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertNil(viewModel.error)
+        XCTAssertFalse(viewModel.isProcessing)
+        XCTAssertEqual(viewModel.historySearchText, "")
+        XCTAssertNil(viewModel.processingStartedAt)
+        XCTAssertEqual(transition.previousMessages.map(\.content), ["First prompt", "First response"])
+    }
+
     func testMentionedAtomBecomesPinnedContextSource() async throws {
         let atom = Atom.new(type: .content, title: "Walking Beam brief", body: "Locks on doors are required.")
         let source = CosmoWindowViewModel.contextSource(for: atom)

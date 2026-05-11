@@ -4,23 +4,34 @@
 import SwiftUI
 
 enum CommandKMetrics {
-    static let overlayCornerRadius: CGFloat = 24
-    static let searchBarHeight: CGFloat = 60
+    static let overlayCornerRadius: CGFloat = 28
+    static let searchBarHeight: CGFloat = 64
     static let tabBarHeight: CGFloat = 44
     static let contentPadding: CGFloat = 24
     static let toolbarSpacing: CGFloat = 12
     static let toolbarChipHeight: CGFloat = 32
     static let toolbarChipRadius: CGFloat = 10
-    static let cardCornerRadius: CGFloat = 14
+    static let cardCornerRadius: CGFloat = 18
     static let sectionCornerRadius: CGFloat = 18
     static let cardSpacing: CGFloat = 18
 
     // Cortex mode metrics
-    static let compactWidth: CGFloat = 640
-    static let searchWidth: CGFloat = 800
+    static let compactWidth: CGFloat = 1130
+    static let searchWidth: CGFloat = 1120
+    static let expandedWidth: CGFloat = 1120
+    static let compactSearchWidth: CGFloat = 680
+    static let expandedSearchWidth: CGFloat = 760
     static let domainBubbleSize: CGFloat = 56
-    static let recentCardMinWidth: CGFloat = 140
-    static let compactMaxHeight: CGFloat = 520
+    static let domainCardWidth: CGFloat = 244
+    static let domainCardHeight: CGFloat = 288
+    static let recentCardMinWidth: CGFloat = 196
+    static let compactMaxHeight: CGFloat = 600
+}
+
+enum CommandKExpandedLayout {
+    static func panelHeight(forAvailableHeight availableHeight: CGFloat) -> CGFloat {
+        min(max(availableHeight - 180, 540), 860)
+    }
 }
 
 private struct CommandKToolbarChipModifier: ViewModifier {

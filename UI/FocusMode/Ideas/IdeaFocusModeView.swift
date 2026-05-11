@@ -12,11 +12,23 @@ import UniformTypeIdentifiers
 
 enum IdeaOutlineLayoutMetrics {
     static let minimumEditorHeight: CGFloat = 22
-    static let maximumEditorHeight: CGFloat = 88
-    static let normalRowSpacing: CGFloat = 8
+    static let normalRowSpacing: CGFloat = 12
 
     static func editorHeight(forMeasuredHeight measuredHeight: CGFloat) -> CGFloat {
-        min(max(minimumEditorHeight, ceil(measuredHeight)), maximumEditorHeight)
+        max(minimumEditorHeight, ceil(measuredHeight))
+    }
+}
+
+private enum HookEditorFocus: Hashable {
+    case existing(Int)
+    case draft
+}
+
+private enum HookLineLayoutMetrics {
+    static let minimumEditorHeight: CGFloat = 22
+
+    static func editorHeight(forMeasuredHeight measuredHeight: CGFloat) -> CGFloat {
+        max(minimumEditorHeight, ceil(measuredHeight))
     }
 }
 
@@ -49,7 +61,7 @@ struct IdeaFocusModeView: View {
     @State private var showFrameworkSheet: Bool = false
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
-    @FocusState private var isNewHookFocused: Bool
+    @FocusState private var focusedHookEditor: HookEditorFocus?
     @FocusState private var focusedOutlineSlideID: UUID?
 
     // MARK: - Constants
@@ -448,7 +460,7 @@ extension IdeaFocusModeView {
     private func clearManuscriptEditingFocus() {
         isTitleFocused = false
         isContextFocused = false
-        isNewHookFocused = false
+        focusedHookEditor = nil
         focusedOutlineSlideID = nil
         NSApp.keyWindow?.makeFirstResponder(nil)
     }
@@ -652,20 +664,40 @@ extension IdeaFocusModeView {
     }
 
     private func atelierHookRow(_ hook: String, at index: Int) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.space12) {
+        HStack(alignment: .top, spacing: DS.space12) {
             Text(romanNumeral(for: index + 1) + ".")
                 .font(.system(size: 11, weight: .regular, design: .monospaced))
                 .foregroundStyle(DS.giltMuted)
                 .frame(width: 28, alignment: .leading)
+                .padding(.top, 3)
 
-            Text(hook)
-                .font(DS.callout)
-                .foregroundStyle(DS.text)
+            HookLineEditor(
+                text: hookBinding(at: index),
+                editorID: .existing(index),
+                focusedEditor: $focusedHookEditor,
+                placeholder: "hook",
+                font: hookEditorFont(),
+                textColor: NSColor(DS.text),
+                placeholderColor: NSColor(DS.inkFaded.opacity(0.55)),
+                onReturn: finishHookEditing,
+                onDeleteEmpty: {
+                    guard viewModel.editableHooks.indices.contains(index) else { return false }
+                    withAnimation(ProMotionSprings.snappy) {
+                        focusedHookEditor = nil
+                        viewModel.editableHooks.remove(at: index)
+                        viewModel.scheduleAutoSave()
+                    }
+                    return true
+                }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: DS.space8)
 
             Button {
                 withAnimation(ProMotionSprings.snappy) {
+                    focusedHookEditor = nil
                     viewModel.editableHooks.remove(at: index)
                     viewModel.scheduleAutoSave()
                 }
@@ -678,26 +710,59 @@ extension IdeaFocusModeView {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Remove hook")
+            .padding(.top, 2)
         }
     }
 
     private var atelierAddHookRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.space12) {
+        HStack(alignment: .top, spacing: DS.space12) {
             Text("+")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .foregroundStyle(DS.gilt.opacity(0.6))
                 .frame(width: 28, alignment: .leading)
+                .padding(.top, 3)
 
-            TextField("add another", text: $newHookText)
-                .textFieldStyle(.plain)
-                .font(DS.callout)
-                .italic()
-                .foregroundStyle(DS.inkFaded)
-                .focused($isNewHookFocused)
-                .onSubmit { addHook() }
-                .accessibilityLabel("New hook text")
+            HookLineEditor(
+                text: $newHookText,
+                editorID: .draft,
+                focusedEditor: $focusedHookEditor,
+                placeholder: "add another",
+                font: hookEditorFont(italic: true),
+                textColor: NSColor(DS.inkFaded),
+                placeholderColor: NSColor(DS.inkFaded.opacity(0.65)),
+                onReturn: addHook,
+                onDeleteEmpty: { false }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("New hook text")
         }
         .padding(.top, DS.space4)
+    }
+
+    private func hookBinding(at index: Int) -> Binding<String> {
+        Binding(
+            get: {
+                guard viewModel.editableHooks.indices.contains(index) else { return "" }
+                return viewModel.editableHooks[index]
+            },
+            set: { newValue in
+                guard viewModel.editableHooks.indices.contains(index) else { return }
+                viewModel.editableHooks[index] = newValue
+                viewModel.scheduleAutoSave()
+            }
+        )
+    }
+
+    private func hookEditorFont(italic: Bool = false) -> NSFont {
+        let font = NSFont.systemFont(ofSize: 15)
+        guard italic else { return font }
+        return NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+    }
+
+    private func finishHookEditing() {
+        focusedHookEditor = nil
+        NSApp.keyWindow?.makeFirstResponder(nil)
     }
 
     private func romanNumeral(for value: Int) -> String {
@@ -721,6 +786,7 @@ extension IdeaFocusModeView {
         withAnimation(ProMotionSprings.snappy) {
             viewModel.editableHooks.append(trimmed)
             newHookText = ""
+            focusedHookEditor = nil
             viewModel.scheduleAutoSave()
         }
     }
@@ -1063,6 +1129,190 @@ extension IdeaFocusModeView {
     }
 }
 
+private struct HookLineEditor: NSViewRepresentable {
+    @Binding var text: String
+    let editorID: HookEditorFocus
+    @FocusState.Binding var focusedEditor: HookEditorFocus?
+    let placeholder: String
+    let font: NSFont
+    let textColor: NSColor
+    let placeholderColor: NSColor
+    let onReturn: () -> Void
+    let onDeleteEmpty: () -> Bool
+
+    func makeNSView(context: Context) -> HookLineTextView {
+        let textView = HookLineTextView()
+        textView.delegate = context.coordinator
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.minSize = NSSize(width: 0, height: HookLineLayoutMetrics.minimumEditorHeight)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.font = font
+        textView.textColor = textColor
+        textView.placeholderColor = placeholderColor
+        textView.placeholder = placeholder
+        textView.onReturn = onReturn
+        textView.onDeleteEmpty = onDeleteEmpty
+        return textView
+    }
+
+    func updateNSView(_ textView: HookLineTextView, context: Context) {
+        context.coordinator.parent = self
+        textView.onReturn = onReturn
+        textView.onDeleteEmpty = onDeleteEmpty
+        textView.placeholder = placeholder
+        textView.placeholderColor = placeholderColor
+
+        if textView.font != font {
+            textView.font = font
+            textView.invalidateIntrinsicContentSize()
+        }
+        if textView.textColor != textColor {
+            textView.textColor = textColor
+        }
+
+        if textView.string != text {
+            textView.string = text
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        if focusedEditor == editorID {
+            textView.requestFocusWhenReady()
+        } else if textView.window?.firstResponder === textView {
+            textView.window?.makeFirstResponder(nil)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: HookLineTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? nsView.frame.width
+        let measured = nsView.measuredHeight(for: width)
+        return CGSize(width: width, height: HookLineLayoutMetrics.editorHeight(forMeasuredHeight: measured))
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: HookLineEditor
+
+        init(parent: HookLineEditor) {
+            self.parent = parent
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            parent.focusedEditor = parent.editorID
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? HookLineTextView else { return }
+            parent.text = textView.string
+            textView.invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+private final class HookLineTextView: NSTextView {
+    var placeholder: String = ""
+    var placeholderColor: NSColor = .secondaryLabelColor
+    var onReturn: (() -> Void)?
+    var onDeleteEmpty: (() -> Bool)?
+    private var shouldFocusWhenAttached = false
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: HookLineLayoutMetrics.editorHeight(forMeasuredHeight: measuredHeight(for: bounds.width))
+        )
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyPendingFocusIfPossible()
+    }
+
+    func requestFocusWhenReady() {
+        shouldFocusWhenAttached = true
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPendingFocusIfPossible()
+        }
+    }
+
+    private func applyPendingFocusIfPossible() {
+        guard shouldFocusWhenAttached, let window else { return }
+        shouldFocusWhenAttached = false
+        guard window.firstResponder !== self else { return }
+
+        window.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: string.count, length: 0))
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isPlainReturn = event.keyCode == 36 && flags.isEmpty
+        if isPlainReturn {
+            onReturn?()
+            return
+        }
+
+        let isShiftReturn = event.keyCode == 36 && flags == .shift
+        if isShiftReturn {
+            insertText("\n", replacementRange: selectedRange())
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(deleteBackward(_:)),
+           string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           onDeleteEmpty?() == true {
+            return
+        }
+
+        if selector == #selector(insertNewline(_:)) {
+            onReturn?()
+            return
+        }
+
+        super.doCommand(by: selector)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        guard string.isEmpty else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 15),
+            .foregroundColor: placeholderColor
+        ]
+        placeholder.draw(at: NSPoint(x: 0, y: 1), withAttributes: attributes)
+    }
+
+    func measuredHeight(for width: CGFloat) -> CGFloat {
+        guard width > 0 else { return HookLineLayoutMetrics.minimumEditorHeight }
+        let storage = NSTextStorage(string: string.isEmpty ? " " : string)
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        let manager = NSLayoutManager()
+        container.lineFragmentPadding = 0
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+        storage.addAttribute(.font, value: font ?? NSFont.systemFont(ofSize: 15), range: NSRange(location: 0, length: storage.length))
+        manager.ensureLayout(for: container)
+        return ceil(manager.usedRect(for: container).height)
+    }
+}
+
 private struct OutlineSlideNoteEditor: NSViewRepresentable {
     @Binding var text: String
     let slideID: UUID
@@ -1082,7 +1332,7 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
         textView.minSize = NSSize(width: 0, height: IdeaOutlineLayoutMetrics.minimumEditorHeight)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: IdeaOutlineLayoutMetrics.maximumEditorHeight)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]

@@ -92,7 +92,7 @@ final class EditorLayoutMetricsTests: XCTestCase {
         )
     }
 
-    func testOutlineSlideEditorAllowsIntentionalMultilineRows() {
+    func testOutlineSlideEditorExpandsForIntentionalMultilineRows() {
         XCTAssertEqual(
             IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: 52),
             52
@@ -100,7 +100,12 @@ final class EditorLayoutMetricsTests: XCTestCase {
 
         XCTAssertEqual(
             IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: 140),
-            IdeaOutlineLayoutMetrics.maximumEditorHeight
+            140
+        )
+
+        XCTAssertEqual(
+            IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: 240),
+            240
         )
     }
 

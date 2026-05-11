@@ -12,7 +12,17 @@ struct CortexSearchResultsView: View {
 
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(spacing: DS.space20) {
+                VStack(alignment: .leading, spacing: DS.space16) {
+                    HStack(spacing: DS.space8) {
+                        Image(systemName: "sparkles.square.filled.on.square")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(DS.text)
+                            .accessibilityHidden(true)
+                        Text("Smart Results")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(DS.text)
+                    }
+
                     if let action = viewModel.primaryAction {
                         CommandKActionPreviewRow(
                             action: action,
@@ -20,6 +30,12 @@ struct CortexSearchResultsView: View {
                             statusMessage: viewModel.actionStatusMessage
                         ) {
                             viewModel.performPrimaryAction()
+                        }
+                    }
+
+                    if let bestMatch = viewModel.unifiedFlatResults.first {
+                        CommandKBestMatchCard(result: bestMatch) {
+                            selectResult(bestMatch)
                         }
                     }
 
@@ -101,6 +117,109 @@ struct CortexSearchResultsView: View {
             viewModel.selectedResultIndex = idx
         }
         viewModel.openSelected()
+    }
+}
+
+// MARK: - Best Match
+
+private struct CommandKBestMatchCard: View {
+    let result: UnifiedSearchResult
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: DS.space16) {
+                preview
+                content
+            }
+            .padding(DS.space16)
+            .frame(maxWidth: .infinity, minHeight: 174, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [DS.accent.opacity(0.96), Color(hex: "10301F")],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(isHovered ? 0.36 : 0.18), lineWidth: 0.7)
+            )
+            .shadow(color: DS.accent.opacity(isHovered ? 0.22 : 0.12), radius: isHovered ? 24 : 16, x: 0, y: 8)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                isHovered = hovering
+            }
+        }
+        .commandKSearchResultContextMenu(result: result)
+    }
+
+    private var preview: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color.white.opacity(0.12))
+            .frame(width: 180, height: 130)
+            .overlay {
+                VStack(spacing: DS.space10) {
+                    Image(systemName: result.icon)
+                        .font(.system(size: 34, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.82))
+                    Text(result.source.displayName)
+                        .font(DS.caption)
+                        .foregroundStyle(.white.opacity(0.64))
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 0.5)
+            )
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text("Best match")
+                .font(DS.caption)
+                .foregroundStyle(.white.opacity(0.78))
+
+            Text(result.title)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+
+            if let subtitle = result.subtitle {
+                Text(subtitle)
+                    .font(DS.callout)
+                    .foregroundStyle(.white.opacity(0.74))
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: DS.space10) {
+                actionPill("Open", icon: "arrow.up.right.square")
+                actionPill("Attach", icon: "paperclip")
+                actionPill("Canvas", icon: "square.grid.2x2")
+            }
+        }
+    }
+
+    private func actionPill(_ title: String, icon: String) -> some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+            Text(title)
+                .font(DS.callout)
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.space10)
+        .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 }
 
@@ -284,6 +403,12 @@ private struct CortexSearchSection: View {
             sectionHeader
             sectionContent
         }
+        .padding(DS.space16)
+        .background(DS.glassCardFill.opacity(0.28), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(DS.glassBorder.opacity(0.64), lineWidth: 0.5)
+        )
     }
 
     private var sectionHeader: some View {
@@ -297,11 +422,11 @@ private struct CortexSearchSection: View {
                 .foregroundStyle(DS.text)
 
             Text("\(results.count)")
-                .font(DS.caption2)
-                .foregroundStyle(source.accentColor)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
-                .background(source.accentColor.opacity(0.12), in: Capsule())
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+            Text("results")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
 
             Spacer()
 

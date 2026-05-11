@@ -11,6 +11,13 @@ import Foundation
 
 @MainActor
 class TaskRecurrenceEngine {
+    struct GeneratedInstanceSnapshot: Equatable {
+        let uuid: String
+        let parentUUID: String
+        let occurrenceDate: Date
+        let isCompleted: Bool
+        let createdAt: Date
+    }
 
     // MARK: - Singleton
 
@@ -34,16 +41,11 @@ class TaskRecurrenceEngine {
 
     /// Run on app launch and at midnight -- generates today's task instances
     func generateTodayInstances() async throws {
-        try await deduplicateGeneratedInstances()
-
-        let templates = try await getTemplates()
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
+        try await deduplicateGeneratedInstances(referenceDate: today)
 
-        // Enforces "at most one active instance per template": if any
-        // incomplete instance already exists (today or overdue), skip
-        // generation so rescheduling the overdue one can't produce a sibling.
-        let activeTemplateUUIDs = try await batchTemplatesWithActiveInstance()
+        let templates = try await getTemplates()
 
         for template in templates {
             guard let metadata = template.metadataValue(as: TaskMetadata.self),
@@ -62,12 +64,15 @@ class TaskRecurrenceEngine {
                 continue
             }
 
-            // Skip if an incomplete instance already exists for this template
-            if activeTemplateUUIDs.contains(template.uuid) { continue }
+            // Skip only if today's occurrence already exists. Older incomplete
+            // occurrences must not block today's repeat from being generated.
+            if try await instanceExists(templateUUID: template.uuid, date: today) { continue }
 
             // Create today's instance
             try await createInstance(from: template, metadata: metadata, for: today)
         }
+
+        try await deduplicateGeneratedInstances(referenceDate: today)
     }
 
     /// Generate missing instances for every occurrence in a visible calendar interval.
@@ -89,6 +94,8 @@ class TaskRecurrenceEngine {
                 try await createInstance(from: template, metadata: metadata, for: occurrence)
             }
         }
+
+        try await deduplicateGeneratedInstances()
     }
 
     /// Returns template UUIDs that already have at least one incomplete
@@ -256,36 +263,79 @@ class TaskRecurrenceEngine {
         }
     }
 
-    func deduplicateGeneratedInstances() async throws {
+    func deduplicateGeneratedInstances(referenceDate: Date = Date()) async throws {
         let allTasks = try await atomRepository.fetchAll(type: .task)
-        let calendar = Calendar.current
-        var grouped: [String: [Atom]] = [:]
-
-        for atom in allTasks {
+        let snapshots = allTasks.compactMap { atom -> GeneratedInstanceSnapshot? in
             guard let metadata = atom.metadataValue(as: TaskMetadata.self),
-                  metadata.isCompleted != true,
                   let parentUUID = metadata.recurrenceParentUUID,
                   let occurrenceDate = Self.occurrenceDate(from: metadata) else {
-                continue
+                return nil
             }
 
-            let day = calendar.startOfDay(for: occurrenceDate)
-            let dayKey = PlannerumFormatters.iso8601.string(from: day)
-            grouped["\(parentUUID)|\(dayKey)", default: []].append(atom)
+            return GeneratedInstanceSnapshot(
+                uuid: atom.uuid,
+                parentUUID: parentUUID,
+                occurrenceDate: occurrenceDate,
+                isCompleted: metadata.isCompleted == true,
+                createdAt: PlannerumFormatters.iso8601.date(from: atom.createdAt) ?? .distantPast
+            )
         }
 
-        for duplicates in grouped.values where duplicates.count > 1 {
+        let deletionUUIDs = Self.generatedInstanceCleanupDeletions(
+            from: snapshots,
+            referenceDate: referenceDate,
+            calendar: Calendar.current
+        )
+
+        for uuid in deletionUUIDs {
+            try await atomRepository.delete(uuid: uuid)
+        }
+    }
+
+    static func generatedInstanceCleanupDeletions(
+        from snapshots: [GeneratedInstanceSnapshot],
+        referenceDate: Date,
+        calendar: Calendar = .current
+    ) -> Set<String> {
+        let activeSnapshots = snapshots.filter { !$0.isCompleted }
+        let referenceDay = calendar.startOfDay(for: referenceDate)
+        var deletions = Set<String>()
+        var groupedByParentAndDay: [String: [GeneratedInstanceSnapshot]] = [:]
+
+        for snapshot in activeSnapshots {
+            let occurrenceDay = calendar.startOfDay(for: snapshot.occurrenceDate)
+            let dayKey = PlannerumFormatters.iso8601.string(from: occurrenceDay)
+            groupedByParentAndDay["\(snapshot.parentUUID)|\(dayKey)", default: []].append(snapshot)
+        }
+
+        for duplicates in groupedByParentAndDay.values where duplicates.count > 1 {
             let sorted = duplicates.sorted { lhs, rhs in
-                let lhsCreated = PlannerumFormatters.iso8601.date(from: lhs.createdAt) ?? .distantPast
-                let rhsCreated = PlannerumFormatters.iso8601.date(from: rhs.createdAt) ?? .distantPast
-                if lhsCreated != rhsCreated { return lhsCreated < rhsCreated }
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
                 return lhs.uuid < rhs.uuid
             }
 
             for duplicate in sorted.dropFirst() {
-                try await atomRepository.delete(uuid: duplicate.uuid)
+                deletions.insert(duplicate.uuid)
             }
         }
+
+        let parentsWithReferenceDayInstance = Set(
+            activeSnapshots.compactMap { snapshot -> String? in
+                calendar.isDate(snapshot.occurrenceDate, inSameDayAs: referenceDay)
+                    ? snapshot.parentUUID
+                    : nil
+            }
+        )
+
+        for snapshot in activeSnapshots {
+            let occurrenceDay = calendar.startOfDay(for: snapshot.occurrenceDate)
+            if occurrenceDay < referenceDay,
+               parentsWithReferenceDayInstance.contains(snapshot.parentUUID) {
+                deletions.insert(snapshot.uuid)
+            }
+        }
+
+        return deletions
     }
 
     private static func occurrenceDate(from metadata: TaskMetadata) -> Date? {

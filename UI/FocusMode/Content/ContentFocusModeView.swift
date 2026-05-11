@@ -94,6 +94,8 @@ struct ContentFocusModeView: View {
     @State private var focusBandRange: NSRange?
     @State private var manuscriptScrollView: NSScrollView?
     @State private var manuscriptScrollMetrics = ManuscriptScrollMetrics()
+    @State private var leftMarginScrollMetrics = ManuscriptScrollMetrics()
+    @State private var rightMarginScrollMetrics = ManuscriptScrollMetrics()
     @State private var isActivelyTyping = false
     @State private var typingActivityTask: Task<Void, Never>?
 
@@ -620,9 +622,12 @@ struct ContentFocusModeView: View {
 
                         HStack(alignment: .top, spacing: showMarginaliaRails ? DS.space24 : 0) {
                             if showMarginaliaRails {
-                                scriptoriumLeftMargin
-                                    .frame(width: 260, alignment: .leading)
-                                    .padding(.top, DS.space12)
+                                scriptoriumMarginScroll(width: 260,
+                                    height: max(0, geo.size.height - DS.space4),
+                                    metrics: $leftMarginScrollMetrics
+                                ) {
+                                    scriptoriumLeftMargin
+                                }
                                     .opacity(sideRailOpacity)
                                     .atelierStaggerIn(delay: continuationStagger(0.28), appeared: hasAppeared)
                             }
@@ -647,9 +652,12 @@ struct ContentFocusModeView: View {
                             .frame(height: max(0, geo.size.height - DS.space4), alignment: .top)
 
                             if showMarginaliaRails {
-                                scriptoriumRightMargin
-                                    .frame(width: 220, alignment: .leading)
-                                    .padding(.top, DS.space12)
+                                scriptoriumMarginScroll(width: 220,
+                                    height: max(0, geo.size.height - DS.space4),
+                                    metrics: $rightMarginScrollMetrics
+                                ) {
+                                    scriptoriumRightMargin
+                                }
                                     .opacity(sideRailOpacity)
                                     .atelierStaggerIn(delay: continuationStagger(0.44), appeared: hasAppeared)
                             }
@@ -701,6 +709,32 @@ struct ContentFocusModeView: View {
     }
 
     // MARK: - Scriptorium manuscript (title hero + step ledger + rich editor)
+
+    private func scriptoriumMarginScroll<Content: View>(
+        width: CGFloat,
+        height: CGFloat,
+        metrics: Binding<ManuscriptScrollMetrics>,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ScrollView {
+            content()
+                .frame(width: width, alignment: .leading)
+                .padding(.top, DS.space12)
+                .padding(.bottom, DS.space20)
+                .background(ScrollViewIntrospector { _ in
+                    // Marginalia scroll views only need metrics; the manuscript keeps responder ownership.
+                } onMetricsChange: { newMetrics in
+                    metrics.wrappedValue = newMetrics
+                })
+        }
+        .scrollIndicators(.hidden)
+        .overlay(alignment: .trailing) {
+            PremiumManuscriptScrollbar(metrics: metrics.wrappedValue)
+                .padding(.trailing, DS.space4)
+                .padding(.vertical, DS.space8)
+        }
+        .frame(width: width, height: height, alignment: .top)
+    }
 
     private func scriptoriumManuscript(height: CGFloat, availableWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: DS.space20) {

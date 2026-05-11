@@ -365,7 +365,7 @@ class CosmoAgentService: ObservableObject {
         var conversation: AgentConversation
         if let convId = conversationId,
            let existing = await ConversationMemoryService.shared.loadConversation(id: convId) {
-            conversation = existing
+            conversation = Self.pruneShadowVisibleMessages(existing)
         } else if let convId = conversationId {
             conversation = AgentConversation(id: convId, source: source)
         } else {
@@ -813,7 +813,7 @@ class CosmoAgentService: ObservableObject {
         var conversation: AgentConversation
         if let convId = conversationId,
            let existing = await ConversationMemoryService.shared.loadConversation(id: convId) {
-            conversation = existing
+            conversation = Self.pruneShadowVisibleMessages(existing)
         } else if let convId = conversationId {
             conversation = AgentConversation(id: convId, source: source)
         } else {
@@ -1328,7 +1328,7 @@ class CosmoAgentService: ObservableObject {
         var conversation: AgentConversation
         if let conversationId,
            let existing = await ConversationMemoryService.shared.loadConversation(id: conversationId) {
-            conversation = existing
+            conversation = Self.pruneShadowVisibleMessages(existing)
         } else if let conversationId {
             conversation = AgentConversation(id: conversationId, source: source)
         } else {
@@ -1886,6 +1886,63 @@ class CosmoAgentService: ObservableObject {
         }
 
         return window
+    }
+
+    nonisolated static func pruneShadowVisibleMessages(_ conversation: AgentConversation) -> AgentConversation {
+        var pruned = AgentConversation(
+            id: conversation.id,
+            source: conversation.source,
+            createdAt: conversation.createdAt
+        )
+        pruned.summary = conversation.summary
+        pruned.linkedAtomUUIDs = conversation.linkedAtomUUIDs
+        pruned.topics = conversation.topics
+
+        var enrichedUserKeys = Set<String>()
+        for message in conversation.messages {
+            if message.role == .user {
+                let key = shadowVisibleKey(for: message.content)
+                if isContextEnrichedUserMessage(message.content) {
+                    if !key.isEmpty {
+                        enrichedUserKeys.insert(key)
+                    }
+                } else if !key.isEmpty, enrichedUserKeys.contains(key) {
+                    continue
+                }
+            }
+            pruned.messages.append(message)
+        }
+
+        return pruned
+    }
+
+    private nonisolated static func isContextEnrichedUserMessage(_ content: String) -> Bool {
+        content.contains("<referenced_")
+            || content.contains("<active_cosmo_context>")
+            || content.contains("## Referenced Context")
+            || content.contains("[COSMO CONTEXT PACK]")
+    }
+
+    private nonisolated static func shadowVisibleKey(for content: String) -> String {
+        let markers = [
+            "\n<referenced_",
+            "\n<active_cosmo_context>",
+            "\n## Referenced Context",
+            "\n[COSMO CONTEXT PACK]"
+        ]
+        var prefix = content
+        for marker in markers {
+            if let range = prefix.range(of: marker) {
+                prefix = String(prefix[..<range.lowerBound])
+            }
+        }
+        return prefix
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .lowercased()
     }
 
     /// Lightweight window for simple intents (capture, correct, meta).

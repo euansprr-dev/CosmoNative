@@ -7,21 +7,23 @@ struct CortexDatabaseBrowser: View {
     @ObservedObject var viewModel: CommandKViewModel
     @StateObject private var libraryVM = LibraryViewModel()
     @State private var hasAppeared = false
+    @State private var selectedUUID: String?
 
-    private let gridColumns = Array(
-        repeating: GridItem(.flexible(), spacing: 10),
-        count: 5
-    )
+    private let gridColumns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
 
     var body: some View {
-        VStack(spacing: 0) {
-            filterBar
-            Divider().foregroundStyle(DS.border.opacity(0.2))
-            content
-        }
+        content
         .task {
             await libraryVM.loadLibrary()
+            if selectedUUID == nil {
+                selectedUUID = visibleItems.first?.uuid
+            }
             withAnimation(ProMotionSprings.cardEntrance) { hasAppeared = true }
+        }
+        .onChange(of: visibleItems.map(\.uuid)) { _, uuids in
+            if selectedUUID == nil || !uuids.contains(selectedUUID ?? "") {
+                selectedUUID = uuids.first
+            }
         }
     }
 
@@ -42,74 +44,55 @@ struct CortexDatabaseBrowser: View {
         } else if visibleItems.isEmpty {
             emptyState
         } else {
-            thumbnailGrid
+            browserSurface
         }
     }
 
-    // MARK: - Filter Bar
-
-    private var filterBar: some View {
-        HStack(spacing: DS.space8) {
-            Text("\(visibleItems.count) items")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-
-            if libraryVM.currentFolderUUID != nil {
-                Button {
-                    libraryVM.navigateToBreadcrumb(
-                        LibraryBreadcrumb(id: "home", title: "Home", uuid: nil)
-                    )
-                } label: {
-                    HStack(spacing: DS.space4) {
-                        Image(systemName: "chevron.left")
-                            .font(DS.caption2)
-                            .accessibilityHidden(true)
-                        Text("Back")
-                            .font(DS.caption)
-                    }
-                    .foregroundStyle(DS.accent)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Spacer()
-
-            Button {
-                libraryVM.showingRecentlyDeleted.toggle()
-                if libraryVM.showingRecentlyDeleted {
-                    Task { await libraryVM.loadRecentlyDeleted() }
-                }
-            } label: {
-                Image(systemName: libraryVM.showingRecentlyDeleted ? "trash.fill" : "trash")
-                    .font(DS.caption)
-                    .foregroundStyle(libraryVM.showingRecentlyDeleted ? DS.red : DS.textMuted)
-                    .accessibilityLabel(libraryVM.showingRecentlyDeleted ? "Hide deleted" : "Show deleted")
-            }
-            .buttonStyle(.plain)
+    private var selectedItem: LibraryItem? {
+        if let selectedUUID, let item = visibleItems.first(where: { $0.uuid == selectedUUID }) {
+            return item
         }
-        .padding(.horizontal, DS.space16)
-        .frame(height: 32)
+        return visibleItems.first
     }
 
     // MARK: - Thumbnail Grid
 
-    private var thumbnailGrid: some View {
-        ScrollView {
-            LazyVGrid(columns: gridColumns, spacing: 14) {
-                ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
-                    SpotlightDocCard(item: item, onTap: { openItem(item) }, onDelete: { libraryVM.softDeleteItem(uuid: item.uuid) })
+    private var browserSurface: some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                LazyVGrid(columns: gridColumns, spacing: 12) {
+                    ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
+                        CommandKDatabaseObjectCard(
+                            item: item,
+                            isSelected: item.uuid == selectedItem?.uuid
+                        ) {
+                            withAnimation(ProMotionSprings.snappy) {
+                                selectedUUID = item.uuid
+                            }
+                        } onOpen: {
+                            openItem(item)
+                        } onDelete: {
+                            libraryVM.softDeleteItem(uuid: item.uuid)
+                        }
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 8)
-                        .animation(
-                            index < 25
-                                ? ProMotionSprings.staggered(index: index)
-                                : .none,
-                            value: hasAppeared
-                        )
+                        .animation(index < 24 ? ProMotionSprings.staggered(index: index) : .none, value: hasAppeared)
+                    }
                 }
+                .padding(DS.space16)
             }
-            .padding(DS.space16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider().foregroundStyle(DS.glassBorder.opacity(0.72))
+
+            if let selectedItem {
+                CommandKDatabasePreviewPane(item: selectedItem) {
+                    openItem(selectedItem)
+                }
+                .frame(width: 226)
+            }
         }
+        .frame(minHeight: 470)
     }
 
     // MARK: - Skeleton
@@ -166,6 +149,247 @@ struct CortexDatabaseBrowser: View {
             object: nil, userInfo: ["atomUUID": item.uuid]
         )
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+    }
+}
+
+// MARK: - Polished Database Cards
+
+private struct CommandKDatabaseObjectCard: View {
+    let item: LibraryItem
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onOpen: () -> Void
+    let onDelete: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: DS.space12) {
+                HStack(spacing: DS.space8) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(item.color)
+                        .frame(width: 16)
+                        .accessibilityHidden(true)
+                    Text(item.typeName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DS.textSecondary)
+                    Spacer()
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .accessibilityHidden(true)
+                }
+
+                Text(item.title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
+                    .frame(height: 38, alignment: .topLeading)
+
+                CommandKLibraryThumbnail(item: item, cornerRadius: 8)
+                    .frame(height: 136)
+
+                HStack {
+                    Text(item.relativeDate)
+                    Spacer()
+                    if item.childCount > 0 || item.blockCount > 0 {
+                        Label("\(max(item.childCount, item.blockCount))", systemImage: "photo")
+                            .labelStyle(.titleAndIcon)
+                    }
+                }
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(DS.textMuted)
+            }
+            .padding(14)
+            .frame(height: 252)
+            .background(cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(isSelected ? item.color.opacity(0.62) : DS.glassBorder.opacity(0.64), lineWidth: isSelected ? 1.1 : 0.5)
+            )
+            .shadow(color: Color.black.opacity(isHovered ? 0.08 : 0.035), radius: isHovered ? 14 : 8, x: 0, y: isHovered ? 6 : 2)
+            .scaleEffect(isHovered ? 1.006 : 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .commandKCardContextMenu(
+            atomUUID: item.uuid,
+            entityId: item.entityId,
+            atomType: item.atomType,
+            isThinkspace: item.kind == .thinkspace,
+            allowsSpatialGoToObject: item.kind != .thinkspace,
+            onDelete: onDelete
+        )
+        .accessibilityLabel("\(item.title), \(item.typeName)")
+    }
+
+    private var cardFill: some ShapeStyle {
+        LinearGradient(
+            colors: [
+                DS.glassCardFill.opacity(isSelected ? 0.76 : 0.46),
+                DS.vellum.opacity(isSelected ? 0.52 : 0.30),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
+private struct CommandKDatabasePreviewPane: View {
+    let item: LibraryItem
+    let onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space16) {
+            HStack(spacing: DS.space8) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(item.color)
+                    .accessibilityHidden(true)
+                Text(item.typeName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: DS.space4) {
+                Text(item.title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
+
+                Text([item.relativeDate, item.statusBadge].compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            CommandKLibraryThumbnail(item: item, cornerRadius: 8)
+                .frame(height: 174)
+                .shadow(color: Color.black.opacity(0.10), radius: 16, x: 0, y: 8)
+
+            quickActions
+
+            metadata
+
+            Spacer(minLength: 0)
+        }
+        .padding(DS.space16)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(DS.glassCardFill.opacity(0.22))
+    }
+
+    private var quickActions: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text("Quick actions")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+
+            VStack(spacing: DS.space6) {
+                previewAction("Open", icon: "arrow.up.right.square", isPrimary: true, action: onOpen)
+                previewAction("Attach", icon: "paperclip", isPrimary: false, action: {})
+                previewAction("Canvas", icon: "square.grid.2x2", isPrimary: false, action: {})
+            }
+        }
+    }
+
+    private var metadata: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            metadataRow("Linked to", value: item.provenanceSummary ?? "No spaces")
+            metadataRow("Updated", value: item.relativeDate)
+            if !item.thinkspaceNames.isEmpty {
+                HStack(spacing: DS.space6) {
+                    ForEach(item.thinkspaceNames.prefix(2), id: \.self) { tag in
+                        Text(tag)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.textSecondary)
+                            .padding(.horizontal, DS.space8)
+                            .padding(.vertical, 4)
+                            .background(DS.vellumDeep.opacity(0.70), in: Capsule())
+                    }
+                }
+            }
+        }
+        .font(.system(size: 11, weight: .regular))
+        .foregroundStyle(DS.textMuted)
+        .padding(DS.space12)
+        .background(DS.glassCardFill.opacity(0.34), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(DS.glassBorder.opacity(0.58), lineWidth: 0.5)
+        )
+    }
+
+    private func metadataRow(_ title: String, value: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value)
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(1)
+        }
+    }
+
+    private func previewAction(_ title: String, icon: String, isPrimary: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 16)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .opacity(isPrimary ? 0 : 0.65)
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(isPrimary ? .white : DS.text)
+            .padding(.horizontal, DS.space10)
+            .frame(height: 34)
+            .background(isPrimary ? item.color : DS.glassCardFill.opacity(0.34), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(isPrimary ? Color.white.opacity(0.22) : DS.glassBorder.opacity(0.62), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct CommandKLibraryThumbnail: View {
+    let item: LibraryItem
+    var cornerRadius: CGFloat = 8
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(DS.glassCardFill.opacity(0.50))
+            thumbnailContent
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(DS.glassBorder.opacity(0.64), lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private var thumbnailContent: some View {
+        if let thumbnailURL = item.thumbnailURL, !thumbnailURL.isEmpty {
+            SpotlightImageContent(urlString: thumbnailURL)
+        } else if item.atomType == .connection {
+            SpotlightConnectionPreview(preview: item.preview, accentColor: item.color)
+        } else if let preview = item.preview, !preview.isEmpty,
+                  item.atomType != .project, item.atomType != .thinkspace {
+            SpotlightPageContent(text: preview, accentColor: item.color)
+        } else if item.atomType == .project || item.atomType == .thinkspace {
+            SpotlightFolderContent(item: item)
+        } else {
+            SpotlightFauxPage(accentColor: item.color)
+        }
     }
 }
 

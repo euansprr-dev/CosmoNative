@@ -10,6 +10,15 @@ private enum CosmoWindowAgentIDs {
     static let writingMode = "writing-editor"
 }
 
+struct CosmoWindowNewChatTransition: Sendable {
+    let previousConversationId: String
+    let previousMessages: [CosmoWindowMessage]
+    let previousLinkedAtomUUIDs: Set<String>
+    let previousPinnedContextSourceIDs: [String]
+    let previousActiveAtomUUID: String?
+    let newConversationId: String
+}
+
 @MainActor
 final class CosmoWindowViewModel: ObservableObject {
     static let shared = CosmoWindowViewModel()
@@ -797,29 +806,63 @@ final class CosmoWindowViewModel: ObservableObject {
             return
         }
 
-        // Persist current conversation if it has messages
-        if !messages.isEmpty {
-            await persistConversation()
-        }
+        let transition = beginNewGlobalChatSession()
 
-        // Generate a new conversation ID
-        globalConversationId = "cosmo-window-\(UUID().uuidString.prefix(8).lowercased())"
-        conversationId = globalConversationId
-        UserDefaults.standard.set(globalConversationId, forKey: globalConversationDefaultsKey)
+        Task { [weak self] in
+            await Task.yield()
+            await self?.finishNewGlobalChatTransition(transition)
+        }
+    }
+
+    @discardableResult
+    func beginNewGlobalChatSession(
+        newConversationId: String = "cosmo-window-\(UUID().uuidString.prefix(8).lowercased())"
+    ) -> CosmoWindowNewChatTransition {
+        let transition = CosmoWindowNewChatTransition(
+            previousConversationId: conversationId,
+            previousMessages: messages,
+            previousLinkedAtomUUIDs: linkedAtomUUIDs,
+            previousPinnedContextSourceIDs: pinnedContextSourceIDs,
+            previousActiveAtomUUID: activeContext.data.currentAtomUUID,
+            newConversationId: newConversationId
+        )
+
+        globalConversationId = newConversationId
+        conversationId = newConversationId
+        UserDefaults.standard.set(newConversationId, forKey: globalConversationDefaultsKey)
+
+        currentTask?.cancel()
+        currentTask = nil
 
         // Clear all state
         messages.removeAll()
         linkedAtomUUIDs.removeAll()
         pinnedContextSourceIDs.removeAll()
         error = nil
+        isProcessing = false
+        liveToolActivity = []
+        activeToolLabel = nil
+        toolActivityScrollTick = 0
         historySearchText = ""
         processingStartedAt = nil
         pendingContextTraceSections = []
 
-        // Persist the fresh empty conversation (establishes the atom)
-        await persistConversation()
+        saveStoredMessages([], for: newConversationId)
 
-        // Refresh history entries
+        return transition
+    }
+
+    private func finishNewGlobalChatTransition(_ transition: CosmoWindowNewChatTransition) async {
+        if !transition.previousMessages.isEmpty {
+            await persistConversationSnapshot(
+                conversationId: transition.previousConversationId,
+                messages: transition.previousMessages,
+                linkedAtomUUIDs: transition.previousLinkedAtomUUIDs,
+                activeAtomUUID: transition.previousActiveAtomUUID,
+                pinnedContextSourceIDs: transition.previousPinnedContextSourceIDs
+            )
+        }
+
         await loadChatHistory()
     }
 
@@ -1388,7 +1431,22 @@ final class CosmoWindowViewModel: ObservableObject {
 
     /// Persists the current conversation via ConversationMemoryService.
     private func persistConversation() async {
-        // Preserve original createdAt from existing conversation to avoid timestamp reset
+        await persistConversationSnapshot(
+            conversationId: conversationId,
+            messages: messages,
+            linkedAtomUUIDs: linkedAtomUUIDs,
+            activeAtomUUID: activeContext.data.currentAtomUUID,
+            pinnedContextSourceIDs: pinnedContextSourceIDs
+        )
+    }
+
+    private func persistConversationSnapshot(
+        conversationId: String,
+        messages: [CosmoWindowMessage],
+        linkedAtomUUIDs: Set<String>,
+        activeAtomUUID: String?,
+        pinnedContextSourceIDs: [String]
+    ) async {
         let existingConv = await conversationMemory.loadConversation(id: conversationId)
         let conversation = Self.mergedConversationForPersistence(
             existing: existingConv,
@@ -1398,14 +1456,30 @@ final class CosmoWindowViewModel: ObservableObject {
         )
         await conversationMemory.saveConversation(conversation)
         saveStoredMessages(messages, for: conversationId)
-        await persistContextSession()
+        await persistContextSession(
+            conversationId: conversationId,
+            activeAtomUUID: activeAtomUUID,
+            pinnedContextSourceIDs: pinnedContextSourceIDs
+        )
     }
 
     private func persistContextSession() async {
+        await persistContextSession(
+            conversationId: conversationId,
+            activeAtomUUID: activeContext.data.currentAtomUUID,
+            pinnedContextSourceIDs: pinnedContextSourceIDs
+        )
+    }
+
+    private func persistContextSession(
+        conversationId: String,
+        activeAtomUUID: String?,
+        pinnedContextSourceIDs: [String]
+    ) async {
         let session = ContextSession(
             id: conversationId,
             surface: .cosmoWindow,
-            activeAtomUUID: activeContext.data.currentAtomUUID,
+            activeAtomUUID: activeAtomUUID,
             activeClientUUID: nil,
             pinnedSourceIDs: pinnedContextSourceIDs
         )
@@ -1447,10 +1521,17 @@ final class CosmoWindowViewModel: ObservableObject {
             return uiConversation
         }
 
+        merged = CosmoAgentService.pruneShadowVisibleMessages(merged)
+
         for message in uiConversation.messages where !merged.messages.containsEquivalentVisibleMessage(to: message) {
+            if message.role == .user,
+               merged.messages.containsContextEnrichedUserMessage(equivalentTo: message) {
+                continue
+            }
             merged.append(message)
         }
 
+        merged = CosmoAgentService.pruneShadowVisibleMessages(merged)
         merged.linkedAtomUUIDs = orderedUnique(merged.linkedAtomUUIDs + Array(linkedAtomUUIDs))
         return merged
     }
@@ -1643,6 +1724,19 @@ private extension AgentConversation {
 private extension Array where Element == AgentMessage {
     func containsEquivalentVisibleMessage(to message: AgentMessage) -> Bool {
         contains { $0.isEquivalentVisibleMessage(to: message) }
+    }
+
+    func containsContextEnrichedUserMessage(equivalentTo message: AgentMessage) -> Bool {
+        guard message.role == .user else { return false }
+        for candidate in self where candidate.role == .user {
+            var conversation = AgentConversation(id: "candidate", source: .inApp)
+            conversation.messages = [candidate, message]
+            let pruned = CosmoAgentService.pruneShadowVisibleMessages(conversation)
+            if pruned.messages.count == 1 {
+                return true
+            }
+        }
+        return false
     }
 }
 

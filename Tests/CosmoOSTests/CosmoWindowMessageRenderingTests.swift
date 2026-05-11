@@ -57,6 +57,56 @@ final class CosmoWindowMessageRenderingTests: XCTestCase {
         XCTAssertEqual(merged.messages.filter { $0.role == .assistant && ($0.toolCalls?.isEmpty ?? true) }.count, 1)
     }
 
+    func testWindowPersistenceDoesNotAppendVisibleDuplicateAfterExpandedMentionContext() {
+        let toolCall = AgentToolCall(
+            id: "call_content",
+            name: "retrieve_context",
+            argumentsJSON: #"{"query":"slide 5"}"#
+        )
+        var existing = AgentConversation(id: "conversation-1", source: .inApp)
+        existing.append(.user("""
+        For slide 5, fill in the data using @Walking Beam Shared Living Arbitrage
+        <referenced_content title="Walking Beam Shared Living Arbitrage" uuid="content-1">
+        Deal data here.
+        </referenced_content>
+        """))
+        existing.append(.assistant("", toolCalls: [toolCall]))
+        existing.append(.tool(callId: "call_content", content: #"{"results":[{"title":"Walking Beam"}]}"#))
+        existing.append(.assistant("Slide 5 filled in."))
+
+        let visibleMessages: [CosmoWindowMessage] = [
+            .user("For slide 5, fill in the data using @Walking Beam Shared Living Arbitrage"),
+            .assistant("Slide 5 filled in.")
+        ]
+
+        let merged = CosmoWindowViewModel.mergedConversationForPersistence(
+            existing: existing,
+            visibleMessages: visibleMessages,
+            conversationId: "conversation-1",
+            linkedAtomUUIDs: []
+        )
+
+        XCTAssertEqual(merged.messages.filter { $0.role == .user }.count, 1)
+        XCTAssertFalse(merged.messages.suffix(2).contains { $0.role == .user })
+    }
+
+    func testAgentTranscriptPrunesPreviouslyPersistedVisibleDuplicate() {
+        var conversation = AgentConversation(id: "conversation-1", source: .inApp)
+        conversation.append(.user("""
+        For slide 5, fill in the data using @Walking Beam Shared Living Arbitrage
+        <referenced_content title="Walking Beam Shared Living Arbitrage" uuid="content-1">
+        Deal data here.
+        </referenced_content>
+        """))
+        conversation.append(.assistant("Slide 5 filled in."))
+        conversation.append(.user("For slide 5, fill in the data using @Walking Beam Shared Living Arbitrage"))
+
+        let pruned = CosmoAgentService.pruneShadowVisibleMessages(conversation)
+
+        XCTAssertEqual(pruned.messages.filter { $0.role == .user }.count, 1)
+        XCTAssertEqual(pruned.messages.last?.role, .assistant)
+    }
+
     func testAgentKeepsRecentToolResultsUncompressedForFollowUps() {
         XCTAssertGreaterThanOrEqual(CosmoAgentService.recentToolResultsToKeepUncompressed, 8)
     }

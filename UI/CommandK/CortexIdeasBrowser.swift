@@ -9,6 +9,8 @@ struct CortexIdeasBrowser: View {
     @State private var clientProfiles: [Atom] = []
     @State private var captureDrafts: [String: String] = [:]
     @State private var expandedClients: Set<String> = []
+    @State private var selectedIdeaID: String?
+    @State private var viewMode: CommandKIdeasViewMode = .clients
     @FocusState private var focusedClient: String?
 
     private static let previewLimit = 5
@@ -16,22 +18,151 @@ struct CortexIdeasBrowser: View {
     private static let minimumColumnWidth: CGFloat = 340
 
     var body: some View {
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
-                    ledger(availableWidth: geometry.size.width)
+        ideasSurface
+            .task {
+                await reload()
+                if selectedIdeaID == nil {
+                    selectedIdeaID = visibleIdeas.first?.atomUUID
+                }
+                withAnimation(.easeOut(duration: 0.55)) { hasAppeared = true }
+            }
+            .onChange(of: visibleIdeas.map(\.atomUUID)) { _, ids in
+                if selectedIdeaID == nil || !ids.contains(selectedIdeaID ?? "") {
+                    selectedIdeaID = ids.first
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
+                Task { await reload() }
+            }
+    }
+
+    private var ideasSurface: some View {
+        HStack(spacing: 0) {
+            GeometryReader { proxy in
+                VStack(alignment: .leading, spacing: DS.space18) {
+                    ideasToolbar
+                    ideasContent(availableWidth: max(0, proxy.size.width - DS.space48))
                 }
                 .padding(.horizontal, DS.space24)
                 .padding(.vertical, DS.space20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if let selectedIdea {
+                CommandKIdeaPreviewPane(item: selectedIdea) {
+                    openIdea(selectedIdea)
+                }
+                .frame(width: 348)
+                .padding(.trailing, DS.space20)
+                .padding(.vertical, DS.space20)
             }
         }
-        .task {
-            await reload()
-            withAnimation(.easeOut(duration: 0.55)) { hasAppeared = true }
+        .frame(minHeight: 484)
+    }
+
+    private var selectedIdea: IdeaGalleryItem? {
+        if let selectedIdeaID, let item = visibleIdeas.first(where: { $0.atomUUID == selectedIdeaID }) {
+            return item
         }
-        .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
-            Task { await reload() }
+        return visibleIdeas.first
+    }
+
+    private var ideasToolbar: some View {
+        HStack(spacing: DS.space12) {
+            Button { } label: {
+                Label("All Ideas", systemImage: "lightbulb")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(DS.entityIdea)
+                    .padding(.horizontal, DS.space12)
+                    .frame(height: 36)
+                    .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(DS.glassBorder.opacity(0.68), lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Button { } label: {
+                Label("Drafts", systemImage: "doc.text")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, DS.space12)
+                    .frame(height: 36)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            viewModeControl
+        }
+    }
+
+    private var viewModeControl: some View {
+        HStack(spacing: 0) {
+            viewModeButton(.clients, icon: "person.2", label: "View by client")
+            viewModeButton(.grid, icon: "square.grid.2x2", label: "Grid")
+        }
+        .background(DS.glassCardFill.opacity(0.50), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DS.glassBorder.opacity(0.64), lineWidth: 0.5)
+        )
+    }
+
+    private func viewModeButton(_ mode: CommandKIdeasViewMode, icon: String, label: String) -> some View {
+        Button {
+            withAnimation(ProMotionSprings.snappy) {
+                viewMode = mode
+            }
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(viewMode == mode ? DS.text : DS.textSecondary)
+                .frame(width: 36, height: 34)
+                .background(
+                    viewMode == mode ? DS.glassCardFill.opacity(0.72) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    @ViewBuilder
+    private func ideasContent(availableWidth: CGFloat) -> some View {
+        switch viewMode {
+        case .clients:
+            ledger(availableWidth: availableWidth)
+        case .grid:
+            ideasGrid
+        }
+    }
+
+    private var ideasGrid: some View {
+        ScrollView {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 184, maximum: 212), spacing: DS.space12)],
+                spacing: DS.space12
+            ) {
+                ForEach(Array(visibleIdeas.enumerated()), id: \.element.id) { index, item in
+                    CommandKIdeaTile(
+                        item: item,
+                        isSelected: item.atomUUID == selectedIdea?.atomUUID
+                    ) {
+                        withAnimation(ProMotionSprings.snappy) {
+                            selectedIdeaID = item.atomUUID
+                        }
+                    }
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 8)
+                    .animation(ProMotionSprings.staggered(index: index), value: hasAppeared)
+                }
+            }
+            .padding(.bottom, DS.space12)
         }
     }
 
@@ -111,7 +242,12 @@ struct CortexIdeasBrowser: View {
             }
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
-                    IdeaMaterialLedgerRow(item: item) { openIdea(item) }
+                    IdeaMaterialLedgerRow(
+                        item: item,
+                        isSelected: item.atomUUID == selectedIdea?.atomUUID
+                    ) {
+                        selectIdea(item)
+                    }
                         .atelierStaggerIn(
                             delay: staggerDelay(sectionIndex: sectionIndex, rowIndex: index),
                             appeared: hasAppeared
@@ -300,6 +436,310 @@ struct CortexIdeasBrowser: View {
         )
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
     }
+
+    private func selectIdea(_ item: IdeaGalleryItem) {
+        withAnimation(ProMotionSprings.snappy) {
+            selectedIdeaID = item.atomUUID
+        }
+    }
+}
+
+enum CommandKIdeasViewMode {
+    case clients
+    case grid
+}
+
+// MARK: - Polished Idea Cards
+
+private struct CommandKIdeaTile: View {
+    let item: IdeaGalleryItem
+    let isSelected: Bool
+    let onSelect: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: DS.space12) {
+                HStack(alignment: .top) {
+                    Image(systemName: "lightbulb")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DS.entityIdea)
+                        .frame(width: 18)
+                        .accessibilityHidden(true)
+
+                    Text(item.title)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(DS.text)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+
+                    Spacer(minLength: DS.space8)
+
+                    Image(systemName: item.isPinned ? "pin.fill" : "ellipsis")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(item.isPinned ? DS.entityIdea : DS.textMuted)
+                        .accessibilityHidden(true)
+                }
+
+                Spacer(minLength: 0)
+
+                HStack {
+                    Text(CommandKDomainFormatters.relativeTime(from: item.updatedAt))
+                    Spacer()
+                    if item.contentCount > 0 {
+                        Circle()
+                            .fill(DS.entityIdea)
+                            .frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(DS.textMuted)
+            }
+            .padding(DS.space16)
+            .frame(height: 132)
+            .background(cardFill, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .stroke(isSelected ? DS.entityIdea.opacity(0.68) : DS.glassBorder.opacity(0.64), lineWidth: isSelected ? 1.2 : 0.5)
+            )
+            .shadow(color: Color.black.opacity(isHovered ? 0.07 : 0.025), radius: isHovered ? 14 : 8, x: 0, y: isHovered ? 6 : 2)
+            .scaleEffect(isHovered ? 1.006 : 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .commandKCardContextMenu(
+            atomUUID: item.atomUUID,
+            entityId: item.entityId,
+            atomType: .idea,
+            allowsSpatialGoToObject: true,
+            onDelete: {
+                Task {
+                    try? await AtomRepository.shared.delete(uuid: item.atomUUID)
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ideaDeleted"),
+                        object: nil,
+                        userInfo: ["uuid": item.atomUUID]
+                    )
+                }
+            }
+        )
+        .accessibilityLabel(item.title)
+    }
+
+    private var cardFill: some ShapeStyle {
+        LinearGradient(
+            colors: [
+                DS.glassCardFill.opacity(isSelected ? 0.76 : 0.42),
+                DS.entityIdea.opacity(isSelected ? 0.085 : 0.025),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
+private struct CommandKIdeaPreviewPane: View {
+    let item: IdeaGalleryItem
+    let onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: DS.space16) {
+                    previewHeader
+
+                    ideaPreviewSection(title: "Context", icon: "text.alignleft") {
+                        if let contextText {
+                            Text(contextText)
+                                .font(.system(size: 13, weight: .regular))
+                                .foregroundStyle(DS.textSecondary)
+                                .lineSpacing(4)
+                                .lineLimit(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            emptySectionLine("No context captured yet")
+                        }
+                    }
+
+                    ideaPreviewSection(title: "Hooks", icon: "text.quote") {
+                        if item.hooks.isEmpty {
+                            emptySectionLine("No hooks yet")
+                        } else {
+                            VStack(alignment: .leading, spacing: DS.space8) {
+                                ForEach(Array(item.hooks.prefix(4).enumerated()), id: \.offset) { index, hook in
+                                    numberedPreviewLine(index: index + 1, text: hook)
+                                }
+                            }
+                        }
+                    }
+
+                    ideaPreviewSection(title: "Outline", icon: "list.bullet.rectangle") {
+                        if item.outline.isEmpty {
+                            emptySectionLine("No outline yet")
+                        } else {
+                            VStack(alignment: .leading, spacing: DS.space8) {
+                                ForEach(Array(item.outline.prefix(5).enumerated()), id: \.offset) { index, outlineItem in
+                                    numberedPreviewLine(index: index + 1, text: outlineItem)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, 14)
+            }
+
+            Divider().foregroundStyle(DS.glassBorder.opacity(0.62))
+
+            actionFooter
+                .padding(.top, 14)
+        }
+        .padding(DS.space18)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(DS.glassCardFill.opacity(0.44), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .stroke(DS.glassBorder.opacity(0.68), lineWidth: 0.6)
+        )
+    }
+
+    private var previewHeader: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: DS.space12) {
+                Text(item.title)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
+
+                HStack(spacing: DS.space8) {
+                    Text(CommandKDomainFormatters.relativeTime(from: item.updatedAt))
+                    statusPill
+                }
+            }
+
+            Spacer()
+
+            Image(systemName: item.isPinned ? "pin.fill" : "ellipsis")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(item.isPinned ? DS.entityIdea : DS.textMuted)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var statusPill: some View {
+        Text(item.status.displayName)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(DS.entityIdea)
+            .padding(.horizontal, DS.space8)
+            .frame(height: 24)
+            .background(DS.entityIdea.opacity(0.12), in: Capsule())
+    }
+
+    private var contextText: String? {
+        firstNonEmpty([item.context, item.body])
+    }
+
+    private func firstNonEmpty(_ values: [String?]) -> String? {
+        values
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+
+    private func ideaPreviewSection<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            HStack(spacing: DS.space8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.entityIdea)
+                    .frame(width: 16)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                Spacer(minLength: 0)
+            }
+
+            content()
+        }
+        .padding(DS.space12)
+        .background(DS.vellum.opacity(0.42), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(DS.glassBorder.opacity(0.50), lineWidth: 0.5)
+        )
+    }
+
+    private func numberedPreviewLine(index: Int, text: String) -> some View {
+        HStack(alignment: .top, spacing: DS.space10) {
+            Text("\(index)")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(DS.entityIdea)
+                .frame(width: 18, height: 18)
+                .background(DS.entityIdea.opacity(0.10), in: Circle())
+
+            Text(text)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(3)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func emptySectionLine(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .regular))
+            .foregroundStyle(DS.textMuted)
+            .italic()
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var actionFooter: some View {
+        HStack(spacing: DS.space12) {
+            footerIcon("pencil")
+            footerIcon("doc.on.doc")
+            footerIcon("tag")
+            Spacer()
+            Button(action: onOpen) {
+                Label("Open", systemImage: "arrow.up.right.square")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, DS.space16)
+                    .frame(height: 40)
+                    .background(DS.accent, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func footerIcon(_ icon: String) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(DS.textSecondary)
+            .frame(width: 40, height: 40)
+            .background(DS.glassCardFill.opacity(0.42), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(DS.glassBorder.opacity(0.62), lineWidth: 0.5)
+            )
+            .accessibilityHidden(true)
+    }
+}
+
+enum CommandKDomainFormatters {
+    static func relativeTime(from timestamp: String) -> String {
+        guard let date = ISO8601.date(from: timestamp) else { return "" }
+        let interval = Date().timeIntervalSince(date)
+        if interval < 3600 { return "\(max(1, Int(interval / 60)))m ago" }
+        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
+        if interval < 604800 { return "\(Int(interval / 86400))d ago" }
+        return "\(Int(interval / 604800))w ago"
+    }
 }
 
 // MARK: - Section Model
@@ -464,6 +904,7 @@ private struct IdeaMaterialCaptureRow: View {
 
 struct IdeaMaterialLedgerRow: View {
     let item: IdeaGalleryItem
+    var isSelected: Bool = false
     let onTap: () -> Void
     @State private var isHovered = false
 
@@ -480,11 +921,11 @@ struct IdeaMaterialLedgerRow: View {
             .frame(minHeight: 64)
             .background(
                 RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                    .fill(isHovered ? accentColor.opacity(0.055) : Color.clear)
+                    .fill(rowFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                    .strokeBorder(isHovered ? accentColor.opacity(0.14) : Color.clear, lineWidth: 0.5)
+                    .strokeBorder(rowBorder, lineWidth: 0.5)
             )
             .contentShape(Rectangle())
         }
@@ -497,6 +938,7 @@ struct IdeaMaterialLedgerRow: View {
             atomUUID: item.atomUUID,
             entityId: item.entityId,
             atomType: .idea,
+            allowsSpatialGoToObject: true,
             onDelete: {
                 Task {
                     try? await AtomRepository.shared.delete(uuid: item.atomUUID)
@@ -508,6 +950,20 @@ struct IdeaMaterialLedgerRow: View {
                 }
             }
         )
+    }
+
+    private var rowFill: Color {
+        if isSelected {
+            return accentColor.opacity(0.085)
+        }
+        return isHovered ? accentColor.opacity(0.055) : Color.clear
+    }
+
+    private var rowBorder: Color {
+        if isSelected {
+            return accentColor.opacity(0.24)
+        }
+        return isHovered ? accentColor.opacity(0.14) : Color.clear
     }
 
     private var accentBar: some View {

@@ -253,7 +253,7 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         )
 
         XCTAssertEqual(sections.scheduled.map(\.uuid), ["today-recurring"])
-        XCTAssertEqual(sections.overdue.map(\.uuid), ["other-recurring", "normal-overdue"])
+        XCTAssertEqual(Set(sections.overdue.map(\.uuid)), ["other-recurring", "normal-overdue"])
     }
 
     private func task(

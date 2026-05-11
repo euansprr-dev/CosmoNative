@@ -2866,6 +2866,55 @@ struct IdeaGalleryItem: Identifiable, Sendable {
     let contentCount: Int
     let createdAt: String
     let updatedAt: String
+    let context: String?
+    let hooks: [String]
+    let outline: [String]
+
+    init(
+        id: String,
+        atomUUID: String,
+        entityId: Int64,
+        title: String,
+        body: String?,
+        status: IdeaStatus,
+        contentFormat: ContentFormat?,
+        platform: IdeaPlatform?,
+        clientName: String?,
+        clientUUID: String?,
+        tags: [String],
+        insightScore: Double?,
+        matchingSwipeCount: Int?,
+        suggestedFramework: SwipeFrameworkType?,
+        isPinned: Bool,
+        contentCount: Int,
+        createdAt: String,
+        updatedAt: String,
+        context: String? = nil,
+        hooks: [String] = [],
+        outline: [String] = []
+    ) {
+        self.id = id
+        self.atomUUID = atomUUID
+        self.entityId = entityId
+        self.title = title
+        self.body = body
+        self.status = status
+        self.contentFormat = contentFormat
+        self.platform = platform
+        self.clientName = clientName
+        self.clientUUID = clientUUID
+        self.tags = tags
+        self.insightScore = insightScore
+        self.matchingSwipeCount = matchingSwipeCount
+        self.suggestedFramework = suggestedFramework
+        self.isPinned = isPinned
+        self.contentCount = contentCount
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.context = context
+        self.hooks = hooks
+        self.outline = outline
+    }
 }
 
 extension Atom {
@@ -2892,8 +2941,40 @@ extension Atom {
             isPinned: meta?.isPinned ?? false,
             contentCount: ideaToContentCount,
             createdAt: createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            context: Self.normalizedIdeaContext(meta?.context, fallbackBody: body),
+            hooks: meta?.hooks ?? [],
+            outline: Self.ideaOutlineItems(from: meta?.codexOutline)
         )
+    }
+
+    private static func normalizedIdeaContext(_ context: String?, fallbackBody: String?) -> String? {
+        for candidate in [context, fallbackBody] {
+            if let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func ideaOutlineItems(from rawOutline: String?) -> [String] {
+        guard let rawOutline, let data = rawOutline.data(using: .utf8),
+              let outline = try? JSONDecoder().decode(CodexOutlineModel.self, from: data) else {
+            return []
+        }
+
+        return outline.slides
+            .sorted { $0.position < $1.position }
+            .compactMap { slide in
+                [
+                    slide.note,
+                    slide.speechAct,
+                    slide.frame,
+                    slide.transition
+                ]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty }
+            }
     }
 }
 

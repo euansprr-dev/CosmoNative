@@ -83,6 +83,49 @@ final class CommandCenterComposerTests: XCTestCase {
     }
 
     @MainActor
+    func testRecurringCleanupDropsPastRepeat() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+
+        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
+            from: [
+                .init(uuid: "daily-yesterday", parentUUID: "daily", occurrenceDate: yesterday, isCompleted: false, createdAt: yesterday),
+                .init(uuid: "daily-today", parentUUID: "daily", occurrenceDate: today, isCompleted: false, createdAt: today),
+                .init(uuid: "daily-tomorrow", parentUUID: "daily", occurrenceDate: tomorrow, isCompleted: false, createdAt: tomorrow),
+                .init(uuid: "weekly-yesterday", parentUUID: "weekly", occurrenceDate: yesterday, isCompleted: false, createdAt: yesterday),
+                .init(uuid: "completed-yesterday", parentUUID: "daily", occurrenceDate: yesterday, isCompleted: true, createdAt: yesterday)
+            ],
+            referenceDate: today,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(deletions, ["daily-yesterday"])
+    }
+
+    @MainActor
+    func testRecurringCleanupDropsSameDayDuplicate() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
+        let earlyCreate = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
+        let lateCreate = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 9))!
+
+        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
+            from: [
+                .init(uuid: "first", parentUUID: "daily", occurrenceDate: today, isCompleted: false, createdAt: earlyCreate),
+                .init(uuid: "second", parentUUID: "daily", occurrenceDate: today, isCompleted: false, createdAt: lateCreate)
+            ],
+            referenceDate: today,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(deletions, ["second"])
+    }
+
+    @MainActor
     func testIntentEngineReturnsExplicitUnassignedPresentation() {
         let engine = CommandCenterIntentEngine()
 

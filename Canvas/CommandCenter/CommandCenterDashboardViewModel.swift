@@ -653,7 +653,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         var activeTasks: [TaskViewModel] = []
 
         do {
-            try? await TaskRecurrenceEngine.shared.deduplicateGeneratedInstances()
+            try? await TaskRecurrenceEngine.shared.generateTodayInstances()
 
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
 

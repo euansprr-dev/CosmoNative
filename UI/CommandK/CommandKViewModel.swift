@@ -1126,6 +1126,10 @@ public final class CommandKViewModel: ObservableObject {
     /// Currently selected index in flatNavigableResults for keyboard nav
     @Published var selectedResultIndex: Int = -1
 
+    /// Flat ordered list for keyboard navigation in expanded domain rail mode.
+    @Published private(set) var expandedDomainSelectionIDs: [String] = []
+    private var expandedDomainOpenTargets: [String: CommandKDomainOpenTarget] = [:]
+
     /// Active #type prefix filter parsed from query
     @Published var activeTypePrefix: AtomType? = nil
 
@@ -1317,6 +1321,10 @@ public final class CommandKViewModel: ObservableObject {
             if cortexMode == .searchResults {
                 cortexMode = .compact
                 await loadRecentsForCompact()
+            }
+            if case .expandedDomain = cortexMode {
+                currentPhase = .idle
+                return
             }
             await showRecents()
             return
@@ -1681,6 +1689,26 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
+    func updateExpandedDomainNavigation(items: [CommandKDomainRailItem]) {
+        let ids = items.map(\.selectionID)
+        expandedDomainSelectionIDs = ids
+        expandedDomainOpenTargets = Dictionary(uniqueKeysWithValues: items.map { ($0.selectionID, $0.openTarget) })
+
+        guard case .expandedDomain = cortexMode else { return }
+        guard !ids.isEmpty else {
+            selectedResultIndex = -1
+            selectedNodeId = nil
+            return
+        }
+
+        if let selectedNodeId, let index = ids.firstIndex(of: selectedNodeId) {
+            selectedResultIndex = index
+        } else {
+            selectedResultIndex = 0
+            selectedNodeId = ids[0]
+        }
+    }
+
     // MARK: - Task Quick-Create
 
     /// Whether the current query is a "task:" creation command
@@ -1739,6 +1767,13 @@ public final class CommandKViewModel: ObservableObject {
             return
         }
 
+        if case .expandedDomain = cortexMode,
+           let selectedNodeId,
+           let target = expandedDomainOpenTargets[selectedNodeId] {
+            openExpandedDomainTarget(target)
+            return
+        }
+
         // Unified search mode
         if isUnifiedSearchActive, selectedResultIndex >= 0,
            selectedResultIndex < unifiedFlatResults.count {
@@ -1782,6 +1817,31 @@ public final class CommandKViewModel: ObservableObject {
 
         // Hide Command-K (keep alive behind focus mode)
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+    }
+
+    private func openExpandedDomainTarget(_ target: CommandKDomainOpenTarget) {
+        switch target {
+        case .atom(let uuid):
+            Task {
+                try? await NodeGraphEngine.shared.recordAccess(atomUUID: uuid, type: .view)
+            }
+            NotificationCenter.default.post(
+                name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+                object: nil,
+                userInfo: ["atomUUID": uuid]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+        case .thinkspace(let id):
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                object: nil,
+                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: id).userInfo
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+        case .readwiseBook(let id):
+            selectedReadwiseBookId = id
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+        }
     }
 
     public func performPrimaryAction() {
@@ -1953,6 +2013,8 @@ public final class CommandKViewModel: ObservableObject {
         cortexMode = .expandedDomain(tab)
         selectedResultIndex = -1
         selectedNodeId = nil
+        expandedDomainSelectionIDs = []
+        expandedDomainOpenTargets = [:]
 
         guard loadDataImmediately else { return }
         ensureExpandedDomainDataLoaded(tab)
@@ -1981,6 +2043,8 @@ public final class CommandKViewModel: ObservableObject {
         isUnifiedSearchActive = false
         selectedResultIndex = -1
         selectedNodeId = nil
+        expandedDomainSelectionIDs = []
+        expandedDomainOpenTargets = [:]
         clearSelection()
         if refreshRecents, isSurfaceActive {
             Task { await loadRecentsForCompact() }
@@ -2006,6 +2070,11 @@ public final class CommandKViewModel: ObservableObject {
                 recentlyUpdated: updatedAtoms,
                 limit: 8
             )
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               cortexMode == .compact || cortexMode == .searchResults {
+                selectedResultIndex = recentItems.isEmpty ? -1 : 0
+                selectedNodeId = recentItems.first?.id
+            }
             refreshDomainPresentation()
         } catch {
             recentItems = []
@@ -2137,6 +2206,9 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Navigate selection up
     public func selectPrevious() {
+        if navigateExpandedDomainSelection(delta: -1) { return }
+        if navigateRecentSelection(delta: -1) { return }
+
         if isUnifiedSearchActive {
             guard !unifiedFlatResults.isEmpty else { return }
             if selectedResultIndex > 0 {
@@ -2161,6 +2233,9 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Navigate selection down
     public func selectNext() {
+        if navigateExpandedDomainSelection(delta: 1) { return }
+        if navigateRecentSelection(delta: 1) { return }
+
         if isUnifiedSearchActive {
             guard !unifiedFlatResults.isEmpty else { return }
             if selectedResultIndex < unifiedFlatResults.count - 1 {
@@ -2181,6 +2256,29 @@ public final class CommandKViewModel: ObservableObject {
             selectedResultIndex = 0
         }
         selectedNodeId = flatNavigableResults[selectedResultIndex].atomUUID
+    }
+
+    private func navigateExpandedDomainSelection(delta: Int) -> Bool {
+        guard case .expandedDomain = cortexMode else { return false }
+        return navigateSelection(in: expandedDomainSelectionIDs, delta: delta)
+    }
+
+    private func navigateRecentSelection(delta: Int) -> Bool {
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              cortexMode == .compact || cortexMode == .searchResults else {
+            return false
+        }
+        return navigateSelection(in: recentItems.map(\.id), delta: delta)
+    }
+
+    private func navigateSelection(in ids: [String], delta: Int) -> Bool {
+        guard !ids.isEmpty else { return false }
+        let currentIndex = selectedNodeId.flatMap { ids.firstIndex(of: $0) } ?? selectedResultIndex
+        let safeIndex = ids.indices.contains(currentIndex) ? currentIndex : 0
+        let nextIndex = (safeIndex + delta + ids.count) % ids.count
+        selectedResultIndex = nextIndex
+        selectedNodeId = ids[nextIndex]
+        return true
     }
 
     // MARK: - Filter
@@ -3084,6 +3182,8 @@ public final class CommandKViewModel: ObservableObject {
         unifiedGroupedResults = []
         unifiedFlatResults = []
         selectedReadwiseBookId = nil
+        expandedDomainSelectionIDs = []
+        expandedDomainOpenTargets = [:]
         domainPresentation = .empty
     }
 }

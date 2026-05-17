@@ -167,12 +167,7 @@ public struct CommandKView: View {
                     .background(DS.accent.opacity(0.12), in: Capsule())
             }
 
-            // Expanded domain title
-            if case .expandedDomain(let tab) = viewModel.cortexMode {
-                expandedTabChip(tab)
-            } else {
-                scopeMenu
-            }
+            scopeMenu
 
             // Voice button
             voiceButton
@@ -282,17 +277,29 @@ public struct CommandKView: View {
     @ViewBuilder
     private func contentPanel(geometry: GeometryProxy) -> some View {
         switch viewModel.cortexMode {
-        case .compact, .searchResults:
-            CortexMasterDetailView(viewModel: viewModel, openDomain: openExpandedDomain)
-                .frame(height: min(geometry.size.height * 0.62, 560))
-                .frame(width: panelWidth(for: geometry))
-                .cortexGlassPanel()
-        case .expandedDomain(let tab):
-            expandedDomainContent(tab)
-                .frame(maxHeight: CommandKExpandedLayout.panelHeight(forAvailableHeight: geometry.size.height))
+        case .compact, .searchResults, .expandedDomain:
+            CortexMasterDetailView(
+                viewModel: viewModel,
+                isDomainHydrated: isMasterDetailDomainHydrated
+            )
+                .frame(height: contentPanelHeight(for: geometry))
                 .frame(width: panelWidth(for: geometry))
                 .cortexGlassPanel()
         }
+    }
+
+    private var isMasterDetailDomainHydrated: Bool {
+        if case .expandedDomain = viewModel.cortexMode {
+            return isExpandedBrowserMounted
+        }
+        return true
+    }
+
+    private func contentPanelHeight(for geometry: GeometryProxy) -> CGFloat {
+        if case .expandedDomain = viewModel.cortexMode {
+            return CommandKExpandedLayout.panelHeight(forAvailableHeight: geometry.size.height)
+        }
+        return min(geometry.size.height * 0.62, 560)
     }
 
     // MARK: - Compact Content

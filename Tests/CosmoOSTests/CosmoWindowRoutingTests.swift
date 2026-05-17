@@ -83,4 +83,94 @@ final class CosmoWindowRoutingTests: XCTestCase {
             )
         )
     }
+
+    func testProfileInspectionRequestsBypassFlashRouter() {
+        XCTAssertTrue(FlashLiteRouter.shouldForceAgentFallback("check out Josh's content profile"))
+        XCTAssertTrue(FlashLiteRouter.shouldForceAgentFallback("show me Josh's best performing posts"))
+    }
+
+    func testAgentContextAtomMergePreservesPinnedProfilesWhenMentionsArePresent() {
+        XCTAssertEqual(
+            CosmoAgentService.mergedContextAtomUUIDs(
+                existing: ["profile-1", "content-1"],
+                mentioned: ["content-1", "swipe-1"]
+            ),
+            ["profile-1", "content-1", "swipe-1"]
+        )
+    }
+}
+
+@MainActor
+final class ClientProfileToolTests: XCTestCase {
+    private var createdUUIDs: [String] = []
+
+    override func tearDown() async throws {
+        let uuids = createdUUIDs.reversed()
+        createdUUIDs.removeAll()
+
+        for uuid in uuids {
+            try? await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
+        }
+
+        try await super.tearDown()
+    }
+
+    func testGetClientProfileReturnsCompleteTopPostsAndDocuments() async throws {
+        let fullPost = String(repeating: "Josh full performer sentence. ", count: 80)
+        let fullDocument = String(repeating: "Josh document transcript sentence. ", count: 90)
+        let profile = ClientProfileMetadata(
+            clientId: UUID().uuidString,
+            clientName: "Josh Profile Tool Test",
+            platforms: [.instagram],
+            topPerformingTranscripts: [fullPost],
+            documents: [
+                ProfileDocument(
+                    category: .reel,
+                    title: "Best reel",
+                    content: fullDocument,
+                    platform: "instagram",
+                    likes: 12,
+                    shares: 3,
+                    saves: 4,
+                    comments: 5,
+                    leads: 6,
+                    sourceURL: "https://example.com/reel"
+                )
+            ],
+            topPerformingPosts: [
+                TopPost(
+                    transcript: fullPost,
+                    platform: "instagram",
+                    likes: 100,
+                    shares: 20,
+                    leads: 7,
+                    views: 12_000,
+                    datePosted: "2026-05-01"
+                )
+            ]
+        )
+
+        let created = try await AtomRepository.shared.create(
+            Atom.new(type: .clientProfile, title: "Josh Profile Tool Test").withMetadata(profile)
+        )
+        createdUUIDs.append(created.uuid)
+
+        let result = try await AgentToolExecutor.shared.execute(
+            toolName: "get_client_profile",
+            arguments: ["client_name": "Josh Profile Tool Test"]
+        )
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any]
+        )
+
+        let posts = try XCTUnwrap(payload["topPerformingPosts"] as? [[String: Any]])
+        XCTAssertEqual(posts.first?["transcript"] as? String, fullPost)
+
+        let transcripts = payload["topPerformingTranscripts"] as? [String]
+        XCTAssertEqual(transcripts?.first, fullPost)
+
+        let documents = try XCTUnwrap(payload["documents"] as? [[String: Any]])
+        XCTAssertEqual(documents.first?["content"] as? String, fullDocument)
+        XCTAssertEqual(documents.first?["sourceURL"] as? String, "https://example.com/reel")
+    }
 }

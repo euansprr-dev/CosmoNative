@@ -16,6 +16,7 @@ struct CosmoWindowNewChatTransition: Sendable {
     let previousLinkedAtomUUIDs: Set<String>
     let previousPinnedContextSourceIDs: [String]
     let previousActiveAtomUUID: String?
+    let previousActiveClientUUID: String?
     let newConversationId: String
 }
 
@@ -672,6 +673,18 @@ final class CosmoWindowViewModel: ObservableObject {
             }
             _ = try? await ContextIndexStore.shared.upsert(atom: atom, pinState: .active)
         }
+
+        if let activeClientUUID = activeContext.data.activeClientUUID,
+           !activeClientUUID.isEmpty,
+           let clientAtom = try? await AtomRepository.shared.fetch(uuid: activeClientUUID),
+           clientAtom.type == .clientProfile {
+            let source = Self.contextSource(for: clientAtom)
+            if !pinnedContextSourceIDs.contains(source.id) {
+                pinnedContextSourceIDs.append(source.id)
+            }
+            linkedAtomUUIDs.insert(clientAtom.uuid)
+            _ = try? await ContextIndexStore.shared.upsert(atom: clientAtom, pinState: .pinned)
+        }
         await persistContextSession()
     }
 
@@ -824,6 +837,7 @@ final class CosmoWindowViewModel: ObservableObject {
             previousLinkedAtomUUIDs: linkedAtomUUIDs,
             previousPinnedContextSourceIDs: pinnedContextSourceIDs,
             previousActiveAtomUUID: activeContext.data.currentAtomUUID,
+            previousActiveClientUUID: activeContext.data.activeClientUUID,
             newConversationId: newConversationId
         )
 
@@ -859,6 +873,7 @@ final class CosmoWindowViewModel: ObservableObject {
                 messages: transition.previousMessages,
                 linkedAtomUUIDs: transition.previousLinkedAtomUUIDs,
                 activeAtomUUID: transition.previousActiveAtomUUID,
+                activeClientUUID: transition.previousActiveClientUUID,
                 pinnedContextSourceIDs: transition.previousPinnedContextSourceIDs
             )
         }
@@ -988,7 +1003,7 @@ final class CosmoWindowViewModel: ObservableObject {
             conversationId: conversationId,
             pinnedSourceIDs: pinnedContextSourceIDs,
             activeAtomUUID: activeContext.data.currentAtomUUID,
-            activeClientUUID: nil
+            activeClientUUID: activeContext.data.activeClientUUID
         )
         let retrievalResults = (try? await CosmoRetrievalService.shared.retrieve(retrievalRequest)) ?? []
         let coreMemory = (try? await CosmoMemoryService.shared.coreMemory()) ?? []
@@ -1017,6 +1032,7 @@ final class CosmoWindowViewModel: ObservableObject {
         toolExecutor.contextAtomUUIDs = Array(linkedAtomUUIDs)
         toolExecutor.contextSourceIDs = pinnedContextSourceIDs
         toolExecutor.contextConversationID = conversationId
+        toolExecutor.activeClientUUID = activeContext.data.activeClientUUID
         let (response, trace) = await agentService.processMessage(
             enrichedText,
             conversationId: conversationId,
@@ -1041,6 +1057,7 @@ final class CosmoWindowViewModel: ObservableObject {
         toolExecutor.contextAtomUUIDs = []
         toolExecutor.contextSourceIDs = []
         toolExecutor.contextConversationID = nil
+        toolExecutor.activeClientUUID = nil
 
         let retrievalTraceSections = hasContextPackContent ? CosmoWindowMessage.contextTraceSections(from: contextPack) : []
         let toolTraceSections = trace.hasContent ? CosmoWindowMessage.contextTraceSections(from: trace) : []
@@ -1105,6 +1122,13 @@ final class CosmoWindowViewModel: ObservableObject {
             """)
         }
 
+        if forcedBundles.contains(.clientProfiles) {
+            sections.append("""
+            ## Client Profile Access
+            Treat "content profile", "creator profile", "brand profile", and "profile" as client profile requests. If the user names a client or asks for voice, best-performing posts, performance patterns, or an Intelligence Model, load the client profile before answering. Do not say the profile is unavailable or not pinned until the profile tools and pinned context have both failed.
+            """)
+        }
+
         return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
     }
 
@@ -1118,6 +1142,14 @@ final class CosmoWindowViewModel: ObservableObject {
         if containsAny(lower, ["client profile", "client voice", "client memory", "for client", "brand profile"]) {
             bundles.insert(.clientProfiles)
             bundles.insert(.clientMemory)
+        }
+        if containsAny(lower, [
+            "content profile", "creator profile", "voice profile", "client intelligence",
+            "intelligence model", "voice fingerprint", "performance pattern",
+            "best performing post", "best-performing post", "top performing post", "top-performing post"
+        ]) || (containsAny(lower, ["check out", "show me", "inspect", "look at", "read", "load"]) &&
+              (lower.contains(" profile") || lower.contains("'s profile"))) {
+            bundles.insert(.clientProfiles)
         }
         if containsAny(lower, ["swipe", "swipes", "examples", "reference ads", "hooks", "frameworks"]) {
             bundles.insert(.swipes)
@@ -1436,6 +1468,7 @@ final class CosmoWindowViewModel: ObservableObject {
             messages: messages,
             linkedAtomUUIDs: linkedAtomUUIDs,
             activeAtomUUID: activeContext.data.currentAtomUUID,
+            activeClientUUID: activeContext.data.activeClientUUID,
             pinnedContextSourceIDs: pinnedContextSourceIDs
         )
     }
@@ -1445,6 +1478,7 @@ final class CosmoWindowViewModel: ObservableObject {
         messages: [CosmoWindowMessage],
         linkedAtomUUIDs: Set<String>,
         activeAtomUUID: String?,
+        activeClientUUID: String?,
         pinnedContextSourceIDs: [String]
     ) async {
         let existingConv = await conversationMemory.loadConversation(id: conversationId)
@@ -1459,6 +1493,7 @@ final class CosmoWindowViewModel: ObservableObject {
         await persistContextSession(
             conversationId: conversationId,
             activeAtomUUID: activeAtomUUID,
+            activeClientUUID: activeClientUUID,
             pinnedContextSourceIDs: pinnedContextSourceIDs
         )
     }
@@ -1467,6 +1502,7 @@ final class CosmoWindowViewModel: ObservableObject {
         await persistContextSession(
             conversationId: conversationId,
             activeAtomUUID: activeContext.data.currentAtomUUID,
+            activeClientUUID: activeContext.data.activeClientUUID,
             pinnedContextSourceIDs: pinnedContextSourceIDs
         )
     }
@@ -1474,13 +1510,14 @@ final class CosmoWindowViewModel: ObservableObject {
     private func persistContextSession(
         conversationId: String,
         activeAtomUUID: String?,
+        activeClientUUID: String?,
         pinnedContextSourceIDs: [String]
     ) async {
         let session = ContextSession(
             id: conversationId,
             surface: .cosmoWindow,
             activeAtomUUID: activeAtomUUID,
-            activeClientUUID: nil,
+            activeClientUUID: activeClientUUID,
             pinnedSourceIDs: pinnedContextSourceIDs
         )
         try? await ContextIndexStore.shared.upsert(session: session)

@@ -3723,6 +3723,7 @@ class ContentContextProvider: CosmoContextProvider {
             currentAtomUUID: atom.uuid,
             currentAtomType: "content",
             currentAtomTitle: atom.title,
+            activeClientUUID: state.clientProfileUUID,
             viewSpecificData: viewData
         )
     }

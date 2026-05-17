@@ -360,6 +360,96 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(visibleItems.map(\.title), ["Client Project", "Loose capture", "Nested draft"])
     }
 
+    func testCommandKDomainRailDataSourceFiltersExpandedDomainItems() {
+        let databaseMatch = LibraryItem(atom: Atom.new(type: .content, title: "Client launch note"))
+        let databaseMiss = LibraryItem(atom: Atom.new(type: .content, title: "Recipe draft"))
+        let swipeMatch = SwipeGalleryItem(
+            atomUUID: "swipe-1",
+            title: "Lead magnet hook",
+            hookText: "A better opening line",
+            hookScore: 8,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+        let ideaMatch = IdeaGalleryItem(
+            id: "idea-1",
+            atomUUID: "idea-1",
+            entityId: 2,
+            title: "Rental arbitrage angle",
+            body: "A family office story",
+            status: .spark,
+            contentFormat: nil,
+            platform: nil,
+            clientName: "Acme Homes",
+            clientUUID: nil,
+            tags: ["housing"],
+            insightScore: nil,
+            matchingSwipeCount: nil,
+            suggestedFramework: nil,
+            isPinned: false,
+            contentCount: 0,
+            createdAt: "2026-05-09T00:00:00Z",
+            updatedAt: "2026-05-09T00:00:00Z"
+        )
+        let bookMatch = ReadwiseLibraryBook(
+            id: 7,
+            title: "Awareness",
+            author: "Anthony De Mello",
+            category: .books,
+            coverImageUrl: nil,
+            sourceUrl: nil,
+            numHighlights: 4,
+            highlights: [],
+            bookTags: []
+        )
+
+        XCTAssertEqual(
+            CommandKDomainRailDataSource.items(
+                for: .database,
+                query: "client",
+                databaseItems: [databaseMatch, databaseMiss],
+                swipeItems: [swipeMatch],
+                ideaItems: [ideaMatch],
+                readwiseBooks: [bookMatch]
+            ).map(\.title),
+            ["Client launch note"]
+        )
+        XCTAssertEqual(
+            CommandKDomainRailDataSource.items(
+                for: .swipeGallery,
+                query: "hook",
+                databaseItems: [databaseMatch],
+                swipeItems: [swipeMatch],
+                ideaItems: [ideaMatch],
+                readwiseBooks: [bookMatch]
+            ).map(\.selectionID),
+            ["swipe-1"]
+        )
+        XCTAssertEqual(
+            CommandKDomainRailDataSource.items(
+                for: .ideas,
+                query: "rental",
+                databaseItems: [databaseMatch],
+                swipeItems: [swipeMatch],
+                ideaItems: [ideaMatch],
+                readwiseBooks: [bookMatch]
+            ).map(\.selectionID),
+            ["idea-1"]
+        )
+        XCTAssertEqual(
+            CommandKDomainRailDataSource.items(
+                for: .readwise,
+                query: "awareness",
+                databaseItems: [databaseMatch],
+                swipeItems: [swipeMatch],
+                ideaItems: [ideaMatch],
+                readwiseBooks: [bookMatch]
+            ).map(\.selectionID),
+            ["readwise-7"]
+        )
+    }
+
     func testRecentComposerIncludesUpdatedAtomsThatWereNeverOpened() {
         let openedAtom = Atom.new(type: .idea, title: "Opened idea")
         let capturedAtom = Atom.new(type: .research, title: "Fresh capture")

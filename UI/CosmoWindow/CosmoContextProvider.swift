@@ -85,6 +85,7 @@ struct CosmoContextData: Codable, Sendable {
     var currentAtomUUID: String?
     var currentAtomType: String?
     var currentAtomTitle: String?
+    var activeClientUUID: String?
     var viewSpecificData: [String: String]
     var visibleItemCount: Int?
     var activeFilters: [String]?
@@ -94,6 +95,7 @@ struct CosmoContextData: Codable, Sendable {
         currentAtomUUID: String? = nil,
         currentAtomType: String? = nil,
         currentAtomTitle: String? = nil,
+        activeClientUUID: String? = nil,
         viewSpecificData: [String: String] = [:],
         visibleItemCount: Int? = nil,
         activeFilters: [String]? = nil,
@@ -102,6 +104,7 @@ struct CosmoContextData: Codable, Sendable {
         self.currentAtomUUID = currentAtomUUID
         self.currentAtomType = currentAtomType
         self.currentAtomTitle = currentAtomTitle
+        self.activeClientUUID = activeClientUUID
         self.viewSpecificData = viewSpecificData
         self.visibleItemCount = visibleItemCount
         self.activeFilters = activeFilters
@@ -117,6 +120,9 @@ struct CosmoContextData: Codable, Sendable {
         }
         if let type = currentAtomType {
             lines.append("Type: \(type)")
+        }
+        if let activeClientUUID, !activeClientUUID.isEmpty {
+            lines.append("Active client UUID: \(activeClientUUID)")
         }
         if let count = visibleItemCount {
             lines.append("Visible items: \(count)")

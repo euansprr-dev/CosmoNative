@@ -7,18 +7,18 @@ import SwiftUI
 struct CortexActionBar: View {
     @ObservedObject var viewModel: CommandKViewModel
     let selectedAtomUUID: String?
-
-    private var hasSelection: Bool { selectedAtomUUID != nil }
+    var hasSelection: Bool
+    var onOpen: () -> Void
 
     var body: some View {
         HStack(spacing: DS.space12) {
-            Text(viewModel.query.isEmpty ? "Command K" : "Results")
+            Text(contextLabel)
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
 
             Spacer(minLength: 0)
 
-            Button(action: { viewModel.openSelected() }) {
+            Button(action: onOpen) {
                 HStack(spacing: DS.space6) {
                     Text("Open")
                         .font(DS.caption)
@@ -42,5 +42,10 @@ struct CortexActionBar: View {
         .overlay(alignment: .top) {
             Rectangle().fill(DS.sepiaBorder).frame(height: 0.5)
         }
+    }
+
+    private var contextLabel: String {
+        if case .expandedDomain(let tab) = viewModel.cortexMode { return tab.title }
+        return viewModel.query.isEmpty ? "Command K" : "Results"
     }
 }

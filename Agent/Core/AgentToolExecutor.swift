@@ -85,6 +85,9 @@ class AgentToolExecutor {
     /// Active conversation ID for shared working-memory tools.
     var contextConversationID: String?
 
+    /// Active client profile UUID from the current UI context.
+    var activeClientUUID: String?
+
     // Writing engine cache removed — all writing now goes through CloudWritingClient.
     // The cloud engine manages its own session cache per contentUUID.
     // The getOrCreateEngine method has been replaced by cloud API calls in
@@ -219,7 +222,7 @@ class AgentToolExecutor {
             purpose: purpose,
             pinnedSourceIDs: sourceIDs,
             activeAtomUUID: contextAtomUUIDs.last,
-            activeClientUUID: nil,
+            activeClientUUID: activeClientUUID,
             maxChunks: limit,
             tokenBudget: 3_500
         )
@@ -3174,7 +3177,8 @@ class AgentToolExecutor {
         if let topPosts = meta.topPerformingPosts, !topPosts.isEmpty {
             result["topPerformingPosts"] = topPosts.map { post in
                 [
-                    "transcript": String(post.transcript.prefix(500)),
+                    "id": post.id.uuidString,
+                    "transcript": post.transcript,
                     "platform": post.platform,
                     "likes": post.likes,
                     "shares": post.shares,
@@ -3183,8 +3187,31 @@ class AgentToolExecutor {
                     "datePosted": post.datePosted
                 ] as [String: Any]
             }
-        } else if let transcripts = meta.topPerformingTranscripts, !transcripts.isEmpty {
-            result["topPerformingTranscripts"] = transcripts.map { String($0.prefix(500)) }
+        }
+        if let transcripts = meta.topPerformingTranscripts, !transcripts.isEmpty {
+            result["topPerformingTranscripts"] = transcripts
+        }
+        if let documents = meta.documents, !documents.isEmpty {
+            result["documents"] = documents.map { document in
+                [
+                    "id": document.id.uuidString,
+                    "category": document.category.rawValue,
+                    "categoryLabel": document.category.displayName,
+                    "title": document.title,
+                    "content": document.content,
+                    "filename": document.filename ?? "",
+                    "platform": document.platform ?? "",
+                    "likes": document.likes ?? 0,
+                    "shares": document.shares ?? 0,
+                    "saves": document.saves ?? 0,
+                    "comments": document.comments ?? 0,
+                    "leads": document.leads ?? 0,
+                    "sourceURL": document.sourceURL ?? "",
+                    "warning": document.warning ?? "",
+                    "isHighPerformer": document.category.isHighPerformer,
+                    "isUnderperformer": document.category.isUnderperformer
+                ] as [String: Any]
+            }
         }
 
         // Include intelligence model summary if available

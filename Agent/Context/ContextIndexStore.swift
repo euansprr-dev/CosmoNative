@@ -402,7 +402,7 @@ actor ContextIndexStore {
             atomUUID: atom.uuid,
             bodyHash: stableHash(body),
             metadataHash: stableHash(metadata),
-            clientUUID: atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID,
+            clientUUID: atom.type == .clientProfile ? atom.uuid : atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID,
             pinState: pinState
         )
     }
@@ -424,7 +424,160 @@ actor ContextIndexStore {
                 parts.append(summary)
             }
         }
+        if atom.type == .clientProfile,
+           let meta = atom.metadataValue(as: ClientProfileMetadata.self) {
+            parts.append(contentsOf: clientProfileIndexableParts(meta))
+        }
         return parts.joined(separator: "\n\n")
+    }
+
+    private static func clientProfileIndexableParts(_ meta: ClientProfileMetadata) -> [String] {
+        var parts: [String] = []
+
+        var overview: [String] = ["Client profile: \(meta.clientName)"]
+        if let niche = meta.niche ?? meta.industry, !niche.isEmpty {
+            overview.append("Niche: \(niche)")
+        }
+        if !meta.platforms.isEmpty {
+            overview.append("Platforms: \(meta.platforms.map(\.rawValue).joined(separator: ", "))")
+        }
+        if let handle = meta.handle, !handle.isEmpty {
+            overview.append("Handle: \(handle)")
+        }
+        if let audience = meta.targetAudience, !audience.isEmpty {
+            overview.append("Target audience: \(audience)")
+        }
+        if let notes = meta.notes, !notes.isEmpty {
+            overview.append("Notes: \(notes)")
+        }
+        parts.append(overview.joined(separator: "\n"))
+
+        func appendField(_ title: String, _ value: String?) {
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            parts.append("\(title):\n\(value)")
+        }
+
+        appendField("Brand story", meta.brandStory)
+        appendField("Brand vision", meta.brandVision)
+        appendField("Voice notes", meta.voiceNotes)
+        appendField("Unique angle", meta.uniqueAngle)
+        appendField("Posting frequency", meta.postingFrequency)
+
+        if let beliefs = meta.coreBeliefs, !beliefs.isEmpty {
+            parts.append("Core beliefs:\n\(beliefs.joined(separator: "\n"))")
+        }
+        if let phrases = meta.signaturePhrases, !phrases.isEmpty {
+            parts.append("Signature phrases:\n\(phrases.joined(separator: "\n"))")
+        }
+        if let bestFormats = meta.bestFormats, !bestFormats.isEmpty {
+            parts.append("Best formats: \(bestFormats.joined(separator: ", "))")
+        }
+        if let beatPatterns = meta.preferredBeatPatterns, !beatPatterns.isEmpty {
+            parts.append("Preferred beat patterns:\n\(beatPatterns.joined(separator: "\n"))")
+        }
+        if let times = meta.preferredPostTimes, !times.isEmpty {
+            parts.append("Preferred post times: \(times.joined(separator: ", "))")
+        }
+
+        if let voice = meta.extractedVoicePatterns {
+            parts.append([
+                "Extracted voice profile:",
+                "Average sentence length: \(String(format: "%.1f", voice.avgSentenceLength))",
+                "Reading level: \(voice.readingLevel)",
+                "Emotional range: \(voice.emotionalRange)",
+                "Recurring phrases: \(voice.recurringPhrases.joined(separator: ", "))",
+                "CTA patterns: \(voice.ctaPatterns.joined(separator: ", "))",
+                "Stylistic quirks: \(voice.stylisticQuirks.joined(separator: ", "))"
+            ].joined(separator: "\n"))
+        }
+
+        if let posts = meta.topPerformingPosts, !posts.isEmpty {
+            for (index, post) in posts.enumerated() {
+                parts.append([
+                    "Top-performing post \(index + 1):",
+                    "Platform: \(post.platform)",
+                    "Views: \(post.views) Likes: \(post.likes) Shares: \(post.shares) Leads: \(post.leads)",
+                    "Date posted: \(post.datePosted)",
+                    post.transcript
+                ].joined(separator: "\n"))
+            }
+        }
+
+        if let transcripts = meta.topPerformingTranscripts, !transcripts.isEmpty {
+            for (index, transcript) in transcripts.enumerated() {
+                parts.append("Top-performing transcript \(index + 1):\n\(transcript)")
+            }
+        }
+
+        if let documents = meta.documents, !documents.isEmpty {
+            for document in documents {
+                var lines = [
+                    "Profile document: \(document.title)",
+                    "Category: \(document.category.displayName)"
+                ]
+                if let platform = document.platform, !platform.isEmpty {
+                    lines.append("Platform: \(platform)")
+                }
+                if let sourceURL = document.sourceURL, !sourceURL.isEmpty {
+                    lines.append("Source URL: \(sourceURL)")
+                }
+                let metrics = [
+                    document.likes.map { "Likes: \($0)" },
+                    document.shares.map { "Shares: \($0)" },
+                    document.saves.map { "Saves: \($0)" },
+                    document.comments.map { "Comments: \($0)" },
+                    document.leads.map { "Leads: \($0)" }
+                ].compactMap { $0 }
+                if !metrics.isEmpty {
+                    lines.append(metrics.joined(separator: " "))
+                }
+                lines.append(document.content)
+                parts.append(lines.joined(separator: "\n"))
+            }
+        }
+
+        if let model = meta.intelligenceModel {
+            parts.append(clientIntelligenceIndexablePart(model))
+        }
+
+        return parts
+    }
+
+    private static func clientIntelligenceIndexablePart(_ model: ClientIntelligenceModel) -> String {
+        var lines: [String] = ["Client Intelligence Model"]
+
+        let voice = model.voiceFingerprint
+        lines.append("Voice fingerprint:")
+        lines.append("Average sentence length: \(String(format: "%.1f", voice.avgSentenceLength))")
+        lines.append("Reading level: \(voice.readingLevel)")
+        lines.append("Punctuation style: \(voice.punctuationStyle)")
+        lines.append("CTA pattern: \(voice.ctaPattern)")
+        if !voice.powerWords.isEmpty { lines.append("Power words: \(voice.powerWords.joined(separator: ", "))") }
+        if !voice.signaturePhrases.isEmpty { lines.append("Signature phrases: \(voice.signaturePhrases.joined(separator: ", "))") }
+        if !voice.blacklistedPhrases.isEmpty { lines.append("Blacklisted phrases: \(voice.blacklistedPhrases.joined(separator: ", "))") }
+
+        let performance = model.performanceFingerprint
+        lines.append("Performance patterns:")
+        lines.append("Optimal length: \(performance.optimalLength)")
+        if !performance.bestTopics.isEmpty { lines.append("Best topics: \(performance.bestTopics.joined(separator: ", "))") }
+        if !performance.engagementTriggers.isEmpty { lines.append("Engagement triggers: \(performance.engagementTriggers.joined(separator: ", "))") }
+        if !performance.bestBeatPatterns.isEmpty { lines.append("Best beat patterns: \(performance.bestBeatPatterns.joined(separator: ", "))") }
+
+        let audience = model.audienceModel
+        lines.append("Audience model:")
+        lines.append("Primary audience: \(audience.primaryAudience)")
+        if !audience.topPainPoints.isEmpty { lines.append("Pain points: \(audience.topPainPoints.joined(separator: "; "))") }
+        if !audience.aspirationalOutcomes.isEmpty { lines.append("Aspirational outcomes: \(audience.aspirationalOutcomes.joined(separator: "; "))") }
+        if !audience.commonObjections.isEmpty { lines.append("Objections: \(audience.commonObjections.joined(separator: "; "))") }
+
+        if let failure = model.failureFingerprint, !failure.rules.isEmpty {
+            lines.append("Failure fingerprint:")
+            for rule in failure.rules {
+                lines.append("[\(rule.severity.rawValue)] \(rule.rule)")
+            }
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     private static func sourceKind(for atom: Atom) -> ContextSourceKind {

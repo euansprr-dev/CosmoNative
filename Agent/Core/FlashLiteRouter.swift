@@ -9,7 +9,45 @@ final class FlashLiteRouter {
     private let model = "google/gemini-3.1-flash-lite-preview"
 
     static func shouldForceAgentFallback(_ text: String) -> Bool {
-        ExplicitLessonCaptureParser.shouldForceAgentFallback(text)
+        if isProfileInspectionRequest(text) {
+            return true
+        }
+        return ExplicitLessonCaptureParser.shouldForceAgentFallback(text)
+    }
+
+    private static func isProfileInspectionRequest(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let profileSignals = [
+            "content profile",
+            "client profile",
+            "creator profile",
+            "brand profile",
+            "voice profile",
+            "client intelligence",
+            "intelligence model",
+            "voice fingerprint",
+            "performance pattern",
+            "best performing post",
+            "best-performing post",
+            "top performing post",
+            "top-performing post"
+        ]
+
+        if profileSignals.contains(where: { lower.contains($0) }) {
+            return true
+        }
+
+        let asksToInspect = [
+            "check out",
+            "show me",
+            "open",
+            "inspect",
+            "look at",
+            "read",
+            "load"
+        ].contains { lower.contains($0) }
+        let mentionsProfile = lower.contains(" profile") || lower.contains("'s profile")
+        return asksToInspect && mentionsProfile
     }
 
     private let systemPrompt = """

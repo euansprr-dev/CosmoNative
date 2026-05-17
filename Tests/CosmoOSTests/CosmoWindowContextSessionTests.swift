@@ -38,6 +38,53 @@ final class CosmoWindowContextSessionTests: XCTestCase {
         XCTAssertEqual(source.id, "atom:\(atom.uuid)")
     }
 
+    func testClientProfileIndexableBodyIncludesMetadataAndFullTopPosts() {
+        let topPost = String(repeating: "Josh performer detail. ", count: 80)
+        let metadata = ClientProfileMetadata(
+            clientId: "josh-profile-context",
+            clientName: "Josh",
+            platforms: [.instagram],
+            brandStory: "Josh helps operators build sober living systems.",
+            voiceNotes: "Plainspoken, tactical, direct.",
+            topPerformingPosts: [
+                TopPost(
+                    transcript: topPost,
+                    platform: "instagram",
+                    likes: 100,
+                    shares: 20,
+                    leads: 4,
+                    views: 50_000
+                )
+            ]
+        )
+        let atom = Atom
+            .new(type: .clientProfile, title: "Josh")
+            .withMetadata(metadata)
+
+        let body = ContextIndexStore.indexableBody(for: atom)
+
+        XCTAssertTrue(body.contains("Josh helps operators build sober living systems."))
+        XCTAssertTrue(body.contains("Plainspoken, tactical, direct."))
+        XCTAssertTrue(body.contains(topPost))
+    }
+
+    @MainActor
+    func testContentContextProviderExposesActiveClientProfileUUID() {
+        var state = ContentFocusModeState(atomUUID: "content-1")
+        state.clientProfileUUID = "client-profile-1"
+        let atom = Atom.new(type: .content, title: "Draft")
+        let provider = ContentContextProvider(
+            atom: atom,
+            stateRef: { state },
+            phaseRef: { .draft }
+        )
+
+        let contextData = provider.contextData
+
+        XCTAssertEqual(contextData.activeClientUUID, "client-profile-1")
+        XCTAssertTrue(contextData.toContextBlock().contains("Active client UUID: client-profile-1"))
+    }
+
     func testContextPackRequestUsesCurrentQuestionAndPinnedSources() {
         let request = CosmoWindowViewModel.contextRetrievalRequest(
             text: "does it mention locks on doors?",

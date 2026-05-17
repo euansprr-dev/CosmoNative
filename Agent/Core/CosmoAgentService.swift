@@ -544,7 +544,10 @@ class CosmoAgentService: ObservableObject {
         // The enriched text contains "(UUID: xxx)" patterns from MentionContextHelper.
         let uuidPattern = /\(UUID: ([A-F0-9\-]{36})\)/
         let mentionedUUIDs = text.matches(of: uuidPattern).map { String($0.1) }
-        toolExecutor.contextAtomUUIDs = mentionedUUIDs
+        toolExecutor.contextAtomUUIDs = Self.mergedContextAtomUUIDs(
+            existing: toolExecutor.contextAtomUUIDs,
+            mentioned: mentionedUUIDs
+        )
 
         // Update failover chain for the current model tier (OpenRouter only)
         if let failoverProvider = provider as? FailoverLLMProvider {
@@ -1353,6 +1356,18 @@ class CosmoAgentService: ObservableObject {
             entities: extractEntities(lower),
             confidence: 0.85
         )
+    }
+
+    nonisolated static func mergedContextAtomUUIDs(existing: [String], mentioned: [String]) -> [String] {
+        var merged: [String] = []
+        var seen: Set<String> = []
+
+        for uuid in existing + mentioned where !uuid.isEmpty && !seen.contains(uuid) {
+            merged.append(uuid)
+            seen.insert(uuid)
+        }
+
+        return merged
     }
 
     private func classifyIntentType(_ lower: String) -> AgentIntent {

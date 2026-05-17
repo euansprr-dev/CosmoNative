@@ -58,3 +58,9 @@ func cortexFormatISO(_ raw: String?) -> String? {
     out.dateFormat = "MMM d, yyyy"
     return out.string(from: date)
 }
+
+func cortexFormatDate(_ date: Date) -> String {
+    let out = DateFormatter()
+    out.dateFormat = "MMM d, yyyy"
+    return out.string(from: date)
+}

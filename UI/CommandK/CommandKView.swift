@@ -177,15 +177,14 @@ public struct CommandKView: View {
         .frame(width: searchBarWidth(for: geometry), height: CommandKMetrics.searchBarHeight)
         .background(
             RoundedRectangle(cornerRadius: CommandKMetrics.searchBarHeight / 2, style: .continuous)
-                .fill(DS.glassInputFill)
+                .fill(DS.surfaceElevated)
         )
         .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.searchBarHeight / 2, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: CommandKMetrics.searchBarHeight / 2, style: .continuous)
-                .stroke(DS.glassBorder.opacity(0.82), lineWidth: 0.75)
+                .strokeBorder(isSearchFocused ? DS.gilt.opacity(0.45) : DS.sepiaBorder, lineWidth: isSearchFocused ? 1 : 0.5)
         )
-        .shadow(color: Color.black.opacity(0.11), radius: 24, x: 0, y: 10)
-        .shadow(color: Color.white.opacity(0.34), radius: 1, x: 0, y: 1)
+        .shadow(color: Color.black.opacity(0.06), radius: 14, x: 0, y: 4)
     }
 
     // MARK: - Domain Bubbles (inline in search bar)
@@ -215,7 +214,7 @@ public struct CommandKView: View {
             CortexCompactView(viewModel: viewModel, namespace: cortexNamespace)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(width: panelWidth(for: geometry))
-                .cortexGlassPanel()
+                .floatingOverlayPanel()
         case .searchResults:
             CortexSearchResultsView(viewModel: viewModel)
                 .frame(maxHeight: min(geometry.size.height * 0.65, 600))

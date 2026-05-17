@@ -1,5 +1,5 @@
 // CosmoOS/UI/CommandK/CortexRecentCard.swift
-// Compact card for recent items in Cortex compact mode — document-style thumbnails
+// Compact card for recent items — Atelier language, real document thumbnails.
 
 import SwiftUI
 
@@ -21,19 +21,22 @@ struct CortexRecentCard: View {
             .padding(DS.space10)
             .frame(height: 92)
             .background(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(isHovered ? DS.glassInputFillFocused.opacity(0.72) : DS.glassCardFill.opacity(0.42))
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .fill(DS.vellum)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .stroke(isHovered ? accentColor.opacity(0.30) : DS.glassBorder.opacity(0.62), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .strokeBorder(isHovered ? DS.sepiaBorder : DS.sepiaSubtle, lineWidth: isHovered ? 1 : 0.5)
             )
-            .shadow(color: Color.black.opacity(isHovered ? 0.08 : 0.03), radius: isHovered ? 12 : 6, x: 0, y: isHovered ? 5 : 2)
+            .overlay(alignment: .topLeading) { hoverBracket }
+            .clipShape(.rect(cornerRadius: DS.radiusMedium))
+            .modifier(RecentCardShadow(isHovered: isHovered))
         }
         .buttonStyle(.plain)
-        .contentShape(.rect(cornerRadius: 13))
-        .onHover { isHovered = $0 }
-        .animation(ProMotionSprings.hover, value: isHovered)
+        .contentShape(.rect(cornerRadius: DS.radiusMedium))
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
         .accessibilityLabel(item.title)
         .accessibilityHint("Open \(item.type.displayName)")
         .commandKCardContextMenu(
@@ -49,28 +52,20 @@ struct CortexRecentCard: View {
     private var thumbnailView: some View {
         ZStack(alignment: .bottomTrailing) {
             thumbnailBackground
-            typeBadge
+            accentChip
         }
         .aspectRatio(3.0 / 4.0, contentMode: .fit)
-        .clipShape(.rect(cornerRadius: 8))
+        .clipShape(.rect(cornerRadius: DS.radiusSmall))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(
-                    isHovered ? accentColor.opacity(0.4) : DS.border.opacity(0.15),
-                    lineWidth: 0.5
-                )
-        )
-        .shadow(
-            color: .black.opacity(isHovered ? 0.12 : 0.04),
-            radius: isHovered ? 8 : 3, x: 0,
-            y: isHovered ? 3 : 1
+            RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                .strokeBorder(DS.sepiaSubtle, lineWidth: 0.5)
         )
     }
 
     private var thumbnailBackground: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DS.glassCardFill.opacity(isHovered ? 0.8 : 0.5))
+            RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                .fill(DS.vellumDeep)
             thumbnailContent
         }
     }
@@ -88,22 +83,29 @@ struct CortexRecentCard: View {
         }
     }
 
-    private var typeBadge: some View {
-        Image(systemName: iconForType)
-            .font(.system(size: 7, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: 14, height: 14)
-            .background(accentColor, in: Circle())
-            .padding(4)
+    private var accentChip: some View {
+        Capsule(style: .continuous)
+            .fill(accentColor.opacity(isHovered ? 0.85 : 0.55))
+            .frame(width: 16, height: 3)
+            .padding(5)
             .accessibilityHidden(true)
+    }
+
+    private var hoverBracket: some View {
+        GiltCornerBracket()
+            .stroke(DS.gilt, lineWidth: 0.8)
+            .frame(width: 10, height: 10)
+            .padding(DS.space6)
+            .opacity(isHovered ? 0.55 : 0)
+            .allowsHitTesting(false)
     }
 
     // MARK: - Label
 
     private var cardLabel: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
+        VStack(alignment: .leading, spacing: DS.space6) {
             Text(item.title)
-                .font(.system(size: 14, weight: .medium))
+                .font(DS.callout)
                 .foregroundStyle(DS.text)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
@@ -113,8 +115,8 @@ struct CortexRecentCard: View {
                 Text("·")
                 Text(item.relativeDate)
             }
-            .font(DS.caption)
-            .foregroundStyle(DS.textMuted)
+            .font(DS.caption2)
+            .foregroundStyle(DS.inkFaded)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -133,19 +135,17 @@ struct CortexRecentCard: View {
         default: return DS.textSecondary
         }
     }
+}
 
-    private var iconForType: String {
-        switch item.type {
-        case .idea: return "lightbulb.fill"
-        case .task: return "checkmark.circle.fill"
-        case .research: return "book.fill"
-        case .content: return "doc.text.fill"
-        case .connection: return "link.circle.fill"
-        case .project: return "folder.fill"
-        case .note: return "note.text"
-        case .stickyNote: return "note"
-        case .image: return "photo.fill"
-        default: return "circle.fill"
+private struct RecentCardShadow: ViewModifier {
+    let isHovered: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isHovered {
+            content.dsHoverShadow()
+        } else {
+            content.dsRestingShadow()
         }
     }
 }

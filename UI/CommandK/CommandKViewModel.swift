@@ -250,6 +250,107 @@ enum CommandKHeaderPreviewComposer {
     }
 }
 
+struct CommandKDomainPresentation: Equatable {
+    let counts: [CommandKTab: Int]
+    let previews: [CommandKTab: CommandKHeaderPreviewContent]
+
+    static let empty = CommandKDomainPresentation(
+        counts: Dictionary(uniqueKeysWithValues: CommandKTab.allCases.map { ($0, 0) } + [(.inquiry, 0)]),
+        previews: Dictionary(uniqueKeysWithValues: (CommandKTab.allCases + [.inquiry]).map {
+            ($0, CommandKHeaderPreviewComposer.fallback(for: $0))
+        })
+    )
+
+    static func build(
+        databaseTotalCount: Int,
+        swipeTotalCount: Int,
+        ideaTotalCount: Int,
+        deepDiveTotalCount: Int,
+        recentItems: [RecentDisplayItem],
+        swipeItems: [SwipeGalleryItem],
+        ideaItems: [IdeaGalleryItem],
+        readwiseBooks: [ReadwiseLibraryBook]
+    ) -> CommandKDomainPresentation {
+        let previews = CommandKHeaderPreviewComposer.build(
+            recentItems: recentItems,
+            swipeItems: swipeItems,
+            ideaItems: ideaItems,
+            readwiseBooks: readwiseBooks
+        )
+
+        return CommandKDomainPresentation(
+            counts: [
+                .database: databaseTotalCount,
+                .swipeGallery: swipeItems.isEmpty ? swipeTotalCount : swipeItems.count,
+                .ideas: ideaItems.isEmpty ? ideaTotalCount : ideaItems.count,
+                .readwise: readwiseBooks.count,
+                .inquiry: deepDiveTotalCount
+            ],
+            previews: previews
+        )
+    }
+}
+
+struct CommandKContentFormatFacet: Equatable {
+    let format: ContentFormat
+    let count: Int
+}
+
+struct CommandKNarrativeFacet: Equatable {
+    let style: NarrativeStyle
+    let count: Int
+}
+
+struct CommandKSwipeFacetSummary: Equatable {
+    let topContentFormats: [CommandKContentFormatFacet]
+    let topNarrativeStyles: [CommandKNarrativeFacet]
+    let averageHookScore: Double?
+
+    static let empty = CommandKSwipeFacetSummary(
+        topContentFormats: [],
+        topNarrativeStyles: [],
+        averageHookScore: nil
+    )
+
+    static func build(
+        allItems: [SwipeGalleryItem],
+        filteredItems: [SwipeGalleryItem],
+        contentLimit: Int = 7,
+        narrativeLimit: Int = 6
+    ) -> CommandKSwipeFacetSummary {
+        let topContentFormats = ContentFormat.allCases.compactMap { format -> CommandKContentFormatFacet? in
+            let count = allItems.reduce(0) { total, item in
+                total + (item.swipeContentFormat == format ? 1 : 0)
+            }
+            guard count > 0 else { return nil }
+            return CommandKContentFormatFacet(format: format, count: count)
+        }
+        .sorted { $0.count > $1.count }
+        .prefix(contentLimit)
+        .map { $0 }
+
+        let topNarrativeStyles = NarrativeStyle.allCases.compactMap { style -> CommandKNarrativeFacet? in
+            let count = allItems.reduce(0) { total, item in
+                total + (item.primaryNarrative == style ? 1 : 0)
+            }
+            guard count > 0 else { return nil }
+            return CommandKNarrativeFacet(style: style, count: count)
+        }
+        .sorted { $0.count > $1.count }
+        .prefix(narrativeLimit)
+        .map { $0 }
+
+        let scores = filteredItems.compactMap(\.hookScore)
+        let averageHookScore = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
+
+        return CommandKSwipeFacetSummary(
+            topContentFormats: topContentFormats,
+            topNarrativeStyles: topNarrativeStyles,
+            averageHookScore: averageHookScore
+        )
+    }
+}
+
 // MARK: - CortexMode
 
 /// The three interaction modes of the Cortex Command-K interface
@@ -942,6 +1043,9 @@ public final class CommandKViewModel: ObservableObject {
     /// Expansion state for Layer 2 narrative clusters (collapsed by default)
     @Published var expandedClusters: Set<String> = []
 
+    /// Precomputed swipe facets used by the command menu chrome.
+    @Published private(set) var swipeFacetSummary: CommandKSwipeFacetSummary = .empty
+
     // MARK: - Multi-Select State
 
     /// UUIDs of cards selected via Shift+Click across gallery tabs
@@ -992,6 +1096,13 @@ public final class CommandKViewModel: ObservableObject {
     /// Whether idea gallery has been loaded
     private var ideaGalleryLoaded = false
 
+    /// Lightweight counts for domains whose full content has not been loaded yet.
+    @Published private(set) var swipeTotalCount: Int = 0
+    @Published private(set) var ideaTotalCount: Int = 0
+
+    /// Cached domain counts and masthead previews. Building this in `body` is too expensive.
+    @Published private(set) var domainPresentation: CommandKDomainPresentation = .empty
+
     // MARK: - Configuration
 
     /// Debounce delay for search queries
@@ -1041,6 +1152,9 @@ public final class CommandKViewModel: ObservableObject {
     private var searchIndex = CommandKSearchIndex()
     private var searchIndexLoaded = false
     private var searchIndexTask: Task<Void, Never>?
+    private var unifiedSearchEnrichmentTask: Task<Void, Never>?
+    private var swipeFilterTask: Task<Void, Never>?
+    private var swipeFilterGeneration = 0
     private var isSurfaceActive = true
 
     /// Unfiltered results for computing filter counts
@@ -1068,6 +1182,8 @@ public final class CommandKViewModel: ObservableObject {
             ideaGalleryReloadTask?.cancel()
             commandKRefreshTask?.cancel()
             searchIndexTask?.cancel()
+            unifiedSearchEnrichmentTask?.cancel()
+            swipeFilterTask?.cancel()
             currentPhase = .idle
         }
     }
@@ -1833,11 +1949,16 @@ public final class CommandKViewModel: ObservableObject {
     // MARK: - Cortex Mode Transitions
 
     /// Transition to expanded domain view for a specific tab
-    public func transitionToExpanded(_ tab: CommandKTab) {
+    public func transitionToExpanded(_ tab: CommandKTab, loadDataImmediately: Bool = true) {
         cortexMode = .expandedDomain(tab)
         selectedResultIndex = -1
         selectedNodeId = nil
 
+        guard loadDataImmediately else { return }
+        ensureExpandedDomainDataLoaded(tab)
+    }
+
+    public func ensureExpandedDomainDataLoaded(_ tab: CommandKTab) {
         // Ensure tab data is loaded
         switch tab {
         case .swipeGallery:
@@ -1854,14 +1975,14 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     /// Return to compact mode from expanded or search
-    public func returnToCompact() {
+    public func returnToCompact(refreshRecents: Bool = true) {
         query = ""
         cortexMode = .compact
         isUnifiedSearchActive = false
         selectedResultIndex = -1
         selectedNodeId = nil
         clearSelection()
-        if isSurfaceActive {
+        if refreshRecents, isSurfaceActive {
             Task { await loadRecentsForCompact() }
         }
     }
@@ -1885,8 +2006,10 @@ public final class CommandKViewModel: ObservableObject {
                 recentlyUpdated: updatedAtoms,
                 limit: 8
             )
+            refreshDomainPresentation()
         } catch {
             recentItems = []
+            refreshDomainPresentation()
         }
     }
 
@@ -1908,6 +2031,7 @@ public final class CommandKViewModel: ObservableObject {
             try? await AtomRepository.shared.delete(uuid: item.id)
             await MainActor.run {
                 recentItems.removeAll { $0.id == item.id }
+                refreshDomainPresentation()
             }
         }
     }
@@ -1917,25 +2041,27 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Domain item counts for bubbles
     public var domainCounts: [CommandKTab: Int] {
-        [
-            .database: databaseTotalCount,
-            .swipeGallery: swipeGalleryItems.count,
-            .ideas: ideaGalleryItems.count,
-            .readwise: ReadwiseBookStore.shared.books.count,
-            .inquiry: deepDiveTotalCount
-        ]
+        domainPresentation.counts
     }
 
     var headerPreviews: [CommandKTab: CommandKHeaderPreviewContent] {
-        CommandKHeaderPreviewComposer.build(
+        domainPresentation.previews
+    }
+
+    @Published public var deepDiveTotalCount: Int = 0
+
+    private func refreshDomainPresentation() {
+        domainPresentation = CommandKDomainPresentation.build(
+            databaseTotalCount: databaseTotalCount,
+            swipeTotalCount: swipeTotalCount,
+            ideaTotalCount: ideaTotalCount,
+            deepDiveTotalCount: deepDiveTotalCount,
             recentItems: recentItems,
             swipeItems: swipeGalleryItems,
             ideaItems: ideaGalleryItems,
             readwiseBooks: ReadwiseBookStore.shared.books
         )
     }
-
-    @Published public var deepDiveTotalCount: Int = 0
 
     /// Load the total database atom count for bubble display
     private func loadDatabaseCount() async {
@@ -1944,15 +2070,30 @@ public final class CommandKViewModel: ObservableObject {
             if ThinkspaceManager.shared.thinkspaces.isEmpty {
                 await ThinkspaceManager.shared.loadThinkspaces()
             }
-            let atoms = try await AtomRepository.shared.fetchAll(types: CommandKLibraryScope.databaseAtomTypes)
+            async let atomsRequest = AtomRepository.shared.fetchAll(types: CommandKLibraryScope.databaseAtomTypes)
+            async let swipeCountRequest = AtomRepository.shared.countSwipeFiles()
+            async let ideaCountRequest = AtomRepository.shared.count(type: .idea)
+            async let deepDiveRequest = InquiryRepository.shared.fetchAllDeepDives()
+            let (atoms, swipeCount, ideaCount, deepDives) = try await (
+                atomsRequest,
+                swipeCountRequest,
+                ideaCountRequest,
+                deepDiveRequest
+            )
             databaseTotalCount = CommandKLibraryScope.databaseItemCount(
                 atoms: atoms,
                 thinkspaceCount: ThinkspaceManager.shared.sidebarThinkspaces.count
             )
-            deepDiveTotalCount = (try? await InquiryRepository.shared.fetchAllDeepDives().count) ?? 0
+            swipeTotalCount = swipeCount
+            ideaTotalCount = ideaCount
+            deepDiveTotalCount = deepDives.count
+            refreshDomainPresentation()
         } catch {
             databaseTotalCount = 0
+            swipeTotalCount = 0
+            ideaTotalCount = 0
             deepDiveTotalCount = 0
+            refreshDomainPresentation()
         }
     }
 
@@ -1961,15 +2102,13 @@ public final class CommandKViewModel: ObservableObject {
         guard isSurfaceActive else { return }
         prewarmSearchIndexIfNeeded()
         if let tab = initialExpandedTab {
-            transitionToExpanded(tab)
+            transitionToExpanded(tab, loadDataImmediately: false)
         } else {
             cortexMode = .compact
             Task {
-                await loadRecentsForCompact()
-                await loadDatabaseCount()
-                // Preload gallery counts for bubble display
-                if swipeGalleryItems.isEmpty { await loadSwipeGallery() }
-                if ideaGalleryItems.isEmpty { await loadIdeaGallery() }
+                async let recents: Void = loadRecentsForCompact()
+                async let counts: Void = loadDatabaseCount()
+                _ = await (recents, counts)
             }
         }
     }
@@ -2103,6 +2242,7 @@ public final class CommandKViewModel: ObservableObject {
             items.sort { ($0.hookScore ?? 0) > ($1.hookScore ?? 0) }
 
             swipeGalleryItems = items
+            swipeTotalCount = items.count
             swipeGalleryLoaded = true
 
             // Extract available niches
@@ -2126,6 +2266,7 @@ public final class CommandKViewModel: ObservableObject {
                 }
             }
             availableCreators = creatorSet.map { (name: $0.key, uuid: $0.value) }.sorted { $0.name < $1.name }
+            refreshDomainPresentation()
         } catch {
             errorMessage = "Failed to load swipe gallery: \(error.localizedDescription)"
         }
@@ -2172,7 +2313,10 @@ public final class CommandKViewModel: ObservableObject {
         let creatorFilter = swipeCreatorFilter
         let sortMode = swipeSortMode
 
-        Task.detached(priority: .userInitiated) { [weak self] in
+        swipeFilterGeneration += 1
+        let generation = swipeFilterGeneration
+        swipeFilterTask?.cancel()
+        swipeFilterTask = Task.detached(priority: .userInitiated) { [weak self] in
             var items = sourceItems
 
             if !query.isEmpty {
@@ -2226,10 +2370,22 @@ public final class CommandKViewModel: ObservableObject {
             }
 
             let sections = buildClusteredSections(from: items)
+            let facetSummary = CommandKSwipeFacetSummary.build(
+                allItems: sourceItems,
+                filteredItems: items
+            )
+            let filteredItems = items
+            let clusteredSections = sections
 
-            await MainActor.run {
-                self?.cachedFilteredSwipes = items
-                self?.cachedClusteredSections = sections
+            guard !Task.isCancelled else { return }
+            await MainActor.run { [weak self, filteredItems, clusteredSections, facetSummary] in
+                guard let self,
+                      self.swipeFilterGeneration == generation else {
+                    return
+                }
+                self.cachedFilteredSwipes = filteredItems
+                self.cachedClusteredSections = clusteredSections
+                self.swipeFacetSummary = facetSummary
             }
         }
     }
@@ -2310,17 +2466,26 @@ public final class CommandKViewModel: ObservableObject {
             .researchCreated,
             Self.legacyIdeaDeletedNotification,
             Self.legacyIdeaActivatedNotification,
-            Notification.Name("swipeDeleted")
+            Self.legacySwipeDeletedNotification
         ]
 
         for name in refreshNotifications {
             NotificationCenter.default.publisher(for: name)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] notification in
-                    self?.scheduleCommandKRefresh(for: notification)
+                    self?.handleCommandKRefreshNotification(notification)
                 }
                 .store(in: &cancellables)
         }
+    }
+
+    private func handleCommandKRefreshNotification(_ notification: Notification) {
+        if notification.name == Self.legacySwipeDeletedNotification,
+           let uuid = Self.swipeUUID(from: notification) {
+            removeDeletedSwipeFromMemory(uuid: uuid)
+        }
+
+        scheduleCommandKRefresh(for: notification)
     }
 
     private func scheduleCommandKRefresh(for notification: Notification) {
@@ -2328,7 +2493,7 @@ public final class CommandKViewModel: ObservableObject {
 
         if Self.notificationTargetsType(notification, .research)
             || notification.name == .researchCreated
-            || notification.name == Notification.Name("swipeDeleted") {
+            || notification.name == Self.legacySwipeDeletedNotification {
             swipeGalleryLoaded = false
         }
 
@@ -2351,12 +2516,56 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
+    private func removeDeletedSwipeFromMemory(uuid: String) {
+        let hadLoadedSwipe = swipeGalleryItems.contains { $0.atomUUID == uuid }
+            || cachedFilteredSwipes.contains { $0.atomUUID == uuid }
+            || unifiedCardItems.contains { item in
+                if case .swipe(let swipe) = item {
+                    return swipe.atomUUID == uuid
+                }
+                return false
+            }
+
+        guard hadLoadedSwipe else { return }
+
+        swipeGalleryItems.removeAll { $0.atomUUID == uuid }
+        cachedFilteredSwipes.removeAll { $0.atomUUID == uuid }
+        cachedClusteredSections = buildClusteredSections(from: cachedFilteredSwipes)
+        swipeFacetSummary = CommandKSwipeFacetSummary.build(
+            allItems: swipeGalleryItems,
+            filteredItems: cachedFilteredSwipes
+        )
+        swipeTotalCount = swipeGalleryItems.count
+        selectedUUIDs.remove(uuid)
+
+        if selectedNodeId == uuid {
+            selectedNodeId = nil
+        }
+
+        unifiedGroupedResults = unifiedGroupedResults
+            .map { group in
+                (source: group.source, results: group.results.filter { $0.atomUUID != uuid })
+            }
+            .filter { !$0.results.isEmpty }
+        unifiedFlatResults.removeAll { $0.atomUUID == uuid }
+        unifiedCardItems.removeAll { item in
+            if case .swipe(let swipe) = item {
+                return swipe.atomUUID == uuid
+            }
+            return false
+        }
+
+        refreshDomainPresentation()
+    }
+
     @MainActor
     private func handleIdeaGalleryNotification(_ notification: Notification) {
         guard isSurfaceActive else { return }
         if let uuid = Self.ideaUUID(from: notification),
            Self.notificationRemovesIdeaFromGallery(notification) {
             ideaGalleryItems.removeAll { $0.atomUUID == uuid }
+            ideaTotalCount = ideaGalleryItems.count
+            refreshDomainPresentation()
         }
 
         scheduleIdeaGalleryReload()
@@ -2375,6 +2584,7 @@ public final class CommandKViewModel: ObservableObject {
 
     static let legacyIdeaDeletedNotification = Notification.Name("ideaDeleted")
     static let legacyIdeaActivatedNotification = Notification.Name("ideaActivated")
+    static let legacySwipeDeletedNotification = Notification.Name("swipeDeleted")
 
     static func notificationTargetsIdeaGallery(_ notification: Notification) -> Bool {
         if notification.name == legacyIdeaDeletedNotification || notification.name == legacyIdeaActivatedNotification {
@@ -2414,6 +2624,14 @@ public final class CommandKViewModel: ObservableObject {
 
     static func ideaUUID(from notification: Notification) -> String? {
         if let atom = notification.userInfo?["atom"] as? Atom {
+            return atom.uuid
+        }
+
+        return notification.userInfo?["uuid"] as? String
+    }
+
+    static func swipeUUID(from notification: Notification) -> String? {
+        if let atom = notification.userInfo?["atom"] as? Atom, atom.isSwipeFileAtom {
             return atom.uuid
         }
 
@@ -2462,7 +2680,9 @@ public final class CommandKViewModel: ObservableObject {
             items.sort { $0.updatedAt > $1.updatedAt }
 
             ideaGalleryItems = items
+            ideaTotalCount = items.count
             ideaGalleryLoaded = true
+            refreshDomainPresentation()
         } catch {
             errorMessage = "Failed to load idea gallery: \(error.localizedDescription)"
         }
@@ -2579,9 +2799,32 @@ public final class CommandKViewModel: ObservableObject {
     func performUnifiedSearch(query: String) async {
         await updateUnifiedSearch(
             query: query,
-            preloadSupportData: true,
+            preloadSupportData: false,
             includeThinkspaces: true
         )
+        scheduleUnifiedSearchEnrichment(for: query)
+    }
+
+    private func scheduleUnifiedSearchEnrichment(for query: String) {
+        unifiedSearchEnrichmentTask?.cancel()
+        let expectedQuery = query.trimmingCharacters(in: .whitespaces)
+        guard !expectedQuery.isEmpty else { return }
+
+        unifiedSearchEnrichmentTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard let self,
+                  !Task.isCancelled,
+                  self.isSurfaceActive,
+                  self.query.trimmingCharacters(in: .whitespaces) == expectedQuery else {
+                return
+            }
+
+            await self.updateUnifiedSearch(
+                query: query,
+                preloadSupportData: true,
+                includeThinkspaces: true
+            )
+        }
     }
 
     private func updateUnifiedSearch(
@@ -2804,6 +3047,8 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Clear search state
     public func clear() {
+        unifiedSearchEnrichmentTask?.cancel()
+        swipeFilterTask?.cancel()
         query = ""
         results = []
         unfilteredResults = []
@@ -2814,6 +3059,8 @@ public final class CommandKViewModel: ObservableObject {
         selectedTypeFilters.removeAll()
         swipeGalleryItems = []
         swipeGalleryLoaded = false
+        swipeTotalCount = 0
+        swipeFacetSummary = .empty
         swipePlatformFilter = nil
         swipeHookTypeFilter = nil
         swipeNarrativeFilters = []
@@ -2824,6 +3071,7 @@ public final class CommandKViewModel: ObservableObject {
         selectedUUIDs.removeAll()
         ideaGalleryItems = []
         ideaGalleryLoaded = false
+        ideaTotalCount = 0
         isShowingRecents = false
         groupedResults = []
         flatNavigableResults = []
@@ -2836,6 +3084,7 @@ public final class CommandKViewModel: ObservableObject {
         unifiedGroupedResults = []
         unifiedFlatResults = []
         selectedReadwiseBookId = nil
+        domainPresentation = .empty
     }
 }
 

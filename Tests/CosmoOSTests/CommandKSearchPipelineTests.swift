@@ -101,6 +101,119 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(previews[.readwise]?.items.first?.thumbnailURL, "https://example.com/cover.jpg")
     }
 
+    func testCommandKDomainPresentationUsesLightweightCountsWhenDomainContentIsNotLoaded() {
+        let presentation = CommandKDomainPresentation.build(
+            databaseTotalCount: 42,
+            swipeTotalCount: 17,
+            ideaTotalCount: 9,
+            deepDiveTotalCount: 3,
+            recentItems: [],
+            swipeItems: [],
+            ideaItems: [],
+            readwiseBooks: []
+        )
+
+        XCTAssertEqual(presentation.counts[.database], 42)
+        XCTAssertEqual(presentation.counts[.swipeGallery], 17)
+        XCTAssertEqual(presentation.counts[.ideas], 9)
+    }
+
+    func testCommandKDomainPresentationPrefersLoadedContentCountsForExpandedDomains() {
+        let swipe = SwipeGalleryItem(
+            atomUUID: "swipe-1",
+            title: "Loaded swipe",
+            hookText: nil,
+            hookScore: nil,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+        let idea = IdeaGalleryItem(
+            id: "idea-1",
+            atomUUID: "idea-1",
+            entityId: 2,
+            title: "Loaded idea",
+            body: nil,
+            status: .spark,
+            contentFormat: nil,
+            platform: nil,
+            clientName: nil,
+            clientUUID: nil,
+            tags: [],
+            insightScore: nil,
+            matchingSwipeCount: nil,
+            suggestedFramework: nil,
+            isPinned: false,
+            contentCount: 0,
+            createdAt: "2026-05-09T00:00:00Z",
+            updatedAt: "2026-05-09T00:00:00Z"
+        )
+
+        let presentation = CommandKDomainPresentation.build(
+            databaseTotalCount: 42,
+            swipeTotalCount: 100,
+            ideaTotalCount: 100,
+            deepDiveTotalCount: 0,
+            recentItems: [],
+            swipeItems: [swipe],
+            ideaItems: [idea],
+            readwiseBooks: []
+        )
+
+        XCTAssertEqual(presentation.counts[.swipeGallery], 1)
+        XCTAssertEqual(presentation.counts[.ideas], 1)
+    }
+
+    func testCommandKSwipeFacetSummaryPrecomputesSidebarAndRailMetrics() {
+        let carousel = SwipeGalleryItem(
+            atomUUID: "swipe-1",
+            title: "Carousel",
+            hookText: nil,
+            hookScore: 8,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil,
+            primaryNarrative: .storytelling,
+            swipeContentFormat: .carousel
+        )
+        let reel = SwipeGalleryItem(
+            atomUUID: "swipe-2",
+            title: "Reel",
+            hookText: nil,
+            hookScore: 6,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil,
+            primaryNarrative: .storytelling,
+            swipeContentFormat: .voiceoverReel
+        )
+
+        let summary = CommandKSwipeFacetSummary.build(allItems: [carousel, reel], filteredItems: [carousel, reel])
+
+        XCTAssertEqual(summary.topContentFormats.map(\.count), [1, 1])
+        XCTAssertEqual(summary.topNarrativeStyles.first?.style, .storytelling)
+        XCTAssertEqual(summary.topNarrativeStyles.first?.count, 2)
+        XCTAssertEqual(summary.averageHookScore, 7)
+    }
+
+    func testCommandKAnimationPolicyLimitsEntranceAnimationsToFirstScreen() {
+        XCTAssertNotNil(CommandKAnimationPolicy.entranceAnimation(index: 0))
+        XCTAssertNotNil(CommandKAnimationPolicy.entranceAnimation(index: 23))
+        XCTAssertNil(CommandKAnimationPolicy.entranceAnimation(index: 24))
+    }
+
+    func testIdeasClientLedgerKeepsVerticalScrollWhenColumnsExpand() {
+        XCTAssertTrue(CortexIdeasLedgerLayout.clientLedgerOuterScrollAxes.contains(.vertical))
+        XCTAssertTrue(CortexIdeasLedgerLayout.clientLedgerInnerScrollAxes.contains(.horizontal))
+        XCTAssertFalse(CortexIdeasLedgerLayout.clientLedgerInnerScrollAxes.contains(.vertical))
+    }
+
+    func testExpandedDomainTransitionDefersHeavyContentUntilAfterMorphStarts() {
+        XCTAssertGreaterThanOrEqual(CommandKDomainTransitionPolicy.browserMountDelay, 0.12)
+        XCTAssertGreaterThanOrEqual(CommandKDomainTransitionPolicy.dataHydrationDelay, CommandKDomainTransitionPolicy.browserMountDelay)
+        XCTAssertLessThan(CommandKDomainTransitionPolicy.collapseCommitDelay, CommandKDomainTransitionPolicy.browserMountDelay)
+    }
+
     func testCommandKExpandedLayoutKeepsPreviewRailInsideDesktopViewport() {
         XCTAssertEqual(CommandKExpandedLayout.panelHeight(forAvailableHeight: 720), 540)
         XCTAssertEqual(CommandKExpandedLayout.panelHeight(forAvailableHeight: 900), 720)
@@ -117,6 +230,39 @@ final class CommandKSearchPipelineTests: XCTestCase {
 
         XCTAssertEqual(viewModel.cortexMode, .compact)
         XCTAssertEqual(viewModel.query, "")
+    }
+
+    @MainActor
+    func testSwipeDeletedNotificationPrunesLoadedSwipeGalleryImmediately() async {
+        let deleted = SwipeGalleryItem(
+            atomUUID: "swipe-deleted",
+            title: "Deleted swipe",
+            hookText: nil,
+            hookScore: nil,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+        let kept = SwipeGalleryItem(
+            atomUUID: "swipe-kept",
+            title: "Kept swipe",
+            hookText: nil,
+            hookScore: nil,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+        let viewModel = CommandKViewModel()
+        viewModel.swipeGalleryItems = [deleted, kept]
+
+        NotificationCenter.default.post(
+            name: Notification.Name("swipeDeleted"),
+            object: nil,
+            userInfo: ["uuid": deleted.atomUUID]
+        )
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(viewModel.swipeGalleryItems.map(\.atomUUID), [kept.atomUUID])
     }
 
     func testSearchIndexNormalizesAndRanksPrefixMatchesFirst() {

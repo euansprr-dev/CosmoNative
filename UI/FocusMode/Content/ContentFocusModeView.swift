@@ -435,6 +435,10 @@ struct ContentFocusModeView: View {
             viewModel.saveOnClose()
         }
         .onReceive(NotificationCenter.default.publisher(for: .unifiedEngineDraftUpdate)) { notification in
+            let targetUUID = notification.userInfo?["contentUUID"] as? String
+                ?? notification.userInfo?["uuid"] as? String
+            if let targetUUID, targetUUID != atom.uuid { return }
+
             // Capture AI-generated draft as the baseline for lesson extraction
             if let content = notification.userInfo?["content"] as? String, !content.isEmpty {
                 lastAIGeneratedDraft = content
@@ -2760,9 +2764,12 @@ class ContentFocusModeViewModel: ObservableObject {
             .sink { [weak self] notification in
                 guard let self, !self.isClosed,
                       let content = notification.userInfo?["content"] as? String else { return }
+                let targetUUID = notification.userInfo?["contentUUID"] as? String
+                    ?? notification.userInfo?["uuid"] as? String
+                if let targetUUID, targetUUID != self.atom.uuid { return }
                 // Convert carousel/thread JSON to readable slide format for display.
-                // Raw JSON stays in atom.body (written by handleWriteDraft); draftContent
-                // gets the human-readable version for the editor and read_draft tool.
+                // New tool paths already persist rendered content; this keeps older
+                // notifications safe if they still contain structured JSON.
                 self.state.draftContent = AgentToolExecutor.renderDraftForDisplay(content)
                 self.state.richDraftDocument = RichDocument.migrateLegacy(self.state.draftContent)
                 self.state.lastModified = Date()

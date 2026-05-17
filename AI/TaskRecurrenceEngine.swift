@@ -265,6 +265,16 @@ class TaskRecurrenceEngine {
 
     func deduplicateGeneratedInstances(referenceDate: Date = Date()) async throws {
         let allTasks = try await atomRepository.fetchAll(type: .task)
+        let activeTemplateUUIDs = Set(
+            allTasks.compactMap { atom -> String? in
+                guard let metadata = atom.metadataValue(as: TaskMetadata.self),
+                      metadata.recurrence != nil,
+                      metadata.recurrenceParentUUID == nil else {
+                    return nil
+                }
+                return atom.uuid
+            }
+        )
         let snapshots = allTasks.compactMap { atom -> GeneratedInstanceSnapshot? in
             guard let metadata = atom.metadataValue(as: TaskMetadata.self),
                   let parentUUID = metadata.recurrenceParentUUID,
@@ -283,6 +293,7 @@ class TaskRecurrenceEngine {
 
         let deletionUUIDs = Self.generatedInstanceCleanupDeletions(
             from: snapshots,
+            activeTemplateUUIDs: activeTemplateUUIDs,
             referenceDate: referenceDate,
             calendar: Calendar.current
         )
@@ -294,6 +305,7 @@ class TaskRecurrenceEngine {
 
     static func generatedInstanceCleanupDeletions(
         from snapshots: [GeneratedInstanceSnapshot],
+        activeTemplateUUIDs: Set<String>? = nil,
         referenceDate: Date,
         calendar: Calendar = .current
     ) -> Set<String> {
@@ -301,6 +313,12 @@ class TaskRecurrenceEngine {
         let referenceDay = calendar.startOfDay(for: referenceDate)
         var deletions = Set<String>()
         var groupedByParentAndDay: [String: [GeneratedInstanceSnapshot]] = [:]
+
+        if let activeTemplateUUIDs {
+            for snapshot in activeSnapshots where !activeTemplateUUIDs.contains(snapshot.parentUUID) {
+                deletions.insert(snapshot.uuid)
+            }
+        }
 
         for snapshot in activeSnapshots {
             let occurrenceDay = calendar.startOfDay(for: snapshot.occurrenceDate)

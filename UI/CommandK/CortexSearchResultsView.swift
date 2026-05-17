@@ -5,6 +5,7 @@ import SwiftUI
 
 struct CortexSearchResultsView: View {
     @ObservedObject var viewModel: CommandKViewModel
+    var openDomain: (CommandKTab) -> Void
 
     var body: some View {
         let swipeItemsByUUID = Dictionary(uniqueKeysWithValues: viewModel.swipeGalleryItems.map { ($0.atomUUID, $0) })
@@ -106,9 +107,7 @@ struct CortexSearchResultsView: View {
         case .ideas: .ideas
         case .readwise: .readwise
         }
-        withAnimation(ProMotionSprings.modal) {
-            viewModel.transitionToExpanded(tab)
-        }
+        openDomain(tab)
     }
 
     private func selectResult(_ result: UnifiedSearchResult) {

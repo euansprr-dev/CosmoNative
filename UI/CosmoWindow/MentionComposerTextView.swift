@@ -13,8 +13,10 @@ struct MentionComposerTextView: NSViewRepresentable {
     let mentionedAtoms: [Atom]
     let placeholder: String
     var isFocused: Binding<Bool>
+    var isMentionOverlayVisible: Bool = false
     var onSubmit: () -> Void
     var onTextChange: () -> Void
+    var onDismissMentionOverlayFromBackspace: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -43,6 +45,8 @@ struct MentionComposerTextView: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 0, height: 2)
         textView.delegate = context.coordinator
         textView.onSubmit = onSubmit
+        textView.isMentionOverlayVisible = isMentionOverlayVisible
+        textView.onDismissMentionOverlayFromBackspace = onDismissMentionOverlayFromBackspace
         textView.string = text
         textView.placeholderString = placeholder
         textView.setSelectedRange(MentionComposerTextSelectionPolicy.clamped(selection, in: text))
@@ -59,6 +63,8 @@ struct MentionComposerTextView: NSViewRepresentable {
 
         // Update callbacks
         textView.onSubmit = onSubmit
+        textView.isMentionOverlayVisible = isMentionOverlayVisible
+        textView.onDismissMentionOverlayFromBackspace = onDismissMentionOverlayFromBackspace
         context.coordinator.parent = self
 
         // Sync text if it changed externally (e.g., mention insertion, clear on send)
@@ -243,7 +249,7 @@ enum MentionComposerMentionParser {
 
                 let queryRange = NSRange(location: index + 1, length: caret - index - 1)
                 let query = nsText.substring(with: queryRange)
-                guard query.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+                guard query.rangeOfCharacter(from: .newlines) == nil else { return nil }
 
                 return MentionComposerActiveMention(
                     query: query,
@@ -251,7 +257,7 @@ enum MentionComposerMentionParser {
                 )
             }
 
-            if character.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
+            if character.rangeOfCharacter(from: .newlines) != nil {
                 return nil
             }
 
@@ -364,6 +370,14 @@ enum MentionComposerTextSelectionPolicy {
     }
 }
 
+enum MentionComposerKeyHandlingPolicy {
+    static let backspaceKeyCode: UInt16 = 51
+
+    static func shouldDismissMentionOverlay(keyCode: UInt16, isMentionOverlayVisible: Bool) -> Bool {
+        isMentionOverlayVisible && keyCode == backspaceKeyCode
+    }
+}
+
 private extension String {
     var hasSuffixWhitespace: Bool {
         guard let last else { return false }
@@ -396,10 +410,17 @@ extension Notification.Name {
 /// Custom NSTextView that handles Enter/Escape and shows placeholder text.
 final class ComposerNSTextView: NSTextView {
     var onSubmit: (() -> Void)?
+    var onDismissMentionOverlayFromBackspace: (() -> Void)?
+    var isMentionOverlayVisible = false
     var placeholderString: String = ""
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 { // Return key
+        if MentionComposerKeyHandlingPolicy.shouldDismissMentionOverlay(
+            keyCode: event.keyCode,
+            isMentionOverlayVisible: isMentionOverlayVisible
+        ) {
+            onDismissMentionOverlayFromBackspace?()
+        } else if event.keyCode == 36 { // Return key
             if event.modifierFlags.contains(.shift) {
                 insertNewline(nil)
             } else {

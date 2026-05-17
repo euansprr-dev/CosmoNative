@@ -1130,6 +1130,17 @@ extension AtomRepository {
                 .fetchCount(db)
         }
     }
+
+    /// Count research atoms that represent saved swipe files without hydrating the gallery.
+    func countSwipeFiles() async throws -> Int {
+        try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.type == AtomType.research.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(sql: "metadata LIKE '%\"isSwipeFile\":true%'")
+                .fetchCount(db)
+        }
+    }
 }
 
 // MARK: - Legacy Compatibility Extensions

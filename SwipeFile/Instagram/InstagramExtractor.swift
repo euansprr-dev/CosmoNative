@@ -969,6 +969,7 @@ final class InstagramExtractor: Sendable {
                   !isVideo,
                   InstagramMediaResolution.isInstagramPostURL(originalURL) {
             expectedCarouselItemCount = 1
+            finalType = .image
         }
 
         if baseType == .reel {
@@ -1407,7 +1408,7 @@ final class InstagramExtractor: Sendable {
             duration: duration,
             authorUsername: author,
             caption: caption,
-            expectedCarouselItemCount: contentType == .carousel && directURL == nil ? 1 : nil,
+            expectedCarouselItemCount: nil,
             extractedAt: Date()
         )
     }
@@ -1692,6 +1693,13 @@ final class InstagramMediaCache {
     }
 
     private func isUsableCachedResult(_ mediaData: InstagramMediaData) -> Bool {
+        if InstagramMediaResolution.isIncompletePostMedia(
+            mediaData: mediaData,
+            sourceURL: mediaData.originalURL
+        ) {
+            return false
+        }
+
         let itemCount = mediaData.carouselItems?.count ?? 0
         let expectedCount = mediaData.expectedCarouselItemCount
 

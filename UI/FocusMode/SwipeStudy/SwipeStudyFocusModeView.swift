@@ -665,9 +665,15 @@ struct SwipeStudyFocusModeView: View {
     private func instagramContentDisplay(atom: Atom, richContent: ResearchRichContent?) -> some View {
         VStack(spacing: 12) {
             // Carousel or video content
-            if isCarouselContent, let items = igMediaData?.carouselItems, !items.isEmpty {
+            if isCarouselContent,
+               let mediaData = igMediaData,
+               let items = mediaData.carouselItems,
+               shouldDisplayCarouselItems(items, mediaData: mediaData) {
                 carouselImagePager(items: items)
-            } else if isCarouselContent, let items = richContent?.instagramData?.carouselItems, !items.isEmpty {
+            } else if isCarouselContent,
+                      let instagramData = richContent?.instagramData,
+                      let items = instagramData.carouselItems,
+                      shouldDisplayStoredCarouselItems(items, instagramData: instagramData) {
                 carouselImagePager(items: items)
             } else if isCarouselContent {
                 // Carousel/post with no items loaded yet — show square placeholder
@@ -889,11 +895,12 @@ struct SwipeStudyFocusModeView: View {
     @ViewBuilder
     private func carouselImagePager(items: [CarouselItem]) -> some View {
         let safeIndex = min(max(carouselCurrentIndex, 0), items.count - 1)
+        let shortcode = currentInstagramShortcode()
 
         VStack(spacing: 8) {
             ZStack {
                 // Current image
-                carouselItemView(item: items[safeIndex])
+                carouselItemView(item: items[safeIndex], shortcode: shortcode)
 
                 // Navigation arrows
                 HStack {
@@ -952,8 +959,15 @@ struct SwipeStudyFocusModeView: View {
     }
 
     @ViewBuilder
-    private func carouselItemView(item: CarouselItem) -> some View {
-        AsyncImage(url: item.mediaURL) { phase in
+    private func carouselItemView(item: CarouselItem, shortcode: String?) -> some View {
+        let displayURL = item.mediaType == .video ? (item.thumbnailURL ?? item.mediaURL) : item.mediaURL
+        let cacheKey = InstagramCarouselImageCache.cacheKey(
+            shortcode: shortcode,
+            index: item.index,
+            url: displayURL
+        )
+
+        CachedAsyncImage(url: displayURL, stableKey: cacheKey) { phase in
             switch phase {
             case .success(let image):
                 image
@@ -985,6 +999,14 @@ struct SwipeStudyFocusModeView: View {
             }
         }
         .frame(maxWidth: 400, maxHeight: 400)
+    }
+
+    private func currentInstagramShortcode() -> String? {
+        guard let urlString = (currentAtom ?? atom).url,
+              let url = URL(string: urlString) else {
+            return nil
+        }
+        return InstagramExtractor.shared.extractShortcode(from: url)
     }
 
     private func carouselNavArrow(systemName: String) -> some View {
@@ -1143,12 +1165,12 @@ struct SwipeStudyFocusModeView: View {
             if let storedIGData = atom.richContent?.instagramData,
                let items = storedIGData.carouselItems, !items.isEmpty {
                 isCarouselContent = true
-                // Populate igMediaData so the carousel pager has items to display
-                igMediaData = InstagramMediaData(
+                let storedMediaData = InstagramMediaData(
                     originalURL: url,
-                    contentType: .carousel,
-                    videoURL: nil,
-                    thumbnailURL: nil,
+                    contentType: storedIGData.contentType,
+                    videoURL: storedIGData.extractedMediaURL,
+                    thumbnailURL: atom.thumbnailUrl.flatMap(URL.init(string:))
+                        ?? atom.richContent?.thumbnailUrl.flatMap(URL.init(string:)),
                     duration: nil,
                     authorUsername: storedIGData.authorUsername,
                     caption: storedIGData.caption,
@@ -1156,7 +1178,13 @@ struct SwipeStudyFocusModeView: View {
                     expectedCarouselItemCount: storedIGData.expectedCarouselItemCount,
                     extractedAt: storedIGData.extractedAt ?? Date()
                 )
-                carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
+                if shouldDisplayCarouselItems(items, mediaData: storedMediaData) {
+                    // Populate igMediaData so the carousel pager has items to display
+                    igMediaData = storedMediaData
+                    carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
+                } else {
+                    igMediaData = nil
+                }
             }
 
             // Fast path: if we already have the video downloaded locally, skip extraction entirely
@@ -1186,11 +1214,6 @@ struct SwipeStudyFocusModeView: View {
             do {
                 let mediaData = try await InstagramMediaCache.shared.getMedia(for: url)
                 guard isViewingAtom(uuid: expectedUUID) else { return }
-                igMediaData = mediaData
-                if let items = mediaData.carouselItems, !items.isEmpty {
-                    carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
-                }
-                await persistInstagramMediaToAtom(mediaData, expectedAtomUUID: expectedUUID)
 
                 // Persist caption to atom if we got one from live extraction but atom doesn't have it
                 if let caption = mediaData.caption, !caption.isEmpty,
@@ -1204,6 +1227,7 @@ struct SwipeStudyFocusModeView: View {
                 ) {
                     print("SwipeStudy: Instagram post extraction is incomplete — waiting for full carousel media")
                     isCarouselContent = true
+                    igMediaData = nil
                     igIsExtractingVideo = false
 
                     let currentUUID = (currentAtom ?? atom).uuid
@@ -1218,6 +1242,12 @@ struct SwipeStudyFocusModeView: View {
                     }
                     return
                 }
+
+                igMediaData = mediaData
+                if let items = mediaData.carouselItems, !items.isEmpty {
+                    carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
+                }
+                await persistInstagramMediaToAtom(mediaData, expectedAtomUUID: expectedUUID)
 
                 // Carousel branch — show image pager instead of video player
                 // Check carousel items regardless of content type label (embed page may return .image for carousels)
@@ -1338,6 +1368,38 @@ struct SwipeStudyFocusModeView: View {
         return lower.contains("/p/") && !lower.contains("/reel/")
     }
 
+    private func shouldDisplayCarouselItems(_ items: [CarouselItem], mediaData: InstagramMediaData) -> Bool {
+        guard !items.isEmpty else { return false }
+        return !InstagramMediaResolution.isIncompletePostMedia(
+            mediaData: mediaData,
+            sourceURL: mediaData.originalURL,
+            existingCarouselItems: items
+        )
+    }
+
+    private func shouldDisplayStoredCarouselItems(_ items: [CarouselItem], instagramData: InstagramData) -> Bool {
+        guard !items.isEmpty else { return false }
+        guard let urlString = (currentAtom ?? atom).url,
+              let url = URL(string: urlString) else {
+            return items.count > 1
+        }
+
+        let mediaData = InstagramMediaData(
+            originalURL: url,
+            contentType: instagramData.contentType,
+            videoURL: instagramData.extractedMediaURL,
+            thumbnailURL: (currentAtom ?? atom).thumbnailUrl.flatMap(URL.init(string:))
+                ?? (currentAtom ?? atom).richContent?.thumbnailUrl.flatMap(URL.init(string:)),
+            authorUsername: instagramData.authorUsername,
+            caption: instagramData.caption,
+            carouselItems: items,
+            expectedCarouselItemCount: instagramData.expectedCarouselItemCount,
+            extractedAt: instagramData.extractedAt ?? Date()
+        )
+
+        return shouldDisplayCarouselItems(items, mediaData: mediaData)
+    }
+
     /// Determine the content type label for the metadata footer
     private func contentTypeLabel(atom: Atom) -> String {
         if isCarouselContent { return "Carousel" }
@@ -1356,17 +1418,45 @@ struct SwipeStudyFocusModeView: View {
             Task {
                 let expectedUUID = (currentAtom ?? atom).uuid
                 var items = igMediaData?.carouselItems ?? currentAtom?.richContent?.instagramData?.carouselItems ?? atom.richContent?.instagramData?.carouselItems ?? []
+                if let mediaData = igMediaData,
+                   let currentItems = mediaData.carouselItems,
+                   !shouldDisplayCarouselItems(currentItems, mediaData: mediaData) {
+                    items = []
+                } else if let instagramData = (currentAtom ?? atom).richContent?.instagramData,
+                          let storedItems = instagramData.carouselItems,
+                          !shouldDisplayStoredCarouselItems(storedItems, instagramData: instagramData) {
+                    items = []
+                }
 
                 if let urlString = (currentAtom ?? atom).url,
                    let url = URL(string: urlString),
-                   let mediaData = try? await InstagramMediaCache.shared.getMedia(for: url),
-                   let refreshedItems = mediaData.carouselItems,
-                   !refreshedItems.isEmpty {
+                   let mediaData = try? await InstagramMediaCache.shared.getMedia(for: url) {
                     guard isViewingAtom(uuid: expectedUUID) else { return }
+
+                    if InstagramMediaResolution.isIncompletePostMedia(
+                        mediaData: mediaData,
+                        sourceURL: url
+                    ) {
+                        igMediaData = nil
+                        if SwipeProcessingService.shared.isProcessing(uuid: expectedUUID) {
+                            pollForBackgroundCompletion()
+                        } else {
+                            SwipeProcessingService.shared.processSwipeInBackground(
+                                uuid: expectedUUID,
+                                forceExtractionRetry: true
+                            )
+                            pollForBackgroundCompletion()
+                        }
+                        return
+                    }
+
                     igMediaData = mediaData
-                    carouselCurrentIndex = min(carouselCurrentIndex, refreshedItems.count - 1)
                     await persistInstagramMediaToAtom(mediaData, expectedAtomUUID: expectedUUID)
-                    items = refreshedItems
+
+                    if let refreshedItems = mediaData.carouselItems, !refreshedItems.isEmpty {
+                        carouselCurrentIndex = min(carouselCurrentIndex, refreshedItems.count - 1)
+                        items = refreshedItems
+                    }
                 }
 
                 guard isViewingAtom(uuid: expectedUUID) else { return }
@@ -1525,11 +1615,13 @@ struct SwipeStudyFocusModeView: View {
     /// Auto-transcribe carousel images (mirrors autoTranscribe but for image slides)
     private func autoTranscribeCarousel(items: [CarouselItem]) async {
         let expectedUUID = (currentAtom ?? atom).uuid
+        let shortcode = currentInstagramShortcode()
         isAutoTranscribing = true
         autoTranscriptionProgress = "Starting carousel transcription..."
 
         let result = await InstagramAutoTranscriber.shared.transcribeCarousel(
-            items: items
+            items: items,
+            shortcode: shortcode
         ) { [self] progress in
             switch progress {
             case .recognizingText(let pct):
@@ -2475,6 +2567,13 @@ struct SwipeStudyFocusModeView: View {
 
         // Skip media refresh if processing is still in progress — avoid version conflict race
         guard current.metadataDict?["processingStatus"] as? String == "complete" else { return }
+        if InstagramMediaResolution.isIncompletePostMedia(
+            mediaData: mediaData,
+            sourceURL: mediaData.originalURL
+        ) {
+            print("SwipeStudy: Skipping persist of incomplete Instagram media")
+            return
+        }
 
         var richContent = current.richContent ?? ResearchRichContent()
         var igData = richContent.instagramData ?? InstagramData(

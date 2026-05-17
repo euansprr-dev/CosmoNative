@@ -2418,6 +2418,7 @@ final class InstagramAutoTranscriber: Sendable {
     /// - Returns: TranscriptionResult with one slide per carousel image
     func transcribeCarousel(
         items: [CarouselItem],
+        shortcode: String? = nil,
         progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
     ) async -> TranscriptionResult {
         let imageItems = items.filter { $0.mediaType == .image }
@@ -2437,8 +2438,14 @@ final class InstagramAutoTranscriber: Sendable {
             let progress = Double(idx) / Double(imageItems.count)
             progressHandler(.recognizingText(progress))
 
-            // Download image
-            guard let imageData = await downloadImage(url: item.mediaURL) else {
+            let cacheKey = InstagramCarouselImageCache.cacheKey(
+                shortcode: shortcode,
+                index: item.index,
+                url: item.mediaURL
+            )
+
+            // Download/cache image
+            guard let imageData = await downloadImage(url: item.mediaURL, stableKey: cacheKey) else {
                 slides.append(TranscriptSlide(text: "", slideNumber: idx + 1, source: .visionOCR))
                 warnings.append("Some carousel slides could not be downloaded.")
                 continue
@@ -2526,18 +2533,8 @@ final class InstagramAutoTranscriber: Sendable {
     // MARK: - Carousel Helpers
 
     /// Download an image from a URL
-    private func downloadImage(url: URL) async -> Data? {
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                return nil
-            }
-            return data
-        } catch {
-            print("InstagramAutoTranscriber: Image download failed: \(error.localizedDescription)")
-            return nil
-        }
+    private func downloadImage(url: URL, stableKey: String) async -> Data? {
+        await InstagramCarouselImageCache.imageData(for: url, stableKey: stableKey)
     }
 
     /// Create a CGImage from image data

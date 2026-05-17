@@ -66,6 +66,9 @@ final class SwipeProcessingService {
         }
 
         if let expectedCarouselItemCount {
+            if expectedCarouselItemCount == 1, carouselItemCount != nil {
+                return false
+            }
             return transcriptSlideCount >= expectedCarouselItemCount
         }
 
@@ -303,8 +306,10 @@ final class SwipeProcessingService {
             _ = try? await AtomRepository.shared.update(atom)
             return nil
         } else if let items = carouselItems, !items.isEmpty {
+            let shortcode = await InstagramExtractor.shared.extractShortcode(from: url)
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
-                items: items
+                items: items,
+                shortcode: shortcode
             ) { progress in
                 switch progress {
                 case .recognizingText(let pct):
@@ -347,8 +352,10 @@ final class SwipeProcessingService {
                 mediaType: .image,
                 mediaURL: thumbnailURL
             )
+            let shortcode = await InstagramExtractor.shared.extractShortcode(from: url)
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
-                items: [singleItem]
+                items: [singleItem],
+                shortcode: shortcode
             ) { progress in
                 switch progress {
                 case .recognizingText(let pct):

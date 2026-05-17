@@ -52,6 +52,29 @@ final class SwipeProcessingServiceTests: XCTestCase {
         XCTAssertFalse(shouldFallback)
     }
 
+    func testThumbnailFallbackIsDisabledForCarouselTypedSingleThumbnailWithoutItems() {
+        let mediaData = InstagramMediaData(
+            originalURL: URL(string: "https://www.instagram.com/p/ABC123/")!,
+            contentType: .carousel,
+            thumbnailURL: URL(string: "https://cdn.example.com/random-slide.jpg"),
+            expectedCarouselItemCount: 1,
+            extractedAt: Date()
+        )
+
+        let shouldFallback = InstagramMediaResolution.shouldUseThumbnailFallback(
+            mediaData: mediaData,
+            sourceURL: mediaData.originalURL
+        )
+
+        XCTAssertFalse(shouldFallback)
+        XCTAssertTrue(
+            InstagramMediaResolution.isIncompletePostMedia(
+                mediaData: mediaData,
+                sourceURL: mediaData.originalURL
+            )
+        )
+    }
+
     func testSingleUnconfirmedCarouselItemIsStillIncompleteForPostURL() {
         let postURL = URL(string: "https://www.instagram.com/p/ABC123/")!
         let mediaData = InstagramMediaData(
@@ -138,5 +161,17 @@ final class SwipeProcessingServiceTests: XCTestCase {
                 expectedCarouselItemCount: 4
             )
         )
+    }
+
+    func testOneSlideCarouselMetadataDoesNotSkipReprocessing() {
+        let shouldSkip = SwipeProcessingService.shouldSkipExistingTranscript(
+            sourceURL: URL(string: "https://www.instagram.com/p/ABC123/")!,
+            transcriptStatus: "available",
+            transcriptSlideCount: 1,
+            carouselItemCount: 1,
+            expectedCarouselItemCount: 1
+        )
+
+        XCTAssertFalse(shouldSkip)
     }
 }

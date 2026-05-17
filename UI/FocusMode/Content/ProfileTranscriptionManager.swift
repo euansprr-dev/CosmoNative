@@ -68,6 +68,7 @@ final class ProfileTranscriptionManager: ObservableObject {
 
         var transcriptionResult: TranscriptionResult
         var isCarousel = false
+        let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
 
         if InstagramMediaResolution.isIncompletePostMedia(
             mediaData: mediaData,
@@ -80,7 +81,8 @@ final class ProfileTranscriptionManager: ObservableObject {
             // Carousel path
             isCarousel = true
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
-                items: items
+                items: items,
+                shortcode: shortcode
             ) { [weak self] progress in
                 Task { @MainActor in
                     self?.updateProgress(documentId: documentId, progress: progress)
@@ -88,7 +90,6 @@ final class ProfileTranscriptionManager: ObservableObject {
             }
         } else if let videoURL = mediaData.videoURL {
             // Video/Reel path — download locally first
-            let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
             let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(
                 from: videoURL, shortcode: shortcode
             )
@@ -115,7 +116,8 @@ final class ProfileTranscriptionManager: ObservableObject {
             }
             let singleItem = CarouselItem(index: 0, mediaType: .image, mediaURL: thumbnailURL)
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
-                items: [singleItem]
+                items: [singleItem],
+                shortcode: shortcode
             ) { [weak self] progress in
                 Task { @MainActor in
                     self?.updateProgress(documentId: documentId, progress: progress)

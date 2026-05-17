@@ -34,6 +34,27 @@ enum CommandKExpandedLayout {
     }
 }
 
+enum CommandKAnimationPolicy {
+    static let maxEntranceAnimationItems = 24
+    static let entranceBaseDelay: TimeInterval = 0.018
+
+    static func entranceAnimation(
+        index: Int,
+        limit: Int = maxEntranceAnimationItems,
+        baseDelay: TimeInterval = entranceBaseDelay
+    ) -> Animation? {
+        guard index >= 0, index < limit else { return nil }
+        return ProMotionSprings.cardEntrance.delay(Double(index) * baseDelay)
+    }
+}
+
+enum CommandKDomainTransitionPolicy {
+    static let browserMountDelay: TimeInterval = 0.16
+    static let dataHydrationDelay: TimeInterval = 0.20
+    static let collapseCommitDelay: TimeInterval = 0.07
+    static let closeNotificationDelay: TimeInterval = 0.26
+}
+
 private struct CommandKToolbarChipModifier: ViewModifier {
     let isActive: Bool
     let activeFill: Color

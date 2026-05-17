@@ -115,7 +115,8 @@ enum InstagramMediaResolution {
         }
 
         if isInstagramPostURL(sourceURL) {
-            return mediaData.expectedCarouselItemCount == 1
+            return mediaData.expectedCarouselItemCount == 1 &&
+                mediaData.contentType != .carousel
         }
 
         return true
@@ -133,6 +134,9 @@ enum InstagramMediaResolution {
         let itemCount = items?.count ?? 0
         if let expected = mediaData.expectedCarouselItemCount {
             if expected == 1 {
+                if mediaData.contentType == .carousel {
+                    return true
+                }
                 return itemCount == 0 && mediaData.thumbnailURL == nil
             }
             return itemCount < expected

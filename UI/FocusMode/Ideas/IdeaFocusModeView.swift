@@ -1389,11 +1389,13 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
     }
 }
 
-private final class OutlineSlideNoteTextView: NSTextView {
+final class OutlineSlideNoteTextView: NSTextView {
     var placeholder: String = ""
     var onReturn: (() -> Void)?
     var onDeleteEmpty: (() -> Bool)?
     private var shouldFocusWhenAttached = false
+    private var focusAttemptCount = 0
+    private let maxFocusAttemptCount = 5
 
     override var intrinsicContentSize: NSSize {
         NSSize(
@@ -1409,6 +1411,7 @@ private final class OutlineSlideNoteTextView: NSTextView {
 
     func requestFocusWhenReady() {
         shouldFocusWhenAttached = true
+        focusAttemptCount = 0
         DispatchQueue.main.async { [weak self] in
             self?.applyPendingFocusIfPossible()
         }
@@ -1416,10 +1419,25 @@ private final class OutlineSlideNoteTextView: NSTextView {
 
     private func applyPendingFocusIfPossible() {
         guard shouldFocusWhenAttached, let window else { return }
-        shouldFocusWhenAttached = false
-        guard window.firstResponder !== self else { return }
+        guard window.firstResponder !== self else {
+            shouldFocusWhenAttached = false
+            setSelectedRange(NSRange(location: string.count, length: 0))
+            return
+        }
 
-        window.makeFirstResponder(self)
+        guard window.makeFirstResponder(self) else {
+            focusAttemptCount += 1
+            if focusAttemptCount < maxFocusAttemptCount {
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyPendingFocusIfPossible()
+                }
+            } else {
+                shouldFocusWhenAttached = false
+            }
+            return
+        }
+
+        shouldFocusWhenAttached = false
         setSelectedRange(NSRange(location: string.count, length: 0))
     }
 

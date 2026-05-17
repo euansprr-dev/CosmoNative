@@ -150,6 +150,26 @@ final class WritingAIContextTests: XCTestCase {
         )
     }
 
+    func testGeneratedStructuredDraftIsRenderedForLocalPersistence() {
+        let rawDraft = #"{"slides":[{"number":2,"text":"Second beat","visualDirection":"internal"},{"number":1,"text":"First beat","visualDirection":"internal"}]}"#
+
+        XCTAssertEqual(
+            AgentToolExecutor.draftBodyForLocalPersistence(rawDraft),
+            "SLIDE 1\nFirst beat\n\nSLIDE 2\nSecond beat"
+        )
+    }
+
+    func testDraftUpdateNotificationPayloadTargetsContentAtom() {
+        let payload = AgentToolExecutor.draftUpdateNotificationUserInfo(
+            contentUUID: "content-123",
+            content: "Draft body"
+        )
+
+        XCTAssertEqual(payload["contentUUID"], "content-123")
+        XCTAssertEqual(payload["uuid"], "content-123")
+        XCTAssertEqual(payload["content"], "Draft body")
+    }
+
     private func makeRequest(
         prompt: String = "Critique this draft",
         action: WritingAIQuickAction? = nil,

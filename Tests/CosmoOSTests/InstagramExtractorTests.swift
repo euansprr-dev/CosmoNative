@@ -79,6 +79,33 @@ final class InstagramExtractorTests: XCTestCase {
         XCTAssertEqual(selected.contentType, .carousel)
     }
 
+    func testConfirmedSingleImageGraphQLResultIsNotCarouselTyped() throws {
+        let extractor = InstagramExtractor.shared
+        let originalURL = URL(string: "https://www.instagram.com/p/ABC123/")!
+        let displayURL = "https://cdn.example.com/confirmed-single.jpg"
+
+        let mediaData = try extractor.parseMediaObject(
+            [
+                "is_video": false,
+                "display_url": displayURL
+            ],
+            originalURL: originalURL,
+            baseType: .carousel,
+            confirmedSidecarState: true
+        )
+
+        XCTAssertEqual(mediaData.expectedCarouselItemCount, 1)
+        XCTAssertEqual(mediaData.contentType, .image)
+        XCTAssertEqual(mediaData.thumbnailURL?.absoluteString, displayURL)
+        XCTAssertNil(mediaData.carouselItems)
+        XCTAssertFalse(
+            InstagramMediaResolution.isIncompletePostMedia(
+                mediaData: mediaData,
+                sourceURL: originalURL
+            )
+        )
+    }
+
     func testCarouselCacheDoesNotForceRefreshWhenFreshSlidesExist() {
         let cache = InstagramMediaCache.shared
         let postURL = URL(string: "https://www.instagram.com/p/ABC123/")!
@@ -100,6 +127,20 @@ final class InstagramExtractorTests: XCTestCase {
             originalURL: postURL,
             contentType: .image,
             thumbnailURL: URL(string: "https://cdn.example.com/thumb.jpg"),
+            extractedAt: Date()
+        )
+
+        XCTAssertTrue(cache.shouldResolveBestCarouselMedia(for: postURL, cached: cached))
+    }
+
+    func testCarouselCacheRefreshesCarouselTypedSingleThumbnailResult() {
+        let cache = InstagramMediaCache.shared
+        let postURL = URL(string: "https://www.instagram.com/p/ABC123/")!
+        let cached = InstagramMediaData(
+            originalURL: postURL,
+            contentType: .carousel,
+            thumbnailURL: URL(string: "https://cdn.example.com/random-slide.jpg"),
+            expectedCarouselItemCount: 1,
             extractedAt: Date()
         )
 

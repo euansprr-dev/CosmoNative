@@ -6,6 +6,7 @@ import SwiftUI
 struct CortexCompactView: View {
     @ObservedObject var viewModel: CommandKViewModel
     var namespace: Namespace.ID
+    var openDomain: (CommandKTab) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space24) {
@@ -52,9 +53,7 @@ struct CortexCompactView: View {
                     count: viewModel.domainCounts[tab] ?? 0,
                     namespace: namespace
                 ) {
-                    withAnimation(ProMotionSprings.modal) {
-                        viewModel.transitionToExpanded(tab)
-                    }
+                    openDomain(tab)
                 }
             }
         }
@@ -91,7 +90,7 @@ struct CortexCompactView: View {
                     viewModel.deleteRecent(item)
                 }
                 .transition(.opacity.combined(with: .offset(y: 6)))
-                .animation(ProMotionSprings.staggered(index: index), value: viewModel.recentItems.count)
+                .animation(CommandKAnimationPolicy.entranceAnimation(index: index), value: viewModel.recentItems.count)
             }
         }
     }

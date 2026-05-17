@@ -144,9 +144,7 @@ struct CortexSwipeBrowser: View {
     }
 
     private var averageScore: Double? {
-        let scored = viewModel.cachedFilteredSwipes.compactMap(\.hookScore)
-        guard !scored.isEmpty else { return nil }
-        return scored.reduce(0, +) / Double(scored.count)
+        viewModel.swipeFacetSummary.averageHookScore
     }
 
     // MARK: - Workbench
@@ -196,7 +194,7 @@ struct CortexSwipeBrowser: View {
                     viewModel.swipeContentFormatFilters = []
                 }
 
-                ForEach(topContentFormats, id: \.format) { entry in
+                ForEach(viewModel.swipeFacetSummary.topContentFormats, id: \.format) { entry in
                     sidebarRow(
                         title: entry.format.displayName,
                         icon: entry.format.icon,
@@ -241,7 +239,7 @@ struct CortexSwipeBrowser: View {
                         viewModel.swipeNarrativeFilters = []
                     }
 
-                    ForEach(topNarrativeStyles, id: \.style) { entry in
+                    ForEach(viewModel.swipeFacetSummary.topNarrativeStyles, id: \.style) { entry in
                         filterPill("\(entry.style.displayName)  \(entry.count)", isSelected: viewModel.swipeNarrativeFilters.contains(entry.style)) {
                             withAnimation(ProMotionSprings.snappy) {
                                 toggleNarrative(entry.style)
@@ -271,36 +269,11 @@ struct CortexSwipeBrowser: View {
                     }
                             .opacity(hasAppeared ? 1 : 0)
                             .offset(y: hasAppeared ? 0 : 8)
-                            .animation(
-                                ProMotionSprings.staggered(index: index),
-                                value: hasAppeared
-                            )
+                            .animation(CommandKAnimationPolicy.entranceAnimation(index: index), value: hasAppeared)
                 }
             }
             .padding(.bottom, DS.space12)
         }
-    }
-
-    private var topContentFormats: [(format: ContentFormat, count: Int)] {
-        ContentFormat.allCases.compactMap { format in
-            let count = viewModel.swipeGalleryItems.filter { $0.swipeContentFormat == format }.count
-            guard count > 0 else { return nil }
-            return (format, count)
-        }
-        .sorted { $0.count > $1.count }
-        .prefix(7)
-        .map { $0 }
-    }
-
-    private var topNarrativeStyles: [(style: NarrativeStyle, count: Int)] {
-        NarrativeStyle.allCases.compactMap { style in
-            let count = viewModel.swipeGalleryItems.filter { $0.primaryNarrative == style }.count
-            guard count > 0 else { return nil }
-            return (style, count)
-        }
-        .sorted { $0.count > $1.count }
-        .prefix(6)
-        .map { $0 }
     }
 
     private var primaryText: Color {

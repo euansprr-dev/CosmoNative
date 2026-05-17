@@ -109,7 +109,7 @@ struct CortexReadwiseBrowser: View {
                     }
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 8)
-                    .animation(ProMotionSprings.staggered(index: index), value: hasAppeared)
+                    .animation(CommandKAnimationPolicy.entranceAnimation(index: index), value: hasAppeared)
                 }
             }
             .padding(.bottom, DS.space12)

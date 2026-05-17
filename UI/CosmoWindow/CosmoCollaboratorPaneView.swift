@@ -255,8 +255,12 @@ struct CosmoCollaboratorPaneView: View {
                     mentionedAtoms: viewModel.mentionedAtoms,
                     placeholder: "It can be messy. One sentence, a link, a half-formed question.",
                     isFocused: $isComposerFocused,
+                    isMentionOverlayVisible: viewModel.showMentionOverlay,
                     onSubmit: sendCurrentMessage,
-                    onTextChange: { syncMentionSearch() }
+                    onTextChange: { syncMentionSearch() },
+                    onDismissMentionOverlayFromBackspace: {
+                        dismissMentionOverlay(trimMentionQuery: false)
+                    }
                 )
                 .frame(maxWidth: .infinity)
                 .fixedSize(horizontal: false, vertical: true)
@@ -383,13 +387,20 @@ struct CosmoCollaboratorPaneView: View {
             return
         }
 
+        if isCompletedInsertedMention(activeMention) {
+            if viewModel.showMentionOverlay {
+                dismissMentionOverlay(trimMentionQuery: false)
+            }
+            return
+        }
+
         if !viewModel.showMentionOverlay {
             withAnimation(ProMotionSprings.snappy) {
                 viewModel.showMentionOverlay = true
             }
         }
 
-        viewModel.mentionSearchText = activeMention.query
+        viewModel.mentionSearchText = activeMention.query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func insertMention(_ atom: Atom) {
@@ -402,6 +413,15 @@ struct CosmoCollaboratorPaneView: View {
         viewModel.inputText = replacement.text
         viewModel.inputSelectionRange = replacement.selection
         focusComposer()
+    }
+
+    private func isCompletedInsertedMention(_ activeMention: MentionComposerActiveMention) -> Bool {
+        viewModel.mentionedAtoms.contains { atom in
+            let title = atom.title ?? "Untitled"
+            return activeMention.query == title
+                || activeMention.query.hasPrefix("\(title) ")
+                || activeMention.query.hasPrefix("\(title)\t")
+        }
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {

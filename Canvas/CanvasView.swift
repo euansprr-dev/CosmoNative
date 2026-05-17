@@ -5,6 +5,26 @@ import SwiftUI
 import GRDB
 import UniformTypeIdentifiers
 
+enum CanvasKeyboardShortcutPolicy {
+    static let tabKeyCode: UInt16 = 48
+
+    static func shouldToggleMinimap(
+        keyCode: UInt16,
+        eventType: NSEvent.EventType,
+        isActive: Bool,
+        isCommandKVisible: Bool,
+        hasFocusedEntity: Bool,
+        isTextInputFocused: Bool
+    ) -> Bool {
+        keyCode == tabKeyCode &&
+            eventType == .keyDown &&
+            isActive &&
+            !isCommandKVisible &&
+            !hasFocusedEntity &&
+            !isTextInputFocused
+    }
+}
+
 struct CanvasView: View {
     /// The thinkspace ID this canvas displays — passed directly to avoid race conditions
     let thinkspaceId: String?
@@ -1819,6 +1839,21 @@ struct CanvasView: View {
                 // Track space bar press to enable drag-to-pan over any element
                 keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
                     guard canvasIsActive else { return event }
+                    if CanvasKeyboardShortcutPolicy.shouldToggleMinimap(
+                        keyCode: event.keyCode,
+                        eventType: event.type,
+                        isActive: canvasIsActive,
+                        isCommandKVisible: appState.isCommandKVisible,
+                        hasFocusedEntity: appState.focusedEntity != nil,
+                        isTextInputFocused: isTextInputFocused(in: event.window)
+                    ) {
+                        if !event.isARepeat {
+                            withAnimation(ProMotionSprings.snappy) {
+                                showMinimap.toggle()
+                            }
+                        }
+                        return nil
+                    }
                     if event.keyCode == 49 { // space bar
                         let pressed = event.type == .keyDown
                         if pressed != isSpaceHeld {
@@ -1958,6 +1993,7 @@ struct CanvasView: View {
             // TAB: Toggle minimap navigator (skip when Command-K is open — Tab cycles tabs there)
             .onKeyPress(.tab) {
                 guard !appState.isCommandKVisible else { return .ignored }
+                guard appState.focusedEntity == nil else { return .ignored }
                 withAnimation(ProMotionSprings.snappy) {
                     showMinimap.toggle()
                 }
@@ -2155,6 +2191,22 @@ struct CanvasView: View {
                 }
             }
         )
+    }
+
+    private func isTextInputFocused(in window: NSWindow?) -> Bool {
+        guard let responder = window?.firstResponder else { return false }
+
+        if responder is NSTextView ||
+            responder is NSTextField ||
+            responder is NSSecureTextField {
+            return true
+        }
+
+        let responderType = String(describing: type(of: responder))
+        return responderType.contains("NSTextInputContext") ||
+            responderType.contains("FieldEditor") ||
+            responderType.contains("TextField") ||
+            responderType.contains("TextEditor")
     }
 
     /// Compute current viewport rect in canvas coordinates

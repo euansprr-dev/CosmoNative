@@ -202,16 +202,33 @@ final class CosmoWindowMessageRenderingTests: XCTestCase {
         XCTAssertEqual(replacement.selection.location, (replacement.text as NSString).range(of: "@Josh ").upperBound)
     }
 
-    func testMentionParserClosesAfterWhitespace() {
+    func testMentionParserAllowsSpacesInQuery() {
         let text = "Write this for @Josh before Friday"
-        let cursor = (text as NSString).range(of: "@Josh ").upperBound
+        let cursor = (text as NSString).range(of: "@Josh before").upperBound
 
         let activeMention = MentionComposerMentionParser.activeMention(
             in: text,
             selectedRange: NSRange(location: cursor, length: 0)
         )
 
-        XCTAssertNil(activeMention)
+        XCTAssertEqual(activeMention?.query, "Josh before")
+        XCTAssertEqual(activeMention?.range, (text as NSString).range(of: "@Josh before"))
+    }
+
+    func testBackspaceDismissesVisibleMentionOverlay() {
+        XCTAssertTrue(
+            MentionComposerKeyHandlingPolicy.shouldDismissMentionOverlay(
+                keyCode: 51,
+                isMentionOverlayVisible: true
+            )
+        )
+
+        XCTAssertFalse(
+            MentionComposerKeyHandlingPolicy.shouldDismissMentionOverlay(
+                keyCode: 51,
+                isMentionOverlayVisible: false
+            )
+        )
     }
 
     func testInlineMentionDraftPolicyHandlesReferencePrompt() {

@@ -159,7 +159,7 @@ struct CortexIdeasBrowser: View {
                     }
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 8)
-                    .animation(ProMotionSprings.staggered(index: index), value: hasAppeared)
+                    .animation(CommandKAnimationPolicy.entranceAnimation(index: index), value: hasAppeared)
                 }
             }
             .padding(.bottom, DS.space12)
@@ -208,15 +208,17 @@ struct CortexIdeasBrowser: View {
             (availableWidth - (DS.space24 * 2) - (DS.space24 * CGFloat(max(clientSections.count - 1, 0)))) / CGFloat(max(clientSections.count, 1))
         )
 
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: DS.space24) {
-                ForEach(Array(clientSections.enumerated()), id: \.element.id) { sectionIndex, section in
-                    clientColumn(section, sectionIndex: sectionIndex)
-                        .frame(width: columnWidth)
+        return ScrollView(CortexIdeasLedgerLayout.clientLedgerOuterScrollAxes, showsIndicators: false) {
+            ScrollView(CortexIdeasLedgerLayout.clientLedgerInnerScrollAxes, showsIndicators: false) {
+                HStack(alignment: .top, spacing: DS.space24) {
+                    ForEach(Array(clientSections.enumerated()), id: \.element.id) { sectionIndex, section in
+                        clientColumn(section, sectionIndex: sectionIndex)
+                            .frame(width: columnWidth)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, DS.space8)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, DS.space8)
         }
     }
 
@@ -1068,6 +1070,9 @@ struct IdeaMaterialLedgerRow: View {
 }
 
 enum CortexIdeasLedgerLayout {
+    static let clientLedgerOuterScrollAxes: Axis.Set = .vertical
+    static let clientLedgerInnerScrollAxes: Axis.Set = .horizontal
+
     static func visibleItems(from items: [IdeaGalleryItem], isExpanded: Bool, previewLimit: Int) -> [IdeaGalleryItem] {
         guard !isExpanded else { return items }
         return Array(items.prefix(previewLimit))

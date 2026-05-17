@@ -76,7 +76,7 @@ struct CortexDatabaseBrowser: View {
                         }
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 8)
-                        .animation(index < 24 ? ProMotionSprings.staggered(index: index) : .none, value: hasAppeared)
+                        .animation(CommandKAnimationPolicy.entranceAnimation(index: index), value: hasAppeared)
                     }
                 }
                 .padding(DS.space16)

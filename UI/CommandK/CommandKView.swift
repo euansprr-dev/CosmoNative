@@ -17,6 +17,8 @@ public struct CommandKView: View {
     @StateObject private var viewModel: CommandKViewModel
     @FocusState private var isSearchFocused: Bool
     @Namespace private var cortexNamespace
+    @State private var isExpandedBrowserMounted = false
+    @State private var domainTransitionTask: Task<Void, Never>?
 
     @MainActor
     init(
@@ -59,6 +61,7 @@ public struct CommandKView: View {
                 if isActive {
                     viewModel.initializeCortexMode()
                     isSearchFocused = true
+                    scheduleExpandedBrowserMountIfNeeded()
                 }
             }
             .onChange(of: isActive) { _, active in
@@ -67,8 +70,23 @@ public struct CommandKView: View {
                     viewModel.initialExpandedTab = initialTab
                     viewModel.initializeCortexMode()
                     isSearchFocused = true
+                    scheduleExpandedBrowserMountIfNeeded()
                 } else {
+                    domainTransitionTask?.cancel()
+                    isExpandedBrowserMounted = false
                     isSearchFocused = false
+                }
+            }
+            .onChange(of: viewModel.cortexMode) { _, mode in
+                switch mode {
+                case .expandedDomain(let tab):
+                    isExpandedBrowserMounted = false
+                    scheduleExpandedBrowserMount(for: tab)
+                case .searchResults:
+                    domainTransitionTask?.cancel()
+                    isExpandedBrowserMounted = false
+                case .compact:
+                    isExpandedBrowserMounted = false
                 }
             }
         }
@@ -94,7 +112,6 @@ public struct CommandKView: View {
             contentPanel(geometry: geometry)
                 .zIndex(1)
         }
-        .animation(ProMotionSprings.gentle, value: viewModel.cortexMode)
     }
 
     // MARK: - Search Bar Pill (Spotlight-style)
@@ -104,9 +121,7 @@ public struct CommandKView: View {
             // Back button in expanded mode
             if case .expandedDomain = viewModel.cortexMode {
                 Button {
-                    withAnimation(ProMotionSprings.modal) {
-                        viewModel.returnToCompact()
-                    }
+                    closeExpandedDomain()
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(DS.caption)
@@ -198,9 +213,7 @@ public struct CommandKView: View {
                     count: viewModel.domainCounts[tab] ?? 0,
                     namespace: cortexNamespace
                 ) {
-                    withAnimation(ProMotionSprings.snappy) {
-                        viewModel.transitionToExpanded(tab)
-                    }
+                    openExpandedDomain(tab)
                 }
             }
         }
@@ -212,12 +225,12 @@ public struct CommandKView: View {
     private func contentPanel(geometry: GeometryProxy) -> some View {
         switch viewModel.cortexMode {
         case .compact:
-            CortexCompactView(viewModel: viewModel, namespace: cortexNamespace)
+            CortexCompactView(viewModel: viewModel, namespace: cortexNamespace, openDomain: openExpandedDomain)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(width: panelWidth(for: geometry))
                 .cortexGlassPanel()
         case .searchResults:
-            CortexSearchResultsView(viewModel: viewModel)
+            CortexSearchResultsView(viewModel: viewModel, openDomain: openExpandedDomain)
                 .frame(maxHeight: min(geometry.size.height * 0.65, 600))
                 .frame(width: panelWidth(for: geometry))
                 .cortexGlassPanel()
@@ -289,7 +302,7 @@ public struct CommandKView: View {
                         viewModel.deleteRecent(item)
                     }
                     .transition(.opacity.combined(with: .offset(y: 6)))
-                    .animation(ProMotionSprings.staggered(index: index), value: viewModel.recentItems.count)
+                    .animation(CommandKAnimationPolicy.entranceAnimation(index: index), value: viewModel.recentItems.count)
                 }
             }
         }
@@ -305,7 +318,13 @@ public struct CommandKView: View {
             preview: viewModel.headerPreviews[tab] ?? CommandKHeaderPreviewComposer.fallback(for: tab),
             namespace: cortexNamespace
         ) {
-            expandedBrowser(for: tab)
+            if isExpandedBrowserMounted {
+                expandedBrowser(for: tab)
+                    .transition(.opacity.animation(.easeOut(duration: 0.10)))
+            } else {
+                CortexExpandedDomainTransitionBody(tab: tab)
+                    .transition(.opacity.animation(.easeOut(duration: 0.08)))
+            }
         }
     }
 
@@ -479,9 +498,7 @@ public struct CommandKView: View {
                     viewModel.clearSelection()
                 }
             } else {
-                withAnimation(ProMotionSprings.modal) {
-                    viewModel.returnToCompact()
-                }
+                closeExpandedDomain()
             }
         case .searchResults:
             viewModel.query = ""
@@ -497,19 +514,99 @@ public struct CommandKView: View {
 
     private func closeWithDomainCollapseIfNeeded() {
         if case .expandedDomain = viewModel.cortexMode {
-            withAnimation(ProMotionSprings.modal) {
-                viewModel.returnToCompact()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            closeExpandedDomain()
+            DispatchQueue.main.asyncAfter(deadline: .now() + CommandKDomainTransitionPolicy.closeNotificationDelay) {
                 NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
             }
         } else {
             NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
         }
     }
+
+    private func openExpandedDomain(_ tab: CommandKTab) {
+        domainTransitionTask?.cancel()
+        isExpandedBrowserMounted = false
+
+        withAnimation(ProMotionSprings.modal) {
+            viewModel.transitionToExpanded(tab, loadDataImmediately: false)
+        }
+
+        scheduleExpandedBrowserMount(for: tab)
+    }
+
+    private func closeExpandedDomain() {
+        domainTransitionTask?.cancel()
+
+        withAnimation(.easeOut(duration: 0.08)) {
+            isExpandedBrowserMounted = false
+        }
+
+        domainTransitionTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(CommandKDomainTransitionPolicy.collapseCommitDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            guard case .expandedDomain = viewModel.cortexMode else { return }
+
+            withAnimation(ProMotionSprings.modal) {
+                viewModel.returnToCompact(refreshRecents: false)
+            }
+
+            try? await Task.sleep(nanoseconds: UInt64(0.18 * 1_000_000_000))
+            guard !Task.isCancelled, viewModel.cortexMode == .compact else { return }
+            await viewModel.loadRecentsForCompact()
+        }
+    }
+
+    private func scheduleExpandedBrowserMountIfNeeded() {
+        if case .expandedDomain(let tab) = viewModel.cortexMode {
+            isExpandedBrowserMounted = false
+            scheduleExpandedBrowserMount(for: tab)
+        }
+    }
+
+    private func scheduleExpandedBrowserMount(for tab: CommandKTab) {
+        domainTransitionTask?.cancel()
+        domainTransitionTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(CommandKDomainTransitionPolicy.browserMountDelay * 1_000_000_000))
+            guard !Task.isCancelled,
+                  case .expandedDomain(let currentTab) = viewModel.cortexMode,
+                  currentTab == tab else { return }
+
+            withAnimation(.easeOut(duration: 0.10)) {
+                isExpandedBrowserMounted = true
+            }
+
+            let hydrationDelay = max(0, CommandKDomainTransitionPolicy.dataHydrationDelay - CommandKDomainTransitionPolicy.browserMountDelay)
+            try? await Task.sleep(nanoseconds: UInt64(hydrationDelay * 1_000_000_000))
+            guard !Task.isCancelled,
+                  case .expandedDomain(let hydratedTab) = viewModel.cortexMode,
+                  hydratedTab == tab else { return }
+            viewModel.ensureExpandedDomainDataLoaded(tab)
+        }
+    }
 }
 
 // MARK: - Expanded Domain Shell
+
+private struct CortexExpandedDomainTransitionBody: View {
+    let tab: CommandKTab
+
+    var body: some View {
+        ZStack {
+            tab.accentColor.opacity(0.045)
+            VStack(spacing: DS.space10) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(tab.accentColor.opacity(0.20))
+                    .frame(width: 96, height: 6)
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(DS.textMuted.opacity(0.12))
+                    .frame(width: 156, height: 6)
+            }
+            .opacity(0.55)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+    }
+}
 
 private struct CortexExpandedDomainShell<Content: View>: View {
     let tab: CommandKTab

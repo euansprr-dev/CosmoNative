@@ -1079,6 +1079,10 @@ class AgentToolExecutor {
             if let igURL = URL(string: input) {
                 do {
                     let mediaData = try await InstagramMediaCache.shared.getMedia(for: igURL)
+                    let isIncompletePostMedia = InstagramMediaResolution.isIncompletePostMedia(
+                        mediaData: mediaData,
+                        sourceURL: igURL
+                    )
                     var richContent = item.richContent ?? ResearchRichContent()
                     var igData = richContent.instagramData ?? InstagramData(
                         originalURL: igURL,
@@ -1095,13 +1099,18 @@ class AgentToolExecutor {
                             if userHook == nil { item.hook = String(caption.prefix(200)) }
                         }
                     }
-                    if let thumb = mediaData.thumbnailURL?.absoluteString, !thumb.isEmpty {
+                    if !isIncompletePostMedia,
+                       let thumb = mediaData.thumbnailURL?.absoluteString, !thumb.isEmpty {
                         item.thumbnailUrl = thumb
                         richContent.thumbnailUrl = thumb
                     }
-                    igData.extractedMediaURL = mediaData.videoURL
-                    igData.extractedAt = mediaData.extractedAt
-                    if let carouselItems = mediaData.carouselItems, !carouselItems.isEmpty {
+                    if !isIncompletePostMedia {
+                        igData.extractedMediaURL = mediaData.videoURL
+                        igData.extractedAt = mediaData.extractedAt
+                        igData.expectedCarouselItemCount = mediaData.expectedCarouselItemCount
+                    }
+                    if !isIncompletePostMedia,
+                       let carouselItems = mediaData.carouselItems, !carouselItems.isEmpty {
                         igData.carouselItems = carouselItems
                         richContent.sourceType = .instagramCarousel
                         richContent.instagramType = "carousel"
@@ -2340,16 +2349,11 @@ class AgentToolExecutor {
                     localMetadata: localMetadata
                 )
 
-                // Write draft directly to local GRDB — don't wait for Supabase sync
-                if let draft = result.formattedDraft, !draft.isEmpty {
-                    if var localAtom = try? await AtomRepository.shared.fetch(uuid: contentUUID) {
-                        localAtom.body = draft
-                        localAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
-                        localAtom.localVersion += 1
-                        _ = try? await AtomRepository.shared.update(localAtom)
-                        print("☁️ [AgentToolExecutor] Draft written to local GRDB (\(draft.count) chars)")
-                    }
-                }
+                await persistGeneratedDraftLocally(
+                    contentUUID: contentUUID,
+                    formattedDraft: result.formattedDraft,
+                    source: "single-session generate_draft"
+                )
 
                 let encoder = JSONEncoder()
                 let data = try encoder.encode(result)
@@ -2374,6 +2378,12 @@ class AgentToolExecutor {
                 userDirection: Self.mergeWritingContext(userDirection, contextBlock: sharedContext),
                 clientName: args["clientName"] as? String,
                 contentFormat: args["contentFormat"] as? String
+            )
+
+            await persistGeneratedDraftLocally(
+                contentUUID: contentUUID,
+                formattedDraft: result.formattedDraft,
+                source: "multi-phase generate_draft"
             )
 
             let encoder = JSONEncoder()
@@ -2501,6 +2511,59 @@ class AgentToolExecutor {
         return draftBody
     }
 
+    static func draftBodyForLocalPersistence(_ formattedDraft: String?) -> String? {
+        guard let formattedDraft else { return nil }
+        let renderedDraft = renderDraftForDisplay(formattedDraft)
+        guard !renderedDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return renderedDraft
+    }
+
+    static func draftUpdateNotificationUserInfo(contentUUID: String, content: String) -> [String: String] {
+        [
+            "contentUUID": contentUUID,
+            "uuid": contentUUID,
+            "content": content,
+            "format": detectDraftFormat(content)
+        ]
+    }
+
+    private func persistGeneratedDraftLocally(
+        contentUUID: String,
+        formattedDraft: String?,
+        source: String
+    ) async {
+        guard let draft = Self.draftBodyForLocalPersistence(formattedDraft) else {
+            print("☁️ [AgentToolExecutor] No draft to persist from \(source) for \(contentUUID)")
+            return
+        }
+
+        guard var atom = try? await atomRepo.fetch(uuid: contentUUID) else {
+            print("⚠️ [AgentToolExecutor] Could not persist draft from \(source); content atom not found: \(contentUUID)")
+            return
+        }
+
+        atom.body = draft
+        atom.metadata = RichDocumentMetadataStorage.writeDocument(
+            RichDocument.migrateLegacy(draft),
+            into: atom.metadata,
+            key: RichDocumentMetadataKeys.contentDraftDocument
+        )
+
+        do {
+            _ = try await atomRepo.update(atom)
+            NotificationCenter.default.post(
+                name: .unifiedEngineDraftUpdate,
+                object: nil,
+                userInfo: Self.draftUpdateNotificationUserInfo(contentUUID: contentUUID, content: draft)
+            )
+            print("☁️ [AgentToolExecutor] Draft persisted locally from \(source) (\(draft.count) chars) for \(contentUUID)")
+        } catch {
+            print("❌ [AgentToolExecutor] Failed to persist draft from \(source) for \(contentUUID): \(error)")
+        }
+    }
+
     private func reviseDraft(_ args: [String: Any]) async throws -> String {
         guard let contentUUID = args["contentUUID"] as? String else {
             return jsonError("Missing or invalid contentUUID")
@@ -2523,6 +2586,12 @@ class AgentToolExecutor {
                 feedback: Self.mergeWritingContext(feedback, contextBlock: sharedContext) ?? feedback,
                 currentDraft: args["currentDraft"] as? String,
                 clientName: args["clientName"] as? String
+            )
+
+            await persistGeneratedDraftLocally(
+                contentUUID: contentUUID,
+                formattedDraft: result.formattedDraft,
+                source: "revise_draft"
             )
 
             let encoder = JSONEncoder()
@@ -2565,6 +2634,7 @@ class AgentToolExecutor {
         guard let uuid = args["uuid"] as? String else {
             return jsonError("Missing required parameter: uuid")
         }
+        var draftUpdateContent: String?
 
         // Resolve client if clientName provided
         var resolvedClientUUID: String?
@@ -2578,7 +2648,19 @@ class AgentToolExecutor {
 
         guard let updated = try await atomRepo.update(uuid: uuid, updates: { atom in
             if let title = args["title"] as? String { atom.title = title }
-            if let body = args["body"] as? String { atom.body = body }
+            if let body = args["body"] as? String {
+                let renderedBody = Self.renderDraftForDisplay(body)
+                atom.body = renderedBody
+                let richDraft = renderedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? RichDocument.empty
+                    : RichDocument.migrateLegacy(renderedBody)
+                atom.metadata = RichDocumentMetadataStorage.writeDocument(
+                    richDraft,
+                    into: atom.metadata,
+                    key: RichDocumentMetadataKeys.contentDraftDocument
+                )
+                draftUpdateContent = renderedBody
+            }
 
             var metaDict = atom.metadataDict ?? [:]
 
@@ -2638,6 +2720,13 @@ class AgentToolExecutor {
         ]
         if let resolvedClientName = resolvedClientName {
             response["clientName"] = resolvedClientName
+        }
+        if let draftUpdateContent {
+            NotificationCenter.default.post(
+                name: .unifiedEngineDraftUpdate,
+                object: nil,
+                userInfo: Self.draftUpdateNotificationUserInfo(contentUUID: uuid, content: draftUpdateContent)
+            )
         }
         return jsonEncode(response)
     }

@@ -114,6 +114,43 @@ final class ActiveCanvasDragStateTests: XCTestCase {
     }
 }
 
+final class CanvasKeyboardShortcutPolicyTests: XCTestCase {
+    func testTabTogglesMinimapOnlyWhenCanvasCanOwnShortcut() {
+        XCTAssertTrue(
+            CanvasKeyboardShortcutPolicy.shouldToggleMinimap(
+                keyCode: 48,
+                eventType: .keyDown,
+                isActive: true,
+                isCommandKVisible: false,
+                hasFocusedEntity: false,
+                isTextInputFocused: false
+            )
+        )
+
+        XCTAssertFalse(
+            CanvasKeyboardShortcutPolicy.shouldToggleMinimap(
+                keyCode: 48,
+                eventType: .keyDown,
+                isActive: true,
+                isCommandKVisible: false,
+                hasFocusedEntity: false,
+                isTextInputFocused: true
+            )
+        )
+
+        XCTAssertFalse(
+            CanvasKeyboardShortcutPolicy.shouldToggleMinimap(
+                keyCode: 48,
+                eventType: .keyDown,
+                isActive: false,
+                isCommandKVisible: false,
+                hasFocusedEntity: false,
+                isTextInputFocused: false
+            )
+        )
+    }
+}
+
 final class CanvasVisibilityIndexTests: XCTestCase {
     func testVisibilityIndexUsesPreloadRectForNearViewportBlocks() {
         let transform = CanvasViewportTransform(

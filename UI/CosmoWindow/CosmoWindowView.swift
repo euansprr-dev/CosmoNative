@@ -296,8 +296,12 @@ struct CosmoWindowView: View {
                     mentionedAtoms: viewModel.mentionedAtoms,
                     placeholder: "Ask Cosmo anything...",
                     isFocused: $isComposerFocused,
+                    isMentionOverlayVisible: viewModel.showMentionOverlay,
                     onSubmit: sendCurrentMessage,
-                    onTextChange: { syncMentionSearch() }
+                    onTextChange: { syncMentionSearch() },
+                    onDismissMentionOverlayFromBackspace: {
+                        dismissMentionOverlay(trimMentionQuery: false)
+                    }
                 )
                 .frame(maxWidth: .infinity)
                 .fixedSize(horizontal: false, vertical: true)
@@ -691,13 +695,20 @@ struct CosmoWindowView: View {
             return
         }
 
+        if isCompletedInsertedMention(activeMention) {
+            if viewModel.showMentionOverlay {
+                dismissMentionOverlay(trimMentionQuery: false)
+            }
+            return
+        }
+
         if !viewModel.showMentionOverlay {
             withAnimation(ProMotionSprings.snappy) {
                 viewModel.showMentionOverlay = true
             }
         }
 
-        viewModel.mentionSearchText = activeMention.query
+        viewModel.mentionSearchText = activeMention.query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func insertMention(_ atom: Atom) {
@@ -710,6 +721,15 @@ struct CosmoWindowView: View {
         viewModel.inputText = replacement.text
         viewModel.inputSelectionRange = replacement.selection
         focusComposer()
+    }
+
+    private func isCompletedInsertedMention(_ activeMention: MentionComposerActiveMention) -> Bool {
+        viewModel.mentionedAtoms.contains { atom in
+            let title = atom.title ?? "Untitled"
+            return activeMention.query == title
+                || activeMention.query.hasPrefix("\(title) ")
+                || activeMention.query.hasPrefix("\(title)\t")
+        }
     }
 
     private func debouncedScrollToBottom(proxy: ScrollViewProxy) {

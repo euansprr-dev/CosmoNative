@@ -1,7 +1,22 @@
+import AppKit
 import XCTest
 @testable import CosmoOS
 
 final class CodexOutlineEditingTests: XCTestCase {
+    @MainActor
+    func testOutlineSlideEditorRetriesPendingFocusUntilWindowAcceptsFirstResponder() throws {
+        let window = FlakyFirstResponderWindow()
+        let textView = OutlineSlideNoteTextView()
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 120))
+        window.contentView?.addSubview(textView)
+
+        textView.requestFocusWhenReady()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertIdentical(window.firstResponder, textView)
+        XCTAssertGreaterThanOrEqual(window.makeFirstResponderAttempts, 2)
+    }
+
     func testInsertSlideAfterFocusedSlideRenumbersAndReturnsInsertedID() {
         let firstID = UUID()
         let secondID = UUID()
@@ -110,5 +125,26 @@ final class CodexOutlineEditingTests: XCTestCase {
             transition: nil,
             note: note
         )
+    }
+}
+
+private final class FlakyFirstResponderWindow: NSWindow {
+    var makeFirstResponderAttempts = 0
+
+    init() {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+    }
+
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        makeFirstResponderAttempts += 1
+        if makeFirstResponderAttempts == 1 {
+            return false
+        }
+        return super.makeFirstResponder(responder)
     }
 }

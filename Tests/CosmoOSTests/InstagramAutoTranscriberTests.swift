@@ -3,6 +3,35 @@ import XCTest
 
 @MainActor
 final class InstagramAutoTranscriberTests: XCTestCase {
+    func testCarouselImageCacheKeyIgnoresExpiringCDNURLWhenShortcodeIsKnown() {
+        let firstURL = URL(string: "https://scontent.cdninstagram.com/v/t51.29350-15/slide.jpg?stp=dst-jpg&_nc_cat=1&ccb=1-7")!
+        let refreshedURL = URL(string: "https://scontent.cdninstagram.com/v/t51.29350-15/slide.jpg?stp=dst-jpg&_nc_cat=8&ccb=1-7&oh=fresh")!
+
+        let firstKey = InstagramCarouselImageCache.cacheKey(
+            shortcode: "ABC123",
+            index: 0,
+            url: firstURL
+        )
+        let refreshedKey = InstagramCarouselImageCache.cacheKey(
+            shortcode: "ABC123",
+            index: 0,
+            url: refreshedURL
+        )
+
+        XCTAssertEqual(firstKey, refreshedKey)
+        XCTAssertEqual(firstKey, "ig-carousel-ABC123-0")
+    }
+
+    func testCarouselImageDownloadRequestUsesBrowserHeaders() {
+        let url = URL(string: "https://scontent.cdninstagram.com/v/t51.29350-15/slide.jpg?oh=expiring")!
+
+        let request = InstagramCarouselImageCache.request(for: url)
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://www.instagram.com/")
+        XCTAssertNotNil(request.value(forHTTPHeaderField: "User-Agent"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+    }
+
     func testMergeGeminiBatchResultsKeepsDistinctSlidesSharingHeader() {
         let transcriber = InstagramAutoTranscriber.shared
 

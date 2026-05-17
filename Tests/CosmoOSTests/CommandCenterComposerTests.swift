@@ -126,6 +126,26 @@ final class CommandCenterComposerTests: XCTestCase {
     }
 
     @MainActor
+    func testRecurringCleanupDropsOrphanedGeneratedInstances() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
+
+        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
+            from: [
+                .init(uuid: "orphan", parentUUID: "deleted-parent", occurrenceDate: today, isCompleted: false, createdAt: today),
+                .init(uuid: "active", parentUUID: "active-parent", occurrenceDate: today, isCompleted: false, createdAt: today),
+                .init(uuid: "completed-orphan", parentUUID: "deleted-parent", occurrenceDate: today, isCompleted: true, createdAt: today)
+            ],
+            activeTemplateUUIDs: ["active-parent"],
+            referenceDate: today,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(deletions, ["orphan"])
+    }
+
+    @MainActor
     func testIntentEngineReturnsExplicitUnassignedPresentation() {
         let engine = CommandCenterIntentEngine()
 

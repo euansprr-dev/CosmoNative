@@ -89,46 +89,13 @@ public actor FunctionGemmaEngine {
 
     /// Load the FunctionGemma model with LoRA adapter
     public func loadModel() async throws {
-        guard modelContainer == nil else {
-            logger.info("FunctionGemma already loaded")
-            return
-        }
-
-        logger.info("Loading FunctionGemma 270M with CosmoOS adapter...")
-
-        do {
-            // Load base model from HuggingFace cache
-            modelContainer = try await LLMModelFactory.shared.loadContainer(
-                configuration: Self.baseModelConfig
-            ) { progress in
-                if Int(progress.fractionCompleted * 100) % 25 == 0 {
-                    self.logger.info("Download progress: \(Int(progress.fractionCompleted * 100))%")
-                }
-            }
-
-            // Check if LoRA adapter exists
-            let bundlePath = Bundle.main.bundlePath
-            let adapterFullPath = URL(fileURLWithPath: bundlePath)
-                .appendingPathComponent(Self.adapterPath)
-                .appendingPathComponent("adapters.safetensors")
-
-            if FileManager.default.fileExists(atPath: adapterFullPath.path) {
-                logger.info("Loading CosmoOS LoRA adapter from: \(adapterFullPath.path)")
-                // Note: mlx-swift adapter loading would go here
-                // For now, the fine-tuned weights are fused during training
-            } else {
-                logger.warning("LoRA adapter not found at \(adapterFullPath.path), using base model")
-            }
-
-            logger.info("FunctionGemma 270M loaded (~533MB peak RAM)")
-
-            // Warmup to pre-compute KV cache
-            await warmup()
-
-        } catch {
-            logger.error("Failed to load FunctionGemma: \(error.localizedDescription)")
-            throw error
-        }
+        // DORMANT: mlx-swift-lm `loadContainer` API drifted and the on-device
+        // micro-brain is unused. Callers treat a load failure as optional.
+        throw NSError(
+            domain: "CosmoOS.MicroBrain",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "FunctionGemma micro-brain disabled (on-device LLM unavailable)"]
+        )
     }
 
     /// Warmup inference to pre-compute system prompt KV cache
@@ -360,21 +327,13 @@ public final class MLXFunctionGemmaEngine: @unchecked Sendable {
     """
 
     public init() async throws {
-        print("MLXFunctionGemmaEngine: Starting FunctionGemma 270M download (~550MB)...")
-        print("MLXFunctionGemmaEngine: Model will be cached at ~/Library/Caches/models/google/")
-
-        modelContainer = try await LLMModelFactory.shared.loadContainer(
-            configuration: Self.modelConfig
-        ) { progress in
-            let percent = Int(progress.fractionCompleted * 100)
-            if percent == 25 || percent == 50 || percent == 75 || percent == 100 {
-                print("MLXFunctionGemmaEngine: Download progress: \(percent)%")
-            }
-        }
-
-        print("MLXFunctionGemmaEngine: FunctionGemma 270M loaded, running warmup...")
-        await warmup()
-        print("MLXFunctionGemmaEngine: FunctionGemma 270M ready (warmed up)")
+        // DORMANT: mlx-swift-lm `loadContainer` API drifted and the on-device
+        // micro-brain is unused. Callers treat a load failure as optional.
+        throw NSError(
+            domain: "CosmoOS.MicroBrain",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "FunctionGemma micro-brain disabled (on-device LLM unavailable)"]
+        )
     }
 
     private func warmup() async {

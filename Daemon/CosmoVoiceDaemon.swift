@@ -11,7 +11,6 @@ import MLXNN
 import MLXRandom
 import MLXLLM
 import MLXLMCommon
-import MLXEmbedders
 import WhisperKit
 
 // MARK: - Thread-safe Chunk Buffer (Actor)
@@ -1037,30 +1036,9 @@ final class MLXHermesLLMEngine: HermesLLMEngine {
     """
 
     init() async throws {
-        daemonLog("MLXHermesLLMEngine: Starting Hermes 3 Llama 3.2 3B download (~2GB)...")
-        daemonLog("MLXHermesLLMEngine: Model will be cached at ~/Library/Caches/models/mlx-community/")
-
-        // Load the model container
-        modelContainer = try await LLMModelFactory.shared.loadContainer(
-            configuration: Self.modelConfig
-        ) { progress in
-            // Log at 25%, 50%, 75%, 100%
-            let percent = Int(progress.fractionCompleted * 100)
-            if percent == 25 || percent == 50 || percent == 75 || percent == 100 {
-                daemonLog("MLXHermesLLMEngine: Download progress: \(percent)%")
-            }
-        }
-
-        // Create chat session for generation
-        if let container = modelContainer {
-            chatSession = ChatSession(
-                container,
-                instructions: "You are a helpful AI assistant that outputs JSON responses.",
-                generateParameters: GenerateParameters(maxTokens: 512, temperature: 0.3)
-            )
-        }
-
-        daemonLog("MLXHermesLLMEngine: Hermes 3 Llama 3.2 3B loaded successfully")
+        // DORMANT: mlx-swift-lm `loadContainer` API drifted and on-device LLM
+        // is unused. Daemon startup tolerates engine load failures.
+        throw DaemonError.modelNotLoaded("Hermes LLM (on-device LLM disabled)")
     }
 
     func generate(prompt: String, systemPrompt: String, schema: Data, maxTokens: Int) async throws -> Data {
@@ -1314,25 +1292,9 @@ final class MLXQuickLLMEngine: QuickLLMEngine {
     )
 
     init() async throws {
-        daemonLog("MLXQuickLLMEngine: Starting Qwen 2.5-0.5B download (~300MB)...")
-
-        // Load the model container
-        modelContainer = try await LLMModelFactory.shared.loadContainer(
-            configuration: Self.modelConfig
-        ) { progress in
-            let percent = Int(progress.fractionCompleted * 100)
-            if percent == 50 || percent == 100 {
-                daemonLog("MLXQuickLLMEngine: Download progress: \(percent)%")
-            }
-        }
-
-        daemonLog("MLXQuickLLMEngine: Qwen 2.5-0.5B loaded, running warmup...")
-
-        // WARMUP: Pre-compute system prompt KV cache with a dummy inference
-        // This makes the first real call instant instead of slow
-        await warmup()
-
-        daemonLog("MLXQuickLLMEngine: Qwen 2.5-0.5B ready (warmed up)")
+        // DORMANT: mlx-swift-lm `loadContainer` API drifted and on-device LLM
+        // is unused. Daemon startup tolerates engine load failures.
+        throw DaemonError.modelNotLoaded("Quick LLM (on-device LLM disabled)")
     }
 
     /// Warmup inference to pre-compute KV cache for system prompt
@@ -1411,86 +1373,26 @@ final class MLXQuickLLMEngine: QuickLLMEngine {
 
 // MARK: - Real MLX Embedding Engine (nomic-embed-text-v1.5)
 
-/// Real embedding engine using mlx-swift-lm MLXEmbedders
+/// Embedding engine — DORMANT.
+///
+/// The pinned `mlx-swift-lm` `MLXEmbedders` API drifted (`ModelContainer` was
+/// removed upstream), and on-device voice/embeddings are unused. This stub
+/// keeps the daemon target compiling without depending on the broken module:
+/// `init` reports the model as unavailable, so the daemon advertises
+/// `embeddingLoaded == false` and every caller (HybridSearchEngine, agent
+/// conversation memory, SmartOrganizer) falls back to keyword/BM25 search,
+/// which they already handle gracefully.
 final class MLXNomicEmbeddingEngine: NomicEmbeddingEngine {
-    private var modelContainer: MLXEmbedders.ModelContainer?
-
-    /// Matryoshka dimension (256 for efficient storage, 768 for full)
-    private let embeddingDimension = 256
-
     init() async throws {
-        daemonLog("MLXNomicEmbeddingEngine: Starting nomic-embed-text-v1.5 download...")
-        daemonLog("MLXNomicEmbeddingEngine: Model will be cached at ~/Library/Caches/models/")
-
-        // Load the nomic embedding model
-        let config = MLXEmbedders.ModelConfiguration.nomic_text_v1_5
-        modelContainer = try await MLXEmbedders.loadModelContainer(
-            configuration: config
-        ) { progress in
-            // Log at 25%, 50%, 75%, 100%
-            let percent = Int(progress.fractionCompleted * 100)
-            if percent == 25 || percent == 50 || percent == 75 || percent == 100 {
-                daemonLog("MLXNomicEmbeddingEngine: Download progress: \(percent)%")
-            }
-        }
-
-        daemonLog("MLXNomicEmbeddingEngine: nomic-embed-text-v1.5 loaded successfully")
+        throw DaemonError.modelNotLoaded("nomic embedding (on-device embeddings disabled)")
     }
 
     func embed(text: String) async throws -> [Float] {
-        guard let container = modelContainer else {
-            throw DaemonError.modelNotLoaded("nomic embedding")
-        }
-
-        // Generate embedding using the model container
-        let embedding = await container.perform { model, tokenizer, pooler in
-            // Tokenize input
-            let tokens = tokenizer.encode(text: text)
-            let inputArray = MLXArray(tokens).expandedDimensions(axis: 0)
-
-            // Create attention mask (all 1s for valid tokens)
-            let attentionMask = MLXArray.ones([1, tokens.count])
-
-            // Run through model with all required parameters
-            let output = model(
-                inputArray,
-                positionIds: nil,
-                tokenTypeIds: nil,
-                attentionMask: attentionMask
-            )
-
-            // Apply pooling - pass EmbeddingModelOutput directly, normalize
-            let pooled = pooler(output, mask: attentionMask, normalize: true)
-
-            // Evaluate and convert to Float array
-            eval(pooled)
-
-            // Get the embedding values - truncate to Matryoshka dimension (256)
-            let fullEmbedding = pooled.asArray(Float.self)
-            return Array(fullEmbedding.prefix(256))
-        }
-
-        return embedding
+        throw DaemonError.modelNotLoaded("nomic embedding (on-device embeddings disabled)")
     }
 
     func embedBatch(texts: [String]) async throws -> [[Float]] {
-        // For batch embedding, process sequentially to avoid memory issues
-        // Could be optimized with true batching if needed
-        var embeddings: [[Float]] = []
-        for text in texts {
-            let embedding = try await embed(text: text)
-            embeddings.append(embedding)
-        }
-        return embeddings
-    }
-
-    /// L2 normalize an embedding vector
-    private func l2Normalize(_ vector: [Float]) -> [Float] {
-        let norm = sqrt(vector.reduce(0) { $0 + $1 * $1 })
-        if norm > 0 {
-            return vector.map { $0 / norm }
-        }
-        return vector
+        throw DaemonError.modelNotLoaded("nomic embedding (on-device embeddings disabled)")
     }
 }
 
@@ -1774,47 +1676,9 @@ final class DaemonMLXFunctionGemmaEngine: DaemonFunctionGemmaEngine {
     )
 
     init() async throws {
-        daemonLog("MLXFunctionGemmaEngine: Starting FunctionGemma 270M download (~550MB)...")
-
-        // Try to load the fine-tuned CosmoOS model first
-        // Fall back to base FunctionGemma if not available
-        do {
-            // First try the fine-tuned CosmoOS model
-            let cosmoConfig = ModelConfiguration(
-                id: "local/functiongemma-270m-cosmo-v1",  // Local fine-tuned model
-                defaultPrompt: "You are FunctionGemma, the CosmoOS Micro-Brain."
-            )
-
-            modelContainer = try await LLMModelFactory.shared.loadContainer(
-                configuration: cosmoConfig
-            ) { progress in
-                let percent = Int(progress.fractionCompleted * 100)
-                if percent == 50 || percent == 100 {
-                    daemonLog("MLXFunctionGemmaEngine: Fine-tuned model progress: \(percent)%")
-                }
-            }
-
-            daemonLog("MLXFunctionGemmaEngine: Loaded fine-tuned CosmoOS model")
-        } catch {
-            // Fall back to base FunctionGemma
-            daemonLog("MLXFunctionGemmaEngine: Fine-tuned model not found, loading base FunctionGemma...")
-
-            modelContainer = try await LLMModelFactory.shared.loadContainer(
-                configuration: Self.modelConfig
-            ) { progress in
-                let percent = Int(progress.fractionCompleted * 100)
-                if percent == 50 || percent == 100 {
-                    daemonLog("MLXFunctionGemmaEngine: Base model progress: \(percent)%")
-                }
-            }
-        }
-
-        daemonLog("MLXFunctionGemmaEngine: FunctionGemma loaded, running warmup...")
-
-        // Warmup to pre-compute system prompt KV cache
-        await warmup()
-
-        daemonLog("MLXFunctionGemmaEngine: FunctionGemma 270M ready (warmed up)")
+        // DORMANT: mlx-swift-lm `loadContainer` API drifted and on-device LLM
+        // is unused. Daemon startup tolerates engine load failures.
+        throw DaemonError.modelNotLoaded("FunctionGemma (on-device LLM disabled)")
     }
 
     /// Warmup inference to pre-compute KV cache for system prompt

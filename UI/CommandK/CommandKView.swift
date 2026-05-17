@@ -170,6 +170,8 @@ public struct CommandKView: View {
             // Expanded domain title
             if case .expandedDomain(let tab) = viewModel.cortexMode {
                 expandedTabChip(tab)
+            } else {
+                scopeMenu
             }
 
             // Voice button
@@ -202,6 +204,63 @@ public struct CommandKView: View {
         .shadow(color: Color.black.opacity(0.06), radius: 14, x: 0, y: 4)
     }
 
+    // MARK: - Scope Menu (Decision 1C — Spaces as scope filter)
+
+    private var scopeMenu: some View {
+        Menu {
+            Button("All") {
+                if case .expandedDomain = viewModel.cortexMode { closeExpandedDomain() }
+            }
+            Divider()
+            ForEach(CortexScope.allCases) { scope in
+                Button(scope.title) { openExpandedDomain(scope.tab) }
+            }
+        } label: {
+            HStack(spacing: DS.space4) {
+                Text(scopeLabel)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space6)
+            .background(DS.vellum, in: Capsule())
+            .overlay(Capsule().strokeBorder(DS.sepiaBorder, lineWidth: 0.5))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Search scope")
+    }
+
+    private var scopeLabel: String {
+        if case .expandedDomain(let tab) = viewModel.cortexMode { return tab.title }
+        return "All"
+    }
+
+    private enum CortexScope: String, CaseIterable, Identifiable {
+        case database, swipe, ideas, library
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .database: return "Database"
+            case .swipe: return "Swipe File"
+            case .ideas: return "Ideas"
+            case .library: return "Library"
+            }
+        }
+        var tab: CommandKTab {
+            switch self {
+            case .database: return .database
+            case .swipe: return .swipeGallery
+            case .ideas: return .ideas
+            case .library: return .readwise
+            }
+        }
+    }
+
     // MARK: - Domain Bubbles (inline in search bar)
 
     private var domainBubblesInline: some View {
@@ -223,14 +282,9 @@ public struct CommandKView: View {
     @ViewBuilder
     private func contentPanel(geometry: GeometryProxy) -> some View {
         switch viewModel.cortexMode {
-        case .compact:
-            CortexCompactView(viewModel: viewModel, namespace: cortexNamespace, openDomain: openExpandedDomain)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: panelWidth(for: geometry))
-                .floatingOverlayPanel()
-        case .searchResults:
-            CortexSearchResultsView(viewModel: viewModel, openDomain: openExpandedDomain)
-                .frame(maxHeight: min(geometry.size.height * 0.65, 600))
+        case .compact, .searchResults:
+            CortexMasterDetailView(viewModel: viewModel, openDomain: openExpandedDomain)
+                .frame(height: min(geometry.size.height * 0.62, 560))
                 .frame(width: panelWidth(for: geometry))
                 .cortexGlassPanel()
         case .expandedDomain(let tab):

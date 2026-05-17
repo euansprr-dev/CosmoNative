@@ -533,6 +533,10 @@
 		AD28ECC4414EE3810E158106 /* PromptTemplateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5945212DC05736CFA9D7CFF9 /* PromptTemplateStore.swift */; };
 		AD4E6F8A1B2C43D59E70F10A /* CapturedItemRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4E6F891B2C43D59E70F10A /* CapturedItemRepository.swift */; };
 		AD71937F3A700A3EBCD7D32C /* CortexRecentCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A521BB30C7318A8C34613EF1 /* CortexRecentCard.swift */; };
+		FEEDFACE0000000000000A01 /* CortexMasterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000A02 /* CortexMasterDetailView.swift */; };
+		FEEDFACE0000000000000B01 /* CortexResultRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000B02 /* CortexResultRail.swift */; };
+		FEEDFACE0000000000000C01 /* CortexDetailPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000C02 /* CortexDetailPane.swift */; };
+		FEEDFACE0000000000000D01 /* CortexActionBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000D02 /* CortexActionBar.swift */; };
 		ADA239E71BB2FD0479D74039 /* ContentFocusPaneLayoutPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20A74C082F320ABFE0A2F6B3 /* ContentFocusPaneLayoutPolicyTests.swift */; };
 		ADB41AF76DBB0E8A9F929828 /* CodexRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3325E8AFCB5AAB831455E453 /* CodexRepository.swift */; };
 		ADC78D106F41736BFE0DA8A7 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6AC930FD36314607F7EC94D /* Theme.swift */; };
@@ -1298,6 +1302,10 @@
 		A3CA0B553A238AEED8D64FCF /* AmbientFieldEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientFieldEngine.swift; sourceTree = "<group>"; };
 		A48ECD25FED69403D785006B /* InquiryPlacementEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = InquiryPlacementEngineTests.swift; sourceTree = "<group>"; };
 		A521BB30C7318A8C34613EF1 /* CortexRecentCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexRecentCard.swift; sourceTree = "<group>"; };
+		FEEDFACE0000000000000A02 /* CortexMasterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexMasterDetailView.swift; sourceTree = "<group>"; };
+		FEEDFACE0000000000000B02 /* CortexResultRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexResultRail.swift; sourceTree = "<group>"; };
+		FEEDFACE0000000000000C02 /* CortexDetailPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexDetailPane.swift; sourceTree = "<group>"; };
+		FEEDFACE0000000000000D02 /* CortexActionBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexActionBar.swift; sourceTree = "<group>"; };
 		A525F8FD1BD8D0B98680C823 /* FocusConnectionLinesLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusConnectionLinesLayer.swift; sourceTree = "<group>"; };
 		A547E14AA66937C42D933F92 /* SidebarLayoutPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SidebarLayoutPolicyTests.swift; sourceTree = "<group>"; };
 		A560491F69BED5875D5944A7 /* XPSummaryOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XPSummaryOverlay.swift; sourceTree = "<group>"; };
@@ -2927,6 +2935,10 @@
 				AE4DF68141F6B5BBBF31FBB7 /* CortexInquiryBrowser.swift */,
 				935DDE0D6305A6C709BE9418 /* CortexReadwiseBrowser.swift */,
 				A521BB30C7318A8C34613EF1 /* CortexRecentCard.swift */,
+				FEEDFACE0000000000000A02 /* CortexMasterDetailView.swift */,
+				FEEDFACE0000000000000B02 /* CortexResultRail.swift */,
+				FEEDFACE0000000000000C02 /* CortexDetailPane.swift */,
+				FEEDFACE0000000000000D02 /* CortexActionBar.swift */,
 				379C20CD408CC7B07E4CAC18 /* CortexSearchBar.swift */,
 				1925E40057B876F9D8526BC9 /* CortexSearchResultsView.swift */,
 				DD5F35F989D5CA15C6D76C7A /* CortexSwipeBrowser.swift */,
@@ -3650,6 +3662,10 @@
 				29A9177D81D17880A1FD36AA /* CortexInquiryBrowser.swift in Sources */,
 				CE9EC912A865FACDADD10A17 /* CortexReadwiseBrowser.swift in Sources */,
 				AD71937F3A700A3EBCD7D32C /* CortexRecentCard.swift in Sources */,
+				FEEDFACE0000000000000A01 /* CortexMasterDetailView.swift in Sources */,
+				FEEDFACE0000000000000B01 /* CortexResultRail.swift in Sources */,
+				FEEDFACE0000000000000C01 /* CortexDetailPane.swift in Sources */,
+				FEEDFACE0000000000000D01 /* CortexActionBar.swift in Sources */,
 				B8271A5165E0EE230B75A5EF /* CortexSearchBar.swift in Sources */,
 				8769F7941935E808525C49AF /* CortexSearchResultsView.swift in Sources */,
 				56E740503F0D56CA5E128D55 /* CortexSwipeBrowser.swift in Sources */,

@@ -2,6 +2,22 @@ import XCTest
 @testable import CosmoOS
 
 final class CommandKSearchPipelineTests: XCTestCase {
+    func testPlainInstagramURLBecomesSwipeCaptureAction() {
+        let action = CommandKActionParser.parse("https://www.instagram.com/reel/ABC123/")
+
+        XCTAssertEqual(action?.kind, .captureSwipe)
+        XCTAssertEqual(action?.title, "Capture Swipe")
+        XCTAssertEqual(action?.payload.url, "https://www.instagram.com/reel/ABC123/")
+    }
+
+    func testPlainWebsiteURLBecomesResearchCaptureAction() {
+        let action = CommandKActionParser.parse("https://example.com/article")
+
+        XCTAssertEqual(action?.kind, .captureResearch)
+        XCTAssertEqual(action?.title, "Capture Research")
+        XCTAssertEqual(action?.payload.url, "https://example.com/article")
+    }
+
     func testCommandKLauncherDomainsUsePolishedPresentationLabels() {
         XCTAssertEqual(CommandKTab.allCases.map(\.title), ["Database", "Swipe File", "Ideas", "Library"])
         XCTAssertEqual(CommandKTab.allCases.map(\.searchPlaceholder), [
@@ -450,11 +466,11 @@ final class CommandKSearchPipelineTests: XCTestCase {
         )
     }
 
-    func testRecentComposerIncludesUpdatedAtomsThatWereNeverOpened() {
+    func testRecentComposerUsesOnlyOpenedAtomsForCommandKRecents() {
         let openedAtom = Atom.new(type: .idea, title: "Opened idea")
         let capturedAtom = Atom.new(type: .research, title: "Fresh capture")
-        let oldOpenedAt = "2026-05-01T10:00:00Z"
-        let freshUpdatedAt = "2026-05-06T10:00:00Z"
+        let oldOpenedAt = "2001-05-01T10:00:00Z"
+        let freshUpdatedAt = ISO8601DateFormatter().string(from: Date())
 
         let items = CommandKRecentComposer.compose(
             opened: [
@@ -467,8 +483,9 @@ final class CommandKSearchPipelineTests: XCTestCase {
             limit: 8
         )
 
-        XCTAssertEqual(items.map(\.id), [capturedAtom.uuid, openedAtom.uuid])
+        XCTAssertEqual(items.map(\.id), [openedAtom.uuid])
         XCTAssertFalse(items.first?.relativeDate.isEmpty ?? true)
+        XCTAssertNotEqual(items.first?.relativeDate, "1m")
 
         let ranked = CommandKRecentComposer.rankedResults(
             opened: [
@@ -481,7 +498,8 @@ final class CommandKSearchPipelineTests: XCTestCase {
             limit: 8
         )
 
-        XCTAssertEqual(ranked.map(\.atomUUID), [capturedAtom.uuid, openedAtom.uuid])
+        XCTAssertEqual(ranked.map(\.atomUUID), [openedAtom.uuid])
+        XCTAssertEqual(ranked.first?.updatedAt, oldOpenedAt)
     }
 
     func testActionParserParsesSwipeLinkAction() {

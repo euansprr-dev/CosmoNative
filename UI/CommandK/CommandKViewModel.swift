@@ -401,10 +401,10 @@ enum CommandKRecentComposer {
 
     static func compose(
         opened: [OpenedAtom],
-        recentlyUpdated: [Atom],
+        recentlyUpdated _: [Atom] = [],
         limit: Int
     ) -> [RecentDisplayItem] {
-        return sortedCandidates(opened: opened, recentlyUpdated: recentlyUpdated)
+        return sortedOpenedCandidates(opened: opened)
             .prefix(limit)
             .map { candidate in
                 let atom = candidate.atom
@@ -427,10 +427,10 @@ enum CommandKRecentComposer {
 
     static func rankedResults(
         opened: [OpenedAtom],
-        recentlyUpdated: [Atom],
+        recentlyUpdated _: [Atom] = [],
         limit: Int
     ) -> [RankedResult] {
-        sortedCandidates(opened: opened, recentlyUpdated: recentlyUpdated)
+        sortedOpenedCandidates(opened: opened)
             .prefix(limit)
             .map { candidate in
                 let atom = candidate.atom
@@ -449,15 +449,8 @@ enum CommandKRecentComposer {
             }
     }
 
-    private static func sortedCandidates(
-        opened: [OpenedAtom],
-        recentlyUpdated: [Atom]
-    ) -> [Candidate] {
+    private static func sortedOpenedCandidates(opened: [OpenedAtom]) -> [Candidate] {
         var candidates: [String: Candidate] = [:]
-
-        for atom in recentlyUpdated {
-            consider(atom: atom, timestamp: atom.updatedAt, accessCount: 0, candidates: &candidates)
-        }
 
         for item in opened {
             consider(atom: item.atom, timestamp: item.openedAt, accessCount: item.accessCount, candidates: &candidates)
@@ -1136,11 +1129,20 @@ public final class CommandKViewModel: ObservableObject {
     /// Top fast action parsed from the current query, shown before search results.
     @Published var primaryAction: CommandKAction? = nil
 
+    /// Saved quicklinks and user commands that match the current query.
+    @Published var userCommandRows: [CommandKUserCommandRow] = []
+
     /// Whether a fast action is currently executing.
     @Published var isExecutingAction: Bool = false
 
     /// Inline status for the action preview row.
     @Published var actionStatusMessage: String? = nil
+
+    var activeCommandAction: CommandKAction? {
+        if let primaryAction { return primaryAction }
+        guard let selectedNodeId else { return nil }
+        return userCommandRows.first { $0.id == selectedNodeId }?.action
+    }
 
     /// Monotonic request token so slower unified searches cannot overwrite newer ones.
     private var unifiedSearchRequestID: Int = 0
@@ -1160,6 +1162,8 @@ public final class CommandKViewModel: ObservableObject {
     private var swipeFilterTask: Task<Void, Never>?
     private var swipeFilterGeneration = 0
     private var isSurfaceActive = true
+    private let userCommandStore = CommandKUserCommandStore()
+    private let userCommandComposer = CommandKUserCommandSearchComposer()
 
     /// Unfiltered results for computing filter counts
     private var unfilteredResults: [RankedResult] = []
@@ -1277,6 +1281,7 @@ public final class CommandKViewModel: ObservableObject {
 
         if let action = CommandKActionParser.parse(query) {
             primaryAction = action
+            userCommandRows = []
             actionStatusMessage = nil
             activeTypePrefix = nil
             selectedTypeFilters.removeAll()
@@ -1317,6 +1322,7 @@ public final class CommandKViewModel: ObservableObject {
             unifiedGroupedResults = []
             unifiedFlatResults = []
             unifiedCardItems = []
+            userCommandRows = []
             // Auto-return to compact when query cleared (unless in expanded domain)
             if cortexMode == .searchResults {
                 cortexMode = .compact
@@ -1329,6 +1335,13 @@ public final class CommandKViewModel: ObservableObject {
             await showRecents()
             return
         }
+
+        let matchedUserCommandRows = prefixType == nil
+            ? await loadUserCommandRows(for: searchQuery)
+            : []
+        guard await searchPipeline.isCurrent(requestID) else { return }
+        userCommandRows = matchedUserCommandRows
+        updateActiveSearchSelection()
 
         // Auto-transition to search results when typing in compact mode
         if cortexMode == .compact {
@@ -1495,6 +1508,15 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
+    private func loadUserCommandRows(for query: String) async -> [CommandKUserCommandRow] {
+        do {
+            let quicklinks = try await userCommandStore.searchQuicklinks(query)
+            return Array(userCommandComposer.rows(for: quicklinks).prefix(6))
+        } catch {
+            return []
+        }
+    }
+
     /// Fallback to direct atom search if HybridSearchEngine fails
     private func fallbackToGraphSearch(query: String) async {
         do {
@@ -1581,9 +1603,7 @@ public final class CommandKViewModel: ObservableObject {
         isShowingRecents = true
 
         do {
-            async let openedRequest = AtomRepository.shared.fetchRecentlyOpened(limit: 24)
-            async let updatedRequest = AtomRepository.shared.fetchRecent(limit: 24)
-            let (openedAtoms, updatedAtoms) = try await (openedRequest, updatedRequest)
+            let openedAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 24)
             let opened = openedAtoms.map {
                 CommandKRecentComposer.OpenedAtom(
                     atom: $0.atom,
@@ -1594,7 +1614,6 @@ public final class CommandKViewModel: ObservableObject {
 
             var combinedResults = CommandKRecentComposer.rankedResults(
                 opened: opened,
-                recentlyUpdated: updatedAtoms,
                 limit: 8
             )
             combinedResults.sort()
@@ -1761,6 +1780,12 @@ public final class CommandKViewModel: ObservableObject {
             return
         }
 
+        if let selectedNodeId,
+           let row = userCommandRows.first(where: { $0.id == selectedNodeId }) {
+            performAction(row.action)
+            return
+        }
+
         // Intercept task creation mode
         if isTaskCreationMode {
             createTaskFromQuery()
@@ -1846,7 +1871,11 @@ public final class CommandKViewModel: ObservableObject {
 
     public func performPrimaryAction() {
         guard let action = primaryAction, !isExecutingAction else { return }
+        performAction(action)
+    }
 
+    private func performAction(_ action: CommandKAction) {
+        guard !isExecutingAction else { return }
         if !action.isExecutable {
             actionStatusMessage = "Add the missing detail first."
             return
@@ -1946,6 +1975,35 @@ public final class CommandKViewModel: ObservableObject {
                 primaryAction = nil
                 actionStatusMessage = nil
             }
+
+        case .openAtom:
+            guard let uuid = action.payload.atomUUID else { return }
+            Task {
+                try? await NodeGraphEngine.shared.recordAccess(atomUUID: uuid, type: .view)
+            }
+            NotificationCenter.default.post(
+                name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+                object: nil,
+                userInfo: ["atomUUID": uuid]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+            finishAction()
+
+        case .openThinkspace:
+            guard let thinkspaceID = action.payload.thinkspaceID else { return }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                object: nil,
+                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: thinkspaceID).userInfo
+            )
+            finishAction()
+
+        case .savedSearch:
+            guard let savedQuery = action.payload.queryText else { return }
+            primaryAction = nil
+            actionStatusMessage = nil
+            query = savedQuery
+            await performSearch(query: savedQuery)
 
         case .openApp:
             guard let appName = action.payload.title else { return }
@@ -2055,9 +2113,7 @@ public final class CommandKViewModel: ObservableObject {
     public func loadRecentsForCompact() async {
         guard isSurfaceActive else { return }
         do {
-            async let openedRequest = AtomRepository.shared.fetchRecentlyOpened(limit: 24)
-            async let updatedRequest = AtomRepository.shared.fetchRecent(limit: 24)
-            let (openedAtoms, updatedAtoms) = try await (openedRequest, updatedRequest)
+            let openedAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 24)
             let opened = openedAtoms.map {
                 CommandKRecentComposer.OpenedAtom(
                     atom: $0.atom,
@@ -2067,7 +2123,6 @@ public final class CommandKViewModel: ObservableObject {
             }
             recentItems = CommandKRecentComposer.compose(
                 opened: opened,
-                recentlyUpdated: updatedAtoms,
                 limit: 8
             )
             if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -2208,6 +2263,7 @@ public final class CommandKViewModel: ObservableObject {
     public func selectPrevious() {
         if navigateExpandedDomainSelection(delta: -1) { return }
         if navigateRecentSelection(delta: -1) { return }
+        if navigateActiveSearchSelection(delta: -1) { return }
 
         if isUnifiedSearchActive {
             guard !unifiedFlatResults.isEmpty else { return }
@@ -2235,6 +2291,7 @@ public final class CommandKViewModel: ObservableObject {
     public func selectNext() {
         if navigateExpandedDomainSelection(delta: 1) { return }
         if navigateRecentSelection(delta: 1) { return }
+        if navigateActiveSearchSelection(delta: 1) { return }
 
         if isUnifiedSearchActive {
             guard !unifiedFlatResults.isEmpty else { return }
@@ -2271,6 +2328,15 @@ public final class CommandKViewModel: ObservableObject {
         return navigateSelection(in: recentItems.map(\.id), delta: delta)
     }
 
+    private func navigateActiveSearchSelection(delta: Int) -> Bool {
+        guard primaryAction == nil,
+              !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              cortexMode == .compact || cortexMode == .searchResults else {
+            return false
+        }
+        return navigateSelection(in: activeSearchSelectionIDs, delta: delta)
+    }
+
     private func navigateSelection(in ids: [String], delta: Int) -> Bool {
         guard !ids.isEmpty else { return false }
         let currentIndex = selectedNodeId.flatMap { ids.firstIndex(of: $0) } ?? selectedResultIndex
@@ -2279,6 +2345,28 @@ public final class CommandKViewModel: ObservableObject {
         selectedResultIndex = nextIndex
         selectedNodeId = ids[nextIndex]
         return true
+    }
+
+    private var activeSearchSelectionIDs: [String] {
+        userCommandRows.map(\.id) + unifiedFlatResults.map(\.selectionID)
+    }
+
+    private func updateActiveSearchSelection() {
+        let ids = activeSearchSelectionIDs
+        guard !ids.isEmpty else {
+            selectedResultIndex = -1
+            selectedNodeId = nil
+            return
+        }
+
+        if let selectedNodeId,
+           let current = ids.firstIndex(of: selectedNodeId) {
+            selectedResultIndex = current
+            return
+        }
+
+        selectedResultIndex = 0
+        selectedNodeId = ids[0]
     }
 
     // MARK: - Filter
@@ -2943,8 +3031,7 @@ public final class CommandKViewModel: ObservableObject {
             unifiedGroupedResults = []
             unifiedFlatResults = []
             unifiedCardItems = []
-            selectedResultIndex = -1
-            selectedNodeId = nil
+            updateActiveSearchSelection()
             return
         }
 
@@ -2954,8 +3041,7 @@ public final class CommandKViewModel: ObservableObject {
             unifiedGroupedResults = []
             unifiedFlatResults = []
             unifiedCardItems = []
-            selectedResultIndex = -1
-            selectedNodeId = nil
+            updateActiveSearchSelection()
             return
         }
 
@@ -3031,14 +3117,7 @@ public final class CommandKViewModel: ObservableObject {
         unifiedFlatResults = regrouped.flatResults
         unifiedLibraryItemsByID = libraryItemsByID
 
-        // Reset keyboard selection to first result
-        if let first = unifiedFlatResults.first {
-            selectedResultIndex = 0
-            selectedNodeId = first.selectionID
-        } else {
-            selectedResultIndex = -1
-            selectedNodeId = nil
-        }
+        updateActiveSearchSelection()
 
         let swipeItemsByUUID = Dictionary(uniqueKeysWithValues: swipeGalleryItems.map { ($0.atomUUID, $0) })
         unifiedCardItems = CommandKUnifiedSearchComposer.buildCardItems(

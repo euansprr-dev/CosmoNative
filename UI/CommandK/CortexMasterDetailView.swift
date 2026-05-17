@@ -11,6 +11,9 @@ struct CortexMasterDetailView: View {
     @StateObject private var libraryVM = LibraryViewModel()
     @StateObject private var bookStore = ReadwiseBookStore.shared
     @State private var isLoadingDomain = false
+    @State private var isActionPanelPresented = false
+    @State private var actionSearchQuery = ""
+    @State private var actionErrorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,27 +38,62 @@ struct CortexMasterDetailView: View {
 
             CortexActionBar(
                 viewModel: viewModel,
-                selectedAtomUUID: detailSubject.atomUUID,
+                primaryAction: primaryAction,
+                actions: contextualActions,
                 hasSelection: hasSelection,
-                onOpen: { viewModel.openSelected() }
+                onOpen: { viewModel.openSelected() },
+                onShowActions: showActionPanel
             )
         }
+        .overlay(alignment: .bottomTrailing) {
+            if isActionPanelPresented {
+                actionPanel
+                    .padding(.trailing, DS.space20)
+                    .padding(.bottom, 58)
+                    .transition(.scale(scale: 0.98, anchor: .bottomTrailing).combined(with: .opacity))
+                    .zIndex(10)
+            }
+        }
+        .animation(ProMotionSprings.snappy, value: isActionPanelPresented)
         .task(id: domainLoadKey) { await loadDomainDataIfNeeded() }
         .onChange(of: domainSelectionIDs) { _, _ in syncDomainNavigation() }
         .onChange(of: viewModel.cortexMode) { _, _ in syncDomainNavigation() }
+        .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
+            showActionPanel()
+        }
+    }
+
+    private var actionPanel: some View {
+        CommandKActionPanel(
+            title: "Command K Actions",
+            groups: actionGroups,
+            errorMessage: actionErrorMessage,
+            execute: executeContextualAction,
+            dismiss: { isActionPanelPresented = false },
+            searchQuery: $actionSearchQuery
+        )
     }
 
     /// Resolve the current selection (driven by keyboard nav + row taps) into
     /// a uniform preview subject without the panes knowing the source.
     private var detailSubject: CortexDetailSubject {
         guard let id = viewModel.selectedNodeId else { return .empty }
-        if let domainItem = selectedDomainItem(for: id) {
+        if let action = viewModel.primaryAction, action.id == id {
+            return .action(action)
+        } else if let row = viewModel.userCommandRows.first(where: { $0.id == id }) {
+            return .action(row.action)
+        } else if let domainItem = selectedDomainItem(for: id) {
             return domainItem.detailSubject
         } else if viewModel.query.isEmpty {
             if let item = viewModel.recentItems.first(where: { $0.id == id }) {
+                if let swipe = swipeItem(atomUUID: item.id) { return .swipe(swipe) }
+                if let idea = ideaItem(atomUUID: item.id) { return .idea(idea) }
                 return .recent(item)
             }
         } else if let result = viewModel.unifiedFlatResults.first(where: { $0.selectionID == id }) {
+            if let atomUUID = result.atomUUID, let swipe = swipeItem(atomUUID: atomUUID) { return .swipe(swipe) }
+            if let atomUUID = result.atomUUID, let idea = ideaItem(atomUUID: atomUUID) { return .idea(idea) }
+            if let bookID = result.readwiseBookId, let book = readwiseBook(id: bookID) { return .readwise(book) }
             return .result(result)
         }
         return .empty
@@ -64,6 +102,29 @@ struct CortexMasterDetailView: View {
     private var hasSelection: Bool {
         if case .empty = detailSubject { return false }
         return true
+    }
+
+    private var actionContext: CommandKActionContext {
+        CommandKActionContext(
+            query: viewModel.query,
+            subject: detailSubject,
+            hydratedAtom: nil,
+            mode: viewModel.cortexMode,
+            activeInquirySessionUUID: nil,
+            activeContentDraftUUID: nil
+        )
+    }
+
+    private var contextualActions: [CommandKContextualAction] {
+        CommandKActionRegistry().actions(for: actionContext)
+    }
+
+    private var actionGroups: [(category: CommandKActionCategory, actions: [CommandKContextualAction])] {
+        CommandKActionRegistry().groupedActions(for: actionContext)
+    }
+
+    private var primaryAction: CommandKContextualAction? {
+        contextualActions.first { $0.category == .primary }
     }
 
     private var isExpandedDomain: Bool {
@@ -107,6 +168,18 @@ struct CortexMasterDetailView: View {
         return domainItems.first { $0.selectionID == id }
     }
 
+    private func swipeItem(atomUUID: String) -> SwipeGalleryItem? {
+        viewModel.swipeGalleryItems.first { $0.atomUUID == atomUUID }
+    }
+
+    private func ideaItem(atomUUID: String) -> IdeaGalleryItem? {
+        viewModel.ideaGalleryItems.first { $0.atomUUID == atomUUID }
+    }
+
+    private func readwiseBook(id: Int) -> ReadwiseLibraryBook? {
+        bookStore.books.first { $0.id == id }
+    }
+
     @MainActor
     private func loadDomainDataIfNeeded() async {
         guard case .expandedDomain(let tab) = viewModel.cortexMode, isDomainHydrated else {
@@ -147,5 +220,25 @@ struct CortexMasterDetailView: View {
     private func openDomainItem(_ item: CommandKDomainRailItem) {
         selectDomainItem(item)
         viewModel.openSelected()
+    }
+
+    private func showActionPanel() {
+        guard !contextualActions.isEmpty else { return }
+        actionErrorMessage = nil
+        actionSearchQuery = ""
+        isActionPanelPresented = true
+    }
+
+    private func executeContextualAction(_ action: CommandKContextualAction) {
+        guard action.availability.isEnabled else { return }
+        actionErrorMessage = nil
+        Task { @MainActor in
+            do {
+                try await CommandKActionExecutor().execute(action.intent)
+                isActionPanelPresented = false
+            } catch {
+                actionErrorMessage = error.localizedDescription
+            }
+        }
     }
 }

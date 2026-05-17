@@ -1,68 +1,29 @@
 // CosmoOS/UI/CommandK/CortexActionsMenu.swift
-// The Raycast-style "Actions" menu for the action bar. Universal uuid-based
-// actions (mirrors the row context menus' notification contract) so it works
-// identically for Recents and search results.
+// The Raycast-style "Actions" affordance for the action bar. The actual action
+// list lives in CommandKActionPanel so actions are searchable and keyboard-native.
 
 import SwiftUI
 
 struct CortexActionsMenu: View {
-    let atomUUID: String?
+    let isEnabled: Bool
+    let onShowActions: () -> Void
 
     var body: some View {
-        Menu {
-            if let uuid = atomUUID {
-                Button {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-                        object: nil, userInfo: ["atomUUID": uuid]
-                    )
-                    NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
-                } label: {
-                    Label("Open in Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
-                }
-
-                Button {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.NodeGraph.addToCanvas,
-                        object: nil, userInfo: ["atomUUID": uuid]
-                    )
-                } label: {
-                    Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
-                }
-
-                Button {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.NodeGraph.goToObjectFromCommandK,
-                        object: nil, userInfo: ["atomUUID": uuid]
-                    )
-                    NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
-                } label: {
-                    Label("Go to Object", systemImage: "scope")
-                }
-
-                Divider()
-
-                Button(role: .destructive) {
-                    Task { try? await AtomRepository.shared.delete(uuid: uuid) }
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            }
-        } label: {
+        Button(action: onShowActions) {
             HStack(spacing: DS.space6) {
                 Text("Actions")
                     .font(DS.caption)
-                    .foregroundStyle(atomUUID == nil ? DS.textMuted : DS.textSecondary)
+                    .foregroundStyle(isEnabled ? DS.textSecondary : DS.textMuted)
                 CortexKeycap(symbol: "command")
                 CortexKeycap(symbol: "K", isLetter: true)
             }
             .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .keyboardShortcut("k", modifiers: .command)
         .fixedSize()
-        .disabled(atomUUID == nil)
-        .accessibilityLabel("Item actions")
+        .disabled(!isEnabled)
+        .accessibilityLabel("Show actions")
     }
 }
 

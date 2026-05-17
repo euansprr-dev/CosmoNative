@@ -6,9 +6,11 @@ import SwiftUI
 
 struct CortexActionBar: View {
     @ObservedObject var viewModel: CommandKViewModel
-    let selectedAtomUUID: String?
+    let primaryAction: CommandKContextualAction?
+    let actions: [CommandKContextualAction]
     var hasSelection: Bool
     var onOpen: () -> Void
+    var onShowActions: () -> Void
 
     var body: some View {
         HStack(spacing: DS.space12) {
@@ -20,22 +22,25 @@ struct CortexActionBar: View {
 
             Button(action: onOpen) {
                 HStack(spacing: DS.space6) {
-                    Text("Open")
+                    Text(primaryLabel)
                         .font(DS.caption)
-                        .foregroundStyle(hasSelection ? DS.text : DS.textMuted)
+                        .foregroundStyle(canOpen ? DS.text : DS.textMuted)
                     CortexKeycap(symbol: "return")
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!hasSelection)
+            .disabled(!canOpen)
             .accessibilityLabel("Open selection")
 
             Rectangle()
                 .fill(DS.sepiaSubtle)
                 .frame(width: 0.5, height: 14)
 
-            CortexActionsMenu(atomUUID: selectedAtomUUID)
+            CortexActionsMenu(
+                isEnabled: !actions.isEmpty,
+                onShowActions: onShowActions
+            )
         }
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space12)
@@ -45,7 +50,23 @@ struct CortexActionBar: View {
     }
 
     private var contextLabel: String {
+        if let status = viewModel.actionStatusMessage { return status }
         if case .expandedDomain(let tab) = viewModel.cortexMode { return tab.title }
         return viewModel.query.isEmpty ? "Command K" : "Results"
+    }
+
+    private var canOpen: Bool {
+        if let action = viewModel.activeCommandAction {
+            return action.isExecutable && !viewModel.isExecutingAction
+        }
+        return hasSelection && (primaryAction?.availability.isEnabled ?? true)
+    }
+
+    private var primaryLabel: String {
+        if viewModel.isExecutingAction { return "Working" }
+        if let action = viewModel.activeCommandAction { return action.title }
+        guard let primaryAction else { return "Open" }
+        if primaryAction.id == .openFocusMode { return "Open" }
+        return primaryAction.title
     }
 }

@@ -14,6 +14,9 @@ enum CommandKActionKind: String, Equatable {
     case navigateCommandCenter
     case navigateLastThinkspace
     case openDomain
+    case openAtom
+    case openThinkspace
+    case savedSearch
     case openApp
     case askCosmo
 }
@@ -28,6 +31,10 @@ struct CommandKActionPayload: Equatable {
     var ideaContext: String? = nil
     var hook: String? = nil
     var domain: String? = nil
+    var atomUUID: String? = nil
+    var thinkspaceID: String? = nil
+    var queryText: String? = nil
+    var quicklinkID: String? = nil
     var rawText: String? = nil
 }
 
@@ -46,6 +53,10 @@ struct CommandKAction: Identifiable, Equatable {
             payload.destinationName,
             payload.subroute?.rawValue,
             payload.domain,
+            payload.atomUUID,
+            payload.thinkspaceID,
+            payload.queryText,
+            payload.quicklinkID,
             payload.body
         ]
         .compactMap { $0 }
@@ -66,6 +77,12 @@ struct CommandKAction: Identifiable, Equatable {
             return payload.title?.isEmpty == false || payload.body?.isEmpty == false || payload.url != nil
         case .navigateCommandCenter, .navigateLastThinkspace, .openDomain:
             return true
+        case .openAtom:
+            return payload.atomUUID?.isEmpty == false
+        case .openThinkspace:
+            return payload.thinkspaceID?.isEmpty == false
+        case .savedSearch:
+            return payload.queryText?.isEmpty == false
         case .openApp:
             return payload.title?.isEmpty == false
         case .askCosmo:
@@ -154,6 +171,10 @@ enum CommandKActionParser {
 
         if let swipe = parseSwipe(trimmed) {
             return swipe
+        }
+
+        if let urlCapture = parseURLCapture(trimmed) {
+            return urlCapture
         }
 
         if let lane = parseCaptureLane(trimmed) {
@@ -329,6 +350,40 @@ enum CommandKActionParser {
             icon: "bolt.fill",
             payload: CommandKActionPayload(url: url, rawText: text)
         )
+    }
+
+    private static func parseURLCapture(_ text: String) -> CommandKAction? {
+        guard let url = firstURL(in: text) else { return nil }
+        let classification = SwipeURLClassifier().classify(url)
+        guard classification.isUrl else { return nil }
+
+        if isSwipeSource(classification.sourceType) {
+            return CommandKAction(
+                kind: .captureSwipe,
+                title: "Capture Swipe",
+                subtitle: url,
+                icon: "bolt.fill",
+                payload: CommandKActionPayload(url: url, rawText: text)
+            )
+        }
+
+        return CommandKAction(
+            kind: .captureResearch,
+            title: "Capture Research",
+            subtitle: url,
+            icon: "doc.text.magnifyingglass",
+            payload: CommandKActionPayload(url: url, title: url, body: text, rawText: text)
+        )
+    }
+
+    private static func isSwipeSource(_ sourceType: ResearchRichContent.SourceType) -> Bool {
+        switch sourceType {
+        case .instagram, .instagramReel, .instagramPost, .instagramCarousel,
+             .youtube, .youtubeShort, .xPost, .twitter, .threads, .tiktok, .loom:
+            return true
+        default:
+            return false
+        }
     }
 
     private static func parseCaptureLane(_ text: String) -> CommandKAction? {

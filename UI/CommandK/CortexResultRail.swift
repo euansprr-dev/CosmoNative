@@ -268,9 +268,59 @@ struct CortexResultRail: View {
     @ViewBuilder
     private var resultsSections: some View {
         let groups = viewModel.unifiedGroupedResults.filter { !$0.results.isEmpty }
-        if groups.isEmpty {
+        if viewModel.primaryAction == nil && groups.isEmpty {
             railHint(viewModel.currentPhase == .searching ? "Searching…" : "No matches yet.")
         } else {
+            if let action = viewModel.primaryAction {
+                AtelierOrnamentalSectionLabel(label: "COMMAND")
+                CortexRailRow(
+                    title: action.title,
+                    subtitle: action.subtitle ?? "Press return to run",
+                    accent: DS.accent,
+                    thumbnailURL: nil,
+                    previewText: action.subtitle ?? action.payload.rawText,
+                    isConnection: false,
+                    isSelected: viewModel.selectedNodeId == action.id,
+                    onSelect: {
+                        viewModel.selectedNodeId = action.id
+                        viewModel.selectedResultIndex = 0
+                    },
+                    onOpen: {
+                        viewModel.selectedNodeId = action.id
+                        viewModel.selectedResultIndex = 0
+                        viewModel.performPrimaryAction()
+                    }
+                )
+                .id(action.id)
+            }
+
+            if !viewModel.userCommandRows.isEmpty {
+                AtelierOrnamentalSectionLabel(label: "QUICKLINKS")
+                ForEach(viewModel.userCommandRows) { row in
+                    CortexRailRow(
+                        title: row.title,
+                        subtitle: row.subtitle,
+                        accent: DS.gilt,
+                        thumbnailURL: nil,
+                        previewText: row.action.subtitle,
+                        isConnection: false,
+                        isSelected: viewModel.selectedNodeId == row.id,
+                        onSelect: {
+                            viewModel.selectedNodeId = row.id
+                            viewModel.selectedResultIndex =
+                                viewModel.userCommandRows.firstIndex { $0.id == row.id } ?? -1
+                        },
+                        onOpen: {
+                            viewModel.selectedNodeId = row.id
+                            viewModel.selectedResultIndex =
+                                viewModel.userCommandRows.firstIndex { $0.id == row.id } ?? -1
+                            viewModel.openSelected()
+                        }
+                    )
+                    .id(row.id)
+                }
+            }
+
             ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                 AtelierOrnamentalSectionLabel(label: group.source.displayName.uppercased())
                 ForEach(group.results) { result in

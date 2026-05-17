@@ -3,6 +3,7 @@
 // connection / reading excerpt) + the INFORMATION metadata table, hydrated
 // from a lazy AtomRepository fetch keyed to the current selection.
 
+import AVKit
 import SwiftUI
 
 /// Maps the current Command-K selection to a uniform preview subject so the
@@ -15,6 +16,7 @@ enum CortexDetailSubject {
     case swipe(SwipeGalleryItem)
     case idea(IdeaGalleryItem)
     case readwise(ReadwiseLibraryBook)
+    case action(CommandKAction)
 
     var title: String {
         switch self {
@@ -25,6 +27,7 @@ enum CortexDetailSubject {
         case .swipe(let item): return item.title
         case .idea(let item): return item.title
         case .readwise(let book): return book.title
+        case .action(let action): return action.title
         }
     }
 
@@ -37,6 +40,7 @@ enum CortexDetailSubject {
         case .swipe: return "Swipe File"
         case .idea: return "Idea"
         case .readwise(let book): return book.category.displayName
+        case .action: return "Command"
         }
     }
 
@@ -49,6 +53,7 @@ enum CortexDetailSubject {
         case .swipe(let item): return [item.creatorName ?? item.author, item.platformName].compactMap { $0 }.joined(separator: " · ")
         case .idea(let item): return [item.status.displayName, item.clientName].compactMap { $0 }.joined(separator: " · ")
         case .readwise(let book): return [book.author, "\(book.numHighlights) highlights"].compactMap { $0 }.joined(separator: " · ")
+        case .action(let action): return action.subtitle
         }
     }
 
@@ -61,6 +66,7 @@ enum CortexDetailSubject {
         case .swipe: return DS.entitySwipe
         case .idea: return DS.entityIdea
         case .readwise: return DS.entityReadwise
+        case .action: return DS.accent
         }
     }
 
@@ -80,6 +86,7 @@ enum CortexDetailSubject {
         case .swipe(let item): return item.hookText
         case .idea(let item): return item.context ?? item.body ?? item.hooks.first
         case .readwise(let book): return book.highlights.first?.text ?? "\(book.numHighlights) saved highlights"
+        case .action(let action): return action.subtitle ?? action.payload.rawText
         default: return nil
         }
     }
@@ -123,6 +130,13 @@ enum CortexDetailSubject {
         switch self {
         case .library(let item): return max(item.childCount, item.blockCount)
         default: return nil
+        }
+    }
+
+    var preferredPreviewHeight: CGFloat {
+        switch self {
+        case .swipe: return 380
+        default: return 220
         }
     }
 }
@@ -177,9 +191,9 @@ struct CortexDetailPane: View {
     private var loaded: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space16) {
-                CortexPreviewBlock(subject: subject, bodyText: atom?.body)
+                CortexPreviewBlock(subject: subject, atom: atom)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 220)
+                    .frame(height: previewHeight)
                     .clipShape(.rect(cornerRadius: DS.radiusMedium))
                     .overlay(
                         RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
@@ -203,27 +217,36 @@ struct CortexDetailPane: View {
         }
         .scrollIndicators(.hidden)
     }
+
+    private var previewHeight: CGFloat {
+        if atom?.toSwipeGalleryItem() != nil { return 380 }
+        return subject.preferredPreviewHeight
+    }
 }
 
 /// Per-type preview: media → image, connection → section map, text → a
 /// serif reading excerpt, otherwise a faux page.
 private struct CortexPreviewBlock: View {
     let subject: CortexDetailSubject
-    let bodyText: String?
+    let atom: Atom?
 
     var body: some View {
-        switch subject {
-        case .library(let item):
-            CommandKLibraryThumbnail(item: item, cornerRadius: DS.radiusMedium)
-                .background(DS.vellum)
-        case .swipe(let item):
-            CortexSwipeDomainPreview(item: item)
-        case .idea(let item):
-            CortexIdeaDomainPreview(item: item)
-        case .readwise(let book):
-            CortexReadwiseDomainPreview(book: book)
-        default:
-            genericPreview
+        if let item = atom?.toSwipeGalleryItem() {
+            CortexSwipeDomainPreview(item: item, atom: atom)
+        } else {
+            switch subject {
+            case .library(let item):
+                CommandKLibraryThumbnail(item: item, cornerRadius: DS.radiusMedium)
+                    .background(DS.vellum)
+            case .swipe(let item):
+                CortexSwipeDomainPreview(item: item, atom: atom)
+            case .idea(let item):
+                CortexIdeaDomainPreview(item: item)
+            case .readwise(let book):
+                CortexReadwiseDomainPreview(book: book)
+            default:
+                genericPreview
+            }
         }
     }
 
@@ -241,7 +264,7 @@ private struct CortexPreviewBlock: View {
     }
 
     private var readingText: String? {
-        let t = bodyText ?? subject.previewText
+        let t = atom?.body ?? subject.previewText
         guard let t, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return t
     }
@@ -262,67 +285,413 @@ private struct CortexPreviewBlock: View {
 
 private struct CortexSwipeDomainPreview: View {
     let item: SwipeGalleryItem
+    let atom: Atom?
+
+    @State private var selectedMediaIndex = 0
+
+    private var mediaItems: [CortexSwipePreviewMedia] {
+        CortexSwipePreviewMedia.resolve(for: item, atom: atom)
+    }
+
+    private var selectedMedia: CortexSwipePreviewMedia {
+        mediaItems[min(max(selectedMediaIndex, 0), max(mediaItems.count - 1, 0))]
+    }
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            imageLayer
-            LinearGradient(
-                colors: [Color.black.opacity(0), Color.black.opacity(0.62)],
-                startPoint: .center,
-                endPoint: .bottom
-            )
-            VStack(alignment: .leading, spacing: DS.space8) {
-                if let hookType = item.hookType {
-                    Text(hookType.displayName)
-                        .font(DS.caption2)
-                        .foregroundStyle(hookType.color)
-                        .padding(.horizontal, DS.space8)
-                        .frame(height: 24)
-                        .background(hookType.color.opacity(0.18), in: Capsule())
-                }
-                Text(item.hookText ?? item.title)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(4)
-                Text([item.creatorName ?? item.author, item.platformName].compactMap { $0 }.joined(separator: " · "))
-                    .font(DS.caption)
-                    .foregroundStyle(.white.opacity(0.76))
-                    .lineLimit(1)
-            }
-            .padding(DS.space16)
+        VStack(spacing: DS.space10) {
+            swipeToolbar
+            mediaStage
+            slideControls
         }
+        .padding(DS.space12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.vellum)
+        .onChange(of: item.id) { _, _ in selectedMediaIndex = 0 }
+    }
+
+    private var swipeToolbar: some View {
+        HStack(spacing: DS.space8) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: selectedMedia.style.iconName)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(selectedMedia.style.label)
+                    .font(DS.smallCaps)
+            }
+            .foregroundStyle(DS.giltMuted)
+
+            Spacer(minLength: DS.space8)
+
+            if mediaItems.count > 1 {
+                Text("\(selectedMediaIndex + 1) / \(mediaItems.count)")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(DS.textMuted)
+            } else if let duration = item.duration, duration > 0 {
+                Text(formatDuration(duration))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+    }
+
+    private var mediaStage: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(DS.vellumDeep)
+
+            CortexSwipeMediaSurface(media: selectedMedia, fallbackIcon: item.platformIcon)
+                .aspectRatio(selectedMedia.style.aspectRatio, contentMode: .fit)
+                .frame(maxWidth: selectedMedia.style.maxWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.vertical, DS.space4)
+        }
+        .clipShape(.rect(cornerRadius: DS.radiusMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .strokeBorder(DS.sepiaSubtle, lineWidth: 0.5)
+        )
     }
 
     @ViewBuilder
-    private var imageLayer: some View {
-        if let rawURL = item.thumbnailUrl, let url = URL(string: rawURL) {
-            CachedAsyncImage(url: url, stableKey: item.instagramId) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                case .empty:
-                    ProgressView().scaleEffect(0.65).tint(.white.opacity(0.70))
-                case .failure:
-                    fallback
+    private var slideControls: some View {
+        if mediaItems.count > 1 {
+            HStack(spacing: DS.space12) {
+                mediaStepButton(systemName: "chevron.left", label: "Previous slide") {
+                    selectedMediaIndex = max(selectedMediaIndex - 1, 0)
                 }
+                .disabled(selectedMediaIndex == 0)
+
+                HStack(spacing: DS.space4) {
+                    ForEach(Array(mediaItems.enumerated()), id: \.element.id) { index, media in
+                        Button {
+                            selectedMediaIndex = index
+                        } label: {
+                            Circle()
+                                .fill(index == selectedMediaIndex ? DS.gilt : DS.sepiaSubtle)
+                                .frame(width: 6, height: 6)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(width: 24, height: 24)
+                        .accessibilityLabel("Slide \(index + 1)")
+                        .accessibilityValue(media.accessibilityLabel)
+                    }
+                }
+
+                mediaStepButton(systemName: "chevron.right", label: "Next slide") {
+                    selectedMediaIndex = min(selectedMediaIndex + 1, mediaItems.count - 1)
+                }
+                .disabled(selectedMediaIndex >= mediaItems.count - 1)
             }
         } else {
-            fallback
+            Text([item.creatorName ?? item.author, item.platformName].compactMap { $0 }.joined(separator: " · "))
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
         }
     }
 
-    private var fallback: some View {
-        LinearGradient(
-            colors: [DS.entitySwipe.opacity(0.34), DS.vellumDeep.opacity(0.92)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .overlay {
-            Image(systemName: item.platformIcon)
+    private func mediaStepButton(
+        systemName: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 34, height: 28)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(DS.textSecondary)
+        .background(DS.vellumDeep.opacity(0.72), in: Capsule())
+        .overlay(Capsule().strokeBorder(DS.sepiaSubtle, lineWidth: 0.5))
+        .accessibilityLabel(label)
+        .help(label)
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+private struct CortexSwipeMediaSurface: View {
+    let media: CortexSwipePreviewMedia
+    let fallbackIcon: String
+
+    var body: some View {
+        switch media.kind {
+        case .image(let url):
+            CortexSwipeImageSurface(url: url, stableKey: media.id)
+        case .video(let url, let thumbnailURL):
+            CortexSwipeVideoSurface(url: url, thumbnailURL: thumbnailURL, stableKey: media.id)
+        case .placeholder:
+            CortexSwipeMediaPlaceholder(iconName: fallbackIcon)
+        }
+    }
+}
+
+private struct CortexSwipeImageSurface: View {
+    let url: URL
+    let stableKey: String
+
+    var body: some View {
+        CachedAsyncImage(url: url, stableKey: stableKey) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .empty:
+                ProgressView()
+                    .scaleEffect(0.72)
+                    .tint(DS.textMuted)
+            case .failure:
+                CortexSwipeMediaPlaceholder(iconName: "photo")
+            }
+        }
+    }
+}
+
+private struct CortexSwipeVideoSurface: View {
+    let url: URL?
+    let thumbnailURL: URL?
+    let stableKey: String
+
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        ZStack {
+            if let player {
+                VideoPlayer(player: player)
+            } else if let thumbnailURL {
+                CortexSwipeImageSurface(url: thumbnailURL, stableKey: stableKey)
+                playOverlay
+            } else {
+                CortexSwipeMediaPlaceholder(iconName: "play.rectangle.fill")
+                playOverlay
+            }
+        }
+        .background(DS.inkWash)
+        .onAppear(perform: configurePlayer)
+        .onChange(of: url) { _, _ in configurePlayer() }
+        .onDisappear { player?.pause() }
+    }
+
+    private var playOverlay: some View {
+        Image(systemName: "play.circle.fill")
+            .font(.system(size: 42, weight: .semibold))
+            .foregroundStyle(DS.textOnAccent.opacity(0.92))
+            .shadow(color: DS.inkWash.opacity(0.28), radius: 10, x: 0, y: 4)
+            .accessibilityHidden(true)
+    }
+
+    private func configurePlayer() {
+        guard let url else {
+            player = nil
+            return
+        }
+        player = AVPlayer(url: url)
+    }
+}
+
+private struct CortexSwipeMediaPlaceholder: View {
+    let iconName: String
+
+    var body: some View {
+        ZStack {
+            DS.entitySwipe.opacity(0.12)
+            Image(systemName: iconName)
                 .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.70))
+                .foregroundStyle(DS.entitySwipe.opacity(0.72))
                 .accessibilityHidden(true)
         }
+    }
+}
+
+private struct CortexSwipePreviewMedia: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case image(URL)
+        case video(url: URL?, thumbnailURL: URL?)
+        case placeholder
+    }
+
+    enum Style: Equatable {
+        case square
+        case portraitVideo
+        case landscapeVideo
+
+        var aspectRatio: CGFloat {
+            switch self {
+            case .square: return 1
+            case .portraitVideo: return 9.0 / 16.0
+            case .landscapeVideo: return 16.0 / 9.0
+            }
+        }
+
+        var maxWidth: CGFloat {
+            switch self {
+            case .square: return 326
+            case .portraitVideo: return 206
+            case .landscapeVideo: return 420
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .square: return "Carousel"
+            case .portraitVideo: return "Video"
+            case .landscapeVideo: return "Video"
+            }
+        }
+
+        var iconName: String {
+            switch self {
+            case .square: return "square.on.square"
+            case .portraitVideo, .landscapeVideo: return "play.rectangle.fill"
+            }
+        }
+    }
+
+    let id: String
+    let kind: Kind
+    let style: Style
+
+    var accessibilityLabel: String {
+        switch kind {
+        case .image: return "Image"
+        case .video: return "Video"
+        case .placeholder: return "Preview"
+        }
+    }
+
+    static func resolve(for item: SwipeGalleryItem, atom: Atom?) -> [Self] {
+        let richContent = atom?.richContent
+
+        if let carouselItems = richContent?.instagramData?.carouselItems, !carouselItems.isEmpty {
+            return carouselItems
+                .sorted { $0.index < $1.index }
+                .map(media)
+        }
+
+        let style = inferredStyle(for: item, richContent: richContent)
+        if style != .square,
+           let media = videoMedia(for: item, atom: atom, richContent: richContent, style: style) {
+            return [media]
+        }
+
+        if let thumbnailURL = thumbnailURL(for: item, atom: atom, richContent: richContent) {
+            return [Self(id: "thumb-\(thumbnailURL.absoluteString)", kind: .image(thumbnailURL), style: style)]
+        }
+
+        return [Self(id: "placeholder-\(item.id)", kind: .placeholder, style: style)]
+    }
+
+    private static func videoMedia(
+        for item: SwipeGalleryItem,
+        atom: Atom?,
+        richContent: ResearchRichContent?,
+        style: Style
+    ) -> Self? {
+        let playableURL = videoURL(for: item, richContent: richContent)
+        let thumbnailURL = thumbnailURL(for: item, atom: atom, richContent: richContent)
+        guard playableURL != nil || thumbnailURL != nil else { return nil }
+
+        let id = playableURL?.absoluteString ?? thumbnailURL?.absoluteString ?? item.id
+        return Self(
+            id: "video-\(id)",
+            kind: .video(url: playableURL, thumbnailURL: thumbnailURL),
+            style: style
+        )
+    }
+
+    private static func media(from item: CarouselItem) -> Self {
+        let id = "carousel-\(item.index)-\(item.mediaURL.absoluteString)"
+        switch item.mediaType {
+        case .image:
+            return Self(id: id, kind: .image(item.mediaURL), style: .square)
+        case .video:
+            return Self(
+                id: id,
+                kind: .video(url: item.mediaURL, thumbnailURL: item.thumbnailURL),
+                style: .square
+            )
+        }
+    }
+
+    private static func inferredStyle(
+        for item: SwipeGalleryItem,
+        richContent: ResearchRichContent?
+    ) -> Style {
+        if isCarousel(item: item, richContent: richContent) || isInstagramPost(item: item, richContent: richContent) {
+            return .square
+        }
+
+        if isLandscapeVideo(item: item, richContent: richContent) {
+            return .landscapeVideo
+        }
+
+        if isVideo(item: item, richContent: richContent) {
+            return .portraitVideo
+        }
+
+        return .square
+    }
+
+    private static func isCarousel(item: SwipeGalleryItem, richContent: ResearchRichContent?) -> Bool {
+        let platform = item.platform?.lowercased() ?? ""
+        return platform.contains("carousel")
+            || item.swipeContentFormat == .carousel
+            || richContent?.sourceType == .instagramCarousel
+            || richContent?.instagramType == "carousel"
+            || richContent?.instagramData?.contentType == .carousel
+    }
+
+    private static func isInstagramPost(item: SwipeGalleryItem, richContent: ResearchRichContent?) -> Bool {
+        let platform = item.platform?.lowercased() ?? ""
+        return platform.contains("instagrampost")
+            || platform.contains("instagram_post")
+            || richContent?.sourceType == .instagramPost
+            || richContent?.instagramData?.contentType == .image
+    }
+
+    private static func isLandscapeVideo(item: SwipeGalleryItem, richContent: ResearchRichContent?) -> Bool {
+        let platform = item.platform?.lowercased() ?? ""
+        return platform == "youtube" || richContent?.sourceType == .youtube
+    }
+
+    private static func isVideo(item: SwipeGalleryItem, richContent: ResearchRichContent?) -> Bool {
+        let platform = item.platform?.lowercased() ?? ""
+        return platform.contains("reel")
+            || platform.contains("short")
+            || item.swipeContentFormat?.isVideoFormat == true
+            || richContent?.sourceType == .instagramReel
+            || richContent?.sourceType == .youtubeShort
+            || richContent?.instagramType == "reel"
+            || richContent?.instagramData?.contentType.isVideo == true
+    }
+
+    private static func videoURL(for item: SwipeGalleryItem, richContent: ResearchRichContent?) -> URL? {
+        if let shortcode = item.instagramId,
+           let localURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) {
+            return localURL
+        }
+        return richContent?.instagramData?.extractedMediaURL
+    }
+
+    private static func thumbnailURL(
+        for item: SwipeGalleryItem,
+        atom: Atom?,
+        richContent: ResearchRichContent?
+    ) -> URL? {
+        [
+            item.thumbnailUrl,
+            atom?.thumbnailUrl,
+            richContent?.thumbnailUrl,
+            richContent?.instagramData?.carouselItems?.first(where: { $0.mediaType == .image })?.mediaURL.absoluteString,
+            richContent?.instagramData?.carouselItems?.first?.mediaURL.absoluteString
+        ]
+        .compactMap { $0 }
+        .first(where: { !$0.isEmpty })
+        .flatMap(URL.init(string:))
     }
 }
 

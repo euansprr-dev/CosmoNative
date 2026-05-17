@@ -1,5 +1,5 @@
 // CosmoOS/UI/CommandK/CortexCompactView.swift
-// Compact mode: domain bubbles + recents grid + keyboard hints
+// Compact mode: space plates + recents grid, Atelier language.
 
 import SwiftUI
 
@@ -8,46 +8,27 @@ struct CortexCompactView: View {
     var namespace: Namespace.ID
     var openDomain: (CommandKTab) -> Void
 
+    @State private var hasAppeared = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space24) {
-            header
+            AtelierOrnamentalSectionLabel(label: "SPACES")
+                .atelierStaggerIn(delay: 0.10, appeared: hasAppeared)
             domainCardsRow
-            Divider()
-                .foregroundStyle(DS.glassBorder.opacity(0.58))
             if !viewModel.recentItems.isEmpty {
                 recentsSection
             }
         }
         .padding(.horizontal, DS.space32)
         .padding(.vertical, DS.space24)
+        .onAppear { hasAppeared = true }
     }
 
-    private var header: some View {
-        HStack {
-            Text("Open a space")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(DS.text)
-
-            Spacer()
-
-            Image(systemName: "square.grid.2x2")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(DS.textSecondary)
-                .frame(width: 36, height: 36)
-                .background(DS.glassCardFill.opacity(0.56), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(DS.glassBorder.opacity(0.62), lineWidth: 0.5)
-                )
-                .accessibilityHidden(true)
-        }
-    }
-
-    // MARK: - Domain Bubbles
+    // MARK: - Space Plates
 
     private var domainCardsRow: some View {
         HStack(spacing: DS.space20) {
-            ForEach(CommandKTab.allCases, id: \.rawValue) { tab in
+            ForEach(Array(CommandKTab.allCases.enumerated()), id: \.element.rawValue) { index, tab in
                 CortexDomainBubble(
                     tab: tab,
                     count: viewModel.domainCounts[tab] ?? 0,
@@ -55,6 +36,7 @@ struct CortexCompactView: View {
                 ) {
                     openDomain(tab)
                 }
+                .atelierStaggerIn(delay: 0.16 + Double(index) * 0.06, appeared: hasAppeared)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -64,17 +46,9 @@ struct CortexCompactView: View {
 
     private var recentsSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            recentsHeader
+            AtelierOrnamentalSectionLabel(label: "RECENTS")
+                .atelierStaggerIn(delay: 0.42, appeared: hasAppeared)
             recentsGrid
-        }
-    }
-
-    private var recentsHeader: some View {
-        HStack {
-            Text("Recents")
-                .font(.system(size: 19, weight: .medium))
-                .foregroundStyle(DS.text)
-            Spacer()
         }
     }
 
@@ -89,8 +63,7 @@ struct CortexCompactView: View {
                 } onDelete: {
                     viewModel.deleteRecent(item)
                 }
-                .transition(.opacity.combined(with: .offset(y: 6)))
-                .animation(CommandKAnimationPolicy.entranceAnimation(index: index), value: viewModel.recentItems.count)
+                .atelierStaggerIn(delay: 0.48 + Double(index) * 0.03, appeared: hasAppeared)
             }
         }
     }

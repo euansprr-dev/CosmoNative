@@ -23,7 +23,7 @@ enum CommandKMetrics {
     static let expandedSearchWidth: CGFloat = 760
     static let domainBubbleSize: CGFloat = 56
     static let domainCardWidth: CGFloat = 244
-    static let domainCardHeight: CGFloat = 288
+    static let domainCardHeight: CGFloat = 196
     static let recentCardMinWidth: CGFloat = 196
     static let compactMaxHeight: CGFloat = 600
 }

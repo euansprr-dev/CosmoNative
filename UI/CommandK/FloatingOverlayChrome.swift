@@ -34,7 +34,7 @@ struct CortexOverlayBackdrop: View {
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .opacity(DS.palette.isDark ? 0.62 : 0.42)
-            Color.black.opacity(DS.palette.isDark ? 0.24 : 0.08)
+            (DS.palette.isDark ? Color.black.opacity(0.24) : DS.bg.opacity(0.15))
         }
         .ignoresSafeArea()
         .contentShape(Rectangle())

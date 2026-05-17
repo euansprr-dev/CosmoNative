@@ -344,6 +344,9 @@ enum DS {
     /// Date serif — 14pt regular New York, date line below greeting ONLY
     static let dateSerif = Font.system(size: 14, weight: .regular, design: .serif)
 
+    /// Space title serif — 21pt regular New York, Command-K space plate names
+    static let spaceTitleSerif = Font.system(size: 21, weight: .regular, design: .serif)
+
     /// Monospace tabular — 28pt ultralight, timer digits
     static let monoTabular = Font.system(size: 28, weight: .ultraLight, design: .monospaced)
 

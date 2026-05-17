@@ -26,7 +26,7 @@ struct CortexMasterDetailView: View {
 
             CortexActionBar(
                 viewModel: viewModel,
-                hasSelection: viewModel.selectedNodeId != nil
+                selectedAtomUUID: detailSubject.atomUUID
             )
         }
     }

@@ -1,7 +1,7 @@
 // CosmoOS/UI/CommandK/CortexDetailPane.swift
-// Raycast-style right-hand preview pane. Phase 1: one generic adaptive
-// renderer (thumbnail / page / faux) + title + a minimal info line.
-// Per-type renderers and the full Information table arrive in Phase 2.
+// Raycast-style right preview pane. Phase 2: per-type rendering (media /
+// connection / reading excerpt) + the INFORMATION metadata table, hydrated
+// from a lazy AtomRepository fetch keyed to the current selection.
 
 import SwiftUI
 
@@ -45,16 +45,22 @@ enum CortexDetailSubject {
     }
 
     var thumbnailURL: String? {
-        switch self {
-        case .recent(let i): return i.thumbnailURL
-        default: return nil
-        }
+        if case .recent(let i) = self { return i.thumbnailURL }
+        return nil
     }
 
     var previewText: String? {
         switch self {
         case .recent(let i): return i.preview
         case .result(let r): return r.snippet ?? r.subtitle
+        default: return nil
+        }
+    }
+
+    var atomUUID: String? {
+        switch self {
+        case .recent(let i): return i.id
+        case .result(let r): return r.atomUUID
         default: return nil
         }
     }
@@ -83,16 +89,21 @@ func cortexEntityAccent(_ type: AtomType) -> Color {
 struct CortexDetailPane: View {
     let subject: CortexDetailSubject
 
+    @State private var atom: Atom?
+
     var body: some View {
         Group {
-            if case .empty = subject {
-                emptyState
-            } else {
-                loaded
-            }
+            if case .empty = subject { emptyState } else { loaded }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(DS.space24)
+        .task(id: subject.atomUUID) { await loadAtom() }
+    }
+
+    private func loadAtom() async {
+        atom = nil
+        guard let id = subject.atomUUID else { return }
+        atom = try? await AtomRepository.shared.fetch(uuid: id)
     }
 
     private var emptyState: some View {
@@ -111,7 +122,7 @@ struct CortexDetailPane: View {
     private var loaded: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space16) {
-                previewBlock
+                CortexPreviewBlock(subject: subject, bodyText: atom?.body)
                     .frame(maxWidth: .infinity)
                     .frame(height: 220)
                     .clipShape(.rect(cornerRadius: DS.radiusMedium))
@@ -125,41 +136,54 @@ struct CortexDetailPane: View {
                     .foregroundStyle(DS.text)
                     .lineLimit(3)
 
-                AtelierOrnamentalSectionLabel(label: "INFORMATION")
-
-                infoRow("Type", subject.typeLabel)
-                if let meta = subject.metaLine, !meta.isEmpty {
-                    infoRow("Captured", meta)
-                }
+                CortexInformationTable(
+                    typeLabel: subject.typeLabel,
+                    created: cortexFormatISO(atom?.createdAt),
+                    updated: cortexFormatISO(atom?.updatedAt),
+                    links: atom?.linksList.count,
+                    fallbackMeta: subject.metaLine
+                )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.hidden)
     }
+}
 
-    @ViewBuilder
-    private var previewBlock: some View {
+/// Per-type preview: media → image, connection → section map, text → a
+/// serif reading excerpt, otherwise a faux page.
+private struct CortexPreviewBlock: View {
+    let subject: CortexDetailSubject
+    let bodyText: String?
+
+    var body: some View {
         if let url = subject.thumbnailURL, !url.isEmpty {
             SpotlightImageContent(urlString: url)
         } else if subject.isConnection {
             SpotlightConnectionPreview(preview: subject.previewText, accentColor: subject.accentColor)
-        } else if let text = subject.previewText, !text.isEmpty {
-            SpotlightPageContent(text: text, accentColor: subject.accentColor)
+        } else if let text = readingText, !text.isEmpty {
+            readingCard(text)
         } else {
             SpotlightFauxPage(accentColor: subject.accentColor)
         }
     }
 
-    private func infoRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(DS.caption2)
-                .foregroundStyle(DS.inkFaded)
-            Spacer(minLength: DS.space12)
-            Text(value)
-                .font(DS.caption)
-                .foregroundStyle(DS.textSecondary)
-                .lineLimit(1)
+    private var readingText: String? {
+        let t = bodyText ?? subject.previewText
+        guard let t, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return t
+    }
+
+    private func readingCard(_ text: String) -> some View {
+        ScrollView {
+            Text(text)
+                .font(DS.dateSerif)
+                .foregroundStyle(DS.text)
+                .lineSpacing(5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(DS.space16)
         }
+        .scrollIndicators(.hidden)
+        .background(DS.vellum)
     }
 }

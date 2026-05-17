@@ -533,6 +533,8 @@
 		AD28ECC4414EE3810E158106 /* PromptTemplateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5945212DC05736CFA9D7CFF9 /* PromptTemplateStore.swift */; };
 		AD4E6F8A1B2C43D59E70F10A /* CapturedItemRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4E6F891B2C43D59E70F10A /* CapturedItemRepository.swift */; };
 		AD71937F3A700A3EBCD7D32C /* CortexRecentCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A521BB30C7318A8C34613EF1 /* CortexRecentCard.swift */; };
+		FEEDFACE0000000000000E01 /* CortexInformationTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000E02 /* CortexInformationTable.swift */; };
+		FEEDFACE0000000000000F01 /* CortexActionsMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000F02 /* CortexActionsMenu.swift */; };
 		FEEDFACE0000000000000A01 /* CortexMasterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000A02 /* CortexMasterDetailView.swift */; };
 		FEEDFACE0000000000000B01 /* CortexResultRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000B02 /* CortexResultRail.swift */; };
 		FEEDFACE0000000000000C01 /* CortexDetailPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEDFACE0000000000000C02 /* CortexDetailPane.swift */; };
@@ -1302,6 +1304,8 @@
 		A3CA0B553A238AEED8D64FCF /* AmbientFieldEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientFieldEngine.swift; sourceTree = "<group>"; };
 		A48ECD25FED69403D785006B /* InquiryPlacementEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = InquiryPlacementEngineTests.swift; sourceTree = "<group>"; };
 		A521BB30C7318A8C34613EF1 /* CortexRecentCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexRecentCard.swift; sourceTree = "<group>"; };
+		FEEDFACE0000000000000E02 /* CortexInformationTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexInformationTable.swift; sourceTree = "<group>"; };
+		FEEDFACE0000000000000F02 /* CortexActionsMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexActionsMenu.swift; sourceTree = "<group>"; };
 		FEEDFACE0000000000000A02 /* CortexMasterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexMasterDetailView.swift; sourceTree = "<group>"; };
 		FEEDFACE0000000000000B02 /* CortexResultRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexResultRail.swift; sourceTree = "<group>"; };
 		FEEDFACE0000000000000C02 /* CortexDetailPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexDetailPane.swift; sourceTree = "<group>"; };
@@ -2935,6 +2939,8 @@
 				AE4DF68141F6B5BBBF31FBB7 /* CortexInquiryBrowser.swift */,
 				935DDE0D6305A6C709BE9418 /* CortexReadwiseBrowser.swift */,
 				A521BB30C7318A8C34613EF1 /* CortexRecentCard.swift */,
+				FEEDFACE0000000000000E02 /* CortexInformationTable.swift */,
+				FEEDFACE0000000000000F02 /* CortexActionsMenu.swift */,
 				FEEDFACE0000000000000A02 /* CortexMasterDetailView.swift */,
 				FEEDFACE0000000000000B02 /* CortexResultRail.swift */,
 				FEEDFACE0000000000000C02 /* CortexDetailPane.swift */,
@@ -3662,6 +3668,8 @@
 				29A9177D81D17880A1FD36AA /* CortexInquiryBrowser.swift in Sources */,
 				CE9EC912A865FACDADD10A17 /* CortexReadwiseBrowser.swift in Sources */,
 				AD71937F3A700A3EBCD7D32C /* CortexRecentCard.swift in Sources */,
+				FEEDFACE0000000000000E01 /* CortexInformationTable.swift in Sources */,
+				FEEDFACE0000000000000F01 /* CortexActionsMenu.swift in Sources */,
 				FEEDFACE0000000000000A01 /* CortexMasterDetailView.swift in Sources */,
 				FEEDFACE0000000000000B01 /* CortexResultRail.swift in Sources */,
 				FEEDFACE0000000000000C01 /* CortexDetailPane.swift in Sources */,

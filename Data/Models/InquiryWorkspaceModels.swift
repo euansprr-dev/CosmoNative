@@ -414,6 +414,9 @@ enum InquirySourceProvider: String, Codable, CaseIterable, Sendable, Hashable {
     case arxiv
     case youtube
     case web
+    case googleBooks
+    case openLibrary
+    case internetArchive
 
     var displayName: String {
         switch self {
@@ -425,6 +428,9 @@ enum InquirySourceProvider: String, Codable, CaseIterable, Sendable, Hashable {
         case .arxiv: return "arXiv"
         case .youtube: return "YouTube"
         case .web: return "Web"
+        case .googleBooks: return "Google Books"
+        case .openLibrary: return "Open Library"
+        case .internetArchive: return "Internet Archive"
         }
     }
 }
@@ -477,6 +483,11 @@ enum InquiryEvidenceRole: String, Codable, CaseIterable, Sendable, Hashable {
     case videoExplainer
     case localLibrary
     case webContext
+    case primaryText
+    case book
+    case lecture
+    case philosophicalContext
+    case traditionGuide
 
     var displayName: String {
         switch self {
@@ -490,6 +501,70 @@ enum InquiryEvidenceRole: String, Codable, CaseIterable, Sendable, Hashable {
         case .videoExplainer: return "Video"
         case .localLibrary: return "Library"
         case .webContext: return "Context"
+        case .primaryText: return "Primary"
+        case .book: return "Book"
+        case .lecture: return "Lecture"
+        case .philosophicalContext: return "Philosophy"
+        case .traditionGuide: return "Tradition"
+        }
+    }
+}
+
+enum InquiryResearchIntent: String, Codable, CaseIterable, Sendable, Hashable {
+    case conceptExploration
+    case philosophicalOrientation
+    case practiceTechnique
+    case historicalLineage
+    case clinicalEvidence
+    case mechanismScience
+    case sourceSurvey
+
+    var displayName: String {
+        switch self {
+        case .conceptExploration: return "Concept"
+        case .philosophicalOrientation: return "Philosophy"
+        case .practiceTechnique: return "Practice"
+        case .historicalLineage: return "Lineage"
+        case .clinicalEvidence: return "Evidence"
+        case .mechanismScience: return "Mechanism"
+        case .sourceSurvey: return "Survey"
+        }
+    }
+}
+
+enum InquirySourceLane: String, Codable, CaseIterable, Sendable, Hashable {
+    case localLibrary
+    case primaryText
+    case deepRead
+    case teacherLecture
+    case practiceGuide
+    case scholarlyContext
+    case clinicalEvidence
+    case webResource
+
+    var displayName: String {
+        switch self {
+        case .localLibrary: return "Your library"
+        case .primaryText: return "Primary text"
+        case .deepRead: return "Deep read"
+        case .teacherLecture: return "Lecture"
+        case .practiceGuide: return "Practice"
+        case .scholarlyContext: return "Scholarship"
+        case .clinicalEvidence: return "Clinical"
+        case .webResource: return "Resource"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .localLibrary: return "archivebox"
+        case .primaryText: return "scroll"
+        case .deepRead: return "book.closed"
+        case .teacherLecture: return "play.rectangle"
+        case .practiceGuide: return "figure.mind.and.body"
+        case .scholarlyContext: return "graduationcap"
+        case .clinicalEvidence: return "cross.case"
+        case .webResource: return "globe"
         }
     }
 }
@@ -569,6 +644,8 @@ struct InquirySourceCandidate: Codable, Sendable, Identifiable, Hashable {
     var importedSourceUUID: String?
     var importStatus: InquirySourceImportStatus
     var generatedAt: String
+    var researchIntent: InquiryResearchIntent?
+    var sourceLane: InquirySourceLane?
 
     init(
         id: String = UUID().uuidString,
@@ -589,7 +666,9 @@ struct InquirySourceCandidate: Codable, Sendable, Identifiable, Hashable {
         branchNodeId: String? = nil,
         importedSourceUUID: String? = nil,
         importStatus: InquirySourceImportStatus = .candidate,
-        generatedAt: String = ISO8601DateFormatter().string(from: Date())
+        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        researchIntent: InquiryResearchIntent? = nil,
+        sourceLane: InquirySourceLane? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -610,6 +689,8 @@ struct InquirySourceCandidate: Codable, Sendable, Identifiable, Hashable {
         self.importedSourceUUID = importedSourceUUID
         self.importStatus = importStatus
         self.generatedAt = generatedAt
+        self.researchIntent = researchIntent
+        self.sourceLane = sourceLane
     }
 }
 
@@ -1623,6 +1704,7 @@ struct SessionCapture: Codable, Sendable, Identifiable {
     var createdAt: String
     var source: Source
     var suggestedKind: ExtractKind?
+    var suggestedKindConfidence: Double?
     var attachedQuestionId: String?
     var attachedSourceTabId: String?
     var status: Status
@@ -1634,6 +1716,7 @@ struct SessionCapture: Codable, Sendable, Identifiable {
         createdAt: String = ISO8601DateFormatter().string(from: Date()),
         source: Source = .type,
         suggestedKind: ExtractKind? = nil,
+        suggestedKindConfidence: Double? = nil,
         attachedQuestionId: String? = nil,
         attachedSourceTabId: String? = nil,
         status: Status = .pending,
@@ -1644,6 +1727,7 @@ struct SessionCapture: Codable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.source = source
         self.suggestedKind = suggestedKind
+        self.suggestedKindConfidence = suggestedKindConfidence
         self.attachedQuestionId = attachedQuestionId
         self.attachedSourceTabId = attachedSourceTabId
         self.status = status
@@ -2096,6 +2180,28 @@ struct CanvasProjection: Codable, Sendable, Identifiable {
 }
 
 /// Crystallization output (Phase 5). Persisted in InquirySession.structured.crystallizationResult.
+struct ConnectionSectionItemDraft: Codable, Sendable, Identifiable, Hashable {
+    var id: String
+    var body: String
+    var sourceUUID: String?
+    var originExtractUUID: String?
+    var kindLabel: String
+
+    init(
+        id: String = UUID().uuidString,
+        body: String,
+        sourceUUID: String? = nil,
+        originExtractUUID: String? = nil,
+        kindLabel: String
+    ) {
+        self.id = id
+        self.body = body
+        self.sourceUUID = sourceUUID
+        self.originExtractUUID = originExtractUUID
+        self.kindLabel = kindLabel
+    }
+}
+
 struct CrystallizationOutput: Codable, Sendable {
     struct LexiconCandidate: Codable, Sendable, Identifiable {
         var id: String
@@ -2124,9 +2230,90 @@ struct CrystallizationOutput: Codable, Sendable {
         var rationale: String?
         var clusterExtractUUIDs: [String]
         var seededLexiconCandidateIds: [String]
+        var proposedTitle: String
+        var proposedConcept: String?
+        var proposedSections: [ConnectionSectionType: [ConnectionSectionItemDraft]]
+        var proposedReferences: [String]
+        var branchNodeId: String?
+        var materialCount: Int
+        var proposedNotes: [ConnectionSectionItemDraft]
         var accepted: Bool
-        init(id: String = UUID().uuidString, name: String, rationale: String? = nil, clusterExtractUUIDs: [String] = [], seededLexiconCandidateIds: [String] = [], accepted: Bool = false) {
-            self.id = id; self.name = name; self.rationale = rationale; self.clusterExtractUUIDs = clusterExtractUUIDs; self.seededLexiconCandidateIds = seededLexiconCandidateIds; self.accepted = accepted
+
+        init(
+            id: String = UUID().uuidString,
+            name: String,
+            rationale: String? = nil,
+            clusterExtractUUIDs: [String] = [],
+            seededLexiconCandidateIds: [String] = [],
+            proposedTitle: String? = nil,
+            proposedConcept: String? = nil,
+            proposedSections: [ConnectionSectionType: [ConnectionSectionItemDraft]] = [:],
+            proposedReferences: [String] = [],
+            branchNodeId: String? = nil,
+            materialCount: Int = 0,
+            proposedNotes: [ConnectionSectionItemDraft] = [],
+            accepted: Bool = false
+        ) {
+            self.id = id
+            self.name = name
+            self.rationale = rationale
+            self.clusterExtractUUIDs = clusterExtractUUIDs
+            self.seededLexiconCandidateIds = seededLexiconCandidateIds
+            self.proposedTitle = proposedTitle ?? name
+            self.proposedConcept = proposedConcept
+            self.proposedSections = proposedSections
+            self.proposedReferences = proposedReferences
+            self.branchNodeId = branchNodeId
+            self.materialCount = materialCount
+            self.proposedNotes = proposedNotes
+            self.accepted = accepted
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, name, rationale, clusterExtractUUIDs, seededLexiconCandidateIds
+            case proposedTitle, proposedConcept, proposedSections, proposedReferences
+            case branchNodeId, materialCount, proposedNotes, accepted
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+            name = try c.decode(String.self, forKey: .name)
+            rationale = try c.decodeIfPresent(String.self, forKey: .rationale)
+            clusterExtractUUIDs = try c.decodeIfPresent([String].self, forKey: .clusterExtractUUIDs) ?? []
+            seededLexiconCandidateIds = try c.decodeIfPresent([String].self, forKey: .seededLexiconCandidateIds) ?? []
+            proposedTitle = try c.decodeIfPresent(String.self, forKey: .proposedTitle) ?? name
+            proposedConcept = try c.decodeIfPresent(String.self, forKey: .proposedConcept)
+            let rawSections = try c.decodeIfPresent([String: [ConnectionSectionItemDraft]].self, forKey: .proposedSections) ?? [:]
+            proposedSections = rawSections.reduce(into: [:]) { partial, pair in
+                guard let type = ConnectionSectionType(rawValue: pair.key) else { return }
+                partial[type] = pair.value
+            }
+            proposedReferences = try c.decodeIfPresent([String].self, forKey: .proposedReferences) ?? []
+            branchNodeId = try c.decodeIfPresent(String.self, forKey: .branchNodeId)
+            materialCount = try c.decodeIfPresent(Int.self, forKey: .materialCount) ?? clusterExtractUUIDs.count
+            proposedNotes = try c.decodeIfPresent([ConnectionSectionItemDraft].self, forKey: .proposedNotes) ?? []
+            accepted = try c.decodeIfPresent(Bool.self, forKey: .accepted) ?? false
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(id, forKey: .id)
+            try c.encode(name, forKey: .name)
+            try c.encodeIfPresent(rationale, forKey: .rationale)
+            try c.encode(clusterExtractUUIDs, forKey: .clusterExtractUUIDs)
+            try c.encode(seededLexiconCandidateIds, forKey: .seededLexiconCandidateIds)
+            try c.encode(proposedTitle, forKey: .proposedTitle)
+            try c.encodeIfPresent(proposedConcept, forKey: .proposedConcept)
+            let rawSections = proposedSections.reduce(into: [String: [ConnectionSectionItemDraft]]()) { partial, pair in
+                partial[pair.key.rawValue] = pair.value
+            }
+            try c.encode(rawSections, forKey: .proposedSections)
+            try c.encode(proposedReferences, forKey: .proposedReferences)
+            try c.encodeIfPresent(branchNodeId, forKey: .branchNodeId)
+            try c.encode(materialCount, forKey: .materialCount)
+            try c.encode(proposedNotes, forKey: .proposedNotes)
+            try c.encode(accepted, forKey: .accepted)
         }
     }
     struct ModelUpdateProposal: Codable, Sendable, Identifiable {

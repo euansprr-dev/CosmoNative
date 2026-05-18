@@ -42,7 +42,7 @@ enum FocusModeEditorBlur {
             return false
         }
 
-        if let hitView, hitView.isEditableTextInputOrDescendant {
+        if let hitView, hitView.isEditableTextInputSurface {
             return false
         }
 
@@ -51,6 +51,24 @@ enum FocusModeEditorBlur {
 }
 
 private extension NSView {
+    var isEditableTextInputSurface: Bool {
+        if isEditableTextInputOrDescendant {
+            return true
+        }
+
+        if let scrollView = self as? NSScrollView,
+           scrollView.documentView?.isEditableTextInputOrDescendant == true {
+            return true
+        }
+
+        if let clipView = self as? NSClipView,
+           clipView.documentView?.isEditableTextInputOrDescendant == true {
+            return true
+        }
+
+        return false
+    }
+
     var isEditableTextInputOrDescendant: Bool {
         var view: NSView? = self
         while let currentView = view {
@@ -116,7 +134,7 @@ struct FocusModeEditorBlurClickMonitor: NSViewRepresentable {
             guard window != nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
                 guard let self else { return event }
-                Task { @MainActor in
+                MainActor.assumeIsolated {
                     guard let window = self.view?.window,
                           event.window === window else {
                         return

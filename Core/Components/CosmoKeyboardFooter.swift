@@ -27,7 +27,7 @@ struct CosmoKeyboardFooter: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(darkMode ? DS.bg : DS.vellum)
+            .background(darkMode ? Color.white.opacity(0.05) : DS.glassInputFill.opacity(0.24))
         }
     }
 }

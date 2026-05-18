@@ -18,7 +18,7 @@ struct SlashCommandMenu: View {
     @FocusState private var isSearchFocused: Bool
 
     // MARK: - Theme-Aware Colors
-    private var bgColor: Color { darkMode ? DS.bg : DS.vellum }
+    private var menuFill: Color { darkMode ? Color.white.opacity(0.06) : DS.glassInputFill.opacity(0.34) }
     private var textPrimary: Color { darkMode ? .white : DS.text }
     private var textTertiary: Color { darkMode ? Color.white.opacity(0.45) : DS.textMuted }
 
@@ -77,7 +77,7 @@ struct SlashCommandMenu: View {
                 }
         }
         .padding(12)
-        .background(bgColor)
+        .background(menuFill)
     }
 
     private var dividerView: some View {
@@ -95,7 +95,7 @@ struct SlashCommandMenu: View {
         }
         .frame(maxHeight: 300)
         .scrollBounceBehavior(.basedOnSize)
-        .background(bgColor)
+        .background(Color.clear)
         .onChange(of: selectedIndex) { _, _ in
             CosmicHaptics.shared.play(.threshold)
         }
@@ -188,21 +188,21 @@ struct SlashCommandRow: View {
     private var textPrimary: Color { darkMode ? .white : CosmoColors.textPrimary }
     private var textSecondary: Color { darkMode ? Color.white.opacity(0.6) : CosmoColors.textSecondary }
     private var textTertiary: Color { darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary }
-    private var accentColor: Color { darkMode ? CosmoColors.thinkspacePurple : CosmoColors.lavender }
+    private var accentColor: Color { darkMode ? Color.white.opacity(0.76) : DS.accent }
 
     var body: some View {
         HStack(spacing: 12) {
             // Icon - Cosmo lavender/purple accent with symbol effect
             Image(systemName: command.icon)
                 .font(.system(size: 16))
-                .foregroundStyle(isSelected ? .white : accentColor)
+                .foregroundStyle(isSelected ? accentColor : accentColor.opacity(0.86))
                 .symbolEffect(.bounce, value: iconBounce)
                 .frame(width: 28, height: 28)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(isSelected ? accentColor : accentColor.opacity(0.15))
+                        .fill(iconFill)
                         .shadow(
-                            color: accentColor.opacity(isSelected ? 0.3 : 0),
+                            color: DS.sidebarMaterialShadow.opacity(isSelected ? 0.28 : 0),
                             radius: isSelected ? 6 : 0,
                             y: isSelected ? 2 : 0
                         )
@@ -229,7 +229,7 @@ struct SlashCommandRow: View {
                     .foregroundStyle(textTertiary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(darkMode ? Color.white.opacity(0.1) : CosmoColors.glassGrey.opacity(0.4))
+                    .background(darkMode ? Color.white.opacity(0.10) : DS.glassInputFill.opacity(0.52))
                     .clipShape(.rect(cornerRadius: DS.radiusXSmall))
             }
 
@@ -245,7 +245,7 @@ struct SlashCommandRow: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? accentColor.opacity(0.12) : Color.clear)
+                .fill(isSelected ? selectedFill : Color.clear)
         )
         .contentShape(Rectangle())
         // Staggered entrance animation
@@ -259,6 +259,17 @@ struct SlashCommandRow: View {
                 iconBounce.toggle()
             }
         }
+    }
+
+    private var iconFill: Color {
+        if darkMode {
+            return isSelected ? Color.white.opacity(0.16) : Color.white.opacity(0.08)
+        }
+        return isSelected ? DS.glassInputFillFocused.opacity(0.90) : DS.glassInputFill.opacity(0.54)
+    }
+
+    private var selectedFill: Color {
+        darkMode ? Color.white.opacity(0.10) : DS.glassInputFillFocused.opacity(0.82)
     }
 }
 

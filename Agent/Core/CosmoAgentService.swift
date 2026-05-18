@@ -173,14 +173,12 @@ class CosmoAgentService: ObservableObject {
 
     nonisolated static func defaultModelTier(for intent: AgentIntent) -> AgentModelTier {
         switch intent {
-        case .capture, .plan, .query, .correct:
+        case .capture, .plan, .correct:
             return .sensor
-        case .brainstorm:
-            return .gptChatLatest
+        case .query, .brainstorm, .draft:
+            return .geminiFlashLatest
         case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
             return .strategist
-        case .draft:
-            return .writer
         }
     }
 
@@ -385,9 +383,9 @@ class CosmoAgentService: ObservableObject {
         // 5. Add user message
         conversation.append(.user(text))
 
-        // 6. Escalate intent if conversation has creative history
-        // Prevents mid-conversation regression from Opus to Haiku when giving
-        // creative direction without explicit draft keywords
+        // 6. Escalate intent if conversation has creative history.
+        // Keeps creative tool guidance active when the user gives follow-up
+        // direction without explicit draft keywords.
         let effectiveIntent = escalateIntentFromConversation(classification.intent, conversation: conversation)
 
         // 7. Route to direct tool execution for all sources
@@ -858,15 +856,7 @@ class CosmoAgentService: ObservableObject {
         let historyWindow = sanitizeToolPairs(rawWindow)
         llmMessages.append(contentsOf: historyWindow)
 
-        let modelTier: AgentModelTier
-        switch effectiveIntent {
-        case .capture, .plan, .query, .correct:
-            modelTier = .sensor
-        case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
-            modelTier = .strategist
-        case .brainstorm, .draft:
-            modelTier = .writer      // Opus — creative writing coordination needs full reasoning to follow tool-use instructions precisely
-        }
+        let modelTier = Self.defaultModelTier(for: effectiveIntent)
 
         // For draft intent with active content, inject a system message forcing tool use
         if effectiveIntent == .draft || effectiveIntent == .brainstorm {
@@ -1572,9 +1562,8 @@ class CosmoAgentService: ObservableObject {
 
     /// Escalate intent based on conversation history. When a conversation has been
     /// about creative work (draft/brainstorm) and the current message is generic (query),
-    /// maintain the creative intent to keep the right model tier and context active.
-    /// This prevents mid-conversation regression from Opus to Haiku when the user gives
-    /// creative direction without explicit draft keywords.
+    /// maintain the creative intent to keep the right tools and context active.
+    /// Model cost is controlled separately by `defaultModelTier(for:)`.
     private func escalateIntentFromConversation(_ intent: AgentIntent, conversation: AgentConversation) -> AgentIntent {
         // Only escalate from generic .query intent
         guard intent == .query else { return intent }

@@ -758,10 +758,30 @@ final class InquiryWorkspaceViewModel {
     func addCapture(_ body: String, source: SessionCapture.Source = .type, suggestedKind: ExtractKind? = nil) {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let detectedIntent: CaptureIntent
+        if let suggestedKind {
+            detectedIntent = CaptureIntent(kind: suggestedKind, confidence: 1.0, reason: "Explicit route")
+        } else {
+            detectedIntent = CaptureIntentClassifier.classifyHeuristic(
+                text: trimmed,
+                context: InquiryPlacementEngine.Context(
+                    deepDiveTitle: deepDive?.title,
+                    activeQuestion: activeQuestion,
+                    activeQuestionUUID: activeQuestionUUID,
+                    activeBranchNodeId: activeBranchNodeId,
+                    sourceTabId: activeSourceTabId,
+                    originExtractUUID: nil,
+                    originAction: .manualAdd,
+                    questions: questions,
+                    claims: claims(for: activeQuestionUUID)
+                )
+            )
+        }
         let capture = SessionCapture(
             body: trimmed,
             source: source,
-            suggestedKind: suggestedKind,
+            suggestedKind: detectedIntent.kind,
+            suggestedKindConfidence: detectedIntent.confidence,
             attachedQuestionId: activeQuestionUUID,
             attachedSourceTabId: activeSourceTabId
         )
@@ -807,6 +827,44 @@ final class InquiryWorkspaceViewModel {
             print("[InquiryWorkspaceVM] commitCapture failed: \(error)")
             return nil
         }
+    }
+
+    @discardableResult
+    func promoteCaptureToBranch(captureId: String) async -> Atom? {
+        guard let idx = structured.sessionCaptures.firstIndex(where: { $0.id == captureId }) else { return nil }
+        let capture = structured.sessionCaptures[idx]
+        guard capture.status == .pending else { return nil }
+
+        if capture.attachedQuestionId != activeQuestionUUID {
+            setActiveQuestion(capture.attachedQuestionId, branchNodeId: questionNodeId(for: capture.attachedQuestionId))
+        }
+
+        let question = await createChildQuestion(
+            title: capture.body,
+            originExtractUUID: nil,
+            sourceTabId: capture.attachedSourceTabId,
+            makeActive: true
+        )
+        if let question {
+            structured.sessionCaptures[idx].status = .committed
+            structured.sessionCaptures[idx].promotedToAtomUUID = question.uuid
+            appendRouteReceipt(
+                InquiryRouteReceipt(
+                    kind: .branchCreated,
+                    message: "Created branch",
+                    detail: question.title,
+                    questionUUID: question.uuid,
+                    branchNodeId: questionNodeId(for: question.uuid)
+                )
+            )
+            scheduleSave()
+        }
+        return question
+    }
+
+    @discardableResult
+    func commitCaptureWith(captureId: String, kind: ExtractKind) async -> String? {
+        await commitCapture(captureId, kind: kind)
     }
 
     func discardCapture(_ captureId: String) {
@@ -1300,7 +1358,26 @@ final class InquiryWorkspaceViewModel {
             guard let kind = parsed.extractKind else { return }
             await saveDockExtract(body, kind: kind, originType: parsed.intent.rawValue)
         case .ask:
-            await saveDockExtract(body, kind: .note, originType: "dock")
+            let intent = CaptureIntentClassifier.classifyHeuristic(
+                text: body,
+                context: InquiryPlacementEngine.Context(
+                    deepDiveTitle: deepDive?.title,
+                    activeQuestion: activeQuestion,
+                    activeQuestionUUID: activeQuestionUUID,
+                    activeBranchNodeId: activeBranchNodeId,
+                    sourceTabId: activeSourceTabId,
+                    originExtractUUID: nil,
+                    originAction: .manualAdd,
+                    questions: questions,
+                    claims: claims(for: activeQuestionUUID)
+                )
+            )
+            if intent.kind == .question && intent.confidence >= 0.7 {
+                addCapture(body, source: .type, suggestedKind: .question)
+                showToast("Captured question", detail: "Make it a branch from the notes rail.")
+            } else {
+                await saveDockExtract(body, kind: .note, originType: "dock")
+            }
         }
     }
 

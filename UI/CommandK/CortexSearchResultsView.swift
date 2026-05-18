@@ -101,12 +101,14 @@ struct CortexSearchResultsView: View {
     }
 
     private func seeAll(_ source: UnifiedSearchSource) {
-        let tab: CommandKTab = switch source {
+        let tab: CommandKTab? = switch source {
         case .atoms: .database
         case .swipes: .swipeGallery
         case .ideas: .ideas
         case .readwise: .readwise
+        case .browser: nil
         }
+        guard let tab else { return }
         openDomain(tab)
     }
 
@@ -340,7 +342,7 @@ private struct CommandKActionPreviewRow: View {
             return DS.entityContent
         case .createThinkspace, .navigateLastThinkspace, .openThinkspace:
             return DS.entityConnection
-        case .navigateCommandCenter, .openDomain, .openApp, .openAtom, .savedSearch:
+        case .navigateCommandCenter, .openBrowser, .openDomain, .openApp, .openAtom, .savedSearch:
             return DS.accent
         case .askCosmo:
             return DS.gilt
@@ -370,6 +372,7 @@ private struct CortexSearchSection: View {
         case .swipes: return 4
         case .ideas: return 3
         case .readwise: return 3
+        case .browser: return 6
         }
     }
 
@@ -429,7 +432,7 @@ private struct CortexSearchSection: View {
 
             Spacer()
 
-            if results.count > maxItems {
+            if source != .browser && results.count > maxItems {
                 Button(action: onSeeAll) {
                     HStack(spacing: 3) {
                         Text("See all")
@@ -455,6 +458,8 @@ private struct CortexSearchSection: View {
             ideaPreviewList
         case .readwise:
             readwisePreviewStrip
+        case .browser:
+            browserPinPreviewStrip
         }
     }
 
@@ -520,6 +525,21 @@ private struct CortexSearchSection: View {
     }
 
     private var readwisePreviewStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: DS.space12) {
+                ForEach(results.prefix(maxItems)) { result in
+                    CortexSearchCard(
+                        result: result,
+                        isSelected: selectedId == result.selectionID,
+                        onSelect: { onSelect(result) }
+                    )
+                    .id(result.selectionID)
+                }
+            }
+        }
+    }
+
+    private var browserPinPreviewStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: DS.space12) {
                 ForEach(results.prefix(maxItems)) { result in

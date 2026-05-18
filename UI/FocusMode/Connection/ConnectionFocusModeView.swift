@@ -1,6 +1,6 @@
 // CosmoOS/UI/FocusMode/Connection/ConnectionFocusModeView.swift
 // Main Connection Focus Mode view - canvas with structured concept card
-// 8 sections with items, ghost suggestions, and connected sources
+// 11 sections with items, ghost suggestions, and connected sources
 // December 2025 - Complete rewrite following PRD spec
 
 import SwiftUI

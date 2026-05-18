@@ -75,8 +75,27 @@ struct InquirySourcesRail: View {
             Text("CANDIDATES")
                 .dsSmallCapsLabel()
                 .padding(.top, DS.space8)
-            ForEach(candidates.prefix(8), id: \.id) { candidate in
-                InquiryCandidateRow(viewModel: viewModel, candidate: candidate)
+            ForEach(candidateGroups.indices, id: \.self) { index in
+                let group = candidateGroups[index]
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 5) {
+                        Image(systemName: group.lane.iconName)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(DS.accent.opacity(0.7))
+                        Text(group.lane.displayName.uppercased())
+                            .font(CosmoTypography.labelSmall)
+                            .tracking(1.1)
+                            .foregroundStyle(CosmoColors.textTertiary)
+                        Spacer()
+                        Text("\(group.candidates.count)")
+                            .font(CosmoTypography.labelSmall)
+                            .foregroundStyle(CosmoColors.textTertiary)
+                            .monospacedDigit()
+                    }
+                    ForEach(group.candidates, id: \.id) { candidate in
+                        InquiryCandidateRow(viewModel: viewModel, candidate: candidate)
+                    }
+                }
             }
         }
     }
@@ -132,6 +151,52 @@ struct InquirySourcesRail: View {
     private var candidates: [InquirySourceCandidate] {
         viewModel.activeSourceCandidates.filter { $0.importStatus == .candidate }
     }
+
+    private var candidateGroups: [CandidateLaneGroup] {
+        let limited = Array(candidates.prefix(12))
+        let grouped = Dictionary(grouping: limited) { candidate in
+            candidate.sourceLane ?? fallbackLane(for: candidate)
+        }
+        return laneOrder.compactMap { lane in
+            guard let candidates = grouped[lane], !candidates.isEmpty else { return nil }
+            return CandidateLaneGroup(lane: lane, candidates: candidates)
+        }
+    }
+
+    private var laneOrder: [InquirySourceLane] {
+        [
+            .localLibrary,
+            .primaryText,
+            .deepRead,
+            .teacherLecture,
+            .practiceGuide,
+            .scholarlyContext,
+            .clinicalEvidence,
+            .webResource
+        ]
+    }
+
+    private func fallbackLane(for candidate: InquirySourceCandidate) -> InquirySourceLane {
+        switch candidate.provider {
+        case .local:
+            return .localLibrary
+        case .googleBooks, .openLibrary, .internetArchive:
+            return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
+        case .youtube:
+            return .teacherLecture
+        case .pubMed:
+            return .clinicalEvidence
+        case .openAlex, .crossref, .semanticScholar, .arxiv:
+            return candidate.evidenceRole == .metaAnalysis || candidate.evidenceRole == .review ? .clinicalEvidence : .scholarlyContext
+        case .web:
+            return .webResource
+        }
+    }
+}
+
+private struct CandidateLaneGroup {
+    var lane: InquirySourceLane
+    var candidates: [InquirySourceCandidate]
 }
 
 // MARK: - Source row
@@ -213,9 +278,9 @@ struct InquiryCandidateRow: View {
             Task { await viewModel.importSourceCandidate(candidate) }
         } label: {
             HStack(alignment: .top, spacing: DS.space8) {
-                Image(systemName: candidate.sourceKind.iconName)
+                Image(systemName: lane.iconName)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(CosmoColors.textTertiary)
+                    .foregroundStyle(DS.accent.opacity(0.72))
                     .frame(width: 18, height: 18)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
@@ -224,7 +289,7 @@ struct InquiryCandidateRow: View {
                         .foregroundStyle(CosmoColors.textPrimary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
-                    Text("\(candidate.provider.displayName) · \(candidate.evidenceRole.displayName)")
+                    Text("\(lane.displayName) · \(candidate.provider.displayName)")
                         .font(CosmoTypography.caption)
                         .foregroundStyle(CosmoColors.textTertiary)
                         .lineLimit(1)
@@ -247,5 +312,26 @@ struct InquiryCandidateRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Import candidate: \(candidate.title)")
+    }
+
+    private var lane: InquirySourceLane {
+        candidate.sourceLane ?? fallbackLane
+    }
+
+    private var fallbackLane: InquirySourceLane {
+        switch candidate.provider {
+        case .local:
+            return .localLibrary
+        case .googleBooks, .openLibrary, .internetArchive:
+            return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
+        case .youtube:
+            return .teacherLecture
+        case .pubMed:
+            return .clinicalEvidence
+        case .openAlex, .crossref, .semanticScholar, .arxiv:
+            return candidate.evidenceRole == .metaAnalysis || candidate.evidenceRole == .review ? .clinicalEvidence : .scholarlyContext
+        case .web:
+            return .webResource
+        }
     }
 }

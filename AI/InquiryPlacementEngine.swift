@@ -450,7 +450,10 @@ struct InquiryPlacementEngine {
     }
 
     private static func isDeepDiveCandidate(_ lower: String, deepDiveTitle: String?) -> Bool {
-        let broadSignals = lower.contains("topic") || lower.contains("field") || lower.contains("entire") || lower.contains("world of")
+        let broadSignals = lower.contains("topic")
+            || lower.contains("field of ")
+            || lower.contains("entire")
+            || lower.contains("world of")
         let weaklyRelated = deepDiveTitle.map { !lower.contains($0.lowercased()) } ?? false
         return broadSignals && weaklyRelated
     }
@@ -664,8 +667,19 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
     ) async -> InquiryRecommendationBatch {
         let localCandidates = Self.localCandidates(from: localSources, profile: profile)
 
-        let queries = searchMode == .deepScout ? Self.scoutQueries(for: profile) : [profile.query]
-        let academicQueries = Array(queries.prefix(searchMode == .deepScout ? 4 : 1))
+        let deepScoutPlan = DeepScoutIntentPlanner.plan(for: profile, mode: searchMode)
+        let queries = searchMode == .deepScout ? deepScoutPlan.queries.map(\.query) : [profile.query]
+        let academicQueries: [String]
+        if searchMode == .deepScout {
+            academicQueries = Array(
+                deepScoutPlan.queries
+                    .filter { !$0.providers.filter(Self.isAcademicProvider).isEmpty }
+                    .map(\.query)
+                    .prefix(4)
+            )
+        } else {
+            academicQueries = Array(queries.prefix(1))
+        }
 
         let (openAlexStatus, openAlexCandidates) = await Self.fetchOpenAlexAcross(queries: academicQueries, profile: profile)
         let (crossrefStatus, crossrefCandidates) = await Self.fetchCrossrefAcross(queries: academicQueries, profile: profile)
@@ -680,15 +694,34 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         if searchMode == .deepScout {
             let (semanticStatus, semanticCandidates) = await Self.fetchSemanticScholarAcross(queries: academicQueries, profile: profile)
             let (pubMedStatus, pubMedCandidates) = await Self.fetchEuropePMCAcross(queries: academicQueries, profile: profile)
-            let videoQuery = queries.first { $0.localizedCaseInsensitiveContains("youtube") || $0.localizedCaseInsensitiveContains("video") } ?? profile.query
-            let (youtubeStatus, youtubeCandidates) = await Self.fetchYouTube(query: videoQuery, profile: profile)
+            let (googleBooksStatus, googleBooksCandidates) = await Self.fetchPlannedProvider(.googleBooks, plan: deepScoutPlan, profile: profile)
+            let (openLibraryStatus, openLibraryCandidates) = await Self.fetchPlannedProvider(.openLibrary, plan: deepScoutPlan, profile: profile)
+            let (archiveStatus, archiveCandidates) = await Self.fetchPlannedProvider(.internetArchive, plan: deepScoutPlan, profile: profile)
+            let (youtubeStatus, youtubeCandidates) = await Self.fetchPlannedProvider(.youtube, plan: deepScoutPlan, profile: profile)
             let (webStatus, webCandidates) = await Self.fetchWebResearch(query: profile.query, profile: profile)
-            rawCandidates += semanticCandidates + pubMedCandidates + youtubeCandidates + webCandidates
-            statuses += [semanticStatus, pubMedStatus, youtubeStatus, webStatus]
+            rawCandidates.append(contentsOf: semanticCandidates)
+            rawCandidates.append(contentsOf: pubMedCandidates)
+            rawCandidates.append(contentsOf: googleBooksCandidates)
+            rawCandidates.append(contentsOf: openLibraryCandidates)
+            rawCandidates.append(contentsOf: archiveCandidates)
+            rawCandidates.append(contentsOf: youtubeCandidates)
+            rawCandidates.append(contentsOf: webCandidates)
+            statuses += [
+                semanticStatus,
+                pubMedStatus,
+                googleBooksStatus,
+                openLibraryStatus,
+                archiveStatus,
+                youtubeStatus,
+                webStatus
+            ]
+            rawCandidates = Self.applyDeepScoutMetadata(rawCandidates, plan: deepScoutPlan)
         }
 
         let merged = Self.mergeCandidates(rawCandidates)
-        let ranked = Self.rankCandidates(merged, profile: profile, existingSourceRefs: existingSourceRefs)
+        let ranked = searchMode == .deepScout
+            ? DeepScoutRanker.rank(merged, profile: profile, plan: deepScoutPlan, existingSourceRefs: existingSourceRefs)
+            : Self.rankCandidates(merged, profile: profile, existingSourceRefs: existingSourceRefs)
 
         statuses = statuses.map { status in
             var copy = status
@@ -709,34 +742,7 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
     }
 
     static func scoutQueries(for profile: InquiryBranchResearchProfile) -> [String] {
-        let focus = (profile.sourceQuery ?? profile.activeQuestionTitle)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let anchor = [
-            profile.deepDiveTitle,
-            profile.activeQuestionTitle
-        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }
-            .joined(separator: " ")
-        let base = [focus.nilIfEmpty, anchor.nilIfEmpty]
-            .compactMap { $0 }
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let rawQueries = [
-            base,
-            "\(base) systematic review meta-analysis randomized controlled trial",
-            "\(base) mechanism physiology evidence",
-            "\(base) recent peer reviewed study",
-            "\(base) expert lecture video youtube",
-            "\(base) limitations contraindications adverse effects"
-        ]
-
-        var seen: Set<String> = []
-        return rawQueries.compactMap { query in
-            let normalized = InquiryPlacementEngine.normalized(query)
-            guard !normalized.isEmpty, !seen.contains(normalized) else { return nil }
-            seen.insert(normalized)
-            return query
-        }
+        DeepScoutIntentPlanner.plan(for: profile, mode: .deepScout).queries.map(\.query)
     }
 
     static func activityPlan(
@@ -755,15 +761,15 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
             ]
         case .deepScout:
             return [
-                "Expanding \(subject) into branch-anchored search angles",
+                "Expanding \(subject) into intent-aware source lanes",
                 "Searching your local library",
-                "Searching OpenAlex and Crossref",
-                "Checking Semantic Scholar for stronger papers",
-                "Checking Europe PMC and PubMed-style biomedical results",
-                "Looking for relevant YouTube explainers",
+                "Searching books, primary texts, and archive material",
+                "Searching OpenAlex and Crossref for scholarly context",
+                "Checking Semantic Scholar and PubMed only where the intent calls for it",
+                "Looking for relevant YouTube lectures",
                 "Running web research for sources outside academic APIs",
-                "Filtering off-topic and weak matches",
-                "Ranking the best sources for this branch"
+                "Filtering off-topic and clinically drifted results",
+                "Ranking with lane diversity for this branch"
             ]
         }
     }
@@ -780,7 +786,12 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         profile: InquiryBranchResearchProfile,
         existingSourceRefs: [InquirySourceRef]
     ) -> [InquirySourceCandidate] {
-        candidates
+        if candidates.contains(where: { $0.sourceLane != nil || $0.researchIntent != nil }) {
+            let plan = DeepScoutIntentPlanner.plan(for: profile, mode: .deepScout)
+            return DeepScoutRanker.rank(candidates, profile: profile, plan: plan, existingSourceRefs: existingSourceRefs)
+        }
+
+        return candidates
             .compactMap { candidate -> InquirySourceCandidate? in
                 var copy = candidate
                 let text = candidateText(for: candidate)
@@ -1039,6 +1050,55 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         return (rollupStatus(provider: .pubMed, statuses: statuses, candidateCount: candidates.count), candidates)
     }
 
+    private static func fetchPlannedProvider(
+        _ provider: InquirySourceProvider,
+        plan: DeepScoutPlan,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        var statuses: [InquiryProviderStatus] = []
+        var candidates: [InquirySourceCandidate] = []
+
+        for query in plan.queries where query.providers.contains(provider) {
+            let result: (InquiryProviderStatus, [InquirySourceCandidate])
+            switch provider {
+            case .googleBooks:
+                result = await DeepScoutProviders.fetchGoogleBooks(
+                    query: query.query,
+                    lane: query.lane,
+                    intent: plan.intent,
+                    profile: profile
+                )
+            case .openLibrary:
+                result = await DeepScoutProviders.fetchOpenLibrary(
+                    query: query.query,
+                    lane: query.lane,
+                    intent: plan.intent,
+                    profile: profile
+                )
+            case .internetArchive:
+                result = await DeepScoutProviders.fetchInternetArchive(
+                    query: query.query,
+                    lane: query.lane,
+                    intent: plan.intent,
+                    profile: profile
+                )
+            case .youtube:
+                result = await DeepScoutProviders.fetchYouTube(
+                    query: query.query,
+                    lane: query.lane,
+                    intent: plan.intent,
+                    profile: profile
+                )
+            default:
+                result = (InquiryProviderStatus(provider: provider, state: .idle, count: 0), [])
+            }
+            statuses.append(result.0)
+            candidates.append(contentsOf: result.1)
+        }
+
+        return (rollupStatus(provider: provider, statuses: statuses, candidateCount: candidates.count), candidates)
+    }
+
     private static func rollupStatus(
         provider: InquirySourceProvider,
         statuses: [InquiryProviderStatus],
@@ -1053,6 +1113,47 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         return InquiryProviderStatus(provider: provider, state: .idle, count: candidateCount)
     }
 
+    private static func isAcademicProvider(_ provider: InquirySourceProvider) -> Bool {
+        switch provider {
+        case .openAlex, .crossref, .semanticScholar, .pubMed, .arxiv:
+            return true
+        case .local, .youtube, .web, .googleBooks, .openLibrary, .internetArchive:
+            return false
+        }
+    }
+
+    private static func applyDeepScoutMetadata(
+        _ candidates: [InquirySourceCandidate],
+        plan: DeepScoutPlan
+    ) -> [InquirySourceCandidate] {
+        candidates.map { candidate in
+            var copy = candidate
+            copy.researchIntent = copy.researchIntent ?? plan.intent
+            copy.sourceLane = copy.sourceLane ?? defaultLane(for: copy, intent: plan.intent)
+            return copy
+        }
+    }
+
+    private static func defaultLane(
+        for candidate: InquirySourceCandidate,
+        intent: InquiryResearchIntent
+    ) -> InquirySourceLane {
+        switch candidate.provider {
+        case .local:
+            return .localLibrary
+        case .googleBooks, .openLibrary, .internetArchive:
+            return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
+        case .youtube:
+            return .teacherLecture
+        case .pubMed:
+            return .clinicalEvidence
+        case .openAlex, .crossref, .semanticScholar, .arxiv:
+            return intent == .clinicalEvidence || intent == .mechanismScience ? .clinicalEvidence : .scholarlyContext
+        case .web:
+            return .webResource
+        }
+    }
+
     private static func scoutSteps(
         for mode: InquirySourceSearchMode,
         queryCount: Int,
@@ -1061,10 +1162,10 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
     ) -> [String] {
         guard mode == .deepScout else { return [] }
         return [
-            "Expanded into \(queryCount) branch-anchored search angles",
-            "Searched academic indexes, video, web, and local library",
+            "Expanded into \(queryCount) intent-aware source lanes",
+            "Searched books, primary texts, lectures, scholarly indexes, web, and local library",
             "Screened \(candidateCount) raw hits for topic fit",
-            "Ranked \(rankedCount) candidates by relevance, evidence role, quality, and freshness"
+            "Ranked \(rankedCount) candidates by intent fit, lane diversity, and source quality"
         ]
     }
 
@@ -1454,6 +1555,7 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         case .arxiv: return 0.08
         case .youtube: return 0.04
         case .web: return 0.03
+        case .googleBooks, .openLibrary, .internetArchive: return 0.04
         }
     }
 
@@ -1463,6 +1565,7 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         case .foundational, .mechanism, .counterevidence: return 0.08
         case .recent, .localLibrary: return 0.07
         case .practicalGuide, .videoExplainer, .webContext: return 0.04
+        case .primaryText, .book, .lecture, .philosophicalContext, .traditionGuide: return 0.04
         }
     }
 

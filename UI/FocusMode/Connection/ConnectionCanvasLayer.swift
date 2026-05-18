@@ -1,14 +1,14 @@
 // CosmoOS/UI/FocusMode/Connection/ConnectionCanvasLayer.swift
 // April 2026 — Connection Focus Mode V3 "The Crucible, Dissolved"
 //
-// Every intrinsic panel on the Connection canvas (masthead, 8 stations,
+// Every intrinsic panel on the Connection canvas (masthead, 11 stations,
 // collaborator, live insights, maturity + usage summary, Well sources)
 // renders here as a first-class draggable block. No sidebars. No grid.
 //
 // Default positions laid out in a deterministic three-column "Crucible
 // Arrangement":
 //   left column  → the Well (single sources block, ex-Well sidebar)
-//   center       → masthead + 2×4 station grid (ex-Forge)
+//   center       → masthead + 11-section station grid (ex-Forge)
 //   right column → collaborator / insights / atelier summary (ex-Atelier)
 //
 // Users can drag any block freely. `⌘⇧R` clears canvas positions, snapping
@@ -100,8 +100,9 @@ struct ConnectionCrucibleLayout {
     // Canonical station order used by both default layout and ley line
     // source lookups.
     static let stationOrder: [ConnectionSectionType] = [
-        .goal, .conceptName, .problems, .benefits,
-        .process, .examples, .beliefsObjections, .references
+        .goal, .problems, .claims, .evidence,
+        .benefits, .examples, .beliefsObjections, .process,
+        .openQuestions, .conceptName, .references
     ]
 
     // Column widths.
@@ -168,7 +169,7 @@ struct ConnectionCrucibleLayout {
         mastheadCenter.y + ConnectionBlockSize.masthead.height / 2
     }
 
-    // MARK: - Station grid (2×4 under masthead)
+    // MARK: - Station grid under masthead
 
     private var stationGridTop: CGFloat {
         mastheadBottom + Self.interBlockGap
@@ -208,9 +209,10 @@ struct ConnectionCrucibleLayout {
     private var atelierAnchors: AtelierAnchors {
         if isCompact {
             // Below the forge grid, row of three.
+            let rowCount = Int(ceil(Double(Self.stationOrder.count) / Double(Self.stationGridCols)))
             let gridBottom = stationGridTop
-                + ConnectionBlockSize.station.height * 2
-                + Self.stationSpacing
+                + ConnectionBlockSize.station.height * CGFloat(rowCount)
+                + Self.stationSpacing * CGFloat(max(rowCount - 1, 0))
             let y = gridBottom + Self.interBlockGap + ConnectionBlockSize.collaborator.height / 2
             let total = ConnectionBlockSize.collaborator.width
                 + ConnectionBlockSize.insights.width

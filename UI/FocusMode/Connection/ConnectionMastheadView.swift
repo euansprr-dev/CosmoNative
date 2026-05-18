@@ -14,7 +14,7 @@ struct ConnectionMastheadView: View {
     @Binding var title: String
     @Binding var conceptType: ConceptFrameworkType
 
-    /// Number of sections with at least one item (0...8). Drives crystal.
+    /// Number of sections with at least one item. Drives crystal.
     let filledCount: Int
 
     /// Stats line inputs.
@@ -172,12 +172,12 @@ struct ConnectionMastheadView: View {
             .font(DS.smallCaps)
             .tracking(1.4)
             .foregroundStyle(DS.inkFaded)
-            .accessibilityLabel("\(sourceCount) sources, \(filledCount) of 8 stations, \(insightCount) insights")
+            .accessibilityLabel("\(sourceCount) sources, \(filledCount) of \(ConnectionSectionType.allCases.count) stations, \(insightCount) insights")
     }
 
     private var statsText: String {
         let sources = "\(sourceCount) SOURCE\(sourceCount == 1 ? "" : "S")"
-        let stations = "\(filledCount)/8 STATIONS"
+        let stations = "\(filledCount)/\(ConnectionSectionType.allCases.count) STATIONS"
         let insights = "\(insightCount) INSIGHT\(insightCount == 1 ? "" : "S")"
         return "\(sources)  ·  \(stations)  ·  \(insights)"
     }

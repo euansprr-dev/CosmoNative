@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 import XCTest
 @testable import CosmoOS
 
@@ -31,6 +32,19 @@ final class FocusModeEditorBlurTests: XCTestCase {
         )
     }
 
+    func testClickInsideTextEditorScrollContainerDoesNotRequestBlurForFocusedTextView() {
+        let scrollView = NSScrollView()
+        let textView = NSTextView()
+        scrollView.documentView = textView
+
+        XCTAssertFalse(
+            FocusModeEditorBlur.shouldClearEditableFirstResponder(
+                currentResponder: textView,
+                hitView: scrollView
+            )
+        )
+    }
+
     func testOutsideClickDoesNotRequestBlurWhenFocusedResponderIsNotEditableText() {
         let button = NSButton()
 
@@ -40,5 +54,26 @@ final class FocusModeEditorBlurTests: XCTestCase {
                 hitView: nil
             )
         )
+    }
+}
+
+@MainActor
+final class MainKeyboardShortcutPolicyTests: XCTestCase {
+    func testWebViewResponderReservesKeyboardInputForBrowser() {
+        let webView = WKWebView()
+
+        XCTAssertTrue(MainKeyboardShortcutPolicy.isTypingTarget(webView))
+    }
+
+    func testWebViewDescendantResponderReservesKeyboardInputForBrowser() {
+        let webView = WKWebView()
+        let descendant = NSView()
+        webView.addSubview(descendant)
+
+        XCTAssertTrue(MainKeyboardShortcutPolicy.isTypingTarget(descendant))
+    }
+
+    func testRegularResponderDoesNotReserveKeyboardInput() {
+        XCTAssertFalse(MainKeyboardShortcutPolicy.isTypingTarget(NSButton()))
     }
 }

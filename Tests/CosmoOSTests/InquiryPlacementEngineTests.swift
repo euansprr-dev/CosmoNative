@@ -80,6 +80,75 @@ final class InquiryPlacementEngineTests: XCTestCase {
         XCTAssertEqual(parsed.body, "best sources on nasal breathing and HRV")
     }
 
+    func testCaptureIntentClassifierRecognizesQuestionAndSpeculativeClaim() {
+        let question = CaptureIntentClassifier.classifyHeuristic(text: "What is pranayama?")
+        XCTAssertEqual(question.kind, .question)
+        XCTAssertGreaterThanOrEqual(question.confidence, 0.9)
+
+        let speculative = CaptureIntentClassifier.classifyHeuristic(text: "Maybe slow breathing improves HRV")
+        XCTAssertEqual(speculative.kind, .speculativeClaim)
+        XCTAssertGreaterThanOrEqual(speculative.confidence, 0.75)
+    }
+
+    func testConnectionRoutingBuildsBranchCandidateWithVerbatimSections() async {
+        let branch = ResearchTreeNode(
+            id: "hrv-node",
+            kind: .question,
+            atomUUID: "question-hrv",
+            meta: ResearchTreeNode.Meta(
+                label: "How does breathwork affect HRV?",
+                nodeType: .branchQuestion,
+                relationshipType: .childOf
+            )
+        )
+        let extracts = [
+            extract(
+                uuid: "claim-1",
+                body: "Vagal tone modulates HRV.",
+                kind: .claim,
+                questionUUID: "question-hrv",
+                branchNodeId: "hrv-node",
+                sourceUUID: "source-a"
+            ),
+            extract(
+                uuid: "evidence-1",
+                body: "A meta-analysis reports slow breathing increases HRV markers.",
+                kind: .evidence,
+                questionUUID: "question-hrv",
+                branchNodeId: "hrv-node",
+                sourceUUID: "source-a"
+            ),
+            extract(
+                uuid: "practice-1",
+                body: "Practice 4-7-8 breathing before sleep.",
+                kind: .practice,
+                questionUUID: "question-hrv",
+                branchNodeId: "hrv-node",
+                sourceUUID: nil
+            )
+        ]
+
+        let proposals = await ConnectionRoutingEngine().proposals(
+            forSession: Atom.new(type: .inquirySession, title: "Breathwork session"),
+            branches: [branch],
+            extracts: extracts,
+            sources: [
+                InquirySourceRef(sourceUUID: "source-a", title: "Slow Breathing Meta-analysis")
+            ]
+        )
+
+        guard let candidate = proposals.first else {
+            return XCTFail("Expected one Connection proposal")
+        }
+        XCTAssertEqual(candidate.branchNodeId, "hrv-node")
+        XCTAssertEqual(candidate.proposedTitle, "How does breathwork affect HRV?")
+        XCTAssertEqual(candidate.materialCount, 3)
+        XCTAssertEqual(candidate.proposedSections[.claims]?.map(\.body), ["Vagal tone modulates HRV."])
+        XCTAssertEqual(candidate.proposedSections[.evidence]?.map(\.body), ["A meta-analysis reports slow breathing increases HRV markers."])
+        XCTAssertEqual(candidate.proposedSections[.process]?.map(\.body), ["Practice 4-7-8 breathing before sleep."])
+        XCTAssertEqual(candidate.proposedSections[.references]?.first?.sourceUUID, "source-a")
+    }
+
     func testInquiryLayoutPayloadRoundTripsFromMenuNotification() {
         let payload = CosmoNotification.Inquiry.LayoutPayload(mode: .write)
         let notification = Notification(
@@ -91,6 +160,233 @@ final class InquiryPlacementEngineTests: XCTestCase {
         let decoded = CosmoNotification.Inquiry.LayoutPayload(from: notification)
 
         XCTAssertEqual(decoded?.mode, .write)
+    }
+
+    func testInquirySourceCandidateDecodesWithoutDeepScoutV2Fields() throws {
+        let json = """
+        {
+          "id": "old-candidate",
+          "provider": "openAlex",
+          "sourceKind": "review",
+          "title": "Systematic review of breathing practices",
+          "authors": [],
+          "evidenceRole": "review",
+          "reason": "Old candidate",
+          "score": 0.5,
+          "qualitySignals": [],
+          "importStatus": "candidate",
+          "generatedAt": "2026-05-18T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(InquirySourceCandidate.self, from: json)
+
+        XCTAssertNil(decoded.researchIntent)
+        XCTAssertNil(decoded.sourceLane)
+        XCTAssertEqual(decoded.provider, .openAlex)
+        XCTAssertEqual(decoded.evidenceRole, .review)
+    }
+
+    func testInquirySourceLaneDisplayNamesAreHumanReadable() {
+        XCTAssertEqual(InquirySourceLane.deepRead.displayName, "Deep read")
+        XCTAssertEqual(InquirySourceLane.teacherLecture.displayName, "Lecture")
+        XCTAssertEqual(InquirySourceLane.primaryText.displayName, "Primary text")
+    }
+
+    func testDeepScoutClassifiesPranayamaDefinitionAsConceptExploration() {
+        let intent = DeepScoutIntentPlanner.intent(for: pranayamaProfile())
+
+        XCTAssertEqual(intent, .conceptExploration)
+    }
+
+    func testDeepScoutV2QueriesForPranayamaPreferBooksVideosAndTradition() {
+        let plan = DeepScoutIntentPlanner.plan(for: pranayamaProfile(), mode: .deepScout)
+        let queries = plan.queries.map(\.query).joined(separator: "\n").lowercased()
+
+        XCTAssertEqual(plan.intent, .conceptExploration)
+        XCTAssertTrue(queries.contains("pranayama meaning"))
+        XCTAssertTrue(queries.contains("prana"))
+        XCTAssertTrue(queries.contains("youtube"))
+        XCTAssertTrue(queries.contains("book"))
+        XCTAssertTrue(queries.contains("patanjali") || queries.contains("hatha yoga pradipika"))
+        XCTAssertFalse(queries.contains("randomized controlled trial"))
+        XCTAssertFalse(queries.contains("mental disorders"))
+    }
+
+    func testDeepScoutV2KeepsClinicalQueriesForClinicalQuestion() {
+        let profile = InquiryBranchResearchProfile(
+            deepDiveTitle: "Breathwork",
+            activeQuestionTitle: "How does pranayama affect anxiety?",
+            activeQuestionUUID: "q-clinical",
+            branchNodeId: "node-clinical",
+            ancestorTitles: [],
+            claims: [],
+            evidence: []
+        )
+
+        let plan = DeepScoutIntentPlanner.plan(for: profile, mode: .deepScout)
+        let queries = plan.queries.map(\.query).joined(separator: "\n").lowercased()
+
+        XCTAssertEqual(plan.intent, .clinicalEvidence)
+        XCTAssertTrue(queries.contains("systematic review") || queries.contains("meta-analysis"))
+        XCTAssertTrue(queries.contains("anxiety"))
+    }
+
+    func testDeepScoutParsesOpenLibraryBookCandidate() throws {
+        let doc: [String: Any] = [
+            "key": "/works/OL123W",
+            "title": "Light on Pranayama",
+            "author_name": ["B. K. S. Iyengar"],
+            "first_publish_year": 1981,
+            "first_sentence": ["A practical and philosophical guide to pranayama."],
+            "subject": ["Pranayama", "Yoga"]
+        ]
+
+        let candidate = try XCTUnwrap(
+            DeepScoutProviders.openLibraryCandidate(
+                from: doc,
+                query: "pranayama book yoga",
+                lane: .deepRead,
+                intent: .conceptExploration,
+                profile: pranayamaProfile()
+            )
+        )
+
+        XCTAssertEqual(candidate.provider, .openLibrary)
+        XCTAssertEqual(candidate.sourceKind, .book)
+        XCTAssertEqual(candidate.sourceLane, .deepRead)
+        XCTAssertEqual(candidate.researchIntent, .conceptExploration)
+        XCTAssertEqual(candidate.evidenceRole, .book)
+        XCTAssertEqual(candidate.title, "Light on Pranayama")
+        XCTAssertEqual(candidate.authors, ["B. K. S. Iyengar"])
+        XCTAssertEqual(candidate.publishedDate, "1981")
+        XCTAssertTrue(candidate.url?.contains("openlibrary.org/works/OL123W") == true)
+    }
+
+    func testDeepScoutParsesYouTubeCandidateWithLectureLane() throws {
+        let item: [String: Any] = [
+            "id": ["videoId": "abc123"],
+            "snippet": [
+                "title": "Pranayama explained by a traditional yoga teacher",
+                "description": "A lecture on prana, breath, and the meaning of pranayama.",
+                "channelTitle": "Yoga Philosophy Archive",
+                "publishedAt": "2020-05-10T12:00:00Z"
+            ]
+        ]
+
+        let candidate = try XCTUnwrap(
+            DeepScoutProviders.youtubeCandidate(
+                from: item,
+                lane: .teacherLecture,
+                intent: .conceptExploration,
+                profile: pranayamaProfile()
+            )
+        )
+
+        XCTAssertEqual(candidate.provider, .youtube)
+        XCTAssertEqual(candidate.sourceKind, .video)
+        XCTAssertEqual(candidate.sourceLane, .teacherLecture)
+        XCTAssertEqual(candidate.researchIntent, .conceptExploration)
+        XCTAssertEqual(candidate.evidenceRole, .lecture)
+        XCTAssertEqual(candidate.subtitle, "Yoga Philosophy Archive")
+        XCTAssertEqual(candidate.publishedDate, "2020")
+        XCTAssertEqual(candidate.url, "https://www.youtube.com/watch?v=abc123")
+    }
+
+    func testDeepScoutV2PranayamaConceptRanksBookAndLectureAboveClinicalStressPaper() {
+        let profile = pranayamaProfile()
+        let plan = DeepScoutIntentPlanner.plan(for: profile, mode: .deepScout)
+        let book = makeCandidate(
+            provider: .googleBooks,
+            kind: .book,
+            title: "Light on Pranayama",
+            abstract: "A deep book on prana, breath, and yogic practice.",
+            role: .book,
+            lane: .deepRead,
+            intent: .conceptExploration
+        )
+        let lecture = makeCandidate(
+            provider: .youtube,
+            kind: .video,
+            title: "What is pranayama? A traditional yoga lecture",
+            abstract: "A teacher explains prana, breath, and the philosophical meaning of pranayama.",
+            role: .lecture,
+            lane: .teacherLecture,
+            intent: .conceptExploration
+        )
+        let clinical = makeCandidate(
+            provider: .openAlex,
+            kind: .review,
+            title: "Effect of pranayama on stress and mental disorders: a systematic review",
+            abstract: "Clinical evidence for anxiety, depression, stress reduction, and mental health treatment.",
+            role: .review,
+            lane: .clinicalEvidence,
+            intent: .clinicalEvidence
+        )
+
+        let ranked = DeepScoutRanker.rank([clinical, lecture, book], profile: profile, plan: plan, existingSourceRefs: [], limit: 3)
+        let topTwo = ranked.prefix(2).map(\.title)
+
+        XCTAssertTrue(topTwo.contains(book.title))
+        XCTAssertTrue(topTwo.contains(lecture.title))
+        XCTAssertNotEqual(ranked.first?.title, clinical.title)
+    }
+
+    func testDeepScoutV2BalancesConceptResultsAcrossLanes() {
+        let profile = pranayamaProfile()
+        let plan = DeepScoutIntentPlanner.plan(for: profile, mode: .deepScout)
+        let candidates = [
+            makeCandidate(provider: .googleBooks, kind: .book, title: "Light on Pranayama", abstract: "A pranayama book.", role: .book, lane: .deepRead),
+            makeCandidate(provider: .openLibrary, kind: .book, title: "The Art of Pranayama", abstract: "A pranayama manual.", role: .book, lane: .deepRead),
+            makeCandidate(provider: .internetArchive, kind: .book, title: "Pranayama in the Hatha Yoga Pradipika", abstract: "A primary-text commentary.", role: .primaryText, lane: .primaryText),
+            makeCandidate(provider: .youtube, kind: .video, title: "Pranayama explained by a teacher", abstract: "A lecture about prana and breath.", role: .lecture, lane: .teacherLecture),
+            makeCandidate(provider: .openAlex, kind: .paper, title: "Pranayama and Yoga Philosophy", abstract: "A scholarly context source about pranayama.", role: .philosophicalContext, lane: .scholarlyContext)
+        ]
+
+        let ranked = DeepScoutRanker.rank(candidates, profile: profile, plan: plan, existingSourceRefs: [], limit: 4)
+        let lanes = Set(ranked.map(\.sourceLane))
+
+        XCTAssertTrue(lanes.contains(.deepRead))
+        XCTAssertTrue(lanes.contains(.primaryText))
+        XCTAssertTrue(lanes.contains(.teacherLecture))
+        XCTAssertTrue(lanes.contains(.scholarlyContext))
+    }
+
+    func testDeepScoutScoutQueriesForPranayamaAvoidClinicalDefaults() {
+        let queries = InquirySourceRecommendationEngine.scoutQueries(for: pranayamaProfile())
+        let joined = queries.joined(separator: "\n").lowercased()
+
+        XCTAssertTrue(joined.contains("book"))
+        XCTAssertTrue(joined.contains("youtube"))
+        XCTAssertTrue(joined.contains("patanjali") || joined.contains("hatha yoga pradipika"))
+        XCTAssertFalse(joined.contains("randomized controlled trial"))
+        XCTAssertFalse(joined.contains("mental disorders"))
+    }
+
+    func testSourceRecommendationRankCandidatesUsesDeepScoutV2WhenLanesPresent() {
+        let profile = pranayamaProfile()
+        let book = makeCandidate(
+            provider: .googleBooks,
+            kind: .book,
+            title: "Light on Pranayama",
+            abstract: "A deep book on prana, breath, and yogic practice.",
+            role: .book,
+            lane: .deepRead
+        )
+        let clinical = makeCandidate(
+            provider: .openAlex,
+            kind: .review,
+            title: "Effectiveness of pranayama for mental disorders: a systematic review",
+            abstract: "Clinical outcomes for stress, anxiety, depression, and mental health treatment.",
+            role: .review,
+            lane: .clinicalEvidence,
+            intent: .clinicalEvidence
+        )
+
+        let ranked = InquirySourceRecommendationEngine.rankCandidates([clinical, book], profile: profile, existingSourceRefs: [])
+
+        XCTAssertEqual(ranked.first?.title, book.title)
+        XCTAssertNotEqual(ranked.first?.sourceLane, .clinicalEvidence)
     }
 
     func testDeepScoutQueryExpansionKeepsBranchAnchorAndAddsSourceAngles() {
@@ -287,5 +583,59 @@ final class InquiryPlacementEngineTests: XCTestCase {
             questions: activeQuestion.map { [$0] } ?? [],
             claims: []
         )
+    }
+
+    private func pranayamaProfile() -> InquiryBranchResearchProfile {
+        InquiryBranchResearchProfile(
+            deepDiveTitle: "Breathwork",
+            activeQuestionTitle: "What is pranayama?",
+            activeQuestionUUID: "q-prana",
+            branchNodeId: "node-prana",
+            ancestorTitles: [],
+            claims: [],
+            evidence: []
+        )
+    }
+
+    private func makeCandidate(
+        provider: InquirySourceProvider,
+        kind: InquirySourceKind,
+        title: String,
+        abstract: String,
+        role: InquiryEvidenceRole,
+        lane: InquirySourceLane,
+        intent: InquiryResearchIntent = .conceptExploration
+    ) -> InquirySourceCandidate {
+        InquirySourceCandidate(
+            provider: provider,
+            sourceKind: kind,
+            title: title,
+            abstract: abstract,
+            evidenceRole: role,
+            reason: "",
+            researchIntent: intent,
+            sourceLane: lane
+        )
+    }
+
+    private func extract(
+        uuid: String,
+        body: String,
+        kind: ExtractKind,
+        questionUUID: String,
+        branchNodeId: String,
+        sourceUUID: String?
+    ) -> Atom {
+        var atom = Atom.new(type: .extract, title: body, body: body)
+        atom.uuid = uuid
+        atom = atom.withMetadata(
+            ExtractMetadata(
+                kind: kind,
+                sourceUUID: sourceUUID,
+                parentQuestionUUID: questionUUID,
+                parentBranchNodeId: branchNodeId
+            )
+        )
+        return atom
     }
 }

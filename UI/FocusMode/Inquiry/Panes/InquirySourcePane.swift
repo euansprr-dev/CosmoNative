@@ -510,8 +510,12 @@ struct InquirySourcePane: View {
                     radarEmptyState
                 } else {
                     LazyVStack(spacing: DS.space10) {
-                        ForEach(viewModel.activeSourceCandidates, id: \.id) { candidate in
-                            sourceCandidateCard(candidate)
+                        ForEach(sourceRadarCandidateGroups.indices, id: \.self) { index in
+                            let group = sourceRadarCandidateGroups[index]
+                            sourceLaneHeader(group)
+                            ForEach(group.candidates, id: \.id) { candidate in
+                                sourceCandidateCard(candidate)
+                            }
                         }
                     }
                 }
@@ -794,10 +798,70 @@ struct InquirySourcePane: View {
         .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
     }
 
+    private var sourceRadarCandidateGroups: [SourceRadarLaneGroup] {
+        let grouped = Dictionary(grouping: viewModel.activeSourceCandidates) { candidate in
+            candidate.sourceLane ?? fallbackLane(for: candidate)
+        }
+        return sourceRadarLaneOrder.compactMap { lane in
+            guard let candidates = grouped[lane], !candidates.isEmpty else { return nil }
+            return SourceRadarLaneGroup(lane: lane, candidates: candidates)
+        }
+    }
+
+    private var sourceRadarLaneOrder: [InquirySourceLane] {
+        [
+            .localLibrary,
+            .primaryText,
+            .deepRead,
+            .teacherLecture,
+            .practiceGuide,
+            .scholarlyContext,
+            .clinicalEvidence,
+            .webResource
+        ]
+    }
+
+    private func fallbackLane(for candidate: InquirySourceCandidate) -> InquirySourceLane {
+        switch candidate.provider {
+        case .local:
+            return .localLibrary
+        case .googleBooks, .openLibrary, .internetArchive:
+            return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
+        case .youtube:
+            return .teacherLecture
+        case .pubMed:
+            return .clinicalEvidence
+        case .openAlex, .crossref, .semanticScholar, .arxiv:
+            return candidate.evidenceRole == .metaAnalysis || candidate.evidenceRole == .review ? .clinicalEvidence : .scholarlyContext
+        case .web:
+            return .webResource
+        }
+    }
+
+    private func sourceLaneHeader(_ group: SourceRadarLaneGroup) -> some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: group.lane.iconName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DS.accent.opacity(0.75))
+                .accessibilityHidden(true)
+            Text(group.lane.displayName.uppercased())
+                .font(CosmoTypography.labelSmall)
+                .tracking(1.4)
+                .foregroundStyle(CosmoColors.textTertiary)
+            Text("\(group.candidates.count)")
+                .font(CosmoTypography.labelSmall)
+                .foregroundStyle(CosmoColors.textTertiary)
+                .monospacedDigit()
+            Spacer()
+        }
+        .padding(.top, DS.space6)
+    }
+
     private func sourceCandidateCard(_ candidate: InquirySourceCandidate) -> some View {
-        HStack(alignment: .top, spacing: DS.space12) {
+        let lane = candidate.sourceLane ?? fallbackLane(for: candidate)
+        return HStack(alignment: .top, spacing: DS.space12) {
             VStack(spacing: 4) {
-                Image(systemName: candidate.sourceKind.iconName)
+                Image(systemName: lane.iconName)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(DS.accent)
                     .frame(width: 32, height: 32)
@@ -813,7 +877,7 @@ struct InquirySourcePane: View {
                         .foregroundStyle(CosmoColors.textPrimary)
                         .lineLimit(2)
                     Spacer(minLength: DS.space8)
-                    evidenceRolePill(candidate.evidenceRole)
+                    sourceLanePill(lane)
                 }
                 if let subtitle = candidate.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
@@ -826,7 +890,7 @@ struct InquirySourcePane: View {
                     .foregroundStyle(CosmoColors.textSecondary)
                     .lineLimit(2)
                 HStack(spacing: 6) {
-                    radarMetadata("\(candidate.provider.displayName) · \(candidate.sourceKind.displayName)")
+                    radarMetadata("\(candidate.provider.displayName) · \(candidate.evidenceRole.displayName)")
                     if let year = candidate.publishedDate?.prefix(4), !year.isEmpty {
                         radarMetadata(String(year))
                     }
@@ -840,6 +904,20 @@ struct InquirySourcePane: View {
         .padding(DS.space12)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(candidate.importStatus == .imported ? DS.accent.opacity(0.28) : DS.borderSubtle, lineWidth: 1))
+    }
+
+    private func sourceLanePill(_ lane: InquirySourceLane) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: lane.iconName)
+                .font(.system(size: 9, weight: .semibold))
+                .accessibilityHidden(true)
+            Text(lane.displayName)
+        }
+        .font(CosmoTypography.labelSmall)
+        .foregroundStyle(DS.accent)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(DS.accent.opacity(0.08), in: Capsule())
     }
 
     private func evidenceRolePill(_ role: InquiryEvidenceRole) -> some View {
@@ -910,4 +988,9 @@ struct InquirySourcePane: View {
         case .loading, .idle: return CosmoColors.textTertiary
         }
     }
+}
+
+private struct SourceRadarLaneGroup {
+    var lane: InquirySourceLane
+    var candidates: [InquirySourceCandidate]
 }

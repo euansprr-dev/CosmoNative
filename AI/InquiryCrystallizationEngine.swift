@@ -216,20 +216,29 @@ final class InquiryCrystallizationEngine {
         deepDive: Atom?,
         extracts: [Atom]
     ) async -> CrystallizationOutput {
+        var copy = output
+        let sourceRefs = session.inquirySessionStructured?.sourceRefs ?? []
+        let branchNodes = session.inquirySessionStructured
+            .map { Array($0.researchTree.nodes.values) } ?? []
+        copy.possibleConnections = await ConnectionRoutingEngine().proposals(
+            forSession: session,
+            branches: branchNodes,
+            extracts: extracts,
+            sources: sourceRefs
+        )
+
         guard let deepDive,
               let thinkspaceUUID = deepDive.deepDiveMetadata?.primaryThinkspaceUUID
                 ?? deepDive.deepDiveMetadata?.parentThinkspaceUUIDs?.first else {
-            return output
+            return copy
         }
 
-        var copy = output
         let questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: deepDive.uuid)) ?? []
         let sources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: deepDive)) ?? []
         let connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive)) ?? []
-        let sourceRefs = session.inquirySessionStructured?.sourceRefs ?? []
 
         let operations = buildCanvasOperations(
-            output: output,
+            output: copy,
             session: session,
             deepDive: deepDive,
             thinkspaceUUID: thinkspaceUUID,
@@ -329,30 +338,37 @@ final class InquiryCrystallizationEngine {
             ))
         }
 
-        let claims = extracts.filter { $0.extractMetadata?.kind.isClaimLike == true }
-        for (index, claim) in claims.prefix(4).enumerated() {
-            let title = makeCardTitle(from: claim.body ?? claim.title ?? "Claim")
+        for (index, candidate) in output.possibleConnections.enumerated() where candidate.accepted {
+            let duplicate = duplicateConnectionCheck(candidate.proposedTitle, connections: connections)
+            let filledSections = candidate.proposedSections.values.filter { !$0.isEmpty }.count
             operations.append(CanvasOperation(
-                type: .createClaimCard,
-                sourceArtifactID: claim.uuid,
+                type: .promoteToConnection,
+                sourceArtifactID: candidate.id,
                 targetThinkspaceUUID: thinkspaceUUID,
+                targetObjectUUID: duplicate.matchedObjectUUID,
                 targetClusterUUID: proposedClusterUUID,
-                proposedObjectType: "claim",
-                proposedTitle: title,
-                proposedBody: claim.body ?? claim.title,
-                proposedPlacement: CanvasPlacementProposal(x: 20 + Double(index * 260), y: 190, width: 300, height: 180, clusterUUID: proposedClusterUUID),
-                relationshipType: claim.extractMetadata?.kind == .speculativeClaim ? "speculative_claim" : "claim",
-                rationale: claim.extractMetadata?.kind == .speculativeClaim
-                    ? "This claim is important enough to review visually, but it must remain marked speculative."
-                    : "This claim is a reasoning object that should be visible and linked to its evidence.",
-                confidence: claim.extractMetadata?.kind == .speculativeClaim ? 0.58 : 0.7,
+                proposedObjectType: AtomType.connection.rawValue,
+                proposedTitle: candidate.proposedTitle,
+                proposedBody: "\(candidate.materialCount) routed items across \(filledSections) sections.",
+                proposedPlacement: CanvasPlacementProposal(
+                    x: -40 + Double(index * 320),
+                    y: 180,
+                    width: 320,
+                    height: 220,
+                    clusterUUID: proposedClusterUUID,
+                    placementRationale: "Promote the branch as one browsable Connection card."
+                ),
+                relationshipType: "branch_connection",
+                rationale: candidate.rationale ?? "Promote this branch as a Connection so captures stay organized around the user's question.",
+                confidence: duplicate.verdict == .exactMatch ? 0.7 : 0.82,
                 alternatives: [
-                    CanvasOperationAlternative(label: "Append under active question", operationType: .appendToObject, targetObjectUUID: claim.extractMetadata?.parentQuestionUUID)
+                    CanvasOperationAlternative(label: "Skip this Connection", operationType: .ignore),
+                    CanvasOperationAlternative(label: "Keep branch internal", operationType: .hideArtifact)
                 ],
-                duplicateCheckResult: duplicateClaimCheck(claim, extracts: extracts),
-                appendCreateRecommendation: .create,
-                rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [claim.uuid]),
-                visualMaturity: .claimQuestionOrTerm
+                duplicateCheckResult: duplicate,
+                appendCreateRecommendation: duplicate.verdict == .exactMatch ? .append : .promote,
+                rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [duplicate.matchedObjectUUID].compactMap { $0 }),
+                visualMaturity: .conceptCardOrConnection
             ))
         }
 
@@ -398,47 +414,6 @@ final class InquiryCrystallizationEngine {
                 rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [extract.uuid]),
                 visualMaturity: .rawCapture,
                 requiresReview: false
-            ))
-        }
-
-        for (index, loop) in output.openLoops.prefix(3).enumerated() {
-            operations.append(CanvasOperation(
-                type: .createNoteCard,
-                sourceArtifactID: loop.id,
-                targetThinkspaceUUID: thinkspaceUUID,
-                targetClusterUUID: proposedClusterUUID,
-                proposedObjectType: "open_loop",
-                proposedTitle: loop.description,
-                proposedBody: loop.suggestedNextStep,
-                proposedPlacement: CanvasPlacementProposal(x: -240 + Double(index * 240), y: 390, width: 260, height: 140, clusterUUID: proposedClusterUUID),
-                relationshipType: "raises_question",
-                rationale: "This unresolved loop should remain visible if it guides the next inquiry session.",
-                confidence: 0.66,
-                alternatives: [
-                    CanvasOperationAlternative(label: "Keep internal under active question", operationType: .hideArtifact)
-                ],
-                appendCreateRecommendation: .create,
-                visualMaturity: .openLoop
-            ))
-        }
-
-        if let source = uniqueSourceRefs.first, let claim = claims.first {
-            operations.append(CanvasOperation(
-                type: .linkObjects,
-                sourceArtifactID: claim.uuid,
-                targetThinkspaceUUID: thinkspaceUUID,
-                targetObjectUUID: claim.uuid,
-                proposedObjectType: "relationship",
-                relationshipType: claim.extractMetadata?.kind == .speculativeClaim ? "weak_support" : "supports",
-                rationale: "Link the source to the claim as evidence provenance. Speculative claims use a weak support relationship.",
-                confidence: claim.extractMetadata?.kind == .speculativeClaim ? 0.52 : 0.68,
-                alternatives: [
-                    CanvasOperationAlternative(label: "Leave evidence attached internally", operationType: .hideArtifact)
-                ],
-                duplicateCheckResult: CanvasDuplicateCheckResult(verdict: .needsReview, matchedObjectUUID: source.sourceUUID, explanation: "Relationship links need validation against existing canvas lines before apply."),
-                appendCreateRecommendation: .link,
-                rollbackMetadata: CanvasRollbackMetadata(affectedAtomUUIDs: [source.sourceUUID, claim.uuid]),
-                visualMaturity: .claimQuestionOrTerm
             ))
         }
 
@@ -575,6 +550,14 @@ final class InquiryCrystallizationEngine {
         let text = normalized(claim.body ?? claim.title ?? "")
         if let exact = extracts.first(where: { $0.uuid != claim.uuid && normalized($0.body ?? $0.title ?? "") == text }) {
             return CanvasDuplicateCheckResult(verdict: .exactMatch, matchedObjectUUID: exact.uuid, explanation: "A matching claim/extract already exists; append provenance rather than duplicating.")
+        }
+        return CanvasDuplicateCheckResult()
+    }
+
+    private func duplicateConnectionCheck(_ title: String, connections: [Atom]) -> CanvasDuplicateCheckResult {
+        let normalizedTitle = normalized(title)
+        if let exact = connections.first(where: { normalized($0.title ?? "") == normalizedTitle }) {
+            return CanvasDuplicateCheckResult(verdict: .exactMatch, matchedObjectUUID: exact.uuid, explanation: "A Connection with this title already exists; update it instead of creating another.")
         }
         return CanvasDuplicateCheckResult()
     }

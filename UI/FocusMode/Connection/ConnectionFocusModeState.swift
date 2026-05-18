@@ -282,25 +282,33 @@ struct CodableSize: Codable, Equatable {
 
 // MARK: - Connection Section Type
 
-/// The 8 section types for a Connection atom
-enum ConnectionSectionType: String, Codable, CaseIterable {
+/// The 11 section types for a Connection atom.
+/// V2 added `.claims`, `.evidence`, `.openQuestions` to support Inquiry crystallization
+/// where verbatim captures are routed by `ExtractKind` into matching sections.
+enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
     case goal               // What is the desired outcome?
     case problems           // What pain points does this solve?
+    case claims             // Load-bearing assertions (V2)
+    case evidence           // Supporting evidence with sources (V2)
     case benefits           // What are the positive outcomes?
     case examples           // Real-world applications
-    case beliefsObjections  // Common views, counterarguments
+    case beliefsObjections  // Counterarguments, alternative views
     case process            // Step-by-step implementation
+    case openQuestions      // Unresolved questions for further inquiry (V2)
     case conceptName        // Your unique name for this idea
-    case references         // Sources and evidence
+    case references         // Sources and cross-Connection web
 
     var displayName: String {
         switch self {
         case .goal: return "Goal"
         case .problems: return "Problems"
+        case .claims: return "Claims"
+        case .evidence: return "Evidence"
         case .benefits: return "Benefits"
         case .examples: return "Examples"
         case .beliefsObjections: return "Beliefs & Objections"
         case .process: return "Process"
+        case .openQuestions: return "Open Questions"
         case .conceptName: return "Concept Name"
         case .references: return "References"
         }
@@ -310,10 +318,13 @@ enum ConnectionSectionType: String, Codable, CaseIterable {
         switch self {
         case .goal: return "target"
         case .problems: return "exclamationmark.triangle.fill"
+        case .claims: return "exclamationmark.bubble.fill"
+        case .evidence: return "checkmark.seal.fill"
         case .benefits: return "checkmark.circle.fill"
         case .examples: return "pin.fill"
         case .beliefsObjections: return "bubble.left.and.bubble.right.fill"
         case .process: return "list.number"
+        case .openQuestions: return "questionmark.diamond.fill"
         case .conceptName: return "lightbulb.fill"
         case .references: return "book.fill"
         }
@@ -323,10 +334,13 @@ enum ConnectionSectionType: String, Codable, CaseIterable {
         switch self {
         case .goal: return "What is the desired outcome?"
         case .problems: return "What pain points does this solve?"
+        case .claims: return "What are you claiming to be true?"
+        case .evidence: return "What evidence supports the claims?"
         case .benefits: return "What are the positive outcomes?"
         case .examples: return "What are real-world applications?"
         case .beliefsObjections: return "What are common views or counterarguments?"
         case .process: return "What are the implementation steps?"
+        case .openQuestions: return "What's still unresolved?"
         case .conceptName: return "What is your unique name for this idea?"
         case .references: return "What sources support this?"
         }
@@ -334,14 +348,17 @@ enum ConnectionSectionType: String, Codable, CaseIterable {
 
     var accentColor: Color {
         switch self {
-        case .goal: return Color(hex: "#6366F1")         // Indigo
-        case .problems: return Color(hex: "#EF4444")     // Red
-        case .benefits: return Color(hex: "#22C55E")     // Green
-        case .examples: return Color(hex: "#F59E0B")     // Amber
+        case .goal: return Color(hex: "#6366F1")          // Indigo
+        case .problems: return Color(hex: "#EF4444")      // Red
+        case .claims: return Color(hex: "#2D6A4F")        // Forest green (accent)
+        case .evidence: return Color(hex: "#22C55E")      // Green (supports claims)
+        case .benefits: return Color(hex: "#22C55E")      // Green
+        case .examples: return Color(hex: "#F59E0B")      // Amber
         case .beliefsObjections: return Color(hex: "#8B5CF6")  // Purple
-        case .process: return Color(hex: "#06B6D4")      // Cyan
-        case .conceptName: return Color(hex: "#F59E0B")  // Amber
-        case .references: return Color(hex: "#6366F1")   // Indigo
+        case .process: return Color(hex: "#06B6D4")       // Cyan
+        case .openQuestions: return Color(hex: "#818CF8") // Lavender (a known "question" tint in CosmoOS)
+        case .conceptName: return Color(hex: "#F59E0B")   // Amber
+        case .references: return Color(hex: "#6366F1")    // Indigo
         }
     }
 
@@ -350,28 +367,39 @@ enum ConnectionSectionType: String, Codable, CaseIterable {
         switch self {
         case .goal: return "GOL"
         case .problems: return "PRB"
+        case .claims: return "CLM"
+        case .evidence: return "EVD"
         case .benefits: return "BEN"
         case .examples: return "EX"
         case .beliefsObjections: return "BEL"
         case .process: return "PRC"
+        case .openQuestions: return "Q?"
         case .conceptName: return "CN"
         case .references: return "REF"
         }
     }
 
-    /// Default order for display
+    /// Default order for display. Claims+evidence sit between problems and benefits
+    /// (statement → support → outcome). Open questions sit between process and the
+    /// closing meta sections (conceptName / references).
     var sortOrder: Int {
         switch self {
         case .goal: return 0
         case .problems: return 1
-        case .benefits: return 2
-        case .examples: return 3
-        case .beliefsObjections: return 4
-        case .process: return 5
-        case .conceptName: return 6
-        case .references: return 7
+        case .claims: return 2
+        case .evidence: return 3
+        case .benefits: return 4
+        case .examples: return 5
+        case .beliefsObjections: return 6
+        case .process: return 7
+        case .openQuestions: return 8
+        case .conceptName: return 9
+        case .references: return 10
         }
     }
+
+    /// V2 section types added in the Inquiry crystallization redesign.
+    static let v2AddedTypes: Set<ConnectionSectionType> = [.claims, .evidence, .openQuestions]
 }
 
 // MARK: - Connection Section
@@ -615,7 +643,7 @@ struct ConnectionFocusModeState: Codable {
 
     init(atomUUID: String) {
         self.atomUUID = atomUUID
-        // Initialize with all 8 sections
+        // Initialize with all current sections.
         self.sections = ConnectionSectionType.allCases
             .sorted { $0.sortOrder < $1.sortOrder }
             .map { ConnectionSection(type: $0) }
@@ -828,7 +856,8 @@ struct ConnectionFocusModeState: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.atomUUID = try c.decode(String.self, forKey: .atomUUID)
-        self.sections = try c.decode([ConnectionSection].self, forKey: .sections)
+        let decodedSections = try c.decode([ConnectionSection].self, forKey: .sections)
+        self.sections = Self.backfillingMissingSections(decodedSections)
         self.viewportState = try c.decode(CanvasViewportState.self, forKey: .viewportState)
         self.floatingPanelIDs = try c.decode([UUID].self, forKey: .floatingPanelIDs)
         self.isGeneratingGhosts = try c.decode(Bool.self, forKey: .isGeneratingGhosts)
@@ -1007,6 +1036,16 @@ struct ConnectionFocusModeState: Codable {
             }
             .joined(separator: "\n\n")
     }
+
+    static func backfillingMissingSections(_ decodedSections: [ConnectionSection]) -> [ConnectionSection] {
+        var sectionsByType = Dictionary(uniqueKeysWithValues: decodedSections.map { ($0.type, $0) })
+        for type in ConnectionSectionType.allCases where sectionsByType[type] == nil {
+            sectionsByType[type] = ConnectionSection(type: type)
+        }
+        return ConnectionSectionType.allCases
+            .sorted { $0.sortOrder < $1.sortOrder }
+            .compactMap { sectionsByType[$0] }
+    }
 }
 
 // MARK: - Persistence
@@ -1040,7 +1079,13 @@ struct ConnectionStructuredData: Codable {
     var sections: [ConnectionSection]
 
     init(sections: [ConnectionSection]) {
-        self.sections = sections
+        self.sections = ConnectionFocusModeState.backfillingMissingSections(sections)
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedSections = try c.decodeIfPresent([ConnectionSection].self, forKey: .sections) ?? []
+        self.sections = ConnectionFocusModeState.backfillingMissingSections(decodedSections)
     }
 
     func toJSON() -> String? {

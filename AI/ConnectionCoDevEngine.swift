@@ -526,6 +526,10 @@ class ConnectionCoDevEngine: ObservableObject {
             return "\(snippet) (from: \(sourceTitle))"
         case .problems:
             return "\(snippet) (from: \(sourceTitle))"
+        case .claims:
+            return "\(snippet) (from: \(sourceTitle))"
+        case .evidence:
+            return "\(snippet) (from: \(sourceTitle))"
         case .benefits:
             return "\(snippet) (from: \(sourceTitle))"
         case .examples:
@@ -533,6 +537,8 @@ class ConnectionCoDevEngine: ObservableObject {
         case .beliefsObjections:
             return "\(snippet) (from: \(sourceTitle))"
         case .process:
+            return "\(snippet) (from: \(sourceTitle))"
+        case .openQuestions:
             return "\(snippet) (from: \(sourceTitle))"
         case .conceptName:
             return sourceTitle

@@ -593,6 +593,7 @@ enum UnifiedSearchSource: String, CaseIterable {
     case swipes      // Swipe gallery matches
     case ideas       // Idea gallery matches
     case readwise    // ReadwiseBookStore matches
+    case browser     // Cosmo browser pinned pages
 
     var displayName: String {
         switch self {
@@ -600,6 +601,7 @@ enum UnifiedSearchSource: String, CaseIterable {
         case .swipes: return "Swipe File"
         case .ideas: return "Ideas"
         case .readwise: return "Library"
+        case .browser: return "Browser Pins"
         }
     }
 
@@ -609,6 +611,7 @@ enum UnifiedSearchSource: String, CaseIterable {
         case .swipes: return "bolt.fill"
         case .ideas: return "lightbulb.fill"
         case .readwise: return "books.vertical.fill"
+        case .browser: return "pin.fill"
         }
     }
 
@@ -618,6 +621,7 @@ enum UnifiedSearchSource: String, CaseIterable {
         case .swipes: return DS.entitySwipe
         case .ideas: return DS.entityIdea
         case .readwise: return DS.entityReadwise
+        case .browser: return DS.entityResearch
         }
     }
 }
@@ -627,6 +631,7 @@ enum UnifiedSearchResultKind: String {
     case project
     case thinkspace
     case readwise
+    case browserPin
 }
 
 /// A single result in the unified cross-library search
@@ -647,6 +652,48 @@ struct UnifiedSearchResult: Identifiable {
     let projectName: String?
     let thinkspaceNames: [String]
     let readwiseBookId: Int?
+    let browserURL: URL?
+    let browserTitle: String?
+
+    init(
+        id: String,
+        source: UnifiedSearchSource,
+        resultKind: UnifiedSearchResultKind,
+        title: String,
+        subtitle: String?,
+        snippet: String?,
+        icon: String,
+        accentColor: Color,
+        relevance: Double,
+        atomUUID: String?,
+        atomType: AtomType?,
+        thinkspaceId: String?,
+        projectUUID: String?,
+        projectName: String?,
+        thinkspaceNames: [String],
+        readwiseBookId: Int?,
+        browserURL: URL? = nil,
+        browserTitle: String? = nil
+    ) {
+        self.id = id
+        self.source = source
+        self.resultKind = resultKind
+        self.title = title
+        self.subtitle = subtitle
+        self.snippet = snippet
+        self.icon = icon
+        self.accentColor = accentColor
+        self.relevance = relevance
+        self.atomUUID = atomUUID
+        self.atomType = atomType
+        self.thinkspaceId = thinkspaceId
+        self.projectUUID = projectUUID
+        self.projectName = projectName
+        self.thinkspaceNames = thinkspaceNames
+        self.readwiseBookId = readwiseBookId
+        self.browserURL = browserURL
+        self.browserTitle = browserTitle
+    }
 
     var selectionID: String {
         atomUUID ?? thinkspaceId ?? id
@@ -661,6 +708,8 @@ struct UnifiedSearchResult: Identifiable {
         case .thinkspace:
             return thinkspaceId
         case .readwise:
+            return nil
+        case .browserPin:
             return nil
         }
     }
@@ -704,13 +753,15 @@ enum CommandKUnifiedSearchComposer {
     private static let swipeLimit = 8
     private static let ideaLimit = 8
     private static let readwiseLimit = 8
+    private static let browserPinLimit = 8
 
     static func buildOutput(
         query: String,
         hybridResults: [RankedResult],
         swipeGalleryItems: [SwipeGalleryItem],
         ideaGalleryItems: [IdeaGalleryItem],
-        readwiseBooks: [ReadwiseLibraryBook]
+        readwiseBooks: [ReadwiseLibraryBook],
+        browserPins: [CosmoBrowserPinnedSite] = []
     ) -> UnifiedSearchOutput {
         let normalizedQuery = CommandKSearchMatcher.normalizeQuery(query)
         guard !normalizedQuery.isEmpty else {
@@ -720,6 +771,8 @@ enum CommandKUnifiedSearchComposer {
         let swipeItemsByUUID = Dictionary(uniqueKeysWithValues: swipeGalleryItems.map { ($0.atomUUID, $0) })
         var includedAtomUUIDs = Set<String>()
         var allResults: [UnifiedSearchResult] = []
+
+        allResults.append(contentsOf: browserPinResults(for: browserPins, normalizedQuery: normalizedQuery))
 
         for result in hybridResults.prefix(hybridLimit) {
             if result.atomType == .idea { continue }
@@ -801,6 +854,8 @@ enum CommandKUnifiedSearchComposer {
                 return .swipe(item)
             case .readwise:
                 return .readwise(result)
+            case .browser:
+                return nil
             case .atoms, .ideas:
                 guard let key = result.libraryLookupKey,
                       let item = libraryItemsByID[key] else { return nil }
@@ -832,6 +887,65 @@ enum CommandKUnifiedSearchComposer {
             let rhsBest = rhs.value.first?.relevance ?? 0
             return lhsBest > rhsBest
         }.map { (source: $0.key, results: $0.value) }
+    }
+
+    private static func browserPinResults(
+        for pins: [CosmoBrowserPinnedSite],
+        normalizedQuery: String
+    ) -> [UnifiedSearchResult] {
+        pins.compactMap { pin -> UnifiedSearchResult? in
+            let normalizedText = CommandKSearchMatcher.normalize(pin.searchableText)
+            guard CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, inNormalizedText: normalizedText) else {
+                return nil
+            }
+
+            return UnifiedSearchResult(
+                id: "browser-pin-\(pin.id.uuidString)",
+                source: .browser,
+                resultKind: .browserPin,
+                title: "Open this page in browser",
+                subtitle: "\(pin.displayName) · \(pin.host)",
+                snippet: pin.url.absoluteString,
+                icon: "safari",
+                accentColor: DS.entityResearch,
+                relevance: browserPinRelevance(for: pin, normalizedQuery: normalizedQuery),
+                atomUUID: nil,
+                atomType: nil,
+                thinkspaceId: nil,
+                projectUUID: nil,
+                projectName: nil,
+                thinkspaceNames: [],
+                readwiseBookId: nil,
+                browserURL: pin.url,
+                browserTitle: pin.displayName
+            )
+        }
+        .sorted { $0.relevance > $1.relevance }
+        .prefix(browserPinLimit)
+        .map { $0 }
+    }
+
+    private static func browserPinRelevance(for pin: CosmoBrowserPinnedSite, normalizedQuery: String) -> Double {
+        let normalizedName = CommandKSearchMatcher.normalize(pin.displayName)
+        let normalizedTitle = CommandKSearchMatcher.normalize(pin.title)
+        let normalizedHost = CommandKSearchMatcher.normalize(pin.host)
+
+        if normalizedName == normalizedQuery {
+            return 1.4
+        }
+        if normalizedName.hasPrefix(normalizedQuery) {
+            return 1.32
+        }
+        if normalizedName.contains(normalizedQuery) {
+            return 1.22
+        }
+        if normalizedTitle.hasPrefix(normalizedQuery) {
+            return 1.12
+        }
+        if normalizedHost.contains(normalizedQuery) {
+            return 1.08
+        }
+        return 1.02
     }
 
     private static func atomResult(for result: RankedResult) -> UnifiedSearchResult {
@@ -1971,7 +2085,17 @@ public final class CommandKViewModel: ObservableObject {
         if isUnifiedSearchActive, selectedResultIndex >= 0,
            selectedResultIndex < unifiedFlatResults.count {
             let result = unifiedFlatResults[selectedResultIndex]
-            if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
+            if result.resultKind == .browserPin, let browserURL = result.browserURL {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openWebBrowserPane,
+                    object: nil,
+                    userInfo: [
+                        "url": browserURL,
+                        "title": result.browserTitle ?? result.subtitle ?? "Browser"
+                    ]
+                )
+                finishAction()
+            } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
                 NotificationCenter.default.post(
                     name: CosmoNotification.Navigation.navigateToThinkspaceById,
                     object: nil,
@@ -2132,6 +2256,27 @@ public final class CommandKViewModel: ObservableObject {
                 name: .voiceNavigationRequested,
                 object: nil,
                 userInfo: ["destination": "thinkspace"]
+            )
+            finishAction()
+
+        case .openBrowser:
+            let queryText = action.payload.queryText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let targetURL = action.payload.url.flatMap(URL.init(string:))
+                ?? queryText.flatMap(CosmoBrowserURLResolver.resolve)
+                ?? CosmoBrowserURLResolver.defaultHomeURL
+            let title: String
+            if let queryText, !queryText.isEmpty {
+                title = "Search: \(queryText)"
+            } else {
+                title = "Browser"
+            }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openWebBrowserPane,
+                object: nil,
+                userInfo: [
+                    "url": targetURL,
+                    "title": title
+                ]
             )
             finishAction()
 
@@ -3222,12 +3367,16 @@ public final class CommandKViewModel: ObservableObject {
         }
         guard isCurrentUnifiedSearchRequest(requestID) else { return }
 
+        let browserPins = await CosmoBrowserStore.shared.allPins()
+        guard isCurrentUnifiedSearchRequest(requestID) else { return }
+
         let output = CommandKUnifiedSearchComposer.buildOutput(
             query: trimmed,
             hybridResults: unfilteredResults,
             swipeGalleryItems: swipeGalleryItems,
             ideaGalleryItems: ideaGalleryItems,
-            readwiseBooks: ReadwiseBookStore.shared.books
+            readwiseBooks: ReadwiseBookStore.shared.books,
+            browserPins: browserPins
         )
         guard isCurrentUnifiedSearchRequest(requestID) else { return }
 

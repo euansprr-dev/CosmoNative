@@ -605,6 +605,35 @@ extension Atom {
         connectionStructured?.notes
     }
 
+    var connectionSectionData: ConnectionStructuredData? {
+        guard type == .connection, let structured else { return nil }
+        return ConnectionStructuredData.fromJSON(structured)
+    }
+
+    var claims: String? {
+        connectionSectionText(.claims)
+    }
+
+    var evidence: String? {
+        connectionSectionText(.evidence)
+    }
+
+    var openQuestions: String? {
+        connectionSectionText(.openQuestions)
+    }
+
+    func connectionSectionText(_ sectionType: ConnectionSectionType) -> String? {
+        let text = connectionSectionData?.sections
+            .first { $0.type == sectionType }?
+            .items
+            .map(\.resolvedPlainText)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        guard let text,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
+    }
+
     var extractionConfidence: Double? {
         connectionStructured?.extractionConfidence
     }

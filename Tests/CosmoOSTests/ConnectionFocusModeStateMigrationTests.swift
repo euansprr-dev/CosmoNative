@@ -52,4 +52,28 @@ final class ConnectionFocusModeStateMigrationTests: XCTestCase {
         XCTAssertFalse(decoded.collaboratorSession.hasBootstrapped)
         XCTAssertNil(decoded.activeDraftProposal)
     }
+
+    func testConnectionStructuredDataBackfillsInquiryV2Sections() throws {
+        let legacyTypes: [ConnectionSectionType] = [
+            .goal,
+            .problems,
+            .benefits,
+            .examples,
+            .beliefsObjections,
+            .process,
+            .conceptName,
+            .references
+        ]
+        let legacyData = ConnectionStructuredData(
+            sections: legacyTypes.map { ConnectionSection(type: $0) }
+        )
+        let json = try XCTUnwrap(legacyData.toJSON())
+
+        let decoded = try XCTUnwrap(ConnectionStructuredData.fromJSON(json))
+
+        XCTAssertEqual(decoded.sections.map(\.type), ConnectionSectionType.allCases.sorted { $0.sortOrder < $1.sortOrder })
+        XCTAssertEqual(decoded.sections.first(where: { $0.type == .claims })?.items, [])
+        XCTAssertEqual(decoded.sections.first(where: { $0.type == .evidence })?.items, [])
+        XCTAssertEqual(decoded.sections.first(where: { $0.type == .openQuestions })?.items, [])
+    }
 }

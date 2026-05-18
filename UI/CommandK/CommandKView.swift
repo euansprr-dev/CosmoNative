@@ -110,7 +110,7 @@ public struct CommandKView: View {
             searchBarPill(geometry: geometry)
                 .zIndex(2)
             contentPanel(geometry: geometry)
-                .zIndex(1)
+                .zIndex(3)
         }
     }
 

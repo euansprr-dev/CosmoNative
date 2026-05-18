@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct CommandKActionPanel: View {
+    private static let menuWidth: CGFloat = 280
+    private static let menuHeight: CGFloat = 340
+
     let title: String
     let groups: [(category: CommandKActionCategory, actions: [CommandKContextualAction])]
     let errorMessage: String?
@@ -13,17 +16,13 @@ struct CommandKActionPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            searchField
+            CosmoGradientDivider()
             results
             footer
         }
-        .frame(width: 540, height: 520)
-        .background(DS.vellum.opacity(0.96), in: .rect(cornerRadius: 18))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(DS.sepiaBorder, lineWidth: 0.8)
-        }
-        .shadow(color: DS.inkWash.opacity(0.16), radius: 28, x: 0, y: 18)
+        .frame(width: Self.menuWidth, height: Self.menuHeight, alignment: .top)
+        .cosmoMenuChrome(cornerRadius: 18)
         .onAppear {
             clampSelection()
             isSearchFocused = true
@@ -37,63 +36,36 @@ struct CommandKActionPanel: View {
         .accessibilityLabel(title)
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            HStack(spacing: DS.space10) {
-                Image(systemName: "command")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.gilt)
+    private var searchField: some View {
+        HStack(spacing: DS.space10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DS.textMuted)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(DS.smallCaps)
-                        .tracking(1.4)
-                        .foregroundStyle(DS.giltMuted)
-                    Text("Search actions for the current selection")
-                        .font(DS.caption)
-                        .foregroundStyle(DS.textMuted)
-                }
+            TextField("Search actions...", text: $searchQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(DS.text)
+                .focused($isSearchFocused)
 
-                Spacer()
-
-                Button(action: dismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close actions")
-            }
-
-            HStack(spacing: DS.space10) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13, weight: .medium))
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(DS.textMuted)
-                TextField("Search actions...", text: $searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(DS.body)
-                    .focused($isSearchFocused)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
-            .padding(.horizontal, DS.space12)
-            .frame(height: 40)
-            .background(DS.vellumDeep.opacity(0.86), in: .rect(cornerRadius: DS.radiusSmall))
-            .overlay {
-                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                    .strokeBorder(DS.sepiaSubtle, lineWidth: 0.6)
-            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close actions")
         }
-        .padding(DS.space16)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(DS.sepiaBorder).frame(height: 0.5)
-        }
+        .padding(DS.space12)
+        .background(DS.glassInputFill.opacity(0.34))
     }
 
     private var results: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: DS.space10) {
+                LazyVStack(alignment: .leading, spacing: DS.space4) {
                     if filteredGroups.isEmpty {
                         emptyState
                     } else {
@@ -110,7 +82,8 @@ struct CommandKActionPanel: View {
                         }
                     }
                 }
-                .padding(DS.space16)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space8)
             }
             .scrollIndicators(.hidden)
             .onChange(of: selectedIndex) { _, _ in
@@ -144,8 +117,9 @@ struct CommandKActionPanel: View {
         }
         .font(DS.caption)
         .foregroundStyle(DS.inkFaded)
-        .padding(.horizontal, DS.space16)
-        .padding(.vertical, DS.space10)
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+        .background(DS.glassInputFill.opacity(0.24))
         .overlay(alignment: .top) {
             Rectangle().fill(DS.sepiaBorder).frame(height: 0.5)
         }

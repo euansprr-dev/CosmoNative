@@ -1,5 +1,5 @@
 // CosmoOS/UI/FocusMode/Inquiry/InquiryCrystallizeSheet.swift
-// Modal sheet wrapping the existing InquiryReviewView (Crystallize phase).
+// Modal sheet wrapping the Inquiry v2 crystallization review.
 
 import SwiftUI
 
@@ -12,7 +12,7 @@ struct InquiryCrystallizeSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().background(DS.borderSubtle)
-            InquiryReviewView(viewModel: viewModel)
+            InquiryCrystallizationReviewV2(viewModel: viewModel)
         }
         .frame(minWidth: 880, minHeight: 620)
         .background(DS.bg)

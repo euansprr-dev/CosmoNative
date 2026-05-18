@@ -2,7 +2,7 @@
 // April 2026 — governed Forge workspace
 //
 // The connection's own structure no longer free-floats. The masthead and
-// metadata stay anchored, and stations live in a controlled 2×4 grid where one
+// metadata stay anchored, and stations live in a controlled grid where one
 // active station can expand and push the next row downward.
 
 import SwiftUI
@@ -35,8 +35,9 @@ struct TheForgeView: View {
     @State private var expandedStation: ConnectionSectionType?
 
     private let orderedStations: [ConnectionSectionType] = [
-        [.goal, .conceptName, .problems, .benefits],
-        [.process, .examples, .beliefsObjections, .references]
+        [.goal, .problems, .claims, .evidence],
+        [.benefits, .examples, .beliefsObjections, .process],
+        [.openQuestions, .conceptName, .references]
     ].flatMap { $0 }
 
     private var displayDraftProposal: ConnectionDraftProposal? {
@@ -166,7 +167,7 @@ private struct ConnectionMaturityCard: View {
                     .font(DS.smallCaps)
                     .tracking(1.8)
                     .foregroundStyle(DS.giltMuted)
-                Text("\(filledCount)/8 STATIONS")
+                Text("\(filledCount)/\(ConnectionSectionType.allCases.count) STATIONS")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(DS.inkWash)
             }

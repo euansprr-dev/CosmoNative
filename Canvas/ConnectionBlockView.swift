@@ -104,10 +104,11 @@ struct ConnectionBlockView: View {
 
     // MARK: - Connection Content (V2 "The Crucible" preview)
 
-    /// Ordering for the canvas block's 2×4 station grid — mirrors TheForgeView's defaults.
+    /// Ordering for the canvas block's compact station grid.
     private static let stationGridOrder: [ConnectionSectionType] = [
-        .goal, .conceptName, .problems, .benefits,
-        .process, .examples, .beliefsObjections, .references
+        .goal, .problems, .claims, .evidence,
+        .benefits, .examples, .beliefsObjections, .process,
+        .openQuestions, .conceptName, .references
     ]
 
     private var connectionContent: some View {
@@ -320,7 +321,7 @@ struct ConnectionBlockView: View {
                     }
             }
 
-            Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/8 sections")
+            Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/\(ConnectionSectionType.allCases.count) sections")
                 .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
         }

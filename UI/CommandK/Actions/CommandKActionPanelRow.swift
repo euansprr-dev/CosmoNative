@@ -49,19 +49,19 @@ struct CommandKActionPanelRow: View {
             .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(iconColor)
             .frame(width: 28, height: 28)
-            .background(iconColor.opacity(action.availability.isEnabled ? 0.10 : 0.04), in: .rect(cornerRadius: 7))
+            .background(iconFill, in: .rect(cornerRadius: 7))
             .overlay {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(iconColor.opacity(action.availability.isEnabled ? 0.22 : 0.10), lineWidth: 0.5)
+                    .strokeBorder(iconStroke, lineWidth: 0.5)
             }
     }
 
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-            .fill(isSelected ? DS.accentSoft : Color.clear)
+            .fill(isSelected ? DS.glassInputFillFocused.opacity(0.82) : Color.clear)
             .overlay {
                 RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                    .strokeBorder(isSelected ? DS.borderActive.opacity(0.55) : Color.clear, lineWidth: 0.5)
+                    .strokeBorder(isSelected ? DS.glassBorderFocused.opacity(0.46) : Color.clear, lineWidth: 0.5)
             }
     }
 
@@ -72,6 +72,16 @@ struct CommandKActionPanelRow: View {
 
     private var titleColor: Color {
         action.availability.isEnabled ? DS.text : DS.textMuted
+    }
+
+    private var iconFill: Color {
+        guard action.availability.isEnabled else { return DS.glassInputFill.opacity(0.30) }
+        return isSelected ? DS.glassInputFillFocused.opacity(0.90) : DS.glassInputFill.opacity(0.54)
+    }
+
+    private var iconStroke: Color {
+        guard action.availability.isEnabled else { return DS.glassBorder.opacity(0.45) }
+        return isSelected ? iconColor.opacity(0.28) : DS.glassBorder.opacity(0.72)
     }
 
     private var subtitle: String? {

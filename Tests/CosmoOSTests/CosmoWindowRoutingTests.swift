@@ -23,6 +23,12 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(ModelFailoverChain.chain(for: .geminiFlashLatest).models.first?.modelId, "~google/gemini-flash-latest")
     }
 
+    func testGeminiFlashLatestFailoverNeverFallsBackToOpus() {
+        let modelIds = ModelFailoverChain.chain(for: .geminiFlashLatest).models.map(\.modelId)
+
+        XCTAssertFalse(modelIds.contains { $0.contains("opus") })
+    }
+
     func testOpenRouterSettingsCatalogIncludesNewModels() {
         let ids = Set(AgentProvider.openRouterModels.map(\.id))
 
@@ -30,6 +36,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertTrue(ids.contains("anthropic/claude-opus-4.7"))
         XCTAssertTrue(ids.contains("openai/gpt-chat-latest"))
         XCTAssertTrue(ids.contains("~google/gemini-flash-latest"))
+        XCTAssertFalse(ids.contains("google/gemini-3.1-flash-lite-preview"))
     }
 
     func testGPT55ThinkingUsesOpenRouterReasoningParameter() {
@@ -55,10 +62,27 @@ final class CosmoWindowRoutingTests: XCTestCase {
 
     func testDefaultModelTierKeepsCheapRoutesCheap() {
         XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .capture), .sensor)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .sensor)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .brainstorm), .gptChatLatest)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .draft), .writer)
+        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .geminiFlashLatest)
+        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .brainstorm), .geminiFlashLatest)
+        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .draft), .geminiFlashLatest)
         XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .analyze), .strategist)
+    }
+
+    func testAutoModelRoutingNeverUsesOpusWriterTier() {
+        let autoIntents: [AgentIntent] = [
+            .capture, .brainstorm, .plan, .query, .execute, .debrief,
+            .reflect, .correct, .meta, .strategy, .draft, .analyze
+        ]
+
+        XCTAssertFalse(autoIntents.contains { CosmoAgentService.defaultModelTier(for: $0) == .writer })
+    }
+
+    func testExplicitPickerStillAllowsOpus() {
+        let opusOption = CosmoModelOption.all.first { $0.id == "opus" }
+        let opus47Option = CosmoModelOption.all.first { $0.id == "opus47" }
+
+        XCTAssertEqual(opusOption?.tier, .writer)
+        XCTAssertEqual(opus47Option?.tier, .opus47)
     }
 
     func testBypassesFlashRouterForFollowUpAboutCapturedContent() {

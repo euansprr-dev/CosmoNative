@@ -59,7 +59,6 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
         ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
         ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
         ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
-        ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite"),
         ("google/gemini-3-flash-preview", "Gemini 3 Flash Preview"),
         ("google/gemini-2.0-flash-001", "Gemini 2.0 Flash"),
         ("google/gemini-2.5-pro-preview", "Gemini 2.5 Pro"),
@@ -360,13 +359,13 @@ enum AgentConfirmationTier: String, Codable, Sendable {
 
 // MARK: - Agent Model Tier
 
-/// Three-tier model routing strategy for cost/quality optimization.
-/// Each tier maps to a specific Claude model via OpenRouter.
+/// Model routing strategy for cost/quality optimization.
+/// Auto routes should stay cheap; premium models are selected explicitly.
 /// NOTE: Named `AgentModelTier` to avoid collision with `ModelTier` in VoiceAtom.swift
 enum AgentModelTier: String, Codable, Sendable {
     case sensor      // Haiku 4.5 — cheap bulk analysis, classification, scoring
     case strategist  // Sonnet 4.5 — conversations, outlines, re-ranking, strategy
-    case writer      // Opus 4.6 — full drafts, hook generation, polish passes
+    case writer      // Opus 4.6 — explicit premium route only
     case gpt55Thinking
     case opus47
     case gptChatLatest
@@ -752,9 +751,7 @@ struct FailoverModel: Sendable {
 struct ModelFailoverChain: Sendable {
     let models: [FailoverModel]
 
-    /// Writer chain: Opus (3 retries) → GPT 5.4
-    /// GPT 5.4 follows tool-use instructions reliably and produces better writing quality
-    /// than Sonnet/Haiku as a fallback orchestrator for the UnifiedWritingEngine pipeline.
+    /// Explicit Opus chain. Auto routing must not use this chain.
     static let writerChain = ModelFailoverChain(models: [
         FailoverModel(modelId: "anthropic/claude-opus-4.6", maxRetries: 3, label: "Opus"),
         FailoverModel(modelId: "openai/gpt-5.4", maxRetries: 1, label: "GPT 5.4"),

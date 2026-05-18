@@ -35,6 +35,8 @@ struct CommandKActionContext {
                 return .thinkspace
             case .readwise:
                 return .readwise
+            case .browserPin:
+                return .none
             }
         case .library(let item):
             return item.kind == .thinkspace ? .thinkspace : .atom(item.atomType)

@@ -3,6 +3,7 @@
 
 import SwiftUI
 import AppKit
+import WebKit
 
 final class MainRightClickRoutingState: ObservableObject {
     private var sidebarIsHidden = true
@@ -49,6 +50,52 @@ struct CommandKPresentationState: Equatable {
             isVisible = false
             isPreservedBehindFocusMode = true
         }
+    }
+}
+
+enum MainKeyboardShortcutPolicy {
+    static func isTextInputFocused(in window: NSWindow?) -> Bool {
+        isTypingTarget(window?.firstResponder)
+    }
+
+    static func isTypingTarget(_ responder: NSResponder?) -> Bool {
+        guard let responder else { return false }
+
+        if responder is NSTextView ||
+            responder is NSTextField ||
+            responder is NSSecureTextField {
+            return true
+        }
+
+        if let responderView = responder as? NSView,
+           responderView.isWebViewOrDescendant {
+            return true
+        }
+
+        let responderType = String(describing: type(of: responder))
+        return responderType.contains("NSTextInputContext") ||
+            responderType.contains("FieldEditor") ||
+            responderType.contains("TextField") ||
+            responderType.contains("TextEditor") ||
+            responderType.contains("WK")
+    }
+}
+
+private extension NSView {
+    var isWebViewOrDescendant: Bool {
+        if self is WKWebView {
+            return true
+        }
+
+        var currentSuperview = superview
+        while let view = currentSuperview {
+            if view is WKWebView {
+                return true
+            }
+            currentSuperview = view.superview
+        }
+
+        return false
     }
 }
 
@@ -1665,7 +1712,7 @@ struct MainView: View {
             if event.type == .keyDown,
                event.keyCode == 35,  // P key
                !event.modifierFlags.contains(.command),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 currentDestination = .commandCenter
                 return nil
             }
@@ -1674,7 +1721,7 @@ struct MainView: View {
             if event.type == .keyDown,
                event.keyCode == 17,  // T key
                !event.modifierFlags.contains(.command),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 navigateToLastThinkspace()
                 return nil
             }
@@ -1683,7 +1730,7 @@ struct MainView: View {
             if event.type == .keyDown,
                event.keyCode == 42,  // \ key
                event.modifierFlags.contains(.command),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 toggleSidebarFromKeyboard()
                 return nil
             }
@@ -1692,7 +1739,7 @@ struct MainView: View {
             if event.type == .keyDown,
                event.keyCode == 45,  // N key
                !event.modifierFlags.contains(.command),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 if case .commandCenter = currentDestination {
                     NotificationCenter.default.post(
                         name: Notification.Name("com.cosmo.commandCenter.quickAddTask"),
@@ -1706,7 +1753,7 @@ struct MainView: View {
             if event.type == .keyDown,
                event.keyCode == 1,  // S key
                !event.modifierFlags.contains(.command),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 if case .commandCenter = currentDestination,
                    sessionEngine.activeSession == nil {
                     sessionEngine.startSession(
@@ -1722,7 +1769,7 @@ struct MainView: View {
             // Command Center keyboard navigation (arrow keys, Enter, Space, Tab, Delete)
             if event.type == .keyDown,
                !event.modifierFlags.contains(.command),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 if case .commandCenter = currentDestination {
                     let keyCode = event.keyCode
                     // Arrow Up (126), Arrow Down (125), Enter (36), Space (49), Tab (48), Delete (51)
@@ -1741,7 +1788,7 @@ struct MainView: View {
             if event.type == .keyDown,
                event.keyCode == 37,  // L key
                !event.modifierFlags.contains(.command),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 presentCommandK()
                 return nil
             }
@@ -1751,7 +1798,7 @@ struct MainView: View {
                event.keyCode == 8,  // C key
                event.modifierFlags.contains(.command),
                event.modifierFlags.contains(.shift),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 NotificationCenter.default.post(name: .activateCommandBarTyping, object: nil)
                 return nil  // Consume event
             }
@@ -1763,7 +1810,7 @@ struct MainView: View {
             if event.type == .keyDown,
                event.keyCode == 6,  // Z key
                event.modifierFlags.contains(.control),
-               !isFirstResponderTextField() {
+               !isKeyboardInputReserved() {
                 if event.modifierFlags.contains(.shift) {
                     // Ctrl+Shift+Z = Redo
                     NotificationCenter.default.post(name: .performRedo, object: nil)
@@ -1783,13 +1830,9 @@ struct MainView: View {
         }
     }
 
-    /// Check if the current first responder is a text field (to avoid stealing keyboard input)
-    private func isFirstResponderTextField() -> Bool {
-        guard let window = NSApp.keyWindow,
-              let firstResponder = window.firstResponder else { return false }
-
-        // Check if it's a text view or text field
-        return firstResponder is NSTextView || firstResponder is NSTextField
+    /// Check if the current first responder owns keyboard input.
+    private func isKeyboardInputReserved() -> Bool {
+        MainKeyboardShortcutPolicy.isTextInputFocused(in: NSApp.keyWindow)
     }
 
     /// Handles the configured voice hotkey while CosmoOS is focused.
@@ -1858,24 +1901,7 @@ struct MainView: View {
     }
 
     private func isTextInputFocused(in window: NSWindow?) -> Bool {
-        guard let responder = window?.firstResponder else { return false }
-
-        if responder is NSTextView ||
-            responder is NSTextField ||
-            responder is NSSecureTextField {
-            return true
-        }
-
-        // SwiftUI text inputs can appear as internal responder types
-        let responderType = String(describing: type(of: responder))
-        if responderType.contains("NSTextInputContext") ||
-            responderType.contains("FieldEditor") ||
-            responderType.contains("TextField") ||
-            responderType.contains("TextEditor") {
-            return true
-        }
-
-        return false
+        MainKeyboardShortcutPolicy.isTextInputFocused(in: window)
     }
 
     private func removeGlobalKeyMonitor() {

@@ -145,6 +145,7 @@ struct InquiryNoteRow: View {
                     .foregroundStyle(CosmoColors.textPrimary)
                     .lineLimit(4)
                     .multilineTextAlignment(.leading)
+                intentSuggestion
                 Text(timestampText)
                     .font(CosmoTypography.caption)
                     .foregroundStyle(CosmoColors.textTertiary)
@@ -178,13 +179,13 @@ struct InquiryNoteRow: View {
         switch item {
         case .capture(let capture):
             Button("Save as note") {
-                Task { _ = await viewModel.commitCapture(capture.id, kind: .note) }
+                Task { _ = await viewModel.commitCaptureWith(captureId: capture.id, kind: .note) }
             }
             Button("Save as claim") {
-                Task { _ = await viewModel.commitCapture(capture.id, kind: .claim) }
+                Task { _ = await viewModel.commitCaptureWith(captureId: capture.id, kind: .claim) }
             }
             Button("Save as speculative claim") {
-                Task { _ = await viewModel.commitCapture(capture.id, kind: .speculativeClaim) }
+                Task { _ = await viewModel.commitCaptureWith(captureId: capture.id, kind: .speculativeClaim) }
             }
             Divider()
             Button("Discard", role: .destructive) {
@@ -192,6 +193,34 @@ struct InquiryNoteRow: View {
             }
         case .extract:
             EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var intentSuggestion: some View {
+        if case .capture(let capture) = item,
+           let suggestedKind = capture.suggestedKind,
+           suggestedKind != .note,
+           (capture.suggestedKindConfidence ?? 0) >= 0.7 {
+            HStack(spacing: 4) {
+                Text("Looks like \(suggestionArticle(for: suggestedKind)) \(suggestionNoun(for: suggestedKind))")
+                Text("-")
+                    .accessibilityHidden(true)
+                Button(suggestionActionTitle(for: suggestedKind)) {
+                    handleSuggestion(capture, suggestedKind: suggestedKind)
+                }
+                .buttonStyle(.plain)
+                Text("·")
+                    .accessibilityHidden(true)
+                Button("Keep") {
+                    Task { _ = await viewModel.commitCaptureWith(captureId: capture.id, kind: .note) }
+                }
+                .buttonStyle(.plain)
+            }
+            .font(.system(.caption, design: .serif))
+            .foregroundStyle(DS.accent.opacity(0.7))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Looks like \(suggestionArticle(for: suggestedKind)) \(suggestionNoun(for: suggestedKind)). \(suggestionActionTitle(for: suggestedKind)) or keep.")
         }
     }
 
@@ -245,6 +274,51 @@ struct InquiryNoteRow: View {
         case .capture(let capture): iso = capture.createdAt
         }
         return RelativeISO8601Formatter.shared.relative(from: iso)
+    }
+
+    private func handleSuggestion(_ capture: SessionCapture, suggestedKind: ExtractKind) {
+        if suggestedKind == .question {
+            Task { _ = await viewModel.promoteCaptureToBranch(captureId: capture.id) }
+        } else {
+            Task { _ = await viewModel.commitCaptureWith(captureId: capture.id, kind: suggestedKind) }
+        }
+    }
+
+    private func suggestionActionTitle(for kind: ExtractKind) -> String {
+        if kind == .question { return "Make branch" }
+        return "Make \(suggestionNoun(for: kind))"
+    }
+
+    private func suggestionNoun(for kind: ExtractKind) -> String {
+        switch kind {
+        case .question: return "question"
+        case .claim: return "claim"
+        case .speculativeClaim: return "maybe"
+        case .evidence: return "evidence"
+        case .counterevidence: return "counterpoint"
+        case .practice: return "practice"
+        case .outputIdea: return "output"
+        case .term: return "term"
+        case .reference: return "reference"
+        case .sourceSnippet: return "snippet"
+        case .quote: return "quote"
+        case .highlight: return "highlight"
+        case .mechanism: return "mechanism"
+        case .example: return "example"
+        case .objection: return "objection"
+        case .principle: return "principle"
+        case .assumption: return "assumption"
+        case .sourceQualityNote: return "source note"
+        case .aiInsight: return "insight"
+        case .note: return "note"
+        }
+    }
+
+    private func suggestionArticle(for kind: ExtractKind) -> String {
+        switch suggestionNoun(for: kind).first?.lowercased() {
+        case "a", "e", "i", "o", "u": return "an"
+        default: return "a"
+        }
     }
 }
 

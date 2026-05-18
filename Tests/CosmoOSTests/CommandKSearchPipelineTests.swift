@@ -18,6 +18,93 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(action?.payload.url, "https://example.com/article")
     }
 
+    func testActionParserParsesBrowserAlias() {
+        let action = CommandKActionParser.parse("browser")
+
+        XCTAssertEqual(action?.kind, .openBrowser)
+        XCTAssertEqual(action?.title, "Open Browser")
+        XCTAssertNil(action?.payload.url)
+    }
+
+    func testActionParserParsesBrowserSearchQuery() {
+        let action = CommandKActionParser.parse("browser creator economy research")
+
+        XCTAssertEqual(action?.kind, .openBrowser)
+        XCTAssertEqual(action?.payload.queryText, "creator economy research")
+    }
+
+    func testUnifiedSearchRanksBrowserPinsByCustomName() {
+        let pin = CosmoBrowserPinnedSite(
+            id: UUID(uuidString: "9A10AF3C-157C-4BB1-8D41-62A50C7E3F1A")!,
+            url: URL(string: "https://www.instagram.com/josh")!,
+            title: "Instagram",
+            displayName: "Instagram Josh",
+            pinnedAt: Date(timeIntervalSince1970: 22)
+        )
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "Josh",
+            hybridResults: [],
+            swipeGalleryItems: [],
+            ideaGalleryItems: [],
+            readwiseBooks: [],
+            browserPins: [pin]
+        )
+
+        let result = output.flatResults.first
+        XCTAssertEqual(result?.source, .browser)
+        XCTAssertEqual(result?.resultKind, .browserPin)
+        XCTAssertEqual(result?.title, "Open this page in browser")
+        XCTAssertEqual(result?.subtitle, "Instagram Josh · instagram.com")
+        XCTAssertEqual(result?.browserURL, URL(string: "https://www.instagram.com/josh")!)
+        XCTAssertEqual(result?.browserTitle, "Instagram Josh")
+        XCTAssertGreaterThan(result?.relevance ?? 0, 1.0)
+    }
+
+    @MainActor
+    func testOpenSelectedBrowserPinOpensBrowserPane() async {
+        let url = URL(string: "https://www.instagram.com/josh")!
+        let result = UnifiedSearchResult(
+            id: "browser-pin-test",
+            source: .browser,
+            resultKind: .browserPin,
+            title: "Open this page in browser",
+            subtitle: "Instagram Josh · instagram.com",
+            snippet: url.absoluteString,
+            icon: "safari",
+            accentColor: DS.entityResearch,
+            relevance: 1.4,
+            atomUUID: nil,
+            atomType: nil,
+            thinkspaceId: nil,
+            projectUUID: nil,
+            projectName: nil,
+            thinkspaceNames: [],
+            readwiseBookId: nil,
+            browserURL: url,
+            browserTitle: "Instagram Josh"
+        )
+        let viewModel = CommandKViewModel()
+        let expectation = expectation(description: "browser pane notification")
+        let token = NotificationCenter.default.addObserver(
+            forName: CosmoNotification.Navigation.openWebBrowserPane,
+            object: nil,
+            queue: nil
+        ) { notification in
+            XCTAssertEqual(notification.userInfo?["url"] as? URL, url)
+            XCTAssertEqual(notification.userInfo?["title"] as? String, "Instagram Josh")
+            expectation.fulfill()
+        }
+
+        viewModel.isUnifiedSearchActive = true
+        viewModel.unifiedFlatResults = [result]
+        viewModel.selectedResultIndex = 0
+
+        viewModel.openSelected()
+        await fulfillment(of: [expectation], timeout: 1)
+        NotificationCenter.default.removeObserver(token)
+    }
+
     func testCommandKLauncherDomainsUsePolishedPresentationLabels() {
         XCTAssertEqual(CommandKTab.allCases.map(\.title), ["Database", "Swipe File", "Ideas", "Library"])
         XCTAssertEqual(CommandKTab.allCases.map(\.searchPlaceholder), [

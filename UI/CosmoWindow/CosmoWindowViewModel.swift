@@ -1685,21 +1685,21 @@ struct CosmoModelOption: Identifiable {
             id: "auto",
             tier: nil,
             title: "Auto",
-            detail: "Route by task and cost",
+            detail: "Gemini Flash by default",
             icon: "wand.and.stars"
         ),
         CosmoModelOption(
             id: "gptChatLatest",
             tier: .gptChatLatest,
             title: "GPT Chat Latest",
-            detail: "Best everyday collaborator",
+            detail: "Premium general chat",
             icon: "bubble.left.and.bubble.right"
         ),
         CosmoModelOption(
             id: "geminiFlashLatest",
             tier: .geminiFlashLatest,
             title: "Gemini Flash",
-            detail: "Fast and cheaper general work",
+            detail: "Day-to-day thinking partner",
             icon: "bolt"
         ),
         CosmoModelOption(

@@ -13,6 +13,7 @@ enum CommandKActionKind: String, Equatable {
     case createThinkspace
     case navigateCommandCenter
     case navigateLastThinkspace
+    case openBrowser
     case openDomain
     case openAtom
     case openThinkspace
@@ -75,7 +76,7 @@ struct CommandKAction: Identifiable, Equatable {
             return payload.destinationName != nil
         case .createIdea, .createTask, .captureResearch, .createContent, .createThinkspace:
             return payload.title?.isEmpty == false || payload.body?.isEmpty == false || payload.url != nil
-        case .navigateCommandCenter, .navigateLastThinkspace, .openDomain:
+        case .navigateCommandCenter, .navigateLastThinkspace, .openBrowser, .openDomain:
             return true
         case .openAtom:
             return payload.atomUUID?.isEmpty == false
@@ -153,6 +154,10 @@ enum CommandKActionParser {
             return navigation
         }
 
+        if let browser = parseBrowser(trimmed) {
+            return browser
+        }
+
         if let domain = parseDomain(trimmed) {
             return domain
         }
@@ -209,6 +214,44 @@ enum CommandKActionParser {
         default:
             return nil
         }
+    }
+
+    private static func parseBrowser(_ text: String) -> CommandKAction? {
+        let normalized = normalizedAlias(text)
+        let launchAliases: Set<String> = ["browser", "open browser", "web", "open web"]
+        if launchAliases.contains(normalized) {
+            return CommandKAction(
+                kind: .openBrowser,
+                title: "Open Browser",
+                subtitle: "Open a persistent research browser pane",
+                icon: "globe",
+                payload: CommandKActionPayload(rawText: text)
+            )
+        }
+
+        let lower = text.lowercased()
+        let prefixes = ["browser ", "open browser ", "web ", "search web "]
+        guard let prefix = prefixes.first(where: { lower.hasPrefix($0) }) else { return nil }
+        let remainder = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remainder.isEmpty else { return nil }
+
+        if let url = firstURL(in: remainder), url == remainder {
+            return CommandKAction(
+                kind: .openBrowser,
+                title: "Open Browser",
+                subtitle: url,
+                icon: "globe",
+                payload: CommandKActionPayload(url: url, rawText: text)
+            )
+        }
+
+        return CommandKAction(
+            kind: .openBrowser,
+            title: "Search Web",
+            subtitle: remainder,
+            icon: "magnifyingglass",
+            payload: CommandKActionPayload(queryText: remainder, rawText: text)
+        )
     }
 
     private static func parseDomain(_ text: String) -> CommandKAction? {

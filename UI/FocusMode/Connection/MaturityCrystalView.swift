@@ -2,7 +2,7 @@
 // Faceted crystal replacing V1's linear progress bar.
 // April 2026 — Connection Focus Mode V2 "The Crucible"
 //
-// The crystal has 8 facets (one per section). Facets reveal with a bouncy spring
+// The crystal has one facet per Connection section. Facets reveal with a bouncy spring
 // as sections fill. When the framework crosses a maturity threshold, the latest
 // facet-reveal carries a brief gilt shimmer.
 //
@@ -13,8 +13,9 @@
 import SwiftUI
 
 struct MaturityCrystalView: View {
+    private static let stationCount = ConnectionSectionType.allCases.count
 
-    /// Number of filled facets (0...8).
+    /// Number of filled facets.
     let filledCount: Int
 
     /// Diameter of the crystal. 28 for compact (masthead/block), 96 for large (atelier).
@@ -28,7 +29,7 @@ struct MaturityCrystalView: View {
     @State private var lastRenderedCount: Int = -1
     @State private var shimmerPhase: Double = 0
 
-    private var clamped: Int { max(0, min(8, filledCount)) }
+    private var clamped: Int { max(0, min(Self.stationCount, filledCount)) }
 
     private var thresholdLabel: String {
         switch clamped {
@@ -49,7 +50,7 @@ struct MaturityCrystalView: View {
                 .frame(width: diameter, height: diameter)
                 .overlay(shimmerOverlay)
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Maturity crystal: \(thresholdLabel), \(clamped) of 8 facets")
+                .accessibilityLabel("Maturity crystal: \(thresholdLabel), \(clamped) of \(Self.stationCount) facets")
         }
         .onAppear {
             if lastRenderedCount < 0 { lastRenderedCount = clamped }
@@ -62,25 +63,24 @@ struct MaturityCrystalView: View {
 
     /// Compact label shown below the crystal in the Atelier.
     static func captionText(for filled: Int) -> String {
-        let clamped = max(0, min(8, filled))
+        let clamped = max(0, min(stationCount, filled))
         let level: String
         switch clamped {
         case 0...2: level = "SEED"
-        case 3...4: level = "SAPLING"
-        case 5...7: level = "MATURE"
+        case 3...5: level = "SAPLING"
+        case 6..<(stationCount): level = "MATURE"
         default: level = "PROVEN"
         }
-        return "\(level) · \(clamped)/8 STATIONS"
+        return "\(level) · \(clamped)/\(stationCount) STATIONS"
     }
 
     // MARK: - Crystal
 
-    /// The 8 facet points — a diamond rosette around a central vertex.
-    /// Indexed 0...7. Render order is an "outside-in" spiral so each reveal
+    /// The facet points form a diamond rosette around a central vertex.
+    /// Render order is an "outside-in" spiral so each reveal
     /// lands in a visually pleasing position.
     private func facetPoint(index: Int, radius: CGFloat, center: CGPoint) -> CGPoint {
-        // 8 points evenly spaced around a circle, starting at top (−90°).
-        let angle = -Double.pi / 2 + (Double.pi * 2 * Double(index) / 8.0)
+        let angle = -Double.pi / 2 + (Double.pi * 2 * Double(index) / Double(Self.stationCount))
         return CGPoint(
             x: center.x + CGFloat(cos(angle)) * radius,
             y: center.y + CGFloat(sin(angle)) * radius
@@ -92,8 +92,8 @@ struct MaturityCrystalView: View {
             let center = CGPoint(x: size.width / 2, y: size.height / 2)
             let radius = min(size.width, size.height) / 2 - 4
 
-            // Draw the 8 outer facets as small diamonds
-            for i in 0..<8 {
+            // Draw the outer facets as small diamonds.
+            for i in 0..<Self.stationCount {
                 let p = facetPoint(index: i, radius: radius * 0.72, center: center)
                 drawFacet(in: &context, at: p, size: radius * 0.22, filled: i < clamped)
 
@@ -177,24 +177,26 @@ struct MaturityCrystalView: View {
     }
 }
 
-// MARK: - Inline masthead variant — 8 small diamond glyphs in a row
+// MARK: - Inline masthead variant
 
-/// Horizontal row of 8 diamond glyphs for the masthead. More readable than a tiny
+/// Horizontal row of diamond glyphs for the masthead. More readable than a tiny
 /// orb at inline sizes and visually rhymes with "◇◇◇◆◆◆◇◇" in the plan mockup.
 struct MaturityCrystalInline: View {
+    private static let stationCount = ConnectionSectionType.allCases.count
+
     let filledCount: Int
     var glyphSize: CGFloat = 8
 
-    private var clamped: Int { max(0, min(8, filledCount)) }
+    private var clamped: Int { max(0, min(Self.stationCount, filledCount)) }
 
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(0..<8, id: \.self) { i in
+            ForEach(0..<Self.stationCount, id: \.self) { i in
                 diamond(filled: i < clamped)
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(clamped) of 8 stations populated")
+        .accessibilityLabel("\(clamped) of \(Self.stationCount) stations populated")
     }
 
     @ViewBuilder

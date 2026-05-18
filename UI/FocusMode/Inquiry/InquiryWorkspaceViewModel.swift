@@ -32,6 +32,15 @@ final class InquiryWorkspaceViewModel {
     var sourceActivityLine: String?
     var toast: InquiryToast?
 
+    // New shell ("Stele" redesign) UI state
+    var activeReaderSourceId: String?           // when non-nil, center morphs into reader
+    var isMapOverlayPresented: Bool = false     // Cmd+M full-screen map overlay
+    var ephemeralAIReplies: [EphemeralAIReplyCard] = []
+    var liveUnderstandingIsForming: Bool = false
+    var liveUnderstandingError: String?
+    private var liveUnderstandingDebounceTask: Task<Void, Never>?
+    private var ephemeralEvictionTasks: [String: Task<Void, Never>] = [:]
+
     // Captures (in-memory until commit/crystallize)
     var captures: [SessionCapture] {
         get { structured.sessionCaptures }
@@ -102,6 +111,80 @@ final class InquiryWorkspaceViewModel {
             notebookMode = .tree
         }
         scheduleSave()
+    }
+
+    // MARK: - Phase (Stele shell)
+
+    /// Two-phase mode used by the new shell.
+    var phase: InquiryPhase {
+        get { InquiryPhase(layoutMode: metadata.layoutMode) }
+        set { setPhase(newValue) }
+    }
+
+    func setPhase(_ phase: InquiryPhase) {
+        let mode = phase.persistedLayoutMode
+        guard metadata.layoutMode != mode else { return }
+        metadata.layoutMode = mode
+        scheduleSave()
+    }
+
+    // MARK: - Reader morph
+
+    func openReader(sourceTabId: String) {
+        activeSourceTabId = sourceTabId
+        activeReaderSourceId = sourceTabId
+    }
+
+    func openReader(forSourceRef ref: InquirySourceRef) {
+        if let tabId = ref.tabId, structured.sourceTabs.contains(where: { $0.id == tabId }) {
+            openReader(sourceTabId: tabId)
+            return
+        }
+        reopenSource(ref)
+        if let id = activeSourceTabId {
+            activeReaderSourceId = id
+        }
+    }
+
+    func dismissReader() {
+        activeReaderSourceId = nil
+    }
+
+    // MARK: - Map overlay
+
+    func presentMap() { isMapOverlayPresented = true }
+    func dismissMap() { isMapOverlayPresented = false }
+    func toggleMap() { isMapOverlayPresented.toggle() }
+
+    // MARK: - Ephemeral AI replies
+
+    /// Append a transient AI reply card above the dock. Auto-fades after `lifetime` seconds.
+    func appendEphemeralAIReply(_ text: String, kind: EphemeralAIReplyCard.Kind = .reply, lifetime: TimeInterval = 18) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let card = EphemeralAIReplyCard(kind: kind, text: trimmed)
+        ephemeralAIReplies.append(card)
+        if ephemeralAIReplies.count > 3 {
+            let evicted = ephemeralAIReplies.removeFirst()
+            ephemeralEvictionTasks[evicted.id]?.cancel()
+            ephemeralEvictionTasks[evicted.id] = nil
+        }
+        let id = card.id
+        ephemeralEvictionTasks[id]?.cancel()
+        ephemeralEvictionTasks[id] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(lifetime * 1_000_000_000))
+            await MainActor.run {
+                guard let self else { return }
+                self.ephemeralAIReplies.removeAll { $0.id == id }
+                self.ephemeralEvictionTasks[id] = nil
+            }
+        }
+    }
+
+    func dismissEphemeralReply(_ id: String) {
+        ephemeralEvictionTasks[id]?.cancel()
+        ephemeralEvictionTasks[id] = nil
+        ephemeralAIReplies.removeAll { $0.id == id }
     }
 
     // MARK: - Questions
@@ -178,6 +261,7 @@ final class InquiryWorkspaceViewModel {
         }
         structured.uiState.selectedInspectorQuestionUUID = questionUUID
         scheduleSave()
+        scheduleLiveUnderstandingRefresh(reason: .questionSwitched)
         Task { [weak self] in
             await self?.refreshSourceRecommendationsIfNeeded()
         }
@@ -315,6 +399,12 @@ final class InquiryWorkspaceViewModel {
     }
 
     func registerSavedExtract(_ extract: Atom, sourceTabId: String?) {
+        defer {
+            if let kind = extract.extractMetadata?.kind,
+               kind.isClaimLike || kind.isEvidenceLike || kind == .note {
+                scheduleLiveUnderstandingRefresh(reason: .extractSaved)
+            }
+        }
         if !extracts.contains(where: { $0.uuid == extract.uuid }) {
             extracts.append(extract)
         }
@@ -931,6 +1021,11 @@ final class InquiryWorkspaceViewModel {
         }
     }
 
+    /// Notify the live understanding engine when a source is imported/opened.
+    private func noteSourceChanged() {
+        scheduleLiveUnderstandingRefresh(reason: .sourceImported)
+    }
+
     func reopenSource(_ ref: InquirySourceRef) {
         if let tabId = ref.tabId, structured.sourceTabs.contains(where: { $0.id == tabId }) {
             activeSourceTabId = tabId
@@ -1449,7 +1544,17 @@ final class InquiryWorkspaceViewModel {
                 sourceUUID: activeSourceTab?.sourceUUID
             )
         )
+        let kind = ephemeralKind(forPrompt: prompt)
+        appendEphemeralAIReply(response, kind: kind)
         scheduleSave()
+    }
+
+    private func ephemeralKind(forPrompt prompt: String) -> EphemeralAIReplyCard.Kind {
+        let lower = prompt.lowercased()
+        if lower.contains("summari") { return .summary }
+        if lower.contains("challenge") || lower.contains("counter") { return .challenge }
+        if lower.contains("branch") || lower.contains("propose") { return .routing }
+        return .reply
     }
 
     func proposeBranchFromSelection(_ selection: String, originExtractUUID: String?, sourceTabId: String?) {
@@ -1756,6 +1861,117 @@ final class InquiryWorkspaceViewModel {
         } catch {
             print("[InquiryWorkspaceVM] persistNow failed: \(error)")
         }
+    }
+
+    // MARK: - Selection → Extract (called by reader's SelectionMiniMenu)
+
+    @discardableResult
+    func saveSelectionAsExtract(_ selection: String, kind: ExtractKind, sourceTab: SourceTab) async -> Atom? {
+        let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        do {
+            let extract = try await InquiryRepository.shared.createExtract(
+                body: trimmed,
+                kind: kind,
+                sourceUUID: sourceTab.sourceUUID,
+                selectionRange: nil,
+                sessionUUID: session.uuid,
+                questionUUID: activeQuestionUUID,
+                deepDiveUUID: deepDive?.uuid,
+                branchNodeId: activeBranchNodeId,
+                sourceTabId: sourceTab.id,
+                userNote: nil,
+                originType: "selection",
+                citation: sourceTab.url ?? sourceTab.title
+            )
+            registerSavedExtract(extract, sourceTabId: sourceTab.id)
+            appendRouteReceipt(
+                InquiryRouteReceipt(
+                    kind: kind == .note ? .noteSaved : .extractSaved,
+                    message: "\(kind.displayName) saved",
+                    detail: "Routed to \(activeQuestionTitle)",
+                    questionUUID: activeQuestionUUID,
+                    branchNodeId: activeBranchNodeId,
+                    sourceUUID: sourceTab.sourceUUID,
+                    extractUUID: extract.uuid
+                )
+            )
+            showToast("\(kind.displayName) saved", detail: "From \(sourceTab.title)")
+            scheduleLiveUnderstandingRefresh(reason: .extractSaved)
+            scheduleSave()
+            return extract
+        } catch {
+            print("[InquiryWorkspaceVM] saveSelectionAsExtract failed: \(error)")
+            showToast("Save failed", detail: error.localizedDescription)
+            return nil
+        }
+    }
+
+    // MARK: - Live Understanding (debounced auto-regenerate + manual trigger)
+
+    enum LiveUnderstandingRefreshReason: String, Sendable {
+        case capture
+        case extractSaved
+        case sourceImported
+        case questionSwitched
+        case manual
+    }
+
+    func scheduleLiveUnderstandingRefresh(reason: LiveUnderstandingRefreshReason) {
+        let immediate = (reason == .questionSwitched || reason == .manual)
+        liveUnderstandingDebounceTask?.cancel()
+        liveUnderstandingDebounceTask = Task { [weak self] in
+            if !immediate {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+            }
+            guard !Task.isCancelled, let self else { return }
+            await self.regenerateLiveUnderstanding(force: immediate)
+        }
+    }
+
+    @discardableResult
+    func regenerateLiveUnderstanding(force: Bool = false) async -> Bool {
+        let input = liveUnderstandingInput()
+        let signature = InquiryUnderstandingEngine.shared.signature(for: input)
+        if !force, let existing = structured.currentUnderstandingDraft, existing.contextSignature == signature, !existing.text.isEmpty {
+            return false
+        }
+        liveUnderstandingIsForming = true
+        liveUnderstandingError = nil
+        let output = await InquiryUnderstandingEngine.shared.brief(input)
+        liveUnderstandingIsForming = false
+        let trimmed = output.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            liveUnderstandingError = "No synthesis yet — try again when more is captured."
+            return false
+        }
+        structured.currentUnderstandingDraft = LiveUnderstandingDraft(
+            text: trimmed,
+            contextSignature: signature,
+            modelTier: output.modelTier
+        )
+        scheduleSave()
+        return true
+    }
+
+    private func liveUnderstandingInput() -> InquiryUnderstandingEngine.Input {
+        let claimAtoms = claims(for: activeQuestionUUID)
+        let evidenceAtoms = evidence(for: activeQuestionUUID)
+        return InquiryUnderstandingEngine.Input(
+            deepDiveTitle: deepDive?.title,
+            deepDiveModel: deepDive?.deepDiveStructured?.currentUnderstanding.oneSentenceModel,
+            activeQuestionTitle: activeQuestionTitle,
+            claims: claimAtoms.filter { $0.extractMetadata?.kind == .claim }.compactMap { $0.body ?? $0.title }.prefix(8).map { $0 },
+            speculativeClaims: claimAtoms.filter { $0.extractMetadata?.kind == .speculativeClaim }.compactMap { $0.body ?? $0.title }.prefix(6).map { $0 },
+            evidence: evidenceAtoms.filter { $0.extractMetadata?.kind == .evidence }.compactMap { $0.body ?? $0.title }.prefix(6).map { $0 },
+            counterevidence: evidenceAtoms.filter { $0.extractMetadata?.kind == .counterevidence }.compactMap { $0.body ?? $0.title }.prefix(4).map { $0 },
+            recentCaptures: structured.sessionCaptures.suffix(6).map { $0.body },
+            recentSourceTitles: structured.sourceRefs
+                .filter { $0.status != .archived && $0.status != .deleted }
+                .sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+                .prefix(5)
+                .map { $0.title }
+        )
     }
 }
 

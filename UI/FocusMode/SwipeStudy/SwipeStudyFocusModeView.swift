@@ -960,12 +960,8 @@ struct SwipeStudyFocusModeView: View {
 
     @ViewBuilder
     private func carouselItemView(item: CarouselItem, shortcode: String?) -> some View {
-        let displayURL = item.mediaType == .video ? (item.thumbnailURL ?? item.mediaURL) : item.mediaURL
-        let cacheKey = InstagramCarouselImageCache.cacheKey(
-            shortcode: shortcode,
-            index: item.index,
-            url: displayURL
-        )
+        let displayURL = InstagramCarouselImageCache.displayURL(for: item, shortcode: shortcode)
+        let cacheKey = InstagramCarouselImageCache.stableKey(for: item, shortcode: shortcode)
 
         CachedAsyncImage(url: displayURL, stableKey: cacheKey) { phase in
             switch phase {
@@ -2609,6 +2605,15 @@ struct SwipeStudyFocusModeView: View {
         }
 
         if let items = mediaData.carouselItems, !items.isEmpty {
+            let shortcode = InstagramExtractor.shared.extractShortcode(from: mediaData.originalURL)
+            let cachedSlideCount = await InstagramCarouselImageCache.cacheCarouselImages(
+                items: items,
+                shortcode: shortcode
+            )
+            if cachedSlideCount > 0 {
+                print("SwipeStudy: Cached \(cachedSlideCount) carousel media images for \(shortcode ?? "unknown")")
+            }
+
             let existingCount = igData.carouselItems?.count ?? 0
             let existingSignature = (igData.carouselItems ?? []).map {
                 "\($0.index)|\($0.mediaType.rawValue)|\($0.mediaURL.absoluteString)"

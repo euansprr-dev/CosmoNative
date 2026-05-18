@@ -34,6 +34,9 @@ enum InquirySessionStatus: String, Codable, CaseIterable, Sendable {
 }
 
 /// Layout mode for the 3-pane Inquiry Workspace (Cmd+1..5).
+/// Legacy: the new Inquiry shell uses `InquiryPhase` (Explore / Crystallize) and treats
+/// `.read/.write/.map/.review` as historical. Persistence still uses this enum so existing
+/// sessions decode cleanly.
 enum InquiryLayoutMode: String, Codable, CaseIterable, Sendable {
     case research
     case read
@@ -49,6 +52,77 @@ enum InquiryLayoutMode: String, Codable, CaseIterable, Sendable {
         case .map: return "Map"
         case .review: return "Review"
         }
+    }
+}
+
+/// Two-phase mode for the redesigned Inquiry Workspace.
+/// - `.explore` covers research / reading / map (contextual).
+/// - `.crystallize` opens the review + write outputs as a modal sheet.
+enum InquiryPhase: String, Codable, CaseIterable, Sendable {
+    case explore
+    case crystallize
+
+    var displayName: String {
+        switch self {
+        case .explore: return "Explore"
+        case .crystallize: return "Crystallize"
+        }
+    }
+
+    /// Derive a phase from the legacy layout mode (so existing sessions resume correctly).
+    init(layoutMode: InquiryLayoutMode) {
+        switch layoutMode {
+        case .review:
+            self = .crystallize
+        default:
+            self = .explore
+        }
+    }
+
+    /// Persisted layout mode for this phase.
+    var persistedLayoutMode: InquiryLayoutMode {
+        switch self {
+        case .explore: return .research
+        case .crystallize: return .review
+        }
+    }
+}
+
+/// A short, debounce-regenerated synthesis of "what we currently understand" about the
+/// active question. Persists inside `InquirySessionStructured.currentUnderstandingDraft`.
+struct LiveUnderstandingDraft: Codable, Sendable, Equatable {
+    var text: String
+    var generatedAt: String        // ISO8601
+    var contextSignature: String   // stable hash of (activeQuestionUUID + claim/evidence/source counts)
+    var modelTier: String?
+
+    init(text: String, generatedAt: String = ISO8601DateFormatter().string(from: Date()), contextSignature: String, modelTier: String? = nil) {
+        self.text = text
+        self.generatedAt = generatedAt
+        self.contextSignature = contextSignature
+        self.modelTier = modelTier
+    }
+}
+
+/// Transient AI reply card that floats above the dock. Never persisted.
+struct EphemeralAIReplyCard: Identifiable, Equatable, Sendable {
+    enum Kind: String, Sendable {
+        case reply
+        case summary
+        case challenge
+        case routing
+    }
+
+    var id: String
+    var kind: Kind
+    var text: String
+    var createdAt: Date
+
+    init(id: String = UUID().uuidString, kind: Kind, text: String, createdAt: Date = Date()) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.createdAt = createdAt
     }
 }
 
@@ -2239,6 +2313,7 @@ struct InquirySessionStructured: Codable, Sendable {
     var recommendationBatches: [InquiryRecommendationBatch]
     var routeReceipts: [InquiryRouteReceipt]
     var crystallizationResult: CrystallizationOutput?
+    var currentUnderstandingDraft: LiveUnderstandingDraft?
 
     enum CodingKeys: String, CodingKey {
         case researchTree
@@ -2254,6 +2329,7 @@ struct InquirySessionStructured: Codable, Sendable {
         case recommendationBatches
         case routeReceipts
         case crystallizationResult
+        case currentUnderstandingDraft
     }
 
     init(
@@ -2269,7 +2345,8 @@ struct InquirySessionStructured: Codable, Sendable {
         operationalTasks: [InquiryOperationalTask] = [],
         recommendationBatches: [InquiryRecommendationBatch] = [],
         routeReceipts: [InquiryRouteReceipt] = [],
-        crystallizationResult: CrystallizationOutput? = nil
+        crystallizationResult: CrystallizationOutput? = nil,
+        currentUnderstandingDraft: LiveUnderstandingDraft? = nil
     ) {
         self.researchTree = researchTree
         self.sourceTabs = sourceTabs
@@ -2284,6 +2361,7 @@ struct InquirySessionStructured: Codable, Sendable {
         self.recommendationBatches = recommendationBatches
         self.routeReceipts = routeReceipts
         self.crystallizationResult = crystallizationResult
+        self.currentUnderstandingDraft = currentUnderstandingDraft
     }
 
     init(from decoder: Decoder) throws {
@@ -2301,6 +2379,7 @@ struct InquirySessionStructured: Codable, Sendable {
         recommendationBatches = try container.decodeIfPresent([InquiryRecommendationBatch].self, forKey: .recommendationBatches) ?? []
         routeReceipts = try container.decodeIfPresent([InquiryRouteReceipt].self, forKey: .routeReceipts) ?? []
         crystallizationResult = try container.decodeIfPresent(CrystallizationOutput.self, forKey: .crystallizationResult)
+        currentUnderstandingDraft = try container.decodeIfPresent(LiveUnderstandingDraft.self, forKey: .currentUnderstandingDraft)
     }
 }
 

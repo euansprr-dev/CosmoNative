@@ -200,6 +200,13 @@ final class QuickCaptureProcessor: ObservableObject {
 
         if let items = mediaData.carouselItems {
             igData.carouselItems = items
+            let cachedSlideCount = await InstagramCarouselImageCache.cacheCarouselImages(
+                items: items,
+                shortcode: richContent.instagramId
+            )
+            if cachedSlideCount > 0 {
+                print("QuickCapture: Cached \(cachedSlideCount) carousel media images for \(richContent.instagramId ?? "unknown")")
+            }
         }
 
         richContent.instagramData = igData

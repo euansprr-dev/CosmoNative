@@ -166,4 +166,46 @@ final class CommandKActionRegistryTests: XCTestCase {
         XCTAssertTrue(ids.contains(.deferTask))
         XCTAssertTrue(ids.contains(.scheduleTaskTomorrow))
     }
+
+    func testCommandKPresentationBringsPreservedPaletteForward() {
+        var state = CommandKPresentationState(
+            isVisible: false,
+            isPreservedBehindFocusMode: true
+        )
+
+        state.apply(.present)
+
+        XCTAssertTrue(state.isVisible)
+        XCTAssertFalse(state.isPreservedBehindFocusMode)
+        XCTAssertTrue(state.isVisibleToApp)
+    }
+
+    func testCommandKPresentationCanReopenAfterClose() {
+        var state = CommandKPresentationState(
+            isVisible: true,
+            isPreservedBehindFocusMode: false
+        )
+
+        state.apply(.preserveBehindFocusMode)
+        state.apply(.close)
+        state.apply(.present)
+
+        XCTAssertTrue(state.isVisible)
+        XCTAssertFalse(state.isPreservedBehindFocusMode)
+        XCTAssertTrue(state.isVisibleToApp)
+    }
+
+    func testInstantSwipeCaptureCreatesPendingInstagramAtomWithoutMediaExtraction() throws {
+        let atom = try CommandKInstantSwipeCapture().pendingAtom(
+            for: "https://www.instagram.com/p/DXCBs_uDKau/"
+        )
+
+        XCTAssertTrue(atom.isSwipeFile)
+        XCTAssertEqual(atom.processingStatus, "pending")
+        XCTAssertEqual(atom.title, "Instagram Post")
+        XCTAssertEqual(atom.richContent?.sourceType, .instagramPost)
+        XCTAssertEqual(atom.richContent?.instagramId, "DXCBs_uDKau")
+        XCTAssertNil(atom.richContent?.instagramData?.carouselItems)
+        XCTAssertNil(atom.richContent?.instagramData?.extractedMediaURL)
+    }
 }

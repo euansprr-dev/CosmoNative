@@ -1117,6 +1117,14 @@ class AgentToolExecutor {
                         igData.carouselItems = carouselItems
                         richContent.sourceType = .instagramCarousel
                         richContent.instagramType = "carousel"
+                        let shortcode = classification.contentId ?? InstagramExtractor.shared.extractShortcode(from: igURL)
+                        let cachedSlideCount = await InstagramCarouselImageCache.cacheCarouselImages(
+                            items: carouselItems,
+                            shortcode: shortcode
+                        )
+                        if cachedSlideCount > 0 {
+                            print("Agent: Cached \(cachedSlideCount) carousel media images for \(shortcode ?? "unknown")")
+                        }
                         if item.thumbnailUrl == nil || item.thumbnailUrl?.isEmpty == true {
                             if let firstImage = carouselItems.first(where: { $0.mediaType == .image }) {
                                 item.thumbnailUrl = firstImage.mediaURL.absoluteString

@@ -23,6 +23,35 @@ final class MainRightClickRoutingState: ObservableObject {
     }
 }
 
+struct CommandKPresentationState: Equatable {
+    enum Event {
+        case present
+        case close
+        case preserveBehindFocusMode
+    }
+
+    var isVisible: Bool
+    var isPreservedBehindFocusMode: Bool
+
+    var isVisibleToApp: Bool {
+        isVisible
+    }
+
+    mutating func apply(_ event: Event) {
+        switch event {
+        case .present:
+            isVisible = true
+            isPreservedBehindFocusMode = false
+        case .close:
+            isVisible = false
+            isPreservedBehindFocusMode = false
+        case .preserveBehindFocusMode:
+            isVisible = false
+            isPreservedBehindFocusMode = true
+        }
+    }
+}
+
 struct MainView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var database: CosmoDatabase
@@ -391,11 +420,7 @@ struct MainView: View {
         .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showSettings)
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
-            withAnimation(.spring(response: 0.2)) {
-                showCommandK = true
-                commandKBehindFocusMode = false
-                appState.isCommandKVisible = true
-            }
+            presentCommandK()
         }
         // NodeGraph Command-K atom opening handler
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.openAtomFromCommandK)) { notification in
@@ -408,20 +433,11 @@ struct MainView: View {
         }
         // Command-K close handler (from background tap or escape in CommandKView)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.closeCommandK)) { _ in
-            withAnimation(.spring(response: 0.2)) {
-                showCommandK = false
-                commandKBehindFocusMode = false
-                appState.isCommandKVisible = false
-                commandKViewModel.clear()
-            }
+            closeCommandK()
         }
         // Command-K hide handler — keeps view alive but hidden behind focus mode
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.hideCommandK)) { _ in
-            withAnimation(.spring(response: 0.2)) {
-                showCommandK = false
-                commandKBehindFocusMode = true
-                appState.isCommandKVisible = false
-            }
+            preserveCommandKBehindFocusMode()
         }
         // Cosmo Window toggle (from menu bar, Telegram, or other sources)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.CosmoWindow.toggle)) { _ in
@@ -484,11 +500,7 @@ struct MainView: View {
             }
             // Dismiss Command-K if it's open
             if showCommandK || commandKBehindFocusMode {
-                withAnimation(.spring(response: 0.2)) {
-                    showCommandK = false
-                    commandKBehindFocusMode = false
-                    commandKViewModel.clear()
-                }
+                closeCommandK()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openWebBrowserPane)) { notification in
@@ -520,19 +532,12 @@ struct MainView: View {
             // When focus mode closes, reveal Command-K if it was kept alive behind focus mode
             if newValue == nil, commandKBehindFocusMode {
                 // CMD+K view is still in the tree — just reveal it (no delay, no recreation)
-                withAnimation(.spring(response: 0.2)) {
-                    showCommandK = true
-                    commandKBehindFocusMode = false
-                    appState.isCommandKVisible = true
-                }
+                presentCommandK()
                 commandKReturnTab = nil
             } else if newValue == nil, commandKReturnTab != nil {
                 // Legacy fallback: CMD+K was destroyed but tab was tracked
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    withAnimation(.spring(response: 0.2)) {
-                        showCommandK = true
-                        appState.isCommandKVisible = true
-                    }
+                    presentCommandK()
                     DispatchQueue.main.async {
                         commandKReturnTab = nil
                     }
@@ -581,11 +586,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
 
-            withAnimation(.spring(response: 0.2)) {
-                showCommandK = false
-                commandKBehindFocusMode = false
-                commandKViewModel.clear()
-            }
+            closeCommandK()
 
             navigateToLastThinkspace()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -599,11 +600,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("addIdeaToCanvas"))) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
 
-            withAnimation(.spring(response: 0.2)) {
-                showCommandK = false
-                commandKBehindFocusMode = false
-                commandKViewModel.clear()
-            }
+            closeCommandK()
 
             navigateToLastThinkspace()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -618,11 +615,7 @@ struct MainView: View {
             let clientUUID = notification.userInfo?["clientUUID"] as? String ?? ""
             let clientName = notification.userInfo?["clientName"] as? String ?? "Client"
 
-            withAnimation(.spring(response: 0.2)) {
-                showCommandK = false
-                commandKBehindFocusMode = false
-                commandKViewModel.clear()
-            }
+            closeCommandK()
 
             navigateToLastThinkspace()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -639,11 +632,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addToCanvas)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
 
-            withAnimation(.spring(response: 0.2)) {
-                showCommandK = false
-                commandKBehindFocusMode = false
-                commandKViewModel.clear()
-            }
+            closeCommandK()
 
             navigateToLastThinkspace()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -660,11 +649,7 @@ struct MainView: View {
             // Only handle at MainView level when no focus mode is active (Thinkspace canvas)
             guard appState.focusedEntity == nil else { return }
 
-            withAnimation(.spring(response: 0.2)) {
-                showCommandK = false
-                commandKBehindFocusMode = false
-                commandKViewModel.clear()
-            }
+            closeCommandK()
 
             // Fetch atom and add to Thinkspace canvas
             Task { @MainActor in
@@ -1435,10 +1420,7 @@ struct MainView: View {
         }
 
         // Close any overlays that might be open
-        withAnimation(.spring(response: 0.2)) {
-            showCommandK = false
-            commandKBehindFocusMode = false
-        }
+        closeCommandK(clearViewModel: false)
 
         Task { @MainActor in
             do {
@@ -1540,10 +1522,64 @@ struct MainView: View {
         }
     }
 
+    private func applyCommandKPresentation(
+        _ event: CommandKPresentationState.Event,
+        clearViewModel: Bool = false
+    ) {
+        var state = CommandKPresentationState(
+            isVisible: showCommandK,
+            isPreservedBehindFocusMode: commandKBehindFocusMode
+        )
+        state.apply(event)
+
+        withAnimation(.spring(response: 0.2)) {
+            showCommandK = state.isVisible
+            commandKBehindFocusMode = state.isPreservedBehindFocusMode
+            appState.isCommandKVisible = state.isVisibleToApp
+            if clearViewModel {
+                commandKViewModel.clear()
+            }
+        }
+    }
+
+    private func presentCommandK() {
+        applyCommandKPresentation(.present)
+    }
+
+    private func closeCommandK(clearViewModel: Bool = true) {
+        applyCommandKPresentation(.close, clearViewModel: clearViewModel)
+    }
+
+    private func preserveCommandKBehindFocusMode() {
+        applyCommandKPresentation(.preserveBehindFocusMode)
+    }
+
+    private func isCommandKShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let hasOnlyCommand = flags.contains(.command)
+            && !flags.contains(.shift)
+            && !flags.contains(.option)
+            && !flags.contains(.control)
+        let character = event.charactersIgnoringModifiers?.lowercased()
+
+        return hasOnlyCommand && (event.keyCode == 40 || character == "k")
+    }
+
     // MARK: - Global Keyboard Monitor
     /// Uses NSEvent monitor for Escape key, keyboard shortcuts, and Ctrl+Z undo/redo fallback
     private func setupGlobalKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
+            // Cmd+K should always reopen the shared palette, including while a focus mode is active.
+            // If Command-K is already visible, let the event continue so its Actions shortcut can handle it.
+            if event.type == .keyDown,
+               isCommandKShortcut(event) {
+                if !showCommandK {
+                    presentCommandK()
+                    return nil
+                }
+                return event
+            }
+
             // Escape to dismiss overlays (only on keyDown) — peels back one layer at a time
             if event.type == .keyDown, event.keyCode == 53 {  // Escape key
                 // 1. Instagram modal
@@ -1573,12 +1609,7 @@ struct MainView: View {
 
                 // 5. Command-K
                 if showCommandK {
-                    withAnimation(.spring(response: 0.2)) {
-                        showCommandK = false
-                        commandKBehindFocusMode = false
-                        appState.isCommandKVisible = false
-                        commandKViewModel.clear()
-                    }
+                    closeCommandK()
                     return nil
                 }
 
@@ -1711,11 +1742,7 @@ struct MainView: View {
                event.keyCode == 37,  // L key
                !event.modifierFlags.contains(.command),
                !isFirstResponderTextField() {
-                withAnimation(.spring(response: 0.2)) {
-                    showCommandK = true
-                    commandKBehindFocusMode = false
-                    appState.isCommandKVisible = true
-                }
+                presentCommandK()
                 return nil
             }
 
@@ -2056,11 +2083,7 @@ struct MainView: View {
     /// Fetches the atom type and routes to the appropriate view
     private func handleOpenAtomFromCommandK(atomUUID: String) {
         // Hide Command-K behind focus mode (keep alive for state preservation)
-        withAnimation(.spring(response: 0.2)) {
-            showCommandK = false
-            commandKBehindFocusMode = true
-            appState.isCommandKVisible = false
-        }
+        preserveCommandKBehindFocusMode()
 
         // Fetch atom and open in appropriate mode
         Task { @MainActor in
@@ -2088,11 +2111,7 @@ struct MainView: View {
     /// Routes Command-K "Go to Object" to the atom's spatial home.
     /// Placed atoms open on their primary thinkspace canvas; unplaced atoms open in Inbox.
     private func handleGoToObjectFromCommandK(atomUUID: String) {
-        withAnimation(.spring(response: 0.2)) {
-            showCommandK = false
-            commandKBehindFocusMode = true
-            appState.isCommandKVisible = false
-        }
+        preserveCommandKBehindFocusMode()
 
         Task { @MainActor in
             let memberships = (try? await AtomRepository.shared.fetchThinkspaceMembership(for: atomUUID)) ?? []

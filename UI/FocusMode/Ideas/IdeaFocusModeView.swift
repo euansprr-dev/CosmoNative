@@ -112,6 +112,11 @@ struct IdeaFocusModeView: View {
 
             overlayPresentations
         }
+        .background {
+            FocusModeEditorBlurClickMonitor {
+                clearManuscriptEditingFocus()
+            }
+        }
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
@@ -462,7 +467,7 @@ extension IdeaFocusModeView {
         isContextFocused = false
         focusedHookEditor = nil
         focusedOutlineSlideID = nil
-        NSApp.keyWindow?.makeFirstResponder(nil)
+        FocusModeEditorBlur.clearFirstResponder()
     }
 
     // MARK: Title hero

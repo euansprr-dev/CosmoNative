@@ -203,6 +203,8 @@ struct CortexResultRail: View {
     var onSelectDomainItem: (CommandKDomainRailItem) -> Void = { _ in }
     var onOpenDomainItem: (CommandKDomainRailItem) -> Void = { _ in }
 
+    @State private var railScrollMetrics = CortexScrollMetrics()
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -210,8 +212,12 @@ struct CortexResultRail: View {
                     railContent
                 }
                 .padding(DS.space16)
+                .background(CortexScrollViewIntrospector { metrics in
+                    railScrollMetrics = metrics
+                })
             }
             .scrollIndicators(.hidden)
+            .cortexThinScrollbar(metrics: railScrollMetrics)
             .onChange(of: viewModel.selectedResultIndex) { _, _ in
                 guard let id = viewModel.selectedNodeId else { return }
                 withAnimation(ProMotionSprings.snappy) { proxy.scrollTo(id, anchor: .center) }

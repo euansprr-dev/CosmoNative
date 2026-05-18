@@ -937,6 +937,174 @@ enum CommandKUnifiedSearchComposer {
 // MARK: - CommandKViewModel
 /// ViewModel for the Command-K overlay
 /// Manages query state, results, and constellation visualization
+struct CommandKInstantSwipeCapture {
+    private let classifier = SwipeURLClassifier()
+
+    func pendingAtom(for url: String, hook: String? = nil) throws -> Atom {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let classification = classifier.classify(trimmed)
+        guard classification.isUrl else {
+            throw CommandKInstantSwipeCaptureError.invalidURL
+        }
+
+        var atom = baseAtom(for: trimmed, classification: classification, hook: hook)
+        atom.processingStatus = classification.sourceType == .rawNote ? "complete" : "pending"
+        atom.isSwipeFile = true
+        atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        return atom
+    }
+
+    @MainActor
+    func capture(url: String, hook: String? = nil) async throws -> Atom {
+        let atom = try pendingAtom(for: url, hook: hook)
+        let saved = try await AtomRepository.shared.create(atom)
+
+        NotificationCenter.default.post(
+            name: .researchCreated,
+            object: nil,
+            userInfo: ["research": saved, "uuid": saved.uuid]
+        )
+
+        if shouldProcessInBackground(saved) {
+            SwipeProcessingService.shared.processSwipeInBackground(uuid: saved.uuid)
+        }
+
+        return saved
+    }
+
+    private func baseAtom(
+        for url: String,
+        classification: SwipeURLClassifier.Classification,
+        hook: String?
+    ) -> Atom {
+        switch classification.sourceType {
+        case .youtube, .youtubeShort:
+            var atom = Research.swipeFromYouTube(
+                videoId: classification.contentId ?? UUID().uuidString,
+                url: url,
+                hook: hook,
+                isShort: classification.sourceType == .youtubeShort
+            )
+            let thumbnailURL = "https://img.youtube.com/vi/\(classification.contentId ?? "")/maxresdefault.jpg"
+            if classification.contentId != nil {
+                atom.thumbnailUrl = thumbnailURL
+                var richContent = atom.richContent ?? ResearchRichContent()
+                richContent.thumbnailUrl = thumbnailURL
+                atom.setRichContent(richContent)
+            }
+            return atom
+
+        case .instagram, .instagramReel, .instagramPost, .instagramCarousel:
+            return instagramAtom(for: url, classification: classification, hook: hook)
+
+        case .xPost, .twitter:
+            return Research.swipeFromXPost(
+                tweetId: classification.contentId ?? UUID().uuidString,
+                url: url,
+                hook: hook
+            )
+
+        case .threads:
+            return Research.swipeFromThreads(
+                threadId: classification.contentId ?? UUID().uuidString,
+                url: url,
+                hook: hook
+            )
+
+        case .loom:
+            return Research.newSwipeFile(
+                url: url,
+                hook: hook,
+                sourceType: .loom,
+                contentSource: .clipboard
+            )
+
+        default:
+            return Research.newSwipeFile(
+                url: url,
+                hook: hook,
+                sourceType: .website,
+                contentSource: .clipboard
+            )
+        }
+    }
+
+    private func instagramAtom(
+        for url: String,
+        classification: SwipeURLClassifier.Classification,
+        hook: String?
+    ) -> Atom {
+        let igType: ResearchRichContent.InstagramContentType
+        let title: String
+        switch classification.sourceType {
+        case .instagramReel:
+            igType = .reel
+            title = "Instagram Reel"
+        case .instagramCarousel:
+            igType = .carousel
+            title = "Instagram Carousel"
+        default:
+            igType = .post
+            title = "Instagram Post"
+        }
+
+        var atom = Research.swipeFromInstagram(
+            instagramId: classification.contentId ?? UUID().uuidString,
+            url: url,
+            hook: hook,
+            type: igType
+        )
+        if hook == nil {
+            atom.title = title
+        }
+
+        var richContent = atom.richContent ?? ResearchRichContent()
+        richContent.sourceType = classification.sourceType
+        richContent.instagramType = igType.rawValue
+        richContent.instagramId = classification.contentId
+        if let originalURL = URL(string: url) {
+            richContent.instagramData = InstagramData(
+                originalURL: originalURL,
+                contentType: instagramContentType(for: igType)
+            )
+        }
+        atom.setRichContent(richContent)
+
+        return atom
+    }
+
+    private func instagramContentType(
+        for type: ResearchRichContent.InstagramContentType
+    ) -> InstagramContentType {
+        switch type {
+        case .reel: return .reel
+        case .carousel: return .carousel
+        case .post: return .image
+        case .story: return .story
+        }
+    }
+
+    private func shouldProcessInBackground(_ atom: Atom) -> Bool {
+        switch atom.richContent?.sourceType {
+        case .instagram, .instagramReel, .instagramPost, .instagramCarousel:
+            return atom.processingStatus == "pending"
+        default:
+            return false
+        }
+    }
+}
+
+enum CommandKInstantSwipeCaptureError: LocalizedError {
+    case invalidURL
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Paste a valid URL to capture."
+        }
+    }
+}
+
 @MainActor
 public final class CommandKViewModel: ObservableObject {
 
@@ -1899,7 +2067,7 @@ public final class CommandKViewModel: ObservableObject {
         switch action.kind {
         case .captureSwipe:
             guard let url = action.payload.url else { return }
-            _ = try await AgentToolExecutor.shared.execute(toolName: "capture_swipe", arguments: ["url": url])
+            _ = try await CommandKInstantSwipeCapture().capture(url: url, hook: action.payload.hook)
             finishAction()
 
         case .captureSwipeWithIdea:

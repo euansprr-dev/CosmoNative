@@ -159,6 +159,7 @@ struct CortexDetailPane: View {
     let subject: CortexDetailSubject
 
     @State private var atom: Atom?
+    @State private var detailScrollMetrics = CortexScrollMetrics()
 
     var body: some View {
         Group {
@@ -214,8 +215,12 @@ struct CortexDetailPane: View {
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(CortexScrollViewIntrospector { metrics in
+                detailScrollMetrics = metrics
+            })
         }
         .scrollIndicators(.hidden)
+        .cortexThinScrollbar(metrics: detailScrollMetrics)
     }
 
     private var previewHeight: CGFloat {
@@ -565,11 +570,14 @@ private struct CortexSwipePreviewMedia: Identifiable, Equatable {
 
     static func resolve(for item: SwipeGalleryItem, atom: Atom?) -> [Self] {
         let richContent = atom?.richContent
+        let itemShortcode = item.instagramId.flatMap { $0.isEmpty ? nil : $0 }
+        let atomShortcode = atom.flatMap(Self.shortcode)
+        let shortcode = itemShortcode ?? atomShortcode
 
         if let carouselItems = richContent?.instagramData?.carouselItems, !carouselItems.isEmpty {
             return carouselItems
                 .sorted { $0.index < $1.index }
-                .map(media)
+                .map { media(from: $0, shortcode: shortcode) }
         }
 
         let style = inferredStyle(for: item, richContent: richContent)
@@ -603,18 +611,36 @@ private struct CortexSwipePreviewMedia: Identifiable, Equatable {
         )
     }
 
-    private static func media(from item: CarouselItem) -> Self {
-        let id = "carousel-\(item.index)-\(item.mediaURL.absoluteString)"
+    private static func media(from item: CarouselItem, shortcode: String?) -> Self {
+        let id = InstagramCarouselImageCache.stableKey(for: item, shortcode: shortcode)
+        let displayURL = InstagramCarouselImageCache.displayURL(for: item, shortcode: shortcode)
         switch item.mediaType {
         case .image:
-            return Self(id: id, kind: .image(item.mediaURL), style: .square)
+            return Self(id: id, kind: .image(displayURL), style: .square)
         case .video:
             return Self(
                 id: id,
-                kind: .video(url: item.mediaURL, thumbnailURL: item.thumbnailURL),
+                kind: .video(url: item.mediaURL, thumbnailURL: item.thumbnailURL ?? displayURL),
                 style: .square
             )
         }
+    }
+
+    private static func shortcode(from atom: Atom) -> String? {
+        guard let urlString = atom.url,
+              let url = URL(string: urlString) else {
+            return nil
+        }
+        let pathComponents = url.pathComponents
+        for marker in ["p", "reel", "tv"] {
+            if let markerIndex = pathComponents.firstIndex(of: marker) {
+                let shortcodeIndex = pathComponents.index(after: markerIndex)
+                guard shortcodeIndex < pathComponents.endIndex else { continue }
+                let shortcode = pathComponents[shortcodeIndex]
+                if !shortcode.isEmpty { return shortcode }
+            }
+        }
+        return nil
     }
 
     private static func inferredStyle(

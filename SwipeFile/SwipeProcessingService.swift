@@ -618,7 +618,7 @@ final class SwipeProcessingService {
             print("SwipeProcessingService: Failed to persist final analysis: \(error)")
         }
 
-        // Cache carousel thumbnail locally (CDN URLs expire)
+        // Cache carousel media locally (CDN URLs expire)
         if let items = carouselItems, !items.isEmpty {
             let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
             await SwipeFileEngine.cacheCarouselThumbnail(items: items, shortcode: shortcode)

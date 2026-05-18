@@ -1,7 +1,7 @@
 // CosmoOS/UI/FocusMode/Inquiry/InquiryWorkspaceView.swift
-// The 3-pane Inquiry Workspace: Notebook + Source + AI Copilot.
-// Layout modes Cmd+1..5 (Research / Read / Write / Map / Review).
-// All actions auto-attach provenance: Deep Dive · Session · Question · Source · Branch.
+// "Stele" redesign — thin shell hosting top bar, 3-pane row (Your Notes · Stele · Sources),
+// bottom dock, Crystallize sheet, Map overlay, and toasts.
+// Modes collapse to Explore / Crystallize (Cmd+1 / Cmd+2). Cmd+M toggles the Map overlay.
 
 import SwiftUI
 
@@ -23,28 +23,20 @@ struct InquiryWorkspaceView: View {
     var body: some View {
         ZStack {
             DS.bg.ignoresSafeArea()
-            VStack(spacing: 0) {
-                topBar
-                Divider().background(DS.borderSubtle)
-                paneRow
-                if viewModel.metadata.layoutMode != .review {
-                    Divider().background(DS.borderSubtle)
-                    thinkingDock
-                }
-            }
+            shellStack
             if let toast = viewModel.toast {
-                toastView(toast)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(.top, 54)
-                    .padding(.trailing, DS.space20)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                toastOverlay(toast)
+            }
+            if viewModel.isMapOverlayPresented {
+                InquiryMapOverlay(viewModel: viewModel)
+                    .transition(.opacity)
             }
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: viewModel.toast)
+        .filmGrain(opacity: 0.02)
+        .animation(ProMotionSprings.gentle, value: viewModel.toast)
+        .animation(ProMotionSprings.focusTransition, value: viewModel.isMapOverlayPresented)
         .task { await viewModel.loadDeepDiveAndRoot() }
-        .onDisappear {
-            Task { await viewModel.pauseAndPersist() }
-        }
+        .onDisappear { Task { await viewModel.pauseAndPersist() } }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.layoutRequested)) { notification in
             guard let payload = CosmoNotification.Inquiry.LayoutPayload(from: notification) else { return }
             viewModel.setLayout(payload.mode)
@@ -55,37 +47,179 @@ struct InquiryWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.refreshSources)) { _ in
             Task { await viewModel.refreshSourceRecommendations() }
         }
-        .background(layoutShortcuts)
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.crystallizeActive)) { _ in
+            viewModel.setPhase(.crystallize)
+        }
+        .sheet(isPresented: crystallizeBinding) {
+            InquiryCrystallizeSheet(viewModel: viewModel) {
+                viewModel.setPhase(.explore)
+            }
+        }
+        .background(InquiryShortcuts(viewModel: viewModel, onClose: closeWorkspace, focusDock: { dockFocused = true }))
     }
 
-    // MARK: - Top bar
+    // MARK: - Shell stack
 
-    private var topBar: some View {
-        HStack(spacing: DS.space12) {
-            Button(action: closeWorkspace) {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                    Text("Close")
-                }
-                .font(CosmoTypography.label)
-                .foregroundStyle(CosmoColors.textSecondary)
-                .padding(.horizontal, DS.space10)
-                .padding(.vertical, 6)
-                .background(DS.surface, in: Capsule())
+    private var shellStack: some View {
+        VStack(spacing: 0) {
+            InquiryTopBar(
+                viewModel: viewModel,
+                onClose: closeWorkspace,
+                onFocusDock: { dockFocused = true }
+            )
+            Divider().background(DS.borderSubtle)
+            paneRow
+            Divider().background(DS.borderSubtle)
+            dockRegion
+        }
+    }
+
+    // MARK: - Pane row (Your Notes · Stele · Sources)
+
+    private var paneRow: some View {
+        HStack(spacing: 0) {
+            InquiryNotesRail(viewModel: viewModel)
+                .frame(width: 280)
+                .background(DS.surface)
+            paneDivider
+            centerColumn
+                .frame(maxWidth: .infinity)
+                .background(DS.bg)
+            paneDivider
+            InquirySourcesRail(viewModel: viewModel)
+                .frame(width: 280)
+                .background(DS.surface)
+        }
+    }
+
+    private var paneDivider: some View {
+        Rectangle()
+            .fill(DS.borderSubtle)
+            .frame(width: 1)
+    }
+
+    private var centerColumn: some View {
+        Group {
+            if let tabId = viewModel.activeReaderSourceId,
+               let tab = viewModel.structured.sourceTabs.first(where: { $0.id == tabId }) {
+                InquiryReaderView(viewModel: viewModel, tab: tab)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                InquirySteleView(viewModel: viewModel) { dockFocused = true }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.escape)
+        }
+        .animation(ProMotionSprings.focusTransition, value: viewModel.activeReaderSourceId)
+    }
 
+    // MARK: - Dock region
+
+    private var dockRegion: some View {
+        VStack(spacing: DS.space6) {
+            if !viewModel.ephemeralAIReplies.isEmpty {
+                InquiryEphemeralAICardsStack(viewModel: viewModel)
+                    .padding(.horizontal, DS.space20)
+                    .padding(.top, DS.space8)
+                    .transition(.opacity)
+            }
+            InquiryDockView(viewModel: viewModel, dockDraft: $dockDraft, dockFocused: $dockFocused)
+        }
+        .animation(ProMotionSprings.gentle, value: viewModel.ephemeralAIReplies.count)
+    }
+
+    // MARK: - Toast overlay
+
+    private func toastOverlay(_ toast: InquiryToast) -> some View {
+        toastView(toast)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .padding(.top, 54)
+            .padding(.trailing, DS.space20)
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+    }
+
+    private func toastView(_ toast: InquiryToast) -> some View {
+        HStack(alignment: .top, spacing: DS.space8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(toast.message)
+                    .font(CosmoTypography.label)
+                    .foregroundStyle(CosmoColors.textPrimary)
+                if let detail = toast.detail {
+                    Text(detail)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                }
+            }
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space10)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 16, y: 8)
+    }
+
+    // MARK: - Bindings
+
+    private var crystallizeBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.phase == .crystallize },
+            set: { isPresented in
+                if !isPresented { viewModel.setPhase(.explore) }
+            }
+        )
+    }
+
+    private func closeWorkspace() {
+        Task {
+            await viewModel.pauseAndPersist()
+            onClose()
+        }
+    }
+}
+
+// MARK: - Top Bar
+
+@MainActor
+private struct InquiryTopBar: View {
+    @Bindable var viewModel: InquiryWorkspaceViewModel
+    let onClose: () -> Void
+    let onFocusDock: () -> Void
+
+    var body: some View {
+        HStack(spacing: DS.space12) {
+            closeButton
             activeQuestionHeader
-
-            Spacer()
-
-            layoutSelector
-
+            Spacer(minLength: DS.space12)
+            InquiryPhaseToggle(viewModel: viewModel)
             crystallizeButton
         }
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space12)
+    }
+
+    private var closeButton: some View {
+        Button(action: onClose) {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left")
+                Text("Close")
+            }
+            .font(CosmoTypography.label)
+            .foregroundStyle(CosmoColors.textSecondary)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, 6)
+            .background(DS.surface, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.escape, modifiers: [])
+        .accessibilityLabel("Close inquiry workspace")
     }
 
     private var activeQuestionHeader: some View {
@@ -94,6 +228,7 @@ struct InquiryWorkspaceView: View {
                 Image(systemName: "questionmark.bubble.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(DS.accent)
+                    .accessibilityHidden(true)
                 Menu {
                     questionMenuContent
                 } label: {
@@ -109,17 +244,20 @@ struct InquiryWorkspaceView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .buttonStyle(.plain)
+                .accessibilityLabel("Switch active question")
 
                 Button {
-                    dockDraft = "branch: "
-                    dockFocused = true
+                    onFocusDock()
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(CosmoColors.textSecondary)
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Create child question")
+                .help("Add a branch question")
+                .accessibilityLabel("Add a branch question")
             }
             Text(viewModel.activeQuestionBreadcrumb)
                 .font(CosmoTypography.caption)
@@ -151,40 +289,14 @@ struct InquiryWorkspaceView: View {
         }
     }
 
-    private var layoutSelector: some View {
-        HStack(spacing: 4) {
-            ForEach(InquiryLayoutMode.allCases, id: \.self) { mode in
-                layoutChip(mode)
-            }
-        }
-    }
-
-    private func layoutChip(_ mode: InquiryLayoutMode) -> some View {
-        let isActive = viewModel.metadata.layoutMode == mode
-        return Button {
-            viewModel.setLayout(mode)
-        } label: {
-            Text(mode.displayName)
-                .font(CosmoTypography.caption)
-                .foregroundStyle(isActive ? DS.textOnAccent : CosmoColors.textSecondary)
-                .padding(.horizontal, DS.space8)
-                .padding(.vertical, 4)
-                .background(isActive ? DS.accent : Color.clear, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(mode.displayName)
-    }
-
     private var crystallizeButton: some View {
         Button {
-            NotificationCenter.default.post(
-                name: CosmoNotification.Inquiry.crystallizeActive,
-                object: nil
-            )
+            viewModel.setPhase(.crystallize)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
+                    .accessibilityHidden(true)
                 Text("Crystallize")
                     .font(CosmoTypography.label)
             }
@@ -192,234 +304,83 @@ struct InquiryWorkspaceView: View {
             .padding(.vertical, 6)
             .overlay(Capsule().stroke(DS.accent.opacity(0.55), lineWidth: 1))
             .foregroundStyle(DS.accent)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .keyboardShortcut(.return, modifiers: [.command])
+        .accessibilityLabel("Crystallize inquiry session")
     }
+}
 
-    private func toastView(_ toast: InquiryToast) -> some View {
-        HStack(alignment: .top, spacing: DS.space8) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DS.accent)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(toast.message)
-                    .font(CosmoTypography.label)
-                    .foregroundStyle(CosmoColors.textPrimary)
-                if let detail = toast.detail {
-                    Text(detail)
-                        .font(CosmoTypography.caption)
-                        .foregroundStyle(CosmoColors.textTertiary)
-                }
-            }
+// MARK: - Phase Toggle (Explore | Crystallize)
+
+@MainActor
+private struct InquiryPhaseToggle: View {
+    @Bindable var viewModel: InquiryWorkspaceViewModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            chip(.explore)
+            chip(.crystallize)
         }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space10)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.12), radius: 16, y: 8)
+        .padding(2)
+        .background(DS.surface, in: Capsule())
+        .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 1))
     }
 
-    // MARK: - Pane row
-
-    private var paneRow: some View {
-        Group {
-            if viewModel.metadata.layoutMode == .review {
-                InquiryReviewView(viewModel: viewModel)
-                    .background(DS.bg)
-            } else {
-                GeometryReader { geo in
-                    let widths = paneWidths(total: geo.size.width)
-                    HStack(spacing: 0) {
-                        if widths.notebook > 0 {
-                            InquiryNotebookPane(viewModel: viewModel)
-                                .frame(width: widths.notebook)
-                                .background(DS.surface)
-                            paneDivider
-                        }
-                        if widths.source > 0 {
-                            InquirySourcePane(viewModel: viewModel)
-                                .frame(width: widths.source)
-                                .background(DS.bg)
-                            paneDivider
-                        }
-                        if widths.copilot > 0 {
-                            InquiryCopilotPane(viewModel: viewModel)
-                                .frame(width: widths.copilot)
-                                .background(DS.surface)
-                        }
-                    }
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.crystallizeActive)) { _ in
-            viewModel.setLayout(.review)
-        }
-    }
-
-    private var paneDivider: some View {
-        Rectangle()
-            .fill(DS.borderSubtle)
-            .frame(width: 1)
-    }
-
-    // MARK: - Thinking Dock
-
-    private var thinkingDock: some View {
-        HStack(spacing: DS.space10) {
-            Image(systemName: "sparkle.magnifyingglass")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 30, height: 30)
-                .background(DS.accentSoft, in: Circle())
-
-            if let activity = viewModel.sourceActivityLine {
-                dockActivityLine(activity)
-            } else {
-                TextField("Think out loud, paste a URL, or route with claim: source: scout: branch:", text: $dockDraft)
-                    .textFieldStyle(.plain)
-                    .font(CosmoTypography.body)
-                    .focused($dockFocused)
-                    .onSubmit { submitDockDraft() }
-            }
-
-            HStack(spacing: 5) {
-                dockPrefixButton("claim:")
-                dockPrefixButton("source:")
-                dockPrefixButton("scout:")
-                dockPrefixButton("branch:")
-                dockCommandButton("/sources")
-            }
-
-            Button {
-                submitDockDraft()
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 30, height: 30)
-                    .background(dockDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? DS.surfaceHover : DS.accent, in: Circle())
-                    .foregroundStyle(dockDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? CosmoColors.textTertiary : DS.textOnAccent)
-            }
-            .buttonStyle(.plain)
-            .disabled(dockDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .help("Route thought")
-        }
-        .padding(.horizontal, DS.space20)
-        .padding(.vertical, DS.space10)
-        .background(DS.surface)
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: viewModel.sourceActivityLine)
-    }
-
-    private func dockActivityLine(_ activity: String) -> some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.58)
-            Text(activity)
-                .font(CosmoTypography.bodySmall)
-                .foregroundStyle(CosmoColors.textSecondary)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, 6)
-        .background(DS.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.accent.opacity(0.14), lineWidth: 1))
-        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-    }
-
-    private func dockPrefixButton(_ prefix: String) -> some View {
-        Button {
-            if dockDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                dockDraft = "\(prefix) "
-            } else {
-                dockDraft = "\(prefix) \(dockDraft)"
-            }
-            dockFocused = true
+    private func chip(_ phase: InquiryPhase) -> some View {
+        let isActive = viewModel.phase == phase
+        return Button {
+            viewModel.setPhase(phase)
         } label: {
-            Text(prefix)
-                .font(CosmoTypography.caption)
-                .foregroundStyle(CosmoColors.textSecondary)
-                .padding(.horizontal, DS.space8)
+            Text(phase.displayName)
+                .font(CosmoTypography.label)
+                .foregroundStyle(isActive ? DS.textOnAccent : CosmoColors.textSecondary)
+                .padding(.horizontal, DS.space12)
                 .padding(.vertical, 5)
-                .background(DS.surfaceElevated, in: Capsule())
-                .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 1))
+                .background(isActive ? DS.accent : Color.clear, in: Capsule())
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("Route as \(prefix)")
+        .accessibilityLabel("\(phase.displayName) phase")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
+}
 
-    private func dockCommandButton(_ command: String) -> some View {
-        Button {
-            dockDraft = command
-            submitDockDraft()
-        } label: {
-            Text(command)
-                .font(CosmoTypography.caption)
-                .foregroundStyle(DS.accent)
-                .padding(.horizontal, DS.space8)
-                .padding(.vertical, 5)
-                .background(DS.accent.opacity(0.08), in: Capsule())
-                .overlay(Capsule().stroke(DS.accent.opacity(0.18), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .help("Refresh source recommendations")
-    }
+// MARK: - Shortcuts
 
-    private func submitDockDraft() {
-        let text = dockDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        dockDraft = ""
-        Task { await viewModel.submitDockText(text) }
-    }
+@MainActor
+private struct InquiryShortcuts: View {
+    @Bindable var viewModel: InquiryWorkspaceViewModel
+    let onClose: () -> Void
+    let focusDock: () -> Void
 
-    private struct PaneWidths { let notebook: CGFloat; let source: CGFloat; let copilot: CGFloat }
-
-    private func paneWidths(total: CGFloat) -> PaneWidths {
-        switch viewModel.metadata.layoutMode {
-        case .research:
-            return PaneWidths(notebook: total * 0.30, source: total * 0.46, copilot: total * 0.24)
-        case .read:
-            return PaneWidths(notebook: 0, source: total * 0.78, copilot: total * 0.22)
-        case .write:
-            return PaneWidths(notebook: total * 0.70, source: 0, copilot: total * 0.30)
-        case .map:
-            return PaneWidths(notebook: total, source: 0, copilot: 0)
-        case .review:
-            return PaneWidths(notebook: total, source: 0, copilot: 0)
-        }
-    }
-
-    // MARK: - Shortcuts
-
-    @ViewBuilder
-    private var layoutShortcuts: some View {
-        // Hidden buttons to attach Cmd+1..5 keyboard shortcuts.
+    var body: some View {
+        // Hidden zero-size buttons hosting keyboard shortcuts.
         VStack(spacing: 0) {
-            Button("") { viewModel.setLayout(.research) }
+            Button("") { viewModel.setPhase(.explore) }
                 .keyboardShortcut("1", modifiers: [.command])
-            Button("") { viewModel.setLayout(.read) }
+            Button("") { viewModel.setPhase(.crystallize) }
                 .keyboardShortcut("2", modifiers: [.command])
-            Button("") { viewModel.setLayout(.write) }
-                .keyboardShortcut("3", modifiers: [.command])
-            Button("") { viewModel.setLayout(.map) }
-                .keyboardShortcut("4", modifiers: [.command])
-            Button("") { viewModel.setLayout(.review) }
-                .keyboardShortcut("5", modifiers: [.command])
+            Button("") { viewModel.toggleMap() }
+                .keyboardShortcut("m", modifiers: [.command])
             Button("") { viewModel.goToParentQuestion() }
                 .keyboardShortcut("[", modifiers: [.command])
             Button("") { viewModel.cycleQuestion(offset: 1) }
                 .keyboardShortcut("]", modifiers: [.command])
+            Button("") { focusDock() }
+                .keyboardShortcut("k", modifiers: [.command])
+            Button("") {
+                if viewModel.activeReaderSourceId != nil {
+                    viewModel.dismissReader()
+                } else if viewModel.isMapOverlayPresented {
+                    viewModel.dismissMap()
+                }
+            }
+            .keyboardShortcut("[", modifiers: [.command, .shift])
         }
         .frame(width: 0, height: 0)
         .opacity(0)
-    }
-
-    private func closeWorkspace() {
-        Task {
-            await viewModel.pauseAndPersist()
-            onClose()
-        }
+        .accessibilityHidden(true)
     }
 }

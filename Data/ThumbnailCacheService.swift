@@ -74,6 +74,8 @@ actor ThumbnailCacheService {
             return diskImage
         }
 
+        let fallbackImage = InstagramCarouselImageCache.fallbackImage(forStableKey: key)
+
         // 3. Deduplicated network fetch
         if let existing = inflightTasks[key] { return await existing.value }
 
@@ -108,7 +110,14 @@ actor ThumbnailCacheService {
         inflightTasks[key] = task
         let result = await task.value
         inflightTasks.removeValue(forKey: key)
-        return result
+        if let result { return result }
+
+        if let fallbackImage {
+            memoryCache.setObject(fallbackImage, forKey: key as NSString)
+            return fallbackImage
+        }
+
+        return nil
     }
 }
 
@@ -157,9 +166,15 @@ struct CachedAsyncImage<Content: View>: View {
                     return
                 }
 
+                if let fallback = InstagramCarouselImageCache.fallbackImage(forStableKey: key) {
+                    phase = .success(Image(nsImage: fallback))
+                }
+
                 // Full lookup: disk then network
                 if let image = await cache.image(for: url, key: key) {
                     phase = .success(Image(nsImage: image))
+                } else if case .success = phase {
+                    return
                 } else {
                     phase = .failure
                 }
@@ -225,9 +240,37 @@ enum InstagramCarouselImageCache {
             host.contains("fbcdn.net")
     }
 
+    static func displayURL(for item: CarouselItem, shortcode: String?) -> URL {
+        let sourceURL = imageSourceURL(for: item)
+        let key = stableKey(for: item, shortcode: shortcode)
+        return cachedFileURL(for: key) ?? sourceURL
+    }
+
+    static func stableKey(for item: CarouselItem, shortcode: String?) -> String {
+        cacheKey(shortcode: shortcode, index: item.index, url: imageSourceURL(for: item))
+    }
+
+    static func cacheCarouselImages(items: [CarouselItem], shortcode: String?) async -> Int {
+        var cachedCount = 0
+
+        for item in items {
+            let sourceURL = imageSourceURL(for: item)
+            let key = stableKey(for: item, shortcode: shortcode)
+            if let data = await imageData(for: sourceURL, stableKey: key), !data.isEmpty {
+                cachedCount += 1
+            }
+        }
+
+        return cachedCount
+    }
+
     static func imageData(for url: URL, stableKey: String) async -> Data? {
         if url.isFileURL {
-            return try? Data(contentsOf: url)
+            guard let data = try? Data(contentsOf: url),
+                  let image = NSImage(data: data) else {
+                return nil
+            }
+            return persistImage(image, originalData: data, stableKey: stableKey)
         }
 
         let path = cachePath(for: stableKey)
@@ -245,10 +288,7 @@ enum InstagramCarouselImageCache {
                 return nil
             }
 
-            let persisted = jpegData(from: image) ?? data
-            try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-            try? persisted.write(to: path)
-            return persisted
+            return persistImage(image, originalData: data, stableKey: stableKey)
         } catch {
             print("InstagramCarouselImageCache: Image download failed: \(error.localizedDescription)")
             return nil
@@ -261,8 +301,46 @@ enum InstagramCarouselImageCache {
         return path
     }
 
+    static func fallbackImage(forStableKey stableKey: String) -> NSImage? {
+        guard let fallbackURL = fallbackFileURL(forStableKey: stableKey) else { return nil }
+        return NSImage(contentsOf: fallbackURL)
+    }
+
     private static func cachePath(for stableKey: String) -> URL {
         cacheDirectory.appendingPathComponent("thumb-\(stableKey).jpg")
+    }
+
+    private static func imageSourceURL(for item: CarouselItem) -> URL {
+        if item.mediaType == .video {
+            return item.thumbnailURL ?? item.mediaURL
+        }
+        return item.mediaURL
+    }
+
+    private static func fallbackFileURL(forStableKey stableKey: String) -> URL? {
+        guard stableKey.hasPrefix("ig-carousel-") else { return nil }
+        let remainder = stableKey.dropFirst("ig-carousel-".count)
+        guard let separator = remainder.lastIndex(of: "-") else { return nil }
+        guard remainder[remainder.index(after: separator)...] == "0" else { return nil }
+        let shortcode = String(remainder[..<separator])
+        guard !shortcode.isEmpty else { return nil }
+
+        let legacyPath = cacheDirectory.appendingPathComponent("thumb-\(shortcode).jpg")
+        guard fileManager.fileExists(atPath: legacyPath.path) else { return nil }
+        return legacyPath
+    }
+
+    private static func persistImage(_ image: NSImage, originalData: Data, stableKey: String) -> Data? {
+        let path = cachePath(for: stableKey)
+        let persisted = jpegData(from: image) ?? originalData
+        do {
+            try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            try persisted.write(to: path)
+            return persisted
+        } catch {
+            print("InstagramCarouselImageCache: Image cache write failed: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     private static func jpegData(from image: NSImage) -> Data? {

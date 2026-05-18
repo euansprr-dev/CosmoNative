@@ -577,10 +577,18 @@ final class SwipeFileEngine: ObservableObject {
 
     // MARK: - Carousel Thumbnail Caching
 
-    /// Download the first carousel image and cache locally so gallery cards can display it
-    /// even after Instagram CDN URLs expire.
+    /// Download carousel images into the durable local cache so gallery cards,
+    /// Command K previews, Swipe Study, and OCR can survive Instagram CDN URL expiry.
     static func cacheCarouselThumbnail(items: [CarouselItem], shortcode: String?) async {
         guard let shortcode, !shortcode.isEmpty else { return }
+
+        let cachedSlideCount = await InstagramCarouselImageCache.cacheCarouselImages(
+            items: items,
+            shortcode: shortcode
+        )
+        if cachedSlideCount > 0 {
+            print("SwipeFile: Cached \(cachedSlideCount) carousel media images for \(shortcode)")
+        }
 
         let thumbDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Cosmo/ThumbnailCache", isDirectory: true)

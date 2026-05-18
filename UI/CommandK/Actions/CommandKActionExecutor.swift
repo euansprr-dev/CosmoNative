@@ -101,6 +101,9 @@ struct CommandKActionExecutor {
             }
         case "attach_swipe_to_current_draft", "use_swipe_as_blueprint", "create_idea_from_swipe":
             _ = try await AgentToolExecutor.shared.execute(toolName: name, arguments: arguments)
+        case "capture_swipe":
+            guard let url = arguments["url"] else { return }
+            _ = try await CommandKInstantSwipeCapture().capture(url: url, hook: arguments["hook"])
         default:
             _ = try await AgentToolExecutor.shared.execute(toolName: name, arguments: arguments)
         }

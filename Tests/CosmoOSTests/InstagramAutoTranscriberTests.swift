@@ -32,6 +32,46 @@ final class InstagramAutoTranscriberTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
     }
 
+    func testCarouselImageCachePersistsLocalImageSourcesByStableKey() async throws {
+        let key = "ig-carousel-unit-\(UUID().uuidString)-0"
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(key).png")
+        let imageData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")!
+        try imageData.write(to: sourceURL)
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            if let cachedURL = InstagramCarouselImageCache.cachedFileURL(for: key) {
+                try? FileManager.default.removeItem(at: cachedURL)
+            }
+        }
+
+        let cachedData = await InstagramCarouselImageCache.imageData(for: sourceURL, stableKey: key)
+
+        XCTAssertNotNil(cachedData)
+        let cachedURL = InstagramCarouselImageCache.cachedFileURL(for: key)
+        XCTAssertNotNil(cachedURL)
+        XCTAssertTrue(cachedURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false)
+    }
+
+    func testLegacyPostThumbnailFallbackDoesNotMasqueradeAsLaterCarouselSlides() async throws {
+        let shortcode = "unit-\(UUID().uuidString)"
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(shortcode).png")
+        let imageData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")!
+        try imageData.write(to: sourceURL)
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            if let legacyURL = InstagramCarouselImageCache.cachedFileURL(for: shortcode) {
+                try? FileManager.default.removeItem(at: legacyURL)
+            }
+        }
+
+        _ = await InstagramCarouselImageCache.imageData(for: sourceURL, stableKey: shortcode)
+
+        XCTAssertNotNil(InstagramCarouselImageCache.fallbackImage(forStableKey: "ig-carousel-\(shortcode)-0"))
+        XCTAssertNil(InstagramCarouselImageCache.fallbackImage(forStableKey: "ig-carousel-\(shortcode)-1"))
+    }
+
     func testMergeGeminiBatchResultsKeepsDistinctSlidesSharingHeader() {
         let transcriber = InstagramAutoTranscriber.shared
 

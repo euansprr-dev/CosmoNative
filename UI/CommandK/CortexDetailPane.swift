@@ -242,13 +242,29 @@ private struct CortexPreviewBlock: View {
             switch subject {
             case .library(let item):
                 CommandKLibraryThumbnail(item: item, cornerRadius: DS.radiusMedium)
-                    .background(DS.vellum)
+                    .background(CommandKPreviewPaper.fill)
             case .swipe(let item):
                 CortexSwipeDomainPreview(item: item, atom: atom)
             case .idea(let item):
                 CortexIdeaDomainPreview(item: item)
             case .readwise(let book):
                 CortexReadwiseDomainPreview(book: book)
+            case .action(let action):
+                CommandKActionVisualPreview(
+                    action: action,
+                    identity: CommandKVisualIdentity.action(action)
+                )
+            case .result(let result) where result.resultKind == .browserPin:
+                CommandKActionVisualPreview(
+                    action: CommandKAction(
+                        kind: .openBrowser,
+                        title: result.title,
+                        subtitle: result.subtitle,
+                        icon: result.icon,
+                        payload: CommandKActionPayload(url: result.browserURL?.absoluteString, title: result.browserTitle)
+                    ),
+                    identity: CommandKVisualIdentity.result(result)
+                )
             default:
                 genericPreview
             }
@@ -278,13 +294,13 @@ private struct CortexPreviewBlock: View {
         ScrollView {
             Text(text)
                 .font(DS.dateSerif)
-                .foregroundStyle(DS.text)
+                .foregroundStyle(CommandKPreviewPaper.text)
                 .lineSpacing(5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(DS.space16)
         }
         .scrollIndicators(.hidden)
-        .background(DS.vellum)
+        .background(CommandKPreviewPaper.fill)
     }
 }
 
@@ -747,7 +763,7 @@ private struct CortexIdeaDomainPreview: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.hidden)
-        .background(DS.vellum)
+        .background(CommandKPreviewPaper.fill)
     }
 
     private var contextText: String? {
@@ -761,7 +777,7 @@ private struct CortexIdeaDomainPreview: View {
                 .foregroundStyle(DS.entityIdea)
             Text(text)
                 .font(DS.callout)
-                .foregroundStyle(DS.text)
+                .foregroundStyle(CommandKPreviewPaper.text)
                 .lineSpacing(3)
                 .lineLimit(6)
         }
@@ -781,7 +797,7 @@ private struct CortexIdeaDomainPreview: View {
                         .background(DS.entityIdea.opacity(0.10), in: Circle())
                     Text(value)
                         .font(DS.caption)
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(CommandKPreviewPaper.textSecondary)
                         .lineLimit(2)
                 }
             }
@@ -799,23 +815,23 @@ private struct CortexReadwiseDomainPreview: View {
             VStack(alignment: .leading, spacing: DS.space12) {
                 Text(book.title)
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(DS.text)
+                    .foregroundStyle(CommandKPreviewPaper.text)
                     .lineLimit(3)
                 if let author = book.author {
                     Text(author)
                         .font(DS.callout)
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(CommandKPreviewPaper.textSecondary)
                 }
                 Text(book.highlights.first?.text ?? "\(book.numHighlights) saved highlights.")
                     .font(DS.dateSerif)
-                    .foregroundStyle(DS.text)
+                    .foregroundStyle(CommandKPreviewPaper.text)
                     .lineSpacing(4)
                     .lineLimit(5)
             }
             Spacer(minLength: 0)
         }
         .padding(DS.space18)
-        .background(DS.vellum)
+        .background(CommandKPreviewPaper.fill)
     }
 
     private var cover: some View {

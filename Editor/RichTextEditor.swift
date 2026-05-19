@@ -216,7 +216,7 @@ struct RichTextEditor: View {
             if plainText.isEmpty {
                 Text(placeholder)
                     .font(.system(size: fontSize, weight: swiftUIFontWeight))
-                    .foregroundStyle(darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary)
+                    .foregroundStyle(darkMode ? Color.white.opacity(0.4) : DS.documentTextMuted)
                     .padding(.top, editorInsets.top)
                     .padding(.leading, editorInsets.leading)
                     .allowsHitTesting(false)

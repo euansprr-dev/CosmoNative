@@ -195,6 +195,21 @@ final class CommandKActionRegistryTests: XCTestCase {
         XCTAssertTrue(state.isVisibleToApp)
     }
 
+    func testCommandKPresentationRequestsSearchFocusEachTimeItIsPresented() {
+        var state = CommandKPresentationState(
+            isVisible: false,
+            isPreservedBehindFocusMode: false
+        )
+
+        state.apply(.present)
+        let firstFocusRequest = state.searchFocusRequest
+        state.apply(.close)
+        state.apply(.present)
+
+        XCTAssertGreaterThan(firstFocusRequest, 0)
+        XCTAssertGreaterThan(state.searchFocusRequest, firstFocusRequest)
+    }
+
     func testInstantSwipeCaptureCreatesPendingInstagramAtomWithoutMediaExtraction() throws {
         let atom = try CommandKInstantSwipeCapture().pendingAtom(
             for: "https://www.instagram.com/p/DXCBs_uDKau/"

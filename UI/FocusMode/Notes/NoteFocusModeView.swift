@@ -7,6 +7,31 @@ import AppKit
 import GRDB
 import Combine
 
+enum NoteFocusTitleChromeMode: Equatable {
+    case emptyEditableTitle
+    case documentHeader
+}
+
+enum NoteFocusHeaderLayoutPolicy {
+    static func chromeMode(titlePlainText: String, plainContent: String) -> NoteFocusTitleChromeMode {
+        let hasTitle = !titlePlainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasContent = !plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasTitle || hasContent ? .documentHeader : .emptyEditableTitle
+    }
+
+    static func showsEmptyGuidance(for mode: NoteFocusTitleChromeMode) -> Bool {
+        mode == .emptyEditableTitle
+    }
+
+    static func showsTitleUnderline(for mode: NoteFocusTitleChromeMode) -> Bool {
+        mode == .emptyEditableTitle
+    }
+
+    static func showsMetadataDivider(for mode: NoteFocusTitleChromeMode) -> Bool {
+        mode == .documentHeader
+    }
+}
+
 struct NoteFocusModeView: View {
     // MARK: - Properties
 
@@ -246,8 +271,14 @@ struct NoteFocusModeView: View {
     }
 
     private var isEmptyNote: Bool {
-        titlePlainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        titleChromeMode == .emptyEditableTitle
+    }
+
+    private var titleChromeMode: NoteFocusTitleChromeMode {
+        NoteFocusHeaderLayoutPolicy.chromeMode(
+            titlePlainText: titlePlainText,
+            plainContent: plainContent
+        )
     }
 
     private var estimatedReadingMinutes: Int {
@@ -271,7 +302,7 @@ struct NoteFocusModeView: View {
 
     private var backgroundSurface: some View {
         ZStack {
-            DS.bg
+            DS.documentBackground
             // Subtle vignette that darkens edges to emphasize the center column
             RadialGradient(
                 colors: [Color.clear, DS.inkWash.opacity(0.04)],
@@ -320,11 +351,11 @@ struct NoteFocusModeView: View {
                 Text("Back")
                     .font(DS.callout)
             }
-            .foregroundStyle(DS.textSecondary)
+            .foregroundStyle(DS.documentTextSecondary)
             .padding(.horizontal, DS.space12)
             .padding(.vertical, DS.space8)
             .frame(minWidth: 44, minHeight: 32)
-            .background(DS.border.opacity(0.5), in: Capsule())
+            .background(DS.documentBorder.opacity(0.5), in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -338,10 +369,10 @@ struct NoteFocusModeView: View {
                 .font(DS.smallCaps)
             if !isEmptyNote {
                 Text("·")
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
                 Text("\(wordCount) words · \(estimatedReadingMinutes) min")
                     .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
             }
         }
         .foregroundStyle(DS.entityNote)
@@ -380,7 +411,7 @@ struct NoteFocusModeView: View {
                 chromeIconButton(
                     systemName: "xmark",
                     isActive: false,
-                    tint: DS.textMuted,
+                    tint: DS.documentTextMuted,
                     help: "Close",
                     accessibilityLabel: "Close note",
                     action: onClose
@@ -400,11 +431,11 @@ struct NoteFocusModeView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(DS.callout)
-                .foregroundStyle(isActive ? tint : DS.textMuted)
+                .foregroundStyle(isActive ? tint : DS.documentTextMuted)
                 .frame(width: 32, height: 32)
                 .background(
                     Circle()
-                        .fill(isActive ? tint.opacity(0.14) : DS.border.opacity(0.4))
+                        .fill(isActive ? tint.opacity(0.14) : DS.documentBorder.opacity(0.4))
                 )
                 .accessibilityLabel(accessibilityLabel)
         }
@@ -415,7 +446,7 @@ struct NoteFocusModeView: View {
 
     private var topBarBackground: some View {
         LinearGradient(
-            colors: [DS.bg.opacity(0.96), DS.bg.opacity(0.78), .clear],
+            colors: [DS.documentBackground.opacity(0.96), DS.documentBackground.opacity(0.78), .clear],
             startPoint: .top,
             endPoint: .bottom
         )
@@ -427,7 +458,9 @@ struct NoteFocusModeView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 0) {
                 if isEmptyNote {
-                    NoteFocusEmptyStateView()
+                    NoteFocusEmptyStateView {
+                        titleSection
+                    }
                         .padding(.top, DS.space48)
                         .frame(maxWidth: CosmoTypography.optimalReadingWidth)
                 } else {
@@ -436,7 +469,9 @@ struct NoteFocusModeView: View {
                     dateTagsRow
                         .padding(.top, DS.space12)
                         .padding(.bottom, DS.space24)
-                    giltDivider
+                    if NoteFocusHeaderLayoutPolicy.showsMetadataDivider(for: titleChromeMode) {
+                        giltDivider
+                    }
                 }
 
                 CosmoDocumentEditor(
@@ -444,7 +479,7 @@ struct NoteFocusModeView: View {
                     fontSize: 17,
                     placeholder: "Start writing…",
                     darkMode: false,
-                    overrideTextColor: NSColor(DS.text),
+                    overrideTextColor: NSColor(DS.documentText),
                     allowSlashCommands: true,
                     allowMentions: true,
                     allowSelectionMenu: true,
@@ -511,7 +546,7 @@ struct NoteFocusModeView: View {
                 if contentHeadings.isEmpty {
                     Text(isEmptyNote ? "No headings yet" : "No sections — use # or ## to create sections")
                         .font(DS.caption)
-                        .foregroundStyle(DS.textMuted)
+                        .foregroundStyle(DS.documentTextMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     VStack(alignment: .leading, spacing: DS.space6) {
@@ -567,7 +602,7 @@ struct NoteFocusModeView: View {
                 .frame(width: 10, alignment: .leading)
             Text(entry.text)
                 .font(entry.level == 1 ? DS.subheadline : DS.caption)
-                .foregroundStyle(entry.level == 1 ? DS.text : DS.textSecondary)
+                .foregroundStyle(entry.level == 1 ? DS.documentText : DS.documentTextSecondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -580,11 +615,11 @@ struct NoteFocusModeView: View {
         HStack(spacing: DS.space6) {
             Text("\(count)")
                 .font(DS.title3)
-                .foregroundStyle(count > 0 ? tint : DS.textMuted)
+                .foregroundStyle(count > 0 ? tint : DS.documentTextMuted)
                 .monospacedDigit()
             Text(label)
                 .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.documentTextMuted)
             Spacer(minLength: 0)
         }
     }
@@ -634,14 +669,14 @@ struct NoteFocusModeView: View {
                 railSectionLabel("BACKLINKS")
                 Text("\(inLinkCount)")
                     .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
                     .monospacedDigit()
             }
 
             if backlinkPreviews.isEmpty {
                 Text("No backlinks yet")
                     .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
             } else {
                 VStack(spacing: DS.space8) {
                     ForEach(Array(backlinkPreviews.prefix(8).enumerated()), id: \.element.atomUUID) { index, preview in
@@ -660,7 +695,7 @@ struct NoteFocusModeView: View {
             if mentionedInCounts.isEmpty || mentionedInCounts.values.reduce(0, +) == 0 {
                 Text("Not yet referenced")
                     .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
             } else {
                 VStack(alignment: .leading, spacing: DS.space4) {
                     ForEach(Array(mentionedInCounts.keys.sorted(by: { $0.rawValue < $1.rawValue })), id: \.self) { type in
@@ -668,11 +703,11 @@ struct NoteFocusModeView: View {
                             HStack(spacing: DS.space6) {
                                 Image(systemName: type.iconName)
                                     .font(DS.caption2)
-                                    .foregroundStyle(DS.textSecondary)
+                                    .foregroundStyle(DS.documentTextSecondary)
                                     .accessibilityLabel(type.displayName)
                                 Text("\(count) \(type.pluralDisplayName.lowercased())")
                                     .font(DS.caption)
-                                    .foregroundStyle(DS.textSecondary)
+                                    .foregroundStyle(DS.documentTextSecondary)
                             }
                         }
                     }
@@ -693,13 +728,13 @@ struct NoteFocusModeView: View {
 
             Text("Ambient adjacencies — notes that sit near this one by tag, theme, and connection graph.")
                 .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.documentTextMuted)
                 .fixedSize(horizontal: false, vertical: true)
 
             if resonantThemes.isEmpty {
                 Text("Tag this note to surface resonances")
                     .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted.opacity(0.7))
+                    .foregroundStyle(DS.documentTextMuted.opacity(0.7))
                     .italic()
             } else {
                 VStack(alignment: .leading, spacing: DS.space4) {
@@ -711,7 +746,7 @@ struct NoteFocusModeView: View {
                                 .accessibilityHidden(true)
                             Text(theme)
                                 .font(DS.caption)
-                                .foregroundStyle(DS.text)
+                                .foregroundStyle(DS.documentText)
                                 .italic()
                         }
                     }
@@ -739,15 +774,15 @@ struct NoteFocusModeView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Ask Cosmo")
                         .font(DS.subheadline.weight(.semibold))
-                        .foregroundStyle(DS.text)
+                        .foregroundStyle(DS.documentText)
                     Text("scoped to this note + backlinks")
                         .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
+                        .foregroundStyle(DS.documentTextMuted)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right")
                     .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
                     .accessibilityHidden(true)
             }
             .padding(DS.space12)
@@ -818,6 +853,34 @@ struct NoteFocusModeView: View {
 
     // MARK: - Title Section
 
+    private var titlePlaceholder: String {
+        titleChromeMode == .emptyEditableTitle ? "Untitled note" : "Untitled Note"
+    }
+
+    private var titleTextAlignment: TextAlignment {
+        titleChromeMode == .emptyEditableTitle ? .center : titleStyle.swiftUITextAlignment
+    }
+
+    private var titleNSTextAlignment: NSTextAlignment {
+        titleChromeMode == .emptyEditableTitle ? .center : titleStyle.textAlignment
+    }
+
+    private var titleFrameAlignment: Alignment {
+        titleChromeMode == .emptyEditableTitle ? .top : .topLeading
+    }
+
+    private var titleUnderlineAlignment: Alignment {
+        titleChromeMode == .emptyEditableTitle ? .center : .leading
+    }
+
+    private var titleUnderlineVisualProgress: CGFloat {
+        titleChromeMode == .emptyEditableTitle ? max(titleUnderlineProgress, 0.28) : titleUnderlineProgress
+    }
+
+    private var titleSectionMaxWidth: CGFloat {
+        titleChromeMode == .emptyEditableTitle ? 420 : CosmoTypography.optimalReadingWidth
+    }
+
     private var titleSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Group {
@@ -826,9 +889,9 @@ struct NoteFocusModeView: View {
                         document: $titleDocument,
                         fontSize: titleFontSize,
                         compact: titleStyle.compact,
-                        placeholder: "Untitled Note",
+                        placeholder: titlePlaceholder,
                         darkMode: false,
-                        overrideTextColor: NSColor(DS.text),
+                        overrideTextColor: NSColor(DS.documentText),
                         allowSlashCommands: false,
                         allowMentions: true,
                         allowSelectionMenu: false,
@@ -836,6 +899,7 @@ struct NoteFocusModeView: View {
                         titleConfiguration: titleStyle.titleConfiguration,
                         baseFontWeight: titleStyle.baseFontWeight,
                         scrollsInternally: false,
+                        textAlignment: titleNSTextAlignment,
                         onContentHeightChange: { newHeight in
                             titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
                         },
@@ -861,14 +925,14 @@ struct NoteFocusModeView: View {
                     )
                     .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
                 } else {
-                    Text(titlePlainText.isEmpty ? "Untitled Note" : titlePlainText)
+                    Text(titlePlainText.isEmpty ? titlePlaceholder : titlePlainText)
                         .font(titleStyle.swiftUIFont)
-                        .foregroundStyle(titlePlainText.isEmpty ? DS.textMuted : DS.text)
+                        .foregroundStyle(titlePlainText.isEmpty ? DS.documentTextMuted : DS.documentText)
                         .lineLimit(titleStyle.previewLineLimit)
                         .truncationMode(.tail)
-                        .multilineTextAlignment(titleStyle.swiftUITextAlignment)
+                        .multilineTextAlignment(titleTextAlignment)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, minHeight: titleMinHeight, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, minHeight: titleMinHeight, alignment: titleFrameAlignment)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             titleDocumentAtEditStart = titleDocument
@@ -878,29 +942,32 @@ struct NoteFocusModeView: View {
             }
 
             // Animated underline
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                DS.entityNote.opacity(titleUnderlineProgress * 0.8),
-                                DS.entityNote.opacity(titleUnderlineProgress * 0.4),
-                                DS.entityNote.opacity(0)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
+            if NoteFocusHeaderLayoutPolicy.showsTitleUnderline(for: titleChromeMode) {
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    DS.entityNote.opacity(titleUnderlineVisualProgress * 0.8),
+                                    DS.entityNote.opacity(titleUnderlineVisualProgress * 0.4),
+                                    DS.entityNote.opacity(0)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
                         )
-                    )
-                    .frame(width: geo.size.width * max(0.16, titleUnderlineProgress), height: 2)
-                    .shadow(
-                        color: DS.entityNote.opacity(titleUnderlineProgress * 0.4),
-                        radius: 4,
-                        y: 2
-                    )
+                        .frame(width: geo.size.width * max(0.16, titleUnderlineVisualProgress), height: 2)
+                        .frame(maxWidth: .infinity, alignment: titleUnderlineAlignment)
+                        .shadow(
+                            color: DS.entityNote.opacity(titleUnderlineVisualProgress * 0.4),
+                            radius: 4,
+                            y: 2
+                        )
+                }
+                .frame(height: 2)
             }
-            .frame(height: 2)
         }
-        .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .leading)
+        .frame(maxWidth: titleSectionMaxWidth, alignment: titleFrameAlignment)
         .opacity(contentAppeared ? 1 : 0)
         .offset(y: contentAppeared ? 0 : 12)
         .blur(radius: contentAppeared ? 0 : 4)
@@ -913,7 +980,7 @@ struct NoteFocusModeView: View {
             // Date
             Text(createdAt, format: .dateTime.month(.wide).day().year())
                 .font(DS.body)
-                .foregroundStyle(DS.textSecondary)
+                .foregroundStyle(DS.documentTextSecondary)
 
             // Tags
             if !tags.isEmpty {
@@ -921,15 +988,15 @@ struct NoteFocusModeView: View {
                     ForEach(tags.prefix(3), id: \.self) { tag in
                         Text(tag)
                             .font(DS.caption)
-                            .foregroundStyle(DS.textSecondary)
+                            .foregroundStyle(DS.documentTextSecondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(DS.border, in: Capsule())
+                            .background(DS.documentBorder, in: Capsule())
                     }
                     if tags.count > 3 {
                         Text("+\(tags.count - 3)")
                             .font(DS.caption)
-                            .foregroundStyle(DS.textMuted)
+                            .foregroundStyle(DS.documentTextMuted)
                     }
                 }
             }
@@ -944,10 +1011,10 @@ struct NoteFocusModeView: View {
                     Text(tags.isEmpty ? "Add tags" : "Edit")
                         .font(DS.caption)
                 }
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.documentTextMuted)
                 .padding(.horizontal, DS.space8)
                 .padding(.vertical, DS.space4)
-                .background(DS.border, in: Capsule())
+                .background(DS.documentBorder, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -981,7 +1048,7 @@ struct NoteFocusModeView: View {
             Text(saveState == .saving ? "Saving..." : "Saved")
                 .font(DS.caption)
         }
-        .foregroundStyle(saveState == .saved ? DS.entityNote : DS.textSecondary)
+        .foregroundStyle(saveState == .saved ? DS.entityNote : DS.documentTextSecondary)
         .padding(.horizontal, DS.space8)
         .padding(.vertical, DS.space4)
         .background(
@@ -989,7 +1056,7 @@ struct NoteFocusModeView: View {
                 .fill(
                     saveState == .saved
                         ? DS.entityNote.opacity(0.15)
-                        : DS.border
+                        : DS.documentBorder
                 )
         )
     }
@@ -1007,7 +1074,7 @@ struct NoteFocusModeView: View {
             if linkedAtoms.isEmpty {
                 Text("No linked items")
                     .font(DS.callout)
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, DS.space20)
             } else {
@@ -1018,11 +1085,11 @@ struct NoteFocusModeView: View {
                     HStack(spacing: DS.space8) {
                         Image(systemName: linked.type.iconName)
                             .font(DS.footnote)
-                            .foregroundStyle(DS.textSecondary)
+                            .foregroundStyle(DS.documentTextSecondary)
 
                         Text(linked.title ?? "Untitled")
                             .font(DS.subheadline)
-                            .foregroundStyle(DS.text)
+                            .foregroundStyle(DS.documentText)
                             .lineLimit(1)
 
                         Spacer()
@@ -1507,7 +1574,7 @@ fileprivate struct BacklinkCardView: View {
                     .accessibilityLabel(preview.type.displayName)
                 Text(preview.title)
                     .font(DS.subheadline.weight(.semibold))
-                    .foregroundStyle(DS.text)
+                    .foregroundStyle(DS.documentText)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1516,7 +1583,7 @@ fileprivate struct BacklinkCardView: View {
             if !preview.excerpt.isEmpty {
                 Text(preview.excerpt)
                     .font(DS.caption)
-                    .foregroundStyle(DS.textSecondary)
+                    .foregroundStyle(DS.documentTextSecondary)
                     .italic()
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1532,7 +1599,7 @@ fileprivate struct BacklinkCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(isHovered ? DS.surface : DS.surface.opacity(0.6))
+                .fill(isHovered ? DS.documentSurface : DS.documentSurface.opacity(0.6))
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .stroke(DS.sepiaBorder.opacity(0.5), lineWidth: 0.5)
@@ -1555,7 +1622,7 @@ fileprivate struct BacklinkCardView: View {
         case .research: return DS.entityResearch
         case .note: return DS.entityNote
         case .task: return DS.entityTask
-        default: return DS.textSecondary
+        default: return DS.documentTextSecondary
         }
     }
 }
@@ -1574,7 +1641,7 @@ fileprivate struct FlowTagCloud: View {
                         .frame(width: 4, height: 4)
                     Text(tag)
                         .font(DS.caption)
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(DS.documentTextSecondary)
                     Spacer(minLength: 0)
                 }
             }
@@ -1584,8 +1651,13 @@ fileprivate struct FlowTagCloud: View {
 
 // MARK: - Empty State
 
-fileprivate struct NoteFocusEmptyStateView: View {
+fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
+    let title: Title
     @State private var appeared = false
+
+    init(@ViewBuilder title: () -> Title) {
+        self.title = title()
+    }
 
     var body: some View {
         VStack(spacing: DS.space20) {
@@ -1596,19 +1668,12 @@ fileprivate struct NoteFocusEmptyStateView: View {
                 .rotationEffect(.degrees(appeared ? 0 : -8))
                 .opacity(appeared ? 1 : 0)
 
-            VStack(spacing: DS.space8) {
-                Text("Untitled note")
-                    .font(DS.displaySerif)
-                    .foregroundStyle(DS.text)
-                    .accessibilityAddTraits(.isHeader)
-                Rectangle()
-                    .fill(DS.gilt.opacity(0.35))
-                    .frame(width: appeared ? 120 : 40, height: 0.8)
-            }
+            title
+                .accessibilityAddTraits(.isHeader)
 
             Text("Start writing, or press ⌘K to capture from\nyour clipboard, a voice memo, or a quote\nyou've highlighted elsewhere.")
                 .font(DS.body)
-                .foregroundStyle(DS.textSecondary)
+                .foregroundStyle(DS.documentTextSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
                 .padding(.top, DS.space8)
@@ -1638,13 +1703,13 @@ fileprivate struct NoteFocusEmptyStateView: View {
             Text(label)
                 .font(DS.caption)
         }
-        .foregroundStyle(DS.textMuted)
+        .foregroundStyle(DS.documentTextMuted)
         .padding(.horizontal, DS.space10)
         .padding(.vertical, DS.space6)
         .frame(minHeight: 32)
         .background(
             Capsule()
-                .fill(DS.surface.opacity(0.6))
+                .fill(DS.documentSurface.opacity(0.6))
                 .overlay(Capsule().stroke(DS.sepiaBorder.opacity(0.5), lineWidth: 0.5))
         )
     }
@@ -1663,7 +1728,7 @@ fileprivate struct NoteGraphOverlayView: View {
     var body: some View {
         ZStack {
             Rectangle()
-                .fill(DS.bg.opacity(0.96))
+                .fill(DS.documentBackground.opacity(0.96))
                 .ignoresSafeArea()
                 .onTapGesture { onClose() }
 
@@ -1688,11 +1753,11 @@ fileprivate struct NoteGraphOverlayView: View {
                     Text("Close")
                         .font(DS.callout)
                 }
-                .foregroundStyle(DS.textSecondary)
+                .foregroundStyle(DS.documentTextSecondary)
                 .padding(.horizontal, DS.space12)
                 .padding(.vertical, DS.space8)
                 .frame(minHeight: 32)
-                .background(DS.border.opacity(0.5), in: Capsule())
+                .background(DS.documentBorder.opacity(0.5), in: Capsule())
                 .accessibilityLabel("Close graph view")
             }
             .buttonStyle(.plain)
@@ -1753,14 +1818,14 @@ fileprivate struct NoteGraphOverlayView: View {
                 .frame(width: isCenter ? 44 : 32, height: isCenter ? 44 : 32)
                 .background(
                     Circle()
-                        .fill(DS.surface)
+                        .fill(DS.documentSurface)
                         .overlay(Circle().stroke(isCenter ? DS.entityNote : DS.sepiaBorder.opacity(0.6), lineWidth: isCenter ? 1.5 : 0.5))
                 )
                 .shadow(color: DS.inkWash.opacity(0.1), radius: isCenter ? 10 : 4, y: 2)
                 .accessibilityLabel(node.title)
             Text(node.title)
                 .font(DS.caption2)
-                .foregroundStyle(isCenter ? DS.text : DS.textSecondary)
+                .foregroundStyle(isCenter ? DS.documentText : DS.documentTextSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: 120)
@@ -1787,7 +1852,7 @@ fileprivate struct NoteGraphOverlayView: View {
                 .frame(width: 8, height: 8)
             Text(label)
                 .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.documentTextMuted)
         }
     }
 
@@ -1798,7 +1863,7 @@ fileprivate struct NoteGraphOverlayView: View {
         case .research: return DS.entityResearch
         case .note: return DS.entityNote
         case .task: return DS.entityTask
-        default: return DS.textSecondary
+        default: return DS.documentTextSecondary
         }
     }
 

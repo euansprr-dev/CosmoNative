@@ -14,20 +14,24 @@ public struct CommandKView: View {
     // MARK: - State
     var initialTab: CommandKTab?
     var isActive: Bool
+    var searchFocusRequest: Int
     @StateObject private var viewModel: CommandKViewModel
     @FocusState private var isSearchFocused: Bool
     @Namespace private var cortexNamespace
     @State private var isExpandedBrowserMounted = false
     @State private var domainTransitionTask: Task<Void, Never>?
+    @State private var searchFocusTask: Task<Void, Never>?
 
     @MainActor
     init(
         initialTab: CommandKTab = .database,
-        isActive: Bool = true
+        isActive: Bool = true,
+        searchFocusRequest: Int = 0
     ) {
         self.init(
             initialTab: initialTab,
             isActive: isActive,
+            searchFocusRequest: searchFocusRequest,
             viewModel: CommandKViewModel()
         )
     }
@@ -35,6 +39,7 @@ public struct CommandKView: View {
     init(
         initialTab: CommandKTab = .database,
         isActive: Bool = true,
+        searchFocusRequest: Int = 0,
         viewModel: CommandKViewModel
     ) {
         if initialTab == .database {
@@ -43,6 +48,7 @@ public struct CommandKView: View {
             self.initialTab = initialTab
         }
         self.isActive = isActive
+        self.searchFocusRequest = searchFocusRequest
         _viewModel = StateObject(wrappedValue: viewModel)
     }
 
@@ -60,7 +66,7 @@ public struct CommandKView: View {
                 viewModel.setSurfaceActive(isActive)
                 if isActive {
                     viewModel.initializeCortexMode()
-                    isSearchFocused = true
+                    requestSearchFocus()
                     scheduleExpandedBrowserMountIfNeeded()
                 }
             }
@@ -69,13 +75,17 @@ public struct CommandKView: View {
                 if active {
                     viewModel.initialExpandedTab = initialTab
                     viewModel.initializeCortexMode()
-                    isSearchFocused = true
+                    requestSearchFocus()
                     scheduleExpandedBrowserMountIfNeeded()
                 } else {
                     domainTransitionTask?.cancel()
+                    searchFocusTask?.cancel()
                     isExpandedBrowserMounted = false
                     isSearchFocused = false
                 }
+            }
+            .onChange(of: searchFocusRequest) { _, _ in
+                requestSearchFocus()
             }
             .onChange(of: viewModel.cortexMode) { _, mode in
                 switch mode {
@@ -88,6 +98,9 @@ public struct CommandKView: View {
                 case .compact:
                     isExpandedBrowserMounted = false
                 }
+            }
+            .onDisappear {
+                searchFocusTask?.cancel()
             }
         }
         .onKeyPress(.escape) { handleEscape() }
@@ -111,6 +124,24 @@ public struct CommandKView: View {
                 .zIndex(2)
             contentPanel(geometry: geometry)
                 .zIndex(3)
+        }
+    }
+
+    @MainActor
+    private func requestSearchFocus() {
+        guard isActive else { return }
+
+        // Animated insertion can drop the first FocusState write before the field is attached.
+        searchFocusTask?.cancel()
+        isSearchFocused = true
+        searchFocusTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled, isActive else { return }
+            isSearchFocused = true
+
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled, isActive else { return }
+            isSearchFocused = true
         }
     }
 
@@ -187,16 +218,11 @@ public struct CommandKView: View {
         }
         .padding(.horizontal, DS.space20)
         .frame(width: searchBarWidth(for: geometry), height: CommandKMetrics.searchBarHeight)
-        .background(
-            RoundedRectangle(cornerRadius: CommandKMetrics.searchBarHeight / 2, style: .continuous)
-                .fill(DS.surfaceElevated)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.searchBarHeight / 2, style: .continuous))
+        .cortexSearchBarPanel()
         .overlay(
             RoundedRectangle(cornerRadius: CommandKMetrics.searchBarHeight / 2, style: .continuous)
-                .strokeBorder(isSearchFocused ? DS.gilt.opacity(0.45) : DS.sepiaBorder, lineWidth: isSearchFocused ? 1 : 0.5)
+                .strokeBorder(isSearchFocused ? DS.gilt.opacity(0.45) : Color.clear, lineWidth: isSearchFocused ? 1 : 0)
         )
-        .shadow(color: Color.black.opacity(0.06), radius: 14, x: 0, y: 4)
     }
 
     // MARK: - Scope Menu (Decision 1C — Spaces as scope filter)

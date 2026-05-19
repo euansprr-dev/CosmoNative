@@ -10,7 +10,7 @@ struct CosmoMarkdown {
     // MARK: - Parse (Markdown -> NSAttributedString)
 
     static func parse(_ text: String, fontSize: CGFloat = 16, darkMode: Bool = false) -> NSAttributedString {
-        let textColor = darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+        let textColor = darkMode ? NSColor.white : NSColor(DS.documentText)
 
         let result = NSMutableAttributedString(
             string: text,

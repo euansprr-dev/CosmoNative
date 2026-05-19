@@ -76,7 +76,25 @@ final class CanvasRenderSnapshotTests: XCTestCase {
             viewportSize: transform.viewportSize
         )
 
-        XCTAssertEqual(metrics.rawDotSize * transform.effectiveScale, 0.75, accuracy: 0.001)
+        XCTAssertEqual(metrics.rawDotSize * transform.effectiveScale, 1.0, accuracy: 0.001)
+    }
+
+    func testGridPatternExposesScreenSpaceDrawingMetricsAtLowZoom() {
+        let transform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: CGSize(width: -123, height: 77),
+            committedScale: 0.25
+        )
+        let metrics = CanvasGridPatternMetrics(
+            transform: transform,
+            viewportSize: transform.viewportSize
+        )
+        let canvasOriginOnScreen = transform.canvasToScreen(.zero)
+
+        XCTAssertEqual(metrics.screenSpacing, 10, accuracy: 0.001)
+        XCTAssertEqual(metrics.screenDotSize, 1, accuracy: 0.001)
+        XCTAssertEqual(metrics.screenGridOrigin.x, canvasOriginOnScreen.x, accuracy: 0.001)
+        XCTAssertEqual(metrics.screenGridOrigin.y, canvasOriginOnScreen.y, accuracy: 0.001)
     }
 
     func testLiveViewportSnapshotPolicyUsesLargerPreloadWithoutPerFramePanBuckets() {

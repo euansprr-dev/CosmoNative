@@ -33,6 +33,149 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(action?.payload.queryText, "creator economy research")
     }
 
+    func testActionParserParsesExplicitCosmoSurfaceCommands() {
+        let pane = CommandKActionParser.parse("open cosmo pane")
+        let floating = CommandKActionParser.parse("ai floating window")
+
+        XCTAssertEqual(pane?.kind, .openCosmoPane)
+        XCTAssertEqual(pane?.title, "Open Cosmo as Pane")
+        XCTAssertEqual(floating?.kind, .openCosmoWindow)
+        XCTAssertEqual(floating?.title, "Open Cosmo Floating Window")
+    }
+
+    func testCommandVisualIdentitiesUseSurfaceSpecificIconTiles() {
+        let browser = CommandKAction(
+            kind: .openBrowser,
+            title: "Open Browser",
+            subtitle: "Open a persistent research browser pane",
+            icon: "globe",
+            payload: CommandKActionPayload(rawText: "browser")
+        )
+        let swipe = CommandKAction(
+            kind: .captureSwipe,
+            title: "Swipe a link",
+            subtitle: "Paste a URL to save it to Swipe Gallery",
+            icon: "bolt.fill",
+            payload: CommandKActionPayload(rawText: "swipe")
+        )
+        let cosmo = CommandKAction(
+            kind: .openCosmoPane,
+            title: "Open Cosmo as Pane",
+            subtitle: "Dock the AI assistant beside your workspace",
+            icon: "sparkles",
+            payload: CommandKActionPayload(rawText: "cosmo")
+        )
+
+        XCTAssertEqual(CommandKVisualIdentity.action(browser).style, .browser)
+        XCTAssertEqual(CommandKVisualIdentity.action(browser).symbolName, "safari")
+        XCTAssertEqual(CommandKVisualIdentity.action(swipe).style, .swipeFile)
+        XCTAssertEqual(CommandKVisualIdentity.action(cosmo).style, .cosmo)
+    }
+
+    func testSystemCommandComposerDoesNotTreatUnrelatedWordsAsAI() {
+        let composer = CommandKSystemCommandComposer()
+
+        XCTAssertEqual(composer.rows(for: "ai").map(\.action.kind), [.openCosmoPane, .openCosmoWindow])
+        XCTAssertTrue(composer.rows(for: "main").isEmpty)
+    }
+
+    @MainActor
+    func testCosmoSearchShowsPaneAndFloatingWindowCommands() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        await viewModel.performSearch(query: "cosmo")
+
+        XCTAssertEqual(viewModel.userCommandRows.map(\.title), [
+            "Open Cosmo as Pane",
+            "Open Cosmo Floating Window"
+        ])
+        XCTAssertEqual(viewModel.userCommandRows.map(\.action.kind), [
+            .openCosmoPane,
+            .openCosmoWindow
+        ])
+    }
+
+    @MainActor
+    func testExactCommandQueryKeepsQuicklinksAndUnifiedSearchAvailable() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CommandKUserCommandStore(fileURL: url, seedBuiltIns: false)
+        try await store.saveQuicklink(CommandKQuicklink(
+            id: "swipes",
+            alias: "swipes",
+            title: "Swipe Gallery",
+            route: .commandKDomain("swipeGallery"),
+            query: nil,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        ))
+        let viewModel = CommandKViewModel(userCommandStore: store)
+        defer { viewModel.setSurfaceActive(false) }
+
+        viewModel.query = "swipe"
+        await viewModel.performSearch(query: "swipe")
+
+        XCTAssertEqual(viewModel.primaryAction?.kind, .captureSwipe)
+        XCTAssertEqual(viewModel.userCommandRows.map { $0.title }, ["Swipe Gallery"])
+        XCTAssertTrue(viewModel.isUnifiedSearchActive)
+    }
+
+    @MainActor
+    func testOpenSelectedRunsSelectedQuicklinkWhenPrimaryActionIsPresent() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+        let rowAction = CommandKAction(
+            kind: .navigateCommandCenter,
+            title: "Today",
+            subtitle: "Open Command Center",
+            icon: "command.circle.fill",
+            payload: CommandKActionPayload(quicklinkID: "today", rawText: "today")
+        )
+        let row = CommandKUserCommandRow(
+            id: "quicklink-today",
+            title: "Today",
+            subtitle: "Quicklink · today",
+            icon: "command.circle.fill",
+            action: rowAction
+        )
+        viewModel.primaryAction = CommandKAction(
+            kind: .captureSwipe,
+            title: "Swipe a link",
+            subtitle: "Paste a URL to save it to Swipe Gallery",
+            icon: "bolt.fill",
+            payload: CommandKActionPayload(rawText: "swipe")
+        )
+        viewModel.userCommandRows = [row]
+        viewModel.selectedNodeId = row.id
+
+        let expectation = expectation(description: "selected quicklink executed")
+        let token = NotificationCenter.default.addObserver(
+            forName: CosmoNotification.Navigation.navigateToCommandCenter,
+            object: nil,
+            queue: nil
+        ) { _ in expectation.fulfill() }
+
+        viewModel.openSelected()
+        await fulfillment(of: [expectation], timeout: 1)
+        NotificationCenter.default.removeObserver(token)
+    }
+
     func testUnifiedSearchRanksBrowserPinsByCustomName() {
         let pin = CosmoBrowserPinnedSite(
             id: UUID(uuidString: "9A10AF3C-157C-4BB1-8D41-62A50C7E3F1A")!,
@@ -99,6 +242,46 @@ final class CommandKSearchPipelineTests: XCTestCase {
         viewModel.isUnifiedSearchActive = true
         viewModel.unifiedFlatResults = [result]
         viewModel.selectedResultIndex = 0
+
+        viewModel.openSelected()
+        await fulfillment(of: [expectation], timeout: 1)
+        NotificationCenter.default.removeObserver(token)
+    }
+
+    @MainActor
+    func testOpenSelectedCosmoPaneCommandPostsPaneNotification() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+        let action = CommandKAction(
+            kind: .openCosmoPane,
+            title: "Open Cosmo as Pane",
+            subtitle: "Dock the AI assistant beside your workspace",
+            icon: "sparkles",
+            payload: CommandKActionPayload(rawText: "cosmo")
+        )
+        let row = CommandKUserCommandRow(
+            id: "system-cosmo-pane",
+            title: action.title,
+            subtitle: action.subtitle ?? "",
+            icon: action.icon,
+            action: action
+        )
+        viewModel.userCommandRows = [row]
+        viewModel.selectedNodeId = row.id
+
+        let expectation = expectation(description: "cosmo pane notification")
+        let token = NotificationCenter.default.addObserver(
+            forName: CosmoNotification.Navigation.openCosmoWindowPane,
+            object: nil,
+            queue: nil
+        ) { _ in expectation.fulfill() }
 
         viewModel.openSelected()
         await fulfillment(of: [expectation], timeout: 1)

@@ -80,6 +80,33 @@ enum CommandKDomainRailItem: Identifiable {
         }
     }
 
+    var visualIdentity: CommandKVisualIdentity {
+        switch self {
+        case .library(let item):
+            return item.kind == .thinkspace
+                ? CommandKVisualIdentity.atom(type: .thinkspace)
+                : CommandKVisualIdentity.atom(type: item.atomType)
+        case .swipe:
+            return CommandKVisualIdentity(
+                style: .swipeFile,
+                symbolName: "bolt.fill",
+                title: "Swipe File",
+                subtitle: "Hook capture",
+                badge: "SWIPE"
+            )
+        case .idea:
+            return CommandKVisualIdentity.atom(type: .idea)
+        case .readwise(let book):
+            return CommandKVisualIdentity(
+                style: .readwise,
+                symbolName: book.category.icon,
+                title: "Library",
+                subtitle: book.category.displayName,
+                badge: "BOOK"
+            )
+        }
+    }
+
     var atomUUID: String? {
         switch self {
         case .library(let item): return item.kind == .thinkspace ? nil : item.uuid
@@ -252,6 +279,7 @@ struct CortexResultRail: View {
                     title: item.title,
                     subtitle: "\(item.type.displayName) · \(item.relativeDate)",
                     accent: cortexEntityAccent(item.type),
+                    visualIdentity: CommandKVisualIdentity.atom(type: item.type),
                     thumbnailURL: item.thumbnailURL,
                     previewText: item.preview,
                     isConnection: item.type == .connection,
@@ -283,6 +311,7 @@ struct CortexResultRail: View {
                     title: action.title,
                     subtitle: action.subtitle ?? "Press return to run",
                     accent: DS.accent,
+                    visualIdentity: CommandKVisualIdentity.action(action),
                     thumbnailURL: nil,
                     previewText: action.subtitle ?? action.payload.rawText,
                     isConnection: false,
@@ -301,12 +330,13 @@ struct CortexResultRail: View {
             }
 
             if !viewModel.userCommandRows.isEmpty {
-                AtelierOrnamentalSectionLabel(label: "QUICKLINKS")
+                AtelierOrnamentalSectionLabel(label: "COMMANDS")
                 ForEach(viewModel.userCommandRows) { row in
                     CortexRailRow(
                         title: row.title,
                         subtitle: row.subtitle,
                         accent: DS.gilt,
+                        visualIdentity: CommandKVisualIdentity.action(row.action),
                         thumbnailURL: nil,
                         previewText: row.action.subtitle,
                         isConnection: false,
@@ -334,6 +364,7 @@ struct CortexResultRail: View {
                         title: result.title,
                         subtitle: result.subtitle ?? result.snippet ?? "",
                         accent: result.accentColor,
+                        visualIdentity: CommandKVisualIdentity.result(result),
                         thumbnailURL: nil,
                         previewText: result.snippet ?? result.subtitle,
                         isConnection: result.atomType == .connection,
@@ -376,6 +407,7 @@ struct CortexResultRail: View {
             title: item.title,
             subtitle: item.subtitle,
             accent: item.accent,
+            visualIdentity: item.visualIdentity,
             thumbnailURL: item.thumbnailURL,
             previewText: item.previewText,
             isConnection: item.isConnection,
@@ -423,6 +455,7 @@ private struct CortexRailRow: View {
     let title: String
     let subtitle: String
     let accent: Color
+    let visualIdentity: CommandKVisualIdentity?
     let thumbnailURL: String?
     let previewText: String?
     let isConnection: Bool
@@ -474,6 +507,8 @@ private struct CortexRailRow: View {
     private var thumbnail: some View {
         if let url = thumbnailURL, !url.isEmpty {
             SpotlightImageContent(urlString: url)
+        } else if let visualIdentity {
+            CommandKIconVisualTile(identity: visualIdentity, accent: accent, scale: .rail)
         } else if isConnection {
             SpotlightConnectionPreview(preview: previewText, accentColor: accent)
         } else if let text = previewText, !text.isEmpty {

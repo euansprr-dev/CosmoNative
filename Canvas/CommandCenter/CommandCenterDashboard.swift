@@ -33,7 +33,6 @@ struct CommandCenterDashboard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .task {
                 await viewModel.loadAreas()
-                await viewModel.loadProjects()
                 await viewModel.loadAnytimeTasks()
                 await viewModel.loadSomedayTasks()
             }

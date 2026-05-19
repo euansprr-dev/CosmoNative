@@ -166,17 +166,24 @@ struct CanvasGridPatternMetrics: Equatable {
     let planeOrigin: CGPoint
     let planeSize: CGSize
     let scaleAnchor: UnitPoint
+    let screenSpacing: CGFloat
+    let screenDotSize: CGFloat
+    let screenGridOrigin: CGPoint
 
     init(
         transform: CanvasViewportTransform,
         viewportSize: CGSize,
         tileSize: CGFloat = 40,
         baseDotSize: CGFloat = 2.5,
-        minimumScreenDotSize: CGFloat = 0.75,
+        minimumScreenDotSize: CGFloat = 1.0,
         preloadTileCount: CGFloat = 2
     ) {
         self.tileSize = tileSize
-        self.rawDotSize = max(baseDotSize, minimumScreenDotSize / max(transform.effectiveScale, 0.001))
+        let safeScale = max(transform.effectiveScale, 0.001)
+        self.rawDotSize = max(baseDotSize, minimumScreenDotSize / safeScale)
+        self.screenSpacing = max(tileSize * safeScale, 1)
+        self.screenDotSize = max(baseDotSize * safeScale, minimumScreenDotSize)
+        self.screenGridOrigin = transform.canvasToScreen(.zero)
 
         let padding = tileSize * preloadTileCount
         let visibleRect = transform.visibleCanvasRect.insetBy(dx: -padding, dy: -padding)

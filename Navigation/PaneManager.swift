@@ -17,6 +17,7 @@ enum PaneContent: Identifiable, Equatable {
     case thinkspace(thinkspaceId: String)
     case commandCenter
     case webBrowser(url: URL, title: String?)
+    case cosmoWindow
     case collaborator(target: CollaborationTarget, presetId: String?)
 
     var id: String {
@@ -29,6 +30,8 @@ enum PaneContent: Identifiable, Equatable {
             return "commandCenter"
         case .webBrowser(let url, _):
             return "web_\(url.absoluteString)"
+        case .cosmoWindow:
+            return "cosmoWindow"
         case .collaborator:
             return "collaborator"
         }
@@ -38,7 +41,7 @@ enum PaneContent: Identifiable, Equatable {
     var entityId: Int64? {
         switch self {
         case .entity(let entity): return entity.id
-        case .thinkspace, .commandCenter, .webBrowser, .collaborator: return nil
+        case .thinkspace, .commandCenter, .webBrowser, .cosmoWindow, .collaborator: return nil
         }
     }
 
@@ -46,14 +49,14 @@ enum PaneContent: Identifiable, Equatable {
     var entitySelection: EntitySelection? {
         switch self {
         case .entity(let entity): return entity
-        case .thinkspace, .commandCenter, .webBrowser, .collaborator: return nil
+        case .thinkspace, .commandCenter, .webBrowser, .cosmoWindow, .collaborator: return nil
         }
     }
 
     /// The thinkspace ID if this is a thinkspace pane
     var thinkspaceId: String? {
         switch self {
-        case .entity, .commandCenter, .webBrowser, .collaborator: return nil
+        case .entity, .commandCenter, .webBrowser, .cosmoWindow, .collaborator: return nil
         case .thinkspace(let id): return id
         }
     }
@@ -70,7 +73,7 @@ enum PaneContent: Identifiable, Equatable {
 
     var chromeStyle: PaneChromeStyle {
         switch self {
-        case .collaborator:
+        case .cosmoWindow, .collaborator:
             return .minimal
         case .entity, .thinkspace, .commandCenter, .webBrowser:
             return .standard
@@ -308,6 +311,27 @@ class PaneManager: ObservableObject {
         }
 
         contextOwnerPaneId = target.paneID
+    }
+
+    func openOrActivateCosmoWindow() {
+        let cosmoWindow = PaneContent.cosmoWindow
+
+        if panes.contains(where: { $0.id == cosmoWindow.id }) {
+            activePaneId = cosmoWindow.id
+            return
+        }
+
+        guard panes.count < maxPanes else { return }
+        let isFirst = panes.isEmpty
+        panes.append(cosmoWindow)
+        redistributeSizes()
+        activePaneId = cosmoWindow.id
+
+        if isFirst {
+            withAnimation(ProMotionSprings.snappy) {
+                mainSplitRatio = 0.5
+            }
+        }
     }
 
     func closeCollaborator() {

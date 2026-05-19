@@ -67,12 +67,12 @@ struct ContentEditorView: View {
                     if title.isEmpty {
                         Text("Untitled Content")
                             .font(titleFont)
-                            .foregroundColor(CosmoColors.textTertiary)
+                            .foregroundColor(DS.documentTextMuted)
                     }
                     TextField("", text: $title)
                         .textFieldStyle(.plain)
                         .font(titleFont)
-                        .foregroundColor(CosmoColors.textPrimary)
+                        .foregroundColor(DS.documentText)
                         .onChange(of: title) { _, _ in
                             if !isInitialLoad { triggerAutoSave() }
                         }
@@ -87,7 +87,7 @@ struct ContentEditorView: View {
                         // Date
                         Text(createdAt, format: .dateTime.month(.wide).day().year())
                             .font(CosmoTypography.body)
-                            .foregroundColor(CosmoColors.textSecondary)
+                            .foregroundColor(DS.documentTextSecondary)
 
                         // Status badge
                         Text(status.capitalized)
@@ -139,18 +139,18 @@ struct ContentEditorView: View {
                     Spacer()
                     Text("\(wordCount) words")
                         .font(CosmoTypography.caption)
-                        .foregroundColor(CosmoColors.textTertiary)
+                        .foregroundColor(DS.documentTextMuted)
                     Text("·")
-                        .foregroundColor(CosmoColors.textTertiary)
+                        .foregroundColor(DS.documentTextMuted)
                     Text("\(plainBody.count) chars")
                         .font(CosmoTypography.caption)
-                        .foregroundColor(CosmoColors.textTertiary)
+                        .foregroundColor(DS.documentTextMuted)
                     Spacer()
                 }
                 .padding(.vertical, 12)
                 .background(
                     LinearGradient(
-                        colors: [CosmoColors.softWhite.opacity(0), CosmoColors.softWhite],
+                        colors: [DS.documentBackground.opacity(0), DS.documentBackground],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -166,6 +166,7 @@ struct ContentEditorView: View {
             observationCancellable?.cancel()
             contextTracker.clearEditingContext()
         }
+        .background(DS.documentBackground)
     }
 
     // MARK: - Computed
@@ -176,9 +177,9 @@ struct ContentEditorView: View {
     private var statusColor: Color {
         switch status.lowercased() {
         case "published": return CosmoColors.emerald
-        case "draft": return CosmoColors.textSecondary
+        case "draft": return DS.documentTextSecondary
         case "archived": return CosmoColors.glassGrey
-        default: return CosmoColors.textSecondary
+        default: return DS.documentTextSecondary
         }
     }
 

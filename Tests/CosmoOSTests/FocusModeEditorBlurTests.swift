@@ -77,3 +77,28 @@ final class MainKeyboardShortcutPolicyTests: XCTestCase {
         XCTAssertFalse(MainKeyboardShortcutPolicy.isTypingTarget(NSButton()))
     }
 }
+
+final class NoteFocusHeaderLayoutPolicyTests: XCTestCase {
+    func testEmptyNoteUsesEditableHeroTitle() {
+        let mode = NoteFocusHeaderLayoutPolicy.chromeMode(
+            titlePlainText: "",
+            plainContent: ""
+        )
+
+        XCTAssertEqual(mode, .emptyEditableTitle)
+        XCTAssertTrue(NoteFocusHeaderLayoutPolicy.showsEmptyGuidance(for: mode))
+        XCTAssertTrue(NoteFocusHeaderLayoutPolicy.showsTitleUnderline(for: mode))
+    }
+
+    func testWrittenNoteUsesOnlyMetadataDividerBelowDateRow() {
+        let mode = NoteFocusHeaderLayoutPolicy.chromeMode(
+            titlePlainText: "A title",
+            plainContent: "Body text"
+        )
+
+        XCTAssertEqual(mode, .documentHeader)
+        XCTAssertFalse(NoteFocusHeaderLayoutPolicy.showsEmptyGuidance(for: mode))
+        XCTAssertFalse(NoteFocusHeaderLayoutPolicy.showsTitleUnderline(for: mode))
+        XCTAssertTrue(NoteFocusHeaderLayoutPolicy.showsMetadataDivider(for: mode))
+    }
+}

@@ -33,6 +33,7 @@ struct CommandKPresentationState: Equatable {
 
     var isVisible: Bool
     var isPreservedBehindFocusMode: Bool
+    var searchFocusRequest: Int = 0
 
     var isVisibleToApp: Bool {
         isVisible
@@ -43,6 +44,7 @@ struct CommandKPresentationState: Equatable {
         case .present:
             isVisible = true
             isPreservedBehindFocusMode = false
+            searchFocusRequest += 1
         case .close:
             isVisible = false
             isPreservedBehindFocusMode = false
@@ -120,6 +122,7 @@ struct MainView: View {
     @State private var showCommandK = false
     @State private var commandKReturnTab: CommandKTab? = nil
     @State private var commandKBehindFocusMode = false
+    @State private var commandKSearchFocusRequest = 0
     @StateObject private var commandKViewModel = CommandKViewModel()
 
     // Block context menu (right-click on block)
@@ -223,6 +226,7 @@ struct MainView: View {
                 CommandKView(
                     initialTab: commandKReturnTab ?? .database,
                     isActive: showCommandK,
+                    searchFocusRequest: commandKSearchFocusRequest,
                     viewModel: commandKViewModel
                 )
                     .opacity(showCommandK ? 1 : 0)
@@ -563,6 +567,12 @@ struct MainView: View {
                     paneManager.activatePane(pane.id)
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openCosmoWindowPane)) { _ in
+            withAnimation(ProMotionSprings.snappy) {
+                paneManager.openOrActivateCosmoWindow()
+            }
+            CosmoWindowPanelController.shared.hide()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openCollaboratorPane)) { notification in
             guard let payload = CosmoNotification.Navigation.CollaboratorPanePayload(from: notification) else { return }
@@ -1575,13 +1585,15 @@ struct MainView: View {
     ) {
         var state = CommandKPresentationState(
             isVisible: showCommandK,
-            isPreservedBehindFocusMode: commandKBehindFocusMode
+            isPreservedBehindFocusMode: commandKBehindFocusMode,
+            searchFocusRequest: commandKSearchFocusRequest
         )
         state.apply(event)
 
         withAnimation(.spring(response: 0.2)) {
             showCommandK = state.isVisible
             commandKBehindFocusMode = state.isPreservedBehindFocusMode
+            commandKSearchFocusRequest = state.searchFocusRequest
             appState.isCommandKVisible = state.isVisibleToApp
             if clearViewModel {
                 commandKViewModel.clear()

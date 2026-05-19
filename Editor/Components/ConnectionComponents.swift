@@ -38,7 +38,7 @@ struct PremiumSectionCard: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(title)
                     .font(CosmoTypography.titleSmall) // 15pt bold
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundColor(DS.documentText)
                 
                 Spacer()
                 
@@ -56,7 +56,7 @@ struct PremiumSectionCard: View {
             if let subtitle = subtitle {
                 Text(subtitle)
                     .font(CosmoTypography.caption)
-                    .foregroundColor(CosmoColors.textTertiary)
+                    .foregroundColor(DS.documentTextMuted)
                     .lineLimit(2)
             }
             
@@ -65,7 +65,7 @@ struct PremiumSectionCard: View {
                 if content.isEmpty && !isFocused {
                     Text(placeholder)
                         .font(CosmoTypography.body)
-                        .foregroundColor(CosmoColors.textTertiary.opacity(0.5))
+                        .foregroundColor(DS.documentTextMuted.opacity(0.5))
                         .padding(.top, 8) // Match TextEditor internal padding
                         .padding(.leading, 5)
                         .allowsHitTesting(false)
@@ -73,7 +73,7 @@ struct PremiumSectionCard: View {
                 
                 TextEditor(text: $content)
                     .font(CosmoTypography.body) // 15pt regular
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundColor(DS.documentText)
                     .scrollContentBackground(.hidden)
                     .focused($isFocused)
                     .frame(minHeight: 120)
@@ -82,7 +82,7 @@ struct PremiumSectionCard: View {
         .padding(24)
         .background(
             ZStack {
-                CosmoColors.cardBackground // Pure white or slight off-white
+                DS.documentSurface // Pure white or slight off-white
                 
                 // Subtle tint based on accent color
                 accentColor.opacity(0.03)
@@ -124,13 +124,13 @@ struct CoreIdeaHero: View {
                 if content.isEmpty {
                     Text("What is the central concept? Describe the essence of this connection...")
                         .font(CosmoTypography.displaySmall) // 24pt
-                        .foregroundColor(CosmoColors.textTertiary.opacity(0.5))
+                        .foregroundColor(DS.documentTextMuted.opacity(0.5))
                         .allowsHitTesting(false)
                 }
                 
                 TextEditor(text: $content)
                     .font(CosmoTypography.displaySmall)
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundColor(DS.documentText)
                     .scrollContentBackground(.hidden)
                     .focused($isFocused)
                     .frame(minHeight: 100)
@@ -141,7 +141,7 @@ struct CoreIdeaHero: View {
             RoundedRectangle(cornerRadius: 24)
                 .fill(LinearGradient(
                     colors: [
-                        CosmoColors.softWhite,
+                        DS.documentBackground,
                         CosmoMentionColors.connection.opacity(0.05)
                     ],
                     startPoint: .topLeading,
@@ -190,7 +190,7 @@ struct ReferencesSection: View {
             HStack {
                 Text("References")
                     .font(CosmoTypography.titleSmall)
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundColor(DS.documentText)
                 
                 Spacer()
                 
@@ -201,7 +201,7 @@ struct ReferencesSection: View {
                         Text("Add")
                             .font(CosmoTypography.labelSmall)
                     }
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundColor(DS.documentTextSecondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -210,14 +210,14 @@ struct ReferencesSection: View {
                 Button(action: onAdd) {
                     Text("Add research, ideas, or other connections...")
                         .font(CosmoTypography.bodySmall)
-                        .foregroundColor(CosmoColors.textTertiary)
+                        .foregroundColor(DS.documentTextMuted)
                         .padding()
                         .frame(maxWidth: .infinity, alignment: .center)
                         .background(CosmoColors.glassGrey.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
-                                .foregroundColor(CosmoColors.textTertiary.opacity(0.3))
+                                .foregroundColor(DS.documentTextMuted.opacity(0.3))
                         )
                 }
                 .buttonStyle(.plain)

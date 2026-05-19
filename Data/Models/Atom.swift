@@ -583,6 +583,7 @@ public enum LevelDimension: String, Codable, CaseIterable, Sendable {
 enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     // MARK: - Core Links (Original)
     case project = "project"
+    case thinkspace = "thinkspace"
     case parentIdea = "parent_idea"
     case originIdea = "origin_idea"
     case connection = "connection"
@@ -722,7 +723,7 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     /// Whether this is a single-value relationship (only one link of this type allowed)
     var isSingleValue: Bool {
         switch self {
-        case .project, .parentIdea, .originIdea, .connection, .recurrenceParent,
+        case .project, .thinkspace, .parentIdea, .originIdea, .connection, .recurrenceParent,
              .draftToContent, .publishSource, .clarityOf, .journalSource,
              .sleepToReadiness, .deepWorkProject, .routineInstance,
              .templateDefinition,
@@ -775,6 +776,7 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .project: return "Project"
+        case .thinkspace: return "Thinkspace"
         case .parentIdea: return "Parent Idea"
         case .originIdea: return "Origin Idea"
         case .connection: return "Connection"
@@ -917,6 +919,10 @@ public struct AtomLink: Codable, Equatable, Sendable, Hashable {
 
     static func project(_ uuid: String) -> AtomLink {
         AtomLink(linkType: .project, uuid: uuid, entityType: .project)
+    }
+
+    static func thinkspace(_ uuid: String) -> AtomLink {
+        AtomLink(linkType: .thinkspace, uuid: uuid, entityType: .thinkspace)
     }
 
     static func parentIdea(_ uuid: String) -> AtomLink {

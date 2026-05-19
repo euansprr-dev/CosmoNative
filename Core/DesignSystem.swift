@@ -39,6 +39,80 @@ enum DS {
     static var surfaceHover: Color { palette.surfaceHover }
 
     // ═══════════════════════════════════════════════════════════════
+    // DOCUMENT PAPER — Stable light surfaces for notes, content drafts,
+    // connection manuscripts, and other long-form reading/writing areas.
+    // Dark app chrome can change, but paper should remain paper.
+    // ═══════════════════════════════════════════════════════════════
+
+    static var documentBackground: Color {
+        palette.isDark ? Color(hex: "F8F7F4") : palette.bg
+    }
+
+    static var documentSurface: Color {
+        palette.isDark ? Color(hex: "FFFFFF") : palette.surfaceElevated
+    }
+
+    static var documentSurfaceHover: Color {
+        palette.isDark ? Color(hex: "F0EFEB") : palette.surfaceHover
+    }
+
+    static var documentText: Color {
+        palette.isDark ? Color(hex: "1A1A1F") : palette.text
+    }
+
+    static var documentTextSecondary: Color {
+        palette.isDark ? Color(hex: "6B6B78") : palette.textSecondary
+    }
+
+    static var documentTextMuted: Color {
+        palette.isDark ? Color(hex: "767685") : palette.textMuted
+    }
+
+    static var documentBorder: Color {
+        palette.isDark ? Color(hex: "DCDCE0") : palette.border
+    }
+
+    static var documentBorderSubtle: Color {
+        palette.isDark ? Color(hex: "E8E8EC") : palette.borderSubtle
+    }
+
+    static var documentVellum: Color {
+        palette.isDark ? Color(hex: "F3EDE4") : palette.vellum
+    }
+
+    static var documentVellumDeep: Color {
+        palette.isDark ? Color(hex: "EDE5D8") : palette.vellumDeep
+    }
+
+    static var documentInkWash: Color {
+        palette.isDark ? Color(hex: "2C2A26") : palette.inkWash
+    }
+
+    static var documentInkFaded: Color {
+        palette.isDark ? Color(hex: "7A7568") : palette.inkFaded
+    }
+
+    static var documentSepiaBorder: Color {
+        palette.isDark ? Color(hex: "DDD5C8") : palette.sepiaBorder
+    }
+
+    static var documentSepiaSubtle: Color {
+        palette.isDark ? Color(hex: "E8E1D6") : palette.sepiaSubtle
+    }
+
+    static var documentGilt: Color {
+        palette.isDark ? Color(hex: "C4A265") : palette.gilt
+    }
+
+    static var documentGiltSoft: Color {
+        palette.isDark ? Color(hex: "F5EDD8") : palette.giltSoft
+    }
+
+    static var documentGiltMuted: Color {
+        palette.isDark ? Color(hex: "D4C9A8") : palette.giltMuted
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // TEXT — Dynamic per theme, always WCAG AA compliant
     // ═══════════════════════════════════════════════════════════════
 
@@ -117,31 +191,31 @@ enum DS {
     // ═══════════════════════════════════════════════════════════════
 
     /// Gold accent for ornamental details — never a fill, never a bar
-    static var gilt: Color { palette.gilt }
+    static var gilt: Color { documentGilt }
 
     /// Subtle gold wash for premium backgrounds
-    static var giltSoft: Color { palette.giltSoft }
+    static var giltSoft: Color { documentGiltSoft }
 
     /// Fine lines, filigree strokes, section labels
-    static var giltMuted: Color { palette.giltMuted }
+    static var giltMuted: Color { documentGiltMuted }
 
     /// Aged paper surface (warmer than surface)
-    static var vellum: Color { palette.vellum }
+    static var vellum: Color { documentVellum }
 
     /// Deeper parchment for inset/recessed areas
-    static var vellumDeep: Color { palette.vellumDeep }
+    static var vellumDeep: Color { documentVellumDeep }
 
     /// Near-black with warm undertone for display text
-    static var inkWash: Color { palette.inkWash }
+    static var inkWash: Color { documentInkWash }
 
     /// Faded ink for secondary information (WCAG AA safe)
-    static var inkFaded: Color { palette.inkFaded }
+    static var inkFaded: Color { documentInkFaded }
 
     /// Warm border replacing cool gray
-    static var sepiaBorder: Color { palette.sepiaBorder }
+    static var sepiaBorder: Color { documentSepiaBorder }
 
     /// Warm subtle border
-    static var sepiaSubtle: Color { palette.sepiaSubtle }
+    static var sepiaSubtle: Color { documentSepiaSubtle }
 
     // ═══════════════════════════════════════════════════════════════
     // ENTITY COLORS — Bespoke muted palette for light backgrounds

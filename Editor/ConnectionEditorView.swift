@@ -83,7 +83,7 @@ struct ConnectionEditorView: View {
                     Color.clear
                         .onAppear { canvasSize = geo.size }
                 }
-                .background(CosmoColors.background)
+                .background(DS.documentBackground)
             }
 
             // LAYER 2: Scrollable Content
@@ -97,7 +97,7 @@ struct ConnectionEditorView: View {
                             VStack(alignment: .leading, spacing: presentation == .focus ? 8 : 4) {
                                 TextField("Concept Name", text: modelBindings.conceptName)
                                     .font(titleFont)
-                                    .foregroundColor(CosmoColors.textPrimary)
+                                    .foregroundColor(DS.documentText)
                                     .textFieldStyle(.plain)
                                     .submitLabel(.done)
 
@@ -108,7 +108,7 @@ struct ConnectionEditorView: View {
                                         Text("• Updated \(timeAgo(from: conn.updatedAt))")
                                     }
                                     .font(CosmoTypography.label)
-                                    .foregroundColor(CosmoColors.textTertiary)
+                                    .foregroundColor(DS.documentTextMuted)
                                 }
                             }
                             .padding(.horizontal, 4)
@@ -220,7 +220,7 @@ struct ConnectionEditorView: View {
                         .scaleEffect(0.8)
                     Text("Loading connection...")
                         .font(CosmoTypography.caption)
-                        .foregroundColor(CosmoColors.textTertiary)
+                        .foregroundColor(DS.documentTextMuted)
                 }
             }
 
@@ -243,7 +243,7 @@ struct ConnectionEditorView: View {
                 }
             }
         }
-        .background(CosmoColors.background)
+        .background(DS.documentBackground)
         .onAppear { loadConnection() }
         .onDisappear {
             Task { await store.forceSave(connectionId) }
@@ -275,7 +275,7 @@ struct ConnectionEditorView: View {
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundColor(DS.documentTextSecondary)
                     .frame(width: 32, height: 32)
                     .background(.ultraThinMaterial, in: Circle())
                     .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
@@ -298,7 +298,7 @@ struct ConnectionEditorView: View {
                         Text("AI Insights")
                             .font(CosmoTypography.labelSmall)
                     }
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundColor(DS.documentTextSecondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -485,13 +485,13 @@ struct ReferenceCard: View {
 
             Text(reference.title)
                 .font(CosmoTypography.bodySmall)
-                .foregroundColor(CosmoColors.textPrimary)
+                .foregroundColor(DS.documentText)
                 .lineLimit(1)
 
             Button(action: onRemove) {
                 Image(systemName: "xmark")
                     .font(.system(size: 8))
-                    .foregroundColor(CosmoColors.textTertiary)
+                    .foregroundColor(DS.documentTextMuted)
             }
             .buttonStyle(.plain)
         }
@@ -514,7 +514,7 @@ struct ReferenceCard: View {
         case "research": return CosmoMentionColors.research
         case "idea": return CosmoMentionColors.idea
         case "connection": return CosmoMentionColors.connection
-        default: return CosmoColors.textSecondary
+        default: return DS.documentTextSecondary
         }
     }
 }
@@ -530,11 +530,11 @@ struct LinkedKnowledgeSection: View {
             HStack {
                 Text("Linked Knowledge")
                     .font(CosmoTypography.titleSmall)
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundColor(DS.documentText)
 
                 Text("(Auto-generated)")
                     .font(CosmoTypography.caption)
-                    .foregroundColor(CosmoColors.textTertiary)
+                    .foregroundColor(DS.documentTextMuted)
 
                 Spacer()
 
@@ -545,7 +545,7 @@ struct LinkedKnowledgeSection: View {
                         Text("Refresh")
                             .font(CosmoTypography.labelSmall)
                     }
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundColor(DS.documentTextSecondary)
                 }
                 .buttonStyle(.plain)
                 .disabled(isGenerating)
@@ -557,13 +557,13 @@ struct LinkedKnowledgeSection: View {
                         .scaleEffect(0.8)
                     Text("Finding related content...")
                         .font(CosmoTypography.bodySmall)
-                        .foregroundColor(CosmoColors.textTertiary)
+                        .foregroundColor(DS.documentTextMuted)
                 }
                 .padding()
             } else if items.isEmpty {
                 Text("Related items will appear here when generated")
                     .font(CosmoTypography.bodySmall)
-                    .foregroundColor(CosmoColors.textTertiary)
+                    .foregroundColor(DS.documentTextMuted)
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .center)
                     .background(CosmoColors.glassGrey.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
@@ -598,12 +598,12 @@ struct LinkedKnowledgeRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(CosmoTypography.body)
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundColor(DS.documentText)
 
                 if let explanation = item.explanation {
                     Text(explanation)
                         .font(CosmoTypography.caption)
-                        .foregroundColor(CosmoColors.textTertiary)
+                        .foregroundColor(DS.documentTextMuted)
                         .lineLimit(1)
                 }
             }
@@ -613,7 +613,7 @@ struct LinkedKnowledgeRow: View {
             // Relevance indicator
             Text("\(Int((item.relevanceScore ?? item.relevance) * 100))%")
                 .font(CosmoTypography.caption)
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundColor(DS.documentTextMuted)
         }
         .padding(.vertical, 4)
     }
@@ -632,7 +632,7 @@ struct LinkedKnowledgeRow: View {
         case "research": return CosmoMentionColors.research
         case "idea": return CosmoMentionColors.idea
         case "connection": return CosmoMentionColors.connection
-        default: return CosmoColors.textSecondary
+        default: return DS.documentTextSecondary
         }
     }
 }
@@ -685,7 +685,7 @@ struct ReferencePickerSheet: View {
                                 Spacer()
                                 Text(result.type)
                                     .font(CosmoTypography.caption)
-                                    .foregroundColor(CosmoColors.textTertiary)
+                                    .foregroundColor(DS.documentTextMuted)
                             }
                             .padding()
                             .background(CosmoColors.glassGrey.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -697,7 +697,7 @@ struct ReferencePickerSheet: View {
             }
         }
         .frame(width: 400, height: 500)
-        .background(CosmoColors.softWhite)
+        .background(DS.documentBackground)
         .onAppear { search() }
     }
 
@@ -765,14 +765,14 @@ struct CompactCoreIdeaCard: View {
                 if content.isEmpty && !isFocused {
                     Text("What is the central concept?")
                         .font(CosmoTypography.bodySmall)
-                        .foregroundColor(CosmoColors.textTertiary.opacity(0.5))
+                        .foregroundColor(DS.documentTextMuted.opacity(0.5))
                         .padding(.top, 2)
                         .allowsHitTesting(false)
                 }
 
                 TextEditor(text: $content)
                     .font(CosmoTypography.bodySmall)
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundColor(DS.documentText)
                     .scrollContentBackground(.hidden)
                     .focused($isFocused)
                     .frame(minHeight: 40, maxHeight: 80)
@@ -818,13 +818,13 @@ struct CompactConnectionSectionCard: View {
 
                     Text(title)
                         .font(CosmoTypography.labelSmall)
-                        .foregroundColor(CosmoColors.textPrimary)
+                        .foregroundColor(DS.documentText)
 
                     Spacer()
 
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(CosmoColors.textTertiary)
+                        .foregroundColor(DS.documentTextMuted)
                 }
             }
             .buttonStyle(.plain)
@@ -835,14 +835,14 @@ struct CompactConnectionSectionCard: View {
                     if content.isEmpty && !isFocused {
                         Text("Add content...")
                             .font(CosmoTypography.bodySmall)
-                            .foregroundColor(CosmoColors.textTertiary.opacity(0.5))
+                            .foregroundColor(DS.documentTextMuted.opacity(0.5))
                             .padding(.top, 2)
                             .allowsHitTesting(false)
                     }
 
                     TextEditor(text: $content)
                         .font(CosmoTypography.bodySmall)
-                        .foregroundColor(CosmoColors.textPrimary)
+                        .foregroundColor(DS.documentText)
                         .scrollContentBackground(.hidden)
                         .focused($isFocused)
                         .frame(minHeight: 40, maxHeight: 100)
@@ -853,7 +853,7 @@ struct CompactConnectionSectionCard: View {
                 // Preview when collapsed
                 Text(content)
                     .font(CosmoTypography.caption)
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundColor(DS.documentTextSecondary)
                     .lineLimit(2)
                     .padding(.top, 2)
             }

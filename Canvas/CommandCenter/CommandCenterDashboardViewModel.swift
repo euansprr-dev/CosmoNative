@@ -92,6 +92,11 @@ private enum DashboardRefreshDomain: Hashable {
     case weeklyReport
 }
 
+enum RecurringTaskTitleEditScope: String, CaseIterable, Sendable {
+    case currentOnly
+    case currentAndFuture
+}
+
 private struct DashboardAtomSubsetSignature: Equatable {
     let count: Int
     let fingerprint: Int
@@ -151,7 +156,7 @@ enum CommandCenterTodayTaskSectioning {
         )
 
         for task in tasks {
-            if let calendarStart = task.calendarStart {
+            if let calendarStart = task.calendarStart(using: calendar) {
                 if calendarStart >= dayStart && calendarStart < dayEnd {
                     scheduled.append(task)
                 } else if calendarStart < dayStart,
@@ -174,7 +179,7 @@ enum CommandCenterTodayTaskSectioning {
 
         return CommandCenterTodayTaskSections(
             overdue: overdue.sorted(by: overdueSort(calendar: calendar)),
-            scheduled: scheduled.sorted(by: scheduledSort),
+            scheduled: scheduled.sorted(by: scheduledSort(calendar: calendar)),
             unscheduled: unscheduled.sorted(by: unscheduledSort)
         )
     }
@@ -189,7 +194,7 @@ enum CommandCenterTodayTaskSectioning {
         dayEnd: Date,
         calendar: Calendar
     ) -> Bool {
-        if let calendarStart = task.calendarStart {
+        if let calendarStart = task.calendarStart(using: calendar) {
             return calendarStart >= dayStart && calendarStart < dayEnd
         }
 
@@ -208,18 +213,20 @@ enum CommandCenterTodayTaskSectioning {
 
     private static func overdueSort(calendar: Calendar) -> (TaskViewModel, TaskViewModel) -> Bool {
         { lhs, rhs in
-            let lhsDay = plannedDate(for: lhs).map { calendar.startOfDay(for: $0) } ?? lhs.calendarStart ?? .distantPast
-            let rhsDay = plannedDate(for: rhs).map { calendar.startOfDay(for: $0) } ?? rhs.calendarStart ?? .distantPast
+            let lhsDay = plannedDate(for: lhs).map { calendar.startOfDay(for: $0) } ?? lhs.calendarStart(using: calendar) ?? .distantPast
+            let rhsDay = plannedDate(for: rhs).map { calendar.startOfDay(for: $0) } ?? rhs.calendarStart(using: calendar) ?? .distantPast
             if lhsDay != rhsDay { return lhsDay < rhsDay }
             return fallbackSort(lhs, rhs)
         }
     }
 
-    private static func scheduledSort(_ lhs: TaskViewModel, _ rhs: TaskViewModel) -> Bool {
-        let lhsStart = lhs.calendarStart ?? .distantFuture
-        let rhsStart = rhs.calendarStart ?? .distantFuture
-        if lhsStart != rhsStart { return lhsStart < rhsStart }
-        return fallbackSort(lhs, rhs)
+    private static func scheduledSort(calendar: Calendar) -> (TaskViewModel, TaskViewModel) -> Bool {
+        { lhs, rhs in
+            let lhsStart = lhs.calendarStart(using: calendar) ?? .distantFuture
+            let rhsStart = rhs.calendarStart(using: calendar) ?? .distantFuture
+            if lhsStart != rhsStart { return lhsStart < rhsStart }
+            return fallbackSort(lhs, rhs)
+        }
     }
 
     private static func unscheduledSort(_ lhs: TaskViewModel, _ rhs: TaskViewModel) -> Bool {
@@ -240,6 +247,123 @@ enum CommandCenterTodayTaskSectioning {
             return lhs.priority.sortOrder < rhs.priority.sortOrder
         }
         return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+    }
+}
+
+enum CommandCenterTaskScheduling {
+    @discardableResult
+    static func moveCalendarTime(
+        in metadata: inout TaskMetadata,
+        toDate date: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
+        let day = calendar.startOfDay(for: date)
+        guard let currentStart = calendarTimeStart(in: metadata),
+              let rescheduledStart = merged(date: day, time: currentStart, calendar: calendar) else {
+            return false
+        }
+
+        let duration = calendarTimeDurationMinutes(in: metadata, start: currentStart)
+        let rescheduledEnd = calendar.date(byAdding: .minute, value: duration, to: rescheduledStart)
+            ?? rescheduledStart.addingTimeInterval(TimeInterval(duration * 60))
+        applyCalendarTimeRange(start: rescheduledStart, end: rescheduledEnd, to: &metadata, calendar: calendar)
+        return true
+    }
+
+    static func reschedule(
+        _ metadata: inout TaskMetadata,
+        toDate date: Date?,
+        calendar: Calendar = .current
+    ) {
+        guard let date else {
+            clearPlannedDate(from: &metadata)
+            clearCalendarTime(from: &metadata)
+            metadata.schedulingState = nil
+            return
+        }
+
+        let day = calendar.startOfDay(for: date)
+        if !moveCalendarTime(in: &metadata, toDate: day, calendar: calendar) {
+            applyPlannedDate(day, to: &metadata)
+        }
+
+        metadata.schedulingState = nil
+    }
+
+    private static func applyPlannedDate(_ day: Date, to metadata: inout TaskMetadata) {
+        let dateString = PlannerumFormatters.iso8601.string(from: day)
+        metadata.dueDate = dateString
+        metadata.focusDate = dateString
+        metadata.whenDate = dateString
+    }
+
+    private static func clearPlannedDate(from metadata: inout TaskMetadata) {
+        metadata.dueDate = nil
+        metadata.focusDate = nil
+        metadata.whenDate = nil
+    }
+
+    private static func clearCalendarTime(from metadata: inout TaskMetadata) {
+        metadata.startTime = nil
+        metadata.endTime = nil
+        metadata.scheduledStart = nil
+        metadata.scheduledEnd = nil
+        metadata.durationMinutes = nil
+    }
+
+    private static func applyCalendarTimeRange(
+        start: Date,
+        end: Date,
+        to metadata: inout TaskMetadata,
+        calendar: Calendar
+    ) {
+        let day = calendar.startOfDay(for: start)
+        applyPlannedDate(day, to: &metadata)
+        metadata.startTime = PlannerumFormatters.iso8601.string(from: start)
+        metadata.endTime = PlannerumFormatters.iso8601.string(from: end)
+        metadata.scheduledStart = metadata.startTime
+        metadata.scheduledEnd = metadata.endTime
+        metadata.durationMinutes = max(15, Int(end.timeIntervalSince(start) / 60))
+    }
+
+    private static func calendarTimeStart(in metadata: TaskMetadata) -> Date? {
+        for candidate in [metadata.scheduledStart, metadata.startTime] {
+            if let candidate, let date = PlannerumFormatters.iso8601.date(from: candidate) {
+                return date
+            }
+        }
+        return nil
+    }
+
+    private static func calendarTimeEnd(in metadata: TaskMetadata) -> Date? {
+        for candidate in [metadata.scheduledEnd, metadata.endTime] {
+            if let candidate, let date = PlannerumFormatters.iso8601.date(from: candidate) {
+                return date
+            }
+        }
+        return nil
+    }
+
+    private static func calendarTimeDurationMinutes(in metadata: TaskMetadata, start: Date) -> Int {
+        if let end = calendarTimeEnd(in: metadata), end > start {
+            return max(15, Int(end.timeIntervalSince(start) / 60))
+        }
+        return max(15, metadata.durationMinutes ?? metadata.estimatedFocusMinutes ?? 30)
+    }
+
+    private static func merged(date: Date, time: Date, calendar: Calendar) -> Date? {
+        let dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: time)
+        var merged = DateComponents()
+        merged.calendar = calendar
+        merged.timeZone = calendar.timeZone
+        merged.year = dateComponents.year
+        merged.month = dateComponents.month
+        merged.day = dateComponents.day
+        merged.hour = timeComponents.hour
+        merged.minute = timeComponents.minute
+        merged.second = timeComponents.second ?? 0
+        return calendar.date(from: merged)
     }
 }
 
@@ -418,7 +542,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     // MARK: - Init
 
-    init() {
+    init(startsRefreshing: Bool = true) {
+        guard startsRefreshing else { return }
+
         setupBindings()
         Task {
             await refreshAll()
@@ -701,12 +827,12 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     if vm.isCompleted { return nil }
                     if vm.isRecurring && vm.recurrenceParentUUID == nil { return nil }
 
-                    guard let calendarStart = vm.calendarStart else { return nil }
-                    return calendarStart >= dayStart && calendarStart < dayEnd ? vm : nil
+                    guard let calendarDisplayDate = vm.calendarDisplayDate else { return nil }
+                    return calendarDisplayDate >= dayStart && calendarDisplayDate < dayEnd ? vm : nil
                 }
                 .sorted {
-                    let lhsStart = $0.calendarStart
-                    let rhsStart = $1.calendarStart
+                    let lhsStart = $0.calendarDisplayDate
+                    let rhsStart = $1.calendarDisplayDate
                     if lhsStart != rhsStart {
                         return (lhsStart ?? .distantFuture) < (rhsStart ?? .distantFuture)
                     }
@@ -826,11 +952,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         do {
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
                 var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-                let dateString = toDate.map { PlannerumFormatters.iso8601.string(from: $0) }
-                metadata.dueDate = dateString
-                metadata.focusDate = dateString
-                metadata.whenDate = dateString
-                metadata.schedulingState = nil
+                CommandCenterTaskScheduling.reschedule(&metadata, toDate: toDate)
                 atom = atom.withMetadata(metadata)
             }
             await refreshTaskCollectionsAfterMutation()
@@ -844,11 +966,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             do {
                 _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
                     var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-                    let dateString = toDate.map { PlannerumFormatters.iso8601.string(from: $0) }
-                    metadata.dueDate = dateString
-                    metadata.focusDate = dateString
-                    metadata.whenDate = dateString
-                    metadata.schedulingState = nil
+                    CommandCenterTaskScheduling.reschedule(&metadata, toDate: toDate)
                     atom = atom.withMetadata(metadata)
                 }
             } catch {
@@ -1049,14 +1167,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     func loadProjects() async {
-        do {
-            let nextProjects = try await AtomRepository.shared.fetchAll(type: .project)
-                .filter { !$0.isDeleted }
-                .filter { ($0.metadataValue(as: ProjectMetadata.self)?.isCompleted ?? false) == false }
-            assignIfChanged(\.projects, to: nextProjects)
-        } catch {
-            print("❌ Dashboard: Failed to load projects: \(error)")
-        }
+        assignIfChanged(\.projects, to: [])
     }
 
     // MARK: - Things 3 Scheduling Operations
@@ -1066,8 +1177,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
             guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
             var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
             if let date = date {
-                meta.whenDate = PlannerumFormatters.iso8601.string(from: date)
-                meta.focusDate = meta.whenDate  // Keep backward compat
+                let day = Calendar.current.startOfDay(for: date)
+                let dateString = PlannerumFormatters.iso8601.string(from: day)
+                let deadline = meta.dueDate
+                CommandCenterTaskScheduling.moveCalendarTime(in: &meta, toDate: day)
+                meta.whenDate = dateString
+                meta.focusDate = dateString  // Keep backward compat
+                meta.dueDate = deadline
                 meta.schedulingState = nil  // Scheduled tasks have no scheduling state
             } else {
                 meta.whenDate = nil
@@ -1780,6 +1896,114 @@ class CommandCenterDashboardViewModel: ObservableObject {
         } catch {
             print("❌ Dashboard: Failed to update task: \(error)")
         }
+    }
+
+    func updateRecurringTaskTitle(
+        uuid: String,
+        title: String,
+        scope: RecurringTaskTitleEditScope
+    ) async {
+        do {
+            guard let current = try await AtomRepository.shared.fetch(uuid: uuid) else { return }
+            let currentMetadata = current.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+
+            guard scope == .currentAndFuture,
+                  let parentUUID = currentMetadata.recurrenceParentUUID,
+                  let parent = try await AtomRepository.shared.fetch(uuid: parentUUID) else {
+                await updateTask(uuid: uuid, title: title)
+                return
+            }
+
+            let calendar = Calendar.current
+            let referenceDay = calendar.startOfDay(for: recurrenceOccurrenceDate(from: currentMetadata) ?? Date())
+            let matchingTitles = Set([current.title, parent.title].compactMap { $0 })
+            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+
+            for candidate in atoms where shouldUpdateRecurringTitleTarget(
+                candidate,
+                parentUUID: parentUUID,
+                currentUUID: uuid,
+                matchingTitles: matchingTitles,
+                referenceDay: referenceDay,
+                calendar: calendar
+            ) {
+                _ = try await AtomRepository.shared.update(uuid: candidate.uuid) { atom in
+                    var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    applyRecurringTitle(title, to: &atom, metadata: &metadata)
+                    atom = atom.withMetadata(metadata)
+                }
+            }
+
+            await refreshTaskCollectionsAfterMutation()
+            await loadHabits()
+        } catch {
+            print("❌ Dashboard: Failed to update recurring task title: \(error)")
+        }
+    }
+
+    private func shouldUpdateRecurringTitleTarget(
+        _ atom: Atom,
+        parentUUID: String,
+        currentUUID: String,
+        matchingTitles: Set<String>,
+        referenceDay: Date,
+        calendar: Calendar
+    ) -> Bool {
+        if atom.uuid == parentUUID || atom.uuid == currentUUID {
+            return true
+        }
+
+        guard !atom.isDeleted,
+              let metadata = atom.metadataValue(as: TaskMetadata.self),
+              metadata.recurrenceParentUUID == parentUUID,
+              metadata.isCompleted != true,
+              let occurrenceDate = recurrenceOccurrenceDate(from: metadata),
+              calendar.startOfDay(for: occurrenceDate) >= referenceDay else {
+            return false
+        }
+
+        guard !matchingTitles.isEmpty else {
+            return true
+        }
+
+        return atom.title.map { matchingTitles.contains($0) } ?? false
+    }
+
+    private func applyRecurringTitle(_ title: String, to atom: inout Atom, metadata: inout TaskMetadata) {
+        let previousAssignmentSource = HabitAssignmentSource(rawValue: metadata.habitAssignmentSource ?? "")
+        atom.title = title
+
+        guard previousAssignmentSource != .manual else { return }
+
+        let resolvedIntent = metadata.intent.flatMap(TaskIntent.init(rawValue:))
+        if let derived = habitEngine.resolveHabit(title: title, intent: resolvedIntent) {
+            metadata.habitUUID = derived.definition.id
+            metadata.habitAssignmentSource = derived.source.rawValue
+            if metadata.intentUUID == nil {
+                metadata.intentUUID = derived.definition.defaultIntentUUID
+            }
+        } else {
+            metadata.habitUUID = nil
+            metadata.habitAssignmentSource = nil
+        }
+    }
+
+    private func recurrenceOccurrenceDate(from metadata: TaskMetadata) -> Date? {
+        let candidates = [
+            metadata.focusDate,
+            metadata.scheduledStart,
+            metadata.startTime,
+            metadata.whenDate,
+            metadata.dueDate
+        ]
+
+        for candidate in candidates {
+            if let candidate, let date = PlannerumFormatters.iso8601.date(from: candidate) {
+                return date
+            }
+        }
+
+        return nil
     }
 
     @discardableResult

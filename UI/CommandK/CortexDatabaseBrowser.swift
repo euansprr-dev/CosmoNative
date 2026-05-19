@@ -366,7 +366,7 @@ struct CommandKLibraryThumbnail: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(DS.glassCardFill.opacity(0.50))
+                .fill(thumbnailSurface)
             thumbnailContent
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -390,6 +390,15 @@ struct CommandKLibraryThumbnail: View {
         } else {
             SpotlightFauxPage(accentColor: item.color)
         }
+    }
+
+    private var thumbnailSurface: Color {
+        isDocumentPreview ? CommandKPreviewPaper.fill : DS.glassCardFill.opacity(0.50)
+    }
+
+    private var isDocumentPreview: Bool {
+        let hasImage = item.thumbnailURL?.isEmpty == false
+        return !hasImage && item.atomType != .connection
     }
 }
 
@@ -478,7 +487,7 @@ struct SpotlightDocCard: View {
     private var thumbnailBackground: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DS.glassCardFill.opacity(isHovered ? 0.8 : 0.5))
+                .fill(thumbnailSurface)
             thumbnailContent
         }
     }
@@ -521,6 +530,15 @@ struct SpotlightDocCard: View {
         default: return DS.textSecondary
         }
     }
+
+    private var thumbnailSurface: Color {
+        isDocumentPreview ? CommandKPreviewPaper.fill : DS.glassCardFill.opacity(isHovered ? 0.8 : 0.5)
+    }
+
+    private var isDocumentPreview: Bool {
+        let hasImage = item.thumbnailURL?.isEmpty == false
+        return !hasImage && item.atomType != .connection
+    }
 }
 
 // MARK: - Mini Document Page (full text at thumbnail scale)
@@ -547,7 +565,7 @@ struct SpotlightPageContent: View {
         .padding(5)
         .background(
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.white.opacity(0.9))
+                .fill(CommandKPreviewPaper.fill)
         )
         .padding(4)
     }
@@ -654,7 +672,7 @@ struct SpotlightFauxPage: View {
         .padding(5)
         .background(
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.white.opacity(0.9))
+                .fill(CommandKPreviewPaper.fill)
         )
         .padding(4)
     }
@@ -724,12 +742,12 @@ private struct SpotlightFolderContent: View {
 
             Text(countLabel)
                 .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(CommandKPreviewPaper.textMuted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.white.opacity(0.9))
+                .fill(CommandKPreviewPaper.fill)
                 .padding(4)
         )
     }

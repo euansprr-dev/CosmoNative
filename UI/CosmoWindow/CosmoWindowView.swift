@@ -7,6 +7,10 @@ import SwiftUI
 struct CosmoWindowView: View {
     @ObservedObject private var viewModel = CosmoWindowViewModel.shared
     @Binding var isVisible: Bool
+    let isPaneMode: Bool
+    let onClose: (() -> Void)?
+    let showsPlaceAsPaneButton: Bool
+
     @AppStorage("cosmoWindowAnchor") private var anchor: CosmoWindowAnchor = .right
     @Environment(\.cosmoWindowIsFloating) private var isFloating
     @State private var isComposerFocused = false
@@ -17,8 +21,26 @@ struct CosmoWindowView: View {
     @State private var bottomAnchorID = "bottom"
     @State private var pendingScrollWorkItem: DispatchWorkItem?
 
+    init(
+        isVisible: Binding<Bool>,
+        isPaneMode: Bool = false,
+        onClose: (() -> Void)? = nil,
+        showsPlaceAsPaneButton: Bool = true
+    ) {
+        self._isVisible = isVisible
+        self.isPaneMode = isPaneMode
+        self.onClose = onClose
+        self.showsPlaceAsPaneButton = showsPlaceAsPaneButton
+    }
+
     var body: some View {
-        if isFloating {
+        if isPaneMode {
+            panelShell
+                .padding(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DS.bg)
+                .onAppear(perform: handleAppear)
+        } else if isFloating {
             panelShell
                 .padding(10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -135,23 +157,18 @@ struct CosmoWindowView: View {
                     }
                 }
 
-                if viewModel.isCurrentContextDockable {
+                if showsPlaceAsPaneButton {
                     headerControlButton("rectangle.split.2x1") {
-                        guard let atomUUID = viewModel.dockableContextAtomUUID else { return }
                         NotificationCenter.default.post(
-                            name: CosmoNotification.Navigation.openCollaboratorPane,
-                            object: nil,
-                            userInfo: CosmoNotification.Navigation.CollaboratorPanePayload(
-                                atomUUID: atomUUID,
-                                presetId: viewModel.currentCollaboratorPresetID ?? "deepen"
-                            ).userInfo
+                            name: CosmoNotification.Navigation.openCosmoWindowPane,
+                            object: nil
                         )
                     }
-                    .help("Dock Collaborator")
+                    .help("Place as Pane")
                 }
 
                 headerControlButton("xmark") {
-                    CosmoWindowPanelController.shared.hide()
+                    closeSurface()
                 }
                 .help("Close")
             }
@@ -163,9 +180,37 @@ struct CosmoWindowView: View {
     }
 
     private var contextSummarySection: some View {
-        CosmoContextBar(context: viewModel.activeContext)
+        VStack(spacing: 8) {
+            CosmoContextBar(context: viewModel.activeContext)
+
+            if !viewModel.activeContext.actions.isEmpty {
+                contextActionRow
+            }
+        }
             .padding(.horizontal, CosmoWindowMetrics.contentPadding)
             .padding(.bottom, 6)
+    }
+
+    private var contextActionRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(viewModel.activeContext.actions.prefix(4))) { action in
+                    Button {
+                        runContextAction(action)
+                    } label: {
+                        Text(action.name)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(DS.textSecondary)
+                            .lineLimit(1)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .cosmoWindowChip()
+                    }
+                    .buttonStyle(.plain)
+                    .help(action.description)
+                }
+            }
+        }
     }
 
     private var messageStage: some View {
@@ -597,6 +642,24 @@ struct CosmoWindowView: View {
     private func focusComposer() {
         isComposerFocused = true
         NotificationCenter.default.post(name: .focusCosmoComposer, object: nil)
+    }
+
+    private func closeSurface() {
+        if let onClose {
+            onClose()
+        } else {
+            CosmoWindowPanelController.shared.hide()
+        }
+    }
+
+    private func runContextAction(_ action: CosmoWindowAction) {
+        let prompt = viewModel.inputText
+        Task {
+            await viewModel.performAction(action, prompt: prompt)
+            if !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                viewModel.inputText = ""
+            }
+        }
     }
 
     private func queuePrompt(_ prompt: String) {

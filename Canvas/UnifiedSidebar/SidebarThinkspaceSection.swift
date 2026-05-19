@@ -1,5 +1,5 @@
 // CosmoOS/Canvas/UnifiedSidebar/SidebarThinkspaceSection.swift
-// Thinkspace list with project folders, keyboard nav, creation flow
+// Thinkspace list with keyboard nav, creation flow, and per-thinkspace color
 // Migrated from ThinkspaceSidebar.swift patterns
 // March 2026 — Command Center navigation
 
@@ -35,10 +35,6 @@ struct SidebarThinkspaceSection: View {
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    // Data
-    @State private var projects: [Atom] = []
-    @State private var selectedProjectFilter: String? = nil
-
     // Creation
     @State private var isCreatingThinkspace = false
     @State private var creatingChildOfThinkspace: Thinkspace?
@@ -65,12 +61,7 @@ struct SidebarThinkspaceSection: View {
     @State private var isKeyboardNavigating: Bool = false
     @FocusState private var isSectionFocused: Bool
 
-    private let repository = AtomRepository.shared
-
-    private let projectColorPalette = [
-        "#A8CCE8", "#CAB8E8", "#F4AFA0", "#8FC7A2",
-        "#F5E6C8", "#E8B8A8", "#A8D8E8", "#D8A8E8",
-    ]
+    private let colorOptions = ThinkspaceColorOption.defaultOptions
 
     private var hoverAnimation: Animation? {
         reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.hover
@@ -83,9 +74,6 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Filtered Thinkspaces
 
     private var filteredThinkspaces: [Thinkspace] {
-        if let projectId = selectedProjectFilter {
-            return manager.rootThinkspacesForProject(projectId)
-        }
         return manager.sidebarThinkspaces
             .filter { $0.parentThinkspaceId == nil }
             .sorted { $0.lastOpened > $1.lastOpened }
@@ -119,10 +107,6 @@ struct SidebarThinkspaceSection: View {
             if isCollapsed {
                 collapsedThinkspaceStack
             } else {
-                if !projects.isEmpty {
-                    filterChipsRow
-                }
-
                 if isCreatingThinkspace && creatingChildOfThinkspace == nil {
                     newThinkspaceRow
                 }
@@ -143,12 +127,6 @@ struct SidebarThinkspaceSection: View {
         .onKeyPress(.escape) { guard !isCollapsed else { return .ignored }; handleKeyEscape(); return .handled }
         .onKeyPress(.rightArrow) { guard !isCollapsed else { return .ignored }; handleKeyRight(); return .handled }
         .onKeyPress(.leftArrow) { guard !isCollapsed else { return .ignored }; handleKeyLeft(); return .handled }
-        .task { await loadProjects() }
-        .onReceive(NotificationCenter.default.publisher(for: .atomsDidChange)) { _ in
-            Task {
-                await loadProjects()
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .sidebarCreateThinkspace)) { _ in
             withAnimation(actionAnimation) {
                 isCreatingThinkspace = true
@@ -185,70 +163,6 @@ struct SidebarThinkspaceSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - Filter Chips Row
-
-    private var filterChipsRow: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                filterChip(label: "All", color: DS.accent, isSelected: selectedProjectFilter == nil) {
-                    withAnimation(actionAnimation) {
-                        selectedProjectFilter = nil
-                    }
-                }
-
-                ForEach(projects, id: \.uuid) { project in
-                    let color = projectColor(for: project)
-                    filterChip(
-                        label: project.title ?? "Untitled",
-                        color: color,
-                        isSelected: selectedProjectFilter == project.uuid
-                    ) {
-                        withAnimation(actionAnimation) {
-                            selectedProjectFilter = project.uuid
-                        }
-                    }
-                    .contextMenu {
-                        Button {
-                            Task { await deleteProject(project) }
-                        } label: {
-                            Label("Delete Project", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-        }
-        .scrollIndicators(.never)
-    }
-
-    @ViewBuilder
-    private func filterChip(label: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(color.opacity(isSelected ? 1.0 : 0.78))
-                    .frame(width: 6, height: 6)
-
-                Text(label)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? color : DS.textSecondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(
-                Capsule().fill(
-                    isSelected
-                        ? color.opacity(DS.palette.isDark ? 0.18 : 0.14)
-                        : DS.bg
-                )
-            )
-            .overlay(
-                Capsule().stroke(isSelected ? color.opacity(0.36) : DS.borderSubtle, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - New Thinkspace Row
@@ -330,8 +244,7 @@ struct SidebarThinkspaceSection: View {
     }
 
     private func thinkspaceRow(_ thinkspace: Thinkspace, level: Int) -> some View {
-        let project = projectFor(thinkspace)
-        let rowColor = project.map { projectColor(for: $0) } ?? DS.accent
+        let rowColor = thinkspace.accentColor
         let isActive = activeThinkspaceId == thinkspace.id
         let isHovered = hoveredThinkspaceId == thinkspace.id
         let isExpanded = expandedThinkspaces.contains(thinkspace.id)
@@ -387,8 +300,7 @@ struct SidebarThinkspaceSection: View {
         isExpanded: Bool,
         level: Int
     ) -> some View {
-        let project = projectFor(thinkspace)
-        let color = project.map { projectColor(for: $0) } ?? DS.accent
+        let color = thinkspace.accentColor
         let isExpandable = thinkspaceIsExpandable(thinkspace)
         let rowHeight = level > 0 ? CGFloat(34) : UnifiedSidebarMetrics.thinkspaceRowHeight
         let textSize = level > 0 ? CGFloat(12) : CGFloat(13)
@@ -525,8 +437,7 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Rename Row
 
     private func thinkspaceRenameRow(_ thinkspace: Thinkspace) -> some View {
-        let project = projectFor(thinkspace)
-        let color = project.map { projectColor(for: $0) } ?? DS.accent
+        let color = thinkspace.accentColor
 
         return HStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -914,30 +825,16 @@ struct SidebarThinkspaceSection: View {
             Label("New Child Thinkspace", systemImage: "rectangle.stack.badge.plus")
         }
 
-        if !projects.isEmpty {
-            Menu("Assign to Project") {
-                ForEach(projects, id: \.uuid) { project in
-                    Button {
-                        Task { await manager.assignThinkspace(thinkspace.id, to: project.uuid) }
-                    } label: {
-                        HStack {
-                            Text(project.title ?? "Untitled")
-                            if thinkspace.projectUuid == project.uuid {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-
-                if thinkspace.projectUuid != nil {
-                    Divider()
-                    Button {
-                        Task { await manager.unassignThinkspace(thinkspace.id) }
-                    } label: {
-                        Label("Remove from Project", systemImage: "xmark.circle")
-                    }
+        Menu {
+            ForEach(colorOptions) { option in
+                Button {
+                    Task { await manager.updateColor(thinkspace, to: option.hex) }
+                } label: {
+                    Label(option.name, systemImage: thinkspace.accentColorHex == option.hex ? "checkmark.circle.fill" : "circle.fill")
                 }
             }
+        } label: {
+            Label("Change Color", systemImage: "paintpalette")
         }
 
         Divider()
@@ -1062,10 +959,7 @@ struct SidebarThinkspaceSection: View {
             if let parent = creatingChildOfThinkspace {
                 createdThinkspace = await manager.createSubThinkspace(name: trimmedName, parent: parent)
             } else {
-                createdThinkspace = await manager.createThinkspace(
-                    name: trimmedName,
-                    projectUuid: selectedProjectFilter
-                )
+                createdThinkspace = await manager.createThinkspace(name: trimmedName)
             }
 
             if let thinkspace = createdThinkspace {
@@ -1102,27 +996,6 @@ struct SidebarThinkspaceSection: View {
             isCreatingThinkspace = false
             creatingChildOfThinkspace = nil
             newName = ""
-        }
-    }
-
-    private func loadProjects() async {
-        do {
-            projects = try await repository.fetchAll(type: .project)
-                .sorted { ($0.title ?? "") < ($1.title ?? "") }
-        } catch {
-            print("Failed to load projects: \(error)")
-        }
-    }
-
-    private func deleteProject(_ project: Atom) async {
-        do {
-            try await repository.softDeleteProject(project.uuid)
-            if selectedProjectFilter == project.uuid {
-                selectedProjectFilter = nil
-            }
-            await loadProjects()
-        } catch {
-            print("Failed to delete project: \(error)")
         }
     }
 
@@ -1225,19 +1098,6 @@ struct SidebarThinkspaceSection: View {
 
     // MARK: - Helpers
 
-    private func projectColor(for project: Atom) -> Color {
-        if let metadata = project.metadataValue(as: ProjectMetadata.self),
-           let colorHex = metadata.color {
-            return Color(hex: colorHex)
-        }
-        return DS.accent
-    }
-
-    private func projectFor(_ thinkspace: Thinkspace) -> Atom? {
-        guard let projectUuid = thinkspace.projectUuid else { return nil }
-        return projects.first { $0.uuid == projectUuid }
-    }
-
     private func thinkspaceIsExpandable(_ thinkspace: Thinkspace) -> Bool {
         thinkspace.hasChildren ||
             !manager.childThinkspaces(of: thinkspace.id).isEmpty ||
@@ -1257,6 +1117,24 @@ struct SidebarThinkspaceSection: View {
             appendNavigationItems(from: childThinkspace, level: level + 1, into: &items)
         }
     }
+}
+
+private struct ThinkspaceColorOption: Identifiable {
+    let name: String
+    let hex: String
+
+    var id: String { hex }
+
+    static let defaultOptions: [ThinkspaceColorOption] = [
+        ThinkspaceColorOption(name: "Moss", hex: "#2D6A4F"),
+        ThinkspaceColorOption(name: "Sky", hex: "#4A7B9D"),
+        ThinkspaceColorOption(name: "Clay", hex: "#C7623F"),
+        ThinkspaceColorOption(name: "Violet", hex: "#8B6BAB"),
+        ThinkspaceColorOption(name: "Ochre", hex: "#B08C5A"),
+        ThinkspaceColorOption(name: "Teal", hex: "#4A8B72"),
+        ThinkspaceColorOption(name: "Rose", hex: "#B06B6B"),
+        ThinkspaceColorOption(name: "Cobalt", hex: "#5B84B0"),
+    ]
 }
 
 private enum ThinkspaceNavigatorItem {

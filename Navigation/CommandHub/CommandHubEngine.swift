@@ -275,7 +275,7 @@ class CommandHubEngine: ObservableObject {
         The user is searching for: "\(query)"
 
         Interpret this as a search query and extract:
-        1. Entity type (idea, content, task, research, connection, project)
+        1. Entity type (idea, content, task, research, connection, thinkspace)
         2. Key search terms
         3. Any temporal context (today, this week, recent)
 
@@ -359,15 +359,6 @@ class CommandHubEngine: ObservableObject {
                     title: "Create New Content",
                     subtitle: "Start writing",
                     type: .create(.content)
-                ))
-            }
-            if lowered.contains("project") {
-                commands.append(PaletteResult(
-                    icon: "plus.circle.fill",
-                    iconColor: CosmoColors.emerald,
-                    title: "Create New Project",
-                    subtitle: "Start a new project",
-                    type: .create(.project)
                 ))
             }
         }

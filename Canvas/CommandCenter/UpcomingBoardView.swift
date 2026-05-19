@@ -45,6 +45,11 @@ enum CalendarResizeEdge {
     case bottom
 }
 
+enum CalendarEntryDensity: Equatable {
+    case compact
+    case expanded
+}
+
 struct CalendarResizePreview: Equatable {
     let offsetY: CGFloat
     let height: CGFloat
@@ -191,6 +196,10 @@ enum CommandCenterCalendarLayout {
         let dayStart = calendar.startOfDay(for: start)
         let duration = end.timeIntervalSince(start)
         return abs(start.timeIntervalSince(dayStart)) < 1 && duration >= 23 * 3_600
+    }
+
+    static func entryDensity(width: CGFloat, height: CGFloat) -> CalendarEntryDensity {
+        width < 72 || height < 34 ? .compact : .expanded
     }
 
     static func overlapPlacements(for intervals: [CalendarLayoutInterval]) -> [String: CalendarOverlapPlacement] {
@@ -357,14 +366,13 @@ struct UpcomingBoardView: View {
 
     private func entry(for task: TaskViewModel) -> CommandCenterCalendarEntry {
         let calendar = Calendar.current
-        let date = calendar.startOfDay(for: task.scheduledStart ?? task.scheduledTime ?? task.whenDate ?? task.scheduledDate ?? task.dueDate ?? Date())
-        let start = task.scheduledStart ?? task.scheduledTime ?? date
-        let end = task.scheduledEnd
-            ?? task.scheduledTime?.addingTimeInterval(TimeInterval(max(15, task.estimatedMinutes) * 60))
-            ?? task.scheduledStart?.addingTimeInterval(TimeInterval(max(15, task.estimatedMinutes) * 60))
+        let date = calendar.startOfDay(for: task.calendarDisplayDate ?? Date())
+        let start = task.calendarStart ?? date
+        let isAllDay = task.scheduledStart == nil && task.scheduledTime == nil
+        let end = task.calendarEnd
+            ?? (!isAllDay ? start.addingTimeInterval(TimeInterval(max(15, task.estimatedMinutes) * 60)) : nil)
             ?? calendar.date(byAdding: .day, value: 1, to: date)
             ?? date.addingTimeInterval(86_400)
-        let isAllDay = task.scheduledStart == nil && task.scheduledTime == nil
         let habit = viewModel.resolvedHabit(for: task)
         let intent = viewModel.resolvedIntentPresentation(for: task)
         let accent = habit?.accent ?? (intent.isUnassigned ? DS.info : intent.accent)
@@ -894,23 +902,24 @@ private struct CalendarEntryPositionReader: View {
 
     @State private var resizeEdge: CalendarResizeEdge?
     @State private var resizeTranslation: CGSize = .zero
+    @State private var moveTranslation: CGSize = .zero
 
     var body: some View {
         GeometryReader { proxy in
-            CalendarEntryBlock(entry: entry, isSelected: isSelected, isHovered: isHovered)
+            CalendarEntryBlock(
+                entry: entry,
+                isSelected: isSelected,
+                isHovered: isHovered,
+                density: CommandCenterCalendarLayout.entryDensity(width: frameWidth, height: preview.height)
+            )
                 .frame(width: frameWidth, height: preview.height)
-                .offset(y: preview.offsetY)
+                .offset(x: moveTranslation.width, y: preview.offsetY + moveTranslation.height)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     onOpenEditor(entry, proxy.frame(in: .named(coordinateSpaceName)))
                 }
                 .onHover(perform: onHover)
-                .gesture(
-                    DragGesture(minimumDistance: 5)
-                        .onEnded { value in
-                            onMove(value.translation)
-                        }
-                )
+                .gesture(moveGesture)
                 .overlay(alignment: .top) {
                     CalendarResizeHandle(isActive: resizeEdge == .top, isVisible: showsResizeHandles)
                         .gesture(
@@ -947,6 +956,22 @@ private struct CalendarEntryPositionReader: View {
         .frame(width: frameWidth, height: frameHeight)
     }
 
+    private var moveGesture: some Gesture {
+        DragGesture(minimumDistance: 5)
+            .onChanged { value in
+                guard entry.isEditableTask, resizeEdge == nil else { return }
+                moveTranslation = value.translation
+            }
+            .onEnded { value in
+                guard entry.isEditableTask, resizeEdge == nil else {
+                    moveTranslation = .zero
+                    return
+                }
+                onMove(value.translation)
+                moveTranslation = .zero
+            }
+    }
+
     private var preview: CalendarResizePreview {
         guard let resizeEdge else {
             return CalendarResizePreview(offsetY: 0, height: frameHeight)
@@ -967,59 +992,63 @@ private struct CalendarEntryBlock: View {
     let entry: CommandCenterCalendarEntry
     let isSelected: Bool
     let isHovered: Bool
+    let density: CalendarEntryDensity
 
     var body: some View {
         HStack(spacing: 0) {
             Rectangle()
                 .fill(entry.accent)
                 .frame(width: 3)
+                .padding(.vertical, 3)
 
-            VStack(alignment: .leading, spacing: DS.space2) {
+            VStack(alignment: .leading, spacing: density == .compact ? 0 : DS.space2) {
                 HStack(spacing: DS.space4) {
                     Text(entry.title)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: density == .compact ? 10 : 11, weight: .semibold))
                         .foregroundStyle(entryTextColor)
                         .lineLimit(1)
+                        .truncationMode(.tail)
 
                     Spacer(minLength: 0)
 
-                    if entry.event?.isExternal == true {
+                    if density == .expanded, entry.event?.isExternal == true {
                         Image(systemName: "calendar")
                             .font(.system(size: 8, weight: .medium))
                             .foregroundStyle(entry.accent.opacity(0.85))
                     }
                 }
 
-                if let subtitle = entry.subtitle {
+                if density == .expanded, let subtitle = entry.subtitle {
                     Text(subtitle)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(entry.accent.opacity(0.9))
+                        .foregroundStyle(entry.accent.opacity(0.72))
                         .lineLimit(1)
                 }
             }
             .padding(.horizontal, DS.space6)
-            .padding(.vertical, DS.space4 + 1)
+            .padding(.vertical, density == .compact ? 2 : DS.space4)
+            .frame(maxHeight: .infinity, alignment: density == .compact ? .center : .top)
         }
-        .background(blockFill, in: .rect(cornerRadius: 7))
+        .background(blockFill, in: .rect(cornerRadius: 5))
         .overlay(
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(isSelected ? entry.accent.opacity(0.72) : entry.accent.opacity(isHovered ? 0.36 : 0.22), lineWidth: isSelected ? 1.2 : 0.7)
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(borderColor, lineWidth: isSelected ? 1 : 0.5)
         )
-        .shadow(color: isSelected ? entry.accent.opacity(0.20) : .black.opacity(0.18), radius: isSelected ? 14 : 3, x: 0, y: isSelected ? 4 : 1)
+        .shadow(color: .black.opacity(isSelected ? 0.10 : 0.05), radius: isSelected ? 4 : 1, x: 0, y: isSelected ? 2 : 1)
         .opacity(entry.source == .draft ? 0.78 : 1)
-        .cosmoGlassSceneSignal(
-            id: "upcoming-entry-\(entry.id)",
-            source: .commandCalendar,
-            color: entry.accent,
-            intensity: entry.source == .draft ? 0.24 : 0.20,
-            allowsDeepDiffusion: true
-        )
+        .clipped()
         .accessibilityElement(children: .combine)
     }
 
     private var blockFill: Color {
-        if entry.source == .draft { return DS.accent.opacity(0.18) }
-        return entry.accent.opacity(DS.palette.isDark ? 0.16 : 0.10)
+        if entry.source == .draft { return DS.accent.opacity(0.14) }
+        return entry.accent.opacity(DS.palette.isDark ? 0.14 : 0.08)
+    }
+
+    private var borderColor: Color {
+        if isSelected { return entry.accent.opacity(0.55) }
+        if isHovered { return entry.accent.opacity(0.24) }
+        return entry.accent.opacity(0.16)
     }
 
     private var entryTextColor: Color {

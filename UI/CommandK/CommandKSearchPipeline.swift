@@ -19,6 +19,8 @@ enum CommandKActionKind: String, Equatable {
     case openThinkspace
     case savedSearch
     case openApp
+    case openCosmoPane
+    case openCosmoWindow
     case askCosmo
 }
 
@@ -86,8 +88,207 @@ struct CommandKAction: Identifiable, Equatable {
             return payload.queryText?.isEmpty == false
         case .openApp:
             return payload.title?.isEmpty == false
+        case .openCosmoPane, .openCosmoWindow:
+            return true
         case .askCosmo:
             return payload.body?.isEmpty == false
+        }
+    }
+}
+
+enum CommandKVisualStyle: String, Equatable {
+    case document
+    case browser
+    case swipeFile
+    case cosmo
+    case commandCenter
+    case thinkspace
+    case domain
+    case app
+    case search
+    case idea
+    case task
+    case research
+    case content
+    case connection
+    case image
+    case readwise
+}
+
+struct CommandKVisualIdentity: Equatable {
+    let style: CommandKVisualStyle
+    let symbolName: String
+    let title: String
+    let subtitle: String
+    let badge: String
+
+    static func action(_ action: CommandKAction) -> CommandKVisualIdentity {
+        switch action.kind {
+        case .captureSwipe, .captureSwipeWithIdea:
+            return CommandKVisualIdentity(
+                style: .swipeFile,
+                symbolName: "bolt.fill",
+                title: "Swipe File",
+                subtitle: "Hook capture",
+                badge: "SWIPE"
+            )
+        case .captureLane, .createCaptureLane, .captureResearch:
+            return CommandKVisualIdentity(
+                style: .research,
+                symbolName: action.icon,
+                title: "Research",
+                subtitle: "Capture route",
+                badge: "SRC"
+            )
+        case .createIdea:
+            return atom(type: .idea)
+        case .createTask:
+            return atom(type: .task)
+        case .createContent:
+            return atom(type: .content)
+        case .createThinkspace, .navigateLastThinkspace, .openThinkspace:
+            return CommandKVisualIdentity(
+                style: .thinkspace,
+                symbolName: "rectangle.3.group.fill",
+                title: "Thinkspace",
+                subtitle: "Canvas workspace",
+                badge: "SPACE"
+            )
+        case .navigateCommandCenter:
+            return CommandKVisualIdentity(
+                style: .commandCenter,
+                symbolName: "command.circle.fill",
+                title: "Command Center",
+                subtitle: "Planning dashboard",
+                badge: "HOME"
+            )
+        case .openBrowser:
+            return CommandKVisualIdentity(
+                style: .browser,
+                symbolName: "safari",
+                title: "Browser",
+                subtitle: "Research pane",
+                badge: "WEB"
+            )
+        case .openDomain:
+            return domain(action.payload.domain, title: action.title, symbolName: action.icon)
+        case .openAtom:
+            return CommandKVisualIdentity(
+                style: .document,
+                symbolName: "arrow.up.left.and.arrow.down.right",
+                title: "Object",
+                subtitle: "Focus surface",
+                badge: "OPEN"
+            )
+        case .savedSearch:
+            return CommandKVisualIdentity(
+                style: .search,
+                symbolName: "magnifyingglass.circle.fill",
+                title: "Saved Search",
+                subtitle: action.payload.queryText ?? "Search",
+                badge: "FIND"
+            )
+        case .openApp:
+            return CommandKVisualIdentity(
+                style: .app,
+                symbolName: "app.fill",
+                title: "App",
+                subtitle: action.payload.title ?? "macOS app",
+                badge: "APP"
+            )
+        case .openCosmoPane, .openCosmoWindow, .askCosmo:
+            return CommandKVisualIdentity(
+                style: .cosmo,
+                symbolName: "sparkles",
+                title: "Cosmo",
+                subtitle: "AI assistant",
+                badge: "AI"
+            )
+        }
+    }
+
+    static func result(_ result: UnifiedSearchResult) -> CommandKVisualIdentity {
+        switch result.resultKind {
+        case .browserPin:
+            return CommandKVisualIdentity(
+                style: .browser,
+                symbolName: "safari",
+                title: "Browser",
+                subtitle: result.browserTitle ?? result.subtitle ?? "Pinned page",
+                badge: "WEB"
+            )
+        case .thinkspace:
+            return CommandKVisualIdentity(
+                style: .thinkspace,
+                symbolName: result.icon,
+                title: "Thinkspace",
+                subtitle: result.subtitle ?? "Canvas workspace",
+                badge: "SPACE"
+            )
+        case .readwise:
+            return CommandKVisualIdentity(
+                style: .readwise,
+                symbolName: result.icon,
+                title: "Library",
+                subtitle: result.subtitle ?? "Readwise",
+                badge: "BOOK"
+            )
+        case .atom, .project:
+            if result.source == .swipes {
+                return CommandKVisualIdentity(
+                    style: .swipeFile,
+                    symbolName: "bolt.fill",
+                    title: "Swipe File",
+                    subtitle: result.subtitle ?? "Hook capture",
+                    badge: "SWIPE"
+                )
+            }
+            if result.source == .ideas {
+                return atom(type: .idea)
+            }
+            return result.atomType.map(atom(type:)) ?? CommandKVisualIdentity(
+                style: .document,
+                symbolName: result.icon,
+                title: result.source.displayName,
+                subtitle: result.subtitle ?? "Object",
+                badge: "OPEN"
+            )
+        }
+    }
+
+    static func atom(type: AtomType) -> CommandKVisualIdentity {
+        switch type {
+        case .idea:
+            return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb.fill", title: "Idea", subtitle: "Spark", badge: "IDEA")
+        case .task:
+            return CommandKVisualIdentity(style: .task, symbolName: "checkmark.circle.fill", title: "Task", subtitle: "Next action", badge: "TASK")
+        case .research:
+            return CommandKVisualIdentity(style: .research, symbolName: "doc.text.magnifyingglass", title: "Research", subtitle: "Source", badge: "SRC")
+        case .content:
+            return CommandKVisualIdentity(style: .content, symbolName: "paperplane.fill", title: "Content", subtitle: "Writing", badge: "POST")
+        case .connection:
+            return CommandKVisualIdentity(style: .connection, symbolName: "link.circle.fill", title: "Connection", subtitle: "Relationship", badge: "LINK")
+        case .image:
+            return CommandKVisualIdentity(style: .image, symbolName: "photo.fill", title: "Image", subtitle: "Visual", badge: "IMG")
+        case .thinkspace:
+            return CommandKVisualIdentity(style: .thinkspace, symbolName: "rectangle.3.group.fill", title: "Thinkspace", subtitle: "Canvas workspace", badge: "SPACE")
+        default:
+            return CommandKVisualIdentity(style: .document, symbolName: type.iconName, title: type.displayName, subtitle: "Object", badge: "OPEN")
+        }
+    }
+
+    private static func domain(_ rawDomain: String?, title: String, symbolName: String) -> CommandKVisualIdentity {
+        switch rawDomain {
+        case "swipeGallery":
+            return CommandKVisualIdentity(style: .swipeFile, symbolName: "bolt.fill", title: "Swipe File", subtitle: "Captures and hooks", badge: "SWIPE")
+        case "ideas":
+            return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb.fill", title: "Ideas", subtitle: "Sparks and notes", badge: "IDEA")
+        case "readwise":
+            return CommandKVisualIdentity(style: .readwise, symbolName: "books.vertical.fill", title: "Library", subtitle: "Books and highlights", badge: "BOOK")
+        case "database":
+            return CommandKVisualIdentity(style: .domain, symbolName: "tray.full.fill", title: "Database", subtitle: "All objects", badge: "DB")
+        default:
+            return CommandKVisualIdentity(style: .domain, symbolName: symbolName, title: title, subtitle: "Command-K domain", badge: "OPEN")
         }
     }
 }
@@ -164,6 +365,10 @@ enum CommandKActionParser {
 
         if let app = parseAppOpen(trimmed) {
             return app
+        }
+
+        if let cosmoSurface = parseCosmoSurface(trimmed) {
+            return cosmoSurface
         }
 
         if let creation = parseCreation(trimmed) {
@@ -302,6 +507,33 @@ enum CommandKActionParser {
             icon: "app.fill",
             payload: CommandKActionPayload(title: appName, rawText: text)
         )
+    }
+
+    private static func parseCosmoSurface(_ text: String) -> CommandKAction? {
+        switch normalizedAlias(text) {
+        case "cosmo pane", "open cosmo pane", "cosmo as pane", "open cosmo as pane",
+             "ai pane", "open ai pane", "ai as pane", "open ai as pane":
+            return CommandKAction(
+                kind: .openCosmoPane,
+                title: "Open Cosmo as Pane",
+                subtitle: "Dock the AI assistant beside your workspace",
+                icon: "sparkles",
+                payload: CommandKActionPayload(rawText: text)
+            )
+        case "cosmo window", "open cosmo window", "cosmo floating", "open cosmo floating",
+             "cosmo floating window", "open cosmo floating window",
+             "ai window", "open ai window", "ai floating", "open ai floating",
+             "ai floating window", "open ai floating window":
+            return CommandKAction(
+                kind: .openCosmoWindow,
+                title: "Open Cosmo Floating Window",
+                subtitle: "Open the AI assistant as a floating window",
+                icon: "sparkles",
+                payload: CommandKActionPayload(rawText: text)
+            )
+        default:
+            return nil
+        }
     }
 
     private static func parseCreation(_ text: String) -> CommandKAction? {

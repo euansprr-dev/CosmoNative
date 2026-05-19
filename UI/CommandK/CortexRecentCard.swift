@@ -65,7 +65,7 @@ struct CortexRecentCard: View {
     private var thumbnailBackground: some View {
         ZStack {
             RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                .fill(DS.vellumDeep)
+                .fill(thumbnailSurface)
             thumbnailContent
         }
     }
@@ -134,6 +134,15 @@ struct CortexRecentCard: View {
         case .image: return DS.entityImage
         default: return DS.textSecondary
         }
+    }
+
+    private var thumbnailSurface: Color {
+        isDocumentPreview ? CommandKPreviewPaper.fill : DS.vellumDeep
+    }
+
+    private var isDocumentPreview: Bool {
+        let hasImage = item.thumbnailURL?.isEmpty == false
+        return !hasImage && item.type != .connection
     }
 }
 

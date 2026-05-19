@@ -153,7 +153,7 @@ struct LibraryView: View {
                     Text("Standalone")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(DS.text)
-                    Text("Unplaced atoms created outside canvases and projects.")
+                    Text("Unplaced atoms created outside thinkspaces.")
                         .font(.system(size: 12))
                         .foregroundColor(DS.textMuted)
                 }
@@ -353,9 +353,6 @@ struct LibraryView: View {
                 Button { viewModel.createAtom(type: .connection) } label: {
                     Label("Connection", systemImage: "link.circle")
                 }
-                Button { viewModel.createAtom(type: .project) } label: {
-                    Label("Project", systemImage: "folder")
-                }
                 Button { viewModel.createAtom(type: .idea) } label: {
                     Label("Idea", systemImage: "lightbulb")
                 }
@@ -540,7 +537,7 @@ struct LibraryView: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(DS.textSecondary)
 
-            Text("Create your first note, idea, or project to get started")
+            Text("Create your first note, idea, or thinkspace to get started")
                 .font(.system(size: 13))
                 .foregroundColor(DS.textMuted)
         }
@@ -822,7 +819,7 @@ struct LibraryItem: Identifiable {
             self.typeName = "Project"
         case .thinkspace:
             self.icon = "rectangle.3.group"
-            self.color = project?.projectMetadata?.color.map { Color(hex: $0) } ?? DS.accent
+            self.color = thinkspaceMetadata?.accentColorHex.map { Color(hex: $0) } ?? DS.accent
             self.typeName = "Thinkspace"
         case .image:
             self.icon = "photo.fill"
@@ -854,7 +851,7 @@ struct LibraryItem: Identifiable {
         self.title = thinkspace.name
         self.atomType = .thinkspace
         self.icon = "rectangle.3.group"
-        if let colorHex = project?.projectMetadata?.color {
+        if let colorHex = thinkspace.accentColorHex {
             self.color = Color(hex: colorHex)
         } else {
             self.color = DS.accent
@@ -864,8 +861,8 @@ struct LibraryItem: Identifiable {
         self.updatedAt = thinkspace.lastOpened
         self.relativeDate = Self.relativeDateString(from: thinkspace.lastOpened)
         self.kind = .thinkspace
-        self.projectUUID = project?.uuid ?? thinkspace.projectUuid
-        self.projectName = project?.title
+        self.projectUUID = nil
+        self.projectName = nil
         self.thinkspaceUUIDs = [thinkspace.id]
         self.thinkspaceNames = [thinkspace.name]
         self.nestedThinkspaceCount = nestedThinkspaceCount
@@ -899,10 +896,10 @@ final class LibraryViewModel: ObservableObject {
     private var sortMode: LibrarySortMode = .dateAdded
     private var libraryLoaded = false
 
-    /// UUIDs of atoms that belong to a project (via thinkspace or link) — excluded from top-level
+    /// Legacy project-owned atom UUIDs. Kept empty after project deprecation.
     private var projectOwnedAtomUUIDs: Set<String> = []
 
-    /// Per-project child counts (for folder card badges)
+    /// Legacy per-project child counts. Kept empty after project deprecation.
     private var projectChildCounts: [String: Int] = [:]
 
     var isAtHome: Bool {
@@ -924,60 +921,25 @@ final class LibraryViewModel: ObservableObject {
         isLoading = true
         do {
             // Fetch all user-facing library atoms, including standalone Atom Window captures.
-            let userTypes: [AtomType] = [.idea, .note, .task, .content, .research, .connection, .project, .image]
+            let userTypes: [AtomType] = [.idea, .note, .task, .content, .research, .connection, .image]
             let atoms = try await AtomRepository.shared.fetchAll(types: userTypes)
             if ThinkspaceManager.shared.thinkspaces.isEmpty {
                 await ThinkspaceManager.shared.loadThinkspaces()
             }
-            let projects = atoms.filter { $0.type == .project }
-            let projectsByUUID = Dictionary(uniqueKeysWithValues: projects.map { ($0.uuid, $0) })
             let thinkspaces = ThinkspaceManager.shared.sidebarThinkspaces
             let thinkspacesByID = Dictionary(uniqueKeysWithValues: thinkspaces.map { ($0.id, $0) })
-            let memberships = try await AtomRepository.shared.fetchThinkspaceMembership(
-                for: atoms.filter { $0.type != .project }.map(\.uuid)
-            )
+            let memberships = try await AtomRepository.shared.fetchThinkspaceMembership(for: atoms.map(\.uuid))
 
-            // Compute project-owned atom UUIDs (atoms on project thinkspaces or with project links)
-            let projectThinkspaces = ThinkspaceManager.shared.thinkspaces.filter { $0.projectUuid != nil }
-            let projectThinkspaceIds = projectThinkspaces.map(\.id)
-            let projectUUIDs = projects.map(\.uuid)
-
-            let (allOwned, perProject) = try await AtomRepository.shared.fetchProjectOwnedAtomUUIDs(
-                projectThinkspaceIds: projectThinkspaceIds,
-                projectUUIDs: projectUUIDs
-            )
-            projectOwnedAtomUUIDs = allOwned
-            projectChildCounts = perProject.mapValues(\.count)
+            projectOwnedAtomUUIDs = []
+            projectChildCounts = [:]
 
             let atomItems = atoms
                 .filter { !$0.isDeleted && !$0.isSwipeFileAtom }
                 .map { atom -> LibraryItem in
                     let atomThinkspaces = (memberships[atom.uuid] ?? []).compactMap { thinkspacesByID[$0] }
-                    let resolvedProject: Atom? = {
-                        if atom.type == .project { return atom }
-                        if let explicitProjectUUID = atom.link(ofType: .project)?.uuid,
-                           let project = projectsByUUID[explicitProjectUUID] {
-                            return project
-                        }
-                        if let thinkspaceProjectUUID = atomThinkspaces.compactMap(\.projectUuid).first,
-                           let project = projectsByUUID[thinkspaceProjectUUID] {
-                            return project
-                        }
-                        return nil
-                    }()
-
-                    if atom.type == .project {
-                        return LibraryItem(
-                            atom: atom,
-                            childCount: projectChildCounts[atom.uuid] ?? 0,
-                            project: resolvedProject,
-                            thinkspaces: []
-                        )
-                    }
 
                     return LibraryItem(
                         atom: atom,
-                        project: resolvedProject,
                         thinkspaces: atomThinkspaces
                     )
                 }
@@ -985,7 +947,7 @@ final class LibraryViewModel: ObservableObject {
             let thinkspaceItems = thinkspaces.map { thinkspace in
                 LibraryItem(
                     thinkspace: thinkspace,
-                    project: thinkspace.projectUuid.flatMap { projectsByUUID[$0] },
+                    project: nil,
                     nestedThinkspaceCount: ThinkspaceManager.shared.childThinkspaces(of: thinkspace.id).count
                 )
             }
@@ -1196,7 +1158,7 @@ final class LibraryViewModel: ObservableObject {
         var items = allItems
         homeStandaloneItems = []
 
-        // When searching, show ALL atoms (including project-owned) so search finds them
+        // When searching, show all atoms so search finds them regardless of placement.
         if !searchFilter.isEmpty {
             items = items.filter {
                 $0.title.localizedCaseInsensitiveContains(searchFilter) ||
@@ -1204,7 +1166,7 @@ final class LibraryViewModel: ObservableObject {
                 ($0.provenanceSummary?.localizedCaseInsensitiveContains(searchFilter) ?? false)
             }
         } else {
-            // At home level without search: exclude non-folder atoms owned by a project
+            // At home level without search: show folders and standalone atoms.
             items = items.filter { item in
                 if item.kind == .thinkspace {
                     return false
@@ -1295,7 +1257,7 @@ final class LibraryViewModel: ObservableObject {
 
     func loadRecentlyDeleted() async {
         do {
-            let userTypes: [AtomType] = [.content, .research, .connection, .project, .thinkspace]
+            let userTypes: [AtomType] = [.content, .research, .connection, .thinkspace]
             let typeStrings = userTypes.map { $0.rawValue }
             let thirtyDaysAgo = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-30 * 86400))
 

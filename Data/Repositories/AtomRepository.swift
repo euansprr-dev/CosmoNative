@@ -982,7 +982,8 @@ extension AtomRepository {
             name: title,  // Same name as project
             projectUuid: project.uuid,
             parentThinkspaceId: nil,
-            isRootThinkspace: true
+            isRootThinkspace: true,
+            accentColorHex: color
         )
 
         guard let thinkspaceMetadataJson = try? JSONEncoder().encode(thinkspaceMetadata),
@@ -1060,6 +1061,7 @@ extension AtomRepository {
         thinkspaceMetadata.projectUuid = project.uuid
         thinkspaceMetadata.isRootThinkspace = true
         thinkspaceMetadata.parentThinkspaceId = nil
+        thinkspaceMetadata.accentColorHex = color
 
         if let metadataJson = try? JSONEncoder().encode(thinkspaceMetadata),
            let metadataString = String(data: metadataJson, encoding: .utf8) {
@@ -1088,6 +1090,188 @@ extension AtomRepository {
 
         print("✅ Project created from existing ThinkSpace: \(thinkspaceName)")
         return project
+    }
+
+    /// One-way compatibility migration from the old Project container model to Thinkspace ownership.
+    /// Project atoms are soft-deleted after their root Thinkspace receives the project's color
+    /// and all explicit `.project` links are rewritten to `.thinkspace(rootThinkspaceUUID)`.
+    func migrateProjectsToThinkspaces() async throws {
+        let projects = try await fetchAll(type: .project)
+        guard !projects.isEmpty else { return }
+
+        var thinkspaceAtoms = try await fetchAll(type: .thinkspace)
+        var updatesByUUID: [String: Atom] = [:]
+        var rootThinkspaceByProjectUUID: [String: String] = [:]
+
+        for project in projects {
+            let projectMetadata = project.metadataValue(as: ProjectMetadata.self)
+            let projectColor = projectMetadata?.color
+            let root = try await rootThinkspaceForMigratingProject(
+                project,
+                projectMetadata: projectMetadata,
+                existingThinkspaces: thinkspaceAtoms,
+                fallbackColorHex: projectColor
+            )
+
+            if !thinkspaceAtoms.contains(where: { $0.uuid == root.uuid }) {
+                thinkspaceAtoms.append(root)
+            }
+
+            rootThinkspaceByProjectUUID[project.uuid] = root.uuid
+
+            let updatedRoot = migratedRootThinkspaceAtom(
+                root,
+                project: project,
+                colorHex: projectColor
+            )
+            updatesByUUID[updatedRoot.uuid] = updatedRoot
+
+            for thinkspace in thinkspaceAtoms where thinkspace.uuid != root.uuid {
+                guard let migrated = migratedChildThinkspaceAtom(
+                    thinkspace,
+                    fromProjectUUID: project.uuid,
+                    rootThinkspaceUUID: root.uuid,
+                    fallbackColorHex: projectColor
+                ) else { continue }
+                updatesByUUID[migrated.uuid] = migrated
+            }
+        }
+
+        let linkedAtoms = try await atomsWithProjectLinks()
+        for atom in linkedAtoms where atom.type != .project {
+            guard let migrated = migratedProjectLinksAtom(
+                atom,
+                rootThinkspaceByProjectUUID: rootThinkspaceByProjectUUID
+            ) else { continue }
+            updatesByUUID[migrated.uuid] = migrated
+        }
+
+        if !updatesByUUID.isEmpty {
+            try await updateBatch(Array(updatesByUUID.values))
+        }
+
+        try await deleteBatch(uuids: projects.map(\.uuid))
+
+        NotificationCenter.default.post(name: .atomsDidChange, object: nil)
+        await ThinkspaceManager.shared.loadThinkspaces()
+    }
+
+    private func rootThinkspaceForMigratingProject(
+        _ project: Atom,
+        projectMetadata: ProjectMetadata?,
+        existingThinkspaces: [Atom],
+        fallbackColorHex: String?
+    ) async throws -> Atom {
+        if let rootUUID = projectMetadata?.rootThinkspaceUuid {
+            if let root = existingThinkspaces.first(where: { $0.uuid == rootUUID }) {
+                return root
+            }
+            if let root = try await fetch(uuid: rootUUID) {
+                return root
+            }
+        }
+
+        if let root = existingThinkspaces.first(where: { atom in
+            guard let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { return false }
+            return metadata.projectUuid == project.uuid && (metadata.isRootThinkspace || metadata.parentThinkspaceId == nil)
+        }) {
+            return root
+        }
+
+        let title = project.title ?? "Untitled Thinkspace"
+        let metadata = ThinkspaceMetadata(
+            name: title,
+            accentColorHex: fallbackColorHex
+        )
+        let root = Atom.new(
+            type: .thinkspace,
+            title: title,
+            body: project.body,
+            metadata: try? String(data: JSONEncoder().encode(metadata), encoding: .utf8)
+        )
+        return try await create(root)
+    }
+
+    private func migratedRootThinkspaceAtom(
+        _ root: Atom,
+        project: Atom,
+        colorHex: String?
+    ) -> Atom {
+        var metadata = root.metadataValue(as: ThinkspaceMetadata.self)
+            ?? ThinkspaceMetadata(name: root.title ?? project.title ?? "Untitled Thinkspace")
+        metadata.name = root.title ?? project.title ?? metadata.name
+        metadata.projectUuid = nil
+        metadata.parentThinkspaceId = nil
+        metadata.isRootThinkspace = false
+        if metadata.accentColorHex == nil {
+            metadata.accentColorHex = colorHex
+        }
+
+        var updated = root.withMetadata(metadata)
+        if updated.title == nil {
+            updated.title = project.title
+        }
+        return updated
+    }
+
+    private func migratedChildThinkspaceAtom(
+        _ thinkspace: Atom,
+        fromProjectUUID projectUUID: String,
+        rootThinkspaceUUID: String,
+        fallbackColorHex: String?
+    ) -> Atom? {
+        guard var metadata = thinkspace.metadataValue(as: ThinkspaceMetadata.self),
+              metadata.projectUuid == projectUUID else {
+            return nil
+        }
+
+        metadata.projectUuid = nil
+        if metadata.parentThinkspaceId == nil {
+            metadata.parentThinkspaceId = rootThinkspaceUUID
+        }
+        if metadata.accentColorHex == nil {
+            metadata.accentColorHex = fallbackColorHex
+        }
+
+        return thinkspace.withMetadata(metadata)
+    }
+
+    private func atomsWithProjectLinks() async throws -> [Atom] {
+        try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(sql: "links LIKE ?", arguments: ["%\"type\":\"project\"%"])
+                .fetchAll(db)
+        }
+    }
+
+    private func migratedProjectLinksAtom(
+        _ atom: Atom,
+        rootThinkspaceByProjectUUID: [String: String]
+    ) -> Atom? {
+        var didChange = false
+        let migratedLinks = atom.linksList.map { link -> AtomLink in
+            guard link.linkType == .project,
+                  let rootThinkspaceUUID = rootThinkspaceByProjectUUID[link.uuid] else {
+                return link
+            }
+            didChange = true
+            return .thinkspace(rootThinkspaceUUID)
+        }
+
+        guard didChange else { return nil }
+        return atom.withLinks(Self.deduplicatedLinks(migratedLinks))
+    }
+
+    private static func deduplicatedLinks(_ links: [AtomLink]) -> [AtomLink] {
+        var seen: Set<String> = []
+        var result: [AtomLink] = []
+        for link in links {
+            let key = "\(link.type)|\(link.uuid)|\(link.entityType ?? "")"
+            guard seen.insert(key).inserted else { continue }
+            result.append(link)
+        }
+        return result
     }
 }
 

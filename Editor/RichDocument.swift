@@ -274,7 +274,7 @@ enum RichDocumentSerializer {
         titleMode: Bool = false
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let textColor = darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+        let textColor = darkMode ? NSColor.white : NSColor(DS.documentText)
 
         for (index, block) in document.blocks.enumerated() {
             if index > 0 {
@@ -578,7 +578,7 @@ enum RichDocumentSerializer {
     }
 
     private static func imageFallbackAttributedString(fontSize: CGFloat, darkMode: Bool) -> NSAttributedString {
-        let color = darkMode ? NSColor.white.withAlphaComponent(0.65) : NSColor(CosmoColors.textSecondary)
+        let color = darkMode ? NSColor.white.withAlphaComponent(0.65) : NSColor(DS.documentTextSecondary)
         return NSAttributedString(string: "[Image]", attributes: [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
             .foregroundColor: color
@@ -612,7 +612,7 @@ enum RichDocumentSerializer {
         baseFontWeight: NSFont.Weight,
         titleMode: Bool
     ) -> [NSAttributedString.Key: Any] {
-        let color = darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+        let color = darkMode ? NSColor.white : NSColor(DS.documentText)
         switch block.kind {
         case .quote:
             return [
@@ -647,7 +647,7 @@ enum RichDocumentSerializer {
         }
         return [
             .font: NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight),
-            .foregroundColor: darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+            .foregroundColor: darkMode ? NSColor.white : NSColor(DS.documentText),
             .paragraphStyle: paragraphStyle
         ]
     }

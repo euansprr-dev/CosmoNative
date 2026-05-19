@@ -465,6 +465,10 @@ public enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
 
     public var id: String { rawValue }
 
+    public static var allCases: [NavigationSection] {
+        [.home, .today, .ideas, .content, .connections, .research, .calendar, .canvas, .library, .cosmo]
+    }
+
     public var icon: String {
         switch self {
         case .home: return "house.fill"

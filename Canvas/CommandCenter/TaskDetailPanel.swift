@@ -23,6 +23,7 @@ struct TaskDetailPanel: View {
     @State private var editedHabitUUID: String? = nil
     @State private var editedLinkedAtoms: [TaskLinkedAtom] = []
     @State private var editedTitleMentions: [RichMention] = []
+    @State private var titleEditScope: RecurringTaskTitleEditScope = .currentOnly
 
     @State private var recurrenceRule: RecurrenceRule?
     @State private var recurrencePreset: TaskDetailRepeatPreset = .weekly
@@ -101,19 +102,92 @@ struct TaskDetailPanel: View {
         editedHabitUUID = task.habitUUID
         editedLinkedAtoms = task.linkedAtoms
         editedTitleMentions = task.titleMentions
+        titleEditScope = .currentOnly
     }
 
     // MARK: - Title (with @ mentions)
 
     private var titleSection: some View {
-        TaskTitleMentionField(
-            title: $editedTitle,
-            mentions: $editedTitleMentions,
-            onSubmit: {
-                saveTitle()
-                saveTitleMentions()
+        VStack(alignment: .leading, spacing: 8) {
+            TaskTitleMentionField(
+                title: $editedTitle,
+                mentions: $editedTitleMentions,
+                onSubmit: {
+                    saveTitle()
+                    saveTitleMentions()
+                }
+            )
+
+            if showsTitleScopeSelector {
+                titleScopeSelector
             }
+        }
+    }
+
+    private var showsTitleScopeSelector: Bool {
+        task.recurrenceParentUUID != nil
+    }
+
+    private var titleScopeSelector: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "repeat")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
+
+                Text(recurrenceRule?.shortDisplayText ?? "Repeats")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
+
+                Spacer()
+
+                Text("Apply edits to")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            HStack(spacing: 6) {
+                titleScopeButton(.currentOnly, label: "\(titleScopeDateLabel) only")
+                titleScopeButton(.currentAndFuture, label: "\(titleScopeDateLabel) + future")
+            }
+        }
+        .padding(8)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DS.borderSubtle, lineWidth: 1)
         )
+    }
+
+    private func titleScopeButton(_ scope: RecurringTaskTitleEditScope, label: String) -> some View {
+        let isActive = titleEditScope == scope
+
+        return Button {
+            titleEditScope = scope
+        } label: {
+            Text(label)
+                .font(DS.caption2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .foregroundStyle(isActive ? DS.textOnAccent : DS.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 6)
+                .background(
+                    isActive ? DS.accent : DS.surfaceElevated,
+                    in: RoundedRectangle(cornerRadius: 7)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(isActive ? Color.clear : DS.borderSubtle, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var titleScopeDateLabel: String {
+        let date = task.whenDate ?? task.dueDate ?? task.calendarStart ?? Date()
+        return date.formatted(.dateTime.month(.abbreviated).day())
     }
 
     // MARK: - Scheduling
@@ -463,7 +537,11 @@ struct TaskDetailPanel: View {
     private func saveTitle() {
         guard editedTitle != task.title else { return }
         Task {
-            await viewModel.updateTask(uuid: task.uuid, title: editedTitle)
+            await viewModel.updateRecurringTaskTitle(
+                uuid: task.uuid,
+                title: editedTitle,
+                scope: titleEditScope
+            )
         }
     }
 

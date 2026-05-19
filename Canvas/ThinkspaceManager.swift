@@ -21,6 +21,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
     var projectUuid: String?        // nil = unassigned to any project
     var parentThinkspaceId: String? // nil = root ThinkSpace (no parent)
     var isRootThinkspace: Bool      // true for auto-created project root ThinkSpaces
+    var accentColorHex: String?     // Per-Thinkspace folder/glow color
 
     // Cluster zones (user-created, persistent)
     var clusters: [CodableCluster] = []
@@ -31,7 +32,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case name, lastOpened, zoomLevel, panOffsetX, panOffsetY, blockIds
-        case projectUuid, parentThinkspaceId, isRootThinkspace, clusters, deepDiveProfileUUID
+        case projectUuid, parentThinkspaceId, isRootThinkspace, accentColorHex, clusters, deepDiveProfileUUID
     }
 
     init(from decoder: Decoder) throws {
@@ -44,7 +45,8 @@ struct ThinkspaceMetadata: Codable, Sendable {
         blockIds = try container.decode([String].self, forKey: .blockIds)
         projectUuid = try container.decodeIfPresent(String.self, forKey: .projectUuid)
         parentThinkspaceId = try container.decodeIfPresent(String.self, forKey: .parentThinkspaceId)
-        isRootThinkspace = try container.decode(Bool.self, forKey: .isRootThinkspace)
+        isRootThinkspace = try container.decodeIfPresent(Bool.self, forKey: .isRootThinkspace) ?? false
+        accentColorHex = try container.decodeIfPresent(String.self, forKey: .accentColorHex)
         clusters = try container.decodeIfPresent([CodableCluster].self, forKey: .clusters) ?? []
         deepDiveProfileUUID = try container.decodeIfPresent(String.self, forKey: .deepDiveProfileUUID)
     }
@@ -59,6 +61,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
         projectUuid: String? = nil,
         parentThinkspaceId: String? = nil,
         isRootThinkspace: Bool = false,
+        accentColorHex: String? = nil,
         clusters: [CodableCluster] = [],
         deepDiveProfileUUID: String? = nil
     ) {
@@ -71,6 +74,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
         self.projectUuid = projectUuid
         self.parentThinkspaceId = parentThinkspaceId
         self.isRootThinkspace = isRootThinkspace
+        self.accentColorHex = accentColorHex
         self.clusters = clusters
         self.deepDiveProfileUUID = deepDiveProfileUUID
     }
@@ -91,6 +95,7 @@ struct Thinkspace: Identifiable, Equatable {
     var projectUuid: String?
     var parentThinkspaceId: String?
     var isRootThinkspace: Bool
+    var accentColorHex: String?
     var deepDiveProfileUUID: String?
 
     /// Whether this Thinkspace is assigned to a project
@@ -112,6 +117,7 @@ struct Thinkspace: Identifiable, Equatable {
             self.projectUuid = metadata.projectUuid
             self.parentThinkspaceId = metadata.parentThinkspaceId
             self.isRootThinkspace = metadata.isRootThinkspace
+            self.accentColorHex = metadata.accentColorHex
             self.deepDiveProfileUUID = metadata.deepDiveProfileUUID
         } else {
             self.name = atom.title ?? "Untitled"
@@ -122,6 +128,7 @@ struct Thinkspace: Identifiable, Equatable {
             self.projectUuid = nil
             self.parentThinkspaceId = nil
             self.isRootThinkspace = false
+            self.accentColorHex = nil
             self.deepDiveProfileUUID = nil
         }
     }
@@ -131,8 +138,13 @@ struct Thinkspace: Identifiable, Equatable {
         lhs.name == rhs.name &&
         lhs.projectUuid == rhs.projectUuid &&
         lhs.parentThinkspaceId == rhs.parentThinkspaceId &&
+        lhs.accentColorHex == rhs.accentColorHex &&
         lhs.blockCount == rhs.blockCount &&
         lhs.deepDiveProfileUUID == rhs.deepDiveProfileUUID
+    }
+
+    var accentColor: Color {
+        accentColorHex.map(Color.init(hex:)) ?? DS.accent
     }
 }
 
@@ -190,6 +202,11 @@ class ThinkspaceManager: ObservableObject {
     private let database = CosmoDatabase.shared
     private var cancellables = Set<AnyCancellable>()
 
+    static let accentColorPalette: [String] = [
+        "#2D6A4F", "#4A7B9D", "#C7623F", "#8B6BAB",
+        "#B08C5A", "#4A8B72", "#B06B6B", "#5B84B0"
+    ]
+
     // UserDefaults key for last opened Thinkspace
     private let lastThinkspaceKey = "com.cosmo.lastThinkspaceId"
 
@@ -198,8 +215,23 @@ class ThinkspaceManager: ObservableObject {
     private init() {
         Task {
             await ensureCommandCenterExists()
+            await migrateLegacyProjectsIfNeeded()
             await loadThinkspaces()
             await openLastThinkspace()
+        }
+    }
+
+    private func nextAccentColorHex() -> String {
+        let usedColors = Set(thinkspaces.compactMap(\.accentColorHex))
+        return Self.accentColorPalette.first { !usedColors.contains($0) }
+            ?? Self.accentColorPalette[thinkspaces.count % Self.accentColorPalette.count]
+    }
+
+    private func migrateLegacyProjectsIfNeeded() async {
+        do {
+            try await repository.migrateProjectsToThinkspaces()
+        } catch {
+            print("❌ Failed to migrate legacy projects: \(error)")
         }
     }
 
@@ -370,13 +402,15 @@ class ThinkspaceManager: ObservableObject {
         name: String,
         projectUuid: String? = nil,
         parentThinkspaceId: String? = nil,
-        isRoot: Bool = false
+        isRoot: Bool = false,
+        accentColorHex: String? = nil
     ) async -> Thinkspace? {
         let metadata = ThinkspaceMetadata(
             name: name,
             projectUuid: projectUuid,
             parentThinkspaceId: parentThinkspaceId,
-            isRootThinkspace: isRoot
+            isRootThinkspace: isRoot,
+            accentColorHex: accentColorHex ?? nextAccentColorHex()
         )
 
         guard let metadataJson = try? JSONEncoder().encode(metadata),
@@ -406,6 +440,28 @@ class ThinkspaceManager: ObservableObject {
         }
 
         return nil
+    }
+
+    func updateColor(_ thinkspace: Thinkspace, to colorHex: String) async {
+        do {
+            guard var atom = try await repository.fetch(uuid: thinkspace.id) else {
+                print("❌ Thinkspace not found for color update")
+                return
+            }
+
+            var metadata = atom.metadataValue(as: ThinkspaceMetadata.self) ?? ThinkspaceMetadata(name: thinkspace.name)
+            metadata.accentColorHex = colorHex
+            atom = atom.withMetadata(metadata)
+
+            try await repository.update(atom)
+            await loadThinkspaces()
+
+            if currentThinkspace?.id == thinkspace.id {
+                currentThinkspace = self.thinkspaces.first { $0.id == thinkspace.id }
+            }
+        } catch {
+            print("❌ Failed to update Thinkspace color: \(error)")
+        }
     }
 
     /// Switch to a Thinkspace
@@ -728,7 +784,6 @@ class ThinkspaceManager: ObservableObject {
     func createSubThinkspace(name: String, parent: Thinkspace) async -> Thinkspace? {
         await createThinkspace(
             name: name,
-            projectUuid: parent.projectUuid,  // Inherit project from parent
             parentThinkspaceId: parent.id,
             isRoot: false
         )
@@ -752,13 +807,13 @@ class ThinkspaceManager: ObservableObject {
             }
 
             if var metadata = atom.metadataValue(as: ThinkspaceMetadata.self) {
-                // If new parent is specified, inherit its project
                 if let newParentId = newParentId,
-                   let parentThinkspace = thinkspaces.first(where: { $0.id == newParentId }) {
+                   thinkspaces.contains(where: { $0.id == newParentId }) {
                     metadata.parentThinkspaceId = newParentId
-                    metadata.projectUuid = parentThinkspace.projectUuid
+                    metadata.projectUuid = nil
                 } else {
                     metadata.parentThinkspaceId = nil
+                    metadata.projectUuid = nil
                 }
 
                 if let metadataJson = try? JSONEncoder().encode(metadata),

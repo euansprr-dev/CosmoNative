@@ -22,7 +22,6 @@ struct CommandHubView: View {
     @State private var appearAnimationComplete = false
     @State private var creatingEntityTypes: Set<CircleAppType> = [] // Debounce flag
     @State private var currentMode: CommandHubMode = .library
-    @State private var showProjectCreationModal = false
 
     @FocusState private var isSearchFocused: Bool
     @GestureState private var resizeDrag: CGSize = .zero
@@ -243,19 +242,6 @@ struct CommandHubView: View {
             }
             return .handled
         }
-        .sheet(isPresented: $showProjectCreationModal) {
-            ProjectCreationModal(
-                isPresented: $showProjectCreationModal,
-                onProjectCreated: { project in
-                    handleInboxViewSelection(.projectInbox(
-                        projectUuid: project.uuid,
-                        projectName: project.title ?? "Untitled",
-                        projectIcon: "💼",
-                        projectColor: project.color
-                    ))
-                }
-            )
-        }
     }
 
     // MARK: - Computed Properties
@@ -360,12 +346,6 @@ struct CommandHubView: View {
                     name: CosmoNotification.Canvas.createEntityAtPosition,
                     object: nil,
                     userInfo: ["type": EntityType.connection, "position": CGPoint(x: 500, y: 400)]
-                )
-            case .projects:
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Canvas.createEntityAtPosition,
-                    object: nil,
-                    userInfo: ["type": EntityType.project, "position": CGPoint(x: 500, y: 400)]
                 )
             case .research:
                 NotificationCenter.default.post(
@@ -526,7 +506,9 @@ struct CommandHubView: View {
     // MARK: - Inbox View Selection Handler
     private func handleInboxViewSelection(_ selection: InboxViewSelection) {
         if case .createProject = selection {
-            showProjectCreationModal = true
+            return
+        }
+        if case .projectInbox = selection {
             return
         }
 
@@ -542,14 +524,8 @@ struct CommandHubView: View {
             block = InboxViewBlock.allUncommitted(at: canvasCenter)
         case .recentlyPromoted:
             block = InboxViewBlock.recentlyPromoted(at: canvasCenter)
-        case .projectInbox(let projectUuid, let projectName, let projectIcon, let projectColor):
-            block = InboxViewBlock.projectInbox(
-                projectUuid: projectUuid,
-                projectName: projectName,
-                projectIcon: projectIcon,
-                projectColor: projectColor,
-                at: canvasCenter
-            )
+        case .projectInbox:
+            return
         case .statusFilter:
             block = InboxViewBlock.general(at: canvasCenter)  // Status filter not implemented
         case .typeFilter(let entityType):
@@ -669,7 +645,6 @@ enum CircleAppType: String, CaseIterable {
     case ideas
     case content
     case connections
-    case projects
     case research
 
     var icon: String {
@@ -678,7 +653,6 @@ enum CircleAppType: String, CaseIterable {
         case .ideas: return "lightbulb.fill"
         case .content: return "doc.text.fill"
         case .connections: return "link.circle.fill"
-        case .projects: return "folder.fill"
         case .research: return "magnifyingglass"
         }
     }
@@ -689,7 +663,6 @@ enum CircleAppType: String, CaseIterable {
         case .ideas: return "Ideas"
         case .content: return "Content"
         case .connections: return "Connections"
-        case .projects: return "Projects"
         case .research: return "Research"
         }
     }
@@ -700,7 +673,6 @@ enum CircleAppType: String, CaseIterable {
         case .ideas: return CosmoColors.lavender
         case .content: return CosmoColors.skyBlue
         case .connections: return CosmoMentionColors.connection
-        case .projects: return CosmoColors.emerald
         case .research: return CosmoColors.emerald
         }
     }
@@ -711,7 +683,6 @@ enum CircleAppType: String, CaseIterable {
         case .ideas: return .idea
         case .content: return .content
         case .connections: return .connection
-        case .projects: return .project
         case .research: return .research
         }
     }

@@ -839,7 +839,7 @@ struct LibraryTab: View {
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(DS.textSecondary)
 
-                Text("Create your first note, idea, or project to get started")
+                Text("Create your first note, idea, or thinkspace to get started")
                     .font(.system(size: 13))
                     .foregroundColor(DS.textMuted)
             } else {

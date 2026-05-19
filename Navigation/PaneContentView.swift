@@ -61,6 +61,17 @@ struct PaneContentView: View {
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)
 
+        case .cosmoWindow:
+            CosmoWindowView(
+                isVisible: .constant(true),
+                isPaneMode: true,
+                onClose: onClose,
+                showsPlaceAsPaneButton: false
+            )
+            .environment(\.isPaneContext, true)
+            .environment(\.isPaneActive, isActive)
+            .environment(\.isPaneContextOwner, isContextOwner)
+
         case .collaborator(let target, let presetId):
             CosmoCollaboratorPaneView(target: target, presetId: presetId, onClose: onClose)
                 .environment(\.isPaneContext, true)

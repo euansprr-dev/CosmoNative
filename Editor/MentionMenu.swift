@@ -17,8 +17,8 @@ struct MentionMenu: View {
     private let menuWidth: CGFloat = 280
     private let menuHeight: CGFloat = 320
 
-    private var textPrimary: Color { darkMode ? .white : DS.text }
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.65) : DS.textSecondary }
+    private var textPrimary: Color { darkMode ? .white : DS.documentText }
+    private var textSecondary: Color { darkMode ? Color.white.opacity(0.65) : DS.documentTextSecondary }
     private var textMuted: Color { darkMode ? Color.white.opacity(0.45) : DS.textMuted }
 
     var body: some View {
@@ -247,8 +247,8 @@ struct MentionRow: View {
         CosmoMentionColors.color(for: entity.type)
     }
 
-    private var textPrimary: Color { darkMode ? .white : DS.text }
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.65) : DS.textSecondary }
+    private var textPrimary: Color { darkMode ? .white : DS.documentText }
+    private var textSecondary: Color { darkMode ? Color.white.opacity(0.65) : DS.documentTextSecondary }
     private var rowFill: Color {
         isSelected ? entityColor.opacity(darkMode ? 0.18 : 0.12) : .clear
     }

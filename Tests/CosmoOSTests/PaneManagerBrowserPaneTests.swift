@@ -4,6 +4,23 @@ import Combine
 
 @MainActor
 final class PaneManagerBrowserPaneTests: XCTestCase {
+    func testCosmoWindowPaneOpensOnceAndReactivatesUnifiedChatPane() {
+        let manager = PaneManager()
+
+        manager.openOrActivateCosmoWindow()
+
+        XCTAssertTrue(manager.isActive)
+        XCTAssertEqual(manager.mainSplitRatio, 0.5)
+        XCTAssertEqual(manager.panes.count, 1)
+        XCTAssertEqual(manager.panes.first?.id, "cosmoWindow")
+        XCTAssertEqual(manager.activePaneId, "cosmoWindow")
+
+        manager.openOrActivateCosmoWindow()
+
+        XCTAssertEqual(manager.panes.count, 1)
+        XCTAssertEqual(manager.activePaneId, "cosmoWindow")
+    }
+
     func testBrowserPaneOpensOncePerURLAndActivatesSplitPane() {
         let manager = PaneManager()
         let url = URL(string: "https://www.instagram.com/reel/example/")!

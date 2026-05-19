@@ -147,6 +147,12 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         XCTAssertFalse(CommandCenterCalendarLayout.isAllDay(start: day, end: shortBlock, calendar: calendar))
     }
 
+    func testEntryDensityCollapsesShortOrNarrowBlocks() {
+        XCTAssertEqual(CommandCenterCalendarLayout.entryDensity(width: 120, height: 48), .expanded)
+        XCTAssertEqual(CommandCenterCalendarLayout.entryDensity(width: 120, height: 28), .compact)
+        XCTAssertEqual(CommandCenterCalendarLayout.entryDensity(width: 58, height: 48), .compact)
+    }
+
     func testWeeklyRecurrenceProducesEveryMatchingDayInVisibleWeek() throws {
         let rule = RecurrenceRule.weekly(on: [.monday, .wednesday, .friday])
         let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 27, hour: 9)))
@@ -196,6 +202,59 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         XCTAssertEqual(sections.unscheduled.map(\.uuid), ["today"])
         XCTAssertTrue(sections.overdue.isEmpty)
         XCTAssertTrue(sections.scheduled.isEmpty)
+    }
+
+    func testCalendarDisplayDateIncludesDayOnlyScheduledTasks() throws {
+        let plannedDay = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19)))
+        let timedStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19, hour: 9)))
+
+        let dayOnly = task("day-only", title: "Day only", whenDate: plannedDay)
+        let timed = task("timed", title: "Timed", scheduledStart: timedStart, whenDate: plannedDay)
+
+        XCTAssertEqual(dayOnly.calendarDisplayDate, plannedDay)
+        XCTAssertEqual(timed.calendarDisplayDate, timedStart)
+    }
+
+    func testCalendarDisplayDateMovesStaleTimedBlockOntoPlannedDay() throws {
+        let plannedDay = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19)))
+        let staleStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 18, hour: 9)))
+        let staleEnd = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 18, hour: 9, minute: 30)))
+        let expectedStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19, hour: 9)))
+        let expectedEnd = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19, hour: 9, minute: 30)))
+
+        let timed = task(
+            "stale-timed",
+            title: "Stale timed",
+            scheduledStart: staleStart,
+            scheduledEnd: staleEnd,
+            whenDate: plannedDay
+        )
+
+        XCTAssertEqual(timed.calendarDisplayDate, expectedStart)
+        XCTAssertEqual(timed.calendarStart(using: calendar), expectedStart)
+        XCTAssertEqual(timed.calendarEnd(using: calendar), expectedEnd)
+    }
+
+    func testTodaySectionsTreatStaleCalendarTimeAsScheduledWhenPlannedToday() throws {
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19)))
+        let staleStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 18, hour: 9)))
+
+        let staleTimedTask = task(
+            "stale-timed",
+            title: "Stale timed",
+            scheduledStart: staleStart,
+            whenDate: today,
+            dueDate: today
+        )
+
+        let sections = CommandCenterTodayTaskSectioning.sectionTasks(
+            [staleTimedTask],
+            selectedDate: today,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(sections.overdue.isEmpty)
+        XCTAssertEqual(sections.scheduled.map { $0.uuid }, ["stale-timed"])
     }
 
     func testTodaySectionsMovePastUntimedTasksToOverdue() throws {
@@ -256,10 +315,63 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         XCTAssertEqual(Set(sections.overdue.map(\.uuid)), ["other-recurring", "normal-overdue"])
     }
 
+    func testReschedulingTimedTaskMovesCalendarTimeToTargetDay() throws {
+        let yesterday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 18, hour: 9)))
+        let targetDay = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19)))
+        let originalEnd = try XCTUnwrap(calendar.date(byAdding: .minute, value: 30, to: yesterday))
+        var metadata = TaskMetadata()
+        metadata.scheduledStart = PlannerumFormatters.iso8601.string(from: yesterday)
+        metadata.scheduledEnd = PlannerumFormatters.iso8601.string(from: originalEnd)
+        metadata.startTime = metadata.scheduledStart
+        metadata.endTime = metadata.scheduledEnd
+        metadata.durationMinutes = 30
+        metadata.schedulingState = "anytime"
+
+        CommandCenterTaskScheduling.reschedule(&metadata, toDate: targetDay, calendar: calendar)
+
+        let rescheduledStart = try XCTUnwrap(metadata.scheduledStart.flatMap(PlannerumFormatters.iso8601.date(from:)))
+        let rescheduledEnd = try XCTUnwrap(metadata.scheduledEnd.flatMap(PlannerumFormatters.iso8601.date(from:)))
+        let whenDate = try XCTUnwrap(metadata.whenDate.flatMap(PlannerumFormatters.iso8601.date(from:)))
+
+        XCTAssertEqual(calendar.component(.day, from: rescheduledStart), 19)
+        XCTAssertEqual(calendar.component(.hour, from: rescheduledStart), 9)
+        XCTAssertEqual(calendar.component(.minute, from: rescheduledStart), 0)
+        XCTAssertEqual(rescheduledEnd.timeIntervalSince(rescheduledStart), 30 * 60, accuracy: 0.001)
+        XCTAssertEqual(calendar.startOfDay(for: whenDate), targetDay)
+        XCTAssertEqual(metadata.startTime, metadata.scheduledStart)
+        XCTAssertEqual(metadata.endTime, metadata.scheduledEnd)
+        XCTAssertNil(metadata.schedulingState)
+    }
+
+    func testUnschedulingTimedTaskClearsCalendarTimeFields() throws {
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 18, hour: 9)))
+        let end = try XCTUnwrap(calendar.date(byAdding: .minute, value: 30, to: start))
+        var metadata = TaskMetadata()
+        metadata.scheduledStart = PlannerumFormatters.iso8601.string(from: start)
+        metadata.scheduledEnd = PlannerumFormatters.iso8601.string(from: end)
+        metadata.startTime = metadata.scheduledStart
+        metadata.endTime = metadata.scheduledEnd
+        metadata.durationMinutes = 30
+        metadata.schedulingState = "anytime"
+
+        CommandCenterTaskScheduling.reschedule(&metadata, toDate: nil, calendar: calendar)
+
+        XCTAssertNil(metadata.dueDate)
+        XCTAssertNil(metadata.focusDate)
+        XCTAssertNil(metadata.whenDate)
+        XCTAssertNil(metadata.scheduledStart)
+        XCTAssertNil(metadata.scheduledEnd)
+        XCTAssertNil(metadata.startTime)
+        XCTAssertNil(metadata.endTime)
+        XCTAssertNil(metadata.durationMinutes)
+        XCTAssertNil(metadata.schedulingState)
+    }
+
     private func task(
         _ uuid: String,
         title: String,
         scheduledStart: Date? = nil,
+        scheduledEnd: Date? = nil,
         whenDate: Date? = nil,
         dueDate: Date? = nil,
         recurrenceParentUUID: String? = nil,
@@ -272,6 +384,7 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
             recurrenceParentUUID: recurrenceParentUUID,
             isRecurring: recurrenceParentUUID != nil,
             scheduledStart: scheduledStart,
+            scheduledEnd: scheduledEnd,
             whenDate: whenDate,
             createdAt: createdAt ?? Date(timeIntervalSince1970: 0)
         )

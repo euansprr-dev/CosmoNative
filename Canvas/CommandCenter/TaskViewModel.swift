@@ -160,7 +160,63 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
 
     /// Canonical start used by Today and Upcoming calendar surfaces.
     public var calendarStart: Date? {
+        calendarStart(using: .current)
+    }
+
+    /// Canonical end used by Today and Upcoming calendar surfaces.
+    public var calendarEnd: Date? {
+        calendarEnd(using: .current)
+    }
+
+    /// Date used by calendar surfaces when a task is scheduled without a specific time.
+    public var calendarDisplayDate: Date? {
+        calendarStart ?? plannedCalendarDate
+    }
+
+    public func calendarStart(using calendar: Calendar) -> Date? {
+        guard let persistedStart = persistedCalendarStart else { return nil }
+        guard let plannedDate = plannedCalendarDate else { return persistedStart }
+
+        let plannedDay = calendar.startOfDay(for: plannedDate)
+        if calendar.isDate(persistedStart, inSameDayAs: plannedDay) {
+            return persistedStart
+        }
+
+        return Self.merged(date: plannedDay, time: persistedStart, calendar: calendar) ?? persistedStart
+    }
+
+    public func calendarEnd(using calendar: Calendar) -> Date? {
+        guard let normalizedStart = calendarStart(using: calendar),
+              let persistedStart = persistedCalendarStart,
+              let persistedEnd = scheduledEnd else {
+            return nil
+        }
+
+        let duration = persistedEnd.timeIntervalSince(persistedStart)
+        guard duration > 0 else { return nil }
+        return normalizedStart.addingTimeInterval(duration)
+    }
+
+    private var persistedCalendarStart: Date? {
         scheduledStart ?? scheduledTime
+    }
+
+    private var plannedCalendarDate: Date? {
+        whenDate ?? scheduledDate ?? dueDate
+    }
+
+    private static func merged(date: Date, time: Date, calendar: Calendar) -> Date? {
+        let dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: time)
+        var merged = DateComponents()
+        merged.year = dateComponents.year
+        merged.month = dateComponents.month
+        merged.day = dateComponents.day
+        merged.hour = timeComponents.hour
+        merged.minute = timeComponents.minute
+        merged.second = timeComponents.second ?? 0
+        merged.timeZone = calendar.timeZone
+        return calendar.date(from: merged)
     }
 
     /// Estimated XP for completing this task

@@ -2,6 +2,19 @@ import XCTest
 @testable import CosmoOS
 
 final class CommandCenterComposerTests: XCTestCase {
+    private var createdTaskUUIDs: [String] = []
+
+    override func tearDown() async throws {
+        let uuids = createdTaskUUIDs.reversed()
+        createdTaskUUIDs.removeAll()
+
+        for uuid in uuids {
+            try? await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
+        }
+
+        try await super.tearDown()
+    }
+
     func testParseDateInputHandlesTodayTomorrowAndNextWeekday() {
         let today = CommandCenterScheduleUtilities.parseDateInput("today")
         let tomorrow = CommandCenterScheduleUtilities.parseDateInput("tomorrow")
@@ -154,5 +167,88 @@ final class CommandCenterComposerTests: XCTestCase {
         XCTAssertTrue(presentation.isUnassigned)
         XCTAssertEqual(presentation.title, "Unassigned")
         XCTAssertNil(presentation.behaviorTemplate)
+    }
+
+    @MainActor
+    func testRecurringTitleFutureScopeUpdatesTemplateAndFutureMatchingInstancesOnly() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let occurrence = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19, hour: 9)))
+        let previousOccurrence = try XCTUnwrap(calendar.date(byAdding: .day, value: -7, to: occurrence))
+        let nextOccurrence = try XCTUnwrap(calendar.date(byAdding: .day, value: 7, to: occurrence))
+        let customFutureOccurrence = try XCTUnwrap(calendar.date(byAdding: .day, value: 14, to: occurrence))
+        let originalTitle = "Create reel/thread for Ben"
+        let renamedTitle = "Create reel/thread for Josh"
+        let viewModel = CommandCenterDashboardViewModel(startsRefreshing: false)
+
+        let template = try await createRecurringTaskAtom(
+            title: originalTitle,
+            occurrenceDate: occurrence,
+            recurrence: .weekly(on: [.tuesday])
+        )
+        let past = try await createRecurringTaskAtom(
+            title: originalTitle,
+            occurrenceDate: previousOccurrence,
+            parentUUID: template.uuid,
+            isCompleted: true
+        )
+        let current = try await createRecurringTaskAtom(
+            title: originalTitle,
+            occurrenceDate: occurrence,
+            parentUUID: template.uuid
+        )
+        let matchingFuture = try await createRecurringTaskAtom(
+            title: originalTitle,
+            occurrenceDate: nextOccurrence,
+            parentUUID: template.uuid
+        )
+        let customFuture = try await createRecurringTaskAtom(
+            title: "Custom future title",
+            occurrenceDate: customFutureOccurrence,
+            parentUUID: template.uuid
+        )
+
+        await viewModel.updateRecurringTaskTitle(
+            uuid: current.uuid,
+            title: renamedTitle,
+            scope: .currentAndFuture
+        )
+
+        let updatedTemplate = try await fetchTaskTitle(template.uuid)
+        let updatedPast = try await fetchTaskTitle(past.uuid)
+        let updatedCurrent = try await fetchTaskTitle(current.uuid)
+        let updatedMatchingFuture = try await fetchTaskTitle(matchingFuture.uuid)
+        let updatedCustomFuture = try await fetchTaskTitle(customFuture.uuid)
+
+        XCTAssertEqual(updatedTemplate, renamedTitle)
+        XCTAssertEqual(updatedCurrent, renamedTitle)
+        XCTAssertEqual(updatedMatchingFuture, renamedTitle)
+        XCTAssertEqual(updatedPast, originalTitle)
+        XCTAssertEqual(updatedCustomFuture, "Custom future title")
+    }
+
+    private func createRecurringTaskAtom(
+        title: String,
+        occurrenceDate: Date,
+        recurrence: RecurrenceRule? = nil,
+        parentUUID: String? = nil,
+        isCompleted: Bool = false
+    ) async throws -> Atom {
+        var metadata = TaskMetadata()
+        metadata.focusDate = PlannerumFormatters.iso8601.string(from: occurrenceDate)
+        metadata.dueDate = PlannerumFormatters.iso8601.string(from: occurrenceDate)
+        metadata.whenDate = PlannerumFormatters.iso8601.string(from: occurrenceDate)
+        metadata.recurrence = recurrence?.toJSON()
+        metadata.recurrenceParentUUID = parentUUID
+        metadata.isCompleted = isCompleted
+
+        let atom = Atom.new(type: .task, title: title).withMetadata(metadata)
+        let created = try await AtomRepository.shared.create(atom)
+        createdTaskUUIDs.append(created.uuid)
+        return created
+    }
+
+    private func fetchTaskTitle(_ uuid: String) async throws -> String? {
+        try await AtomRepository.shared.fetch(uuid: uuid)?.title
     }
 }

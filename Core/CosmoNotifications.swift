@@ -136,6 +136,7 @@ enum CosmoNotification {
         // Panes
         static let openAsPane = Notification.Name("com.cosmo.nav.openAsPane")
         static let openWebBrowserPane = Notification.Name("com.cosmo.nav.openWebBrowserPane")
+        static let openCosmoWindowPane = Notification.Name("com.cosmo.nav.openCosmoWindowPane")
         static let openCollaboratorPane = Notification.Name("com.cosmo.nav.openCollaboratorPane")
 
         // UI

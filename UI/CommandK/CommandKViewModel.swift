@@ -378,7 +378,7 @@ public struct RecentDisplayItem: Identifiable {
 
 enum CommandKLibraryScope {
     static let databaseAtomTypes: [AtomType] = [
-        .idea, .note, .task, .content, .research, .connection, .project, .image
+        .idea, .note, .task, .content, .research, .connection, .image
     ]
 
     static func databaseItemCount(atoms: [Atom], thinkspaceCount: Int) -> Int {
@@ -1380,8 +1380,8 @@ public final class CommandKViewModel: ObservableObject {
 
     // MARK: - Configuration
 
-    /// Debounce delay for search queries
-    private let searchDebounce: TimeInterval = 0.15
+    /// Debounce delay for search queries. Keep this close to a frame so local command rows feel instant.
+    private let searchDebounce: TimeInterval = 0.03
 
     /// Maximum results to display
     private let maxResults = 25
@@ -1421,7 +1421,10 @@ public final class CommandKViewModel: ObservableObject {
     @Published var actionStatusMessage: String? = nil
 
     var activeCommandAction: CommandKAction? {
-        if let primaryAction { return primaryAction }
+        if let primaryAction,
+           selectedNodeId == nil || selectedNodeId == primaryAction.id {
+            return primaryAction
+        }
         guard let selectedNodeId else { return nil }
         return userCommandRows.first { $0.id == selectedNodeId }?.action
     }
@@ -1444,15 +1447,21 @@ public final class CommandKViewModel: ObservableObject {
     private var swipeFilterTask: Task<Void, Never>?
     private var swipeFilterGeneration = 0
     private var isSurfaceActive = true
-    private let userCommandStore = CommandKUserCommandStore()
+    private let userCommandStore: CommandKUserCommandStore
     private let userCommandComposer = CommandKUserCommandSearchComposer()
+    private let systemCommandComposer = CommandKSystemCommandComposer()
 
     /// Unfiltered results for computing filter counts
     private var unfilteredResults: [RankedResult] = []
 
     // MARK: - Initialization
 
-    public init() {
+    public convenience init() {
+        self.init(userCommandStore: CommandKUserCommandStore())
+    }
+
+    init(userCommandStore: CommandKUserCommandStore) {
+        self.userCommandStore = userCommandStore
         setupQueryDebounce()
         setupFilterObserver()
         setupSwipeFilterPipeline()
@@ -1561,45 +1570,27 @@ public final class CommandKViewModel: ObservableObject {
         let searchQuery = parsed.query
         let prefixType = parsed.typeFilter
 
-        if let action = CommandKActionParser.parse(query) {
-            primaryAction = action
-            userCommandRows = []
-            actionStatusMessage = nil
+        let parsedAction = CommandKActionParser.parse(query)
+        primaryAction = parsedAction
+        actionStatusMessage = nil
+
+        if parsedAction != nil {
             activeTypePrefix = nil
             selectedTypeFilters.removeAll()
-            results = []
-            unfilteredResults = []
-            groupedResults = []
-            flatNavigableResults = []
-            isUnifiedSearchActive = false
-            unifiedGroupedResults = []
-            unifiedFlatResults = []
-            unifiedCardItems = []
-            selectedNodeId = action.id
-            selectedResultIndex = 0
-            currentPhase = .idle
-            isShowingRecents = false
-            if cortexMode == .compact {
-                cortexMode = .searchResults
-            }
-            return
-        } else {
-            primaryAction = nil
-            actionStatusMessage = nil
         }
 
         // Update prefix filter state
-        if let pt = prefixType {
+        if parsedAction == nil, let pt = prefixType {
             activeTypePrefix = pt
             if !selectedTypeFilters.contains(pt) {
                 selectedTypeFilters = [pt]
             }
-        } else {
+        } else if parsedAction == nil {
             activeTypePrefix = nil
         }
 
         // Handle empty query - show recents
-        if searchQuery.isEmpty && prefixType == nil {
+        if searchQuery.isEmpty && prefixType == nil && parsedAction == nil {
             isUnifiedSearchActive = false
             unifiedGroupedResults = []
             unifiedFlatResults = []
@@ -1635,6 +1626,15 @@ public final class CommandKViewModel: ObservableObject {
         // Skip search in task creation mode
         if isTaskCreationMode {
             results = []
+            unfilteredResults = []
+            groupedResults = []
+            flatNavigableResults = []
+            filterCounts = [:]
+            isUnifiedSearchActive = false
+            unifiedGroupedResults = []
+            unifiedFlatResults = []
+            unifiedCardItems = []
+            updateActiveSearchSelection()
             isShowingRecents = false
             currentPhase = .idle
             return
@@ -1642,9 +1642,17 @@ public final class CommandKViewModel: ObservableObject {
 
         isShowingRecents = false
         currentPhase = .searching
+        results = []
+        unfilteredResults = []
+        groupedResults = []
+        flatNavigableResults = []
+        filterCounts = [:]
+        isAIRanked = false
 
         let effectiveQuery = searchQuery.isEmpty ? "" : searchQuery
         let queryForSearch = effectiveQuery.isEmpty ? query : effectiveQuery
+
+        await performInstantUnifiedSearch(query: queryForSearch)
 
         let instantIndexedResults = searchIndex.search(queryForSearch, limit: maxResults)
         if !instantIndexedResults.isEmpty {
@@ -1791,11 +1799,13 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     private func loadUserCommandRows(for query: String) async -> [CommandKUserCommandRow] {
+        let systemRows = systemCommandComposer.rows(for: query)
         do {
             let quicklinks = try await userCommandStore.searchQuicklinks(query)
-            return Array(userCommandComposer.rows(for: quicklinks).prefix(6))
+            let quicklinkLimit = max(0, 6 - systemRows.count)
+            return systemRows + Array(userCommandComposer.rows(for: quicklinks).prefix(quicklinkLimit))
         } catch {
-            return []
+            return systemRows
         }
     }
 
@@ -2057,7 +2067,8 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Open the selected result
     public func openSelected() {
-        if primaryAction != nil {
+        if let primaryAction,
+           selectedNodeId == nil || selectedNodeId == primaryAction.id {
             performPrimaryAction()
             return
         }
@@ -2082,39 +2093,16 @@ public final class CommandKViewModel: ObservableObject {
         }
 
         // Unified search mode
+        if isUnifiedSearchActive,
+           let selectedNodeId,
+           let result = unifiedFlatResults.first(where: { $0.selectionID == selectedNodeId }) {
+            openUnifiedSearchResult(result)
+            return
+        }
+
         if isUnifiedSearchActive, selectedResultIndex >= 0,
            selectedResultIndex < unifiedFlatResults.count {
-            let result = unifiedFlatResults[selectedResultIndex]
-            if result.resultKind == .browserPin, let browserURL = result.browserURL {
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Navigation.openWebBrowserPane,
-                    object: nil,
-                    userInfo: [
-                        "url": browserURL,
-                        "title": result.browserTitle ?? result.subtitle ?? "Browser"
-                    ]
-                )
-                finishAction()
-            } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Navigation.navigateToThinkspaceById,
-                    object: nil,
-                    userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: thinkspaceId).userInfo
-                )
-                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-            } else if let atomUUID = result.atomUUID {
-                Task {
-                    try? await NodeGraphEngine.shared.recordAccess(atomUUID: atomUUID, type: .view)
-                }
-                NotificationCenter.default.post(
-                    name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-                    object: nil,
-                    userInfo: ["atomUUID": atomUUID]
-                )
-                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
-            } else if let bookId = result.readwiseBookId {
-                selectedReadwiseBookId = bookId
-            }
+            openUnifiedSearchResult(unifiedFlatResults[selectedResultIndex])
             return
         }
 
@@ -2134,6 +2122,39 @@ public final class CommandKViewModel: ObservableObject {
 
         // Hide Command-K (keep alive behind focus mode)
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+    }
+
+    private func openUnifiedSearchResult(_ result: UnifiedSearchResult) {
+        if result.resultKind == .browserPin, let browserURL = result.browserURL {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openWebBrowserPane,
+                object: nil,
+                userInfo: [
+                    "url": browserURL,
+                    "title": result.browserTitle ?? result.subtitle ?? "Browser"
+                ]
+            )
+            finishAction()
+        } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                object: nil,
+                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: thinkspaceId).userInfo
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        } else if let atomUUID = result.atomUUID {
+            Task {
+                try? await NodeGraphEngine.shared.recordAccess(atomUUID: atomUUID, type: .view)
+            }
+            NotificationCenter.default.post(
+                name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+                object: nil,
+                userInfo: ["atomUUID": atomUUID]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+        } else if let bookId = result.readwiseBookId {
+            selectedReadwiseBookId = bookId
+        }
     }
 
     private func openExpandedDomainTarget(_ target: CommandKDomainOpenTarget) {
@@ -2321,6 +2342,17 @@ public final class CommandKViewModel: ObservableObject {
         case .openApp:
             guard let appName = action.payload.title else { return }
             try openApplication(named: appName)
+            finishAction()
+
+        case .openCosmoPane:
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openCosmoWindowPane,
+                object: nil
+            )
+            finishAction()
+
+        case .openCosmoWindow:
+            CosmoWindowPanelController.shared.show()
             finishAction()
 
         case .askCosmo:
@@ -2642,8 +2674,7 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     private func navigateActiveSearchSelection(delta: Int) -> Bool {
-        guard primaryAction == nil,
-              !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               cortexMode == .compact || cortexMode == .searchResults else {
             return false
         }
@@ -2661,7 +2692,7 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     private var activeSearchSelectionIDs: [String] {
-        userCommandRows.map(\.id) + unifiedFlatResults.map(\.selectionID)
+        (primaryAction.map { [$0.id] } ?? []) + userCommandRows.map(\.id) + unifiedFlatResults.map(\.selectionID)
     }
 
     private func updateActiveSearchSelection() {
@@ -2705,7 +2736,7 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Available filter types with their display info
     public var filterTypes: [AtomType] {
-        [.idea, .task, .research, .content, .connection, .project, .templateInstance]
+        [.idea, .task, .research, .content, .connection, .templateInstance]
     }
 
     /// Get count for a specific filter type
@@ -3380,15 +3411,14 @@ public final class CommandKViewModel: ObservableObject {
         )
         guard isCurrentUnifiedSearchRequest(requestID) else { return }
 
-        let projectAtoms = includeThinkspaces ? ((try? await AtomRepository.shared.fetchAll(type: .project)) ?? []) : []
-        let projectsByUUID = Dictionary(uniqueKeysWithValues: projectAtoms.map { ($0.uuid, $0) })
+        let projectsByUUID: [String: Atom] = [:]
         let thinkspaceLibraryItems: [LibraryItem]
         let matchingThinkspaceResults: [UnifiedSearchResult]
         if includeThinkspaces {
             thinkspaceLibraryItems = ThinkspaceManager.shared.sidebarThinkspaces.map { thinkspace in
                 LibraryItem(
                     thinkspace: thinkspace,
-                    project: thinkspace.projectUuid.flatMap { projectsByUUID[$0] },
+                    project: nil,
                     nestedThinkspaceCount: ThinkspaceManager.shared.childThinkspaces(of: thinkspace.id).count
                 )
             }
@@ -3409,6 +3439,7 @@ public final class CommandKViewModel: ObservableObject {
         let combinedResults = output.flatResults + matchingThinkspaceResults
         let atomUUIDs = combinedResults.compactMap { result -> String? in
             guard result.resultKind != .thinkspace,
+                  result.atomType != .project,
                   result.source != .swipes else { return nil }
             return result.atomUUID
         }
@@ -3455,6 +3486,7 @@ public final class CommandKViewModel: ObservableObject {
         let memberships = (try? await AtomRepository.shared.fetchThinkspaceMembership(for: atomUUIDs)) ?? [:]
 
         return atoms.reduce(into: [String: LibraryItem]()) { result, atom in
+            guard atom.type != .project else { return }
             let atomThinkspaces = (memberships[atom.uuid] ?? []).compactMap { thinkspacesByID[$0] }
             let project = resolveProject(
                 for: atom,
@@ -3474,17 +3506,6 @@ public final class CommandKViewModel: ObservableObject {
         thinkspaces: [Thinkspace],
         projectsByUUID: [String: Atom]
     ) -> Atom? {
-        if atom.type == .project {
-            return atom
-        }
-        if let explicitProjectUUID = atom.link(ofType: .project)?.uuid,
-           let project = projectsByUUID[explicitProjectUUID] {
-            return project
-        }
-        if let thinkspaceProjectUUID = thinkspaces.compactMap(\.projectUuid).first,
-           let project = projectsByUUID[thinkspaceProjectUUID] {
-            return project
-        }
         return nil
     }
 

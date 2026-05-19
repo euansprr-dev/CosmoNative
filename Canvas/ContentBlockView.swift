@@ -108,19 +108,19 @@ struct ContentBlockView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(displayTitle)
                 .font(.system(size: 40, weight: .semibold, design: .serif))
-                .foregroundStyle(DS.text)
+                .foregroundStyle(DS.documentText)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let client = clientName, !client.isEmpty {
                 Text("For \(client)")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
                     .lineLimit(1)
             } else if let platform = platformName, !platform.isEmpty {
                 Text(platform)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
                     .lineLimit(1)
             }
         }
@@ -133,13 +133,13 @@ struct ContentBlockView: View {
             if documentBodyText.isEmpty {
                 Text("Open to start writing...")
                     .font(.system(size: 20))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
                     .italic()
             } else {
                 Text(documentBodyText)
                     .font(.system(size: 20))
                     .lineSpacing(8)
-                    .foregroundStyle(DS.text)
+                    .foregroundStyle(DS.documentText)
                     .textSelection(.enabled)
             }
         }
@@ -158,13 +158,13 @@ struct ContentBlockView: View {
                 Spacer()
                 Text("\(documentWordCount) words  ·  \(documentBodyText.count) chars")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(DS.borderSubtle, lineWidth: 1)
+                            .stroke(DS.documentBorderSubtle, lineWidth: 1)
                     }
             }
         }
@@ -196,11 +196,11 @@ struct ContentBlockView: View {
             if let modified = lastModified {
                 Text(formatRelativeDate(modified))
                     .font(.system(size: 10))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
             } else if let timestamp = block.metadata["updated"] {
                 Text(formatTimestamp(timestamp))
                     .font(.system(size: 10))
-                    .foregroundStyle(DS.textMuted)
+                    .foregroundStyle(DS.documentTextMuted)
             }
         }
     }
@@ -211,7 +211,7 @@ struct ContentBlockView: View {
         } else if step.stepNumber == currentStep.stepNumber {
             return accentColor
         } else {
-            return DS.borderSubtle
+            return DS.documentBorderSubtle
         }
     }
 
@@ -377,7 +377,7 @@ struct ContentStatsBar: View {
                 Text("\(wordCount) words")
                     .font(CosmoTypography.caption)
             }
-            .foregroundColor(CosmoColors.textTertiary)
+            .foregroundColor(DS.documentTextMuted)
 
             // Reading time
             HStack(spacing: 4) {
@@ -386,7 +386,7 @@ struct ContentStatsBar: View {
                 Text(readingTime)
                     .font(CosmoTypography.caption)
             }
-            .foregroundColor(CosmoColors.textTertiary)
+            .foregroundColor(DS.documentTextMuted)
 
             Spacer()
 
@@ -406,7 +406,7 @@ struct StatusBadge: View {
         case "published", "complete": return CosmoColors.emerald
         case "draft": return CosmoColors.glassGrey
         case "review", "editing": return CosmoColors.lavender
-        case "archived": return CosmoColors.textTertiary
+        case "archived": return DS.documentTextMuted
         default: return CosmoColors.glassGrey
         }
     }
@@ -510,7 +510,7 @@ struct StatItem: View {
 
             Text(label)
                 .font(CosmoTypography.caption)
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundColor(DS.documentTextMuted)
         }
     }
 }
@@ -524,7 +524,7 @@ struct ContentMetadataView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Details")
                 .font(CosmoTypography.label)
-                .foregroundColor(CosmoColors.textSecondary)
+                .foregroundColor(DS.documentTextSecondary)
 
             VStack(alignment: .leading, spacing: 6) {
                 MetadataRow(icon: "calendar", label: "Created", value: formatDate(content.createdAt))
@@ -566,18 +566,18 @@ struct MetadataRow: View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 10))
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundColor(DS.documentTextMuted)
                 .frame(width: 16)
 
             Text(label)
                 .font(CosmoTypography.caption)
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundColor(DS.documentTextMuted)
 
             Spacer()
 
             Text(value)
                 .font(CosmoTypography.caption)
-                .foregroundColor(CosmoColors.textSecondary)
+                .foregroundColor(DS.documentTextSecondary)
         }
     }
 }
@@ -593,7 +593,7 @@ struct ContentFooter: View {
             // Last updated
             Text(timeAgo(from: content.updatedAt))
                 .font(CosmoTypography.caption)
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundColor(DS.documentTextMuted)
 
             Spacer()
 
@@ -606,7 +606,7 @@ struct ContentFooter: View {
                         Text("Copy")
                             .font(CosmoTypography.caption)
                     }
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundColor(DS.documentTextSecondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(CosmoColors.glassGrey.opacity(0.3), in: Capsule())
@@ -620,7 +620,7 @@ struct ContentFooter: View {
                         Text("Export")
                             .font(CosmoTypography.caption)
                     }
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundColor(DS.documentTextSecondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(CosmoColors.glassGrey.opacity(0.3), in: Capsule())

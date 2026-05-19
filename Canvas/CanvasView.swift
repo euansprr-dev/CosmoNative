@@ -4578,9 +4578,14 @@ struct CanvasControls: View {
     }
 }
 
-// MARK: - Grid Pattern View (Infinite Tiling — Greenhouse Light Mode)
+// MARK: - Grid Pattern View
 struct GridPatternView: View {
     let transform: CanvasViewportTransform
+    private let dotColor = Color(
+        red: 216.0 / 255.0,
+        green: 215.0 / 255.0,
+        blue: 211.0 / 255.0
+    ).opacity(0.5)
 
     var body: some View {
         GeometryReader { geometry in
@@ -4588,30 +4593,60 @@ struct GridPatternView: View {
                 transform: transform,
                 viewportSize: geometry.size
             )
-            let tileImage = CanvasGridPatternCache.shared.image(
-                spacing: metrics.tileSize,
-                dotSize: metrics.rawDotSize,
-                tileMultiplier: 1
-            )
 
-            ZStack(alignment: .topLeading) {
-                Image(nsImage: tileImage)
-                    .resizable(resizingMode: .tile)
-                    .interpolation(.none)
-                    .frame(
-                        width: metrics.planeSize.width,
-                        height: metrics.planeSize.height
-                    )
-                    .position(
-                        x: metrics.planeOrigin.x + metrics.planeSize.width / 2,
-                        y: metrics.planeOrigin.y + metrics.planeSize.height / 2
-                    )
+            Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
+                guard metrics.screenSpacing.isFinite,
+                      metrics.screenSpacing > 0,
+                      metrics.screenDotSize.isFinite,
+                      metrics.screenDotSize > 0,
+                      size.width > 0,
+                      size.height > 0 else {
+                    return
+                }
+
+                var dots = Path()
+                let dotSize = metrics.screenDotSize
+                let spacing = metrics.screenSpacing
+                let startX = Self.firstGridPosition(
+                    atOrBefore: -dotSize,
+                    origin: metrics.screenGridOrigin.x,
+                    spacing: spacing
+                )
+                let startY = Self.firstGridPosition(
+                    atOrBefore: -dotSize,
+                    origin: metrics.screenGridOrigin.y,
+                    spacing: spacing
+                )
+                let maxX = size.width + dotSize
+                let maxY = size.height + dotSize
+
+                var x = startX
+                while x <= maxX {
+                    var y = startY
+                    while y <= maxY {
+                        dots.addEllipse(in: CGRect(
+                            x: x - dotSize / 2,
+                            y: y - dotSize / 2,
+                            width: dotSize,
+                            height: dotSize
+                        ))
+                        y += spacing
+                    }
+                    x += spacing
+                }
+
+                context.fill(dots, with: .color(dotColor))
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .offset(x: transform.contentOffset.width, y: transform.contentOffset.height)
-            .scaleEffect(transform.effectiveScale, anchor: metrics.scaleAnchor)
         }
         .allowsHitTesting(false)
+    }
+
+    private static func firstGridPosition(
+        atOrBefore limit: CGFloat,
+        origin: CGFloat,
+        spacing: CGFloat
+    ) -> CGFloat {
+        origin + floor((limit - origin) / spacing) * spacing
     }
 }
 

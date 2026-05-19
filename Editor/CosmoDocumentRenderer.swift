@@ -7,11 +7,11 @@ struct CosmoDocumentRenderer: View {
     var lineLimit: Int? = nil
 
     private var textColor: Color {
-        darkMode ? .white : CosmoColors.textPrimary
+        darkMode ? .white : DS.documentText
     }
 
     private var secondaryTextColor: Color {
-        darkMode ? Color.white.opacity(0.7) : CosmoColors.textSecondary
+        darkMode ? Color.white.opacity(0.7) : DS.documentTextSecondary
     }
 
     var body: some View {

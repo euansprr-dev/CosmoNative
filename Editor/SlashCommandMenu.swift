@@ -19,7 +19,7 @@ struct SlashCommandMenu: View {
 
     // MARK: - Theme-Aware Colors
     private var menuFill: Color { darkMode ? Color.white.opacity(0.06) : DS.glassInputFill.opacity(0.34) }
-    private var textPrimary: Color { darkMode ? .white : DS.text }
+    private var textPrimary: Color { darkMode ? .white : DS.documentText }
     private var textTertiary: Color { darkMode ? Color.white.opacity(0.45) : DS.textMuted }
 
     private var filteredCommands: [SlashCommand] {
@@ -185,9 +185,9 @@ struct SlashCommandRow: View {
     @State private var iconBounce = false
 
     // Dark mode colors
-    private var textPrimary: Color { darkMode ? .white : CosmoColors.textPrimary }
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.6) : CosmoColors.textSecondary }
-    private var textTertiary: Color { darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary }
+    private var textPrimary: Color { darkMode ? .white : DS.documentText }
+    private var textSecondary: Color { darkMode ? Color.white.opacity(0.6) : DS.documentTextSecondary }
+    private var textTertiary: Color { darkMode ? Color.white.opacity(0.4) : DS.documentTextMuted }
     private var accentColor: Color { darkMode ? Color.white.opacity(0.76) : DS.accent }
 
     var body: some View {

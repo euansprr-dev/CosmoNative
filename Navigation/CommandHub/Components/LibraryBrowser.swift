@@ -278,34 +278,6 @@ struct LibraryBrowser: View {
                 }
             }
 
-            if selectedFilter == nil || selectedFilter == .project {
-                let projects: [ProjectWrapper] = (try? await database.asyncRead { db in
-                    var request = Atom
-                        .filter(Column("type") == AtomType.project.rawValue)
-                        .filter(Column("is_deleted") == false)
-                    if !query.isEmpty {
-                        request = request.filter(Column("title").like("%\(query)%"))
-                    }
-                    return try request.order(Column("updated_at").desc).limit(20).fetchAll(db).map { ProjectWrapper(atom: $0) }
-                }) ?? []
-
-                loadedEntities += projects.map { (item: ProjectWrapper) -> LibraryEntity in
-                    LibraryEntity(
-                        entityId: item.id ?? -1,
-                        type: .project,
-                        title: item.title ?? "Untitled",
-                        preview: item.description ?? "",
-                        metadata: [
-                            "status": item.status,
-                            "progress": "0.5", // TODO: Calculate actual progress
-                            "taskCount": "10",
-                            "pendingCount": "5"
-                        ],
-                        updatedAt: ISO8601DateFormatter().date(from: item.updatedAt)
-                    )
-                }
-            }
-
             if selectedFilter == nil || selectedFilter == .task {
                 let queryCapture = query
                 let tasks = try? await database.asyncRead { db in

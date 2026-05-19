@@ -768,22 +768,10 @@ private struct SidebarCommandCenterContext: View {
                 planningRow("Objectives", icon: "scope", isActive: false)
             }
 
-            if !viewModel.areas.isEmpty || !viewModel.projects.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    SidebarContextLabel(title: "Areas & Projects")
-                    ForEach(viewModel.areas, id: \.uuid) { area in
-                        areaRow(area)
-                    }
-                    ForEach(projectsWithoutArea, id: \.uuid) { project in
-                        projectRow(project, isIndented: false)
-                    }
-                }
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
             await viewModel.loadAreas()
-            await viewModel.loadProjects()
             await viewModel.loadAnytimeTasks()
             await viewModel.loadSomedayTasks()
             await viewModel.loadHabits()

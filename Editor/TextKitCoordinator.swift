@@ -299,6 +299,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// bypassing the SwiftUI @Binding→onChange chain which can coalesce/skip updates.
     var onPlainTextDidChange: ((String) -> Void)?
 
+    var resolvedEditorTextColor: NSColor {
+        overrideTextColor ?? (darkMode ? NSColor.white : NSColor(DS.documentText))
+    }
+
     func makeNSView(context: Context) -> CosmoScrollView {
         let scrollView = CosmoTextView.scrollableCosmoTextView()
         scrollView.forwardsScrollEvents = !scrollsInternally
@@ -412,14 +416,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // destroying any rich text formatting (bold, italic, etc.).
         if isInitial {
             textView.font = overrideFont ?? resolvedBaseFont()
-            textView.textColor = overrideTextColor ?? (darkMode ? .white : NSColor(CosmoColors.textPrimary))
+            textView.textColor = resolvedEditorTextColor
             textView.alignment = textAlignment
             textView.defaultParagraphStyle = baseParagraphStyle()
             textView.typingAttributes = defaultTypingAttributes()
         }
 
         textView.backgroundColor = .clear
-        textView.insertionPointColor = overrideTextColor ?? (darkMode ? .white : NSColor(CosmoColors.textPrimary))
+        textView.insertionPointColor = resolvedEditorTextColor
         textView.textContainerInset = resolvedTextInsets()
         textView.textContainer?.lineFragmentPadding = 0
         let isTitleMode = titleConfiguration != nil
@@ -471,7 +475,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     private func defaultTypingAttributes() -> [NSAttributedString.Key: Any] {
         [
             .font: overrideFont ?? resolvedBaseFont(),
-            .foregroundColor: overrideTextColor ?? (darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)),
+            .foregroundColor: resolvedEditorTextColor,
             .paragraphStyle: baseParagraphStyle()
         ]
     }
@@ -724,8 +728,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let activeRange = NSRange(location: activeLocation, length: max(activeLength, 1))
             guard activeRange.location < fullRange.length else { return }
 
-            let mutedColor = NSColor(DS.textMuted).withAlphaComponent(0.48)
-            let activeColor = parent.overrideTextColor ?? NSColor(DS.text)
+            let mutedColor = NSColor(DS.documentTextMuted).withAlphaComponent(0.48)
+            let activeColor = parent.resolvedEditorTextColor
 
             layoutManager.addTemporaryAttribute(.foregroundColor, value: mutedColor, forCharacterRange: fullRange)
             layoutManager.addTemporaryAttribute(.foregroundColor, value: activeColor, forCharacterRange: activeRange)
@@ -1046,7 +1050,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     textView.textStorage?.beginEditing()
                     textView.textStorage?.addAttributes([
                         .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
-                        .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                        .foregroundColor: parent.resolvedEditorTextColor,
                         .paragraphStyle: defaultParagraphStyle()
                     ], range: nlRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: nlRange)
@@ -1493,7 +1497,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: checkRange)
                 textView.textStorage?.addAttributes([
                     .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
-                    .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                    .foregroundColor: parent.resolvedEditorTextColor,
                     .paragraphStyle: defaultParagraphStyle()
                 ], range: checkRange)
                 isInHeadingMode = false
@@ -1517,7 +1521,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if updatedLineRange.length > 0 {
                 textView.textStorage?.addAttributes([
                     .font: font,
-                    .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                    .foregroundColor: parent.resolvedEditorTextColor,
                     .paragraphStyle: paragraphStyle,
                     RichDocumentAttributeKeys.headingLevel: level
                 ], range: updatedLineRange)
@@ -1525,7 +1529,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             textView.typingAttributes = [
                 .font: font,
-                .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                .foregroundColor: parent.resolvedEditorTextColor,
                 .paragraphStyle: paragraphStyle,
                 RichDocumentAttributeKeys.headingLevel: level
             ]
@@ -1578,7 +1582,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 if updatedLineRange.length > 0 {
                     textView.textStorage?.addAttributes([
                         .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
-                        .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                        .foregroundColor: parent.resolvedEditorTextColor,
                         .paragraphStyle: defaultParagraphStyle()
                     ], range: updatedLineRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: updatedLineRange)
@@ -1614,7 +1618,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if updatedLineRange.length > 0 {
                 textView.textStorage?.addAttributes([
                     .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
-                    .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                    .foregroundColor: parent.resolvedEditorTextColor,
                     .paragraphStyle: defaultParagraphStyle()
                 ], range: updatedLineRange)
                 textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: updatedLineRange)
@@ -1657,7 +1661,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             activeBlockMode = .none
             textView.typingAttributes = [
                 .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
-                .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                .foregroundColor: parent.resolvedEditorTextColor,
                 .paragraphStyle: defaultParagraphStyle()
             ]
         }
@@ -1668,7 +1672,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             isInHeadingMode = false
             var attrs = textView.typingAttributes
             attrs[.font] = NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight)
-            attrs[.foregroundColor] = parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+            attrs[.foregroundColor] = parent.resolvedEditorTextColor
             attrs.removeValue(forKey: RichDocumentAttributeKeys.headingLevel)
             // Preserve existing paragraphStyle (block indentation) if in a list
             if attrs[.paragraphStyle] == nil {
@@ -1738,7 +1742,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 string: " ",
                 attributes: [
                     .font: NSFont.systemFont(ofSize: parent.fontSize),
-                    .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+                    .foregroundColor: parent.resolvedEditorTextColor
                 ]
             ))
 

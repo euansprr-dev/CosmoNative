@@ -241,7 +241,7 @@ struct NoteBlockView: View {
                 if noteBodyDocument.isEmpty {
                     Text("Press / for commands...")
                         .font(.system(size: bodyFontSize))
-                        .foregroundStyle(DS.textMuted)
+                        .foregroundStyle(DS.documentTextMuted)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                 } else {
                     CosmoDocumentRenderer(
@@ -266,13 +266,13 @@ struct NoteBlockView: View {
             Spacer()
             Text("\(noteWordCount) words  ·  \(noteText.count) chars")
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.documentTextMuted)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
+                        .stroke(DS.documentBorderSubtle, lineWidth: 1)
                 }
         }
     }
@@ -315,7 +315,7 @@ struct NoteBlockView: View {
             } else {
                 Text(noteTitleText.isEmpty ? "Heading" : noteTitleText)
                     .font(documentTitleFont)
-                    .foregroundStyle(noteTitleText.isEmpty ? DS.textMuted : DS.text)
+                    .foregroundStyle(noteTitleText.isEmpty ? DS.documentTextMuted : DS.documentText)
                     .lineLimit(titleStyle.previewLineLimit)
                     .truncationMode(.tail)
                     .multilineTextAlignment(titleStyle.swiftUITextAlignment)

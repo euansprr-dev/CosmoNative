@@ -83,3 +83,78 @@ struct CommandKUserCommandSearchComposer {
         }
     }
 }
+
+struct CommandKSystemCommandComposer {
+    func rows(for query: String) -> [CommandKUserCommandRow] {
+        guard matchesCosmoQuery(query) else { return [] }
+        return [
+            row(
+                id: "system-cosmo-pane",
+                title: "Open Cosmo as Pane",
+                subtitle: "Dock the AI assistant beside your workspace",
+                kind: .openCosmoPane
+            ),
+            row(
+                id: "system-cosmo-window",
+                title: "Open Cosmo Floating Window",
+                subtitle: "Open the AI assistant as a floating window",
+                kind: .openCosmoWindow
+            )
+        ]
+    }
+
+    private func row(
+        id: String,
+        title: String,
+        subtitle: String,
+        kind: CommandKActionKind
+    ) -> CommandKUserCommandRow {
+        let action = CommandKAction(
+            kind: kind,
+            title: title,
+            subtitle: subtitle,
+            icon: "sparkles",
+            payload: CommandKActionPayload(rawText: "cosmo")
+        )
+        return CommandKUserCommandRow(
+            id: id,
+            title: title,
+            subtitle: "System · Cosmo",
+            icon: action.icon,
+            action: action
+        )
+    }
+
+    private func matchesCosmoQuery(_ query: String) -> Bool {
+        let normalized = Self.normalized(query)
+        guard normalized.count >= 2 else { return false }
+
+        if normalized == "ai" {
+            return true
+        }
+
+        let prefixable = [
+            "cosmo",
+            "assistant",
+            "agent",
+            "open cosmo",
+            "open ai",
+            "cosmo pane",
+            "cosmo window",
+            "ai pane",
+            "ai window"
+        ]
+        return prefixable.contains { candidate in
+            candidate.hasPrefix(normalized) || normalized.hasPrefix(candidate)
+        }
+    }
+
+    private static func normalized(_ raw: String) -> String {
+        raw
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"[^a-z0-9 ]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

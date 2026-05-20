@@ -1383,6 +1383,9 @@ public final class CommandKViewModel: ObservableObject {
     /// Debounce delay for search queries. Keep this close to a frame so local command rows feel instant.
     private let searchDebounce: TimeInterval = 0.03
 
+    /// Delay only the expensive semantic search. Local indexed results still publish immediately.
+    private let semanticSearchDelayNanoseconds: UInt64 = 120_000_000
+
     /// Maximum results to display
     private let maxResults = 25
 
@@ -1442,6 +1445,8 @@ public final class CommandKViewModel: ObservableObject {
     private let searchPipeline = CommandKSearchPipeline()
     private var searchIndex = CommandKSearchIndex()
     private var searchIndexLoaded = false
+    private var instantIndexSearchTask: Task<[RankedResult], Never>?
+    private var instantIndexSearchGeneration = 0
     private var searchIndexTask: Task<Void, Never>?
     private var unifiedSearchEnrichmentTask: Task<Void, Never>?
     private var swipeFilterTask: Task<Void, Never>?
@@ -1478,6 +1483,7 @@ public final class CommandKViewModel: ObservableObject {
             prewarmSearchIndexIfNeeded()
         } else {
             searchTask?.cancel()
+            instantIndexSearchTask?.cancel()
             ideaGalleryReloadTask?.cancel()
             commandKRefreshTask?.cancel()
             searchIndexTask?.cancel()
@@ -1491,6 +1497,7 @@ public final class CommandKViewModel: ObservableObject {
 
     private func setupQueryDebounce() {
         $query
+            .dropFirst()
             .debounce(for: .seconds(searchDebounce), scheduler: DispatchQueue.main)
             .removeDuplicates()
             .sink { [weak self] query in
@@ -1558,6 +1565,8 @@ public final class CommandKViewModel: ObservableObject {
     public func performSearch(query: String) async {
         // Cancel previous search
         searchTask?.cancel()
+        instantIndexSearchTask?.cancel()
+        instantIndexSearchGeneration &+= 1
         guard isSurfaceActive else { return }
         let requestID = await searchPipeline.nextRequestID()
         let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("perform-search")
@@ -1609,6 +1618,21 @@ public final class CommandKViewModel: ObservableObject {
             return
         }
 
+        if case .expandedDomain = cortexMode {
+            primaryAction = nil
+            userCommandRows = []
+            results = []
+            unfilteredResults = []
+            groupedResults = []
+            flatNavigableResults = []
+            isUnifiedSearchActive = false
+            unifiedGroupedResults = []
+            unifiedFlatResults = []
+            unifiedCardItems = []
+            currentPhase = .idle
+            return
+        }
+
         let matchedUserCommandRows = prefixType == nil
             ? await loadUserCommandRows(for: searchQuery)
             : []
@@ -1651,16 +1675,28 @@ public final class CommandKViewModel: ObservableObject {
 
         let effectiveQuery = searchQuery.isEmpty ? "" : searchQuery
         let queryForSearch = effectiveQuery.isEmpty ? query : effectiveQuery
-
-        await performInstantUnifiedSearch(query: queryForSearch)
-
-        let instantIndexedResults = searchIndex.search(queryForSearch, limit: maxResults)
+        let maxInstantResults = maxResults
+        let searchIndexSnapshot = searchIndex
+        let instantSearchGeneration = instantIndexSearchGeneration
+        let instantSearchTask = Task.detached(priority: .userInitiated) {
+            searchIndexSnapshot.search(queryForSearch, limit: maxInstantResults) {
+                Task.isCancelled
+            }
+        }
+        instantIndexSearchTask = instantSearchTask
+        let instantIndexedResults = await instantSearchTask.value
+        if instantIndexSearchGeneration == instantSearchGeneration {
+            instantIndexSearchTask = nil
+        }
+        guard await searchPipeline.isCurrent(requestID), isSurfaceActive else { return }
         if !instantIndexedResults.isEmpty {
             unfilteredResults = instantIndexedResults
             computeFilterCounts()
             applyFiltersToResults()
             await performInstantUnifiedSearch(query: queryForSearch)
             currentPhase = .instant
+        } else {
+            await performInstantUnifiedSearch(query: queryForSearch)
         }
 
         // Check cache first
@@ -1672,17 +1708,27 @@ public final class CommandKViewModel: ObservableObject {
         )
 
         if let cached = await QueryResultCache.shared.get(for: cacheKey) {
+            guard await searchPipeline.isCurrent(requestID), isSurfaceActive else { return }
             unfilteredResults = cached
             computeFilterCounts()
             applyFiltersToResults()
-            await performUnifiedSearch(query: queryForSearch)
+            await performInstantUnifiedSearch(query: queryForSearch)
+            scheduleUnifiedSearchEnrichment(for: queryForSearch)
             currentPhase = .instant
             return
         }
 
         // Perform hybrid search (BM25 + vector similarity)
+        let semanticDelay = semanticSearchDelayNanoseconds
         searchTask = Task { @MainActor in
             do {
+                try await Task.sleep(nanoseconds: semanticDelay)
+                try Task.checkCancellation()
+                guard isSurfaceActive,
+                      await searchPipeline.isCurrent(requestID) else {
+                    return
+                }
+
                 let hybridSignpost = CommandKPerformanceInstrumentation.signposter.beginInterval("hybrid-search")
                 // Use HybridSearchEngine for semantic + keyword search
                 let hybridResults = try await hybridSearch.search(
@@ -1692,10 +1738,12 @@ public final class CommandKViewModel: ObservableObject {
                     entityTypes: nil  // Don't filter at search level, do it client-side for counts
                 )
                 CommandKPerformanceInstrumentation.signposter.endInterval("hybrid-search", hybridSignpost)
+                try Task.checkCancellation()
 
                 // Convert HybridSearchEngine.SearchResult to RankedResult
                 var rankedResults: [RankedResult] = []
                 for result in hybridResults {
+                    try Task.checkCancellation()
                     // Map EntityType to AtomType
                     let atomType = entityTypeToAtomType(result.entityType)
 
@@ -1736,7 +1784,8 @@ public final class CommandKViewModel: ObservableObject {
                     unfilteredResults = rankedResults
                     computeFilterCounts()
                     applyFiltersToResults()
-                    await performUnifiedSearch(query: queryForSearch)
+                    await performInstantUnifiedSearch(query: queryForSearch)
+                    scheduleUnifiedSearchEnrichment(for: queryForSearch)
                     currentPhase = .complete
 
                     // Cache unfiltered results
@@ -1754,6 +1803,11 @@ public final class CommandKViewModel: ObservableObject {
                         )
                     }
                     Task { @MainActor in
+                        guard !Task.isCancelled,
+                              isSurfaceActive,
+                              await searchPipeline.isCurrent(requestID) else {
+                            return
+                        }
                         let rerankSignpost = CommandKPerformanceInstrumentation.signposter.beginInterval("ai-rerank")
                         if let reRanked = await SearchReRanker.shared.reRank(
                             query: queryForReRank,
@@ -1781,12 +1835,15 @@ public final class CommandKViewModel: ObservableObject {
                             }
                             unfilteredResults = reRankedResults.sorted()
                             applyFiltersToResults()
-                            await performUnifiedSearch(query: queryForReRank)
+                            await performInstantUnifiedSearch(query: queryForReRank)
+                            scheduleUnifiedSearchEnrichment(for: queryForReRank)
                             isAIRanked = true
                         }
                         CommandKPerformanceInstrumentation.signposter.endInterval("ai-rerank", rerankSignpost)
                     }
                 }
+            } catch is CancellationError {
+                return
             } catch {
                 if !Task.isCancelled,
                    isSurfaceActive,
@@ -2065,6 +2122,109 @@ public final class CommandKViewModel: ObservableObject {
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 
+    /// Open the selected result in the split-pane column.
+    public func openSelectedAsPane() async {
+        if let primaryAction,
+           selectedNodeId == nil || selectedNodeId == primaryAction.id {
+            return
+        }
+
+        if let selectedNodeId,
+           userCommandRows.contains(where: { $0.id == selectedNodeId }) {
+            return
+        }
+
+        guard !isTaskCreationMode else { return }
+
+        if let selectedNodeId,
+           let item = recentItems.first(where: { $0.id == selectedNodeId }),
+           openRecentItemAsPane(item) {
+            return
+        }
+
+        if case .expandedDomain = cortexMode,
+           let selectedNodeId,
+           let target = expandedDomainOpenTargets[selectedNodeId] {
+            await openExpandedDomainTargetAsPane(target)
+            return
+        }
+
+        if let result = selectedUnifiedSearchResultForPaneOpen() {
+            await openUnifiedSearchResultAsPane(result)
+            return
+        }
+
+        guard let uuid = selectedNodeId else { return }
+        try? await CommandKActionExecutor().execute(.openAsPane(uuid: uuid))
+    }
+
+    private func openRecentItemAsPane(_ item: RecentDisplayItem) -> Bool {
+        openEntityAsPane(type: item.type, id: item.entityId)
+    }
+
+    private func openEntityAsPane(type: AtomType, id: Int64) -> Bool {
+        guard id > 0, let entityType = EntityType(rawValue: type.rawValue) else { return false }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openAsPane,
+            object: nil,
+            userInfo: ["type": entityType, "id": id]
+        )
+        closeCommandKAfterPaneOpen()
+        return true
+    }
+
+    private func openThinkspaceAsPane(id: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openAsPane,
+            object: nil,
+            userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: id).userInfo
+        )
+        closeCommandKAfterPaneOpen()
+    }
+
+    private func closeCommandKAfterPaneOpen() {
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+    }
+
+    private func selectedUnifiedSearchResultForPaneOpen() -> UnifiedSearchResult? {
+        guard isUnifiedSearchActive else { return nil }
+        if let selectedNodeId,
+           let result = unifiedFlatResults.first(where: { $0.selectionID == selectedNodeId }) {
+            return result
+        }
+        guard selectedResultIndex >= 0, selectedResultIndex < unifiedFlatResults.count else { return nil }
+        return unifiedFlatResults[selectedResultIndex]
+    }
+
+    private func openUnifiedSearchResultAsPane(_ result: UnifiedSearchResult) async {
+        if result.resultKind == .browserPin, let browserURL = result.browserURL {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openWebBrowserPane,
+                object: nil,
+                userInfo: [
+                    "url": browserURL,
+                    "title": result.browserTitle ?? result.subtitle ?? "Browser"
+                ]
+            )
+            finishAction()
+        } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
+            openThinkspaceAsPane(id: thinkspaceId)
+        } else if let atomUUID = result.atomUUID {
+            try? await CommandKActionExecutor().execute(.openAsPane(uuid: atomUUID))
+        }
+    }
+
+    private func openExpandedDomainTargetAsPane(_ target: CommandKDomainOpenTarget) async {
+        switch target {
+        case .atom(let uuid):
+            try? await CommandKActionExecutor().execute(.openAsPane(uuid: uuid))
+        case .thinkspace(let id):
+            openThinkspaceAsPane(id: id)
+        case .readwiseBook:
+            break
+        }
+    }
+
     /// Open the selected result
     public func openSelected() {
         if let primaryAction,
@@ -2242,8 +2402,14 @@ public final class CommandKViewModel: ObservableObject {
 
         case .createIdea:
             let title = action.payload.title ?? action.payload.body ?? ""
-            _ = try await AgentToolExecutor.shared.execute(toolName: "create_idea", arguments: ["title": title])
-            finishAction()
+            if let clientName = action.payload.clientName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !clientName.isEmpty {
+                try await captureScopedIdea(title: title, body: action.payload.body, clientName: clientName)
+                finishScopedIdeaCapture()
+            } else {
+                _ = try await AgentToolExecutor.shared.execute(toolName: "create_idea", arguments: ["title": title])
+                finishAction()
+            }
 
         case .createTask:
             let title = action.payload.title ?? action.payload.body ?? ""
@@ -2407,6 +2573,29 @@ public final class CommandKViewModel: ObservableObject {
         query = ""
         primaryAction = nil
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+    }
+
+    private func finishScopedIdeaCapture() {
+        activeTypePrefix = nil
+        selectedTypeFilters.removeAll()
+        actionStatusMessage = nil
+        query = ""
+        primaryAction = nil
+        userCommandRows = []
+        results = []
+        unfilteredResults = []
+        groupedResults = []
+        flatNavigableResults = []
+        filterCounts = [:]
+        isUnifiedSearchActive = false
+        unifiedGroupedResults = []
+        unifiedFlatResults = []
+        unifiedCardItems = []
+        selectedReadwiseBookId = nil
+        isShowingRecents = false
+        currentPhase = .idle
+
+        transitionToExpanded(.ideas, loadDataImmediately: false)
     }
 
     // MARK: - Cortex Mode Transitions
@@ -3230,43 +3419,107 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    private func captureScopedIdea(title rawTitle: String, body rawBody: String?, clientName rawClientName: String) async throws -> Atom {
+        let clientName = rawClientName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let client = try await AtomRepository.shared.fuzzyFindClient(query: clientName) else {
+            throw CommandKActionExecutionError.clientNotFound(clientName)
+        }
+
+        let trimmedTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBody = rawBody?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ideaTitle = trimmedTitle.isEmpty ? (trimmedBody ?? "") : trimmedTitle
+        let ideaBody = (trimmedBody?.isEmpty == false) ? trimmedBody : ideaTitle
+
+        return try await createIdeaForClientAtom(
+            title: ideaTitle,
+            body: ideaBody,
+            clientUUID: client.uuid,
+            clientName: client.title ?? clientName,
+            captureSource: "command_k"
+        )
+    }
+
+    @discardableResult
+    private func createIdeaForClientAtom(
+        title rawTitle: String,
+        body rawBody: String?,
+        clientUUID: String?,
+        clientName: String?,
+        captureSource: String? = nil
+    ) async throws -> Atom {
+        let trimmedTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { throw CommandKActionExecutionError.missingIdeaText }
+
+        let trimmedBody = rawBody?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var atom = Atom.new(
+            type: .idea,
+            title: trimmedTitle,
+            body: trimmedBody?.isEmpty == false ? trimmedBody : nil,
+            metadata: nil
+        )
+
+        if clientUUID != nil || captureSource != nil {
+            atom = atom.withUpdatedIdeaMetadata { meta in
+                if let clientUUID {
+                    meta.clientUUID = clientUUID
+                }
+                if let captureSource {
+                    meta.captureSource = captureSource
+                }
+            }
+        }
+
+        if let clientUUID {
+            atom = atom.addingLink(.ideaToClient(clientUUID))
+        }
+
+        let created = try await AtomRepository.shared.create(atom)
+        insertCreatedIdeaIntoGallery(created, clientName: clientName)
+
+        if let clientUUID,
+           var client = try? await AtomRepository.shared.fetch(uuid: clientUUID) {
+            client = client.addingLink(.clientToIdea(created.uuid))
+            client.updatedAt = ISO8601DateFormatter().string(from: Date())
+            client.localVersion += 1
+            _ = try? await AtomRepository.shared.update(client)
+        }
+
+        NotificationCenter.default.post(
+            name: CosmoNotification.Entity.created,
+            object: nil,
+            userInfo: ["atom": created, "uuid": created.uuid, "type": "idea"]
+        )
+
+        return created
+    }
+
+    private func insertCreatedIdeaIntoGallery(_ atom: Atom, clientName: String?) {
+        guard let galleryItem = atom.toIdeaGalleryItem(clientName: clientName) else { return }
+
+        ideaGalleryItems.removeAll { $0.atomUUID == galleryItem.atomUUID }
+        ideaGalleryItems.insert(galleryItem, at: 0)
+        ideaGalleryItems.sort { $0.updatedAt > $1.updatedAt }
+        ideaTotalCount = ideaGalleryItems.count
+        ideaGalleryLoaded = true
+        refreshDomainPresentation()
+    }
+
     /// Create an idea pre-assigned to a client profile (used by board view inline add)
     func createIdeaForClient(title: String, clientUUID: String?) async {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        var atom = Atom.new(type: .idea, title: trimmed, body: nil, metadata: nil)
-
-        if let clientUUID {
-            atom = atom.withUpdatedIdeaMetadata { meta in
-                meta.clientUUID = clientUUID
-            }
-            atom = atom.addingLink(.ideaToClient(clientUUID))
-        }
-
         do {
-            let created = try await AtomRepository.shared.create(atom)
-
-            if let clientName = await clientName(for: clientUUID),
-               let galleryItem = created.toIdeaGalleryItem(clientName: clientName) {
-                ideaGalleryItems.insert(galleryItem, at: 0)
-            } else if let galleryItem = created.toIdeaGalleryItem() {
-                ideaGalleryItems.insert(galleryItem, at: 0)
-            }
-            ideaGalleryItems.sort { $0.updatedAt > $1.updatedAt }
-            ideaGalleryLoaded = true
+            try await createIdeaForClientAtom(
+                title: trimmed,
+                body: nil,
+                clientUUID: clientUUID,
+                clientName: await clientName(for: clientUUID)
+            )
         } catch {
             errorMessage = "Failed to capture idea: \(error.localizedDescription)"
             return
-        }
-
-        // Add reciprocal link on client
-        if let clientUUID,
-           var client = try? await AtomRepository.shared.fetch(uuid: clientUUID) {
-            client = client.addingLink(.clientToIdea(atom.uuid))
-            client.updatedAt = ISO8601DateFormatter().string(from: Date())
-            client.localVersion += 1
-            _ = try? await AtomRepository.shared.update(client)
         }
 
         await loadIdeaGallery(forceReload: true)
@@ -3562,6 +3815,7 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Clear search state
     public func clear() {
+        instantIndexSearchTask?.cancel()
         unifiedSearchEnrichmentTask?.cancel()
         swipeFilterTask?.cancel()
         query = ""

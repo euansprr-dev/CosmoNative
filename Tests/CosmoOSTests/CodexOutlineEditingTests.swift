@@ -17,6 +17,53 @@ final class CodexOutlineEditingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(window.makeFirstResponderAttempts, 2)
     }
 
+    @MainActor
+    func testOutlineSlideFocusRegistryFulfillsFocusRequestedBeforeEditorRegisters() throws {
+        let slideID = UUID()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let textView = OutlineSlideNoteTextView()
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 120))
+        window.contentView?.addSubview(textView)
+
+        OutlineSlideFocusRegistry.shared.requestFocus(slideID)
+        OutlineSlideFocusRegistry.shared.register(textView, for: slideID)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertIdentical(window.firstResponder, textView)
+        OutlineSlideFocusRegistry.shared.unregister(textView, for: slideID)
+    }
+
+    @MainActor
+    func testOutlineSlideEditorMovesToNextSlideWithDownArrowAtEnd() throws {
+        let textView = OutlineSlideNoteTextView()
+        textView.string = "Hook"
+        textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
+
+        var requestedDirection: OutlineSlideNavigationDirection?
+        textView.onMoveFocus = { requestedDirection = $0 }
+        textView.keyDown(with: arrowKeyEvent(keyCode: 125))
+
+        XCTAssertEqual(requestedDirection, .next)
+    }
+
+    @MainActor
+    func testOutlineSlideEditorMovesToPreviousSlideWithUpArrowAtStart() throws {
+        let textView = OutlineSlideNoteTextView()
+        textView.string = "Hook"
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+        var requestedDirection: OutlineSlideNavigationDirection?
+        textView.onMoveFocus = { requestedDirection = $0 }
+        textView.keyDown(with: arrowKeyEvent(keyCode: 126))
+
+        XCTAssertEqual(requestedDirection, .previous)
+    }
+
     func testInsertSlideAfterFocusedSlideRenumbersAndReturnsInsertedID() {
         let firstID = UUID()
         let secondID = UUID()
@@ -125,6 +172,21 @@ final class CodexOutlineEditingTests: XCTestCase {
             transition: nil,
             note: note
         )
+    }
+
+    private func arrowKeyEvent(keyCode: UInt16) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "",
+            charactersIgnoringModifiers: "",
+            isARepeat: false,
+            keyCode: keyCode
+        )!
     }
 }
 

@@ -1,12 +1,12 @@
 import Foundation
 
-/// Routes Telegram messages to direct tool execution via Gemini Flash classification.
+/// Routes Telegram messages to direct tool execution via cheap Gemini Flash-Lite classification.
 /// Replaces keyword-based intent classification for simple single-shot operations.
 /// Complex operations (drafting, brainstorming, strategy) fall through to the full agent.
 final class FlashLiteRouter {
     static let shared = FlashLiteRouter()
 
-    private let model = "~google/gemini-flash-latest"
+    static let modelId = "google/gemini-3.1-flash-lite"
 
     static func shouldForceAgentFallback(_ text: String) -> Bool {
         if isProfileInspectionRequest(text) {
@@ -151,7 +151,7 @@ final class FlashLiteRouter {
             let response = try await ResearchService.shared.analyze(
                 prompt: text,
                 systemPrompt: systemPrompt,
-                model: model,
+                model: Self.modelId,
                 maxTokens: 1024,
                 temperature: 0.0
             )

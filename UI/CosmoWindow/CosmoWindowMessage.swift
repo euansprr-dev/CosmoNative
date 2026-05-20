@@ -429,7 +429,7 @@ enum MentionContextHelper {
     }
 
     private static func contextBody(for atom: Atom, limit: Int?) -> String {
-        let body = atom.body ?? ""
+        let body = DocumentElementContextFormatter.contextBody(for: atom)
         guard let limit, body.count > limit else {
             return body
         }

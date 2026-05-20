@@ -92,6 +92,7 @@ class SyncEngine: ObservableObject {
 
         // Refresh auth token before sync to prevent JWT expired errors
         await SupabaseAuthService.shared.refreshSessionIfNeeded()
+        guard SupabaseSyncTrafficPolicy.shouldAttemptPush(isAuthenticated: client.isAuthenticated) else { return }
 
         // FIX 5: Housekeeping — remove expired sync fences to prevent unbounded table growth
         await cleanupExpiredFences()
@@ -157,6 +158,11 @@ class SyncEngine: ObservableObject {
     // MARK: - Push Local Changes (Invisible)
     private func syncPendingChanges() async {
         guard isOnline else { return }
+        guard let client = supabaseClient,
+              SupabaseSyncTrafficPolicy.shouldAttemptPush(isAuthenticated: client.isAuthenticated) else {
+            print("⏸️ Sync push paused — Supabase auth unavailable")
+            return
+        }
 
         let pendingItems = try? await database.asyncRead { db in
             try SyncQueueItem
@@ -188,24 +194,32 @@ class SyncEngine: ObservableObject {
                 pendingChanges -= 1
 
             } catch {
-                try? await database.asyncWrite { db in
-                    let newRetryCount = item.retryCount + 1
-                    let newStatus = newRetryCount >= self.maxRetries ? "failed" : "pending"
+                let resolution = SyncFailurePolicy.resolve(
+                    currentRetryCount: item.retryCount,
+                    maxRetries: self.maxRetries,
+                    error: error
+                )
 
+                try? await database.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE sync_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
-                        arguments: [newStatus, newRetryCount, error.localizedDescription, item.id]
+                        arguments: [resolution.status, resolution.retryCount, error.localizedDescription, item.id]
                     )
 
                     // FIX 2 [P0]: If permanently failed, unblock remote updates.
                     // Without this, _local_pending stays 1 forever and ALL future
                     // Realtime/pull updates for this atom are silently dropped.
-                    if newStatus == "failed" {
+                    if resolution.shouldClearLocalPending {
                         try db.execute(
                             sql: "UPDATE \(item.tableName) SET _local_pending = 0 WHERE uuid = ?",
                             arguments: [item.uuid]
                         )
                     }
+                }
+
+                if resolution.shouldPauseFurtherAttempts {
+                    print("⏸️ Supabase sync writes paused — preserving pending local changes and pausing this sync pass")
+                    break
                 }
             }
         }
@@ -221,6 +235,9 @@ class SyncEngine: ObservableObject {
     private func pushChange(_ item: SyncQueueItem) async throws {
         guard let client = supabaseClient else {
             throw SyncError.noClient
+        }
+        guard SupabaseSyncTrafficPolicy.shouldAttemptPush(isAuthenticated: client.isAuthenticated) else {
+            throw SupabaseError.authRequired
         }
 
         // Set sync fence to prevent remote from overwriting
@@ -323,7 +340,8 @@ class SyncEngine: ObservableObject {
                 let lastSync = await getLastPullTime(for: table)
                 let remoteChanges = try await client.fetchChanges(
                     table: table,
-                    since: lastSync
+                    since: lastSync,
+                    excludeLocalSource: table == "atoms"
                 )
 
                 for change in remoteChanges {
@@ -368,8 +386,7 @@ class SyncEngine: ObservableObject {
 
         // LOCAL-FIRST: NEVER apply our own writes back.
         // Only apply changes from cloud agent (_source = "cloud") or iOS app (_source = "ios").
-        let source = data["_source"] as? String ?? "mac"
-        if source == "mac" {
+        if !SupabaseSyncTrafficPolicy.shouldApplyRemoteChange(source: data["_source"] as? String) {
             return
         }
 

@@ -15,4 +15,12 @@ enum NoteWritePolicy {
 
         return hasLocalEdits
     }
+
+    static func requiresBlockFlushBeforeFocusMode(
+        hasLocalEdits: Bool,
+        entityId: Int64,
+        entityUUID: String
+    ) -> Bool {
+        hasLocalEdits && (entityId > 0 || !entityUUID.isEmpty)
+    }
 }

@@ -55,11 +55,10 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
         ("openai/gpt-5.5", "GPT 5.5 Thinking"),
         ("anthropic/claude-opus-4.7", "Claude Opus 4.7"),
         ("openai/gpt-chat-latest", "GPT Chat Latest"),
-        ("~google/gemini-flash-latest", "Gemini Flash Latest"),
+        ("google/gemini-3-flash-preview", "Gemini 3 Flash"),
         ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
         ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
         ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
-        ("google/gemini-3-flash-preview", "Gemini 3 Flash Preview"),
         ("google/gemini-2.0-flash-001", "Gemini 2.0 Flash"),
         ("google/gemini-2.5-pro-preview", "Gemini 2.5 Pro"),
         ("deepseek/deepseek-chat", "DeepSeek V3"),
@@ -379,7 +378,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .gpt55Thinking: return "openai/gpt-5.5"
         case .opus47: return "anthropic/claude-opus-4.7"
         case .gptChatLatest: return "openai/gpt-chat-latest"
-        case .geminiFlashLatest: return "~google/gemini-flash-latest"
+        case .geminiFlashLatest: return "google/gemini-3-flash-preview"
         }
     }
 
@@ -391,7 +390,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .gpt55Thinking: return "GPT 5.5 Thinking"
         case .opus47: return "Opus 4.7"
         case .gptChatLatest: return "GPT Chat Latest"
-        case .geminiFlashLatest: return "Gemini Flash"
+        case .geminiFlashLatest: return "Gemini 3 Flash"
         }
     }
 
@@ -757,17 +756,17 @@ struct ModelFailoverChain: Sendable {
         FailoverModel(modelId: "openai/gpt-5.4", maxRetries: 1, label: "GPT 5.4"),
     ])
 
-    /// Default chain: Sonnet → Haiku → Gemini Flash
+    /// Default chain: Sonnet → Haiku → pinned Gemini 3 Flash
     static let defaultChain = ModelFailoverChain(models: [
         FailoverModel(modelId: "anthropic/claude-sonnet-4.5", maxRetries: 1, label: "Sonnet"),
         FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
-        FailoverModel(modelId: "~google/gemini-flash-latest", maxRetries: 1, label: "Gemini Flash"),
+        FailoverModel(modelId: "google/gemini-3-flash-preview", maxRetries: 1, label: "Gemini 3 Flash"),
     ])
 
-    /// Sensor chain: Haiku → Gemini Flash
+    /// Sensor chain: Haiku → pinned Gemini 3 Flash
     static let sensorChain = ModelFailoverChain(models: [
         FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
-        FailoverModel(modelId: "~google/gemini-flash-latest", maxRetries: 1, label: "Gemini Flash"),
+        FailoverModel(modelId: "google/gemini-3-flash-preview", maxRetries: 1, label: "Gemini 3 Flash"),
     ])
 
     static let gpt55ThinkingChain = ModelFailoverChain(models: [
@@ -783,11 +782,11 @@ struct ModelFailoverChain: Sendable {
 
     static let gptChatLatestChain = ModelFailoverChain(models: [
         FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
-        FailoverModel(modelId: "~google/gemini-flash-latest", maxRetries: 1, label: "Gemini Flash"),
+        FailoverModel(modelId: "google/gemini-3-flash-preview", maxRetries: 1, label: "Gemini 3 Flash"),
     ])
 
     static let geminiFlashLatestChain = ModelFailoverChain(models: [
-        FailoverModel(modelId: "~google/gemini-flash-latest", maxRetries: 1, label: "Gemini Flash"),
+        FailoverModel(modelId: "google/gemini-3-flash-preview", maxRetries: 1, label: "Gemini 3 Flash"),
         FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
     ])
 

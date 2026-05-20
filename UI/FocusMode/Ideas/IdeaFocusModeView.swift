@@ -32,6 +32,11 @@ private enum HookLineLayoutMetrics {
     }
 }
 
+enum OutlineSlideNavigationDirection: Equatable {
+    case previous
+    case next
+}
+
 // MARK: - Idea Focus Mode View
 
 /// Full-screen thinking surface for an idea.
@@ -881,6 +886,9 @@ extension IdeaFocusModeView {
                 focusedSlideID: $focusedOutlineSlideID,
                 placeholder: "what should this slide do?",
                 onReturn: { insertSlideAfterFocusedSlide(slide.id) },
+                onMoveFocus: { direction in
+                    focusAdjacentOutlineSlide(from: slide.id, direction: direction)
+                },
                 onDeleteEmpty: { handleDeleteOnSlide(slide.id) == .handled }
             )
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1099,8 +1107,26 @@ extension IdeaFocusModeView {
 
     private func focusOutlineSlide(_ slideID: UUID) {
         DispatchQueue.main.async {
+            focusedOutlineSlideID = nil
             focusedOutlineSlideID = slideID
+            OutlineSlideFocusRegistry.shared.requestFocus(slideID)
         }
+    }
+
+    private func focusAdjacentOutlineSlide(from slideID: UUID, direction: OutlineSlideNavigationDirection) {
+        guard let slides = viewModel.codexOutline?.slides,
+              let currentIndex = slides.firstIndex(where: { $0.id == slideID }) else { return }
+
+        let targetIndex: Int
+        switch direction {
+        case .previous:
+            targetIndex = currentIndex - 1
+        case .next:
+            targetIndex = currentIndex + 1
+        }
+
+        guard slides.indices.contains(targetIndex) else { return }
+        focusOutlineSlide(slides[targetIndex].id)
     }
 
     private func addElementToSlide(slideId: UUID, field: String, name: String) {
@@ -1192,7 +1218,7 @@ private struct HookLineEditor: NSViewRepresentable {
 
         if focusedEditor == editorID {
             textView.requestFocusWhenReady()
-        } else if textView.window?.firstResponder === textView {
+        } else if focusedEditor != nil, textView.window?.firstResponder === textView {
             textView.window?.makeFirstResponder(nil)
         }
     }
@@ -1220,6 +1246,7 @@ private struct HookLineEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? HookLineTextView else { return }
+            parent.focusedEditor = parent.editorID
             parent.text = textView.string
             textView.invalidateIntrinsicContentSize()
         }
@@ -1324,10 +1351,12 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
     @FocusState.Binding var focusedSlideID: UUID?
     let placeholder: String
     let onReturn: () -> Void
+    let onMoveFocus: (OutlineSlideNavigationDirection) -> Void
     let onDeleteEmpty: () -> Bool
 
     func makeNSView(context: Context) -> OutlineSlideNoteTextView {
         let textView = OutlineSlideNoteTextView()
+        textView.slideID = slideID
         textView.delegate = context.coordinator
         textView.drawsBackground = false
         textView.isRichText = false
@@ -1345,13 +1374,17 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
         textView.textColor = NSColor(DS.text)
         textView.placeholder = placeholder
         textView.onReturn = onReturn
+        textView.onMoveFocus = onMoveFocus
         textView.onDeleteEmpty = onDeleteEmpty
         return textView
     }
 
     func updateNSView(_ textView: OutlineSlideNoteTextView, context: Context) {
         context.coordinator.parent = self
+        textView.slideID = slideID
+        OutlineSlideFocusRegistry.shared.register(textView, for: slideID)
         textView.onReturn = onReturn
+        textView.onMoveFocus = onMoveFocus
         textView.onDeleteEmpty = onDeleteEmpty
         textView.placeholder = placeholder
 
@@ -1362,6 +1395,12 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
 
         if focusedSlideID == slideID {
             textView.requestFocusWhenReady()
+        }
+    }
+
+    static func dismantleNSView(_ textView: OutlineSlideNoteTextView, coordinator: Coordinator) {
+        if let slideID = textView.slideID {
+            OutlineSlideFocusRegistry.shared.unregister(textView, for: slideID)
         }
     }
 
@@ -1394,9 +1433,47 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
     }
 }
 
+final class OutlineSlideFocusRegistry {
+    static let shared = OutlineSlideFocusRegistry()
+
+    private struct Entry {
+        weak var textView: OutlineSlideNoteTextView?
+    }
+
+    private var textViewsBySlideID: [UUID: Entry] = [:]
+    private var pendingFocusSlideIDs: Set<UUID> = []
+
+    private init() {}
+
+    func register(_ textView: OutlineSlideNoteTextView, for slideID: UUID) {
+        textViewsBySlideID[slideID] = Entry(textView: textView)
+        if pendingFocusSlideIDs.contains(slideID) {
+            requestFocus(slideID)
+        }
+    }
+
+    func unregister(_ textView: OutlineSlideNoteTextView, for slideID: UUID) {
+        if textViewsBySlideID[slideID]?.textView === textView {
+            textViewsBySlideID.removeValue(forKey: slideID)
+        }
+    }
+
+    func requestFocus(_ slideID: UUID) {
+        guard let textView = textViewsBySlideID[slideID]?.textView else {
+            pendingFocusSlideIDs.insert(slideID)
+            return
+        }
+
+        pendingFocusSlideIDs.remove(slideID)
+        textView.requestFocusWhenReady()
+    }
+}
+
 final class OutlineSlideNoteTextView: NSTextView {
+    var slideID: UUID?
     var placeholder: String = ""
     var onReturn: (() -> Void)?
+    var onMoveFocus: ((OutlineSlideNavigationDirection) -> Void)?
     var onDeleteEmpty: (() -> Bool)?
     private var shouldFocusWhenAttached = false
     private var focusAttemptCount = 0
@@ -1447,15 +1524,26 @@ final class OutlineSlideNoteTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let isPlainReturn = event.keyCode == 36 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isPlainReturn = event.keyCode == 36 && flags.isEmpty
         if isPlainReturn {
             onReturn?()
             return
         }
 
-        let isShiftReturn = event.keyCode == 36 && event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .shift
+        let isShiftReturn = event.keyCode == 36 && flags == .shift
         if isShiftReturn {
             insertText("\n", replacementRange: selectedRange())
+            return
+        }
+
+        if flags.isEmpty, event.keyCode == 126, selectedRange().location == 0 {
+            onMoveFocus?(.previous)
+            return
+        }
+
+        if flags.isEmpty, event.keyCode == 125, NSMaxRange(selectedRange()) >= string.count {
+            onMoveFocus?(.next)
             return
         }
 

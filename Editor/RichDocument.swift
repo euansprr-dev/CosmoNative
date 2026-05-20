@@ -20,6 +20,7 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
     case numberedList
     case checklist
     case image
+    case element
 
     var headingLevelInt: Int? {
         switch self {
@@ -80,9 +81,80 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
     var kind: RichBlockKind
     var inlines: [RichInlineNode] = []
     var checked: Bool? = nil
+    var element: RichElementInstance? = nil
+    var children: [RichBlock] = []
+
+    init(
+        id: UUID = UUID(),
+        kind: RichBlockKind,
+        inlines: [RichInlineNode] = [],
+        checked: Bool? = nil,
+        element: RichElementInstance? = nil,
+        children: [RichBlock] = []
+    ) {
+        self.id = id
+        self.kind = kind
+        self.inlines = inlines
+        self.checked = checked
+        self.element = element
+        self.children = children
+    }
 
     static func paragraph(_ text: String) -> RichBlock {
         RichBlock(kind: .paragraph, inlines: [.text(text)])
+    }
+
+    static func element(
+        _ definition: DocumentElementDefinition,
+        children: [RichBlock] = [],
+        isCollapsed: Bool = false,
+        instanceTitle: String? = nil
+    ) -> RichBlock {
+        RichBlock.element(
+            RichElementInstance(
+                definitionID: definition.id,
+                titleSnapshot: definition.title,
+                systemIconSnapshot: definition.systemIcon,
+                isCollapsed: isCollapsed,
+                instanceTitleSnapshot: instanceTitle ?? definition.title
+            ),
+            children: children
+        )
+    }
+
+    static func element(_ instance: RichElementInstance, children: [RichBlock] = []) -> RichBlock {
+        RichBlock(kind: .element, element: instance, children: children)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case inlines
+        case checked
+        case element
+        case children
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try container.decode(RichBlockKind.self, forKey: .kind)
+        inlines = try container.decodeIfPresent([RichInlineNode].self, forKey: .inlines) ?? []
+        checked = try container.decodeIfPresent(Bool.self, forKey: .checked)
+        element = try container.decodeIfPresent(RichElementInstance.self, forKey: .element)
+        children = try container.decodeIfPresent([RichBlock].self, forKey: .children) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(inlines, forKey: .inlines)
+        try container.encodeIfPresent(checked, forKey: .checked)
+        try container.encodeIfPresent(element, forKey: .element)
+        if !children.isEmpty {
+            try container.encode(children, forKey: .children)
+        }
     }
 }
 
@@ -94,7 +166,7 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
     var isEmpty: Bool {
         blocks.allSatisfy { block in
             switch block.kind {
-            case .divider:
+            case .divider, .image, .element:
                 return false
             default:
                 return block.inlines.allSatisfy { node in
@@ -112,7 +184,12 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
     }
 
     var plainText: String {
+        Self.plainText(for: blocks, depth: 0)
+    }
+
+    private static func plainText(for blocks: [RichBlock], depth: Int) -> String {
         blocks.enumerated().map { index, block in
+            let indentation = String(repeating: "  ", count: depth)
             let prefix: String
             switch block.kind {
             case .paragraph:
@@ -126,7 +203,7 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
             case .quote:
                 prefix = "│ "
             case .divider:
-                return "───────────────"
+                return indentation + "───────────────"
             case .bulletList:
                 prefix = "• "
             case .numberedList:
@@ -141,11 +218,18 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
             case .checklist:
                 prefix = (block.checked ?? false) ? "☑ " : "☐ "
             case .image:
-                return "[Image]"
+                return indentation + "[Image]"
+            case .element:
+                let title = block.element?.instanceTitleSnapshot ?? block.element?.titleSnapshot ?? "Untitled Element"
+                let childText = plainText(for: block.children, depth: depth + 1)
+                if childText.isEmpty {
+                    return indentation + title
+                }
+                return indentation + title + "\n" + childText
             }
 
             let body = block.inlines.map(\.plainText).joined()
-            return prefix + body
+            return indentation + prefix + body
         }
         .joined(separator: "\n")
     }
@@ -262,6 +346,14 @@ enum RichDocumentAttributeKeys {
     static let entityUUID = NSAttributedString.Key("CosmoEntityUUID")
     static let imagePath = NSAttributedString.Key("CosmoImagePath")
     static let headingLevel = NSAttributedString.Key("CosmoHeadingLevel")
+    static let elementDepth = NSAttributedString.Key("CosmoElementDepth")
+    static let elementInstanceID = NSAttributedString.Key("CosmoElementInstanceID")
+    static let elementDefinitionID = NSAttributedString.Key("CosmoElementDefinitionID")
+    static let elementTitle = NSAttributedString.Key("CosmoElementTitle")
+    static let elementInstanceTitle = NSAttributedString.Key("CosmoElementInstanceTitle")
+    static let elementIcon = NSAttributedString.Key("CosmoElementIcon")
+    static let elementCollapsed = NSAttributedString.Key("CosmoElementCollapsed")
+    static let elementChildrenJSON = NSAttributedString.Key("CosmoElementChildrenJSON")
 }
 
 enum RichDocumentSerializer {
@@ -273,19 +365,44 @@ enum RichDocumentSerializer {
         baseFontWeight: NSFont.Weight = .regular,
         titleMode: Bool = false
     ) -> NSAttributedString {
+        attributedString(
+            from: document,
+            depth: 0,
+            fontSize: fontSize,
+            darkMode: darkMode,
+            singleLine: singleLine,
+            baseFontWeight: baseFontWeight,
+            titleMode: titleMode
+        )
+    }
+
+    private static func attributedString(
+        from document: RichDocument,
+        depth: Int,
+        fontSize: CGFloat,
+        darkMode: Bool,
+        singleLine: Bool,
+        baseFontWeight: NSFont.Weight,
+        titleMode: Bool
+    ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let textColor = darkMode ? NSColor.white : NSColor(DS.documentText)
 
         for (index, block) in document.blocks.enumerated() {
             if index > 0 {
-                result.append(NSAttributedString(string: "\n", attributes: baseAttributes(
-                    fontSize: fontSize,
-                    darkMode: darkMode,
-                    singleLine: singleLine,
-                    baseFontWeight: baseFontWeight,
-                    titleMode: titleMode
+                result.append(NSAttributedString(string: "\n", attributes: attributesWithDepth(
+                    baseAttributes(
+                        fontSize: fontSize,
+                        darkMode: darkMode,
+                        singleLine: singleLine,
+                        baseFontWeight: baseFontWeight,
+                        titleMode: titleMode
+                    ),
+                    depth: depth
                 )))
             }
+
+            let blockStart = result.length
 
             // Compute list-relative position for numbered lists
             var listPosition = 1
@@ -313,11 +430,39 @@ enum RichDocumentSerializer {
                     .font: NSFont.systemFont(ofSize: max(12, fontSize - 3)),
                     .foregroundColor: textColor.withAlphaComponent(0.45)
                 ]))
+                addDepth(depth, to: result, from: blockStart)
                 continue
             }
 
             if block.kind == .image, block.inlines.isEmpty {
                 result.append(imageFallbackAttributedString(fontSize: fontSize, darkMode: darkMode))
+                addDepth(depth, to: result, from: blockStart)
+                continue
+            }
+
+            if block.kind == .element {
+                result.append(elementHeaderAttributedString(for: block, depth: depth, fontSize: fontSize, darkMode: darkMode))
+                if !(block.element?.isCollapsed ?? false), !block.children.isEmpty {
+                    result.append(NSAttributedString(string: "\n", attributes: attributesWithDepth(
+                        baseAttributes(
+                            fontSize: fontSize,
+                            darkMode: darkMode,
+                            singleLine: singleLine,
+                            baseFontWeight: baseFontWeight,
+                            titleMode: titleMode
+                        ),
+                        depth: depth + 1
+                    )))
+                    result.append(attributedString(
+                        from: RichDocument(blocks: block.children),
+                        depth: depth + 1,
+                        fontSize: fontSize,
+                        darkMode: darkMode,
+                        singleLine: singleLine,
+                        baseFontWeight: baseFontWeight,
+                        titleMode: titleMode
+                    ))
+                }
                 continue
             }
 
@@ -366,6 +511,7 @@ enum RichDocumentSerializer {
                     }
                 }
             }
+            addDepth(depth, to: result, from: blockStart)
         }
 
         if result.length == 0 {
@@ -385,7 +531,7 @@ enum RichDocumentSerializer {
         guard attributedString.length > 0 else { return .empty }
 
         let string = attributedString.string as NSString
-        var blocks: [RichBlock] = []
+        var lines: [ParsedAttributedLine] = []
         var lineStart = 0
 
         while lineStart <= string.length {
@@ -396,13 +542,68 @@ enum RichDocumentSerializer {
 
             let rawLine = attributedString.attributedSubstring(from: lineRange)
             let trimmedLine = trimTrailingNewline(from: rawLine)
-            blocks.append(block(from: trimmedLine))
+            lines.append(parsedLine(from: trimmedLine))
 
             lineStart = lineRange.location + lineRange.length
             if lineStart >= string.length { break }
         }
 
-        return RichDocument(blocks: blocks)
+        var index = 0
+        return RichDocument(blocks: buildBlocks(from: lines, startingAt: &index, depth: 0))
+    }
+
+    private struct ParsedAttributedLine {
+        var depth: Int
+        var block: RichBlock
+    }
+
+    private static func parsedLine(from line: NSAttributedString) -> ParsedAttributedLine {
+        let depth: Int
+        if line.length > 0 {
+            depth = intAttribute(RichDocumentAttributeKeys.elementDepth, in: line) ?? 0
+        } else {
+            depth = 0
+        }
+        return ParsedAttributedLine(depth: max(0, depth), block: block(from: line))
+    }
+
+    private static func buildBlocks(
+        from lines: [ParsedAttributedLine],
+        startingAt index: inout Int,
+        depth: Int
+    ) -> [RichBlock] {
+        var blocks: [RichBlock] = []
+
+        while index < lines.count {
+            let line = lines[index]
+            if line.depth < depth {
+                break
+            }
+
+            if line.depth > depth, blocks.last?.kind == .element {
+                var parent = blocks.removeLast()
+                let nested = buildBlocks(from: lines, startingAt: &index, depth: line.depth)
+                if !nested.isEmpty {
+                    parent.children = nested
+                }
+                blocks.append(parent)
+                continue
+            }
+
+            var block = line.block
+            index += 1
+
+            if block.kind == .element {
+                let nested = buildBlocks(from: lines, startingAt: &index, depth: line.depth + 1)
+                if !nested.isEmpty {
+                    block.children = nested
+                }
+            }
+
+            blocks.append(block)
+        }
+
+        return blocks
     }
 
     private static func trimTrailingNewline(from attributedString: NSAttributedString) -> NSAttributedString {
@@ -433,6 +634,10 @@ enum RichDocumentSerializer {
             return RichBlock(kind: .divider)
         }
 
+        if let element = elementBlock(from: line) {
+            return element
+        }
+
         // Detect headings by custom attribute (preferred over text prefix)
         if line.length > 0,
            let level = line.attribute(RichDocumentAttributeKeys.headingLevel, at: 0, effectiveRange: nil) as? Int {
@@ -459,6 +664,40 @@ enum RichDocumentSerializer {
             return (.numberedList, text.distance(from: text.startIndex, to: range.upperBound), nil)
         }
         return (.paragraph, 0, nil)
+    }
+
+    private static func elementBlock(from line: NSAttributedString) -> RichBlock? {
+        guard line.length > 0,
+              let definitionID = uuidAttribute(RichDocumentAttributeKeys.elementDefinitionID, in: line) else {
+            return nil
+        }
+
+        let instanceID = uuidAttribute(RichDocumentAttributeKeys.elementInstanceID, in: line) ?? UUID()
+        let elementName = stringAttribute(RichDocumentAttributeKeys.elementTitle, in: line)
+            ?? line.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let instanceTitle = stringAttribute(RichDocumentAttributeKeys.elementInstanceTitle, in: line)
+            ?? line.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let icon = stringAttribute(RichDocumentAttributeKeys.elementIcon, in: line) ?? DocumentElementSymbol.fallback
+        let collapsed = boolAttribute(RichDocumentAttributeKeys.elementCollapsed, in: line) ?? false
+        let children = elementChildrenAttribute(from: line)
+        let instance = RichElementInstance(
+            id: instanceID,
+            definitionID: definitionID,
+            titleSnapshot: elementName.isEmpty ? "Untitled Element" : elementName,
+            systemIconSnapshot: DocumentElementSymbol.validName(icon),
+            isCollapsed: collapsed,
+            instanceTitleSnapshot: instanceTitle.isEmpty ? elementName : instanceTitle
+        )
+        return RichBlock.element(instance, children: children)
+    }
+
+    private static func elementChildrenAttribute(from line: NSAttributedString) -> [RichBlock] {
+        guard let json = stringAttribute(RichDocumentAttributeKeys.elementChildrenJSON, in: line),
+              let data = json.data(using: .utf8),
+              let children = try? JSONDecoder().decode([RichBlock].self, from: data) else {
+            return []
+        }
+        return children
     }
 
     private static func inlineNodes(from attributedString: NSAttributedString) -> [RichInlineNode] {
@@ -527,6 +766,47 @@ enum RichDocumentSerializer {
         return containsAttachment && !containsNonWhitespaceText
     }
 
+    private static func stringAttribute(_ key: NSAttributedString.Key, in line: NSAttributedString) -> String? {
+        guard line.length > 0 else { return nil }
+        if let value = line.attribute(key, at: 0, effectiveRange: nil) as? String {
+            return value
+        }
+        return nil
+    }
+
+    private static func uuidAttribute(_ key: NSAttributedString.Key, in line: NSAttributedString) -> UUID? {
+        guard line.length > 0 else { return nil }
+        if let value = line.attribute(key, at: 0, effectiveRange: nil) as? UUID {
+            return value
+        }
+        if let value = line.attribute(key, at: 0, effectiveRange: nil) as? String {
+            return UUID(uuidString: value)
+        }
+        return nil
+    }
+
+    private static func intAttribute(_ key: NSAttributedString.Key, in line: NSAttributedString) -> Int? {
+        guard line.length > 0 else { return nil }
+        if let value = line.attribute(key, at: 0, effectiveRange: nil) as? Int {
+            return value
+        }
+        if let value = line.attribute(key, at: 0, effectiveRange: nil) as? NSNumber {
+            return value.intValue
+        }
+        return nil
+    }
+
+    private static func boolAttribute(_ key: NSAttributedString.Key, in line: NSAttributedString) -> Bool? {
+        guard line.length > 0 else { return nil }
+        if let value = line.attribute(key, at: 0, effectiveRange: nil) as? Bool {
+            return value
+        }
+        if let value = line.attribute(key, at: 0, effectiveRange: nil) as? NSNumber {
+            return value.boolValue
+        }
+        return nil
+    }
+
     private static func marks(from attributes: [NSAttributedString.Key: Any]) -> Set<RichTextMark> {
         var marks: Set<RichTextMark> = []
         if let font = attributes[.font] as? NSFont {
@@ -585,9 +865,70 @@ enum RichDocumentSerializer {
         ])
     }
 
+    private static func elementHeaderAttributedString(for block: RichBlock, depth: Int, fontSize: CGFloat, darkMode: Bool) -> NSAttributedString {
+        let elementName = block.element?.titleSnapshot ?? "Untitled Element"
+        let instanceTitle = block.element?.instanceTitleSnapshot ?? elementName
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 0
+        paragraphStyle.minimumLineHeight = max(42, fontSize + 24)
+        paragraphStyle.maximumLineHeight = max(42, fontSize + 24)
+        paragraphStyle.paragraphSpacing = 10
+        paragraphStyle.paragraphSpacingBefore = 8
+        let titleInset = DocumentElementHeaderLayout.titleLeadingInset(
+            depth: depth,
+            fontSize: fontSize,
+            elementName: elementName
+        )
+        paragraphStyle.firstLineHeadIndent = titleInset
+        paragraphStyle.headIndent = titleInset
+
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: max(14, fontSize - 1), weight: .medium),
+            .foregroundColor: (darkMode ? NSColor.white : NSColor(DS.documentText)).withAlphaComponent(darkMode ? 0.82 : 0.78),
+            .paragraphStyle: paragraphStyle,
+            RichDocumentAttributeKeys.elementDepth: depth
+        ]
+
+        if let element = block.element {
+            attributes[RichDocumentAttributeKeys.elementInstanceID] = element.id.uuidString
+            attributes[RichDocumentAttributeKeys.elementDefinitionID] = element.definitionID.uuidString
+            attributes[RichDocumentAttributeKeys.elementTitle] = element.titleSnapshot
+            attributes[RichDocumentAttributeKeys.elementInstanceTitle] = element.instanceTitleSnapshot
+            attributes[RichDocumentAttributeKeys.elementIcon] = DocumentElementSymbol.validName(element.systemIconSnapshot)
+            attributes[RichDocumentAttributeKeys.elementCollapsed] = NSNumber(value: element.isCollapsed)
+        }
+
+        if !block.children.isEmpty,
+           let data = try? JSONEncoder().encode(block.children),
+           let json = String(data: data, encoding: .utf8) {
+            attributes[RichDocumentAttributeKeys.elementChildrenJSON] = json
+        }
+
+        return NSAttributedString(string: instanceTitle, attributes: attributes)
+    }
+
+    private static func addDepth(_ depth: Int, to attributedString: NSMutableAttributedString, from start: Int) {
+        let length = attributedString.length - start
+        guard length > 0 else { return }
+        attributedString.addAttribute(
+            RichDocumentAttributeKeys.elementDepth,
+            value: depth,
+            range: NSRange(location: start, length: length)
+        )
+    }
+
+    private static func attributesWithDepth(
+        _ attributes: [NSAttributedString.Key: Any],
+        depth: Int
+    ) -> [NSAttributedString.Key: Any] {
+        var result = attributes
+        result[RichDocumentAttributeKeys.elementDepth] = depth
+        return result
+    }
+
     private static func blockPrefix(for block: RichBlock, listPosition: Int) -> String {
         switch block.kind {
-        case .paragraph, .image:
+        case .paragraph, .image, .element:
             return ""
         case .heading1, .heading2, .heading3:
             return ""  // Headings use attribute-based detection, no visible prefix

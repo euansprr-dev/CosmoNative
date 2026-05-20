@@ -70,7 +70,8 @@ final class RealtimeSyncService {
         let atomChanges = atoms.postgresChange(
             AnyAction.self,
             schema: "public",
-            table: "atoms"
+            table: "atoms",
+            filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
         )
 
         await atoms.subscribe()
@@ -165,11 +166,7 @@ final class RealtimeSyncService {
     /// Cloud agent sets _source = "cloud", iOS app will set _source = "ios".
     /// Mac sets _source = "mac" — those are OUR writes echoing back. Always skip.
     private func isFromCloud(_ data: [String: Any]) -> Bool {
-        let source = data["_source"] as? String
-        // If no _source field (e.g., canvas_blocks), assume it's a Mac write → skip
-        guard let source else { return false }
-        // Only apply if source is NOT "mac"
-        return source != "mac"
+        SupabaseSyncTrafficPolicy.shouldApplyRemoteChange(source: data["_source"] as? String)
     }
 
     /// Skip changes for atoms that have pending local modifications.

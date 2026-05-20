@@ -42,4 +42,20 @@ final class NotePersistenceRegressionTests: XCTestCase {
             hasLocalEdits: true
         ))
     }
+
+    func testNoteWritePolicyRequiresFlushBeforeFocusModeWhenBlockHasLocalEdits() {
+        XCTAssertTrue(NoteWritePolicy.requiresBlockFlushBeforeFocusMode(
+            hasLocalEdits: true,
+            entityId: 42,
+            entityUUID: "note-uuid"
+        ))
+    }
+
+    func testNoteWritePolicyDoesNotFlushCleanBlockBeforeFocusMode() {
+        XCTAssertFalse(NoteWritePolicy.requiresBlockFlushBeforeFocusMode(
+            hasLocalEdits: false,
+            entityId: 42,
+            entityUUID: "note-uuid"
+        ))
+    }
 }

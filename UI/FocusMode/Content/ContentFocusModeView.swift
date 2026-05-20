@@ -307,10 +307,6 @@ struct ContentFocusModeView: View {
                     FocusModeEditorBlurTapLayer()
                         .ignoresSafeArea()
                 }
-            DS.inkWash
-                .opacity(zenMode ? 0.16 : 0)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
 
             if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
                 scriptoriumBody

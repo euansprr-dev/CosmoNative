@@ -53,7 +53,7 @@ enum CortexDetailSubject {
         case .swipe(let item): return [item.creatorName ?? item.author, item.platformName].compactMap { $0 }.joined(separator: " · ")
         case .idea(let item): return [item.status.displayName, item.clientName].compactMap { $0 }.joined(separator: " · ")
         case .readwise(let book): return [book.author, "\(book.numHighlights) highlights"].compactMap { $0 }.joined(separator: " · ")
-        case .action(let action): return action.subtitle
+        case .action(let action): return action.scopedIdeaDestinationText ?? action.subtitle
         }
     }
 
@@ -86,7 +86,7 @@ enum CortexDetailSubject {
         case .swipe(let item): return item.hookText
         case .idea(let item): return item.context ?? item.body ?? item.hooks.first
         case .readwise(let book): return book.highlights.first?.text ?? "\(book.numHighlights) saved highlights"
-        case .action(let action): return action.subtitle ?? action.payload.rawText
+        case .action(let action): return action.scopedIdeaPreviewText ?? action.subtitle ?? action.payload.rawText
         default: return nil
         }
     }
@@ -250,10 +250,14 @@ private struct CortexPreviewBlock: View {
             case .readwise(let book):
                 CortexReadwiseDomainPreview(book: book)
             case .action(let action):
-                CommandKActionVisualPreview(
-                    action: action,
-                    identity: CommandKVisualIdentity.action(action)
-                )
+                if action.scopedIdeaClientName != nil {
+                    genericPreview
+                } else {
+                    CommandKActionVisualPreview(
+                        action: action,
+                        identity: CommandKVisualIdentity.action(action)
+                    )
+                }
             case .result(let result) where result.resultKind == .browserPin:
                 CommandKActionVisualPreview(
                     action: CommandKAction(

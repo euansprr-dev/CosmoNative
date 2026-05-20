@@ -412,7 +412,8 @@ actor ContextIndexStore {
         if let title = atom.title, !title.isEmpty {
             parts.append(title)
         }
-        if let body = atom.body, !body.isEmpty {
+        let body = DocumentElementContextFormatter.contextBody(for: atom)
+        if !body.isEmpty {
             parts.append(body)
         }
         if let structured = atom.structured, !structured.isEmpty {

@@ -68,6 +68,35 @@ final class CosmoWindowContextSessionTests: XCTestCase {
         XCTAssertTrue(body.contains(topPost))
     }
 
+    func testIndexableBodyPreservesElementStructureFromRichDocument() {
+        let definition = DocumentElementDefinition(
+            title: "Pain Points",
+            systemIcon: "exclamationmark.triangle"
+        )
+        let document = RichDocument(blocks: [
+            .paragraph("Audience notes"),
+            RichBlock.element(definition, children: [
+                .paragraph("They feel scattered and low-energy.")
+            ], isCollapsed: true)
+        ])
+        let fields = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: nil,
+            bodyDocument: document
+        )
+        let atom = Atom.new(
+            type: .note,
+            title: "Target Audience",
+            body: fields.body,
+            metadata: fields.metadata
+        )
+
+        let body = ContextIndexStore.indexableBody(for: atom)
+
+        XCTAssertTrue(body.contains(#"<element title="Pain Points" icon="exclamationmark.triangle" collapsed="true">"#))
+        XCTAssertTrue(body.contains("They feel scattered and low-energy."))
+        XCTAssertTrue(body.contains("</element>"))
+    }
+
     @MainActor
     func testContentContextProviderExposesActiveClientProfileUUID() {
         var state = ContentFocusModeState(atomUUID: "content-1")

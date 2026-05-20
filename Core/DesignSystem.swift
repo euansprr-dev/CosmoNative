@@ -16,6 +16,10 @@ enum DS {
     /// All color properties below are computed from this.
     nonisolated(unsafe) static var palette: ThemePalette = GreenhousePalette()
 
+    private static var usesCodexMonoMaterial: Bool {
+        palette.name == "Codex Mono"
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // SURFACES — Dynamic per theme
     // ═══════════════════════════════════════════════════════════════
@@ -308,33 +312,39 @@ enum DS {
 
     /// Base wash layered above native macOS material for major app sidebars.
     static var sidebarMaterialBase: Color {
-        palette.isDark ? Color.black.opacity(0.018) : Color.white.opacity(0.010)
+        if palette.isDark { return Color.black.opacity(0.018) }
+        return usesCodexMonoMaterial ? Color.white.opacity(0.34) : Color.white.opacity(0.010)
     }
 
     /// Opacity for the native material layer. Light mode needs a lower value so
     /// bright canvas content can still register through the sidebar.
     static var sidebarMaterialNativeOpacity: Double {
-        palette.isDark ? 0.94 : 0.74
+        if palette.isDark { return 0.94 }
+        return usesCodexMonoMaterial ? 0.38 : 0.74
     }
 
     /// Solid fallback used when Reduce Transparency is enabled.
     static var sidebarMaterialFallback: Color {
-        palette.isDark ? palette.surface : palette.surfaceElevated
+        if palette.isDark { return palette.surface }
+        return palette.surfaceElevated
     }
 
     /// Hairline material edge.
     static var sidebarMaterialBorder: Color {
-        palette.isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.085)
+        if palette.isDark { return Color.white.opacity(0.16) }
+        return Color.black.opacity(usesCodexMonoMaterial ? 0.058 : 0.085)
     }
 
     /// Top/leading highlight for the glass surface.
     static var sidebarMaterialHighlight: Color {
-        palette.isDark ? Color.white.opacity(0.18) : Color.white.opacity(0.30)
+        if palette.isDark { return Color.white.opacity(0.18) }
+        return Color.white.opacity(usesCodexMonoMaterial ? 0.64 : 0.30)
     }
 
     /// Inner shade that keeps translucent panels readable.
     static var sidebarMaterialInnerShade: Color {
-        palette.isDark ? Color.black.opacity(0.018) : Color.black.opacity(0.010)
+        if palette.isDark { return Color.black.opacity(0.018) }
+        return Color.black.opacity(usesCodexMonoMaterial ? 0 : 0.010)
     }
 
     /// Ambient scene tint cap for global sidebars.
@@ -364,7 +374,8 @@ enum DS {
 
     /// Exterior shadow for inset glass panels.
     static var sidebarMaterialShadow: Color {
-        Color.black.opacity(palette.isDark ? 0.075 : 0.028)
+        if palette.isDark { return Color.black.opacity(0.075) }
+        return Color.black.opacity(usesCodexMonoMaterial ? 0.018 : 0.028)
     }
 
     // ═══════════════════════════════════════════════════════════════

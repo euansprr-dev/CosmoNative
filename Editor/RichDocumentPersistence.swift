@@ -101,11 +101,15 @@ enum RichDocumentPersistence {
         let trimmedPlainText = plainText.trimmingCharacters(in: .whitespacesAndNewlines)
         let documentPlainText = bodyDocument.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard trimmedPlainText.count > documentPlainText.count + lagTolerance else {
+        if trimmedPlainText == documentPlainText {
             return bodyDocument
         }
 
-        return RichDocument.migrateLegacy(plainText)
+        if trimmedPlainText.count > documentPlainText.count + lagTolerance || bodyDocument.isPlainTextOnly {
+            return RichDocument.migrateLegacy(plainText)
+        }
+
+        return bodyDocument
     }
 
     static func noteSnapshot(
@@ -195,7 +199,18 @@ enum RichDocumentPersistence {
 
     static func normalizedTitleDocument(_ document: RichDocument) -> RichDocument {
         let inlines = normalizedTitleInlines(from: document)
-        return inlines.isEmpty ? .empty : RichDocument(blocks: [
+        guard !inlines.isEmpty else { return .empty }
+
+        if var firstBlock = document.blocks.first {
+            firstBlock.kind = .paragraph
+            firstBlock.inlines = inlines
+            firstBlock.checked = nil
+            firstBlock.element = nil
+            firstBlock.children = []
+            return RichDocument(blocks: [firstBlock])
+        }
+
+        return RichDocument(blocks: [
             RichBlock(kind: .paragraph, inlines: inlines)
         ])
     }
@@ -359,5 +374,15 @@ struct NoteDocumentSnapshot: Equatable {
         }
 
         return userInfo
+    }
+}
+
+private extension RichDocument {
+    var isPlainTextOnly: Bool {
+        blocks.allSatisfy { block in
+            block.inlines.allSatisfy { node in
+                node.kind == .text
+            }
+        }
     }
 }

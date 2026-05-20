@@ -13,13 +13,16 @@ struct RichTextEditor: View {
     @State private var showSlashMenu = false
     @State private var showMentionMenu = false
     @State private var showSelectionMenu = false
+    @State private var showElementCreationMenu = false
     @State private var slashMenuPosition: CGPoint = .zero
     @State private var mentionMenuPosition: CGPoint = .zero
     @State private var selectionMenuPosition: CGPoint = .zero
+    @State private var elementCreationMenuPosition: CGPoint = .zero
     @State private var mentionSearchQuery = ""
     @State private var cursorPosition: Int = 0
     @State private var shouldRefocusEditor = false
-    
+    @StateObject private var elementStore = DocumentElementStore()
+
     // Configuration
     var fontSize: CGFloat = 16
     var compact: Bool = false  // Compact mode for notes
@@ -56,8 +59,6 @@ struct RichTextEditor: View {
     // Tracks measured text content height so the representable can be explicitly sized
     // (needed for non-scrolling mode inside a parent ScrollView)
     @State private var measuredContentHeight: CGFloat = 0
-    @State private var outsideClickDismissMonitor: Any?
-
     @EnvironmentObject var voiceEngine: VoiceEngine
 
     let placeholder: String
@@ -65,7 +66,19 @@ struct RichTextEditor: View {
 
     /// Whether any overlay menu is currently visible
     private var isOverlayVisible: Bool {
-        showSlashMenu || showMentionMenu || showSelectionMenu
+        showSlashMenu || showMentionMenu || showSelectionMenu || showElementCreationMenu
+    }
+
+    private var slashCommands: [SlashCommand] {
+        SlashCommandCatalog.commands(elementDefinitions: elementStore.activeDefinitions)
+    }
+
+    private var slashSearchCommands: [SlashCommand] {
+        SlashCommandCatalog.searchableCommands(elementDefinitions: elementStore.activeDefinitions)
+    }
+
+    private var elementSubmenuCommands: [SlashCommand] {
+        SlashCommandCatalog.elementSubmenuCommands(elementDefinitions: elementStore.activeDefinitions)
     }
 
     init(
@@ -167,7 +180,7 @@ struct RichTextEditor: View {
                 scrollsInternally: scrollsInternally,
                 onSlashCommand: { position in
                     guard allowSlashCommands else { return }
-                    slashMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 300, height: 330), in: containerSize)
+                    slashMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 528, height: 340), in: containerSize)
                     showSlashMenu = true
                 },
                 onMention: { position, query in
@@ -244,7 +257,21 @@ struct RichTextEditor: View {
             if showSlashMenu {
                 SlashCommandMenu(
                     position: slashMenuPosition,
+                    commands: slashCommands,
+                    searchCommands: slashSearchCommands,
+                    elementSubmenuCommands: elementSubmenuCommands,
                     onSelect: { command in
+                        if command.type == .newElement {
+                            showSlashMenu = false
+                            elementCreationMenuPosition = clampMenuPosition(
+                                slashMenuPosition,
+                                menuSize: CGSize(width: 330, height: 364),
+                                in: containerSize
+                            )
+                            showElementCreationMenu = true
+                            return
+                        }
+
                         // First dismiss overlays and refocus
                         dismissAllOverlays()
 
@@ -267,6 +294,23 @@ struct RichTextEditor: View {
                 )
                 .background(ScrollEventBlocker())
                 .zIndex(1000)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+            }
+
+            if showElementCreationMenu {
+                ElementCreationMenu(
+                    position: elementCreationMenuPosition,
+                    onCreate: { title, icon in
+                        createElementAndInsert(title: title, icon: icon)
+                    },
+                    onDismiss: {
+                        dismissAllOverlays()
+                        refocusAfterDismiss()
+                    },
+                    darkMode: darkMode
+                )
+                .background(ScrollEventBlocker())
+                .zIndex(1001)
                 .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
             }
 
@@ -327,22 +371,13 @@ struct RichTextEditor: View {
                 shouldRefocusEditor = true
             }
         }
-        .onChange(of: isOverlayVisible) { _, visible in
-            if visible {
-                installOutsideClickDismissMonitor()
-            } else {
-                removeOutsideClickDismissMonitor()
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoDismissEditorOverlays)) { _ in
             dismissAllOverlays(includeSelection: false)
-        }
-        .onDisappear {
-            removeOutsideClickDismissMonitor()
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showSlashMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showMentionMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showSelectionMenu)
+        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showElementCreationMenu)
     }
 
     // MARK: - Overlay Helpers
@@ -350,36 +385,38 @@ struct RichTextEditor: View {
     private func dismissAllOverlays(includeSelection: Bool = true) {
         showSlashMenu = false
         showMentionMenu = false
+        showElementCreationMenu = false
         if includeSelection {
             showSelectionMenu = false
+        }
+    }
+
+    private func createElementAndInsert(title: String, icon: String) {
+        do {
+            let definition = try elementStore.createDefinition(title: title, systemIcon: icon)
+            dismissAllOverlays()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                shouldRefocusEditor = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    insertSlashCommand(SlashCommand(
+                        type: .element,
+                        title: definition.title,
+                        subtitle: "Insert element",
+                        icon: definition.systemIcon,
+                        shortcut: nil,
+                        searchAliases: ["element", definition.systemIcon],
+                        elementDefinition: definition
+                    ))
+                }
+            }
+        } catch {
+            NSSound.beep()
         }
     }
 
     private func refocusAfterDismiss() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             shouldRefocusEditor = true
-        }
-    }
-
-    private func installOutsideClickDismissMonitor() {
-        guard outsideClickDismissMonitor == nil else { return }
-
-        // Dismiss slash/mention menus on clicks elsewhere.
-        // Selection menu is NOT dismissed here — it dismisses when the text selection clears.
-        outsideClickDismissMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseUp, .rightMouseUp, .otherMouseUp]
-        ) { event in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                NotificationCenter.default.post(name: .cosmoDismissEditorOverlays, object: nil)
-            }
-            return event
-        }
-    }
-
-    private func removeOutsideClickDismissMonitor() {
-        if let monitor = outsideClickDismissMonitor {
-            NSEvent.removeMonitor(monitor)
-            outsideClickDismissMonitor = nil
         }
     }
 
@@ -496,14 +533,70 @@ extension Notification.Name {
 
 // MARK: - Slash Commands
 struct SlashCommand: Identifiable {
-    let id = UUID()
+    let id: String
     let type: SlashCommandType
     let title: String
     let subtitle: String
     let icon: String
     let shortcut: String?
+    var searchAliases: [String]
+    var elementDefinition: DocumentElementDefinition?
 
-    static let all: [SlashCommand] = [
+    init(
+        type: SlashCommandType,
+        title: String,
+        subtitle: String,
+        icon: String,
+        shortcut: String?,
+        searchAliases: [String] = [],
+        elementDefinition: DocumentElementDefinition? = nil
+    ) {
+        self.type = type
+        self.title = title
+        self.subtitle = subtitle
+        self.icon = icon
+        self.shortcut = shortcut
+        self.searchAliases = searchAliases
+        self.elementDefinition = elementDefinition
+        if let elementDefinition {
+            id = "element:\(elementDefinition.id.uuidString)"
+        } else {
+            id = "command:\(type.stableID)"
+        }
+    }
+}
+
+enum SlashCommandType: Equatable {
+    case writingAI
+    case image
+    case elements
+    case element
+    case newElement
+    case heading1, heading2, heading3
+    case bulletList, numberedList, checkbox
+    case quote, divider
+
+    var stableID: String {
+        switch self {
+        case .writingAI: return "writing-ai"
+        case .image: return "image"
+        case .elements: return "elements"
+        case .element: return "element"
+        case .newElement: return "new-element"
+        case .heading1: return "heading-1"
+        case .heading2: return "heading-2"
+        case .heading3: return "heading-3"
+        case .bulletList: return "bullet-list"
+        case .numberedList: return "numbered-list"
+        case .checkbox: return "checkbox"
+        case .quote: return "quote"
+        case .divider: return "divider"
+        }
+    }
+}
+
+enum SlashCommandCatalog {
+    static let baseCommands: [SlashCommand] = [
         SlashCommand(type: .writingAI, title: "Writing AI", subtitle: "Ask, rewrite, search, or critique", icon: "sparkles", shortcut: "⌥A"),
         SlashCommand(type: .image, title: "Image", subtitle: "Insert an inline image", icon: "photo", shortcut: nil),
         SlashCommand(type: .heading1, title: "Heading 1", subtitle: "Large section heading", icon: "textformat.size.larger", shortcut: nil),
@@ -515,14 +608,99 @@ struct SlashCommand: Identifiable {
         SlashCommand(type: .numberedList, title: "Numbered List", subtitle: "Create a numbered list", icon: "list.number", shortcut: nil),
         SlashCommand(type: .checkbox, title: "Checklist", subtitle: "Track tasks with checkboxes", icon: "checklist", shortcut: nil),
     ]
-}
 
-enum SlashCommandType {
-    case writingAI
-    case image
-    case heading1, heading2, heading3
-    case bulletList, numberedList, checkbox
-    case quote, divider
+    static let newElementCommand = SlashCommand(
+        type: .newElement,
+        title: "New Element",
+        subtitle: "Create a reusable organization block",
+        icon: "plus.square",
+        shortcut: nil,
+        searchAliases: ["new elements", "create element", "elements"]
+    )
+
+    static let elementsCommand = SlashCommand(
+        type: .elements,
+        title: "Elements",
+        subtitle: "Create or insert reusable blocks",
+        icon: "square.stack.3d.up",
+        shortcut: nil,
+        searchAliases: ["element", "elements", "new element"]
+    )
+
+    static func commands(elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
+        Array(baseCommands.prefix(2)) + [elementsCommand] + Array(baseCommands.dropFirst(2))
+    }
+
+    static func searchableCommands(elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
+        Array(baseCommands.prefix(2))
+            + [elementsCommand, newElementCommand]
+            + elementCommands(from: elementDefinitions)
+            + Array(baseCommands.dropFirst(2))
+    }
+
+    static func elementSubmenuCommands(elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
+        [newElementCommand] + elementCommands(from: elementDefinitions)
+    }
+
+    private static func elementCommands(from elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
+        let elementCommands = activeElementDefinitions(from: elementDefinitions).map { definition in
+            SlashCommand(
+                type: .element,
+                title: definition.title,
+                subtitle: "Insert element",
+                icon: definition.systemIcon,
+                shortcut: nil,
+                searchAliases: ["element", definition.systemIcon],
+                elementDefinition: definition
+            )
+        }
+        return elementCommands
+    }
+
+    static func filteredCommands(
+        matching query: String,
+        elementDefinitions: [DocumentElementDefinition]
+    ) -> [SlashCommand] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = normalizedQuery.isEmpty
+            ? commands(elementDefinitions: elementDefinitions)
+            : searchableCommands(elementDefinitions: elementDefinitions)
+        return filteredCommands(matching: query, commands: source)
+    }
+
+    static func filteredCommands(matching query: String, commands: [SlashCommand]) -> [SlashCommand] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return commands }
+        return commands.filter { command in
+            command.title.localizedCaseInsensitiveContains(normalizedQuery)
+                || command.subtitle.localizedCaseInsensitiveContains(normalizedQuery)
+                || command.searchAliases.contains { $0.localizedCaseInsensitiveContains(normalizedQuery) }
+        }
+        .sorted {
+            matchRank(for: $0, query: normalizedQuery) < matchRank(for: $1, query: normalizedQuery)
+        }
+    }
+
+    private static func matchRank(for command: SlashCommand, query: String) -> Int {
+        if command.title.compare(query, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
+            return 0
+        }
+        if command.title.localizedCaseInsensitiveContains(query) {
+            return 1
+        }
+        if command.subtitle.localizedCaseInsensitiveContains(query) {
+            return 2
+        }
+        return 3
+    }
+
+    private static func activeElementDefinitions(from definitions: [DocumentElementDefinition]) -> [DocumentElementDefinition] {
+        definitions
+            .filter(\.isEnabled)
+            .sorted { lhs, rhs in
+                lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            }
+    }
 }
 
 // MARK: - Mention Entity

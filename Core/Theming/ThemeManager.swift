@@ -6,6 +6,7 @@ import SwiftUI
 /// All available themes in CosmoOS.
 enum CosmoAppTheme: String, CaseIterable, Identifiable {
     case greenhouse
+    case codexMono
     case midnightStudy
     case nordicFrost
     case terracotta
@@ -16,6 +17,7 @@ enum CosmoAppTheme: String, CaseIterable, Identifiable {
     var palette: ThemePalette {
         switch self {
         case .greenhouse: GreenhousePalette()
+        case .codexMono: CodexMonoPalette()
         case .midnightStudy: MidnightStudyPalette()
         case .nordicFrost: NordicFrostPalette()
         case .terracotta: TerracottaPalette()
@@ -26,6 +28,7 @@ enum CosmoAppTheme: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .greenhouse: "Greenhouse"
+        case .codexMono: "Codex Mono"
         case .midnightStudy: "Midnight Study"
         case .nordicFrost: "Nordic Frost"
         case .terracotta: "Terracotta"
@@ -39,6 +42,7 @@ enum CosmoAppTheme: String, CaseIterable, Identifiable {
     var tagline: String {
         switch self {
         case .greenhouse: "Morning coffee in a sunlit studio"
+        case .codexMono: "Black and white workspace with colored signal cues"
         case .midnightStudy: "Late-night deep work by lamplight"
         case .nordicFrost: "Scandinavian clarity on a winter morning"
         case .terracotta: "Mediterranean creative studio at golden hour"

@@ -66,6 +66,14 @@ final class CosmoTextView: NSTextView {
     var onTapWhileReadOnly: (() -> Void)?
     var onBecomeFirstResponder: (() -> Void)?
     var onResignFirstResponder: (() -> Void)?
+    var onToggleElementCollapse: ((UUID) -> Void)?
+    var elementBlockDarkMode: Bool = false
+    var elementBlockBaseFontSize: CGFloat = 16
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawElementBlockDecorations(in: dirtyRect)
+        super.draw(dirtyRect)
+    }
 
     override func paste(_ sender: Any?) {
         let selectedRange = self.selectedRange()
@@ -130,6 +138,11 @@ final class CosmoTextView: NSTextView {
                 self.window?.makeFirstResponder(self)
                 self.superMouseDown(with: savedEvent)
             }
+            return
+        }
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if let hit = elementHitTest(at: localPoint), hit.area == .collapseToggle {
+            onToggleElementCollapse?(hit.instanceID)
             return
         }
         super.mouseDown(with: event)
@@ -197,6 +210,204 @@ final class CosmoTextView: NSTextView {
         // content — causing a visible upward jitter on newline insertion.
         guard scrollsInternally else { return }
         super.scrollRangeToVisible(range)
+    }
+
+    private enum ElementHitArea {
+        case collapseToggle
+    }
+
+    private struct ElementHit {
+        let instanceID: UUID
+        let area: ElementHitArea
+    }
+
+    private func drawElementBlockDecorations(in dirtyRect: NSRect) {
+        guard let storage = textStorage,
+              storage.length > 0,
+              let layoutManager,
+              let textContainer else {
+            return
+        }
+
+        let decorations = DocumentElementEditorDecoration.decorations(in: storage)
+        guard !decorations.isEmpty else { return }
+
+        layoutManager.ensureLayout(for: textContainer)
+
+        for decoration in decorations {
+            guard let headerLayout = elementHeaderLayout(for: decoration, storageLength: storage.length) else { continue }
+            let chromeRect = headerLayout.chromeRect
+            guard chromeRect.intersects(dirtyRect) else { continue }
+
+            drawElementBlockChrome(in: chromeRect)
+            drawElementChevron(
+                collapsed: decoration.isCollapsed,
+                in: headerLayout.chevronGlyphRect,
+                color: elementBlockSecondaryColor
+            )
+            drawElementBlockSymbol(
+                name: decoration.systemIcon,
+                in: headerLayout.iconRect,
+                color: elementBlockSecondaryColor
+            )
+            drawElementName(
+                decoration.title,
+                in: headerLayout.nameRect,
+                color: elementBlockSecondaryColor
+            )
+        }
+    }
+
+    private func elementHitTest(at point: NSPoint) -> ElementHit? {
+        guard let storage = textStorage,
+              storage.length > 0,
+              let layoutManager,
+              let textContainer else {
+            return nil
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let decorations = DocumentElementEditorDecoration.decorations(in: storage)
+        for decoration in decorations.reversed() {
+            guard let instanceID = decoration.instanceID,
+                  let layout = elementHeaderLayout(for: decoration, storageLength: storage.length) else {
+                continue
+            }
+            if layout.chevronHitRect.contains(point) {
+                return ElementHit(instanceID: instanceID, area: .collapseToggle)
+            }
+        }
+        return nil
+    }
+
+    private func elementHeaderLayout(
+        for decoration: DocumentElementEditorDecoration,
+        storageLength: Int
+    ) -> DocumentElementHeaderLayout? {
+        guard let layoutManager,
+              let textContainer else {
+            return nil
+        }
+
+        let characterRange = NSIntersectionRange(
+            decoration.range,
+            NSRange(location: 0, length: storageLength)
+        )
+        guard characterRange.length > 0 else { return nil }
+
+        let headerGlyphRange = layoutManager.glyphRange(
+            forCharacterRange: characterRange,
+            actualCharacterRange: nil
+        )
+        let headerGlyphRect = layoutManager.boundingRect(forGlyphRange: headerGlyphRange, in: textContainer)
+        guard headerGlyphRect.width.isFinite, headerGlyphRect.height.isFinite, headerGlyphRect.height > 0 else {
+            return nil
+        }
+
+        let blockGlyphRange = layoutManager.glyphRange(
+            forCharacterRange: NSIntersectionRange(
+                decoration.blockRange,
+                NSRange(location: 0, length: storageLength)
+            ),
+            actualCharacterRange: nil
+        )
+        let blockGlyphRect = layoutManager.boundingRect(forGlyphRange: blockGlyphRange, in: textContainer)
+        guard blockGlyphRect.width.isFinite, blockGlyphRect.height.isFinite, blockGlyphRect.height > 0 else {
+            return nil
+        }
+
+        let blockMinY = min(headerGlyphRect.minY, blockGlyphRect.minY)
+        let blockMaxY = max(headerGlyphRect.maxY, blockGlyphRect.maxY)
+        let chromeRect = NSRect(
+            x: textContainerOrigin.x,
+            y: textContainerOrigin.y + blockMinY - 8,
+            width: max(80, bounds.width - (textContainerOrigin.x * 2)),
+            height: max(blockMaxY - blockMinY + 16, elementBlockBaseFontSize + 28)
+        )
+        return DocumentElementHeaderLayout(
+            chromeRect: chromeRect,
+            headerMidY: textContainerOrigin.y + headerGlyphRect.midY,
+            elementName: decoration.title,
+            instanceTitle: decoration.instanceTitle,
+            depth: decoration.depth,
+            fontSize: elementBlockBaseFontSize
+        )
+    }
+
+    private func drawElementBlockChrome(in rect: NSRect) {
+        let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+        elementBlockFillColor.setFill()
+        path.fill()
+        elementBlockStrokeColor.setStroke()
+        path.lineWidth = 0.8
+        path.stroke()
+    }
+
+    private func drawElementChevron(collapsed: Bool, in rect: NSRect, color: NSColor) {
+        let path = NSBezierPath()
+        path.lineWidth = 1.45
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+
+        if collapsed {
+            path.move(to: NSPoint(x: rect.minX + 3, y: rect.minY + 1.5))
+            path.line(to: NSPoint(x: rect.maxX - 2, y: rect.midY))
+            path.line(to: NSPoint(x: rect.minX + 3, y: rect.maxY - 1.5))
+        } else {
+            path.move(to: NSPoint(x: rect.minX + 1.5, y: rect.minY + 3))
+            path.line(to: NSPoint(x: rect.midX, y: rect.maxY - 2))
+            path.line(to: NSPoint(x: rect.maxX - 1.5, y: rect.minY + 3))
+        }
+
+        color.setStroke()
+        path.stroke()
+    }
+
+    private func drawElementBlockSymbol(name: String, in rect: NSRect, color: NSColor) {
+        let validName = DocumentElementSymbol.validName(name)
+        guard let baseImage = NSImage(systemSymbolName: validName, accessibilityDescription: nil) else { return }
+        let configuration = NSImage.SymbolConfiguration(
+            pointSize: min(rect.width, rect.height),
+            weight: .medium
+        )
+        let image = baseImage.withSymbolConfiguration(configuration) ?? baseImage
+        image.isTemplate = true
+        color.set()
+        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+
+    private func drawElementName(_ name: String, in rect: NSRect, color: NSColor) {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: max(12, elementBlockBaseFontSize - 3), weight: .medium),
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle
+        ]
+        NSString(string: name).draw(in: rect, withAttributes: attributes)
+    }
+
+    private var elementBlockFillColor: NSColor {
+        effectiveElementBlockDarkMode
+            ? NSColor(red: 0.12, green: 0.125, blue: 0.13, alpha: 0.98)
+            : NSColor.white.withAlphaComponent(0.98)
+    }
+
+    private var elementBlockStrokeColor: NSColor {
+        effectiveElementBlockDarkMode
+            ? NSColor.white.withAlphaComponent(0.11)
+            : NSColor.black.withAlphaComponent(0.10)
+    }
+
+    private var elementBlockSecondaryColor: NSColor {
+        effectiveElementBlockDarkMode
+            ? NSColor.white.withAlphaComponent(0.58)
+            : NSColor(DS.documentTextSecondary).withAlphaComponent(0.82)
+    }
+
+    private var effectiveElementBlockDarkMode: Bool {
+        elementBlockDarkMode
+            || effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 }
 
@@ -405,6 +616,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             coordinator?.parent.onDeactivate?()
         }
         textView.scrollsInternally = scrollsInternally
+        textView.elementBlockDarkMode = darkMode
+        textView.elementBlockBaseFontSize = fontSize
+        textView.onToggleElementCollapse = { [weak coordinator = context.coordinator] instanceID in
+            guard let coordinator, let textView = coordinator.textViewReference else { return }
+            coordinator.toggleElementCollapse(instanceID: instanceID, in: textView)
+        }
         textView.usesFontPanel = false
         textView.usesRuler = false
         textView.importsGraphics = allowImages
@@ -1325,6 +1542,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             case .image:
                 guard parent.allowImages else { return }
                 presentImagePicker(for: textView)
+            case .elements:
+                break
+            case .newElement:
+                break
+            case .element:
+                guard let definition = command.elementDefinition else { return }
+                insertElement(definition, at: insertionPoint, in: textView)
             case .heading1:
                 applyHeading(level: 1, textView: textView)
             case .heading2:
@@ -1718,6 +1942,78 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             storage.replaceCharacters(in: range, with: text)
             textView.setSelectedRange(NSRange(location: range.location + text.count, length: 0))
             syncBindings(from: textView)
+        }
+
+        private func insertElement(_ definition: DocumentElementDefinition, at insertionPoint: Int, in textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+
+            let elementBlock = RichBlock.element(definition, instanceTitle: definition.title)
+            let elementAttributedString = RichDocumentSerializer.attributedString(
+                from: RichDocument(blocks: [elementBlock]),
+                fontSize: parent.fontSize,
+                darkMode: parent.darkMode,
+                singleLine: parent.singleLine,
+                baseFontWeight: parent.baseFontWeight,
+                titleMode: parent.titleConfiguration != nil
+            )
+            let replacement = NSMutableAttributedString()
+            let safeInsertionPoint = max(0, min(insertionPoint, storage.length))
+            if safeInsertionPoint > 0 {
+                let previousCharacter = (storage.string as NSString).substring(
+                    with: NSRange(location: safeInsertionPoint - 1, length: 1)
+                )
+                if previousCharacter != "\n" {
+                    replacement.append(NSAttributedString(string: "\n", attributes: elementInsertionBaseAttributes()))
+                }
+            }
+
+            replacement.append(elementAttributedString)
+            replacement.append(NSAttributedString(string: "\n", attributes: elementInsertionBaseAttributes()))
+
+            storage.replaceCharacters(in: NSRange(location: safeInsertionPoint, length: 0), with: replacement)
+            textView.setSelectedRange(NSRange(location: safeInsertionPoint + replacement.length, length: 0))
+            resetToNormalTypingAttributes(textView)
+            syncBindings(from: textView)
+        }
+
+        func toggleElementCollapse(instanceID: UUID, in textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+
+            let selectedRange = textView.selectedRange()
+            let document = RichDocumentSerializer.document(from: storage)
+            let updated = DocumentElementMutation.toggledCollapse(instanceID: instanceID, in: document)
+            guard updated != document else { return }
+
+            let serialized = RichDocumentSerializer.attributedString(
+                from: updated,
+                fontSize: parent.fontSize,
+                darkMode: parent.darkMode,
+                singleLine: parent.singleLine,
+                baseFontWeight: parent.baseFontWeight,
+                titleMode: parent.titleConfiguration != nil
+            )
+
+            storage.setAttributedString(serialized)
+            let safeLocation = min(selectedRange.location, storage.length)
+            let safeLength = min(selectedRange.length, storage.length - safeLocation)
+            textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
+            resetToNormalTypingAttributes(textView)
+            syncBindings(from: textView)
+
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.needsDisplay = true
+            textView.sizeToFit()
+            notifyContentHeightChange(for: textView)
+        }
+
+        private func elementInsertionBaseAttributes() -> [NSAttributedString.Key: Any] {
+            [
+                .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
+                .foregroundColor: parent.resolvedEditorTextColor,
+                .paragraphStyle: defaultParagraphStyle()
+            ]
         }
 
         private func replaceCurrentMentionOrSelection(in textView: NSTextView, mention: RichMention) {

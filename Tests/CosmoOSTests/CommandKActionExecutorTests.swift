@@ -24,6 +24,33 @@ final class CommandKActionExecutorTests: XCTestCase {
         XCTAssertEqual(recorder.notifications.first?.userInfo?["anchorUUID"] as? String, "atom-1")
         XCTAssertEqual(recorder.notifications.first?.userInfo?["anchorType"] as? String, "Research")
     }
+
+    @MainActor
+    func testOpenSelectedAsPanePostsPanePayloadForSelectedRecent() async throws {
+        let paneRecorder = NotificationRecorder(name: CosmoNotification.Navigation.openAsPane)
+        let closeRecorder = NotificationRecorder(name: CosmoNotification.NodeGraph.closeCommandK)
+        let viewModel = CommandKViewModel()
+        defer { viewModel.setSurfaceActive(false) }
+        viewModel.recentItems = [
+            RecentDisplayItem(
+                id: "note-1",
+                title: "Launch Notes",
+                type: .note,
+                entityId: 42,
+                relativeDate: "2h",
+                thumbnailURL: nil,
+                preview: nil
+            )
+        ]
+        viewModel.selectedNodeId = "note-1"
+
+        await viewModel.openSelectedAsPane()
+
+        XCTAssertEqual(paneRecorder.notifications.count, 1)
+        XCTAssertEqual(paneRecorder.notifications.first?.userInfo?["type"] as? EntityType, .note)
+        XCTAssertEqual(paneRecorder.notifications.first?.userInfo?["id"] as? Int64, 42)
+        XCTAssertEqual(closeRecorder.notifications.count, 1)
+    }
 }
 
 private final class NotificationRecorder {

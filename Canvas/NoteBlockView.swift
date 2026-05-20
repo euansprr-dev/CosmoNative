@@ -222,15 +222,13 @@ struct NoteBlockView: View {
                 allowImages: true,
                 isEditable: true,
                 scrollsInternally: true,
+                onPlainTextChange: { plainText in
+                    applyBodyPlainTextChange(plainText)
+                },
                 onDocumentChange: { _, plainText in
                     let changed = plainText != noteText
                     print("[BLOCK-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
-                    noteText = plainText
-                    noteWordCount = Self.wordCount(in: plainText)
-                    if !isSyncingFromDB {
-                        hasLocalEdits = true
-                        scheduleAutoSave()
-                    }
+                    applyBodyPlainTextChange(plainText)
                 },
                 onDeactivate: { isEditingBody = false },
                 autoFocus: true
@@ -296,16 +294,17 @@ struct NoteBlockView: View {
                         titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
                     },
                     onPlainTextChange: { plainText in
+                        let changed = plainText != noteTitleText
                         noteTitleText = plainText
+                        if changed {
+                            markLocalEditAndScheduleSave()
+                        }
                     },
                     onStructuredDocumentChange: { document, plainText in
                         print("[BLOCK-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
                         noteTitleDocument = document
                         noteTitleText = plainText
-                        if !isSyncingFromDB {
-                            hasLocalEdits = true
-                            scheduleAutoSave()
-                        }
+                        markLocalEditAndScheduleSave()
                     },
                     onDeactivate: { isEditingTitle = false },
                     onCommit: { isEditingTitle = false },
@@ -491,6 +490,34 @@ struct NoteBlockView: View {
         noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
     }
 
+    private func applyBodyPlainTextChange(_ plainText: String) {
+        let changed = plainText != noteText
+        noteText = plainText
+        noteWordCount = Self.wordCount(in: plainText)
+
+        if changed {
+            markLocalEditAndScheduleSave()
+        }
+    }
+
+    private func markLocalEditAndScheduleSave() {
+        guard !isSyncingFromDB else { return }
+        hasLocalEdits = true
+        scheduleAutoSave()
+    }
+
+    private func titleDocumentForSave() -> RichDocument {
+        let normalizedDocument = RichDocumentPersistence.normalizedTitleDocument(noteTitleDocument)
+        let documentPlainText = RichDocumentPersistence.titlePlainText(from: normalizedDocument)
+        let currentPlainText = RichDocumentPersistence.normalizedTitleString(noteTitleText)
+
+        guard documentPlainText != currentPlainText else {
+            return normalizedDocument
+        }
+
+        return currentPlainText.isEmpty ? .empty : RichDocument.migrateLegacy(currentPlainText)
+    }
+
     // MARK: - Auto-save
 
     private func scheduleAutoSave() {
@@ -512,9 +539,10 @@ struct NoteBlockView: View {
 
     private func saveNote() {
         print("[BLOCK-NOTE] saveNote() — uuid=\(trackedEntityUuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(80)))\" saveClosed=\(saveClosed)")
+        let effectiveTitleDocument = titleDocumentForSave()
         let blockSnapshot = RichDocumentPersistence.noteSnapshot(
             existingMetadata: nil,
-            titleDocument: noteTitleDocument,
+            titleDocument: effectiveTitleDocument,
             bodyDocument: noteBodyDocument,
             plainBodyText: noteText
         )
@@ -549,8 +577,8 @@ struct NoteBlockView: View {
         // Also update the atom in the database (for blocks linked to entities)
         let uuid = trackedEntityUuid
         if !uuid.isEmpty {
-            let titleDoc = noteTitleDocument
-            let titleText = noteTitleText
+            let titleDoc = effectiveTitleDocument
+            let titleText = blockSnapshot.titlePlainText
             let bodyDoc = noteBodyDocument
             let bodyText = noteText
             let blockId = block.id
@@ -558,6 +586,15 @@ struct NoteBlockView: View {
                 // Skip if sync save already ran on close
                 guard !saveClosed else {
                     print("[BLOCK-NOTE] saveNote() async SKIPPED — saveClosed=true uuid=\(uuid)")
+                    return
+                }
+                let capturedStateIsCurrent = await MainActor.run {
+                    !saveClosed
+                        && RichDocumentPersistence.normalizedTitleString(noteTitleText) == titleText
+                        && noteText == bodyText
+                }
+                guard capturedStateIsCurrent else {
+                    print("[BLOCK-NOTE] saveNote() async SKIPPED — stale snapshot uuid=\(uuid)")
                     return
                 }
                 print("[BLOCK-NOTE] saveNote() async DB write starting — uuid=\(uuid) bodyLen=\(bodyText.count)")
@@ -649,6 +686,11 @@ struct NoteBlockView: View {
                             await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                         }
                     }
+                    await MainActor.run {
+                        if noteTitleText == titleText && noteText == bodyText {
+                            hasLocalEdits = false
+                        }
+                    }
                 } catch {
                     print("NoteBlock: Failed to save to atom: \(error)")
                 }
@@ -671,9 +713,10 @@ struct NoteBlockView: View {
             return
         }
 
+        let effectiveTitleDocument = titleDocumentForSave()
         let blockSnapshot = RichDocumentPersistence.noteSnapshot(
             existingMetadata: nil,
-            titleDocument: noteTitleDocument,
+            titleDocument: effectiveTitleDocument,
             bodyDocument: noteBodyDocument,
             plainBodyText: noteText
         )
@@ -711,7 +754,7 @@ struct NoteBlockView: View {
 
                 let snapshot = RichDocumentPersistence.noteSnapshot(
                     existingMetadata: existingMetadata,
-                    titleDocument: noteTitleDocument,
+                    titleDocument: effectiveTitleDocument,
                     bodyDocument: noteBodyDocument,
                     plainBodyText: noteText
                 )
@@ -801,6 +844,7 @@ struct NoteBlockView: View {
                     }
                 }
             }
+            hasLocalEdits = false
         } catch {
             print("NoteBlock: sync save failed: \(error)")
         }
@@ -809,6 +853,36 @@ struct NoteBlockView: View {
     // MARK: - Focus Mode
 
     private func openFocusMode() {
+        autoSaveTask?.cancel()
+
+        if NoteWritePolicy.requiresBlockFlushBeforeFocusMode(
+            hasLocalEdits: hasLocalEdits,
+            entityId: trackedEntityId,
+            entityUUID: trackedEntityUuid
+        ) {
+            isEditingTitle = false
+            isEditingBody = false
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                openFocusModeAfterFlushingLocalEdits()
+            }
+            return
+        }
+
+        openFocusModeAfterFlushingLocalEdits()
+    }
+
+    private func openFocusModeAfterFlushingLocalEdits() {
+        autoSaveTask?.cancel()
+
+        if NoteWritePolicy.requiresBlockFlushBeforeFocusMode(
+            hasLocalEdits: hasLocalEdits,
+            entityId: trackedEntityId,
+            entityUUID: trackedEntityUuid
+        ) {
+            saveNoteSync()
+        }
+
         Task {
             do {
                 if !trackedEntityUuid.isEmpty,
@@ -853,7 +927,7 @@ struct NoteBlockView: View {
 
                 let snapshot = RichDocumentPersistence.noteSnapshot(
                     existingMetadata: nil,
-                    titleDocument: noteTitleDocument,
+                    titleDocument: titleDocumentForSave(),
                     bodyDocument: noteBodyDocument,
                     plainBodyText: noteText
                 )

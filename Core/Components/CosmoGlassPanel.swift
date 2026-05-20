@@ -300,7 +300,7 @@ enum CosmoGlassPanelRole {
     var material: NSVisualEffectView.Material {
         switch self {
         case .globalSidebar:
-            return .sidebar
+            return DS.palette.name == "Codex Mono" ? .popover : .sidebar
         case .focusSidebar:
             return .hudWindow
         case .floatingAssistant:

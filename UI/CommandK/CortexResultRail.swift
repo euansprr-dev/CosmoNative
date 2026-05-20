@@ -167,6 +167,98 @@ enum CommandKDomainRailItem: Identifiable {
     }
 }
 
+struct CommandKIdeaRailSection: Identifiable {
+    let id: String
+    let title: String
+    let color: Color
+    let items: [IdeaGalleryItem]
+
+    var countText: String {
+        "\(items.count) idea\(items.count == 1 ? "" : "s")"
+    }
+}
+
+enum CommandKIdeaRailGrouping {
+    private static let unassignedSectionID = "unassigned"
+
+    static func sections(from ideas: [IdeaGalleryItem]) -> [CommandKIdeaRailSection] {
+        var groupedItems: [String: [IdeaGalleryItem]] = [:]
+        var sectionTitles: [String: String] = [:]
+        var colorSeeds: [String: String] = [:]
+        var unassigned: [IdeaGalleryItem] = []
+
+        for idea in ideas {
+            guard let key = profileKey(for: idea) else {
+                unassigned.append(idea)
+                continue
+            }
+
+            groupedItems[key, default: []].append(idea)
+            sectionTitles[key] = profileTitle(for: idea)
+            colorSeeds[key] = idea.clientUUID ?? sectionTitles[key] ?? key
+        }
+
+        let profileSections = groupedItems.keys
+            .sorted { lhs, rhs in
+                let left = sectionTitles[lhs] ?? lhs
+                let right = sectionTitles[rhs] ?? rhs
+                return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
+            }
+            .map { key in
+                CommandKIdeaRailSection(
+                    id: key,
+                    title: sectionTitles[key] ?? "Profile",
+                    color: DS.clientColor(for: colorSeeds[key] ?? key),
+                    items: sortedIdeas(groupedItems[key] ?? [])
+                )
+            }
+
+        guard !unassigned.isEmpty else { return profileSections }
+        return profileSections + [
+            CommandKIdeaRailSection(
+                id: unassignedSectionID,
+                title: "Unassigned",
+                color: DS.entityIdea,
+                items: sortedIdeas(unassigned)
+            )
+        ]
+    }
+
+    static func orderedItems(from ideas: [IdeaGalleryItem]) -> [IdeaGalleryItem] {
+        sections(from: ideas).flatMap(\.items)
+    }
+
+    private static func sortedIdeas(_ ideas: [IdeaGalleryItem]) -> [IdeaGalleryItem] {
+        ideas.sorted { lhs, rhs in
+            if lhs.updatedAt == rhs.updatedAt {
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+            return lhs.updatedAt > rhs.updatedAt
+        }
+    }
+
+    private static func profileKey(for idea: IdeaGalleryItem) -> String? {
+        if let clientUUID = idea.clientUUID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !clientUUID.isEmpty {
+            return "client-\(clientUUID)"
+        }
+
+        guard let clientName = idea.clientName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !clientName.isEmpty else {
+            return nil
+        }
+        return "name-\(clientName.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased())"
+    }
+
+    private static func profileTitle(for idea: IdeaGalleryItem) -> String {
+        guard let title = idea.clientName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty else {
+            return "Profile"
+        }
+        return title
+    }
+}
+
 enum CommandKDomainRailDataSource {
     static func items(
         for tab: CommandKTab,
@@ -201,7 +293,7 @@ enum CommandKDomainRailDataSource {
         case .swipeGallery:
             return swipeItems.map(CommandKDomainRailItem.swipe)
         case .ideas:
-            return ideaItems.map(CommandKDomainRailItem.idea)
+            return CommandKIdeaRailGrouping.orderedItems(from: ideaItems).map(CommandKDomainRailItem.idea)
         case .readwise:
             return readwiseBooks.map(CommandKDomainRailItem.readwise)
         case .inquiry:
@@ -393,12 +485,51 @@ struct CortexResultRail: View {
             railHint("Gathering \(tab.title.lowercased())…")
         } else if domainItems.isEmpty {
             railHint(viewModel.query.isEmpty ? "Nothing in \(tab.title) yet." : "No \(tab.title.lowercased()) matches.")
+        } else if tab == .ideas {
+            ideaDomainSection(domainItems)
         } else {
             AtelierOrnamentalSectionLabel(label: tab.title.uppercased())
             ForEach(domainItems) { item in
                 domainRow(item)
             }
         }
+    }
+
+    @ViewBuilder
+    private func ideaDomainSection(_ items: [CommandKDomainRailItem]) -> some View {
+        let ideas = items.compactMap { item -> IdeaGalleryItem? in
+            if case .idea(let idea) = item { return idea }
+            return nil
+        }
+        let sections = CommandKIdeaRailGrouping.sections(from: ideas)
+
+        AtelierOrnamentalSectionLabel(label: "IDEAS")
+        ForEach(sections) { section in
+            ideaProfileHeader(section)
+            ForEach(section.items, id: \.atomUUID) { idea in
+                domainRow(.idea(idea))
+            }
+        }
+    }
+
+    private func ideaProfileHeader(_ section: CommandKIdeaRailSection) -> some View {
+        HStack(spacing: DS.space8) {
+            Circle()
+                .fill(section.color.opacity(0.82))
+                .frame(width: 6, height: 6)
+            Text(section.title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: DS.space8)
+            Text(section.countText)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, DS.space8)
+        .padding(.top, DS.space10)
+        .padding(.bottom, DS.space2)
     }
 
     @ViewBuilder

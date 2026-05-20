@@ -19,6 +19,14 @@ enum NoteFocusHeaderLayoutPolicy {
         return hasTitle || hasContent ? .documentHeader : .emptyEditableTitle
     }
 
+    static func chromeMode(
+        titlePlainText: String,
+        plainContent: String,
+        activeEditChromeMode: NoteFocusTitleChromeMode?
+    ) -> NoteFocusTitleChromeMode {
+        activeEditChromeMode ?? chromeMode(titlePlainText: titlePlainText, plainContent: plainContent)
+    }
+
     static func showsEmptyGuidance(for mode: NoteFocusTitleChromeMode) -> Bool {
         mode == .emptyEditableTitle
     }
@@ -77,6 +85,7 @@ struct NoteFocusModeView: View {
     @State private var pendingObservedTitleDocument: RichDocument?
     @State private var titleDocumentAtEditStart: RichDocument = .empty
     @State private var isEditingTitle = false
+    @State private var titleChromeModeAtEditStart: NoteFocusTitleChromeMode?
 
     // Save state
     @State private var saveState: SaveState = .idle
@@ -248,6 +257,9 @@ struct NoteFocusModeView: View {
         }
         .onChange(of: isEditingTitle) { _, isEditing in
             if isEditing {
+                if titleChromeModeAtEditStart == nil {
+                    titleChromeModeAtEditStart = liveTitleChromeMode
+                }
                 titleDocumentAtEditStart = titleDocument
                 pendingObservedTitleDocument = nil
                 titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight))
@@ -256,6 +268,7 @@ struct NoteFocusModeView: View {
                     applyObservedTitleDocument(pendingObservedTitleDocument)
                 }
                 pendingObservedTitleDocument = nil
+                titleChromeModeAtEditStart = nil
             }
         }
     }
@@ -275,6 +288,14 @@ struct NoteFocusModeView: View {
     }
 
     private var titleChromeMode: NoteFocusTitleChromeMode {
+        NoteFocusHeaderLayoutPolicy.chromeMode(
+            titlePlainText: titlePlainText,
+            plainContent: plainContent,
+            activeEditChromeMode: isEditingTitle ? titleChromeModeAtEditStart : nil
+        )
+    }
+
+    private var liveTitleChromeMode: NoteFocusTitleChromeMode {
         NoteFocusHeaderLayoutPolicy.chromeMode(
             titlePlainText: titlePlainText,
             plainContent: plainContent
@@ -936,6 +957,7 @@ struct NoteFocusModeView: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             titleDocumentAtEditStart = titleDocument
+                            titleChromeModeAtEditStart = liveTitleChromeMode
                             isEditingTitle = true
                         }
                 }

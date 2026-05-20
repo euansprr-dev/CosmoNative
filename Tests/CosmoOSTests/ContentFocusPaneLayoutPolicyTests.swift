@@ -36,4 +36,16 @@ final class ContentFocusPaneLayoutPolicyTests: XCTestCase {
 
         XCTAssertEqual(width, 620)
     }
+
+    func testZenModeDoesNotApplyDocumentWideBackgroundWash() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let packageRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let focusViewURL = packageRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift")
+        let source = try String(contentsOf: focusViewURL, encoding: .utf8)
+
+        XCTAssertFalse(source.contains("DS.inkWash\n                .opacity(zenMode ?"))
+    }
 }

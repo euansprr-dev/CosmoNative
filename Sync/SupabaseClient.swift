@@ -183,27 +183,21 @@ final class SupabaseClient {
 
     // MARK: - Fetch Changes (Pull)
 
-    func fetchChanges(table: String, since: Date?, userId: String? = nil) async throws -> [[String: Any]] {
+    func fetchChanges(
+        table: String,
+        since: Date?,
+        userId: String? = nil,
+        excludeLocalSource: Bool = false
+    ) async throws -> [[String: Any]] {
         guard var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)") else {
             throw SupabaseError.invalidURL
         }
 
-        var queryItems = [URLQueryItem(name: "is_deleted", value: "eq.false")]
-
-        if let since = since {
-            let sinceStr = ISO8601DateFormatter().string(from: since)
-            queryItems.append(URLQueryItem(name: "updated_at", value: "gt.\(sinceStr)"))
-        }
-
-        // Filter by user_id if provided (for RLS-bypassing service role calls)
-        if let uid = userId {
-            queryItems.append(URLQueryItem(name: "user_id", value: "eq.\(uid)"))
-        }
-
-        queryItems.append(URLQueryItem(name: "order", value: "updated_at.asc"))
-        queryItems.append(URLQueryItem(name: "limit", value: "100"))
-
-        urlComponents.queryItems = queryItems
+        urlComponents.queryItems = Self.fetchChangesQueryItems(
+            since: since,
+            userId: userId,
+            excludeLocalSource: excludeLocalSource
+        )
 
         guard let url = urlComponents.url else {
             throw SupabaseError.invalidURL
@@ -225,6 +219,33 @@ final class SupabaseClient {
         }
 
         return json
+    }
+
+    nonisolated static func fetchChangesQueryItems(
+        since: Date?,
+        userId: String? = nil,
+        excludeLocalSource: Bool = false
+    ) -> [URLQueryItem] {
+        var queryItems = [URLQueryItem(name: "is_deleted", value: "eq.false")]
+
+        if let since = since {
+            let sinceStr = ISO8601DateFormatter().string(from: since)
+            queryItems.append(URLQueryItem(name: "updated_at", value: "gt.\(sinceStr)"))
+        }
+
+        // Filter by user_id if provided (for RLS-bypassing service role calls)
+        if let uid = userId {
+            queryItems.append(URLQueryItem(name: "user_id", value: "eq.\(uid)"))
+        }
+
+        if excludeLocalSource {
+            queryItems.append(SupabaseSyncTrafficPolicy.remoteOnlyQueryItem)
+        }
+
+        queryItems.append(URLQueryItem(name: "order", value: "updated_at.asc"))
+        queryItems.append(URLQueryItem(name: "limit", value: "100"))
+
+        return queryItems
     }
 
     // MARK: - Fetch Single Row

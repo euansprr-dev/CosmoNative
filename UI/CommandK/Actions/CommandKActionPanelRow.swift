@@ -102,6 +102,7 @@ private extension CommandKActionShortcut {
     var label: String {
         switch self {
         case .returnKey: return "return"
+        case .commandReturn: return "cmd return"
         case .commandK: return "cmd K"
         case .commandS: return "cmd S"
         case .commandI: return "cmd I"

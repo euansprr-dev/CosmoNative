@@ -48,6 +48,30 @@ struct CommandKAction: Identifiable, Equatable {
     let icon: String
     let payload: CommandKActionPayload
 
+    var scopedIdeaClientName: String? {
+        guard kind == .createIdea else { return nil }
+        let clientName = payload.clientName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let clientName, !clientName.isEmpty else { return nil }
+        return clientName
+    }
+
+    var scopedIdeaDraftText: String? {
+        guard scopedIdeaClientName != nil else { return nil }
+        let text = (payload.body ?? payload.title)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let text, !text.isEmpty else { return nil }
+        return text
+    }
+
+    var scopedIdeaPreviewText: String? {
+        guard scopedIdeaClientName != nil else { return nil }
+        return scopedIdeaDraftText ?? "Type the idea after :"
+    }
+
+    var scopedIdeaDestinationText: String? {
+        guard let clientName = scopedIdeaClientName else { return nil }
+        return "Save to \(clientName)'s ideas"
+    }
+
     var id: String {
         [
             kind.rawValue,
@@ -295,11 +319,17 @@ struct CommandKVisualIdentity: Equatable {
 
 enum CommandKActionExecutionError: LocalizedError {
     case appNotFound(String)
+    case clientNotFound(String)
+    case missingIdeaText
 
     var errorDescription: String? {
         switch self {
         case .appNotFound(let appName):
             return "Couldn't find an app named \(appName)."
+        case .clientNotFound(let clientName):
+            return "Couldn't find a client named \(clientName)."
+        case .missingIdeaText:
+            return "Type the idea text first."
         }
     }
 }
@@ -357,6 +387,10 @@ enum CommandKActionParser {
 
         if let browser = parseBrowser(trimmed) {
             return browser
+        }
+
+        if let scopedIdea = parseScopedIdeaCapture(trimmed) {
+            return scopedIdea
         }
 
         if let domain = parseDomain(trimmed) {
@@ -482,6 +516,36 @@ enum CommandKActionParser {
             subtitle: "Switch Command-K domain",
             icon: domain.2,
             payload: CommandKActionPayload(domain: domain.0, rawText: text)
+        )
+    }
+
+    private static func parseScopedIdeaCapture(_ text: String) -> CommandKAction? {
+        let lower = text.lowercased()
+        let prefix = "idea for "
+        guard lower.hasPrefix(prefix) else { return nil }
+
+        let remainder = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let delimiterIndex = remainder.firstIndex(of: ":") else {
+            return nil
+        }
+
+        let clientName = String(remainder[..<delimiterIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clientName.isEmpty else { return nil }
+
+        let contentStart = remainder.index(after: delimiterIndex)
+        let content = String(remainder[contentStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return CommandKAction(
+            kind: .createIdea,
+            title: "Create idea for \(clientName)",
+            subtitle: content.isEmpty ? "For \(clientName) · Type the idea after :" : "For \(clientName) · \(content)",
+            icon: "lightbulb.fill",
+            payload: CommandKActionPayload(
+                title: content.isEmpty ? nil : content,
+                body: content.isEmpty ? nil : content,
+                clientName: clientName,
+                rawText: text
+            )
         )
     }
 
@@ -772,8 +836,8 @@ struct CommandKSearchRequestID: Equatable, Sendable {
     private let rawValue = UUID()
 }
 
-struct CommandKSearchIndex {
-    struct Entry: Identifiable, Equatable {
+struct CommandKSearchIndex: Sendable {
+    struct Entry: Identifiable, Equatable, Sendable {
         let id: String
         let atomUUID: String
         let atomType: AtomType
@@ -781,6 +845,7 @@ struct CommandKSearchIndex {
         let snippet: String?
         let updatedAt: String
         let searchableText: String
+        let normalizedTitle: String
 
         init(
             id: String,
@@ -801,6 +866,7 @@ struct CommandKSearchIndex {
                 snippet,
                 atomType.rawValue
             ])
+            self.normalizedTitle = CommandKSearchMatcher.normalize(title)
         }
     }
 
@@ -823,40 +889,42 @@ struct CommandKSearchIndex {
         }
     }
 
-    func search(_ query: String, limit: Int) -> [RankedResult] {
+    func search(_ query: String, limit: Int, shouldCancel: () -> Bool = { false }) -> [RankedResult] {
         let normalizedQuery = CommandKSearchMatcher.normalizeQuery(query)
         guard !normalizedQuery.isEmpty else { return [] }
 
-        return entries
-            .compactMap { entry -> RankedResult? in
-                guard entry.searchableText.contains(normalizedQuery) else { return nil }
-                let normalizedTitle = CommandKSearchMatcher.normalize(entry.title)
-                let structural: Double
-                if normalizedTitle == normalizedQuery {
-                    structural = 1.0
-                } else if normalizedTitle.hasPrefix(normalizedQuery) {
-                    structural = 0.86
-                } else if normalizedTitle.contains(normalizedQuery) {
-                    structural = 0.68
-                } else {
-                    structural = 0.42
-                }
+        var matches: [RankedResult] = []
+        matches.reserveCapacity(min(limit * 2, entries.count))
 
-                return RankedResult(
-                    atomUUID: entry.atomUUID,
-                    atomType: entry.atomType,
-                    title: entry.title,
-                    snippet: entry.snippet?.prefix(160).description,
-                    semanticWeight: 0.0,
-                    structuralWeight: structural,
-                    recencyWeight: 0.5,
-                    usageWeight: 0.5,
-                    updatedAt: entry.updatedAt
-                )
+        for entry in entries {
+            if shouldCancel() { return [] }
+            guard entry.searchableText.contains(normalizedQuery) else { continue }
+
+            let structural: Double
+            if entry.normalizedTitle == normalizedQuery {
+                structural = 1.0
+            } else if entry.normalizedTitle.hasPrefix(normalizedQuery) {
+                structural = 0.86
+            } else if entry.normalizedTitle.contains(normalizedQuery) {
+                structural = 0.68
+            } else {
+                structural = 0.42
             }
-            .sorted()
-            .prefix(limit)
-            .map { $0 }
+
+            matches.append(RankedResult(
+                atomUUID: entry.atomUUID,
+                atomType: entry.atomType,
+                title: entry.title,
+                snippet: entry.snippet?.prefix(160).description,
+                semanticWeight: 0.0,
+                structuralWeight: structural,
+                recencyWeight: 0.5,
+                usageWeight: 0.5,
+                updatedAt: entry.updatedAt
+            ))
+        }
+
+        return matches.sorted().prefix(limit).map { $0 }
     }
 }
 

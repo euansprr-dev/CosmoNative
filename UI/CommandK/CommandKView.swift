@@ -3,6 +3,7 @@
 // Three modes: Compact (bubbles + recents) → Search Results → Expanded Domain
 
 import SwiftUI
+import AppKit
 
 // MARK: - CommandKView
 
@@ -106,6 +107,7 @@ public struct CommandKView: View {
         .onKeyPress(.escape) { handleEscape() }
         .onKeyPress(.downArrow) { viewModel.selectNext(); return .handled }
         .onKeyPress(.upArrow) { viewModel.selectPrevious(); return .handled }
+        .onKeyPress { handleCommandReturn($0) }
         .onKeyPress(.return) { viewModel.openSelected(); return .handled }
         .onKeyPress(.tab) { handleTab() }
     }
@@ -179,7 +181,7 @@ public struct CommandKView: View {
                 .font(DS.title2)
                 .foregroundStyle(DS.text)
                 .focused($isSearchFocused)
-                .onSubmit { viewModel.openSelected() }
+                .onSubmit { submitSearchField() }
 
             Spacer()
 
@@ -592,6 +594,27 @@ public struct CommandKView: View {
             NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
         }
         return .handled
+    }
+
+    private func handleCommandReturn(_ press: KeyPress) -> KeyPress.Result {
+        guard press.key == .return, press.modifiers.contains(.command) else { return .ignored }
+        openSelectedAsPaneFromShortcut()
+        return .handled
+    }
+
+    private func submitSearchField() {
+        let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.contains(.command) {
+            openSelectedAsPaneFromShortcut()
+        } else {
+            viewModel.openSelected()
+        }
+    }
+
+    private func openSelectedAsPaneFromShortcut() {
+        Task { @MainActor in
+            await viewModel.openSelectedAsPane()
+        }
     }
 
     private func handleTab() -> KeyPress.Result {

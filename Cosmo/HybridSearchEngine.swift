@@ -104,6 +104,7 @@ final class HybridSearchEngine: ObservableObject {
         entityTypes: [EntityType]? = nil,
         excludedEntityUUIDs: [String] = []
     ) async throws -> [SearchResult] {
+        try Task.checkCancellation()
         let weight = hybridWeight ?? defaultHybridWeight
         let excludedUUIDs = Set(excludedEntityUUIDs)
 
@@ -116,6 +117,7 @@ final class HybridSearchEngine: ObservableObject {
             entityTypes: entityTypes,
             excludedEntityUUIDs: excludedUUIDs
         )
+        try Task.checkCancellation()
 
         print("  📋 BM25 candidates: \(bm25Candidates.count)")
 
@@ -133,15 +135,19 @@ final class HybridSearchEngine: ObservableObject {
         let queryVector: [Float]
         do {
             let fullVector = try await DaemonXPCClient.shared.embed(text: query)
+            try Task.checkCancellation()
             // Truncate 768d → 256d Matryoshka to match stored vectors
             queryVector = Array(fullVector.prefix(vectorDimension))
             if fullVector.count != vectorDimension {
                 print("  📐 Truncated query vector \(fullVector.count)d → \(queryVector.count)d")
             }
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             print("  ⚠️ Embedding failed, using BM25 only: \(error.localizedDescription)")
             var fallbackResults: [SearchResult] = []
             for candidate in bm25Candidates.prefix(limit) {
+                try Task.checkCancellation()
                 if excludedUUIDs.contains(candidate.uuid) {
                     continue
                 }
@@ -165,6 +171,7 @@ final class HybridSearchEngine: ObservableObject {
         var scoredResults: [SearchResult] = []
 
         for candidate in bm25Candidates {
+            try Task.checkCancellation()
             if excludedUUIDs.contains(candidate.uuid) {
                 continue
             }
@@ -210,6 +217,7 @@ final class HybridSearchEngine: ObservableObject {
         // Stage 4: Apply context boosting if available
         if let ctx = context, ctx.contextVector != nil {
             scoredResults = await applyContextBoost(results: scoredResults, context: ctx)
+            try Task.checkCancellation()
         }
 
         // Sort by combined score and return top results
@@ -232,6 +240,7 @@ final class HybridSearchEngine: ObservableObject {
         limit: Int = 5,
         entityTypes: [EntityType]? = nil
     ) async throws -> [SearchResult] {
+        try Task.checkCancellation()
         guard let contextVector = context.contextVector else {
             // Fall back to concept-based search using extracted concepts
             if !context.extractedConcepts.isEmpty {
@@ -282,10 +291,11 @@ final class HybridSearchEngine: ObservableObject {
         entityTypes: [EntityType]?,
         excludedEntityUUIDs: Set<String>
     ) async throws -> [BM25Candidate] {
+        try Task.checkCancellation()
         // Escape special FTS5 characters and prepare query
         let escapedQuery = prepareFTS5Query(query)
 
-        return try await database.asyncRead { db in
+        let candidates = try await database.asyncRead { db in
             // Query atoms_fts (unified atom index) instead of legacy semantic_fts
             // BM25 weights: uuid=0, type=0, title=10, body=5, metadata=1
             var sql = """
@@ -334,6 +344,8 @@ final class HybridSearchEngine: ObservableObject {
                 )
             }
         }
+        try Task.checkCancellation()
+        return candidates
     }
 
     /// Prepare query string for FTS5 (handle special characters)
@@ -361,7 +373,9 @@ final class HybridSearchEngine: ObservableObject {
         entityTypes: [EntityType]?,
         excludedEntityUUIDs: Set<String>
     ) async throws -> [SearchResult] {
+        try Task.checkCancellation()
         let fullVector = try await DaemonXPCClient.shared.embed(text: query)
+        try Task.checkCancellation()
         // Truncate 768d → 256d Matryoshka to match stored vectors
         let queryVector = Array(fullVector.prefix(vectorDimension))
         return try await pureVectorSearch(
@@ -381,16 +395,19 @@ final class HybridSearchEngine: ObservableObject {
         excludeEntity: (EntityType?, Int64?),
         excludedEntityUUIDs: Set<String> = []
     ) async throws -> [SearchResult] {
+        try Task.checkCancellation()
         // Fetch all semantic chunks
         let chunks = try await database.asyncRead { db in
             try SemanticChunk
                 .order(Column("created_at").desc)
                 .fetchAll(db)
         }
+        try Task.checkCancellation()
 
         var results: [(entityType: String, entityId: Int64, title: String, text: String, similarity: Float)] = []
 
         for chunk in chunks {
+            try Task.checkCancellation()
             // Skip excluded entity
             if let excludeType = excludeEntity.0,
                let excludeId = excludeEntity.1,
@@ -450,6 +467,7 @@ final class HybridSearchEngine: ObservableObject {
         // Enrich with entity details and return
         var enrichedResults: [SearchResult] = []
         for result in deduplicated.prefix(limit) {
+            try Task.checkCancellation()
             let uuid = await resolveUUID(entityType: result.entityType, entityId: result.entityId)
             if let uuid, excludedEntityUUIDs.contains(uuid) {
                 continue
@@ -489,6 +507,7 @@ final class HybridSearchEngine: ObservableObject {
             var maxSimilarity: Float = 0
 
             for chunk in chunks {
+                if Task.isCancelled { return 0 }
                 guard let vectorData = chunk.vector,
                       let chunkVector = decodeVector(vectorData) else {
                     continue
@@ -532,6 +551,7 @@ final class HybridSearchEngine: ObservableObject {
 
             var maxSimilarity: Float = 0
             for row in rows {
+                if Task.isCancelled { return 0 }
                 guard let vectorData = row["vector"] as? Data,
                       let chunkVector = decodeVector(vectorData) else { continue }
 
@@ -575,6 +595,7 @@ final class HybridSearchEngine: ObservableObject {
         var boostedResults: [SearchResult] = []
 
         for result in results {
+            if Task.isCancelled { return results }
             let contextSimilarity = await getVectorSimilarity(
                 entityType: result.entityType.rawValue,
                 entityId: result.entityId,

@@ -2,6 +2,19 @@ import XCTest
 @testable import CosmoOS
 
 final class CommandKSearchPipelineTests: XCTestCase {
+    private var createdUUIDs: [String] = []
+
+    override func tearDown() async throws {
+        let uuids = createdUUIDs.reversed()
+        createdUUIDs.removeAll()
+
+        for uuid in uuids {
+            try? await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
+        }
+
+        try await super.tearDown()
+    }
+
     func testPlainInstagramURLBecomesSwipeCaptureAction() {
         let action = CommandKActionParser.parse("https://www.instagram.com/reel/ABC123/")
 
@@ -519,6 +532,58 @@ final class CommandKSearchPipelineTests: XCTestCase {
     }
 
     @MainActor
+    func testIdeaQueryKeepsIdeasQuicklinkAvailableWithOtherSearchOptions() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CommandKUserCommandStore(fileURL: url, seedBuiltIns: false)
+        try await store.saveQuicklink(CommandKQuicklink(
+            id: "ideas",
+            alias: "ideas",
+            title: "Ideas",
+            route: .commandKDomain("ideas"),
+            query: nil,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        ))
+        let viewModel = CommandKViewModel(userCommandStore: store)
+        defer { viewModel.setSurfaceActive(false) }
+
+        viewModel.query = "idea"
+        await viewModel.performSearch(query: "idea")
+
+        XCTAssertEqual(viewModel.cortexMode, .searchResults)
+        XCTAssertEqual(viewModel.query, "idea")
+        XCTAssertNil(viewModel.primaryAction)
+        XCTAssertTrue(viewModel.userCommandRows.contains { $0.title == "Ideas" })
+    }
+
+    @MainActor
+    func testIdeasQueryKeepsIdeasQuicklinkAvailable() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CommandKUserCommandStore(fileURL: url, seedBuiltIns: false)
+        try await store.saveQuicklink(CommandKQuicklink(
+            id: "ideas",
+            alias: "ideas",
+            title: "Ideas",
+            route: .commandKDomain("ideas"),
+            query: nil,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        ))
+        let viewModel = CommandKViewModel(userCommandStore: store)
+        defer { viewModel.setSurfaceActive(false) }
+
+        viewModel.query = "ideas"
+        await viewModel.performSearch(query: "ideas")
+
+        XCTAssertEqual(viewModel.userCommandRows.map(\.title), ["Ideas"])
+        XCTAssertEqual(viewModel.activeCommandAction?.kind, .openDomain)
+    }
+
+    @MainActor
     func testSwipeDeletedNotificationPrunesLoadedSwipeGalleryImmediately() async {
         let deleted = SwipeGalleryItem(
             atomUUID: "swipe-deleted",
@@ -576,6 +641,29 @@ final class CommandKSearchPipelineTests: XCTestCase {
 
         XCTAssertEqual(results.map(\.atomUUID), ["idea-1", "task-1"])
         XCTAssertGreaterThan(results[0].structuralWeight, results[1].structuralWeight)
+    }
+
+    func testSearchIndexStopsWithoutPublishingPartialResultsWhenCancelled() {
+        var index = CommandKSearchIndex()
+        index.replace((0..<20).map { offset in
+            CommandKSearchIndex.Entry(
+                id: "item-\(offset)",
+                atomUUID: "item-\(offset)",
+                atomType: .idea,
+                title: "Laggy Search Item \(offset)",
+                snippet: "Command K should abandon stale local scans while the user keeps typing.",
+                updatedAt: "2026-05-01T00:00:00Z"
+            )
+        })
+
+        var probes = 0
+        let results = index.search("laggy", limit: 10) {
+            probes += 1
+            return probes > 3
+        }
+
+        XCTAssertTrue(results.isEmpty)
+        XCTAssertEqual(probes, 4)
     }
 
     func testSearchPipelineRejectsStaleRequests() async {
@@ -736,6 +824,49 @@ final class CommandKSearchPipelineTests: XCTestCase {
         )
     }
 
+    func testIdeaRailGroupingSeparatesContentProfilesAndKeepsUnassignedLast() {
+        let acmeNew = makeIdea(
+            uuid: "idea-acme-new",
+            title: "New Acme angle",
+            clientName: "Acme",
+            clientUUID: "client-acme",
+            updatedAt: "2026-05-12T00:00:00Z"
+        )
+        let zed = makeIdea(
+            uuid: "idea-zed",
+            title: "Zed angle",
+            clientName: "Zed",
+            clientUUID: "client-zed",
+            updatedAt: "2026-05-11T00:00:00Z"
+        )
+        let acmeOld = makeIdea(
+            uuid: "idea-acme-old",
+            title: "Old Acme angle",
+            clientName: "Acme",
+            clientUUID: "client-acme",
+            updatedAt: "2026-05-10T00:00:00Z"
+        )
+        let unassigned = makeIdea(
+            uuid: "idea-unassigned",
+            title: "Loose angle",
+            clientName: nil,
+            clientUUID: nil,
+            updatedAt: "2026-05-13T00:00:00Z"
+        )
+
+        let sections = CommandKIdeaRailGrouping.sections(from: [zed, unassigned, acmeOld, acmeNew])
+
+        XCTAssertEqual(sections.map(\.title), ["Acme", "Zed", "Unassigned"])
+        XCTAssertEqual(sections.map(\.countText), ["2 ideas", "1 idea", "1 idea"])
+        XCTAssertEqual(sections[0].items.map(\.atomUUID), ["idea-acme-new", "idea-acme-old"])
+        XCTAssertEqual(sections.flatMap { $0.items.map(\.atomUUID) }, [
+            "idea-acme-new",
+            "idea-acme-old",
+            "idea-zed",
+            "idea-unassigned"
+        ])
+    }
+
     func testRecentComposerUsesOnlyOpenedAtomsForCommandKRecents() {
         let openedAtom = Atom.new(type: .idea, title: "Opened idea")
         let capturedAtom = Atom.new(type: .research, title: "Fresh capture")
@@ -772,6 +903,35 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(ranked.first?.updatedAt, oldOpenedAt)
     }
 
+    private func makeIdea(
+        uuid: String,
+        title: String,
+        clientName: String?,
+        clientUUID: String?,
+        updatedAt: String
+    ) -> IdeaGalleryItem {
+        IdeaGalleryItem(
+            id: uuid,
+            atomUUID: uuid,
+            entityId: 1,
+            title: title,
+            body: nil,
+            status: .spark,
+            contentFormat: nil,
+            platform: nil,
+            clientName: clientName,
+            clientUUID: clientUUID,
+            tags: [],
+            insightScore: nil,
+            matchingSwipeCount: nil,
+            suggestedFramework: nil,
+            isPinned: false,
+            contentCount: 0,
+            createdAt: "2026-05-09T00:00:00Z",
+            updatedAt: updatedAt
+        )
+    }
+
     func testActionParserParsesSwipeLinkAction() {
         let action = CommandKActionParser.parse("swipe https://www.instagram.com/p/DWrp-7BiKny/")
 
@@ -790,6 +950,109 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(action?.payload.url, "https://www.instagram.com/reel/abc123")
         XCTAssertEqual(action?.payload.title, "The 3 Silent Taxes Killing Retirement")
         XCTAssertEqual(action?.payload.clientName, "Acme Wealth")
+    }
+
+    func testActionParserParsesScopedIdeaCaptureWithColon() {
+        let action = CommandKActionParser.parse("idea for Ben: turn onboarding calls into a story bank")
+
+        XCTAssertEqual(action?.kind, .createIdea)
+        XCTAssertEqual(action?.title, "Create idea for Ben")
+        XCTAssertEqual(action?.payload.clientName, "Ben")
+        XCTAssertEqual(action?.payload.title, "turn onboarding calls into a story bank")
+        XCTAssertEqual(action?.payload.body, "turn onboarding calls into a story bank")
+    }
+
+    func testActionParserDoesNotUseSemicolonForScopedIdeaCapture() {
+        let action = CommandKActionParser.parse("idea for Ben; turn onboarding calls into a story bank")
+
+        XCTAssertNil(action)
+    }
+
+    @MainActor
+    func testScopedIdeaCaptureIsSelectedAndCarriesDraftPreviewBeforeEnter() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CommandKUserCommandStore(fileURL: url, seedBuiltIns: false)
+        try await store.saveQuicklink(CommandKQuicklink(
+            id: "ideas",
+            alias: "ideas",
+            title: "Ideas",
+            route: .commandKDomain("ideas"),
+            query: nil,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        ))
+        let viewModel = CommandKViewModel(userCommandStore: store)
+        defer { viewModel.setSurfaceActive(false) }
+
+        let ideaText = "turn onboarding calls into a story bank"
+        viewModel.query = "idea for Ben: \(ideaText)"
+        await viewModel.performSearch(query: viewModel.query)
+
+        let action = try XCTUnwrap(viewModel.primaryAction)
+        XCTAssertEqual(viewModel.selectedNodeId, action.id)
+        XCTAssertEqual(action.title, "Create idea for Ben")
+        XCTAssertEqual(action.subtitle, "For Ben · \(ideaText)")
+        XCTAssertEqual(CortexDetailSubject.action(action).metaLine, "Save to Ben's ideas")
+        XCTAssertEqual(CortexDetailSubject.action(action).previewText, ideaText)
+    }
+
+    @MainActor
+    func testScopedIdeaCaptureCreatesClientIdeaAndOpensIdeasDomain() async throws {
+        let uniqueSuffix = UUID().uuidString.prefix(8)
+        let clientName = "Ben CommandK \(uniqueSuffix)"
+        let ideaText = "Turn onboarding calls into a story bank \(uniqueSuffix)"
+        let client = try await AtomRepository.shared.create(type: .clientProfile, title: clientName)
+        createdUUIDs.append(client.uuid)
+
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        let command = "idea for \(clientName): \(ideaText)"
+        viewModel.query = command
+        await viewModel.performSearch(query: command)
+        XCTAssertEqual(viewModel.primaryAction?.kind, .createIdea)
+
+        viewModel.openSelected()
+
+        var createdIdea: Atom?
+        for _ in 0..<20 {
+            let ideas = try await AtomRepository.shared.fetchAll(type: .idea)
+            if let idea = ideas.first(where: { $0.title == ideaText && $0.ideaClientUUID == client.uuid }) {
+                createdIdea = idea
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        for _ in 0..<20 {
+            if viewModel.cortexMode == .expandedDomain(.ideas) {
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        let idea = try XCTUnwrap(createdIdea)
+        createdUUIDs.append(idea.uuid)
+        XCTAssertEqual(idea.body, ideaText)
+        XCTAssertEqual(idea.ideaClientUUID, client.uuid)
+        XCTAssertTrue(idea.linksList.contains { $0.linkType == .ideaToClient && $0.uuid == client.uuid })
+
+        let fetchedClient = try await AtomRepository.shared.fetch(uuid: client.uuid)
+        let refreshedClient = try XCTUnwrap(fetchedClient)
+        XCTAssertTrue(refreshedClient.linksList.contains { $0.linkType == .clientToIdea && $0.uuid == idea.uuid })
+        XCTAssertEqual(viewModel.cortexMode, .expandedDomain(.ideas))
+        XCTAssertEqual(viewModel.query, "")
+        XCTAssertEqual(viewModel.ideaGalleryItems.first?.atomUUID, idea.uuid)
+        XCTAssertEqual(viewModel.ideaGalleryItems.first?.clientUUID, client.uuid)
     }
 
     func testActionParserParsesCustomCaptureLanePrefix() {

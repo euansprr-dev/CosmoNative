@@ -15,43 +15,101 @@ struct CosmoDocumentRenderer: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
-                blockView(block, at: index)
-            }
-        }
+        blockStack(document.blocks, depth: 0)
     }
 
-    @ViewBuilder
-    private func blockView(_ block: RichBlock, at index: Int) -> some View {
+    private func blockStack(_ blocks: [RichBlock], depth: Int) -> AnyView {
+        AnyView(VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
+                blockView(block, at: index, in: blocks, depth: depth)
+            }
+        })
+    }
+
+    private func blockView(_ block: RichBlock, at index: Int, in siblings: [RichBlock], depth: Int) -> AnyView {
         switch block.kind {
         case .divider:
-            Rectangle()
+            AnyView(Rectangle()
                 .fill(secondaryTextColor.opacity(0.35))
-                .frame(height: 1)
+                .frame(height: 1))
+        case .element:
+            AnyView(elementBlockView(block, depth: depth))
         case .image:
             if let image = block.inlines.compactMap(\.image).first,
                let nsImage = ImageStore.load(path: image.path) {
-                Image(nsImage: nsImage)
+                AnyView(Image(nsImage: nsImage)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: min(680, image.width))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 10)))
             } else {
-                Text("[Image]")
+                AnyView(Text("[Image]")
                     .font(.system(size: fontSize, weight: .medium))
-                    .foregroundColor(secondaryTextColor)
+                    .foregroundColor(secondaryTextColor))
             }
         default:
-            inlineText(for: block, at: index)
+            AnyView(inlineText(for: block, at: index, in: siblings)
                 .font(font(for: block))
                 .foregroundColor(textColor)
                 .lineLimit(lineLimit)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: false, vertical: true))
         }
     }
 
-    private func inlineText(for block: RichBlock, at index: Int) -> Text {
+    private func elementBlockView(_ block: RichBlock, depth: Int) -> some View {
+        let visibleChildren = DocumentElementRendering.visibleChildBlocks(for: block)
+        let collapsed = DocumentElementRendering.isCollapsed(block)
+        let elementName = DocumentElementRendering.title(for: block)
+        let instanceTitle = DocumentElementRendering.instanceTitle(for: block)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(secondaryTextColor)
+                    .frame(width: 28, height: 28)
+
+                Image(systemName: DocumentElementRendering.systemIcon(for: block))
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: max(13, min(15, fontSize - 2)), weight: .medium))
+                    .foregroundStyle(secondaryTextColor)
+                    .frame(width: 15, height: 15)
+
+                Text(elementName)
+                    .font(.system(size: max(12, fontSize - 4), weight: .medium))
+                    .foregroundStyle(secondaryTextColor)
+                    .lineLimit(1)
+                    .frame(minWidth: 56, maxWidth: 150, alignment: .leading)
+
+                Text(instanceTitle)
+                    .font(.system(size: max(14, fontSize - 1), weight: .medium))
+                    .foregroundStyle(textColor.opacity(darkMode ? 0.82 : 0.78))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: max(42, fontSize + 24), alignment: .center)
+            .padding(.horizontal, 8)
+
+            if !visibleChildren.isEmpty {
+                blockStack(visibleChildren, depth: depth + 1)
+                    .padding(.top, 8)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(elementBackgroundColor(depth: depth))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(elementBorderColor, lineWidth: 1)
+        )
+    }
+
+    private func inlineText(for block: RichBlock, at index: Int, in siblings: [RichBlock]) -> Text {
         let prefix: Text
         switch block.kind {
         case .quote:
@@ -62,7 +120,7 @@ struct CosmoDocumentRenderer: View {
             // Compute list-relative position
             var listPosition = 1
             var j = index - 1
-            while j >= 0 && document.blocks[j].kind == .numberedList {
+            while j >= 0 && siblings[j].kind == .numberedList {
                 listPosition += 1
                 j -= 1
             }
@@ -119,5 +177,16 @@ struct CosmoDocumentRenderer: View {
         default:
             return .system(size: fontSize)
         }
+    }
+
+    private func elementBackgroundColor(depth: Int) -> Color {
+        if darkMode {
+            return Color(red: 0.12, green: 0.125, blue: 0.13).opacity(depth == 0 ? 0.98 : 0.94)
+        }
+        return Color.white
+    }
+
+    private var elementBorderColor: Color {
+        darkMode ? Color.white.opacity(0.11) : Color.black.opacity(0.10)
     }
 }

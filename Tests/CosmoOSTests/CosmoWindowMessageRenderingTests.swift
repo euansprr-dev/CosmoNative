@@ -124,6 +124,37 @@ final class CosmoWindowMessageRenderingTests: XCTestCase {
         XCTAssertTrue(expanded.contains(sentinel))
     }
 
+    func testMentionExpansionPreservesElementStructureFromRichDocument() {
+        let definition = DocumentElementDefinition(
+            title: "Where they are",
+            systemIcon: "square.dashed"
+        )
+        let document = RichDocument(blocks: [
+            RichBlock.element(definition, children: [
+                .paragraph("Hidden visual state should still be AI context.")
+            ], isCollapsed: true)
+        ])
+        let fields = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: nil,
+            bodyDocument: document
+        )
+        let atom = Atom.new(
+            type: .note,
+            title: "Target Audience",
+            body: fields.body,
+            metadata: fields.metadata
+        )
+
+        let expanded = MentionContextHelper.expandMentionsInline(
+            text: "Read @Target Audience before answering.",
+            atoms: [atom]
+        )
+
+        XCTAssertTrue(expanded.contains(#"<element title="Where they are" icon="square.dashed" collapsed="true">"#))
+        XCTAssertTrue(expanded.contains("Hidden visual state should still be AI context."))
+        XCTAssertTrue(expanded.contains("</element>"))
+    }
+
     func testWritingEngineMentionExpansionIncludesFullBodyByDefault() {
         let sentinel = "FINAL BLUEPRINT BEAT: reveal expected versus actual cashflow"
         let longBody = String(repeating: "Blueprint context ", count: 260) + sentinel

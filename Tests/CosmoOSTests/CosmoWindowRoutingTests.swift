@@ -6,21 +6,21 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(AgentModelTier.gpt55Thinking.modelId, "openai/gpt-5.5")
         XCTAssertEqual(AgentModelTier.opus47.modelId, "anthropic/claude-opus-4.7")
         XCTAssertEqual(AgentModelTier.gptChatLatest.modelId, "openai/gpt-chat-latest")
-        XCTAssertEqual(AgentModelTier.geminiFlashLatest.modelId, "~google/gemini-flash-latest")
+        XCTAssertEqual(AgentModelTier.geminiFlashLatest.modelId, "google/gemini-3-flash-preview")
     }
 
     func testExpandedAgentModelTiersExposeReadableLabels() {
         XCTAssertEqual(AgentModelTier.gpt55Thinking.displayLabel, "GPT 5.5 Thinking")
         XCTAssertEqual(AgentModelTier.opus47.displayLabel, "Opus 4.7")
         XCTAssertEqual(AgentModelTier.gptChatLatest.displayLabel, "GPT Chat Latest")
-        XCTAssertEqual(AgentModelTier.geminiFlashLatest.displayLabel, "Gemini Flash")
+        XCTAssertEqual(AgentModelTier.geminiFlashLatest.displayLabel, "Gemini 3 Flash")
     }
 
     func testExplicitModelFailoverChainsStartWithSelectedModel() {
         XCTAssertEqual(ModelFailoverChain.chain(for: .gpt55Thinking).models.first?.modelId, "openai/gpt-5.5")
         XCTAssertEqual(ModelFailoverChain.chain(for: .opus47).models.first?.modelId, "anthropic/claude-opus-4.7")
         XCTAssertEqual(ModelFailoverChain.chain(for: .gptChatLatest).models.first?.modelId, "openai/gpt-chat-latest")
-        XCTAssertEqual(ModelFailoverChain.chain(for: .geminiFlashLatest).models.first?.modelId, "~google/gemini-flash-latest")
+        XCTAssertEqual(ModelFailoverChain.chain(for: .geminiFlashLatest).models.first?.modelId, "google/gemini-3-flash-preview")
     }
 
     func testGeminiFlashLatestFailoverNeverFallsBackToOpus() {
@@ -35,8 +35,15 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertTrue(ids.contains("openai/gpt-5.5"))
         XCTAssertTrue(ids.contains("anthropic/claude-opus-4.7"))
         XCTAssertTrue(ids.contains("openai/gpt-chat-latest"))
-        XCTAssertTrue(ids.contains("~google/gemini-flash-latest"))
+        XCTAssertTrue(ids.contains("google/gemini-3-flash-preview"))
+        XCTAssertFalse(ids.contains("~google/gemini-flash-latest"))
         XCTAssertFalse(ids.contains("google/gemini-3.1-flash-lite-preview"))
+    }
+
+    func testOpenRouterSettingsCatalogDoesNotContainDuplicateModelIds() {
+        let ids = AgentProvider.openRouterModels.map(\.id)
+
+        XCTAssertEqual(Set(ids).count, ids.count)
     }
 
     func testGPT55ThinkingUsesOpenRouterReasoningParameter() {
@@ -66,6 +73,15 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .brainstorm), .geminiFlashLatest)
         XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .draft), .geminiFlashLatest)
         XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .analyze), .strategist)
+    }
+
+    func testCosmoModelPickerLabelsPinnedGeminiThreeFlashAsEverydayDefault() {
+        let autoOption = CosmoModelOption.all.first { $0.id == "auto" }
+        let geminiOption = CosmoModelOption.all.first { $0.id == "geminiFlashLatest" }
+
+        XCTAssertEqual(autoOption?.detail, "Gemini 3 Flash by default")
+        XCTAssertEqual(geminiOption?.title, "Gemini 3 Flash")
+        XCTAssertEqual(geminiOption?.detail, "Pinned everyday search and brainstorming")
     }
 
     func testAutoModelRoutingNeverUsesOpusWriterTier() {
@@ -111,6 +127,10 @@ final class CosmoWindowRoutingTests: XCTestCase {
     func testProfileInspectionRequestsBypassFlashRouter() {
         XCTAssertTrue(FlashLiteRouter.shouldForceAgentFallback("check out Josh's content profile"))
         XCTAssertTrue(FlashLiteRouter.shouldForceAgentFallback("show me Josh's best performing posts"))
+    }
+
+    func testFlashLiteRouterUsesPinnedCheapClassifierModel() {
+        XCTAssertEqual(FlashLiteRouter.modelId, "google/gemini-3.1-flash-lite")
     }
 
     func testAgentContextAtomMergePreservesPinnedProfilesWhenMentionsArePresent() {

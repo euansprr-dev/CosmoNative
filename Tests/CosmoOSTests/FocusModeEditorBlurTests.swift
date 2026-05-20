@@ -101,4 +101,14 @@ final class NoteFocusHeaderLayoutPolicyTests: XCTestCase {
         XCTAssertFalse(NoteFocusHeaderLayoutPolicy.showsTitleUnderline(for: mode))
         XCTAssertTrue(NoteFocusHeaderLayoutPolicy.showsMetadataDivider(for: mode))
     }
+
+    func testActiveEmptyTitleEditKeepsEditableHeroChromeAfterTyping() {
+        let mode = NoteFocusHeaderLayoutPolicy.chromeMode(
+            titlePlainText: "A",
+            plainContent: "",
+            activeEditChromeMode: .emptyEditableTitle
+        )
+
+        XCTAssertEqual(mode, .emptyEditableTitle)
+    }
 }

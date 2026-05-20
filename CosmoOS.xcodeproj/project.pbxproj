@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C0DE5AFE0000000000000001 /* SupabaseSyncTrafficPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5AFE0000000000000002 /* SupabaseSyncTrafficPolicy.swift */; };
+		C0DE5AFE0000000000000003 /* SupabaseSyncTrafficPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5AFE0000000000000004 /* SupabaseSyncTrafficPolicyTests.swift */; };
+		C0D3C0D3C0D3C0D3C0D3C0D2 /* ThemePaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */; };
+		C0D3C0D3C0D3C0D3C0D3A002 /* CodexMonoPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */; };
 		009BB3A912B8D36D99B64182 /* SharedTitleSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3898EC77376C9313EEE76A9 /* SharedTitleSystem.swift */; };
 		00BD6CC692DE3139E9A42598 /* EditorPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7829068125D7586394C50B /* EditorPresentation.swift */; };
 		01413C896130D77833669A20 /* LibraryGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 512FCBE75880721AE01DB134 /* LibraryGridView.swift */; };
@@ -484,6 +488,7 @@
 		9AF4708475E5FA719E54E64A /* CanvasClusterEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC7A07BB7E92F9A25CDDEA91 /* CanvasClusterEngineTests.swift */; };
 		9B1763187183A56535D4762E /* InquiryWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A0FD758181BC833C5421F5C /* InquiryWorkspaceView.swift */; };
 		9B4DCC663814AFEDFE4D0ACA /* CosmoDocumentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32CA3704F5CF28B0CC6B37B4 /* CosmoDocumentRenderer.swift */; };
+		E1E1A0B0C0D0E0F011223351 /* DocumentElements.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1E1A0B0C0D0E0F011223350 /* DocumentElements.swift */; };
 		9B68774AC397CC3A89C848C0 /* TaskRecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FAF18B3FC839A4996A418CB /* TaskRecommendationEngine.swift */; };
 		9C15C2E079A43C1328D59245 /* StationModeOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BD796F53B3CFB20B69C2BF2 /* StationModeOverlay.swift */; };
 		9C4229C2213C1DF64A36000F /* StatePersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D27B0748EF6B964647C599E /* StatePersistence.swift */; };
@@ -561,6 +566,8 @@
 		ADB41AF76DBB0E8A9F929828 /* CodexRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3325E8AFCB5AAB831455E453 /* CodexRepository.swift */; };
 		ADC78D106F41736BFE0DA8A7 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6AC930FD36314607F7EC94D /* Theme.swift */; };
 		AE27DCBDB366291B203B26EA /* RichDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A586BF7761FADFC055F3E9C8 /* RichDocumentTests.swift */; };
+		E1E1A0B0C0D0E0F011223345 /* DocumentElementStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1E1A0B0C0D0E0F011223344 /* DocumentElementStoreTests.swift */; };
+		E1E1A0B0C0D0E0F011223347 /* DocumentElementHeaderLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1E1A0B0C0D0E0F011223346 /* DocumentElementHeaderLayoutTests.swift */; };
 		AE4DD2C5F49FD9261D5C2C50 /* AssignmentStatusGroupHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D29278C0B16583ADA18727 /* AssignmentStatusGroupHeader.swift */; };
 		AE59A8D13292FDCC2AC805D7 /* TelegramWritingSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2550F1D8304F236D09E7EC7 /* TelegramWritingSessionManager.swift */; };
 		AEE689FC6028CCD4D59559C2 /* PerplexityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD23AEE8E88A0C9D6448F6C6 /* PerplexityService.swift */; };
@@ -1008,6 +1015,7 @@
 		324B159B2DB0B7A7F622E4F5 /* ThemePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemePickerView.swift; sourceTree = "<group>"; };
 		325348C45A3821A0F6CE5F30 /* ConnectionCoDevEngine+LiveInsights.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConnectionCoDevEngine+LiveInsights.swift"; sourceTree = "<group>"; };
 		32CA3704F5CF28B0CC6B37B4 /* CosmoDocumentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoDocumentRenderer.swift; sourceTree = "<group>"; };
+		E1E1A0B0C0D0E0F011223350 /* DocumentElements.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentElements.swift; sourceTree = "<group>"; };
 		330A4B1FC1968EB1573460C9 /* PhysicsTransitionFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicsTransitionFlowView.swift; sourceTree = "<group>"; };
 		3325E8AFCB5AAB831455E453 /* CodexRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRepository.swift; sourceTree = "<group>"; };
 		3411B8C2E7745D8825E29B6D /* MoveBlockAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveBlockAction.swift; sourceTree = "<group>"; };
@@ -1048,10 +1056,16 @@
 		3E4797D5DBE4176975FB1037 /* ConceptCollaboratorEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConceptCollaboratorEngine.swift; sourceTree = "<group>"; };
 		3E4C96A6B2814E33B6B1D504 /* CaptureDestinationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureDestinationRepository.swift; sourceTree = "<group>"; };
 		3E6C0226C8847CF89BB73A9D /* CodexElementBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexElementBrowser.swift; sourceTree = "<group>"; };
+		C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMonoPalette.swift; sourceTree = "<group>"; };
 		3EC40026C3F525EDBC642CA0 /* ObsidianPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianPalette.swift; sourceTree = "<group>"; };
 		3EFA6AB392D25C61AB751DA5 /* CommandHubCaptureController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandHubCaptureController.swift; sourceTree = "<group>"; };
 		40830DB846D9B1BD193E899E /* EditorLayoutMetricsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EditorLayoutMetricsTests.swift; sourceTree = "<group>"; };
 		D0C0DE000000000000000101 /* DocumentPaperThemeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DocumentPaperThemeTests.swift; sourceTree = "<group>"; };
+		E1E1A0B0C0D0E0F011223344 /* DocumentElementStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DocumentElementStoreTests.swift; sourceTree = "<group>"; };
+		E1E1A0B0C0D0E0F011223346 /* DocumentElementHeaderLayoutTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DocumentElementHeaderLayoutTests.swift; sourceTree = "<group>"; };
+		C0DE5AFE0000000000000004 /* SupabaseSyncTrafficPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SupabaseSyncTrafficPolicyTests.swift; sourceTree = "<group>"; };
+		C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThemePaletteTests.swift; sourceTree = "<group>"; };
+		C0DE5AFE0000000000000002 /* SupabaseSyncTrafficPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseSyncTrafficPolicy.swift; sourceTree = "<group>"; };
 		40BC28B57B439BB86AA9B5E7 /* VoicePillWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePillWindow.swift; sourceTree = "<group>"; };
 		4209519AA1ABD06558754E98 /* LLMProviderAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMProviderAdapter.swift; sourceTree = "<group>"; };
 		42ABFC827D53B00ED0A7DD9C /* IdeaFocusModeState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaFocusModeState.swift; sourceTree = "<group>"; };
@@ -1807,6 +1821,7 @@
 				5D27B0748EF6B964647C599E /* StatePersistence.swift */,
 				4B849861E7F08EDF7C76AAE7 /* SupabaseAuthService.swift */,
 				60F31C795B4917561C273C20 /* SupabaseClient.swift */,
+				C0DE5AFE0000000000000002 /* SupabaseSyncTrafficPolicy.swift */,
 				EDEF42B4D86FA70998859B35 /* SyncEngine.swift */,
 				AD5191F57108CFBFFF2E58A6 /* SyncIntegration.swift */,
 				CFEE39B0E0751F2B08503004 /* SyncStatusView.swift */,
@@ -1897,6 +1912,7 @@
 				845884C0E33871260B8D0D1C /* CosmoDocumentEditor.swift */,
 				32CA3704F5CF28B0CC6B37B4 /* CosmoDocumentRenderer.swift */,
 				104DB71B6C8643EFDFB4D419 /* CosmoMarkdown.swift */,
+				E1E1A0B0C0D0E0F011223350 /* DocumentElements.swift */,
 				5E8B6D2EA422D93E1B4026AD /* EditorCommandBus.swift */,
 				2C7829068125D7586394C50B /* EditorPresentation.swift */,
 				BBC56F2F6B3494DABB829258 /* EditorToolbar.swift */,
@@ -3252,6 +3268,8 @@
 				C0DE5C0018A4E00100000004 /* CommandKScrollChromePolicyTests.swift */,
 				A3A4708524FFFEFEDA9DA979 /* ConnectionFocusModeStateMigrationTests.swift */,
 				20A74C082F320ABFE0A2F6B3 /* ContentFocusPaneLayoutPolicyTests.swift */,
+				E1E1A0B0C0D0E0F011223346 /* DocumentElementHeaderLayoutTests.swift */,
+				E1E1A0B0C0D0E0F011223344 /* DocumentElementStoreTests.swift */,
 				D0C0DE000000000000000101 /* DocumentPaperThemeTests.swift */,
 				9D3E03F08DE5D490D0F8A51A /* CosmoWindowMessageRenderingTests.swift */,
 				CCFA9C92C9E16819CDAE31AF /* CosmoWindowRoutingTests.swift */,
@@ -3267,6 +3285,8 @@
 				A547E14AA66937C42D933F92 /* SidebarLayoutPolicyTests.swift */,
 				F54F95C2F42A19860FFD4286 /* SwipeIdeaCaptureParserTests.swift */,
 				98B5CB58628EE8E88057C0EF /* SwipeProcessingServiceTests.swift */,
+				C0DE5AFE0000000000000004 /* SupabaseSyncTrafficPolicyTests.swift */,
+				C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */,
 				DE1A3A8D61EEEB003E266A2C /* TelegramCaptureCommandParserTests.swift */,
 				676FAE0CE51D03195E6DA3E1 /* UnifiedWritingEngineCostTests.swift */,
 				27B06FC74E2432B7AEE5C967 /* VoiceCommandRouterTests.swift */,
@@ -3290,6 +3310,7 @@
 		EBF45585254424EF82021386 /* Theming */ = {
 			isa = PBXGroup;
 			children = (
+				C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */,
 				49BC9E954C8FC24862480D98 /* GreenhousePalette.swift */,
 				EDC149ACC3006F00A22775DE /* MidnightStudyPalette.swift */,
 				09D0AE57D7C40C61373DBA03 /* NordicFrostPalette.swift */,
@@ -3582,6 +3603,8 @@
 				C0DE5C0018A4E00100000003 /* CommandKScrollChromePolicyTests.swift in Sources */,
 				0DC6D43436CED4B486395984 /* ConnectionFocusModeStateMigrationTests.swift in Sources */,
 				ADA239E71BB2FD0479D74039 /* ContentFocusPaneLayoutPolicyTests.swift in Sources */,
+				E1E1A0B0C0D0E0F011223347 /* DocumentElementHeaderLayoutTests.swift in Sources */,
+				E1E1A0B0C0D0E0F011223345 /* DocumentElementStoreTests.swift in Sources */,
 				D0C0DE000000000000000102 /* DocumentPaperThemeTests.swift in Sources */,
 				DFF91C9C1A5C8057CF27D91E /* CosmoWindowMessageRenderingTests.swift in Sources */,
 				3C5758AAA490A874A59DC78C /* CosmoWindowRoutingTests.swift in Sources */,
@@ -3597,6 +3620,8 @@
 				CC8845EA194204A30B474E76 /* SidebarLayoutPolicyTests.swift in Sources */,
 				4D14B3EEE460D81D58DE398F /* SwipeIdeaCaptureParserTests.swift in Sources */,
 				475C183C4EA9A8C2EAE92F10 /* SwipeProcessingServiceTests.swift in Sources */,
+				C0DE5AFE0000000000000003 /* SupabaseSyncTrafficPolicyTests.swift in Sources */,
+				C0D3C0D3C0D3C0D3C0D3C0D2 /* ThemePaletteTests.swift in Sources */,
 				28885BC1D149750314D61518 /* TelegramCaptureCommandParserTests.swift in Sources */,
 				F8036854BF90AE6406566B26 /* UnifiedWritingEngineCostTests.swift in Sources */,
 				E6210BB2C79234200EF6812C /* VoiceCommandRouterTests.swift in Sources */,
@@ -3862,6 +3887,7 @@
 				4155173AE5ED17A1B4DBD95D /* CosmoDocumentEditor.swift in Sources */,
 				9B4DCC663814AFEDFE4D0ACA /* CosmoDocumentRenderer.swift in Sources */,
 				807415AF357D1574ABAA26AD /* CosmoFunctionGemmaConfig.swift in Sources */,
+				E1E1A0B0C0D0E0F011223351 /* DocumentElements.swift in Sources */,
 				21B763DBE0ABA48B11CBE9B5 /* CosmoGlassCard.swift in Sources */,
 				525542963EC6645DD2C3B56F /* CosmoGlassCenter.swift in Sources */,
 				BD8A636D960A78723A1DC8BE /* CosmoGlassOverlayView.swift in Sources */,
@@ -3975,6 +4001,7 @@
 				95CBD7D061E63A073FD6C410 /* GraphNode.swift in Sources */,
 				8AD844AD751C207164D53005 /* GraphQueryEngine.swift in Sources */,
 				C9ABD41A41844D163D48974A /* GreenhousePalette.swift in Sources */,
+				C0D3C0D3C0D3C0D3C0D3A002 /* CodexMonoPalette.swift in Sources */,
 				48BA6EED11991BD49E8477DE /* GuidedStoryCreatorView.swift in Sources */,
 				D7C602A8D30ADE2E07659DC9 /* HealthKitAtomFactory.swift in Sources */,
 				6AC7910E934878E910C145BC /* HealthKitConfiguration.swift in Sources */,
@@ -4205,6 +4232,7 @@
 				BF547572598C1C587E9A4D8A /* SavedTimerPreset.swift in Sources */,
 				4164B1E75B907ACE29F18DDE /* SearchReRanker.swift in Sources */,
 				2B1320C896FE35B69848D7CF /* SelectableTranscriptText.swift in Sources */,
+				C0DE5AFE0000000000000001 /* SupabaseSyncTrafficPolicy.swift in Sources */,
 				60B77F8699F4E1688A5BE1DF /* SelectionBar.swift in Sources */,
 				3E9A07483736D762D01C1A61 /* SelectionFormattingMenu.swift in Sources */,
 				4458A0E9B7D398E9D019DBCE /* SemanticSearchEngine.swift in Sources */,

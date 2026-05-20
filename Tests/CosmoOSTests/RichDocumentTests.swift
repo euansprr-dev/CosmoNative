@@ -46,6 +46,227 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertEqual(document.plainText, "Hello @Michael!\n[Image]")
     }
 
+    func testElementBlocksPersistNestedChildrenAndPlainText() throws {
+        let audience = DocumentElementDefinition(
+            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            title: "Target Audience",
+            systemIcon: "person.2.fill"
+        )
+        let pains = DocumentElementDefinition(
+            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+            title: "Pain Points",
+            systemIcon: "exclamationmark.bubble"
+        )
+        let document = RichDocument(blocks: [
+            RichBlock.element(audience, children: [
+                .paragraph("High-agency founders"),
+                RichBlock.element(pains, children: [
+                    .paragraph("They feel scattered")
+                ], isCollapsed: true)
+            ])
+        ])
+
+        let data = try JSONEncoder().encode(document)
+        let roundTripped = try JSONDecoder().decode(RichDocument.self, from: data)
+
+        XCTAssertEqual(roundTripped, document)
+        XCTAssertEqual(roundTripped.blocks.first?.element?.titleSnapshot, "Target Audience")
+        XCTAssertEqual(roundTripped.blocks.first?.children.last?.element?.isCollapsed, true)
+        XCTAssertEqual(
+            roundTripped.plainText,
+            """
+            Target Audience
+              High-agency founders
+              Pain Points
+                They feel scattered
+            """
+        )
+    }
+
+    func testRichBlockDecodesLegacyJSONWithoutElementFields() throws {
+        let json = """
+        {
+          "blocks": [
+            {
+              "id": "33333333-3333-3333-3333-333333333333",
+              "kind": "paragraph",
+              "inlines": []
+            }
+          ]
+        }
+        """
+
+        let document = try JSONDecoder().decode(RichDocument.self, from: Data(json.utf8))
+
+        XCTAssertEqual(document.blocks.first?.kind, .paragraph)
+        XCTAssertEqual(document.blocks.first?.children, [])
+        XCTAssertNil(document.blocks.first?.element)
+    }
+
+    func testElementRenderingStateHidesCollapsedChildren() {
+        let definition = DocumentElementDefinition(
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            title: "Offer Stack",
+            systemIcon: "square.stack.3d.up"
+        )
+        let collapsed = RichBlock.element(definition, children: [
+            .paragraph("Core offer")
+        ], isCollapsed: true)
+        let expanded = RichBlock.element(definition, children: [
+            .paragraph("Core offer")
+        ])
+
+        XCTAssertEqual(DocumentElementRendering.visibleChildBlocks(for: collapsed), [])
+        XCTAssertEqual(
+            DocumentElementRendering.visibleChildBlocks(for: expanded)
+                .map { RichDocument(blocks: [$0]).plainText },
+            ["Core offer"]
+        )
+    }
+
+    func testAttributedSerializerRoundTripsExpandedElementChildren() {
+        let audience = DocumentElementDefinition(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            title: "Target Audience",
+            systemIcon: "person.2.fill"
+        )
+        let document = RichDocument(blocks: [
+            RichBlock.element(audience, children: [
+                .paragraph("High-agency founders"),
+                RichBlock(kind: .checklist, inlines: [.text("Needs clarity")], checked: false)
+            ])
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document)
+        let roundTripped = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(roundTripped.blocks.count, 1)
+        XCTAssertEqual(roundTripped.blocks.first?.kind, .element)
+        XCTAssertEqual(roundTripped.blocks.first?.element?.definitionID, audience.id)
+        XCTAssertEqual(roundTripped.blocks.first?.element?.titleSnapshot, "Target Audience")
+        XCTAssertEqual(roundTripped.blocks.first?.element?.systemIconSnapshot, "person.2.fill")
+        XCTAssertEqual(roundTripped.blocks.first?.children.map(\.kind), [.paragraph, .checklist])
+        XCTAssertEqual(roundTripped.blocks.first?.children.first?.inlines.first?.text, "High-agency founders")
+        XCTAssertEqual(roundTripped.blocks.first?.children.last?.checked, false)
+    }
+
+    func testAttributedSerializerPreservesCollapsedElementChildrenSnapshot() {
+        let offer = DocumentElementDefinition(
+            id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!,
+            title: "Offer Stack",
+            systemIcon: "square.stack.3d.up"
+        )
+        let document = RichDocument(blocks: [
+            RichBlock.element(offer, children: [
+                .paragraph("Core offer")
+            ], isCollapsed: true)
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document)
+        let roundTripped = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(roundTripped.blocks.count, 1)
+        XCTAssertEqual(roundTripped.blocks.first?.element?.isCollapsed, true)
+        XCTAssertEqual(roundTripped.blocks.first?.children.first?.inlines.first?.text, "Core offer")
+    }
+
+    func testElementEditorDecorationFindsSerializedElementHeader() {
+        let audience = DocumentElementDefinition(
+            title: "Target Audience",
+            systemIcon: "person.2.fill"
+        )
+        let attributed = RichDocumentSerializer.attributedString(
+            from: RichDocument(blocks: [
+                RichBlock.paragraph("Intro"),
+                RichBlock.element(audience),
+                RichBlock.paragraph("Outro")
+            ]),
+            fontSize: 16,
+            darkMode: false
+        )
+
+        let decorations = DocumentElementEditorDecoration.decorations(in: attributed)
+
+        XCTAssertEqual(decorations.count, 1)
+        XCTAssertEqual(decorations.first?.systemIcon, "person.2.fill")
+        XCTAssertEqual(decorations.first?.title, "Target Audience")
+        XCTAssertEqual(decorations.first?.isCollapsed, false)
+    }
+
+    func testElementEditorDecorationIncludesExpandedChildRange() {
+        let audience = DocumentElementDefinition(
+            title: "Target Audience",
+            systemIcon: "person.2.fill"
+        )
+        let attributed = RichDocumentSerializer.attributedString(
+            from: RichDocument(blocks: [
+                RichBlock.element(audience, children: [
+                    .paragraph("High-agency founders")
+                ])
+            ]),
+            fontSize: 16,
+            darkMode: false
+        )
+
+        let decoration = DocumentElementEditorDecoration.decorations(in: attributed).first
+
+        XCTAssertNotNil(decoration)
+        XCTAssertGreaterThan(decoration?.blockRange.length ?? 0, decoration?.range.length ?? 0)
+        XCTAssertTrue((attributed.string as NSString).substring(with: decoration?.blockRange ?? NSRange()).contains("High-agency founders"))
+    }
+
+    func testElementSerializerSeparatesElementNameFromInstanceTitle() throws {
+        let definition = DocumentElementDefinition(
+            id: UUID(uuidString: "AAAAAAA1-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+            title: "Concept",
+            systemIcon: "person.2.fill"
+        )
+        let instance = RichElementInstance(
+            definitionID: definition.id,
+            titleSnapshot: "Concept",
+            systemIconSnapshot: "person.2.fill",
+            isCollapsed: false,
+            instanceTitleSnapshot: "Audience Situation"
+        )
+        let document = RichDocument(blocks: [
+            RichBlock.element(instance, children: [.paragraph("Nested context")])
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document, fontSize: 17, darkMode: false)
+        let decorations = DocumentElementEditorDecoration.decorations(in: attributed)
+        let roundTripped = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(attributed.string.components(separatedBy: CharacterSet.newlines).first, "Audience Situation")
+        XCTAssertEqual(decorations.first?.title, "Concept")
+        XCTAssertEqual(decorations.first?.instanceTitle, "Audience Situation")
+        XCTAssertEqual(roundTripped.blocks.first?.element?.titleSnapshot, "Concept")
+        XCTAssertEqual(roundTripped.blocks.first?.element?.instanceTitleSnapshot, "Audience Situation")
+    }
+
+    func testTogglingCollapsedHidesChildrenButPreservesContext() throws {
+        let definition = DocumentElementDefinition(
+            id: UUID(uuidString: "BBBBBBB2-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+            title: "Concept",
+            systemIcon: "person.2.fill"
+        )
+        let element = RichBlock.element(definition, children: [
+            .paragraph("This must remain stored")
+        ])
+        let document = RichDocument(blocks: [element])
+        let id = try XCTUnwrap(document.blocks.first?.element?.id)
+
+        let collapsed = DocumentElementMutation.toggledCollapse(instanceID: id, in: document)
+
+        XCTAssertEqual(collapsed.blocks.first?.element?.isCollapsed, true)
+        XCTAssertEqual(collapsed.blocks.first?.children.first?.inlines.first?.text, "This must remain stored")
+
+        let visible = RichDocumentSerializer.attributedString(from: collapsed, fontSize: 17, darkMode: false)
+        XCTAssertFalse(visible.string.contains("This must remain stored"))
+
+        let restored = RichDocumentSerializer.document(from: visible)
+        XCTAssertEqual(restored.blocks.first?.children.first?.inlines.first?.text, "This must remain stored")
+    }
+
     func testMetadataPersistenceRoundTripsTitleAndBodyDocuments() {
         let titleDocument = RichDocument(blocks: [
             RichBlock(kind: .paragraph, inlines: [.text("Connected Note")])
@@ -227,6 +448,18 @@ final class RichDocumentTests: XCTestCase {
             .flatMap { $0.data(using: .utf8) }
             .flatMap { try? JSONDecoder().decode(RichDocument.self, from: $0) }
         XCTAssertEqual(decodedBodyDocument?.plainText, fullBody)
+    }
+
+    func testNoteSnapshotPrefersPlainBodyWhenStructuredDocumentLagsWithoutGrowing() {
+        let snapshot = RichDocumentPersistence.noteSnapshot(
+            existingMetadata: nil,
+            titleDocument: RichDocument.migrateLegacy("Recovered note"),
+            bodyDocument: RichDocument.migrateLegacy("abc"),
+            plainBodyText: "xyz"
+        )
+
+        XCTAssertEqual(snapshot.bodyPlainText, "xyz")
+        XCTAssertEqual(snapshot.bodyDocument.plainText, "xyz")
     }
 
     func testSyncWriteDispositionUsesUpsertForUnsyncedAtomUpdates() {

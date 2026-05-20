@@ -81,6 +81,32 @@ final class CommandKActionRegistryTests: XCTestCase {
         XCTAssertTrue(ids.contains(.copyCosmoLink))
     }
 
+    func testOpenAsPaneActionUsesCommandReturnShortcut() {
+        let subject = CortexDetailSubject.recent(
+            RecentDisplayItem(
+                id: "atom-1",
+                title: "Launch Notes",
+                type: .note,
+                entityId: 42,
+                relativeDate: "2h",
+                thumbnailURL: nil,
+                preview: nil
+            )
+        )
+        let context = CommandKActionContext(
+            query: "",
+            subject: subject,
+            hydratedAtom: nil,
+            mode: .compact,
+            activeInquirySessionUUID: nil,
+            activeContentDraftUUID: nil
+        )
+
+        let action = CommandKActionRegistry().actions(for: context).first { $0.id == .openAsPane }
+
+        XCTAssertEqual(action?.shortcut, .commandReturn)
+    }
+
     func testRegistryDisablesInquiryAttachWhenNoActiveInquiryExists() {
         let subject = CortexDetailSubject.recent(
             RecentDisplayItem(

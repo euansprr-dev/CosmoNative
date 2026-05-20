@@ -38,7 +38,7 @@ struct CommandKActionRegistry {
                 title: "Open as Pane",
                 subtitle: nil,
                 systemImage: "rectangle.split.2x1",
-                shortcut: nil,
+                shortcut: .commandReturn,
                 role: .normal,
                 availability: .enabled,
                 intent: .openAsPane(uuid: uuid)

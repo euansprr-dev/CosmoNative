@@ -59,6 +59,7 @@ enum CommandKActionAvailability: Equatable {
 
 enum CommandKActionShortcut: String, Codable, Equatable {
     case returnKey
+    case commandReturn
     case commandK
     case commandS
     case commandI

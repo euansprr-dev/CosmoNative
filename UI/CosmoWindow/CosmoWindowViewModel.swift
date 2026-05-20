@@ -1685,7 +1685,7 @@ struct CosmoModelOption: Identifiable {
             id: "auto",
             tier: nil,
             title: "Auto",
-            detail: "Gemini Flash by default",
+            detail: "Gemini 3 Flash by default",
             icon: "wand.and.stars"
         ),
         CosmoModelOption(
@@ -1698,8 +1698,8 @@ struct CosmoModelOption: Identifiable {
         CosmoModelOption(
             id: "geminiFlashLatest",
             tier: .geminiFlashLatest,
-            title: "Gemini Flash",
-            detail: "Day-to-day thinking partner",
+            title: "Gemini 3 Flash",
+            detail: "Pinned everyday search and brainstorming",
             icon: "bolt"
         ),
         CosmoModelOption(

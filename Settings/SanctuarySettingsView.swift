@@ -37,6 +37,7 @@ enum SettingsTab: String, CaseIterable {
     case apiKeys = "API Keys"
     case cosmoAI = "Cosmo AI"
     case codex = "Codex"
+    case elements = "Elements"
     case shortcuts = "Shortcuts"
     case about = "About"
 
@@ -50,6 +51,7 @@ enum SettingsTab: String, CaseIterable {
         case .apiKeys: return "key.fill"
         case .cosmoAI: return "sparkles.rectangle.stack"
         case .codex: return "atom"
+        case .elements: return "square.stack.3d.up"
         case .shortcuts: return "keyboard"
         case .about: return "info.circle"
         }
@@ -214,6 +216,8 @@ struct SanctuarySettingsView: View {
                     CosmoAISettingsTab()
                 case .codex:
                     CodexSettingsTab()
+                case .elements:
+                    ElementsSettingsTab()
                 case .shortcuts:
                     ShortcutsSettingsTab()
                 case .about:
@@ -1477,6 +1481,287 @@ private struct SocialPlatformConnectionCard: View {
         return "\(num)"
     }
 }
+
+// MARK: - Elements Settings
+
+struct ElementsSettingsTab: View {
+    @StateObject private var store = DocumentElementStore()
+    @State private var newTitle = ""
+    @State private var newIcon = "square.dashed"
+    @State private var errorMessage: String?
+
+    private var activeDefinitions: [DocumentElementDefinition] {
+        store.activeDefinitions
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Elements")
+                    .font(DS.title2)
+                    .foregroundStyle(DS.text)
+
+                Text("Reusable rounded blocks for notes, focus documents, and canvas note blocks.")
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            createElementCard
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Saved Elements")
+                        .font(DS.title3)
+                        .foregroundStyle(DS.text)
+                    Spacer()
+                    Text("\(activeDefinitions.count)")
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textMuted)
+                }
+
+                if activeDefinitions.isEmpty {
+                    emptyElementsView
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(activeDefinitions) { definition in
+                            ElementDefinitionSettingsRow(
+                                definition: definition,
+                                onSave: updateElement,
+                                onDisable: disableElement
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(minLength: 24)
+        }
+    }
+
+    private var createElementCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: sanitizedNewIcon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 32, height: 32)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(DS.accentSoft))
+
+                Text("Create Element")
+                    .font(DS.title3)
+                    .foregroundStyle(DS.text)
+
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                TextField("Name", text: $newTitle)
+                    .textFieldStyle(.plain)
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.text)
+                    .padding(DS.space8)
+                    .background(fieldBackground)
+
+                TextField("SF Symbol", text: $newIcon)
+                    .textFieldStyle(.plain)
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.text)
+                    .frame(width: 160)
+                    .padding(DS.space8)
+                    .background(fieldBackground)
+
+                Button(action: createElement) {
+                    Image(systemName: "plus")
+                        .font(DS.buttonText)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.accent)
+                .background(RoundedRectangle(cornerRadius: 7).fill(DS.accentSoft))
+                .disabled(newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.red)
+            }
+        }
+        .padding(DS.space16)
+        .background(cardBackground)
+    }
+
+    private var emptyElementsView: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "square.dashed")
+                .font(DS.title2)
+                .foregroundStyle(DS.textMuted)
+                .frame(width: 36, height: 36)
+                .background(RoundedRectangle(cornerRadius: 7).fill(DS.glassInputFill))
+
+            Text("No elements yet")
+                .font(DS.navTitle)
+                .foregroundStyle(DS.textSecondary)
+
+            Spacer()
+        }
+        .padding(DS.space16)
+        .background(cardBackground)
+    }
+
+    private var sanitizedNewIcon: String {
+        let trimmed = newIcon.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "square.dashed" : trimmed
+    }
+
+    private var fieldBackground: some View {
+        RoundedRectangle(cornerRadius: DS.radiusSmall)
+            .fill(DS.glassInputFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.glassBorder, lineWidth: 1)
+            )
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: DS.radiusMedium)
+            .fill(DS.glassCardFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                    .stroke(DS.glassBorder, lineWidth: 1)
+            )
+    }
+
+    private func createElement() {
+        do {
+            _ = try store.createDefinition(title: newTitle, systemIcon: sanitizedNewIcon)
+            newTitle = ""
+            newIcon = "square.dashed"
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func updateElement(id: UUID, title: String, icon: String) {
+        do {
+            _ = try store.updateDefinition(id: id, title: title, systemIcon: icon)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func disableElement(id: UUID) {
+        do {
+            try store.disableDefinition(id: id)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct ElementDefinitionSettingsRow: View {
+    let definition: DocumentElementDefinition
+    let onSave: (UUID, String, String) -> Void
+    let onDisable: (UUID) -> Void
+
+    @State private var title: String
+    @State private var icon: String
+
+    init(
+        definition: DocumentElementDefinition,
+        onSave: @escaping (UUID, String, String) -> Void,
+        onDisable: @escaping (UUID) -> Void
+    ) {
+        self.definition = definition
+        self.onSave = onSave
+        self.onDisable = onDisable
+        _title = State(initialValue: definition.title)
+        _icon = State(initialValue: definition.systemIcon)
+    }
+
+    private var sanitizedIcon: String {
+        let trimmed = icon.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "square.dashed" : trimmed
+    }
+
+    private var hasChanges: Bool {
+        title != definition.title || sanitizedIcon != definition.systemIcon
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: sanitizedIcon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 32, height: 32)
+                .background(RoundedRectangle(cornerRadius: 7).fill(DS.accentSoft))
+
+            TextField("Name", text: $title)
+                .textFieldStyle(.plain)
+                .font(DS.navTitle)
+                .foregroundStyle(DS.text)
+                .padding(DS.space8)
+                .background(fieldBackground)
+
+            TextField("SF Symbol", text: $icon)
+                .textFieldStyle(.plain)
+                .font(DS.navTitle)
+                .foregroundStyle(DS.text)
+                .frame(width: 150)
+                .padding(DS.space8)
+                .background(fieldBackground)
+
+            Button(action: save) {
+                Image(systemName: "checkmark")
+                    .font(DS.buttonText)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(hasChanges ? DS.accent : DS.textMuted)
+            .background(RoundedRectangle(cornerRadius: 7).fill(hasChanges ? DS.accentSoft : DS.glassInputFill))
+            .disabled(!hasChanges)
+
+            Button(role: .destructive) {
+                onDisable(definition.id)
+            } label: {
+                Image(systemName: "archivebox")
+                    .font(DS.buttonText)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.red)
+            .background(RoundedRectangle(cornerRadius: 7).fill(DS.red.opacity(0.10)))
+        }
+        .padding(DS.space12)
+        .background(rowBackground)
+    }
+
+    private var fieldBackground: some View {
+        RoundedRectangle(cornerRadius: DS.radiusSmall)
+            .fill(DS.glassInputFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.glassBorder, lineWidth: 1)
+            )
+    }
+
+    private var rowBackground: some View {
+        RoundedRectangle(cornerRadius: DS.radiusMedium)
+            .fill(DS.glassCardFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                    .stroke(DS.glassBorder, lineWidth: 1)
+            )
+    }
+
+    private func save() {
+        onSave(definition.id, title, sanitizedIcon)
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG

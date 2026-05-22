@@ -67,11 +67,13 @@ final class CosmoTextView: NSTextView {
     var onBecomeFirstResponder: (() -> Void)?
     var onResignFirstResponder: (() -> Void)?
     var onToggleElementCollapse: ((UUID) -> Void)?
+    var onToggleHeadingCollapse: ((NSRange) -> Void)?
     var elementBlockDarkMode: Bool = false
     var elementBlockBaseFontSize: CGFloat = 16
 
     override func draw(_ dirtyRect: NSRect) {
         drawElementBlockDecorations(in: dirtyRect)
+        drawHeadingDecorations(in: dirtyRect)
         super.draw(dirtyRect)
     }
 
@@ -143,6 +145,10 @@ final class CosmoTextView: NSTextView {
         let localPoint = convert(event.locationInWindow, from: nil)
         if let hit = elementHitTest(at: localPoint), hit.area == .collapseToggle {
             onToggleElementCollapse?(hit.instanceID)
+            return
+        }
+        if let hit = headingHitTest(at: localPoint), hit.area == .collapseToggle {
+            onToggleHeadingCollapse?(hit.range)
             return
         }
         super.mouseDown(with: event)
@@ -221,6 +227,21 @@ final class CosmoTextView: NSTextView {
         let area: ElementHitArea
     }
 
+    private enum HeadingHitArea {
+        case collapseToggle
+    }
+
+    private struct HeadingHit {
+        let range: NSRange
+        let area: HeadingHitArea
+    }
+
+    private struct HeadingDecoration {
+        let range: NSRange
+        let level: Int
+        let isCollapsed: Bool
+    }
+
     private func drawElementBlockDecorations(in dirtyRect: NSRect) {
         guard let storage = textStorage,
               storage.length > 0,
@@ -258,6 +279,32 @@ final class CosmoTextView: NSTextView {
         }
     }
 
+    private func drawHeadingDecorations(in dirtyRect: NSRect) {
+        guard let storage = textStorage,
+              storage.length > 0,
+              let layoutManager,
+              let textContainer else {
+            return
+        }
+
+        let decorations = headingDecorations(in: storage)
+        guard !decorations.isEmpty else { return }
+
+        layoutManager.ensureLayout(for: textContainer)
+
+        for decoration in decorations {
+            guard let layout = headingLayout(for: decoration, storageLength: storage.length),
+                  layout.hitRect.intersects(dirtyRect.insetBy(dx: -10, dy: -10)) else {
+                continue
+            }
+            drawElementChevron(
+                collapsed: decoration.isCollapsed,
+                in: layout.glyphRect,
+                color: headingChevronColor
+            )
+        }
+    }
+
     private func elementHitTest(at point: NSPoint) -> ElementHit? {
         guard let storage = textStorage,
               storage.length > 0,
@@ -278,6 +325,109 @@ final class CosmoTextView: NSTextView {
             }
         }
         return nil
+    }
+
+    private func headingHitTest(at point: NSPoint) -> HeadingHit? {
+        guard let storage = textStorage,
+              storage.length > 0,
+              let layoutManager,
+              let textContainer else {
+            return nil
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        for decoration in headingDecorations(in: storage).reversed() {
+            guard let layout = headingLayout(for: decoration, storageLength: storage.length) else {
+                continue
+            }
+            if layout.hitRect.contains(point) {
+                return HeadingHit(range: decoration.range, area: .collapseToggle)
+            }
+        }
+        return nil
+    }
+
+    private func headingDecorations(in storage: NSAttributedString) -> [HeadingDecoration] {
+        guard storage.length > 0 else { return [] }
+
+        let string = storage.string as NSString
+        let fullRange = NSRange(location: 0, length: storage.length)
+        var decorations: [HeadingDecoration] = []
+        var lineStart = 0
+
+        while lineStart < storage.length {
+            let lineRange = string.lineRange(for: NSRange(location: lineStart, length: 0))
+            let safeRange = NSIntersectionRange(lineRange, fullRange)
+            let trimmedRange = trimmingTrailingNewline(from: safeRange, in: string)
+
+            if trimmedRange.length > 0,
+               let level = intValue(storage.attribute(
+                RichDocumentAttributeKeys.headingLevel,
+                at: trimmedRange.location,
+                effectiveRange: nil
+               )) {
+                let isCollapsed = boolValue(storage.attribute(
+                    RichDocumentAttributeKeys.headingCollapsed,
+                    at: trimmedRange.location,
+                    effectiveRange: nil
+                )) ?? false
+                decorations.append(HeadingDecoration(
+                    range: trimmedRange,
+                    level: max(1, min(3, level)),
+                    isCollapsed: isCollapsed
+                ))
+            }
+
+            lineStart = lineRange.location + lineRange.length
+            if lineStart <= safeRange.location {
+                break
+            }
+        }
+
+        return decorations
+    }
+
+    private func headingLayout(
+        for decoration: HeadingDecoration,
+        storageLength: Int
+    ) -> (hitRect: CGRect, glyphRect: CGRect)? {
+        guard let layoutManager,
+              let textContainer else {
+            return nil
+        }
+
+        let characterRange = NSIntersectionRange(
+            decoration.range,
+            NSRange(location: 0, length: storageLength)
+        )
+        guard characterRange.length > 0 else { return nil }
+
+        let glyphRange = layoutManager.glyphRange(
+            forCharacterRange: characterRange,
+            actualCharacterRange: nil
+        )
+        let lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        guard lineRect.width.isFinite, lineRect.height.isFinite, lineRect.height > 0 else {
+            return nil
+        }
+
+        let hitSize: CGFloat = 24
+        let hitRect = CGRect(
+            x: max(2, textContainerOrigin.x - 14),
+            y: textContainerOrigin.y + lineRect.midY - (hitSize / 2),
+            width: hitSize,
+            height: hitSize
+        )
+        let glyphSize: CGFloat = 8
+        return (
+            hitRect,
+            CGRect(
+                x: hitRect.midX - (glyphSize / 2),
+                y: hitRect.midY - (glyphSize / 2),
+                width: glyphSize,
+                height: glyphSize
+            )
+        )
     }
 
     private func elementHeaderLayout(
@@ -405,9 +555,40 @@ final class CosmoTextView: NSTextView {
             : NSColor(DS.documentTextSecondary).withAlphaComponent(0.82)
     }
 
+    private var headingChevronColor: NSColor {
+        effectiveElementBlockDarkMode
+            ? NSColor.white.withAlphaComponent(0.50)
+            : NSColor(DS.documentTextSecondary).withAlphaComponent(0.70)
+    }
+
     private var effectiveElementBlockDarkMode: Bool {
         elementBlockDarkMode
             || effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    private func trimmingTrailingNewline(from range: NSRange, in string: NSString) -> NSRange {
+        var length = range.length
+        while length > 0 {
+            let character = string.substring(with: NSRange(location: range.location + length - 1, length: 1))
+            if character == "\n" || character == "\r" {
+                length -= 1
+            } else {
+                break
+            }
+        }
+        return NSRange(location: range.location, length: length)
+    }
+
+    private func boolValue(_ value: Any?) -> Bool? {
+        if let value = value as? Bool { return value }
+        if let value = value as? NSNumber { return value.boolValue }
+        return nil
+    }
+
+    private func intValue(_ value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        return nil
     }
 }
 
@@ -622,6 +803,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         textView.onToggleElementCollapse = { [weak coordinator = context.coordinator] instanceID in
             guard let coordinator, let textView = coordinator.textViewReference else { return }
             coordinator.toggleElementCollapse(instanceID: instanceID, in: textView)
+        }
+        textView.onToggleHeadingCollapse = { [weak coordinator = context.coordinator] range in
+            guard let coordinator, let textView = coordinator.textViewReference else { return }
+            coordinator.toggleHeadingCollapse(headingRange: range, in: textView)
         }
         textView.usesFontPanel = false
         textView.usesRuler = false
@@ -1213,6 +1398,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     return true
                 }
 
+                if let collapsedHeadingRange = collapsedHeadingLineRangeContainingSelection(in: textView) {
+                    insertParagraphAfterCollapsedHeading(headingRange: collapsedHeadingRange, in: textView)
+                    return true
+                }
+
                 // Block continuation: quotes, bullets, numbered lists, checklists
                 if activeBlockMode != .none {
                     if isEmptyBlockLine(in: textView) {
@@ -1272,6 +1462,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                         .paragraphStyle: defaultParagraphStyle()
                     ], range: nlRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: nlRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: nlRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: nlRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: nlRange)
                     textView.textStorage?.endEditing()
                 }
                 return true
@@ -1334,6 +1527,42 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 }
                 return 0
             }
+        }
+
+        private func collapsedHeadingLineRangeContainingSelection(in textView: NSTextView) -> NSRange? {
+            guard let storage = textView.textStorage,
+                  storage.length > 0,
+                  textView.selectedRange().length == 0 else {
+                return nil
+            }
+
+            let lineRange = currentLineRange(in: textView)
+            let trimmedRange = trimmingTrailingNewline(from: lineRange, in: textView.string as NSString)
+            guard trimmedRange.length > 0,
+                  trimmedRange.location < storage.length,
+                  storage.attribute(RichDocumentAttributeKeys.headingLevel, at: trimmedRange.location, effectiveRange: nil) != nil,
+                  boolAttribute(RichDocumentAttributeKeys.headingCollapsed, at: trimmedRange.location, in: storage) == true else {
+                return nil
+            }
+            return trimmedRange
+        }
+
+        private func insertParagraphAfterCollapsedHeading(headingRange: NSRange, in textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+
+            let insertionLocation = min(NSMaxRange(headingRange), storage.length)
+            let newline = NSAttributedString(string: "\n", attributes: elementInsertionBaseAttributes())
+            storage.replaceCharacters(in: NSRange(location: insertionLocation, length: 0), with: newline)
+            textView.setSelectedRange(NSRange(location: insertionLocation + 1, length: 0))
+            resetToNormalTypingAttributes(textView)
+            syncBindings(from: textView)
+
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.needsDisplay = true
+            textView.sizeToFit()
+            notifyContentHeightChange(for: textView)
         }
 
         // MARK: - Menu State
@@ -1730,6 +1959,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                currentLevel == level {
                 // Remove heading — reset to normal
                 textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: checkRange)
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: checkRange)
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: checkRange)
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: checkRange)
                 textView.textStorage?.addAttributes([
                     .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
                     .foregroundColor: parent.resolvedEditorTextColor,
@@ -1743,6 +1975,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             // Apply heading attributes (no prefix insertion)
             let updatedLineRange = currentLineRange(in: textView)
+            let headingBlockID = existingHeadingBlockID(in: textView, lineRange: updatedLineRange) ?? UUID().uuidString
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineSpacing = 4
             paragraphStyle.paragraphSpacing = 12
@@ -1758,7 +1991,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     .font: font,
                     .foregroundColor: parent.resolvedEditorTextColor,
                     .paragraphStyle: paragraphStyle,
-                    RichDocumentAttributeKeys.headingLevel: level
+                    RichDocumentAttributeKeys.headingLevel: level,
+                    RichDocumentAttributeKeys.headingBlockID: headingBlockID,
+                    RichDocumentAttributeKeys.headingCollapsed: NSNumber(value: false)
                 ], range: updatedLineRange)
             }
 
@@ -1766,7 +2001,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 .font: font,
                 .foregroundColor: parent.resolvedEditorTextColor,
                 .paragraphStyle: paragraphStyle,
-                RichDocumentAttributeKeys.headingLevel: level
+                RichDocumentAttributeKeys.headingLevel: level,
+                RichDocumentAttributeKeys.headingBlockID: headingBlockID,
+                RichDocumentAttributeKeys.headingCollapsed: NSNumber(value: false)
             ]
             isInHeadingMode = true
 
@@ -1821,6 +2058,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                         .paragraphStyle: defaultParagraphStyle()
                     ], range: updatedLineRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: updatedLineRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: updatedLineRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: updatedLineRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: updatedLineRange)
                 }
             }
 
@@ -1857,6 +2097,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     .paragraphStyle: defaultParagraphStyle()
                 ], range: updatedLineRange)
                 textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: updatedLineRange)
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: updatedLineRange)
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: updatedLineRange)
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: updatedLineRange)
             }
 
             activeBlockMode = newMode
@@ -1891,6 +2134,73 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             (textView.string as NSString).lineRange(for: textView.selectedRange())
         }
 
+        private func trimmingTrailingNewline(from range: NSRange, in string: NSString) -> NSRange {
+            var length = min(range.length, max(0, string.length - range.location))
+            while length > 0 {
+                let character = string.substring(with: NSRange(location: range.location + length - 1, length: 1))
+                if character == "\n" || character == "\r" {
+                    length -= 1
+                } else {
+                    break
+                }
+            }
+            return NSRange(location: range.location, length: length)
+        }
+
+        private func existingHeadingBlockID(in textView: NSTextView, lineRange: NSRange) -> String? {
+            guard let storage = textView.textStorage,
+                  lineRange.location < storage.length else {
+                return nil
+            }
+            if let value = storage.attribute(
+                RichDocumentAttributeKeys.headingBlockID,
+                at: lineRange.location,
+                effectiveRange: nil
+            ) as? String {
+                return value
+            }
+            if let value = storage.attribute(
+                RichDocumentAttributeKeys.headingBlockID,
+                at: lineRange.location,
+                effectiveRange: nil
+            ) as? UUID {
+                return value.uuidString
+            }
+            return nil
+        }
+
+        private func ensureHeadingBlockID(in storage: NSTextStorage, headingRange: NSRange) {
+            guard headingRange.length > 0,
+                  headingRange.location < storage.length,
+                  headingBlockID(in: storage, location: headingRange.location) == nil else {
+                return
+            }
+            storage.addAttributes([
+                RichDocumentAttributeKeys.headingBlockID: UUID().uuidString,
+                RichDocumentAttributeKeys.headingCollapsed: NSNumber(value: false)
+            ], range: headingRange)
+        }
+
+        private func headingBlockID(in storage: NSTextStorage, location: Int) -> UUID? {
+            guard location < storage.length else { return nil }
+            let value = storage.attribute(
+                RichDocumentAttributeKeys.headingBlockID,
+                at: location,
+                effectiveRange: nil
+            )
+            if let value = value as? UUID { return value }
+            if let value = value as? String { return UUID(uuidString: value) }
+            return nil
+        }
+
+        private func boolAttribute(_ key: NSAttributedString.Key, at location: Int, in storage: NSTextStorage) -> Bool? {
+            guard location < storage.length else { return nil }
+            let value = storage.attribute(key, at: location, effectiveRange: nil)
+            if let value = value as? Bool { return value }
+            if let value = value as? NSNumber { return value.boolValue }
+            return nil
+        }
+
         private func resetToNormalTypingAttributes(_ textView: NSTextView) {
             isInHeadingMode = false
             activeBlockMode = .none
@@ -1909,6 +2219,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             attrs[.font] = NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight)
             attrs[.foregroundColor] = parent.resolvedEditorTextColor
             attrs.removeValue(forKey: RichDocumentAttributeKeys.headingLevel)
+            attrs.removeValue(forKey: RichDocumentAttributeKeys.headingBlockID)
+            attrs.removeValue(forKey: RichDocumentAttributeKeys.headingCollapsed)
+            attrs.removeValue(forKey: RichDocumentAttributeKeys.headingCollapsedChildrenJSON)
             // Preserve existing paragraphStyle (block indentation) if in a list
             if attrs[.paragraphStyle] == nil {
                 attrs[.paragraphStyle] = defaultParagraphStyle()
@@ -2008,6 +2321,52 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let safeLocation = min(selectedRange.location, storage.length)
             let safeLength = min(selectedRange.length, storage.length - safeLocation)
             textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
+            resetToNormalTypingAttributes(textView)
+            syncBindings(from: textView)
+
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.needsDisplay = true
+            textView.sizeToFit()
+            notifyContentHeightChange(for: textView)
+        }
+
+        func toggleHeadingCollapse(headingRange: NSRange, in textView: NSTextView) {
+            guard let storage = textView.textStorage,
+                  storage.length > 0,
+                  headingRange.location < storage.length else {
+                return
+            }
+
+            ensureHeadingBlockID(in: storage, headingRange: headingRange)
+
+            let selectedRange = textView.selectedRange()
+            let headingID = headingBlockID(in: storage, location: headingRange.location)
+            guard let headingID else { return }
+
+            let document = RichDocumentSerializer.document(from: storage)
+            let updated = RichDocumentHeadings.toggledCollapse(headingID: headingID, in: document)
+            guard updated != document else { return }
+
+            let serialized = RichDocumentSerializer.attributedString(
+                from: updated,
+                fontSize: parent.fontSize,
+                darkMode: parent.darkMode,
+                singleLine: parent.singleLine,
+                baseFontWeight: parent.baseFontWeight,
+                titleMode: parent.titleConfiguration != nil
+            )
+
+            storage.setAttributedString(serialized)
+            let fallbackLocation = min(NSMaxRange(headingRange), storage.length)
+            let safeLocation = min(selectedRange.location, storage.length)
+            let safeLength = min(selectedRange.length, storage.length - safeLocation)
+            let restoredRange = NSRange(
+                location: safeLocation < storage.length ? safeLocation : fallbackLocation,
+                length: safeLength
+            )
+            textView.setSelectedRange(restoredRange)
             resetToNormalTypingAttributes(textView)
             syncBindings(from: textView)
 

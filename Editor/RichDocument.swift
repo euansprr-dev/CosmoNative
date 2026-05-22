@@ -378,6 +378,9 @@ enum RichDocumentAttributeKeys {
     static let entityUUID = NSAttributedString.Key("CosmoEntityUUID")
     static let imagePath = NSAttributedString.Key("CosmoImagePath")
     static let headingLevel = NSAttributedString.Key("CosmoHeadingLevel")
+    static let headingBlockID = NSAttributedString.Key("CosmoHeadingBlockID")
+    static let headingCollapsed = NSAttributedString.Key("CosmoHeadingCollapsed")
+    static let headingCollapsedChildrenJSON = NSAttributedString.Key("CosmoHeadingCollapsedChildrenJSON")
     static let elementDepth = NSAttributedString.Key("CosmoElementDepth")
     static let elementInstanceID = NSAttributedString.Key("CosmoElementInstanceID")
     static let elementDefinitionID = NSAttributedString.Key("CosmoElementDefinitionID")
@@ -674,7 +677,17 @@ enum RichDocumentSerializer {
         if line.length > 0,
            let level = line.attribute(RichDocumentAttributeKeys.headingLevel, at: 0, effectiveRange: nil) as? Int {
             let kind: RichBlockKind = level == 1 ? .heading1 : level == 2 ? .heading2 : .heading3
-            return RichBlock(kind: kind, inlines: inlineNodes(from: line))
+            let id = uuidAttribute(RichDocumentAttributeKeys.headingBlockID, in: line) ?? UUID()
+            let collapsed = boolAttribute(RichDocumentAttributeKeys.headingCollapsed, in: line) ?? false
+            return RichBlock(
+                id: id,
+                kind: kind,
+                inlines: inlineNodes(from: line),
+                heading: RichHeadingMetadata(
+                    isCollapsed: collapsed,
+                    collapsedBlocks: headingCollapsedBlocksAttribute(from: line)
+                )
+            )
         }
 
         // Fallback: detect by text prefix (backward compat for legacy documents)
@@ -730,6 +743,15 @@ enum RichDocumentSerializer {
             return []
         }
         return children
+    }
+
+    private static func headingCollapsedBlocksAttribute(from line: NSAttributedString) -> [RichBlock] {
+        guard let json = stringAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, in: line),
+              let data = json.data(using: .utf8),
+              let blocks = try? JSONDecoder().decode([RichBlock].self, from: data) else {
+            return []
+        }
+        return blocks
     }
 
     private static func inlineNodes(from attributedString: NSAttributedString) -> [RichInlineNode] {
@@ -1071,6 +1093,14 @@ enum RichDocumentSerializer {
         // Headings: embed level attribute + paragraph spacing for round-trip detection
         if let headingLevel = block.kind.headingLevelInt, !titleMode {
             attributes[RichDocumentAttributeKeys.headingLevel] = headingLevel
+            attributes[RichDocumentAttributeKeys.headingBlockID] = block.id.uuidString
+            attributes[RichDocumentAttributeKeys.headingCollapsed] = NSNumber(value: block.heading?.isCollapsed ?? false)
+            if let collapsedBlocks = block.heading?.collapsedBlocks,
+               !collapsedBlocks.isEmpty,
+               let data = try? JSONEncoder().encode(collapsedBlocks),
+               let json = String(data: data, encoding: .utf8) {
+                attributes[RichDocumentAttributeKeys.headingCollapsedChildrenJSON] = json
+            }
             let headingParagraph = NSMutableParagraphStyle()
             headingParagraph.lineSpacing = 4
             headingParagraph.paragraphSpacing = 12

@@ -86,4 +86,45 @@ final class RichDocumentHeadingTests: XCTestCase {
         XCTAssertEqual(inserted.blocks[1].plainInlineText, "")
         XCTAssertEqual(inserted.blocks[0].heading?.collapsedBlocks.first?.plainInlineText, "Hidden intro")
     }
+
+    func testSerializerPreservesCollapsedHeadingBlocks() throws {
+        let headingID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        let hiddenID = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
+        let document = RichDocument(blocks: [
+            RichBlock(
+                id: headingID,
+                kind: .heading2,
+                inlines: [.text("Draft")],
+                heading: RichHeadingMetadata(isCollapsed: true, collapsedBlocks: [
+                    RichBlock(id: hiddenID, kind: .paragraph, inlines: [.text("Hidden body")])
+                ])
+            ),
+            RichBlock(kind: .heading2, inlines: [.text("Next")])
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document)
+
+        XCTAssertFalse(attributed.string.contains("Hidden body"))
+
+        let roundTripped = RichDocumentSerializer.document(from: attributed)
+        let heading = try XCTUnwrap(roundTripped.blocks.first)
+        XCTAssertEqual(heading.id, headingID)
+        XCTAssertEqual(heading.heading?.isCollapsed, true)
+        XCTAssertEqual(heading.heading?.collapsedBlocks.first?.id, hiddenID)
+        XCTAssertEqual(heading.heading?.collapsedBlocks.first?.plainInlineText, "Hidden body")
+    }
+
+    func testHeadingBlockIDsSurviveSerializerRoundTrip() throws {
+        let headingID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
+        let document = RichDocument(blocks: [
+            RichBlock(id: headingID, kind: .heading3, inlines: [.text("Hook")])
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document)
+        let roundTripped = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(roundTripped.blocks.first?.id, headingID)
+        XCTAssertEqual(roundTripped.blocks.first?.heading?.isCollapsed, false)
+        XCTAssertEqual(roundTripped.blocks.first?.heading?.collapsedBlocks, [])
+    }
 }

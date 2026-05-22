@@ -458,7 +458,8 @@ enum CommandKActionParser {
     private static func parseBrowser(_ text: String) -> CommandKAction? {
         let normalized = normalizedAlias(text)
         let launchAliases: Set<String> = ["browser", "open browser", "web", "open web"]
-        if launchAliases.contains(normalized) {
+        if launchAliases.contains(normalized) ||
+            (normalized.count >= 3 && launchAliases.contains { $0.hasPrefix(normalized) }) {
             return CommandKAction(
                 kind: .openBrowser,
                 title: "Open Browser",

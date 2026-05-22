@@ -25,6 +25,7 @@ struct ConnectionAtelierDockView: View {
     let onUseLinkedSources: () -> Void
     let onRefreshInsights: () -> Void
     let onDismissInsight: (UUID) -> Void
+    var collaboratorHeight: CGFloat = 420
 
     private var displayDraft: ConnectionDraftProposal? {
         previewStore.streamingDraft ?? activeDraftProposal
@@ -51,7 +52,7 @@ struct ConnectionAtelierDockView: View {
                 onResumeDraft: onResumeDraft,
                 onUseLinkedSources: onUseLinkedSources
             )
-            .frame(height: 420)
+            .frame(height: collaboratorHeight)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }

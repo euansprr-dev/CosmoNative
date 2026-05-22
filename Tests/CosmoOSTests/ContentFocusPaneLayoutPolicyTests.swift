@@ -48,4 +48,16 @@ final class ContentFocusPaneLayoutPolicyTests: XCTestCase {
 
         XCTAssertFalse(source.contains("DS.inkWash\n                .opacity(zenMode ?"))
     }
+
+    func testZenModeDoesNotHideWordCharacterCounter() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let packageRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let focusViewURL = packageRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift")
+        let source = try String(contentsOf: focusViewURL, encoding: .utf8)
+
+        XCTAssertFalse(source.contains(".opacity(localDraftContent.isEmpty || zenMode ? 0 : 1)"))
+    }
 }

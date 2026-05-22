@@ -2329,18 +2329,121 @@ class CommandCenterDashboardViewModel: ObservableObject {
         return try await AtomRepository.shared.create(template)
     }
 
-    func deleteTask(uuid: String) async {
+    func deleteTask(
+        uuid: String,
+        recurrenceScope: RecurringTaskTitleEditScope = .currentOnly
+    ) async {
         do {
-            let calendarEventId = try await AtomRepository.shared.fetch(uuid: uuid)?
-                .metadataValue(as: TaskMetadata.self)?
-                .calendarEventId
-            try await AtomRepository.shared.delete(uuid: uuid)
-            if calendarService.hasCalendarAccess, let calendarEventId {
-                try? await calendarService.deleteCosmoEvent(eventId: calendarEventId)
-            }
+            guard let current = try await AtomRepository.shared.fetch(uuid: uuid) else { return }
+            try await truncateRecurringTemplateIfNeeded(
+                for: current,
+                scope: recurrenceScope
+            )
+            let targets = try await recurringDeleteTargets(
+                for: current,
+                scope: recurrenceScope
+            )
+            try await deleteTasksAndCalendarEvents(targets)
             await refreshTaskCollectionsAfterMutation()
         } catch {
             print("❌ Dashboard: Failed to delete task: \(error)")
+        }
+    }
+
+    private func recurringDeleteTargets(
+        for current: Atom,
+        scope: RecurringTaskTitleEditScope
+    ) async throws -> [Atom] {
+        guard scope == .currentAndFuture,
+              let currentMetadata = current.metadataValue(as: TaskMetadata.self) else {
+            return [current]
+        }
+
+        if let parentUUID = currentMetadata.recurrenceParentUUID {
+            let calendar = Calendar.current
+            let referenceDay = calendar.startOfDay(for: recurrenceOccurrenceDate(from: currentMetadata) ?? Date())
+            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            var targetsByUUID: [String: Atom] = [current.uuid: current]
+
+            for atom in atoms {
+                guard let metadata = atom.metadataValue(as: TaskMetadata.self),
+                      metadata.recurrenceParentUUID == parentUUID,
+                      let occurrenceDate = recurrenceOccurrenceDate(from: metadata),
+                      calendar.startOfDay(for: occurrenceDate) >= referenceDay else {
+                    continue
+                }
+
+                targetsByUUID[atom.uuid] = atom
+            }
+
+            return Array(targetsByUUID.values)
+        }
+
+        guard currentMetadata.recurrence != nil else {
+            return [current]
+        }
+
+        let calendar = Calendar.current
+        let referenceDay = calendar.startOfDay(for: recurrenceOccurrenceDate(from: currentMetadata) ?? Date())
+        let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+        var targetsByUUID: [String: Atom] = [current.uuid: current]
+
+        for atom in atoms {
+            guard let metadata = atom.metadataValue(as: TaskMetadata.self),
+                  metadata.recurrenceParentUUID == current.uuid,
+                  let occurrenceDate = recurrenceOccurrenceDate(from: metadata),
+                  calendar.startOfDay(for: occurrenceDate) >= referenceDay else {
+                continue
+            }
+
+            targetsByUUID[atom.uuid] = atom
+        }
+
+        return Array(targetsByUUID.values)
+    }
+
+    private func truncateRecurringTemplateIfNeeded(
+        for current: Atom,
+        scope: RecurringTaskTitleEditScope
+    ) async throws {
+        guard scope == .currentAndFuture,
+              let currentMetadata = current.metadataValue(as: TaskMetadata.self),
+              let parentUUID = currentMetadata.recurrenceParentUUID,
+              let occurrenceDate = recurrenceOccurrenceDate(from: currentMetadata),
+              let parent = try await AtomRepository.shared.fetch(uuid: parentUUID),
+              let parentMetadata = parent.metadataValue(as: TaskMetadata.self),
+              let recurrenceJSON = parentMetadata.recurrence,
+              let rule = RecurrenceRule.fromJSON(recurrenceJSON) else {
+            return
+        }
+
+        let calendar = Calendar.current
+        let referenceDay = calendar.startOfDay(for: occurrenceDate)
+        let endDate = calendar.date(byAdding: .day, value: -1, to: referenceDay)
+            ?? referenceDay.addingTimeInterval(-86_400)
+        let truncatedRule = RecurrenceRule(
+            frequency: rule.frequency,
+            interval: rule.interval,
+            daysOfWeek: rule.daysOfWeek,
+            dayOfMonth: rule.dayOfMonth,
+            monthOfYear: rule.monthOfYear,
+            endCondition: .onDate(endDate)
+        )
+
+        _ = try await AtomRepository.shared.update(uuid: parentUUID) { atom in
+            var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            metadata.recurrence = truncatedRule.toJSON()
+            atom = atom.withMetadata(metadata)
+        }
+    }
+
+    private func deleteTasksAndCalendarEvents(_ atoms: [Atom]) async throws {
+        for atom in atoms {
+            try await AtomRepository.shared.delete(uuid: atom.uuid)
+            if calendarService.hasCalendarAccess,
+               let calendarEventId = atom.metadataValue(as: TaskMetadata.self)?.calendarEventId {
+                try? await calendarService.deleteCosmoEvent(eventId: calendarEventId)
+            }
         }
     }
 

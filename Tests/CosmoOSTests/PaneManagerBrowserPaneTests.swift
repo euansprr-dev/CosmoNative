@@ -111,6 +111,32 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         try? FileManager.default.removeItem(at: stateURL)
     }
 
+    func testPinningFromFreshBrowserStateMergesWithExistingProfilePins() async throws {
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CosmoBrowserStore(fileURL: stateURL)
+        let existingPin = CosmoBrowserPinnedSite(
+            url: URL(string: "https://www.first.example")!,
+            title: "First",
+            pinnedAt: Date(timeIntervalSince1970: 24)
+        )
+        try await store.savePins([existingPin], for: CosmoBrowserProfile.standard.id)
+
+        let state = CosmoWebBrowserState(
+            initialURL: URL(string: "https://www.second.example")!,
+            title: "Second",
+            store: store
+        )
+
+        state.toggleCurrentSitePin()
+        let pins = try await waitForPins(in: store, profileID: CosmoBrowserProfile.standard.id, count: 2)
+
+        XCTAssertEqual(Set(pins.map(\.host)), ["first.example", "second.example"])
+
+        try? FileManager.default.removeItem(at: stateURL)
+    }
+
     func testBrowserProfilesDeclareWebsiteDataAndAuthenticationPolicy() {
         XCTAssertEqual(CosmoBrowserProfile.standard.websiteDataMode, .defaultPersistent)
         XCTAssertEqual(CosmoBrowserProfile.privateBrowsing.websiteDataMode, .privateMemory)
@@ -191,5 +217,24 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         XCTAssertEqual(history.map(\.title), ["Two", "One"])
 
         try? FileManager.default.removeItem(at: stateURL)
+    }
+
+    private func waitForPins(
+        in store: CosmoBrowserStore,
+        profileID: String,
+        count: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws -> [CosmoBrowserPinnedSite] {
+        var latest: [CosmoBrowserPinnedSite] = []
+        for _ in 0..<20 {
+            latest = await store.pins(for: profileID)
+            if latest.count == count {
+                return latest
+            }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTFail("Expected \(count) pins, found \(latest.count)", file: file, line: line)
+        return latest
     }
 }

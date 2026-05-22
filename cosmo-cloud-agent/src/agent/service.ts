@@ -10,7 +10,7 @@ import { assembleSystemPrompt } from './contextAssembler';
 import { executeTool, jsonEncode } from './toolExecutor';
 import { loadConversation, saveConversation, logApiUsage, createAtom, fetchAtom } from '../db/queries';
 import { getToolDefinitions } from './toolRegistry';
-import { parseCaptureLanePrefix, TelegramCapturedMedia, telegramMediaPlaceholder } from './captureLane';
+import { parseCaptureLaneCommand, parseCaptureLanePrefix, TelegramCapturedMedia, telegramMediaPlaceholder } from './captureLane';
 
 interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -179,7 +179,7 @@ async function tryFastCaptureLaneTransport(
   options: ProcessMessageOptions = {},
 ): Promise<ProcessResult | null> {
   const media = options.telegramMedia || [];
-  const parsed = parseCaptureLanePrefix(text, { allowsEmptyBody: media.length > 0 });
+  const parsed = parseCaptureLaneCommand(text, { allowsEmptyBody: media.length > 0 });
   if (!parsed) return null;
 
   const body = parsed.body || telegramMediaPlaceholder(media);
@@ -194,7 +194,8 @@ async function tryFastCaptureLaneTransport(
       isCaptureLaneCapture: true,
       captureDestinationName: parsed.destinationName,
       captureLaneCommandText: parsed.commandText,
-      ...(parsed.subroute ? { captureLaneSubroute: parsed.subroute } : {}),
+      ...(parsed.kind === 'createLane' ? { isCaptureLaneCreation: true } : {}),
+      ...(parsed.kind === 'route' && parsed.subroute ? { captureLaneSubroute: parsed.subroute } : {}),
       captureSource: 'telegram_cloud',
       telegramChatId: chatId,
       ...(options.telegramMessageId ? { telegramMessageId: options.telegramMessageId } : {}),
@@ -206,7 +207,9 @@ async function tryFastCaptureLaneTransport(
 
   const createdAtomUUIDs = atom?.uuid ? [atom.uuid] : [];
   const response = atom
-    ? `📥 Saved to ${parsed.destinationName}\n"${title}"\nOpen CosmoOS to review.`
+    ? parsed.kind === 'createLane'
+      ? `📥 Created ${parsed.destinationName} and saved this to it\n"${title}"\nOpen CosmoOS to review.`
+      : `📥 Saved to ${parsed.destinationName}\n"${title}"\nOpen CosmoOS to review.`
     : `Something went wrong saving to ${parsed.destinationName}.`;
 
   messages.push({ role: 'user', content: text });

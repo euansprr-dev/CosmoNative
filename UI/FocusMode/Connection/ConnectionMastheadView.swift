@@ -23,6 +23,7 @@ struct ConnectionMastheadView: View {
 
     /// Commit callbacks — fired on title commit.
     var onTitleCommit: (String) -> Void = { _ in }
+    var maxWidth: CGFloat = 720
 
     // MARK: - Local state
 
@@ -52,7 +53,7 @@ struct ConnectionMastheadView: View {
         }
         .padding(.horizontal, DS.space24)
         .padding(.vertical, DS.space20)
-        .frame(maxWidth: 720)
+        .frame(maxWidth: maxWidth)
         .onAppear {
             if !didInit {
                 draftTitle = title

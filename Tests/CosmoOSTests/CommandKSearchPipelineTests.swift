@@ -39,6 +39,14 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertNil(action?.payload.url)
     }
 
+    func testActionParserParsesBrowserPrefix() {
+        let action = CommandKActionParser.parse("BRO")
+
+        XCTAssertEqual(action?.kind, .openBrowser)
+        XCTAssertEqual(action?.title, "Open Browser")
+        XCTAssertNil(action?.payload.url)
+    }
+
     func testActionParserParsesBrowserSearchQuery() {
         let action = CommandKActionParser.parse("browser creator economy research")
 
@@ -92,6 +100,23 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertTrue(composer.rows(for: "main").isEmpty)
     }
 
+    func testSystemCommandComposerRanksBrowserPrefixFirst() {
+        let composer = CommandKSystemCommandComposer()
+        let rows = composer.rows(for: "br")
+
+        XCTAssertEqual(rows.first?.action.kind, .openBrowser)
+        XCTAssertEqual(rows.first?.title, "Open Browser")
+    }
+
+    func testSystemCommandComposerFindsCommandAndDomainPrefixes() {
+        let composer = CommandKSystemCommandComposer()
+
+        XCTAssertTrue(composer.rows(for: "co").contains { $0.action.kind == .navigateCommandCenter })
+        XCTAssertTrue(composer.rows(for: "co").contains { $0.action.kind == .openCosmoPane })
+        XCTAssertTrue(composer.rows(for: "sw").contains { $0.action.kind == .openDomain && $0.action.payload.domain == "swipeGallery" })
+        XCTAssertTrue(composer.rows(for: "id").contains { $0.action.kind == .openDomain && $0.action.payload.domain == "ideas" })
+    }
+
     @MainActor
     func testCosmoSearchShowsPaneAndFloatingWindowCommands() async {
         let viewModel = CommandKViewModel(
@@ -138,7 +163,8 @@ final class CommandKSearchPipelineTests: XCTestCase {
         await viewModel.performSearch(query: "swipe")
 
         XCTAssertEqual(viewModel.primaryAction?.kind, .captureSwipe)
-        XCTAssertEqual(viewModel.userCommandRows.map { $0.title }, ["Swipe Gallery"])
+        XCTAssertTrue(viewModel.userCommandRows.contains { $0.title == "Open Swipe Gallery" })
+        XCTAssertTrue(viewModel.userCommandRows.contains { $0.title == "Swipe Gallery" })
         XCTAssertTrue(viewModel.isUnifiedSearchActive)
     }
 
@@ -581,6 +607,91 @@ final class CommandKSearchPipelineTests: XCTestCase {
 
         XCTAssertEqual(viewModel.userCommandRows.map(\.title), ["Ideas"])
         XCTAssertEqual(viewModel.activeCommandAction?.kind, .openDomain)
+    }
+
+    @MainActor
+    func testNewSearchQueryResetsActiveSelectionToFirstResult() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CommandKUserCommandStore(fileURL: url, seedBuiltIns: false)
+        try await store.saveQuicklink(CommandKQuicklink(
+            id: "alpha",
+            alias: "alpha",
+            title: "Alpha",
+            route: .commandKDomain("database"),
+            query: nil,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        ))
+        try await store.saveQuicklink(CommandKQuicklink(
+            id: "alphabet",
+            alias: "alphabet",
+            title: "Alphabet",
+            route: .commandKDomain("ideas"),
+            query: nil,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        ))
+        let viewModel = CommandKViewModel(userCommandStore: store)
+        defer { viewModel.setSurfaceActive(false) }
+
+        viewModel.selectedNodeId = "quicklink-alphabet"
+        viewModel.selectedResultIndex = 1
+
+        await viewModel.performSearch(query: "alpha")
+
+        XCTAssertEqual(viewModel.userCommandRows.map(\.id), ["quicklink-alpha", "quicklink-alphabet"])
+        XCTAssertEqual(viewModel.selectedResultIndex, 0)
+        XCTAssertEqual(viewModel.selectedNodeId, "quicklink-alpha")
+    }
+
+    @MainActor
+    func testSearchShowsAllMatchingQuicklinksWithoutSystemCommandCap() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CommandKUserCommandStore(fileURL: url, seedBuiltIns: false)
+        for index in 1...8 {
+            try await store.saveQuicklink(CommandKQuicklink(
+                id: "alpha-\(index)",
+                alias: "alpha \(index)",
+                title: "Alpha \(index)",
+                route: .commandKDomain("database"),
+                query: nil,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                updatedAt: Date(timeIntervalSince1970: TimeInterval(index))
+            ))
+        }
+        let viewModel = CommandKViewModel(userCommandStore: store)
+        defer { viewModel.setSurfaceActive(false) }
+
+        await viewModel.performSearch(query: "alpha")
+
+        XCTAssertEqual(viewModel.userCommandRows.count, 8)
+        XCTAssertEqual(Set(viewModel.userCommandRows.map(\.id)).count, 8)
+    }
+
+    @MainActor
+    func testBrowserPrefixSearchSelectsBrowserCommandFirst() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        viewModel.selectedNodeId = "stale-bottom-result"
+        viewModel.selectedResultIndex = 9
+
+        await viewModel.performSearch(query: "BRO")
+
+        XCTAssertEqual(viewModel.primaryAction?.kind, .openBrowser)
+        XCTAssertEqual(viewModel.selectedResultIndex, 0)
+        XCTAssertEqual(viewModel.selectedNodeId, viewModel.primaryAction?.id)
     }
 
     @MainActor

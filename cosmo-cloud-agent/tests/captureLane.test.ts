@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   extractTelegramMedia,
+  parseCaptureLaneCommand,
   parseCaptureLanePrefix,
   telegramMediaPlaceholder,
 } from '../src/agent/captureLane';
@@ -39,6 +40,15 @@ assert.deepEqual(subroute, {
   destinationName: 'books',
   subroute: 'source',
   body: 'ISBN note',
+});
+
+const createLane = parseCaptureLaneCommand('Make a new capture lane called Travel and capture this to it.\nDa Nang');
+assert.deepEqual(createLane, {
+  kind: 'createLane',
+  commandText: 'make capture lane',
+  destinationName: 'Travel',
+  body: 'Da Nang',
+  shouldCaptureRemainder: true,
 });
 
 const media = extractTelegramMedia({

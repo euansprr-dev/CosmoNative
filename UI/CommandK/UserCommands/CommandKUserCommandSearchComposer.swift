@@ -86,67 +86,167 @@ struct CommandKUserCommandSearchComposer {
 
 struct CommandKSystemCommandComposer {
     func rows(for query: String) -> [CommandKUserCommandRow] {
-        guard matchesCosmoQuery(query) else { return [] }
-        return [
-            row(
-                id: "system-cosmo-pane",
-                title: "Open Cosmo as Pane",
-                subtitle: "Dock the AI assistant beside your workspace",
-                kind: .openCosmoPane
-            ),
-            row(
-                id: "system-cosmo-window",
-                title: "Open Cosmo Floating Window",
-                subtitle: "Open the AI assistant as a floating window",
-                kind: .openCosmoWindow
-            )
-        ]
+        let normalizedQuery = Self.normalized(query)
+        guard normalizedQuery.count >= 2 || normalizedQuery == "ai" else { return [] }
+
+        return Self.commands
+            .compactMap { command -> (row: CommandKUserCommandRow, score: Int)? in
+                guard let score = command.matchScore(for: normalizedQuery) else { return nil }
+                return (row: row(for: command), score: score)
+            }
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.row.title.localizedCaseInsensitiveCompare($1.row.title) == .orderedAscending
+            }
+            .map(\.row)
     }
 
-    private func row(
-        id: String,
-        title: String,
-        subtitle: String,
-        kind: CommandKActionKind
-    ) -> CommandKUserCommandRow {
-        let action = CommandKAction(
-            kind: kind,
-            title: title,
-            subtitle: subtitle,
+    private struct SystemCommand {
+        let id: String
+        let title: String
+        let subtitle: String
+        let category: String
+        let kind: CommandKActionKind
+        let icon: String
+        let payload: CommandKActionPayload
+        let aliases: [String]
+
+        func matchScore(for normalizedQuery: String) -> Int? {
+            let normalizedAliases = aliases.map(CommandKSystemCommandComposer.normalized)
+            let normalizedTitle = CommandKSystemCommandComposer.normalized(title)
+            let searchable = ([normalizedTitle] + normalizedAliases).joined(separator: " ")
+
+            if normalizedAliases.contains(normalizedQuery) || normalizedTitle == normalizedQuery {
+                return 400
+            }
+
+            if normalizedAliases.contains(where: { $0.hasPrefix(normalizedQuery) }) ||
+                normalizedTitle.hasPrefix(normalizedQuery) {
+                return 300
+            }
+
+            if normalizedTitle
+                .split(separator: " ")
+                .contains(where: { $0.hasPrefix(normalizedQuery) }) {
+                return 250
+            }
+
+            if searchable.contains(normalizedQuery) {
+                return 100
+            }
+
+            return nil
+        }
+    }
+
+    private static let commands: [SystemCommand] = [
+        SystemCommand(
+            id: "system-open-browser",
+            title: "Open Browser",
+            subtitle: "Open a persistent research browser pane",
+            category: "Browser",
+            kind: .openBrowser,
+            icon: "globe",
+            payload: CommandKActionPayload(rawText: "browser"),
+            aliases: ["browser", "open browser", "web", "open web", "research browser", "browser pane"]
+        ),
+        SystemCommand(
+            id: "system-command-center",
+            title: "Go to Command Center",
+            subtitle: "Open the planning dashboard",
+            category: "Navigation",
+            kind: .navigateCommandCenter,
+            icon: "command.circle.fill",
+            payload: CommandKActionPayload(rawText: "command center"),
+            aliases: ["command center", "home", "plannerum", "planning", "sanctuary"]
+        ),
+        SystemCommand(
+            id: "system-last-thinkspace",
+            title: "Go to Thinkspace",
+            subtitle: "Open the last-used canvas",
+            category: "Navigation",
+            kind: .navigateLastThinkspace,
+            icon: "rectangle.3.group.fill",
+            payload: CommandKActionPayload(rawText: "thinkspace"),
+            aliases: ["thinkspace", "canvas", "last thinkspace"]
+        ),
+        SystemCommand(
+            id: "system-open-library",
+            title: "Open Library",
+            subtitle: "Switch Command-K domain",
+            category: "Domain",
+            kind: .openDomain,
+            icon: "tray.full.fill",
+            payload: CommandKActionPayload(domain: "database", rawText: "library"),
+            aliases: ["library", "database", "objects", "all objects"]
+        ),
+        SystemCommand(
+            id: "system-open-swipe-gallery",
+            title: "Open Swipe Gallery",
+            subtitle: "Switch Command-K domain",
+            category: "Domain",
+            kind: .openDomain,
+            icon: "bolt.fill",
+            payload: CommandKActionPayload(domain: "swipeGallery", rawText: "swipes"),
+            aliases: ["swipe gallery", "swipes", "swipe file", "swipe library"]
+        ),
+        SystemCommand(
+            id: "system-open-ideas",
+            title: "Open Ideas",
+            subtitle: "Switch Command-K domain",
+            category: "Domain",
+            kind: .openDomain,
+            icon: "lightbulb.fill",
+            payload: CommandKActionPayload(domain: "ideas", rawText: "ideas"),
+            aliases: ["ideas", "idea", "idea gallery"]
+        ),
+        SystemCommand(
+            id: "system-open-readwise",
+            title: "Open Readwise",
+            subtitle: "Switch Command-K domain",
+            category: "Domain",
+            kind: .openDomain,
+            icon: "books.vertical.fill",
+            payload: CommandKActionPayload(domain: "readwise", rawText: "readwise"),
+            aliases: ["readwise", "books", "book library", "highlights"]
+        ),
+        SystemCommand(
+            id: "system-cosmo-pane",
+            title: "Open Cosmo as Pane",
+            subtitle: "Dock the AI assistant beside your workspace",
+            category: "Cosmo",
+            kind: .openCosmoPane,
             icon: "sparkles",
-            payload: CommandKActionPayload(rawText: "cosmo")
+            payload: CommandKActionPayload(rawText: "cosmo pane"),
+            aliases: ["cosmo", "assistant", "agent", "open cosmo", "open ai", "cosmo pane", "ai pane"]
+        ),
+        SystemCommand(
+            id: "system-cosmo-window",
+            title: "Open Cosmo Floating Window",
+            subtitle: "Open the AI assistant as a floating window",
+            category: "Cosmo",
+            kind: .openCosmoWindow,
+            icon: "sparkles",
+            payload: CommandKActionPayload(rawText: "cosmo window"),
+            aliases: ["cosmo window", "cosmo floating", "ai window", "ai floating", "assistant window"]
+        )
+    ]
+
+    private func row(for command: SystemCommand) -> CommandKUserCommandRow {
+        let action = CommandKAction(
+            kind: command.kind,
+            title: command.title,
+            subtitle: command.subtitle,
+            icon: command.icon,
+            payload: command.payload
         )
         return CommandKUserCommandRow(
-            id: id,
-            title: title,
-            subtitle: "System · Cosmo",
+            id: command.id,
+            title: command.title,
+            subtitle: "System · \(command.category)",
             icon: action.icon,
             action: action
         )
-    }
-
-    private func matchesCosmoQuery(_ query: String) -> Bool {
-        let normalized = Self.normalized(query)
-        guard normalized.count >= 2 else { return false }
-
-        if normalized == "ai" {
-            return true
-        }
-
-        let prefixable = [
-            "cosmo",
-            "assistant",
-            "agent",
-            "open cosmo",
-            "open ai",
-            "cosmo pane",
-            "cosmo window",
-            "ai pane",
-            "ai window"
-        ]
-        return prefixable.contains { candidate in
-            candidate.hasPrefix(normalized) || normalized.hasPrefix(candidate)
-        }
     }
 
     private static func normalized(_ raw: String) -> String {

@@ -117,7 +117,7 @@ class TaskRecurrenceEngine {
 
     /// Check if an instance already exists for a template on a given date
     func instanceExists(templateUUID: String, date: Date) async throws -> Bool {
-        let allTasks = try await atomRepository.fetchAll(type: .task)
+        let allTasks = try await atomRepository.fetchAllIncludingDeleted(type: .task)
 
         return allTasks.contains { atom in
             guard let meta = atom.metadataValue(as: TaskMetadata.self) else { return false }

@@ -78,6 +78,16 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// Fetch all atoms of a specific type, including soft-deleted rows.
+    func fetchAllIncludingDeleted(type: AtomType) async throws -> [Atom] {
+        try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.type == type.rawValue)
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .fetchAll(db)
+        }
+    }
+
     /// Fetch a single atom by UUID
     func fetch(uuid: String) async throws -> Atom? {
         try await database.asyncRead { db in

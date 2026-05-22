@@ -139,8 +139,25 @@ enum InboxCaptureConverter {
         title: String?,
         metadata: [String: Any]
     ) async {
-        guard let destinationName,
-              let destination = try? await CaptureDestinationRepository.shared.resolveCommand(destinationName) else {
+        guard let destinationName else {
+            await convertLaneCaptureToInbox(
+                sourceAtomUuid: sourceAtomUuid,
+                rawText: rawText,
+                title: title,
+                reason: "Unknown capture lane"
+            )
+            return
+        }
+
+        let shouldCreateLane = metadata["isCaptureLaneCreation"] as? Bool == true
+        let destination: CaptureDestination?
+        if shouldCreateLane {
+            destination = try? await CaptureDestinationRepository.shared.createLane(named: destinationName)
+        } else {
+            destination = try? await CaptureDestinationRepository.shared.resolveCommand(destinationName)
+        }
+
+        guard let destination else {
             await convertLaneCaptureToInbox(
                 sourceAtomUuid: sourceAtomUuid,
                 rawText: rawText,

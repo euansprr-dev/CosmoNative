@@ -5,6 +5,27 @@ export interface CaptureLaneCommand {
   body: string;
 }
 
+export interface CreateCaptureLaneCommand {
+  kind: 'createLane';
+  commandText: string;
+  destinationName: string;
+  body: string;
+  shouldCaptureRemainder: boolean;
+}
+
+export type ParsedCaptureLaneCommand = (CaptureLaneCommand & { kind: 'route' }) | CreateCaptureLaneCommand;
+
+export function parseCaptureLaneCommand(
+  text: string,
+  options: { allowsEmptyBody?: boolean } = {},
+): ParsedCaptureLaneCommand | null {
+  const createLane = parseCreateCaptureLaneCommand(text, options);
+  if (createLane) return createLane;
+
+  const route = parseCaptureLanePrefix(text, options);
+  return route ? { ...route, kind: 'route' } : null;
+}
+
 export interface TelegramCapturedMedia {
   kind: 'image' | 'screenshot' | 'pdf' | 'epub' | 'text_file' | 'markdown' | 'audio' | 'video' | 'document' | 'unknown';
   fileId: string;
@@ -75,6 +96,36 @@ export function parseCaptureLanePrefix(
     destinationName,
     subroute,
     body,
+  };
+}
+
+function parseCreateCaptureLaneCommand(
+  text: string,
+  options: { allowsEmptyBody?: boolean } = {},
+): CreateCaptureLaneCommand | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(
+    /^(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(?:capture\s+)?(?:inbox|lane|media lane|task lane|research lane)\s+(?:named|called)\s+(?:"([^"]+)"|“([^”]+)”|(.+?))(?:\s+for\s+[a-z ]+?)?(?:\s+and\s+(?:capture|save)\s+this(?:\s+to\s+it)?\.?:?)\s*([\s\S]*)$/i,
+  );
+  if (!match) return null;
+
+  const destinationName = (match[1] || match[2] || match[3] || '')
+    .trim()
+    .replace(/[.。]+$/g, '')
+    .trim();
+  const body = (match[4] || '').trim();
+
+  if (!destinationName) return null;
+  if (!options.allowsEmptyBody && !body) return null;
+
+  return {
+    kind: 'createLane',
+    commandText: 'make capture lane',
+    destinationName,
+    body,
+    shouldCaptureRemainder: true,
   };
 }
 

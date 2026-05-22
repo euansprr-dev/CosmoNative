@@ -186,8 +186,23 @@ struct CollaboratorMessage: Identifiable, Codable, Equatable {
     let observationKind: CollaboratorObservationKind?
     let questionSuggestion: String?
     let recommendedAction: String?
-    var draftProposal: ConnectionDraftProposal?
+    var draftProposals: [ConnectionDraftProposal]
     let createdAt: Date
+
+    var draftProposal: ConnectionDraftProposal? {
+        get { draftProposals.first }
+        set {
+            if let newValue {
+                if draftProposals.isEmpty {
+                    draftProposals = [newValue]
+                } else {
+                    draftProposals[0] = newValue
+                }
+            } else {
+                draftProposals.removeAll()
+            }
+        }
+    }
 
     enum Role: String, Codable {
         case user
@@ -202,6 +217,7 @@ struct CollaboratorMessage: Identifiable, Codable, Equatable {
         questionSuggestion: String? = nil,
         recommendedAction: String? = nil,
         draftProposal: ConnectionDraftProposal? = nil,
+        draftProposals: [ConnectionDraftProposal] = [],
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -210,12 +226,18 @@ struct CollaboratorMessage: Identifiable, Codable, Equatable {
         self.observationKind = observationKind
         self.questionSuggestion = questionSuggestion
         self.recommendedAction = recommendedAction
-        self.draftProposal = draftProposal
+        if !draftProposals.isEmpty {
+            self.draftProposals = draftProposals
+        } else if let draftProposal {
+            self.draftProposals = [draftProposal]
+        } else {
+            self.draftProposals = []
+        }
         self.createdAt = createdAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, text, observationKind, questionSuggestion, recommendedAction, draftProposal, createdAt
+        case id, role, text, observationKind, questionSuggestion, recommendedAction, draftProposal, draftProposals, createdAt
         case crystallizeTarget, crystallizeContent
     }
 
@@ -229,20 +251,23 @@ struct CollaboratorMessage: Identifiable, Codable, Equatable {
         self.recommendedAction = try c.decodeIfPresent(String.self, forKey: .recommendedAction)
         self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
 
-        if let draft = try c.decodeIfPresent(ConnectionDraftProposal.self, forKey: .draftProposal) {
-            self.draftProposal = draft
+        if let drafts = try c.decodeIfPresent([ConnectionDraftProposal].self, forKey: .draftProposals),
+           !drafts.isEmpty {
+            self.draftProposals = drafts
+        } else if let draft = try c.decodeIfPresent(ConnectionDraftProposal.self, forKey: .draftProposal) {
+            self.draftProposals = [draft]
         } else if let legacyTarget = try c.decodeIfPresent(ConnectionSectionType.self, forKey: .crystallizeTarget),
                   let legacyContent = try c.decodeIfPresent(String.self, forKey: .crystallizeContent),
                   !legacyContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            self.draftProposal = ConnectionDraftProposal(
+            self.draftProposals = [ConnectionDraftProposal(
                 targetSection: legacyTarget,
                 draftText: legacyContent,
                 visibleText: legacyContent,
                 rationale: text,
                 status: .pending
-            )
+            )]
         } else {
-            self.draftProposal = nil
+            self.draftProposals = []
         }
     }
 
@@ -255,6 +280,9 @@ struct CollaboratorMessage: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(questionSuggestion, forKey: .questionSuggestion)
         try c.encodeIfPresent(recommendedAction, forKey: .recommendedAction)
         try c.encodeIfPresent(draftProposal, forKey: .draftProposal)
+        if !draftProposals.isEmpty {
+            try c.encode(draftProposals, forKey: .draftProposals)
+        }
         try c.encode(createdAt, forKey: .createdAt)
     }
 }
@@ -802,15 +830,26 @@ struct ConnectionFocusModeState: Codable {
         if activeDraftProposal?.id == draft.id {
             activeDraftProposal = draft
         }
-        if let messageIndex = collaboratorMessages.firstIndex(where: { $0.draftProposal?.id == draft.id }) {
-            collaboratorMessages[messageIndex].draftProposal = draft
+        if let messageIndex = collaboratorMessages.firstIndex(where: { message in
+            message.draftProposals.contains(where: { $0.id == draft.id })
+        }),
+           let draftIndex = collaboratorMessages[messageIndex].draftProposals.firstIndex(where: { $0.id == draft.id }) {
+            collaboratorMessages[messageIndex].draftProposals[draftIndex] = draft
         }
         lastModified = Date()
     }
 
     mutating func setCollaboratorDraft(_ draft: ConnectionDraftProposal?, forMessageID messageID: UUID) {
         if let messageIndex = collaboratorMessages.firstIndex(where: { $0.id == messageID }) {
-            collaboratorMessages[messageIndex].draftProposal = draft
+            if let draft {
+                if let draftIndex = collaboratorMessages[messageIndex].draftProposals.firstIndex(where: { $0.id == draft.id }) {
+                    collaboratorMessages[messageIndex].draftProposals[draftIndex] = draft
+                } else {
+                    collaboratorMessages[messageIndex].draftProposals.append(draft)
+                }
+            } else {
+                collaboratorMessages[messageIndex].draftProposals.removeAll()
+            }
             lastModified = Date()
         }
     }

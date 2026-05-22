@@ -1633,6 +1633,15 @@ public final class CommandKViewModel: ObservableObject {
             return
         }
 
+        results = []
+        unfilteredResults = []
+        groupedResults = []
+        flatNavigableResults = []
+        isUnifiedSearchActive = false
+        unifiedGroupedResults = []
+        unifiedFlatResults = []
+        unifiedCardItems = []
+
         let matchedUserCommandRows = prefixType == nil
             ? await loadUserCommandRows(for: searchQuery)
             : []
@@ -1856,11 +1865,12 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     private func loadUserCommandRows(for query: String) async -> [CommandKUserCommandRow] {
+        let primaryActionID = primaryAction?.id
         let systemRows = systemCommandComposer.rows(for: query)
+            .filter { $0.action.id != primaryActionID }
         do {
             let quicklinks = try await userCommandStore.searchQuicklinks(query)
-            let quicklinkLimit = max(0, 6 - systemRows.count)
-            return systemRows + Array(userCommandComposer.rows(for: quicklinks).prefix(quicklinkLimit))
+            return systemRows + userCommandComposer.rows(for: quicklinks)
         } catch {
             return systemRows
         }
@@ -2889,12 +2899,6 @@ public final class CommandKViewModel: ObservableObject {
         guard !ids.isEmpty else {
             selectedResultIndex = -1
             selectedNodeId = nil
-            return
-        }
-
-        if let selectedNodeId,
-           let current = ids.firstIndex(of: selectedNodeId) {
-            selectedResultIndex = current
             return
         }
 

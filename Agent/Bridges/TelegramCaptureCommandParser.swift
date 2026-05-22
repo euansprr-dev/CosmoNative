@@ -91,6 +91,10 @@ enum TelegramCaptureCommandParser {
     }
 
     static func parseCreateLane(_ text: String, allowsEmptyBody: Bool = false) -> TelegramCaptureCommand? {
+        if let natural = parseNaturalCreateLane(text, allowsEmptyBody: allowsEmptyBody) {
+            return natural
+        }
+
         let patterns = [
             #"(?i)^create\s+(?:a\s+)?new\s+(inbox|lane|media lane|task lane|research lane)\s+named\s+[“"]([^”"]+)[”"](?:\s+and\s+(?:capture|save)\s+this:?)?\s*(.*)$"#,
             #"(?i)^create\s+(?:a\s+)?(?:new\s+)?(inbox|lane|media lane|task lane|research lane)\s+called\s+[“"]([^”"]+)[”"](?:\s+(?:for\s+([a-z ]+))?)?(?:\s+and\s+(?:capture|save)\s+this\s*(?:file|image|pdf)?:?)?\s*(.*)$"#
@@ -132,6 +136,34 @@ enum TelegramCaptureCommandParser {
         }
 
         return nil
+    }
+
+    private static func parseNaturalCreateLane(_ text: String, allowsEmptyBody: Bool) -> TelegramCaptureCommand? {
+        let pattern = #"(?is)^(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(?:capture\s+)?(inbox|lane|media lane|task lane|research lane)\s+(?:named|called)\s+(?:[“"]([^”"]+)[”"]|(.+?))(?:\s+for\s+([a-z ]+?))?(?:\s+and\s+(?:capture|save)\s+this(?:\s+to\s+it)?\.?:?)\s*(.*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: range) else { return nil }
+
+        let laneKind = capture(match, in: text, at: 1)
+        let quotedName = capture(match, in: text, at: 2)
+        let unquotedName = capture(match, in: text, at: 3)
+        let purpose = capture(match, in: text, at: 4)
+        let body = capture(match, in: text, at: 5)
+        let name = (quotedName.isEmpty ? unquotedName : quotedName)
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+
+        guard !name.isEmpty else { return nil }
+        guard allowsEmptyBody || !body.isEmpty else { return nil }
+
+        return TelegramCaptureCommand(
+            kind: .createLane,
+            commandText: "create lane",
+            destinationName: name,
+            subroute: .general,
+            body: body.trimmingCharacters(in: .whitespacesAndNewlines),
+            requestedLaneType: typeFromCreationKind(laneKind, purpose: purpose, name: name),
+            shouldCaptureRemainder: true
+        )
     }
 
     private static func isValidPrefix(_ prefix: String) -> Bool {

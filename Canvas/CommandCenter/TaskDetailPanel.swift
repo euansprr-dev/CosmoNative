@@ -141,7 +141,7 @@ struct TaskDetailPanel: View {
 
                 Spacer()
 
-                Text("Apply edits to")
+                Text("Apply to")
                     .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
             }
@@ -498,9 +498,10 @@ struct TaskDetailPanel: View {
 
     private var deleteSection: some View {
         Button(role: .destructive) {
+            let scope = task.recurrenceParentUUID == nil ? .currentOnly : titleEditScope
             onDeleted(task.uuid)
             Task {
-                await viewModel.deleteTask(uuid: task.uuid)
+                await viewModel.deleteTask(uuid: task.uuid, recurrenceScope: scope)
             }
         } label: {
             HStack(spacing: 4) {

@@ -800,7 +800,13 @@ struct ConnectionFocusModeView: View {
     }
 
     private func persistedCollaboratorReply(_ reply: CollaboratorMessage) -> CollaboratorMessage {
-        guard reply.draftProposal != nil else { return reply }
+        guard !reply.draftProposals.isEmpty else { return reply }
+        let normalizedDrafts = reply.draftProposals.map { draft in
+            var pending = draft
+            pending.visibleText = pending.draftText
+            pending.status = .pending
+            return pending
+        }
         return CollaboratorMessage(
             id: reply.id,
             role: reply.role,
@@ -808,7 +814,7 @@ struct ConnectionFocusModeView: View {
             observationKind: reply.observationKind,
             questionSuggestion: reply.questionSuggestion,
             recommendedAction: reply.recommendedAction,
-            draftProposal: nil,
+            draftProposals: normalizedDrafts,
             createdAt: reply.createdAt
         )
     }
@@ -816,20 +822,22 @@ struct ConnectionFocusModeView: View {
     private func appendCollaboratorReply(_ reply: CollaboratorMessage, persistState: Bool = true) {
         let storedReply = persistedCollaboratorReply(reply)
         viewModel.state.appendCollaboratorMessage(storedReply)
-        guard reply.draftProposal != nil else {
+        guard !reply.draftProposals.isEmpty else {
             if persistState {
                 viewModel.saveState()
             }
             return
         }
-        stageDraftIfNeeded(from: reply, sourceMessageID: storedReply.id, persistState: persistState)
+        stageDraftIfNeeded(from: storedReply, sourceMessageID: storedReply.id, persistState: persistState)
     }
 
     private func sourceMessageID(for draft: ConnectionDraftProposal) -> UUID? {
         if collaboratorPreview.streamingDraft?.id == draft.id {
             return collaboratorPreview.sourceMessageID
         }
-        return viewModel.state.collaboratorMessages.first(where: { $0.draftProposal?.id == draft.id })?.id
+        return viewModel.state.collaboratorMessages.first(where: { message in
+            message.draftProposals.contains(where: { $0.id == draft.id })
+        })?.id
     }
 
     private func persistDraft(
@@ -860,10 +868,18 @@ struct ConnectionFocusModeView: View {
     }
 
     private func stageDraftIfNeeded(from message: CollaboratorMessage, sourceMessageID: UUID?, persistState: Bool) {
-        guard let draft = message.draftProposal else {
+        guard let draft = message.draftProposals.first(where: { $0.status != .accepted && $0.status != .dismissed }) else {
             collaboratorPreview.clear()
             return
         }
+        stageDraft(draft, sourceMessageID: sourceMessageID, persistState: persistState)
+    }
+
+    private func stageDraft(
+        _ draft: ConnectionDraftProposal,
+        sourceMessageID: UUID?,
+        persistState: Bool
+    ) {
         draftStreamingTask?.cancel()
 
         if let existingPreview = collaboratorPreview.streamingDraft,
@@ -885,6 +901,7 @@ struct ConnectionFocusModeView: View {
         var previewDraft = draft
         previewDraft.visibleText = ""
         previewDraft.status = .streaming
+        persistDraft(previewDraft, sourceMessageID: sourceMessageID, setActive: true)
         collaboratorPreview.begin(draft: previewDraft, sourceMessageID: sourceMessageID)
         streamDraftPreview(previewDraft, sourceMessageID: sourceMessageID, startingAt: 0, persistState: persistState)
     }
@@ -940,7 +957,75 @@ struct ConnectionFocusModeView: View {
 
         let document = RichDocument.migrateLegacy(accepted.draftText)
         viewModel.addItem(document: document, plainText: accepted.draftText, toSection: accepted.targetSection)
+        if let nextDraft = nextQueuedDraft(after: accepted, sourceMessageID: sourceMessageID) {
+            stageDraft(nextDraft, sourceMessageID: sourceMessageID, persistState: false)
+        } else {
+            appendPostInsertionQuestion(for: accepted, sourceMessageID: sourceMessageID)
+        }
         viewModel.saveState()
+    }
+
+    private func nextQueuedDraft(
+        after acceptedDraft: ConnectionDraftProposal,
+        sourceMessageID: UUID?
+    ) -> ConnectionDraftProposal? {
+        guard let sourceMessageID,
+              let message = viewModel.state.collaboratorMessages.first(where: { $0.id == sourceMessageID }) else {
+            return nil
+        }
+        return message.draftProposals.first { draft in
+            draft.id != acceptedDraft.id
+                && draft.status != .accepted
+                && draft.status != .dismissed
+        }
+    }
+
+    private func appendPostInsertionQuestion(
+        for draft: ConnectionDraftProposal,
+        sourceMessageID: UUID?
+    ) {
+        let sourceQuestion = sourceMessageID.flatMap { id in
+            viewModel.state.collaboratorMessages
+                .first(where: { $0.id == id })?
+                .questionSuggestion?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let question = sourceQuestion?.isEmpty == false
+            ? sourceQuestion!
+            : postInsertionFallbackQuestion(for: draft.targetSection)
+        let message = CollaboratorMessage(
+            role: .assistant,
+            text: "Inserted into \(draft.targetSection.displayName). \(question)",
+            questionSuggestion: question
+        )
+        viewModel.state.appendCollaboratorMessage(message)
+    }
+
+    private func postInsertionFallbackQuestion(for section: ConnectionSectionType) -> String {
+        switch section {
+        case .goal:
+            return "What would make this desired outcome feel concrete enough that someone could recognize it in real life?"
+        case .problems:
+            return "Which pain point is the sharpest proof that this concept matters?"
+        case .claims:
+            return "What evidence or example would make this claim harder to dismiss?"
+        case .evidence:
+            return "What does this evidence prove about the larger concept?"
+        case .benefits:
+            return "Which benefit would matter most to the person using this idea?"
+        case .examples:
+            return "What pattern does this example reveal that should shape the whole framework?"
+        case .beliefsObjections:
+            return "What objection would a smart skeptic raise first?"
+        case .process:
+            return "Which step is the real turning point in the process?"
+        case .openQuestions:
+            return "Which open question would most deepen the concept if answered?"
+        case .conceptName:
+            return "What should the name make someone understand before you explain anything else?"
+        case .references:
+            return "Which source should become the anchor for the next sharper claim?"
+        }
     }
 
     @MainActor

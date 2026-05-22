@@ -2,8 +2,8 @@
 // April 2026 — governed Forge workspace
 //
 // The connection's own structure no longer free-floats. The masthead and
-// metadata stay anchored, and stations live in a controlled grid where one
-// active station can expand and push the next row downward.
+// metadata stay anchored, and stations live in controlled columns where one
+// active station can expand and push only the cards beneath it downward.
 
 import SwiftUI
 
@@ -34,6 +34,11 @@ struct TheForgeView: View {
 
     @State private var expandedStation: ConnectionSectionType?
 
+    private var forgeWidth: CGFloat {
+        CGFloat(max(1, stationColumns)) * stationWidth
+            + CGFloat(max(0, stationColumns - 1)) * columnSpacing
+    }
+
     private let orderedStations: [ConnectionSectionType] = [
         [.goal, .problems, .claims, .evidence],
         [.benefits, .examples, .beliefsObjections, .process],
@@ -50,7 +55,7 @@ struct TheForgeView: View {
             MarginaliaLabel("THE FORGE")
             stationRows
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(width: forgeWidth, alignment: .topLeading)
         .onChange(of: displayDraftProposal?.targetSection) { _, newTarget in
             guard let newTarget else { return }
             withAnimation(ProMotionSprings.focusTransition) {
@@ -60,21 +65,12 @@ struct TheForgeView: View {
     }
 
     private var headerDeck: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 24) {
-                Color.clear
-                    .frame(width: 184, height: 1)
-                masthead
-                    .frame(maxWidth: .infinity, alignment: .top)
-                maturityCard
-                    .frame(width: 184, alignment: .trailing)
-            }
-
-            VStack(alignment: .center, spacing: 16) {
-                masthead
-                maturityCard
-            }
+        VStack(alignment: .center, spacing: 16) {
+            masthead
+            maturityCard
+                .frame(width: forgeWidth, alignment: .center)
         }
+        .frame(width: forgeWidth, alignment: .center)
     }
 
     private var masthead: some View {
@@ -84,7 +80,8 @@ struct TheForgeView: View {
             filledCount: state.completedSectionCount,
             sourceCount: sourceCount,
             insightCount: insightCount,
-            onTitleCommit: onTitleCommit
+            onTitleCommit: onTitleCommit,
+            maxWidth: forgeWidth
         )
     }
 
@@ -96,10 +93,10 @@ struct TheForgeView: View {
     }
 
     private var stationRows: some View {
-        VStack(alignment: .leading, spacing: rowSpacing) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                HStack(alignment: .top, spacing: columnSpacing) {
-                    ForEach(row, id: \.self) { type in
+        HStack(alignment: .top, spacing: columnSpacing) {
+            ForEach(Array(stationColumnsForLayout.enumerated()), id: \.offset) { _, column in
+                VStack(alignment: .leading, spacing: rowSpacing) {
+                    ForEach(column, id: \.self) { type in
                         if let binding = stationBinding(for: type) {
                             stationCard(type: type, binding: binding)
                         }
@@ -109,10 +106,12 @@ struct TheForgeView: View {
         }
     }
 
-    private var rows: [[ConnectionSectionType]] {
-        stride(from: 0, to: orderedStations.count, by: stationColumns).map { start in
-            let end = min(start + stationColumns, orderedStations.count)
-            return Array(orderedStations[start..<end])
+    private var stationColumnsForLayout: [[ConnectionSectionType]] {
+        let count = max(1, stationColumns)
+        return (0..<count).map { columnIndex in
+            orderedStations.enumerated().compactMap { index, type in
+                index % count == columnIndex ? type : nil
+            }
         }
     }
 

@@ -35,10 +35,10 @@ final class ThemePaletteTests: XCTestCase {
         assertColor(palette.vellum, equalsHex: "FBFBFC")
         assertColor(palette.vellumDeep, equalsHex: "F4F4F5")
 
-        assertColor(palette.glassCardFill, equalsHex: "FFFFFF", alpha: 0.90)
-        assertColor(palette.glassInputFill, equalsHex: "FFFFFF", alpha: 0.94)
-        assertColor(palette.glassInputFillFocused, equalsHex: "FFFFFF", alpha: 0.99)
-        assertColor(palette.glassSectionFill, equalsHex: "FFFFFF", alpha: 0.72)
+        assertColor(palette.glassCardFill, equalsHex: "FFFFFF", alpha: 0.950)
+        assertColor(palette.glassInputFill, equalsHex: "FFFFFF", alpha: 0.970)
+        assertColor(palette.glassInputFillFocused, equalsHex: "FFFFFF", alpha: 0.996)
+        assertColor(palette.glassSectionFill, equalsHex: "FFFFFF", alpha: 0.860)
         assertColor(palette.glassBorder, equalsHex: "000000", alpha: 0.050)
         assertColor(palette.glassBorderFocused, equalsHex: "000000", alpha: 0.20)
     }
@@ -46,19 +46,27 @@ final class ThemePaletteTests: XCTestCase {
     func testCodexMonoUsesLighterNativeSidebarMaterialChrome() {
         DS.palette = CodexMonoPalette()
 
-        assertColor(DS.sidebarMaterialBase, equalsHex: "FFFFFF", alpha: 0.34)
-        XCTAssertEqual(DS.sidebarMaterialNativeOpacity, 0.38, accuracy: 0.001)
+        assertColor(DS.sidebarMaterialBase, equalsHex: "FFFFFF", alpha: 0.665)
+        XCTAssertEqual(DS.sidebarMaterialNativeOpacity, 0.650, accuracy: 0.001)
         assertColor(DS.sidebarMaterialFallback, equalsHex: "FFFFFF")
         assertColor(DS.sidebarMaterialBorder, equalsHex: "000000", alpha: 0.058)
         assertColor(DS.sidebarMaterialHighlight, equalsHex: "FFFFFF", alpha: 0.64)
         assertColor(DS.sidebarMaterialInnerShade, equalsHex: "000000", alpha: 0.0)
-        assertColor(DS.sidebarMaterialShadow, equalsHex: "000000", alpha: 0.018)
+        assertColor(DS.sidebarMaterialShadow, equalsHex: "000000", alpha: 0.034)
     }
 
     func testCodexMonoUsesPopoverMaterialForSpotlightWeightGlobalChrome() {
         DS.palette = CodexMonoPalette()
 
         XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.material, .popover)
+    }
+
+    func testCodexMonoGlobalPanelsUseStrongerSpotlightShadow() {
+        DS.palette = CodexMonoPalette()
+
+        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowRadius, 40, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowYOffset, 11, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.sideShadowOpacity, 0.074, accuracy: 0.001)
     }
 
     func testCodexMonoKeepsSemanticSignalColorsDifferentiated() {

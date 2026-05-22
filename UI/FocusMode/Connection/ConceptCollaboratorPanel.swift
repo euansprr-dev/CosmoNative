@@ -240,14 +240,13 @@ struct ConceptCollaboratorPanel: View {
     }
 
     private func resolvedDraft(for message: CollaboratorMessage) -> ConnectionDraftProposal? {
-        if let activeDraft, previewSourceMessageID == message.id {
+        if let activeDraft,
+           previewSourceMessageID == message.id || message.draftProposals.contains(where: { $0.id == activeDraft.id }) {
             return activeDraft
         }
-        guard let messageDraft = message.draftProposal else { return nil }
-        if let activeDraft, activeDraft.id == messageDraft.id {
-            return activeDraft
-        }
-        return messageDraft
+        return message.draftProposals.first { draft in
+            draft.status != .accepted && draft.status != .dismissed
+        } ?? message.draftProposal
     }
 
     @ViewBuilder

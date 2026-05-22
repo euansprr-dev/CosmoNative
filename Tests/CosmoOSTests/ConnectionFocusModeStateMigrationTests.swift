@@ -53,6 +53,62 @@ final class ConnectionFocusModeStateMigrationTests: XCTestCase {
         XCTAssertNil(decoded.activeDraftProposal)
     }
 
+    func testCollaboratorMessagePreservesMultipleDraftProposals() throws {
+        let claim = ConnectionDraftProposal(
+            targetSection: .claims,
+            draftText: "The subconscious executes toward the clearest image.",
+            status: .pending
+        )
+        let example = ConnectionDraftProposal(
+            targetSection: .examples,
+            draftText: "A painter finishes the image internally before the first brushstroke.",
+            status: .pending
+        )
+        let message = CollaboratorMessage(
+            role: .assistant,
+            text: "I'll stage the claim first, then the painter example.",
+            questionSuggestion: "What would make the image concrete enough to test?",
+            draftProposals: [claim, example]
+        )
+
+        let data = try JSONEncoder().encode(message)
+        let decoded = try JSONDecoder().decode(CollaboratorMessage.self, from: data)
+
+        XCTAssertEqual(decoded.draftProposals.count, 2)
+        XCTAssertEqual(decoded.draftProposal?.targetSection, .claims)
+        XCTAssertEqual(decoded.draftProposals[1].targetSection, .examples)
+        XCTAssertEqual(decoded.questionSuggestion, "What would make the image concrete enough to test?")
+    }
+
+    func testUpdatingCollaboratorDraftKeepsQueuedDrafts() throws {
+        var state = ConnectionFocusModeState(atomUUID: "connection-uuid")
+        var claim = ConnectionDraftProposal(
+            targetSection: .claims,
+            draftText: "The subconscious executes toward the clearest image.",
+            status: .pending
+        )
+        let example = ConnectionDraftProposal(
+            targetSection: .examples,
+            draftText: "A painter finishes the image internally before the first brushstroke.",
+            status: .pending
+        )
+        let message = CollaboratorMessage(
+            role: .assistant,
+            text: "I'll stage both.",
+            draftProposals: [claim, example]
+        )
+        state.appendCollaboratorMessage(message)
+
+        claim.status = .accepted
+        claim.insertedAt = Date()
+        state.updateCollaboratorDraft(claim)
+
+        let updatedMessage = try XCTUnwrap(state.collaboratorMessages.first)
+        XCTAssertEqual(updatedMessage.draftProposals.count, 2)
+        XCTAssertEqual(updatedMessage.draftProposals[0].status, .accepted)
+        XCTAssertEqual(updatedMessage.draftProposals[1].status, .pending)
+    }
+
     func testConnectionStructuredDataBackfillsInquiryV2Sections() throws {
         let legacyTypes: [ConnectionSectionType] = [
             .goal,

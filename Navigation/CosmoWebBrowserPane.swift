@@ -351,6 +351,24 @@ actor CosmoBrowserStore {
         try persist()
     }
 
+    func upsertPin(_ pin: CosmoBrowserPinnedSite, for profileID: String) throws -> [CosmoBrowserPinnedSite] {
+        var pins = snapshot.pinnedSitesByProfile[profileID] ?? []
+        pins.removeAll { $0.host == pin.host }
+        pins.append(pin)
+        pins.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        snapshot.pinnedSitesByProfile[profileID] = pins
+        try persist()
+        return pins
+    }
+
+    func removePin(host: String, for profileID: String) throws -> [CosmoBrowserPinnedSite] {
+        var pins = snapshot.pinnedSitesByProfile[profileID] ?? []
+        pins.removeAll { $0.host == host }
+        snapshot.pinnedSitesByProfile[profileID] = pins
+        try persist()
+        return pins
+    }
+
     func renamePin(_ pinID: UUID, to displayName: String, for profileID: String) throws {
         guard var pins = snapshot.pinnedSitesByProfile[profileID],
               let index = pins.firstIndex(where: { $0.id == pinID }) else {
@@ -1179,22 +1197,31 @@ final class CosmoWebBrowserState: ObservableObject {
     func toggleCurrentSitePin() {
         guard let currentURL else { return }
         let host = CosmoBrowserPinnedSite.normalizedHost(for: currentURL)
+        let profileID = profile.id
 
         if isCurrentSitePinned {
             session.unpin(host: host)
             pins.removeAll { $0.host == host }
+
+            Task {
+                guard let savedPins = try? await store.removePin(host: host, for: profileID) else { return }
+                guard profile.id == profileID else { return }
+                pins = savedPins
+                session.pinnedSites = savedPins
+            }
         } else {
             session.recordVisit(url: currentURL, title: displayTitle)
             guard let pin = session.pinCurrentSite() else { return }
             pins.removeAll { $0.host == pin.host }
             pins.append(pin)
             pins.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-        }
 
-        let pinsSnapshot = pins
-        let profileID = profile.id
-        Task {
-            try? await store.savePins(pinsSnapshot, for: profileID)
+            Task {
+                guard let savedPins = try? await store.upsertPin(pin, for: profileID) else { return }
+                guard profile.id == profileID else { return }
+                pins = savedPins
+                session.pinnedSites = savedPins
+            }
         }
     }
 
@@ -1218,10 +1245,12 @@ final class CosmoWebBrowserState: ObservableObject {
         pins.removeAll { $0.id == pin.id }
         session.pinnedSites = pins
 
-        let pinsSnapshot = pins
         let profileID = profile.id
         Task {
-            try? await store.savePins(pinsSnapshot, for: profileID)
+            guard let savedPins = try? await store.removePin(host: pin.host, for: profileID) else { return }
+            guard profile.id == profileID else { return }
+            pins = savedPins
+            session.pinnedSites = savedPins
         }
     }
 

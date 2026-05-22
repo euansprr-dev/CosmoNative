@@ -53,4 +53,16 @@ final class TelegramCaptureCommandParserTests: XCTestCase {
         XCTAssertEqual(parsed?.destinationName, "Vietnam admin")
         XCTAssertEqual(parsed?.requestedLaneType, .taskLane)
     }
+
+    func testParsesNaturalLanguageCreateLaneAndCapture() {
+        let parsed = TelegramCaptureCommandParser.parse(
+            "Make a new capture lane called Travel and capture this to it.\nDa Nang",
+            allowsEmptyBody: true
+        )
+
+        XCTAssertEqual(parsed?.kind, .createLane)
+        XCTAssertEqual(parsed?.destinationName, "Travel")
+        XCTAssertEqual(parsed?.body, "Da Nang")
+        XCTAssertEqual(parsed?.shouldCaptureRemainder, true)
+    }
 }

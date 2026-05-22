@@ -75,27 +75,24 @@ struct ConnectionStructuredWorkspaceView: View {
                 wellColumn
                     .frame(width: metrics.wellWidth)
                 forgeColumn(metrics: metrics)
-                atelierColumn
+                atelierColumn(metrics: metrics)
                     .frame(width: metrics.atelierWidth)
             }
 
         case .medium:
-            VStack(alignment: .leading, spacing: metrics.rowSpacing) {
-                HStack(alignment: .top, spacing: metrics.columnSpacing) {
-                    forgeColumn(metrics: metrics)
-                    atelierColumn
-                        .frame(width: min(metrics.atelierWidth, availableWidth - metrics.outerPadding * 2))
-                }
-
+            HStack(alignment: .top, spacing: metrics.columnSpacing) {
                 wellColumn
-                    .frame(width: min(metrics.wellWidth, availableWidth - metrics.outerPadding * 2))
+                    .frame(width: metrics.wellWidth)
+                forgeColumn(metrics: metrics)
+                atelierColumn(metrics: metrics)
+                    .frame(width: metrics.atelierWidth)
             }
 
         case .narrow:
             VStack(alignment: .leading, spacing: metrics.rowSpacing) {
                 forgeColumn(metrics: metrics)
                 wellColumn
-                atelierColumn
+                atelierColumn(metrics: metrics)
             }
         }
     }
@@ -144,7 +141,7 @@ struct ConnectionStructuredWorkspaceView: View {
         )
     }
 
-    private var atelierColumn: some View {
+    private func atelierColumn(metrics: ConnectionWorkspaceMetrics) -> some View {
         ConnectionAtelierDockView(
             collaboratorMessages: $collaboratorMessages,
             activeDraftProposal: $activeDraftProposal,
@@ -164,7 +161,8 @@ struct ConnectionStructuredWorkspaceView: View {
             onResumeDraft: onResumeDraft,
             onUseLinkedSources: onUseLinkedSources,
             onRefreshInsights: onRefreshInsights,
-            onDismissInsight: onDismissInsight
+            onDismissInsight: onDismissInsight,
+            collaboratorHeight: metrics.atelierHeight
         )
     }
 }
@@ -183,15 +181,20 @@ private struct ConnectionWorkspaceMetrics {
     let stationSpacing: CGFloat
     let wellWidth: CGFloat
     let atelierWidth: CGFloat
+    let atelierHeight: CGFloat
     let stationWidth: CGFloat
     let stationColumns: Int
 
     init(width: CGFloat) {
+        let stationTargetWidth: CGFloat = 372
+        let compactStationMaxWidth: CGFloat = 360
+        let atelierTargetWidth: CGFloat = 340
+        let atelierTargetHeight: CGFloat = 500
         let wideOuterPadding: CGFloat = 40
         let wideColumnSpacing: CGFloat = 24
         let wideStationSpacing: CGFloat = 16
         let wideWellWidth: CGFloat = 272
-        let wideAtelierWidth: CGFloat = 296
+        let wideAtelierWidth: CGFloat = atelierTargetWidth
         let wideAvailableStationWidth = floor(
             (width
              - wideOuterPadding * 2
@@ -205,7 +208,7 @@ private struct ConnectionWorkspaceMetrics {
         let mediumColumnSpacing: CGFloat = 24
         let mediumStationSpacing: CGFloat = 16
         let mediumWellWidth: CGFloat = 272
-        let mediumAtelierWidth: CGFloat = 296
+        let mediumAtelierWidth: CGFloat = atelierTargetWidth
         let mediumAvailableStationWidth = floor(
             (width
              - mediumOuterPadding * 2
@@ -222,7 +225,8 @@ private struct ConnectionWorkspaceMetrics {
             stationSpacing = wideStationSpacing
             wellWidth = wideWellWidth
             atelierWidth = wideAtelierWidth
-            stationWidth = min(248, wideAvailableStationWidth)
+            atelierHeight = atelierTargetHeight
+            stationWidth = stationTargetWidth
             stationColumns = 4
         } else if mediumAvailableStationWidth >= 192 {
             breakpoint = .medium
@@ -232,7 +236,8 @@ private struct ConnectionWorkspaceMetrics {
             stationSpacing = mediumStationSpacing
             wellWidth = mediumWellWidth
             atelierWidth = mediumAtelierWidth
-            stationWidth = min(224, mediumAvailableStationWidth)
+            atelierHeight = atelierTargetHeight
+            stationWidth = stationTargetWidth
             stationColumns = 4
         } else {
             breakpoint = .narrow
@@ -242,11 +247,12 @@ private struct ConnectionWorkspaceMetrics {
             stationSpacing = 16
             wellWidth = width
             atelierWidth = width
+            atelierHeight = atelierTargetHeight
             stationColumns = width >= 860 ? 2 : 1
             let availableWidth = width
                 - outerPadding * 2
                 - stationSpacing * CGFloat(max(stationColumns - 1, 0))
-            stationWidth = max(220, min(320, floor(availableWidth / CGFloat(stationColumns))))
+            stationWidth = max(260, min(compactStationMaxWidth, floor(availableWidth / CGFloat(stationColumns))))
         }
     }
 }

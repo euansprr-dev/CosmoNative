@@ -1584,7 +1584,7 @@ struct ContentFocusModeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         .padding(.leading, DS.space20)
         .padding(.bottom, DS.space20)
-        .opacity(localDraftContent.isEmpty || zenMode ? 0 : 1)
+        .opacity(localDraftContent.isEmpty ? 0 : 1)
         .allowsHitTesting(false)
         .animation(ProMotionSprings.snappy, value: isSelection)
     }

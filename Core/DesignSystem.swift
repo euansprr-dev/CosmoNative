@@ -313,14 +313,14 @@ enum DS {
     /// Base wash layered above native macOS material for major app sidebars.
     static var sidebarMaterialBase: Color {
         if palette.isDark { return Color.black.opacity(0.018) }
-        return usesCodexMonoMaterial ? Color.white.opacity(0.34) : Color.white.opacity(0.010)
+        return usesCodexMonoMaterial ? Color.white.opacity(0.665) : Color.white.opacity(0.010)
     }
 
     /// Opacity for the native material layer. Light mode needs a lower value so
     /// bright canvas content can still register through the sidebar.
     static var sidebarMaterialNativeOpacity: Double {
         if palette.isDark { return 0.94 }
-        return usesCodexMonoMaterial ? 0.38 : 0.74
+        return usesCodexMonoMaterial ? 0.650 : 0.74
     }
 
     /// Solid fallback used when Reduce Transparency is enabled.
@@ -375,7 +375,7 @@ enum DS {
     /// Exterior shadow for inset glass panels.
     static var sidebarMaterialShadow: Color {
         if palette.isDark { return Color.black.opacity(0.075) }
-        return Color.black.opacity(usesCodexMonoMaterial ? 0.018 : 0.028)
+        return Color.black.opacity(usesCodexMonoMaterial ? 0.034 : 0.028)
     }
 
     // ═══════════════════════════════════════════════════════════════

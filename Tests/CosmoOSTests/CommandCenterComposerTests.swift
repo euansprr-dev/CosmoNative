@@ -227,6 +227,88 @@ final class CommandCenterComposerTests: XCTestCase {
         XCTAssertEqual(updatedCustomFuture, "Custom future title")
     }
 
+    @MainActor
+    func testDeletedRecurringInstanceBlocksSameOccurrenceRegeneration() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let occurrence = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19, hour: 9)))
+
+        let template = try await createRecurringTaskAtom(
+            title: "Repeat tombstone",
+            occurrenceDate: occurrence,
+            recurrence: .weekly(on: [.tuesday])
+        )
+        let instance = try await createRecurringTaskAtom(
+            title: "Repeat tombstone",
+            occurrenceDate: occurrence,
+            parentUUID: template.uuid
+        )
+
+        try await AtomRepository.shared.delete(uuid: instance.uuid)
+
+        let exists = try await TaskRecurrenceEngine.shared.instanceExists(
+            templateUUID: template.uuid,
+            date: occurrence
+        )
+
+        XCTAssertTrue(exists)
+    }
+
+    @MainActor
+    func testDeletingRecurringTaskFutureScopeDeletesTemplateAndFutureInstancesOnly() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let occurrence = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19, hour: 9)))
+        let previousOccurrence = try XCTUnwrap(calendar.date(byAdding: .day, value: -7, to: occurrence))
+        let nextOccurrence = try XCTUnwrap(calendar.date(byAdding: .day, value: 7, to: occurrence))
+        let viewModel = CommandCenterDashboardViewModel(startsRefreshing: false)
+
+        let template = try await createRecurringTaskAtom(
+            title: "Future delete",
+            occurrenceDate: occurrence,
+            recurrence: .weekly(on: [.tuesday])
+        )
+        let past = try await createRecurringTaskAtom(
+            title: "Future delete",
+            occurrenceDate: previousOccurrence,
+            parentUUID: template.uuid
+        )
+        let current = try await createRecurringTaskAtom(
+            title: "Future delete",
+            occurrenceDate: occurrence,
+            parentUUID: template.uuid
+        )
+        let future = try await createRecurringTaskAtom(
+            title: "Future delete",
+            occurrenceDate: nextOccurrence,
+            parentUUID: template.uuid
+        )
+
+        await viewModel.deleteTask(uuid: current.uuid, recurrenceScope: .currentAndFuture)
+
+        let remainingPast = try await AtomRepository.shared.fetch(uuid: past.uuid)
+        let remainingCurrent = try await AtomRepository.shared.fetch(uuid: current.uuid)
+        let remainingFuture = try await AtomRepository.shared.fetch(uuid: future.uuid)
+        let remainingTemplate = try await AtomRepository.shared.fetch(uuid: template.uuid)
+
+        XCTAssertNotNil(remainingPast)
+        XCTAssertNil(remainingCurrent)
+        XCTAssertNil(remainingFuture)
+        XCTAssertNotNil(remainingTemplate)
+
+        let truncatedRule = try XCTUnwrap(
+            remainingTemplate?
+                .metadataValue(as: TaskMetadata.self)?
+                .recurrence
+                .flatMap(RecurrenceRule.fromJSON)
+        )
+        guard case .onDate(let endDate) = truncatedRule.endCondition else {
+            XCTFail("Expected recurring template to be truncated before the deleted occurrence")
+            return
+        }
+        XCTAssertLessThan(endDate, occurrence)
+    }
+
     private func createRecurringTaskAtom(
         title: String,
         occurrenceDate: Date,

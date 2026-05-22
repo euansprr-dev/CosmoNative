@@ -54,10 +54,10 @@ struct CodexMonoPalette: ThemePalette {
     var focusRing: Color { Color.black.opacity(0.28) }
 
     // Glass
-    var glassCardFill: Color { Color.white.opacity(0.90) }
-    var glassInputFill: Color { Color.white.opacity(0.94) }
-    var glassInputFillFocused: Color { Color.white.opacity(0.99) }
-    var glassSectionFill: Color { Color.white.opacity(0.72) }
+    var glassCardFill: Color { Color.white.opacity(0.950) }
+    var glassInputFill: Color { Color.white.opacity(0.970) }
+    var glassInputFillFocused: Color { Color.white.opacity(0.996) }
+    var glassSectionFill: Color { Color.white.opacity(0.860) }
     var glassBorder: Color { Color.black.opacity(0.05) }
     var glassBorderFocused: Color { Color.black.opacity(0.20) }
 

@@ -92,10 +92,12 @@ final class ConceptCollaboratorEngine {
         - bootstrap turn: \(isBootstrap ? "yes" : "no")
 
         Connection-specific rules:
-        - The current connection is the working surface. Additive drafts belong in one section at a time.
+        - The current connection is the working surface. Additive drafts belong in one section at a time in the UI, but a single reply may stage multiple drafts when the user explicitly asks for multiple insertions.
         - If the connection is blank or barely started, invite the user to send the core idea even if it is messy.
         - If the connection already has material, begin from what is already written and any linked sources.
-        - Ask one question at a time or stage one section-targeted draft. Do not do both aggressively.
+        - Ask one question at a time or stage section-targeted drafts. Do not do both aggressively.
+        - If you say you will draft multiple items, include every item in the structured drafts array. Never promise an insertion in prose without returning its draft object.
+        - After staging any draft, include a question_suggestion that would deepen the concept as a whole after the user accepts an insertion.
         - Never use canned filler like "What's the tension?" unless the user uses that language first.
         - Observation kind, if any, must be one of: pattern, paradox, name, contrast, sourceLink.
         - Use linked sources only when they materially sharpen the question, observation, or draft.
@@ -201,8 +203,8 @@ final class ConceptCollaboratorEngine {
 
     private func historyMessagePayload(_ message: CollaboratorMessage) -> [String: Any] {
         var content = message.text
-        if let draft = message.draftProposal {
-            content += "\n\n[Draft proposal for \(draft.targetSection.displayName)]: \(draft.draftText)"
+        for draft in message.draftProposals {
+            content += "\n\n[Draft proposal for \(draft.targetSection.displayName), \(draft.status.rawValue)]: \(draft.draftText)"
         }
         if let observationKind = message.observationKind {
             content += "\n[Observation: \(observationKind.rawValue)]"
@@ -223,7 +225,7 @@ final class ConceptCollaboratorEngine {
             "type": "function",
             "function": [
                 "name": "stage_connection_turn",
-                "description": "Return the next collaborator turn for this connection. Include assistant_text every time. Optionally include one observation kind, one question suggestion, and one additive section-targeted draft proposal.",
+                "description": "Return the next collaborator turn for this connection. Include assistant_text every time. Optionally include one observation kind, one question suggestion, and one or more additive section-targeted draft proposals.",
                 "parameters": [
                     "type": "object",
                     "properties": [
@@ -246,6 +248,7 @@ final class ConceptCollaboratorEngine {
                         ],
                         "draft": [
                             "type": "object",
+                            "description": "Legacy single draft proposal. Prefer drafts when staging more than one insertion.",
                             "properties": [
                                 "section": [
                                     "type": "string",
@@ -267,6 +270,34 @@ final class ConceptCollaboratorEngine {
                                 ]
                             ],
                             "required": ["section", "draft_text"]
+                        ],
+                        "drafts": [
+                            "type": "array",
+                            "description": "Ordered list of additive section-targeted draft proposals. Use this when the user asks for multiple insertions; the app will show them one at a time.",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "section": [
+                                        "type": "string",
+                                        "enum": ConnectionSectionType.allCases.map(\.rawValue),
+                                        "description": "The section that should receive this draft."
+                                    ],
+                                    "draft_text": [
+                                        "type": "string",
+                                        "description": "The exact additive draft text for the target section."
+                                    ],
+                                    "rationale": [
+                                        "type": "string",
+                                        "description": "One sentence on why this belongs in that section."
+                                    ],
+                                    "source_ids": [
+                                        "type": "array",
+                                        "items": ["type": "string"],
+                                        "description": "Optional array of linked source UUIDs used for the draft."
+                                    ]
+                                ],
+                                "required": ["section", "draft_text"]
+                            ]
                         ]
                     ],
                     "required": ["assistant_text"]
@@ -299,26 +330,7 @@ final class ConceptCollaboratorEngine {
             let recommendedAction = (input["recommended_action"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            var draftProposal: ConnectionDraftProposal?
-            if let draftInput = input["draft"] as? [String: Any],
-               let sectionRaw = draftInput["section"] as? String,
-               let section = ConnectionSectionType(rawValue: sectionRaw),
-               let draftText = (draftInput["draft_text"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !draftText.isEmpty {
-                let rationale = (draftInput["rationale"] as? String)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let sourceIDs = (draftInput["source_ids"] as? [String] ?? [])
-                    .filter { linkedSourceIDs.contains($0) }
-                draftProposal = ConnectionDraftProposal(
-                    targetSection: section,
-                    draftText: draftText,
-                    visibleText: "",
-                    rationale: rationale,
-                    sourceIDs: sourceIDs,
-                    status: .streaming
-                )
-            }
+            let draftProposals = parseDraftProposals(from: input, linkedSourceIDs: linkedSourceIDs)
 
             return CollaboratorMessage(
                 role: .assistant,
@@ -326,7 +338,7 @@ final class ConceptCollaboratorEngine {
                 observationKind: observationKind,
                 questionSuggestion: questionSuggestion,
                 recommendedAction: recommendedAction,
-                draftProposal: draftProposal
+                draftProposals: draftProposals
             )
         }
 
@@ -338,6 +350,41 @@ final class ConceptCollaboratorEngine {
             role: .assistant,
             text: text.isEmpty ? fallbackText(for: state, linkedSources: linkedSources) : text
         )
+    }
+
+    private func parseDraftProposals(
+        from input: [String: Any],
+        linkedSourceIDs: Set<String>
+    ) -> [ConnectionDraftProposal] {
+        var draftInputs: [[String: Any]] = []
+        if let drafts = input["drafts"] as? [[String: Any]] {
+            draftInputs.append(contentsOf: drafts)
+        }
+        if draftInputs.isEmpty, let draft = input["draft"] as? [String: Any] {
+            draftInputs.append(draft)
+        }
+
+        return draftInputs.compactMap { draftInput in
+            guard let sectionRaw = draftInput["section"] as? String,
+                  let section = ConnectionSectionType(rawValue: sectionRaw),
+                  let draftText = (draftInput["draft_text"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !draftText.isEmpty else {
+                return nil
+            }
+            let rationale = (draftInput["rationale"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let sourceIDs = (draftInput["source_ids"] as? [String] ?? [])
+                .filter { linkedSourceIDs.contains($0) }
+            return ConnectionDraftProposal(
+                targetSection: section,
+                draftText: draftText,
+                visibleText: "",
+                rationale: rationale,
+                sourceIDs: sourceIDs,
+                status: .streaming
+            )
+        }
     }
 
     private func sanitizeAssistantText(_ text: String, state: ConnectionFocusModeState) -> String {

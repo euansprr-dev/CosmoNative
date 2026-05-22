@@ -117,9 +117,12 @@ Extend the shared rich document model with heading metadata instead of creating 
 
 - add a small `RichHeadingMetadata` value, or equivalent fields, to `RichBlock`
 - store per-heading collapsed state
+- store the collapsed section blocks on the heading while collapsed
 - preserve existing `RichBlock.id` so heading navigator entries can reference a stable block
 
-The first version only needs persisted collapse state. It does not need custom heading IDs beyond the existing block ID.
+When a heading is expanded, the document remains flat: heading blocks and paragraph/list/media blocks are siblings. When a heading is collapsed, the blocks owned by that heading section are moved into the heading metadata and removed from the flat sibling list until the heading is expanded again. This makes the collapsed section behave like a folded range and lets Return insert a new visible paragraph below the folded heading instead of into hidden content.
+
+The first version does not need custom heading IDs beyond the existing block ID.
 
 ### Section Tree Builder
 
@@ -140,7 +143,7 @@ The utility should be pure Swift and unit tested without AppKit.
 
 `RichDocumentSerializer.attributedString(from:)` should render visible blocks only when editing. When it omits content hidden by a collapsed heading, it must attach a deterministic JSON snapshot of the hidden section blocks to the collapsed heading line, using a new heading-specific attributed-string key such as `RichDocumentAttributeKeys.headingCollapsedChildrenJSON`.
 
-`RichDocumentSerializer.document(from:)` must restore hidden section blocks by decoding that snapshot and splicing the blocks immediately after the collapsed heading block. This follows the existing Element pattern: collapsed content is not visible in the attributed text, but the attributed heading line carries enough structured information to restore the hidden blocks.
+`RichDocumentSerializer.document(from:)` must restore hidden section blocks by decoding that snapshot back into the collapsed heading metadata. It must not splice those blocks into the visible sibling list until the heading is expanded. This follows the existing Element pattern: collapsed content is not visible in the attributed text, but the attributed heading line carries enough structured information to restore the hidden blocks.
 
 The serializer must emit the same `RichDocument.plainText` before and after a collapsed-heading round trip. Toggling collapse and saving must never delete hidden content.
 

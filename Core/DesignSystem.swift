@@ -16,8 +16,12 @@ enum DS {
     /// All color properties below are computed from this.
     nonisolated(unsafe) static var palette: ThemePalette = GreenhousePalette()
 
-    private static var usesCodexMonoMaterial: Bool {
-        palette.name == "Codex Mono"
+    private static var usesMonoMaterial: Bool {
+        palette.name == "Codex Mono" || palette.name == "Black Mono"
+    }
+
+    private static var usesBlackMonoPaper: Bool {
+        palette.name == "Black Mono"
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -42,6 +46,43 @@ enum DS {
     /// Hover state tint for interactive surfaces
     static var surfaceHover: Color { palette.surfaceHover }
 
+    /// Compact command/dashboard chrome fill. Kept separate from document paper so
+    /// Black Mono app controls stay dark while notes and cards remain white.
+    static var commandChromePanelFill: Color {
+        if usesBlackMonoPaper { return palette.surfaceElevated }
+        return documentVellum.opacity(0.35)
+    }
+
+    /// Stronger compact command/dashboard chrome fill for nested active states.
+    static var commandChromeProminentFill: Color {
+        if usesBlackMonoPaper { return palette.surfaceCard }
+        return documentVellum.opacity(0.50)
+    }
+
+    /// Compact command/dashboard chrome border.
+    static var commandChromeBorder: Color {
+        if usesBlackMonoPaper { return palette.border }
+        return documentSepiaSubtle
+    }
+
+    /// Stronger compact command/dashboard border.
+    static var commandChromeProminentBorder: Color {
+        if usesBlackMonoPaper { return palette.border }
+        return documentSepiaBorder.opacity(0.65)
+    }
+
+    /// Secondary compact control fill on command/dashboard chrome.
+    static var commandChromeControlFill: Color {
+        if usesBlackMonoPaper { return palette.surfaceHover }
+        return documentVellumDeep.opacity(0.65)
+    }
+
+    /// Secondary compact control border on command/dashboard chrome.
+    static var commandChromeControlBorder: Color {
+        if usesBlackMonoPaper { return palette.border }
+        return documentSepiaSubtle
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // DOCUMENT PAPER — Stable light surfaces for notes, content drafts,
     // connection manuscripts, and other long-form reading/writing areas.
@@ -49,71 +90,88 @@ enum DS {
     // ═══════════════════════════════════════════════════════════════
 
     static var documentBackground: Color {
-        palette.isDark ? Color(hex: "F8F7F4") : palette.bg
+        if usesBlackMonoPaper { return palette.vellumDeep }
+        return palette.isDark ? Color(hex: "F8F7F4") : palette.bg
     }
 
     static var documentSurface: Color {
-        palette.isDark ? Color(hex: "FFFFFF") : palette.surfaceElevated
+        if usesBlackMonoPaper { return palette.vellum }
+        return palette.isDark ? Color(hex: "FFFFFF") : palette.surfaceElevated
     }
 
     static var documentSurfaceHover: Color {
-        palette.isDark ? Color(hex: "F0EFEB") : palette.surfaceHover
+        if usesBlackMonoPaper { return palette.sepiaSubtle }
+        return palette.isDark ? Color(hex: "F0EFEB") : palette.surfaceHover
     }
 
     static var documentText: Color {
-        palette.isDark ? Color(hex: "1A1A1F") : palette.text
+        if usesBlackMonoPaper { return palette.inkWash }
+        return palette.isDark ? Color(hex: "1A1A1F") : palette.text
     }
 
     static var documentTextSecondary: Color {
-        palette.isDark ? Color(hex: "6B6B78") : palette.textSecondary
+        if usesBlackMonoPaper { return palette.inkFaded }
+        return palette.isDark ? Color(hex: "6B6B78") : palette.textSecondary
     }
 
     static var documentTextMuted: Color {
-        palette.isDark ? Color(hex: "767685") : palette.textMuted
+        if usesBlackMonoPaper { return palette.inkFaded }
+        return palette.isDark ? Color(hex: "767685") : palette.textMuted
     }
 
     static var documentBorder: Color {
-        palette.isDark ? Color(hex: "DCDCE0") : palette.border
+        if usesBlackMonoPaper { return palette.sepiaBorder }
+        return palette.isDark ? Color(hex: "DCDCE0") : palette.border
     }
 
     static var documentBorderSubtle: Color {
-        palette.isDark ? Color(hex: "E8E8EC") : palette.borderSubtle
+        if usesBlackMonoPaper { return palette.sepiaBorder }
+        return palette.isDark ? Color(hex: "E8E8EC") : palette.borderSubtle
     }
 
     static var documentVellum: Color {
-        palette.isDark ? Color(hex: "F3EDE4") : palette.vellum
+        if usesBlackMonoPaper { return palette.vellum }
+        return palette.isDark ? Color(hex: "F3EDE4") : palette.vellum
     }
 
     static var documentVellumDeep: Color {
-        palette.isDark ? Color(hex: "EDE5D8") : palette.vellumDeep
+        if usesBlackMonoPaper { return palette.vellumDeep }
+        return palette.isDark ? Color(hex: "EDE5D8") : palette.vellumDeep
     }
 
     static var documentInkWash: Color {
-        palette.isDark ? Color(hex: "2C2A26") : palette.inkWash
+        if usesBlackMonoPaper { return palette.inkWash }
+        return palette.isDark ? Color(hex: "2C2A26") : palette.inkWash
     }
 
     static var documentInkFaded: Color {
-        palette.isDark ? Color(hex: "7A7568") : palette.inkFaded
+        if usesBlackMonoPaper { return palette.inkFaded }
+        return palette.isDark ? Color(hex: "7A7568") : palette.inkFaded
     }
 
     static var documentSepiaBorder: Color {
-        palette.isDark ? Color(hex: "DDD5C8") : palette.sepiaBorder
+        if usesBlackMonoPaper { return palette.sepiaBorder }
+        return palette.isDark ? Color(hex: "DDD5C8") : palette.sepiaBorder
     }
 
     static var documentSepiaSubtle: Color {
-        palette.isDark ? Color(hex: "E8E1D6") : palette.sepiaSubtle
+        if usesBlackMonoPaper { return palette.sepiaSubtle }
+        return palette.isDark ? Color(hex: "E8E1D6") : palette.sepiaSubtle
     }
 
     static var documentGilt: Color {
-        palette.isDark ? Color(hex: "C4A265") : palette.gilt
+        if usesBlackMonoPaper { return palette.gilt }
+        return palette.isDark ? Color(hex: "C4A265") : palette.gilt
     }
 
     static var documentGiltSoft: Color {
-        palette.isDark ? Color(hex: "F5EDD8") : palette.giltSoft
+        if usesBlackMonoPaper { return palette.giltSoft }
+        return palette.isDark ? Color(hex: "F5EDD8") : palette.giltSoft
     }
 
     static var documentGiltMuted: Color {
-        palette.isDark ? Color(hex: "D4C9A8") : palette.giltMuted
+        if usesBlackMonoPaper { return palette.giltMuted }
+        return palette.isDark ? Color(hex: "D4C9A8") : palette.giltMuted
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -313,14 +371,14 @@ enum DS {
     /// Base wash layered above native macOS material for major app sidebars.
     static var sidebarMaterialBase: Color {
         if palette.isDark { return Color.black.opacity(0.018) }
-        return usesCodexMonoMaterial ? Color.white.opacity(0.665) : Color.white.opacity(0.010)
+        return usesMonoMaterial ? Color.white.opacity(0.665) : Color.white.opacity(0.010)
     }
 
     /// Opacity for the native material layer. Light mode needs a lower value so
     /// bright canvas content can still register through the sidebar.
     static var sidebarMaterialNativeOpacity: Double {
         if palette.isDark { return 0.94 }
-        return usesCodexMonoMaterial ? 0.650 : 0.74
+        return usesMonoMaterial ? 0.650 : 0.74
     }
 
     /// Solid fallback used when Reduce Transparency is enabled.
@@ -332,19 +390,19 @@ enum DS {
     /// Hairline material edge.
     static var sidebarMaterialBorder: Color {
         if palette.isDark { return Color.white.opacity(0.16) }
-        return Color.black.opacity(usesCodexMonoMaterial ? 0.058 : 0.085)
+        return Color.black.opacity(usesMonoMaterial ? 0.058 : 0.085)
     }
 
     /// Top/leading highlight for the glass surface.
     static var sidebarMaterialHighlight: Color {
         if palette.isDark { return Color.white.opacity(0.18) }
-        return Color.white.opacity(usesCodexMonoMaterial ? 0.64 : 0.30)
+        return Color.white.opacity(usesMonoMaterial ? 0.64 : 0.30)
     }
 
     /// Inner shade that keeps translucent panels readable.
     static var sidebarMaterialInnerShade: Color {
         if palette.isDark { return Color.black.opacity(0.018) }
-        return Color.black.opacity(usesCodexMonoMaterial ? 0 : 0.010)
+        return Color.black.opacity(usesMonoMaterial ? 0 : 0.010)
     }
 
     /// Ambient scene tint cap for global sidebars.
@@ -375,7 +433,7 @@ enum DS {
     /// Exterior shadow for inset glass panels.
     static var sidebarMaterialShadow: Color {
         if palette.isDark { return Color.black.opacity(0.075) }
-        return Color.black.opacity(usesCodexMonoMaterial ? 0.034 : 0.028)
+        return Color.black.opacity(usesMonoMaterial ? 0.034 : 0.028)
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -7,6 +7,7 @@ import SwiftUI
 enum CosmoAppTheme: String, CaseIterable, Identifiable {
     case greenhouse
     case codexMono
+    case blackMono
     case midnightStudy
     case nordicFrost
     case terracotta
@@ -18,6 +19,7 @@ enum CosmoAppTheme: String, CaseIterable, Identifiable {
         switch self {
         case .greenhouse: GreenhousePalette()
         case .codexMono: CodexMonoPalette()
+        case .blackMono: BlackMonoPalette()
         case .midnightStudy: MidnightStudyPalette()
         case .nordicFrost: NordicFrostPalette()
         case .terracotta: TerracottaPalette()
@@ -29,6 +31,7 @@ enum CosmoAppTheme: String, CaseIterable, Identifiable {
         switch self {
         case .greenhouse: "Greenhouse"
         case .codexMono: "Codex Mono"
+        case .blackMono: "Black Mono"
         case .midnightStudy: "Midnight Study"
         case .nordicFrost: "Nordic Frost"
         case .terracotta: "Terracotta"
@@ -43,6 +46,7 @@ enum CosmoAppTheme: String, CaseIterable, Identifiable {
         switch self {
         case .greenhouse: "Morning coffee in a sunlit studio"
         case .codexMono: "Black and white workspace with colored signal cues"
+        case .blackMono: "Black mono workspace with white signal"
         case .midnightStudy: "Late-night deep work by lamplight"
         case .nordicFrost: "Scandinavian clarity on a winter morning"
         case .terracotta: "Mediterranean creative studio at golden hour"

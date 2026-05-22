@@ -2331,7 +2331,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func deleteTask(
         uuid: String,
-        recurrenceScope: RecurringTaskTitleEditScope = .currentOnly
+        recurrenceScope: RecurringTaskTitleEditScope = .currentAndFuture
     ) async {
         do {
             guard let current = try await AtomRepository.shared.fetch(uuid: uuid) else { return }

@@ -18,6 +18,28 @@ final class DocumentPaperThemeTests: XCTestCase {
         assertColor(DS.documentBorderSubtle, equalsHex: "E8E8EC")
     }
 
+    func testBlackMonoKeepsDocumentPaperWhiteWithDarkInk() throws {
+        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
+        DS.palette = theme.palette
+
+        assertColor(DS.documentSurface, equalsHex: "FFFFFF")
+        assertColor(DS.documentText, equalsHex: "1A1A1F")
+        assertColor(DS.documentTextSecondary, equalsHex: "6B6B78")
+        assertColor(DS.documentBorderSubtle, equalsHex: "E8E8EC")
+    }
+
+    func testBlackMonoKeepsVellumPaperWhiteWithDarkInk() throws {
+        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
+        DS.palette = theme.palette
+
+        assertColor(DS.vellum, equalsHex: "FFFFFF")
+        assertColor(DS.vellumDeep, equalsHex: "F8F7F4")
+        assertColor(DS.inkWash, equalsHex: "1A1A1F")
+        assertColor(DS.inkFaded, equalsHex: "6B6B78")
+        assertColor(DS.sepiaBorder, equalsHex: "E8E8EC")
+        assertColor(DS.sepiaSubtle, equalsHex: "F5F4F0")
+    }
+
     func testDarkThemesKeepVellumConnectionSurfacesLight() {
         DS.palette = MidnightStudyPalette()
 

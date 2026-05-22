@@ -11,6 +11,7 @@
 		C0DE5AFE0000000000000003 /* SupabaseSyncTrafficPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5AFE0000000000000004 /* SupabaseSyncTrafficPolicyTests.swift */; };
 		C0D3C0D3C0D3C0D3C0D3C0D2 /* ThemePaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */; };
 		C0D3C0D3C0D3C0D3C0D3A002 /* CodexMonoPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */; };
+		B1AC0DE00000000000000002 /* BlackMonoPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AC0DE00000000000000001 /* BlackMonoPalette.swift */; };
 		009BB3A912B8D36D99B64182 /* SharedTitleSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3898EC77376C9313EEE76A9 /* SharedTitleSystem.swift */; };
 		00BD6CC692DE3139E9A42598 /* EditorPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7829068125D7586394C50B /* EditorPresentation.swift */; };
 		01413C896130D77833669A20 /* LibraryGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 512FCBE75880721AE01DB134 /* LibraryGridView.swift */; };
@@ -123,6 +124,7 @@
 		236482B8E69106DA73573E94 /* FocusContextDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF318DF384EB48B497D68E2F /* FocusContextDetector.swift */; };
 		23C919888D21860BD7061A1E /* TemplateBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090597754446D78C195A77C1 /* TemplateBlockView.swift */; };
 		23FBB186AF6D46EB1BE06A3E /* ContentPipelineBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709437D7412018C3AB023EDD /* ContentPipelineBar.swift */; };
+		2405AFE00000000000000002 /* ContentFocusPersistenceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2405AFE00000000000000001 /* ContentFocusPersistenceRegressionTests.swift */; };
 		243E55F8D4DEA8FFB64BDAB5 /* ContentContextPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3941E21C0691A2C9D94A7965 /* ContentContextPanel.swift */; };
 		24DE5DF1BA508ADD325E18FA /* InlineUndoAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA676F005BD2AE33F5AEAD79 /* InlineUndoAction.swift */; };
 		24F4EE4D9D4D3DC5835CBD55 /* CosmoChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078263DA1CD2E018ADBBDB2A /* CosmoChatView.swift */; };
@@ -965,6 +967,7 @@
 		200D6F1058EDFFDE093E9A31 /* InstagramSwipeModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstagramSwipeModal.swift; sourceTree = "<group>"; };
 		205A233119A70ADFD0F913C3 /* CosmoDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoDatabase.swift; sourceTree = "<group>"; };
 		20A74C082F320ABFE0A2F6B3 /* ContentFocusPaneLayoutPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentFocusPaneLayoutPolicyTests.swift; sourceTree = "<group>"; };
+		2405AFE00000000000000001 /* ContentFocusPersistenceRegressionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentFocusPersistenceRegressionTests.swift; sourceTree = "<group>"; };
 		2102FEA4B0C930DF27F2DA7F /* LevelSystemVoicePatterns.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LevelSystemVoicePatterns.swift; sourceTree = "<group>"; };
 		227559B36BA19282F06B89BA /* CanvasDrawingRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingRecord.swift; sourceTree = "<group>"; };
 		229A581FC01C4C1886C9D2FA /* LevelUpCelebrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LevelUpCelebrationView.swift; sourceTree = "<group>"; };
@@ -1057,6 +1060,7 @@
 		3E4C96A6B2814E33B6B1D504 /* CaptureDestinationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureDestinationRepository.swift; sourceTree = "<group>"; };
 		3E6C0226C8847CF89BB73A9D /* CodexElementBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexElementBrowser.swift; sourceTree = "<group>"; };
 		C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMonoPalette.swift; sourceTree = "<group>"; };
+		B1AC0DE00000000000000001 /* BlackMonoPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlackMonoPalette.swift; sourceTree = "<group>"; };
 		3EC40026C3F525EDBC642CA0 /* ObsidianPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianPalette.swift; sourceTree = "<group>"; };
 		3EFA6AB392D25C61AB751DA5 /* CommandHubCaptureController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandHubCaptureController.swift; sourceTree = "<group>"; };
 		40830DB846D9B1BD193E899E /* EditorLayoutMetricsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EditorLayoutMetricsTests.swift; sourceTree = "<group>"; };
@@ -3268,6 +3272,7 @@
 				C0DE5C0018A4E00100000004 /* CommandKScrollChromePolicyTests.swift */,
 				A3A4708524FFFEFEDA9DA979 /* ConnectionFocusModeStateMigrationTests.swift */,
 				20A74C082F320ABFE0A2F6B3 /* ContentFocusPaneLayoutPolicyTests.swift */,
+				2405AFE00000000000000001 /* ContentFocusPersistenceRegressionTests.swift */,
 				E1E1A0B0C0D0E0F011223346 /* DocumentElementHeaderLayoutTests.swift */,
 				E1E1A0B0C0D0E0F011223344 /* DocumentElementStoreTests.swift */,
 				D0C0DE000000000000000101 /* DocumentPaperThemeTests.swift */,
@@ -3311,6 +3316,7 @@
 			isa = PBXGroup;
 			children = (
 				C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */,
+				B1AC0DE00000000000000001 /* BlackMonoPalette.swift */,
 				49BC9E954C8FC24862480D98 /* GreenhousePalette.swift */,
 				EDC149ACC3006F00A22775DE /* MidnightStudyPalette.swift */,
 				09D0AE57D7C40C61373DBA03 /* NordicFrostPalette.swift */,
@@ -3603,6 +3609,7 @@
 				C0DE5C0018A4E00100000003 /* CommandKScrollChromePolicyTests.swift in Sources */,
 				0DC6D43436CED4B486395984 /* ConnectionFocusModeStateMigrationTests.swift in Sources */,
 				ADA239E71BB2FD0479D74039 /* ContentFocusPaneLayoutPolicyTests.swift in Sources */,
+				2405AFE00000000000000002 /* ContentFocusPersistenceRegressionTests.swift in Sources */,
 				E1E1A0B0C0D0E0F011223347 /* DocumentElementHeaderLayoutTests.swift in Sources */,
 				E1E1A0B0C0D0E0F011223345 /* DocumentElementStoreTests.swift in Sources */,
 				D0C0DE000000000000000102 /* DocumentPaperThemeTests.swift in Sources */,
@@ -4002,6 +4009,7 @@
 				8AD844AD751C207164D53005 /* GraphQueryEngine.swift in Sources */,
 				C9ABD41A41844D163D48974A /* GreenhousePalette.swift in Sources */,
 				C0D3C0D3C0D3C0D3C0D3A002 /* CodexMonoPalette.swift in Sources */,
+				B1AC0DE00000000000000002 /* BlackMonoPalette.swift in Sources */,
 				48BA6EED11991BD49E8477DE /* GuidedStoryCreatorView.swift in Sources */,
 				D7C602A8D30ADE2E07659DC9 /* HealthKitAtomFactory.swift in Sources */,
 				6AC7910E934878E910C145BC /* HealthKitConfiguration.swift in Sources */,

@@ -313,6 +313,11 @@ class TaskRecurrenceEngine {
         let referenceDay = calendar.startOfDay(for: referenceDate)
         var deletions = Set<String>()
         var groupedByParentAndDay: [String: [GeneratedInstanceSnapshot]] = [:]
+        func parentDayKey(for snapshot: GeneratedInstanceSnapshot) -> String {
+            let occurrenceDay = calendar.startOfDay(for: snapshot.occurrenceDate)
+            let dayKey = PlannerumFormatters.iso8601.string(from: occurrenceDay)
+            return "\(snapshot.parentUUID)|\(dayKey)"
+        }
 
         if let activeTemplateUUIDs {
             for snapshot in activeSnapshots where !activeTemplateUUIDs.contains(snapshot.parentUUID) {
@@ -320,10 +325,13 @@ class TaskRecurrenceEngine {
             }
         }
 
+        let completedParentDays = Set(snapshots.filter(\.isCompleted).map(parentDayKey))
+        for snapshot in activeSnapshots where completedParentDays.contains(parentDayKey(for: snapshot)) {
+            deletions.insert(snapshot.uuid)
+        }
+
         for snapshot in activeSnapshots {
-            let occurrenceDay = calendar.startOfDay(for: snapshot.occurrenceDate)
-            let dayKey = PlannerumFormatters.iso8601.string(from: occurrenceDay)
-            groupedByParentAndDay["\(snapshot.parentUUID)|\(dayKey)", default: []].append(snapshot)
+            groupedByParentAndDay[parentDayKey(for: snapshot), default: []].append(snapshot)
         }
 
         for duplicates in groupedByParentAndDay.values where duplicates.count > 1 {

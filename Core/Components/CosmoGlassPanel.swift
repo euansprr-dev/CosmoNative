@@ -297,14 +297,14 @@ enum CosmoGlassPanelRole {
     case focusSidebar
     case floatingAssistant
 
-    private var usesCodexMonoMaterial: Bool {
-        DS.palette.name == "Codex Mono"
+    private var usesMonoMaterial: Bool {
+        DS.palette.name == "Codex Mono" || DS.palette.name == "Black Mono"
     }
 
     var material: NSVisualEffectView.Material {
         switch self {
         case .globalSidebar:
-            return usesCodexMonoMaterial ? .popover : .sidebar
+            return usesMonoMaterial ? .popover : .sidebar
         case .focusSidebar:
             return .hudWindow
         case .floatingAssistant:
@@ -326,7 +326,7 @@ enum CosmoGlassPanelRole {
     var shadowRadius: CGFloat {
         switch self {
         case .globalSidebar:
-            return usesCodexMonoMaterial ? 40 : 34
+            return usesMonoMaterial ? 40 : 34
         case .focusSidebar:
             return 20
         case .floatingAssistant:
@@ -337,7 +337,7 @@ enum CosmoGlassPanelRole {
     var shadowYOffset: CGFloat {
         switch self {
         case .globalSidebar:
-            return usesCodexMonoMaterial ? 11 : 10
+            return usesMonoMaterial ? 11 : 10
         case .focusSidebar:
             return 8
         case .floatingAssistant:
@@ -370,7 +370,7 @@ enum CosmoGlassPanelRole {
     var sideShadowOpacity: Double {
         switch self {
         case .globalSidebar:
-            if usesCodexMonoMaterial { return 0.074 }
+            if usesMonoMaterial { return 0.074 }
             return DS.palette.isDark ? 0.12 : 0.058
         case .focusSidebar:
             return DS.palette.isDark ? 0.08 : 0.032

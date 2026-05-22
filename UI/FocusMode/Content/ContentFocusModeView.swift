@@ -41,6 +41,35 @@ enum ContentFocusLayoutPolicy {
     }
 }
 
+enum ContentFocusWritePolicy {
+    static func allowsWrite(existingMetadata: String?, snapshotLastModified: Date) -> Bool {
+        guard let existingModified = persistedModifiedTime(from: existingMetadata) else {
+            return true
+        }
+
+        return snapshotLastModified.timeIntervalSince1970 + 0.000001 >= existingModified
+    }
+
+    private static func persistedModifiedTime(from metadata: String?) -> TimeInterval? {
+        guard let metadata,
+              let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        if let unix = dict["lastModifiedUnix"] as? TimeInterval {
+            return unix
+        }
+
+        if let modifiedString = dict["lastModified"] as? String,
+           let date = ISO8601DateFormatter().date(from: modifiedString) {
+            return date.timeIntervalSince1970
+        }
+
+        return nil
+    }
+}
+
 /// Unified single-page Content Focus Mode.
 /// Left sidebar (outline/hooks/core idea) + center editor + right sidebar (context OR polish).
 struct ContentFocusModeView: View {
@@ -2681,6 +2710,7 @@ class ContentFocusModeViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self, !self.isClosed else { return }
                 self.writeSequence += 1  // Invalidate in-flight async writes
+                self.flushTitleUpdateSync()
                 self.writeToAtomSync()
             }
     }
@@ -2689,6 +2719,7 @@ class ContentFocusModeViewModel: ObservableObject {
 
     deinit {
         autoSaveTask?.cancel()
+        titleUpdateTask?.cancel()
         saveNotificationCancellable?.cancel()
         phaseChangeCancellable?.cancel()
         terminationCancellable?.cancel()
@@ -2887,6 +2918,13 @@ class ContentFocusModeViewModel: ObservableObject {
                     }
 
                     let fields = stateCopy.toAtomFields(existingMetadata: existingMetadata)
+                    guard ContentFocusWritePolicy.allowsWrite(
+                        existingMetadata: existingMetadata,
+                        snapshotLastModified: stateCopy.lastModified
+                    ) else {
+                        print("[FOCUS-CONTENT-VM] writeToAtom() SKIPPED stale metadata — uuid=\(atomUUID) seq=\(mySequence)")
+                        return
+                    }
 
                     try db.execute(
                         sql: """
@@ -2938,6 +2976,13 @@ class ContentFocusModeViewModel: ObservableObject {
                 }
 
                 let fields = stateCopy.toAtomFields(existingMetadata: existingMetadata)
+                guard ContentFocusWritePolicy.allowsWrite(
+                    existingMetadata: existingMetadata,
+                    snapshotLastModified: stateCopy.lastModified
+                ) else {
+                    print("[FOCUS-CONTENT-VM] writeToAtomSync() SKIPPED stale metadata — uuid=\(atomUUID)")
+                    return
+                }
 
                 try db.execute(
                     sql: """
@@ -2984,6 +3029,7 @@ class ContentFocusModeViewModel: ObservableObject {
         phaseChangeCancellable = nil
         toolNotificationCancellables.removeAll()
         writeSequence += 1  // Invalidate any in-flight async writes from writeToAtom()
+        flushTitleUpdateSync()
         writeToAtomSync()
     }
 
@@ -3229,6 +3275,8 @@ class ContentFocusModeViewModel: ObservableObject {
     // MARK: - Title Update
 
     private var titleUpdateTask: Task<Void, Never>?
+    private var pendingTitleDocument: RichDocument?
+    private var pendingTitlePlainText: String?
 
     func updateTitle(_ newTitle: String) {
         updateTitleDocument(RichDocument.migrateLegacy(newTitle), plainTitle: newTitle)
@@ -3236,35 +3284,77 @@ class ContentFocusModeViewModel: ObservableObject {
 
     func updateTitleDocument(_ document: RichDocument, plainTitle: String) {
         titleUpdateTask?.cancel()
+        let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
+            document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
+        )
+        let trimmed = RichDocumentPersistence.titlePlainText(from: titleDocument)
+        pendingTitleDocument = titleDocument
+        pendingTitlePlainText = trimmed
+
         titleUpdateTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s debounce
             guard !Task.isCancelled else { return }
-            let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
-                document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
-            )
-            let trimmed = RichDocumentPersistence.titlePlainText(from: titleDocument)
-            let uuid = atom.uuid
-            do {
-                try await CosmoDatabase.shared.asyncWrite { db in
-                    var existingMetadata: String?
-                    if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
-                        existingMetadata = row["metadata"]
-                    }
-                    let fields = RichDocumentPersistence.writeAtomDocuments(
-                        existingMetadata: existingMetadata,
-                        titleDocument: titleDocument
-                    )
-                    try db.execute(
-                        sql: """
-                        UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1
-                        WHERE uuid = ?
-                        """,
-                        arguments: [RichDocumentPersistence.nilIfEmpty(trimmed), fields.metadata, ISO8601DateFormatter().string(from: Date()), uuid]
-                    )
+            await persistTitleUpdate(titleDocument: titleDocument, trimmed: trimmed)
+        }
+    }
+
+    private func persistTitleUpdate(titleDocument: RichDocument, trimmed: String) async {
+        let uuid = atom.uuid
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                var existingMetadata: String?
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                    existingMetadata = row["metadata"]
                 }
-            } catch {
-                print("❌ Content focus: title update failed: \(error)")
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: existingMetadata,
+                    titleDocument: titleDocument
+                )
+                try db.execute(
+                    sql: """
+                    UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1
+                    WHERE uuid = ?
+                    """,
+                    arguments: [RichDocumentPersistence.nilIfEmpty(trimmed), fields.metadata, ISO8601DateFormatter().string(from: Date()), uuid]
+                )
             }
+            if pendingTitleDocument == titleDocument {
+                pendingTitleDocument = nil
+                pendingTitlePlainText = nil
+            }
+        } catch {
+            print("❌ Content focus: title update failed: \(error)")
+        }
+    }
+
+    private func flushTitleUpdateSync() {
+        titleUpdateTask?.cancel()
+        guard let titleDocument = pendingTitleDocument else { return }
+
+        let trimmed = pendingTitlePlainText ?? RichDocumentPersistence.titlePlainText(from: titleDocument)
+        let uuid = atom.uuid
+        do {
+            try CosmoDatabase.shared.write { db in
+                var existingMetadata: String?
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                    existingMetadata = row["metadata"]
+                }
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: existingMetadata,
+                    titleDocument: titleDocument
+                )
+                try db.execute(
+                    sql: """
+                    UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1
+                    WHERE uuid = ?
+                    """,
+                    arguments: [RichDocumentPersistence.nilIfEmpty(trimmed), fields.metadata, ISO8601DateFormatter().string(from: Date()), uuid]
+                )
+            }
+            pendingTitleDocument = nil
+            pendingTitlePlainText = nil
+        } catch {
+            print("❌ Content focus: title flush failed: \(error)")
         }
     }
 

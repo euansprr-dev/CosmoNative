@@ -19,10 +19,10 @@ struct DashboardObjectivesBar: View {
                 }
                 .padding(.horizontal, DS.space12)
                 .padding(.vertical, DS.space10)
-                .background(DS.vellum.opacity(0.34), in: .rect(cornerRadius: 8))
+                .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(DS.sepiaSubtle, lineWidth: 0.5)
+                        .stroke(DS.commandChromeBorder, lineWidth: 0.5)
                 )
             }
         }
@@ -83,7 +83,7 @@ struct DashboardObjectivesBar: View {
             HStack {
                 Text(objective.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.inkWash)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Spacer()

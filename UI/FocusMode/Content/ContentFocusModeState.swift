@@ -760,6 +760,7 @@ extension ContentFocusModeState {
         metadataDict["isContextPanelVisible"] = isContextPanelVisible
         metadataDict["isAISuggestedOutline"] = isAISuggestedOutline
         metadataDict["lastModified"] = ISO8601DateFormatter().string(from: lastModified)
+        metadataDict["lastModifiedUnix"] = lastModified.timeIntervalSince1970
 
         // Encode outline as JSON array
         if !outline.isEmpty,

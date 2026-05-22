@@ -32,11 +32,11 @@ struct DashboardTimeTracker: View {
 
                 Text(formattedTodayTotal)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(DS.inkWash)
+                    .foregroundStyle(DS.text)
 
                 Text("today")
                     .font(DS.caption)
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(DS.textMuted)
             }
 
             if !viewModel.todayIntentSummaries.isEmpty {
@@ -50,10 +50,10 @@ struct DashboardTimeTracker: View {
         }
         .padding(.horizontal, DS.space10)
         .padding(.vertical, DS.space8)
-        .background(DS.vellum.opacity(0.35), in: .rect(cornerRadius: 8))
+        .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(DS.sepiaSubtle, lineWidth: 0.5)
+                .stroke(DS.commandChromeBorder, lineWidth: 0.5)
         )
     }
 
@@ -133,14 +133,14 @@ struct DashboardTimeTracker: View {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Text(formattedElapsedTime)
                         .font(.system(size: 24, weight: .light, design: .monospaced))
-                        .foregroundStyle(DS.inkWash)
+                        .foregroundStyle(DS.text)
                 }
 
                 Spacer()
 
                 HStack(spacing: DS.space8) {
                     if sessionEngine.isTimerRunning {
-                        iconControlButton(icon: "pause.fill", color: DS.text, bg: DS.vellumDeep) {
+                        iconControlButton(icon: "pause.fill", color: DS.text, bg: DS.commandChromeControlFill) {
                             sessionEngine.pauseSession()
                         }
                     } else {
@@ -156,10 +156,10 @@ struct DashboardTimeTracker: View {
             }
         }
         .padding(DS.space12)
-        .background(DS.vellum.opacity(0.5), in: .rect(cornerRadius: 10))
+        .background(DS.commandChromeProminentFill, in: .rect(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.sepiaBorder.opacity(0.65), lineWidth: 0.5)
+                .stroke(DS.commandChromeProminentBorder, lineWidth: 0.5)
         )
     }
 
@@ -171,13 +171,13 @@ struct DashboardTimeTracker: View {
                 Text(title)
                     .font(DS.caption)
             }
-            .foregroundStyle(isProminent ? DS.textOnAccent : DS.inkFaded)
+            .foregroundStyle(isProminent ? DS.textOnAccent : DS.textSecondary)
             .padding(.horizontal, DS.space10)
             .padding(.vertical, DS.space6)
-            .background(isProminent ? DS.accent : DS.vellumDeep.opacity(0.65), in: Capsule())
+            .background(isProminent ? DS.accent : DS.commandChromeControlFill, in: Capsule())
             .overlay(
                 Capsule()
-                    .stroke(isProminent ? DS.accent.opacity(0.25) : DS.sepiaSubtle, lineWidth: 0.5)
+                    .stroke(isProminent ? DS.accent.opacity(0.25) : DS.commandChromeControlBorder, lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)

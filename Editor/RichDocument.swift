@@ -32,6 +32,16 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
     }
 }
 
+struct RichHeadingMetadata: Codable, Equatable, Hashable, Sendable {
+    var isCollapsed: Bool
+    var collapsedBlocks: [RichBlock]
+
+    init(isCollapsed: Bool = false, collapsedBlocks: [RichBlock] = []) {
+        self.isCollapsed = isCollapsed
+        self.collapsedBlocks = collapsedBlocks
+    }
+}
+
 public struct RichMention: Codable, Equatable, Hashable, Sendable {
     var entityUUID: String
     var entityID: Int64?
@@ -82,6 +92,7 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
     var inlines: [RichInlineNode] = []
     var checked: Bool? = nil
     var element: RichElementInstance? = nil
+    var heading: RichHeadingMetadata? = nil
     var children: [RichBlock] = []
 
     init(
@@ -90,6 +101,7 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         inlines: [RichInlineNode] = [],
         checked: Bool? = nil,
         element: RichElementInstance? = nil,
+        heading: RichHeadingMetadata? = nil,
         children: [RichBlock] = []
     ) {
         self.id = id
@@ -97,6 +109,7 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.inlines = inlines
         self.checked = checked
         self.element = element
+        self.heading = kind.headingLevelInt == nil ? nil : (heading ?? RichHeadingMetadata())
         self.children = children
     }
 
@@ -132,6 +145,7 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         case inlines
         case checked
         case element
+        case heading
         case children
     }
 
@@ -142,6 +156,10 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         inlines = try container.decodeIfPresent([RichInlineNode].self, forKey: .inlines) ?? []
         checked = try container.decodeIfPresent(Bool.self, forKey: .checked)
         element = try container.decodeIfPresent(RichElementInstance.self, forKey: .element)
+        heading = try container.decodeIfPresent(RichHeadingMetadata.self, forKey: .heading)
+        if kind.headingLevelInt != nil, heading == nil {
+            heading = RichHeadingMetadata()
+        }
         children = try container.decodeIfPresent([RichBlock].self, forKey: .children) ?? []
     }
 
@@ -152,9 +170,18 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         try container.encode(inlines, forKey: .inlines)
         try container.encodeIfPresent(checked, forKey: .checked)
         try container.encodeIfPresent(element, forKey: .element)
+        if kind.headingLevelInt != nil {
+            try container.encode(heading ?? RichHeadingMetadata(), forKey: .heading)
+        }
         if !children.isEmpty {
             try container.encode(children, forKey: .children)
         }
+    }
+}
+
+extension RichBlock {
+    var plainInlineText: String {
+        inlines.map(\.plainText).joined()
     }
 }
 
@@ -229,7 +256,12 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
             }
 
             let body = block.inlines.map(\.plainText).joined()
-            return indentation + prefix + body
+            let line = indentation + prefix + body
+            if let collapsedBlocks = block.heading?.collapsedBlocks, !collapsedBlocks.isEmpty {
+                let childText = plainText(for: collapsedBlocks, depth: depth)
+                return childText.isEmpty ? line : line + "\n" + childText
+            }
+            return line
         }
         .joined(separator: "\n")
     }

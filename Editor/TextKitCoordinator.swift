@@ -673,6 +673,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var focusBandRange: NSRange? = nil
     var focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil
     var editorTargetID: String? = nil
+    var navigationTargetID: UUID? = nil
     var textAlignment: NSTextAlignment = .natural
 
     var typewriterMode: Bool = false
@@ -745,6 +746,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     self.shouldRefocus = false
                 }
             }
+            context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
             return
         }
 
@@ -763,6 +765,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.applyFocusBand(to: textView)
         context.coordinator.normalizeSingleLineViewport(for: textView)
+        context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
 
         if shouldRefocus {
             DispatchQueue.main.async {
@@ -977,6 +980,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         var deferredSyncWorkItem: DispatchWorkItem?
         private var lastReportedHeight: CGFloat = 0
         private var lastObservedFrameWidth: CGFloat = 0
+        private var lastNavigationTargetID: UUID?
         private var selectionChangeWorkItem: DispatchWorkItem?
         /// Grace period after opening a menu — ignores auto-scroll dismiss
         private var menuOpenedAt: CFAbsoluteTime = 0
@@ -1136,6 +1140,21 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             layoutManager.addTemporaryAttribute(.foregroundColor, value: mutedColor, forCharacterRange: fullRange)
             layoutManager.addTemporaryAttribute(.foregroundColor, value: activeColor, forCharacterRange: activeRange)
+        }
+
+        func navigateIfNeeded(to headingID: UUID?, in textView: CosmoTextView) {
+            guard headingID != lastNavigationTargetID else { return }
+            lastNavigationTargetID = headingID
+            guard let headingID,
+                  let headingRange = headingRange(for: headingID, in: textView) else {
+                return
+            }
+
+            textView.window?.makeFirstResponder(textView)
+            textView.setSelectedRange(NSRange(location: headingRange.location, length: 0))
+            scrollRangeIntoAncestorViewport(headingRange, in: textView)
+            textView.showFindIndicator(for: headingRange)
+            parent.cursorPosition = headingRange.location
         }
 
         // MARK: - Shortcut Delegate
@@ -2191,6 +2210,73 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if let value = value as? UUID { return value }
             if let value = value as? String { return UUID(uuidString: value) }
             return nil
+        }
+
+        private func headingRange(for headingID: UUID, in textView: NSTextView) -> NSRange? {
+            guard let storage = textView.textStorage,
+                  storage.length > 0 else {
+                return nil
+            }
+
+            let string = storage.string as NSString
+            let fullRange = NSRange(location: 0, length: storage.length)
+            var lineStart = 0
+
+            while lineStart < storage.length {
+                let lineRange = string.lineRange(for: NSRange(location: lineStart, length: 0))
+                let safeRange = NSIntersectionRange(lineRange, fullRange)
+                let trimmedRange = trimmingTrailingNewline(from: safeRange, in: string)
+
+                if trimmedRange.length > 0,
+                   let id = headingBlockID(in: storage, location: trimmedRange.location),
+                   id == headingID {
+                    return trimmedRange
+                }
+
+                lineStart = lineRange.location + lineRange.length
+                if lineStart <= safeRange.location {
+                    break
+                }
+            }
+
+            return nil
+        }
+
+        private func scrollRangeIntoAncestorViewport(_ range: NSRange, in textView: NSTextView) {
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer,
+                  let ancestorScrollView = textView.nearestAncestorScrollView(excluding: textView.enclosingScrollView),
+                  let documentView = ancestorScrollView.documentView else {
+                textView.scrollRangeToVisible(range)
+                return
+            }
+
+            layoutManager.ensureLayout(for: textContainer)
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            if rect.isEmpty {
+                rect = CGRect(x: 0, y: 0, width: 1, height: textView.font?.pointSize ?? parent.fontSize)
+            }
+
+            let textViewRect = CGRect(
+                x: rect.origin.x + textView.textContainerOrigin.x,
+                y: rect.origin.y + textView.textContainerOrigin.y,
+                width: max(rect.width, 1),
+                height: max(rect.height, textView.font?.pointSize ?? parent.fontSize)
+            )
+            let targetRect = textView.convert(textViewRect, to: documentView)
+            let visibleRect = ancestorScrollView.documentVisibleRect
+            let visibleHeight = max(visibleRect.height, 1)
+            let documentHeight = max(documentView.bounds.height, visibleHeight)
+            let maxY = max(0, documentHeight - visibleHeight)
+            let targetY = min(max(0, targetRect.minY - visibleHeight * 0.18), maxY)
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                ancestorScrollView.contentView.animator().setBoundsOrigin(NSPoint(x: visibleRect.minX, y: targetY))
+            }
+            ancestorScrollView.reflectScrolledClipView(ancestorScrollView.contentView)
         }
 
         private func boolAttribute(_ key: NSAttributedString.Key, at location: Int, in storage: NSTextStorage) -> Bool? {

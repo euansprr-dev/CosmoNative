@@ -50,6 +50,7 @@ struct CosmoDocumentEditor: View {
     var focusBandRange: NSRange? = nil
     var focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil
     var editorTargetID: String? = nil
+    var navigationTargetID: UUID? = nil
     var onPlainTextChange: ((String) -> Void)? = nil
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
     var onDocumentChange: ((RichDocument, String) -> Void)? = nil
@@ -88,6 +89,7 @@ struct CosmoDocumentEditor: View {
                 focusBandRange: focusBandRange,
                 focusBandRangeProvider: focusBandRangeProvider,
                 editorTargetID: editorTargetID,
+                navigationTargetID: navigationTargetID,
                 onActivate: onActivate,
             onDeactivate: onDeactivate,
             onCommit: onCommit,

@@ -102,6 +102,8 @@ struct NoteFocusModeView: View {
     @State private var backlinkPreviews: [NoteBacklinkPreview] = []
     @State private var mentionedInCounts: [AtomType: Int] = [:]
     @State private var contentHeadings: [NoteHeadingEntry] = []
+    @State private var bodyHeadingOutline: [RichHeadingOutlineEntry] = []
+    @State private var bodyNavigationTargetID: UUID?
 
     private let database = CosmoDatabase.shared
     private let autoSaveDelay: TimeInterval = 0.5
@@ -528,10 +530,13 @@ struct NoteFocusModeView: View {
                         bodyEditorHeight = max(400, newHeight)
                     },
                     editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
-                    onDocumentChange: { _, plainText in
+                    navigationTargetID: bodyNavigationTargetID,
+                    onDocumentChange: { document, plainText in
                         let changed = plainText != plainContent
                         print("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
+                        bodyDocument = document
                         plainContent = plainText
+                        updateBodyHeadingOutline(from: document)
                         refreshCosmoContextIfActive()
                         refreshHeadings()
                         if !isInitialLoad {
@@ -583,14 +588,14 @@ struct NoteFocusModeView: View {
             VStack(alignment: .leading, spacing: DS.space20) {
                 railSectionLabel("❡  ON THIS NOTE")
 
-                if contentHeadings.isEmpty {
-                    Text(isEmptyNote ? "No headings yet" : "No sections — use # or ## to create sections")
+                if bodyHeadingOutline.isEmpty {
+                    Text(isEmptyNote ? "No headings yet" : "No sections — use Heading 1, 2, or 3 to create sections")
                         .font(DS.caption)
                         .foregroundStyle(DS.documentTextMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     VStack(alignment: .leading, spacing: DS.space6) {
-                        ForEach(Array(contentHeadings.enumerated()), id: \.offset) { _, entry in
+                        ForEach(bodyHeadingOutline) { entry in
                             outlineEntryRow(entry)
                         }
                     }
@@ -634,21 +639,27 @@ struct NoteFocusModeView: View {
         )
     }
 
-    private func outlineEntryRow(_ entry: NoteHeadingEntry) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
-            Text(entry.level == 1 ? "¶" : "›")
-                .font(DS.caption2)
-                .foregroundStyle(DS.gilt.opacity(0.6))
-                .frame(width: 10, alignment: .leading)
-            Text(entry.text)
-                .font(entry.level == 1 ? DS.subheadline : DS.caption)
-                .foregroundStyle(entry.level == 1 ? DS.documentText : DS.documentTextSecondary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
+    private func outlineEntryRow(_ entry: RichHeadingOutlineEntry) -> some View {
+        Button {
+            navigateToBodyHeading(entry)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+                Text(entry.level == 1 ? "¶" : "›")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.gilt.opacity(0.6))
+                    .frame(width: 10, alignment: .leading)
+                Text(entry.title)
+                    .font(entry.level == 1 ? DS.subheadline : DS.caption)
+                    .foregroundStyle(entry.level == 1 ? DS.documentText : DS.documentTextSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.leading, CGFloat(entry.level - 1) * DS.space8)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.leading, CGFloat(entry.level - 1) * DS.space8)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
     }
 
     private func linkCountRow(label: String, count: Int, tint: Color) -> some View {
@@ -894,6 +905,17 @@ struct NoteFocusModeView: View {
             }
         }
         contentHeadings = Array(entries.prefix(25))
+    }
+
+    private func updateBodyHeadingOutline(from document: RichDocument) {
+        bodyHeadingOutline = RichDocumentHeadings.outline(in: document)
+    }
+
+    private func navigateToBodyHeading(_ entry: RichHeadingOutlineEntry) {
+        bodyNavigationTargetID = nil
+        DispatchQueue.main.async {
+            bodyNavigationTargetID = entry.id
+        }
     }
 
     // MARK: - Title Section
@@ -1288,6 +1310,7 @@ struct NoteFocusModeView: View {
                         print("[FOCUS-NOTE] 🔔 observation APPLYING body (initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count)")
                         bodyDocument = nextBodyDocument
                         plainContent = nextBodyPlainText
+                        updateBodyHeadingOutline(from: nextBodyDocument)
                     } else if !isInitialLoad, nextBodyPlainText != plainContent {
                         print("[FOCUS-NOTE] 🔔 observation SKIPPED body (not initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count) localLen=\(plainContent.count) ⚠️ DIVERGED=\(nextBodyPlainText != plainContent)")
                     }

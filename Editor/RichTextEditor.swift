@@ -49,6 +49,7 @@ struct RichTextEditor: View {
     var focusBandRange: NSRange? = nil
     var focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil
     var editorTargetID: String? = nil
+    var navigationTargetID: UUID? = nil
     var onActivate: (() -> Void)? = nil
     var onDeactivate: (() -> Void)? = nil
     var onCommit: (() -> Void)? = nil
@@ -111,6 +112,7 @@ struct RichTextEditor: View {
         focusBandRange: NSRange? = nil,
         focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil,
         editorTargetID: String? = nil,
+        navigationTargetID: UUID? = nil,
         onActivate: (() -> Void)? = nil,
         onDeactivate: (() -> Void)? = nil,
         onCommit: (() -> Void)? = nil,
@@ -146,6 +148,7 @@ struct RichTextEditor: View {
         self.focusBandRange = focusBandRange
         self.focusBandRangeProvider = focusBandRangeProvider
         self.editorTargetID = editorTargetID
+        self.navigationTargetID = navigationTargetID
         self.onActivate = onActivate
         self.onDeactivate = onDeactivate
         self.onCommit = onCommit
@@ -178,6 +181,7 @@ struct RichTextEditor: View {
                 focusBandRange: focusBandRange,
                 focusBandRangeProvider: focusBandRangeProvider,
                 editorTargetID: editorTargetID,
+                navigationTargetID: navigationTargetID,
                 textAlignment: textAlignment,
                 typewriterMode: typewriterMode,
                 isEditable: isEditable,

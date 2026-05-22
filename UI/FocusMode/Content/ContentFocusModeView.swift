@@ -88,6 +88,8 @@ struct ContentFocusModeView: View {
     @State private var editableTitle: String
     @State private var titleDocument: RichDocument = .empty
     @State private var draftDocument: RichDocument = .empty
+    @State private var draftHeadingOutline: [RichHeadingOutlineEntry] = []
+    @State private var draftNavigationTargetID: UUID?
     @StateObject private var writingEngine = UnifiedWritingEngine()
     @StateObject private var writingAIAssistant = ContentWritingAssistant()
 
@@ -376,6 +378,7 @@ struct ContentFocusModeView: View {
             viewModel.loadState()
             localDraftContent = viewModel.state.draftContent
             draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(viewModel.state.draftContent)
+            updateDraftHeadingOutline(from: draftDocument)
             titleDocument = RichDocumentPersistence.loadAtomDocument(
                 field: .title,
                 metadata: atom.metadata,
@@ -446,6 +449,7 @@ struct ContentFocusModeView: View {
             if draftDocument.plainText != localDraftContent && !localDraftContent.isEmpty {
                 print("[FOCUS-CONTENT] onDisappear — rebuilding stale draftDocument from localDraftContent (docLen=\(draftDocument.plainText.count) vs localLen=\(localDraftContent.count))")
                 draftDocument = RichDocument.migrateLegacy(localDraftContent)
+                updateDraftHeadingOutline(from: draftDocument)
             }
             // Sync local draft to viewModel state before closing
             viewModel.state.draftContent = localDraftContent
@@ -486,6 +490,7 @@ struct ContentFocusModeView: View {
                 print("[FOCUS-CONTENT] onChange(vmDraftContent) APPLYING external update — uuid=\(atom.uuid) newLen=\(newValue.count) localLen=\(localDraftContent.count) preview=\"\(String(newValue.prefix(60)))\"")
                 localDraftContent = newValue
                 draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(newValue)
+                updateDraftHeadingOutline(from: draftDocument)
             } else if newValue != localDraftContent, draftEditedLocally {
                 print("[FOCUS-CONTENT] onChange(vmDraftContent) SKIPPED — draftEditedLocally=true uuid=\(atom.uuid) vmLen=\(newValue.count) localLen=\(localDraftContent.count)")
             }
@@ -832,11 +837,13 @@ struct ContentFocusModeView: View {
                 focusBandRangeProvider: { plainText, selectionRange in
                     focusBandRange(for: selectionRange, mode: focusBandMode, in: plainText)
                 },
+                navigationTargetID: draftNavigationTargetID,
                 onDocumentChange: { document, plainText in
                     let changed = plainText != localDraftContent
                     print("[FOCUS-CONTENT] onDocumentChange(draft) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
                     localDraftContent = plainText
                     draftDocument = document
+                    updateDraftHeadingOutline(from: document)
                     draftEditedLocally = true
                     markTypingActive()
                     updateFocusBand()
@@ -1100,9 +1107,43 @@ struct ContentFocusModeView: View {
             if !viewModel.state.hooks.isEmpty {
                 hooksMarginaliaSection
             }
+            if !draftHeadingOutline.isEmpty {
+                draftSectionsMarginaliaSection
+            }
             outlineMarginaliaSection
             if !viewModel.state.contentDescription.isEmpty {
                 coreIdeaMarginaliaSection
+            }
+        }
+    }
+
+    private var draftSectionsMarginaliaSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            MarginaliaLabel("SECTIONS", countText: "\(draftHeadingOutline.count)")
+            VStack(alignment: .leading, spacing: DS.space6) {
+                ForEach(draftHeadingOutline) { entry in
+                    Button {
+                        navigateToDraftHeading(entry)
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+                            Text(entry.level == 1 ? "¶" : "›")
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.giltMuted)
+                                .frame(width: 10, alignment: .leading)
+                            Text(entry.title)
+                                .font(entry.level == 1 ? DS.caption : DS.caption2)
+                                .foregroundStyle(entry.level == 1 ? DS.documentText : DS.inkFaded)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.leading, CGFloat(entry.level - 1) * DS.space8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .accessibilityLabel("Go to \(entry.title)")
+                }
             }
         }
     }
@@ -1570,6 +1611,17 @@ struct ContentFocusModeView: View {
         )
     }
 
+    private func updateDraftHeadingOutline(from document: RichDocument) {
+        draftHeadingOutline = RichDocumentHeadings.outline(in: document)
+    }
+
+    private func navigateToDraftHeading(_ entry: RichHeadingOutlineEntry) {
+        draftNavigationTargetID = nil
+        DispatchQueue.main.async {
+            draftNavigationTargetID = entry.id
+        }
+    }
+
     // MARK: - Word & character counter (bottom-left overlay)
 
     private var counterValues: (words: Int, chars: Int) {
@@ -1778,6 +1830,7 @@ struct ContentFocusModeView: View {
                         // Directly update editor bindings (belt-and-suspenders)
                         localDraftContent = body
                         draftDocument = richDoc
+                        updateDraftHeadingOutline(from: richDoc)
                         lastAIGeneratedDraft = body
                         viewModel.state.save()
                     }
@@ -2025,6 +2078,7 @@ struct ContentFocusModeView: View {
         draftDocument = draftDocumentByReplacingSelection(with: replacement, originalText: selectedText)
         localDraftContent = draftDocument.plainText
         viewModel.state.richDraftDocument = draftDocument
+        updateDraftHeadingOutline(from: draftDocument)
         draftEditedLocally = true
         triggerAutoSave()
         withAnimation(ProMotionSprings.snappy) {
@@ -2037,6 +2091,7 @@ struct ContentFocusModeView: View {
         draftDocument = draftDocumentByInsertingTextBelowSelection(text)
         localDraftContent = draftDocument.plainText
         viewModel.state.richDraftDocument = draftDocument
+        updateDraftHeadingOutline(from: draftDocument)
         draftEditedLocally = true
         triggerAutoSave()
     }
@@ -2332,6 +2387,7 @@ struct ContentFocusModeView: View {
             localDraftContent = draftDocument.plainText
         }
         viewModel.state.richDraftDocument = draftDocument
+        updateDraftHeadingOutline(from: draftDocument)
 
         triggerAutoSave()
         dismissInlineAI()

@@ -491,6 +491,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var polishHighlights: WritingAnalysis? = nil
     var focusBandRange: NSRange? = nil
     var focusBandRangeProvider: ((String, NSRange) -> NSRange?)? = nil
+    var editorTargetID: String? = nil
     var textAlignment: NSTextAlignment = .natural
 
     var typewriterMode: Bool = false
@@ -1469,6 +1470,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         @objc private func handleInsertTextInEditor(_ notification: Notification) {
             guard let textView = activeTextView,
                   let text = notification.userInfo?["text"] as? String else { return }
+            guard acceptsEditorCommand(notification) else { return }
 
             let allowInactive = notification.userInfo?["allowInactive"] as? Bool ?? false
             guard allowInactive || textView.window?.firstResponder === textView else { return }
@@ -1480,10 +1482,19 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         @objc private func handleReplaceSelectionInEditor(_ notification: Notification) {
             guard let textView = activeTextView,
                   let text = notification.userInfo?["text"] as? String else { return }
+            guard acceptsEditorCommand(notification) else { return }
 
             let allowInactive = notification.userInfo?["allowInactive"] as? Bool ?? false
             guard allowInactive || textView.window?.firstResponder === textView else { return }
             insertText(text, position: EditorCommandBus.InsertPosition.cursor.rawValue, into: textView)
+        }
+
+        private func acceptsEditorCommand(_ notification: Notification) -> Bool {
+            guard let targetID = notification.userInfo?["targetEditorID"] as? String,
+                  !targetID.isEmpty else {
+                return true
+            }
+            return parent.editorTargetID == targetID
         }
 
         @objc private func handleSetTypingAttributes(_ notification: Notification) {

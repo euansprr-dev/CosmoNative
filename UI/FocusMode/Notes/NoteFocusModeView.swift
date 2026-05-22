@@ -62,6 +62,7 @@ struct NoteFocusModeView: View {
     @State private var bodyDocument: RichDocument = .empty
     @State private var titlePlainText: String = ""
     @State private var plainContent: String = ""
+    @State private var selectedText: String = ""
     @State private var tags: [String] = []
     @State private var createdAt: Date = Date()
     @State private var showTagEditor = false
@@ -205,7 +206,13 @@ struct NoteFocusModeView: View {
                 }
             }
             // Register context provider for global Cosmo window
-            let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.titlePlainText }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
+            let provider = NoteContextProvider(
+                atom: atom,
+                titleRef: { [self] in self.titlePlainText },
+                contentRef: { [self] in self.plainContent },
+                tagsRef: { [self] in self.tags },
+                selectedTextRef: { [self] in self.selectedText }
+            )
             if !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
@@ -219,7 +226,13 @@ struct NoteFocusModeView: View {
         }
         .onChange(of: isPaneContextOwner) { _, isOwner in
             if isOwner {
-                let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.titlePlainText }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
+                let provider = NoteContextProvider(
+                    atom: atom,
+                    titleRef: { [self] in self.titlePlainText },
+                    contentRef: { [self] in self.plainContent },
+                    tagsRef: { [self] in self.tags },
+                    selectedTextRef: { [self] in self.selectedText }
+                )
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
@@ -507,13 +520,19 @@ struct NoteFocusModeView: View {
                     allowImages: true,
                     typewriterMode: typewriterMode,
                     scrollsInternally: false,
+                    onSelectionChanged: { snapshot in
+                        selectedText = snapshot.text
+                        refreshCosmoContextIfActive()
+                    },
                     onContentHeightChange: { newHeight in
                         bodyEditorHeight = max(400, newHeight)
                     },
+                    editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
                     onDocumentChange: { _, plainText in
                         let changed = plainText != plainContent
                         print("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                         plainContent = plainText
+                        refreshCosmoContextIfActive()
                         refreshHeadings()
                         if !isInitialLoad {
                             if changed { hasLocalBodyEdits = true }
@@ -848,10 +867,15 @@ struct NoteFocusModeView: View {
             atom: atom,
             titleRef: { [self] in self.titlePlainText },
             contentRef: { [self] in self.plainContent },
-            tagsRef: { [self] in self.tags }
+            tagsRef: { [self] in self.tags },
+            selectedTextRef: { [self] in self.selectedText }
         )
         CosmoWindowViewModel.shared.updateContext(provider: provider)
         CosmoWindowPanelController.shared.show()
+    }
+
+    private func refreshCosmoContextIfActive() {
+        CosmoWindowViewModel.shared.refreshContextIfCurrentAtomMatches(atomUUID: atom.uuid)
     }
 
     // MARK: - Heading Parser
@@ -926,6 +950,7 @@ struct NoteFocusModeView: View {
                         },
                         onPlainTextChange: { plainText in
                             titlePlainText = plainText
+                            refreshCosmoContextIfActive()
                             withAnimation(ProMotionSprings.bouncy) {
                                 titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
                             }
@@ -934,6 +959,7 @@ struct NoteFocusModeView: View {
                             print("[FOCUS-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                             titleDocument = document
                             titlePlainText = plainText
+                            refreshCosmoContextIfActive()
                             withAnimation(ProMotionSprings.bouncy) {
                                 titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
                             }
@@ -1962,12 +1988,20 @@ class NoteContextProvider: CosmoContextProvider {
     private let titleRef: () -> String
     private let contentRef: () -> String
     private let tagsRef: () -> [String]
+    private let selectedTextRef: () -> String
 
-    init(atom: Atom, titleRef: @escaping () -> String, contentRef: @escaping () -> String, tagsRef: @escaping () -> [String]) {
+    init(
+        atom: Atom,
+        titleRef: @escaping () -> String,
+        contentRef: @escaping () -> String,
+        tagsRef: @escaping () -> [String],
+        selectedTextRef: @escaping () -> String = { "" }
+    ) {
         self.atom = atom
         self.titleRef = titleRef
         self.contentRef = contentRef
         self.tagsRef = tagsRef
+        self.selectedTextRef = selectedTextRef
     }
 
     var contextType: CosmoContextType { .noteFocusMode }
@@ -1989,12 +2023,16 @@ class NoteContextProvider: CosmoContextProvider {
                 "wordCount": "\(content.split(separator: " ").count)",
                 "tags": tags.joined(separator: ", "),
                 "contentPreview": String(content.prefix(500))
-            ]
+            ],
+            selectedText: selectedTextRef()
         )
     }
 
     var availableActions: [CosmoWindowAction] {
-        [
+        let targetEditorID = EditorCommandTarget.noteBody(atom.uuid)
+        let appendPrefix = contentRef().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
+
+        return [
             CosmoWindowAction(
                 id: "note-insert-selection",
                 name: "Insert at Cursor",
@@ -2003,7 +2041,12 @@ class NoteContextProvider: CosmoContextProvider {
             ) { prompt in
                 let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return "Nothing inserted." }
-                await EditorCommandBus.shared.insertText(trimmed, at: .cursor, allowInactive: true)
+                await EditorCommandBus.shared.insertText(
+                    trimmed,
+                    at: .cursor,
+                    targetEditorID: targetEditorID,
+                    allowInactive: true
+                )
                 return "Inserted into the note."
             },
             CosmoWindowAction(
@@ -2014,7 +2057,12 @@ class NoteContextProvider: CosmoContextProvider {
             ) { prompt in
                 let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return "Nothing appended." }
-                await EditorCommandBus.shared.insertText(trimmed, at: .newParagraph, allowInactive: true)
+                await EditorCommandBus.shared.insertText(
+                    "\(appendPrefix)\(trimmed)",
+                    at: .endOfDocument,
+                    targetEditorID: targetEditorID,
+                    allowInactive: true
+                )
                 return "Appended to the note."
             }
         ]

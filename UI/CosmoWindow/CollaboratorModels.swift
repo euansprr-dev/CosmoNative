@@ -166,6 +166,91 @@ enum CollaborationEditOperation: Equatable, Sendable {
     case showGhostCursor(String?)
 }
 
+enum CosmoProposedEditOperation: String, Codable, Sendable {
+    case insertAtCursor
+    case appendToDocument
+    case replaceSelection
+}
+
+enum CosmoProposedEditDiffKind: String, Codable, Sendable {
+    case context
+    case removed
+    case added
+}
+
+struct CosmoProposedEditDiffLine: Identifiable, Equatable, Codable, Sendable {
+    var id: UUID
+    var kind: CosmoProposedEditDiffKind
+    var text: String
+
+    init(id: UUID = UUID(), kind: CosmoProposedEditDiffKind, text: String) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+    }
+}
+
+struct CosmoProposedEdit: Identifiable, Equatable, Codable, Sendable {
+    var id: UUID
+    var targetTitle: String
+    var targetEditorID: String
+    var operation: CosmoProposedEditOperation
+    var originalText: String?
+    var proposedText: String
+    var rationale: String
+    var createdAt: Date
+
+    var diffLines: [CosmoProposedEditDiffLine] {
+        guard operation == .replaceSelection,
+              let originalText,
+              !originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return [.init(kind: .added, text: proposedText)]
+        }
+        return [
+            .init(kind: .removed, text: originalText),
+            .init(kind: .added, text: proposedText)
+        ]
+    }
+
+    static func insertion(
+        targetTitle: String,
+        targetEditorID: String,
+        operation: CosmoProposedEditOperation,
+        proposedText: String,
+        rationale: String
+    ) -> CosmoProposedEdit {
+        CosmoProposedEdit(
+            id: UUID(),
+            targetTitle: targetTitle,
+            targetEditorID: targetEditorID,
+            operation: operation,
+            originalText: nil,
+            proposedText: proposedText,
+            rationale: rationale,
+            createdAt: Date()
+        )
+    }
+
+    static func replacement(
+        targetTitle: String,
+        targetEditorID: String,
+        originalText: String,
+        replacementText: String,
+        rationale: String
+    ) -> CosmoProposedEdit {
+        CosmoProposedEdit(
+            id: UUID(),
+            targetTitle: targetTitle,
+            targetEditorID: targetEditorID,
+            operation: .replaceSelection,
+            originalText: originalText,
+            proposedText: replacementText,
+            rationale: rationale,
+            createdAt: Date()
+        )
+    }
+}
+
 enum CollaborationTargetSource: Equatable, Codable, Sendable {
     case focusMode
     case pane(paneID: String)
@@ -657,6 +742,12 @@ final class CustomAgentProfileStore: ObservableObject {
 
     private static func defaultSeedPrompts(for id: String) -> [String] {
         switch id {
+        case "planning-agent":
+            return [
+                "Help me build this plan",
+                "Find the strongest direction",
+                "What should this become?"
+            ]
         case "idea-collaborator":
             return [
                 "Help me develop this idea",
@@ -693,6 +784,29 @@ final class CustomAgentProfileStore: ObservableObject {
     private static var defaultProfiles: [CustomAgentProfile] {
         let now = Date()
         return [
+            CustomAgentProfile(
+                id: "planning-agent",
+                name: "Planning Agent",
+                icon: "point.3.connected.trianglepath.dotted",
+                summary: "Turns messy goals, brand thoughts, and strategy notes into living plans.",
+                runtimePrompt: """
+                You are Cosmo's planning partner. Help the user turn messy strategic thinking into clear, living plans for branding, niche, offers, creative direction, systems, and personal operating models.
+
+                Work like the Connection collaborator: start from the active artifact, ask one question at a time when a decision is missing, spot patterns, hunt useful paradoxes, name unnamed mechanisms, and create sharp contrasts between the user's real approach and generic advice.
+
+                When the user has a note, idea, content draft, or connection open, treat that artifact as the working surface. Prefer staging additive edits, section suggestions, or replacements for review instead of only explaining in chat. If replacement is better than appending, say what should be replaced and why so the UI can show a clear red/added diff.
+
+                Keep the voice direct and useful. Do not compliment generically. Preserve decisions the user already approved.
+                """,
+                seedPrompts: defaultSeedPrompts(for: "planning-agent"),
+                toolBundles: [.contentSearch, .strategy, .preferences, .clientProfiles, .swipes],
+                contextScopes: [.activeContext, .mentions, .database, .clients, .swipes],
+                preferredModelTier: nil,
+                isEnabled: true,
+                isBuiltin: true,
+                createdAt: now,
+                updatedAt: now
+            ),
             CustomAgentProfile(
                 id: "idea-collaborator",
                 name: "Idea Collaborator",
@@ -760,6 +874,10 @@ final class CustomAgentProfileStore: ObservableObject {
                 updatedAt: now
             )
         ]
+    }
+
+    static func defaultProfileForTests(id: String) -> CustomAgentProfile? {
+        defaultProfiles.first { $0.id == id }
     }
 }
 

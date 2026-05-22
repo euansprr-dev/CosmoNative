@@ -23,27 +23,34 @@ final class EditorCommandBus: ObservableObject {
     }
 
     /// Insert plain text at the current cursor position
-    func insertText(_ text: String, at position: InsertPosition = .cursor, allowInactive: Bool = false) {
+    func insertText(
+        _ text: String,
+        at position: InsertPosition = .cursor,
+        targetEditorID: String? = nil,
+        allowInactive: Bool = false
+    ) {
         NotificationCenter.default.post(
             name: .insertTextInEditor,
             object: nil,
-            userInfo: [
-                "text": text,
-                "position": position.rawValue,
-                "allowInactive": allowInactive
-            ]
+            userInfo: EditorCommandPayload.insertText(
+                text,
+                position: position,
+                targetEditorID: targetEditorID,
+                allowInactive: allowInactive
+            )
         )
     }
 
     /// Replace the current editor selection with plain text.
-    func replaceSelection(with text: String, allowInactive: Bool = false) {
+    func replaceSelection(with text: String, targetEditorID: String? = nil, allowInactive: Bool = false) {
         NotificationCenter.default.post(
             name: .replaceSelectionInEditor,
             object: nil,
-            userInfo: [
-                "text": text,
-                "allowInactive": allowInactive
-            ]
+            userInfo: EditorCommandPayload.replaceSelection(
+                text,
+                targetEditorID: targetEditorID,
+                allowInactive: allowInactive
+            )
         )
     }
 
@@ -78,6 +85,46 @@ final class EditorCommandBus: ObservableObject {
             object: nil,
             userInfo: ["type": type]
         )
+    }
+}
+
+enum EditorCommandTarget {
+    static func noteBody(_ atomUUID: String) -> String {
+        "note:\(atomUUID):body"
+    }
+}
+
+enum EditorCommandPayload {
+    static func insertText(
+        _ text: String,
+        position: EditorCommandBus.InsertPosition,
+        targetEditorID: String? = nil,
+        allowInactive: Bool = false
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "text": text,
+            "position": position.rawValue,
+            "allowInactive": allowInactive
+        ]
+        if let targetEditorID, !targetEditorID.isEmpty {
+            payload["targetEditorID"] = targetEditorID
+        }
+        return payload
+    }
+
+    static func replaceSelection(
+        _ text: String,
+        targetEditorID: String? = nil,
+        allowInactive: Bool = false
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "text": text,
+            "allowInactive": allowInactive
+        ]
+        if let targetEditorID, !targetEditorID.isEmpty {
+            payload["targetEditorID"] = targetEditorID
+        }
+        return payload
     }
 }
 

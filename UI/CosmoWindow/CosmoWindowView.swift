@@ -250,6 +250,17 @@ struct CosmoWindowView: View {
                             .transition(.opacity.combined(with: .scale(scale: 0.98)))
                         }
 
+                        if let edit = viewModel.pendingProposedEdit {
+                            CosmoProposedEditReviewCard(
+                                edit: edit,
+                                onApply: viewModel.applyPendingProposedEdit,
+                                onRevise: viewModel.revisePendingProposedEdit,
+                                onDismiss: viewModel.dismissPendingProposedEdit
+                            )
+                            .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        }
+
                         if viewModel.isProcessing {
                             CosmoThinkingCard(
                                 activeLabel: viewModel.activeToolLabel ?? "Thinking",
@@ -994,6 +1005,171 @@ private struct CosmoCanvasPlanReviewCard: View {
         }
         .padding(14)
         .cosmoWindowSectionChrome(cornerRadius: 16)
+    }
+}
+
+private struct CosmoProposedEditReviewCard: View {
+    let edit: CosmoProposedEdit
+    let onApply: () -> Void
+    let onRevise: () -> Void
+    let onDismiss: () -> Void
+
+    private var actionTitle: String {
+        switch edit.operation {
+        case .insertAtCursor:
+            return "Insert"
+        case .appendToDocument:
+            return "Append"
+        case .replaceSelection:
+            return "Replace"
+        }
+    }
+
+    private var operationLabel: String {
+        switch edit.operation {
+        case .insertAtCursor:
+            return "Insert at cursor"
+        case .appendToDocument:
+            return "Append to note"
+        case .replaceSelection:
+            return "Replace selection"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: edit.operation == .replaceSelection ? "arrow.triangle.2.circlepath" : "text.append")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 32, height: 32)
+                    .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(operationLabel)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+
+                    Text(edit.targetTitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            Text(edit.rationale)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            CosmoProposedEditDiffView(lines: edit.diffLines)
+
+            HStack(spacing: 8) {
+                Button(actionTitle, action: onApply)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textOnAccent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.accent, in: Capsule())
+
+                Button("Revise", action: onRevise)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .cosmoWindowChip(isActive: true)
+
+                Button("Dismiss", action: onDismiss)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .cosmoWindowChip()
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(14)
+        .cosmoWindowSectionChrome(cornerRadius: 16)
+    }
+}
+
+private struct CosmoProposedEditDiffView: View {
+    let lines: [CosmoProposedEditDiffLine]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(lines) { line in
+                CosmoProposedEditDiffRow(line: line)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DS.glassBorder, lineWidth: 1)
+        )
+    }
+}
+
+private struct CosmoProposedEditDiffRow: View {
+    let line: CosmoProposedEditDiffLine
+
+    private var marker: String {
+        switch line.kind {
+        case .context:
+            return " "
+        case .removed:
+            return "-"
+        case .added:
+            return "+"
+        }
+    }
+
+    private var foreground: Color {
+        switch line.kind {
+        case .context:
+            return DS.textSecondary
+        case .removed:
+            return .red.opacity(0.86)
+        case .added:
+            return DS.accent
+        }
+    }
+
+    private var background: Color {
+        switch line.kind {
+        case .context:
+            return DS.glassSectionFill
+        case .removed:
+            return .red.opacity(0.08)
+        case .added:
+            return DS.accent.opacity(0.10)
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(marker)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundStyle(foreground)
+                .frame(width: 12, alignment: .center)
+
+            Text(line.text)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(foreground)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(background)
     }
 }
 

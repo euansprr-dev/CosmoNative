@@ -3,6 +3,84 @@ import XCTest
 
 final class CosmoWindowContextSessionTests: XCTestCase {
     @MainActor
+    func testRefreshContextOnlyUpdatesMatchingActiveAtom() {
+        let viewModel = CosmoWindowViewModel.shared
+        var title = "Personal brand plan"
+        let provider = TestCosmoContextProvider(
+            atomUUID: "note-1",
+            title: { title }
+        )
+
+        viewModel.updateContext(provider: provider)
+        XCTAssertEqual(viewModel.activeContext.data.currentAtomTitle, "Personal brand plan")
+
+        title = "Updated brand plan"
+        viewModel.refreshContextIfCurrentAtomMatches(atomUUID: "other-note")
+        XCTAssertEqual(viewModel.activeContext.data.currentAtomTitle, "Personal brand plan")
+
+        viewModel.refreshContextIfCurrentAtomMatches(atomUUID: "note-1")
+        XCTAssertEqual(viewModel.activeContext.data.currentAtomTitle, "Updated brand plan")
+    }
+
+    func testEditorCommandPayloadCarriesTargetEditorIDForNoteAppend() {
+        let payload = EditorCommandPayload.insertText(
+            "New section",
+            position: .endOfDocument,
+            targetEditorID: "note:note-1:body",
+            allowInactive: true
+        )
+
+        XCTAssertEqual(payload["text"] as? String, "New section")
+        XCTAssertEqual(payload["position"] as? String, "end")
+        XCTAssertEqual(payload["targetEditorID"] as? String, "note:note-1:body")
+        XCTAssertEqual(payload["allowInactive"] as? Bool, true)
+    }
+
+    func testProposedReplacementEditBuildsRemovedAndAddedDiffLines() {
+        let edit = CosmoProposedEdit.replacement(
+            targetTitle: "Personal brand plan",
+            targetEditorID: "note:note-1:body",
+            originalText: "Old positioning line",
+            replacementText: "New positioning line",
+            rationale: "Sharper positioning."
+        )
+
+        XCTAssertEqual(edit.operation, .replaceSelection)
+        XCTAssertEqual(edit.diffLines.map(\.kind), [.removed, .added])
+        XCTAssertEqual(edit.diffLines.map(\.text), ["Old positioning line", "New positioning line"])
+    }
+
+    @MainActor
+    func testPlanningAgentProfileIsBundled() {
+        let profile = CustomAgentProfileStore.defaultProfileForTests(id: "planning-agent")
+
+        XCTAssertEqual(profile?.name, "Planning Agent")
+        XCTAssertTrue(profile?.runtimePrompt.contains("planning partner") == true)
+        XCTAssertTrue(profile?.toolBundles.contains(.strategy) == true)
+        XCTAssertTrue(profile?.contextScopes.contains(.activeContext) == true)
+        XCTAssertNil(profile?.preferredModelTier)
+    }
+
+    @MainActor
+    func testNoteContextProviderIncludesSelectedTextForReplacementDiffs() {
+        let atom = Atom.new(type: .note, title: "Personal brand plan")
+        let provider = NoteContextProvider(
+            atom: atom,
+            titleRef: { "Personal brand plan" },
+            contentRef: { "Old positioning line" },
+            tagsRef: { [] },
+            selectedTextRef: { "Old positioning line" }
+        )
+
+        let contextData = provider.contextData
+
+        XCTAssertEqual(contextData.currentAtomUUID, atom.uuid)
+        XCTAssertEqual(contextData.currentAtomTitle, "Personal brand plan")
+        XCTAssertEqual(contextData.selectedText, "Old positioning line")
+        XCTAssertTrue(contextData.toContextBlock().contains("Selected text: Old positioning line"))
+    }
+
+    @MainActor
     func testBeginNewGlobalChatSessionClearsVisibleStateSynchronously() {
         let viewModel = CosmoWindowViewModel.shared
         let previousMessages = [
@@ -145,4 +223,31 @@ final class CosmoWindowContextSessionTests: XCTestCase {
         XCTAssertEqual(loaded?.activeAtomUUID, "atom-1")
         XCTAssertEqual(loaded?.pinnedSourceIDs, ["source-1", "source-2"])
     }
+}
+
+@MainActor
+private final class TestCosmoContextProvider: CosmoContextProvider {
+    let atomUUID: String
+    let title: () -> String
+
+    init(atomUUID: String, title: @escaping () -> String) {
+        self.atomUUID = atomUUID
+        self.title = title
+    }
+
+    var contextType: CosmoContextType { .noteFocusMode }
+
+    var contextSummary: String {
+        "Note: \(title())"
+    }
+
+    var contextData: CosmoContextData {
+        CosmoContextData(
+            currentAtomUUID: atomUUID,
+            currentAtomType: "note",
+            currentAtomTitle: title()
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
 }

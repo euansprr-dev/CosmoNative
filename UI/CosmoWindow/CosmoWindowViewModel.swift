@@ -58,6 +58,7 @@ final class CosmoWindowViewModel: ObservableObject {
     @Published var selectedAgentProfileID: String? = nil
     @Published private(set) var agentProfiles: [CustomAgentProfile] = []
     @Published var pendingCanvasPlan: PendingCanvasPlan? = nil
+    @Published var pendingProposedEdit: CosmoProposedEdit? = nil
 
     // MARK: - Edit State
 
@@ -197,6 +198,10 @@ final class CosmoWindowViewModel: ObservableObject {
             }
         }
 
+        if let stagedEditResponse = tryStageNoteEditFromUserCommand(text: text) {
+            return stagedEditResponse
+        }
+
         // 2. FlashLiteRouter for quick single-shot operations
         // Skip flash router when mentions are present — mentions signal contextual reasoning
         let bypassFlash: Bool
@@ -227,6 +232,62 @@ final class CosmoWindowViewModel: ObservableObject {
             return response
         }
         return nil
+    }
+
+    private func tryStageNoteEditFromUserCommand(text: String) -> String? {
+        guard activeContext.type == .noteFocusMode,
+              let atomUUID = activeContext.data.currentAtomUUID,
+              !atomUUID.isEmpty else {
+            return nil
+        }
+
+        let lower = text.lowercased()
+        let wantsAppend = Self.containsAny(lower, ["append to note", "add to note", "put this in the note", "drop it in", "append this"])
+        let wantsInsert = Self.containsAny(lower, ["insert at cursor", "insert this"])
+        let wantsReplace = Self.containsAny(lower, ["replace", "rewrite selected", "rewrite this section"])
+        guard wantsAppend || wantsInsert || wantsReplace else { return nil }
+
+        guard let proposedText = lastAssistantContentForEditing() else {
+            return nil
+        }
+
+        let title = activeContext.data.currentAtomTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetTitle = title?.isEmpty == false ? title! : "current note"
+        let targetEditorID = EditorCommandTarget.noteBody(atomUUID)
+
+        if wantsReplace,
+           let selectedText = activeContext.data.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !selectedText.isEmpty {
+            pendingProposedEdit = .replacement(
+                targetTitle: targetTitle,
+                targetEditorID: targetEditorID,
+                originalText: selectedText,
+                replacementText: proposedText,
+                rationale: "Replacing the selected passage keeps the note tighter than appending another version."
+            )
+            return "I staged this as a replacement in \(targetTitle). Review the diff before I apply it."
+        }
+
+        let operation: CosmoProposedEditOperation = wantsInsert ? .insertAtCursor : .appendToDocument
+        pendingProposedEdit = .insertion(
+            targetTitle: targetTitle,
+            targetEditorID: targetEditorID,
+            operation: operation,
+            proposedText: proposedText,
+            rationale: operation == .appendToDocument
+                ? "This looks like a new section for the current note."
+                : "This should go at the current cursor location."
+        )
+        return "I staged this for \(targetTitle). Review it before I insert it."
+    }
+
+    private func lastAssistantContentForEditing() -> String? {
+        messages.reversed().compactMap { message -> String? in
+            guard case .assistant = message.type else { return nil }
+            let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            return content
+        }.first
     }
 
     // MARK: - FlashLiteRouter Follow-Up Detection
@@ -424,6 +485,11 @@ final class CosmoWindowViewModel: ObservableObject {
         )
     }
 
+    func refreshContextIfCurrentAtomMatches(atomUUID: String) {
+        guard activeContext.data.currentAtomUUID == atomUUID else { return }
+        refreshContext()
+    }
+
     var isCollaboratorActive: Bool {
         collaboratorSessionKey != nil && collaboratorTarget != nil && collaboratorPreset != nil
     }
@@ -597,6 +663,47 @@ final class CosmoWindowViewModel: ObservableObject {
         let applied = applyCanvasOperations(plan.operations)
         pendingCanvasPlan = nil
         messages.append(.system("Applied \(applied) of \(plan.operations.count) canvas operations."))
+    }
+
+    func applyPendingProposedEdit() {
+        guard let edit = pendingProposedEdit else { return }
+
+        switch edit.operation {
+        case .appendToDocument:
+            EditorCommandBus.shared.insertText(
+                "\n\n\(edit.proposedText)",
+                at: .endOfDocument,
+                targetEditorID: edit.targetEditorID,
+                allowInactive: true
+            )
+        case .insertAtCursor:
+            EditorCommandBus.shared.insertText(
+                edit.proposedText,
+                at: .cursor,
+                targetEditorID: edit.targetEditorID,
+                allowInactive: true
+            )
+        case .replaceSelection:
+            EditorCommandBus.shared.replaceSelection(
+                with: edit.proposedText,
+                targetEditorID: edit.targetEditorID,
+                allowInactive: true
+            )
+        }
+
+        pendingProposedEdit = nil
+        messages.append(.system("Inserted into \(edit.targetTitle)."))
+        refreshContext()
+    }
+
+    func dismissPendingProposedEdit() {
+        pendingProposedEdit = nil
+    }
+
+    func revisePendingProposedEdit() {
+        guard let edit = pendingProposedEdit else { return }
+        inputText = "Revise this proposed edit for \(edit.targetTitle): \(edit.proposedText)"
+        pendingProposedEdit = nil
     }
 
     // MARK: - Conversation Lifecycle

@@ -247,6 +247,73 @@ final class NoteStructurePlanTests: XCTestCase {
     }
 
     @MainActor
+    func testReceivedNoteStructurePlanUsesSnapshotCapturedBeforeMentionsClear() {
+        let viewModel = CosmoWindowViewModel.shared
+        viewModel.clearMentions()
+        defer {
+            viewModel.cancelPendingNoteStructurePlan()
+            viewModel.clearMentions()
+            viewModel.clearContext()
+        }
+
+        let targetID = UUID()
+        let sourceBody = "Module A\n\nModule B"
+        let sourceNote = Atom.new(type: .note, title: "Course knowledge", body: sourceBody)
+        let sourceID = UUID(uuidString: sourceNote.uuid)!
+        let spatialEngine = SpatialEngine()
+        spatialEngine.currentThinkspaceId = targetID.uuidString
+        let provider = CanvasContextProvider(
+            spatialEngine: spatialEngine,
+            thinkspaceId: targetID.uuidString
+        )
+
+        viewModel.updateContext(provider: provider)
+        viewModel.addMention(sourceNote)
+        let capturedSnapshot = viewModel.activeNoteStructureSnapshot()
+        XCTAssertNotNil(capturedSnapshot)
+
+        viewModel.clearMentions()
+        XCTAssertNil(viewModel.activeNoteStructureSnapshot())
+
+        let clusterID = UUID()
+        let moduleID = UUID()
+        let plan = PendingNoteStructurePlan(
+            title: "Structure course knowledge",
+            rationale: "Split modules.",
+            sourceNoteUUID: sourceID,
+            sourceTitle: "Course knowledge",
+            sourceBodyHash: NoteStructureSourceSnapshot.hashBody(sourceBody),
+            targetThinkspaceUUID: targetID,
+            clusters: [
+                NoteStructureClusterProposal(
+                    id: clusterID,
+                    name: "Core",
+                    colorIndex: 0,
+                    frame: CGRect(x: 0, y: 0, width: 900, height: 700),
+                    moduleIDs: [moduleID]
+                )
+            ],
+            modules: [
+                NoteStructureModuleProposal(
+                    id: moduleID,
+                    clusterID: clusterID,
+                    title: "Module A",
+                    startUTF16Offset: 0,
+                    lengthUTF16: 8,
+                    position: CGPoint(x: 80, y: 80),
+                    size: CanvasBlock.documentLayoutSize
+                )
+            ]
+        )
+
+        viewModel.receivePendingNoteStructurePlan(plan)
+
+        XCTAssertNil(viewModel.pendingNoteStructurePreviewError)
+        XCTAssertTrue(viewModel.canApplyPendingNoteStructurePlan)
+        XCTAssertEqual(viewModel.noteStructurePreviewText(for: plan.modules[0]), "Module A")
+    }
+
+    @MainActor
     func testCanvasOrganizerPromptMentionsNoteStructurePlanTool() {
         let profile = CustomAgentProfileStore.defaultProfileForTests(id: "canvas-organizer")
 

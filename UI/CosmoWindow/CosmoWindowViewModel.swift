@@ -74,6 +74,7 @@ final class CosmoWindowViewModel: ObservableObject {
     private let toolRegistry = AgentToolRegistry.shared
     private let collaboratorSessions = CollaboratorSessionStore.shared
     private let agentProfileStore = CustomAgentProfileStore.shared
+    private var noteStructureSourceSnapshotsByNoteUUID: [UUID: NoteStructureSourceSnapshot] = [:]
 
     // MARK: - Chat History State
 
@@ -702,7 +703,7 @@ final class CosmoWindowViewModel: ObservableObject {
     }
 
     func validatePendingNoteStructurePlan(_ plan: PendingNoteStructurePlan) -> NoteStructurePlanError? {
-        guard let snapshot = activeNoteStructureSnapshot() else {
+        guard let snapshot = noteStructureSnapshot(for: plan) else {
             return .missingSourceNote
         }
 
@@ -721,7 +722,8 @@ final class CosmoWindowViewModel: ObservableObject {
     }
 
     func noteStructurePreviewText(for module: NoteStructureModuleProposal) -> String {
-        guard let snapshot = activeNoteStructureSnapshot(),
+        let snapshot = pendingNoteStructurePlan.flatMap { noteStructureSnapshot(for: $0) } ?? activeNoteStructureSnapshot()
+        guard let snapshot,
               let text = try? module.copiedText(in: snapshot.body) else {
             return ""
         }
@@ -792,11 +794,11 @@ final class CosmoWindowViewModel: ObservableObject {
            let noteUUIDString = activeContext.data.currentAtomUUID,
            let noteUUID = UUID(uuidString: noteUUIDString),
            let body = activeContext.data.viewSpecificData["noteBody"] {
-            return NoteStructureSourceSnapshot(
+            return rememberNoteStructureSnapshot(NoteStructureSourceSnapshot(
                 sourceNoteUUID: noteUUID,
                 sourceTitle: activeContext.data.currentAtomTitle ?? "Untitled Note",
                 body: body
-            )
+            ))
         }
 
         if activeContext.type == .thinkspaceCanvas,
@@ -808,17 +810,30 @@ final class CosmoWindowViewModel: ObservableObject {
         return nil
     }
 
+    private func noteStructureSnapshot(for plan: PendingNoteStructurePlan) -> NoteStructureSourceSnapshot? {
+        if let activeSnapshot = activeNoteStructureSnapshot(),
+           activeSnapshot.sourceNoteUUID == plan.sourceNoteUUID {
+            return activeSnapshot
+        }
+        return noteStructureSourceSnapshotsByNoteUUID[plan.sourceNoteUUID]
+    }
+
     private func noteStructureSnapshot(for atom: Atom) -> NoteStructureSourceSnapshot? {
         guard atom.type == .note,
               let noteUUID = UUID(uuidString: atom.uuid) else {
             return nil
         }
         let body = DocumentElementContextFormatter.contextBody(for: atom)
-        return NoteStructureSourceSnapshot(
+        return rememberNoteStructureSnapshot(NoteStructureSourceSnapshot(
             sourceNoteUUID: noteUUID,
             sourceTitle: atom.title ?? "Untitled Note",
             body: body
-        )
+        ))
+    }
+
+    private func rememberNoteStructureSnapshot(_ snapshot: NoteStructureSourceSnapshot) -> NoteStructureSourceSnapshot {
+        noteStructureSourceSnapshotsByNoteUUID[snapshot.sourceNoteUUID] = snapshot
+        return snapshot
     }
 
     func resolvedTargetThinkspaceForNoteStructure() -> UUID? {

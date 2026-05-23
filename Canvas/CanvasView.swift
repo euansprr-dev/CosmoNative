@@ -1280,7 +1280,7 @@ struct CanvasView: View {
                     canvasIsActive = isActive
 
                 // Register context provider for global Cosmo window
-                let provider = CanvasContextProvider(spatialEngine: spatialEngine)
+                let provider = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceId)
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
 
                 // Load persisted blocks from database for this ThinkSpace
@@ -1293,6 +1293,7 @@ struct CanvasView: View {
                     }
 
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+                    CosmoWindowViewModel.shared.refreshContext()
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
                     rebuildMediaContentCache()
@@ -1941,6 +1942,7 @@ struct CanvasView: View {
                     }
 
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: newId)
+                    CosmoWindowViewModel.shared.refreshContext()
                     guard !Task.isCancelled else { return }
 
                     drawingState.loadDrawings(thinkspaceId: newId)
@@ -5456,26 +5458,60 @@ extension Notification.Name {
 @MainActor
 class CanvasContextProvider: CosmoContextProvider {
     private weak var spatialEngine: SpatialEngine?
+    private let initialThinkspaceId: String?
 
-    init(spatialEngine: SpatialEngine) {
+    init(spatialEngine: SpatialEngine, thinkspaceId: String? = nil) {
         self.spatialEngine = spatialEngine
+        self.initialThinkspaceId = thinkspaceId
     }
 
     var contextType: CosmoContextType { .thinkspaceCanvas }
 
     var contextSummary: String {
         let count = spatialEngine?.blocks.count ?? 0
+        if let title = currentThinkspaceTitle {
+            return "\(title) - \(count) blocks on canvas"
+        }
         return "\(count) blocks on canvas"
+    }
+
+    private var currentThinkspaceId: String? {
+        spatialEngine?.currentThinkspaceId ?? initialThinkspaceId
+    }
+
+    private var currentThinkspaceTitle: String? {
+        guard let id = currentThinkspaceId else { return nil }
+        return ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == id })?.name
+            ?? ThinkspaceManager.shared.currentThinkspace.flatMap { $0.id == id ? $0.name : nil }
     }
 
     var contextData: CosmoContextData {
         guard let blocks = spatialEngine?.blocks else {
-            return CosmoContextData(viewSpecificData: ["blockCount": "0"])
+            var viewData = ["blockCount": "0"]
+            if let id = currentThinkspaceId {
+                viewData["currentThinkspaceUUID"] = id
+                viewData["targetThinkspaceUUID"] = id
+                viewData["thinkspaceUUID"] = id
+            }
+            return CosmoContextData(
+                currentAtomUUID: currentThinkspaceId,
+                currentAtomType: currentThinkspaceId == nil ? nil : "thinkspace",
+                currentAtomTitle: currentThinkspaceTitle,
+                viewSpecificData: viewData
+            )
         }
 
         var viewData: [String: String] = [
             "blockCount": "\(blocks.count)"
         ]
+        if let id = currentThinkspaceId {
+            viewData["currentThinkspaceUUID"] = id
+            viewData["targetThinkspaceUUID"] = id
+            viewData["thinkspaceUUID"] = id
+        }
+        if let title = currentThinkspaceTitle {
+            viewData["currentThinkspaceTitle"] = title
+        }
 
         // Summarize block types
         var typeCounts: [String: Int] = [:]
@@ -5492,6 +5528,9 @@ class CanvasContextProvider: CosmoContextProvider {
         }
 
         return CosmoContextData(
+            currentAtomUUID: currentThinkspaceId,
+            currentAtomType: currentThinkspaceId == nil ? nil : "thinkspace",
+            currentAtomTitle: currentThinkspaceTitle,
             viewSpecificData: viewData,
             visibleItemCount: blocks.count
         )

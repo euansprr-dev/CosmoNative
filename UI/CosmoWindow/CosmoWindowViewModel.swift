@@ -787,17 +787,36 @@ final class CosmoWindowViewModel: ObservableObject {
     }
 
     func activeNoteStructureSnapshot() -> NoteStructureSourceSnapshot? {
-        guard activeContext.type == .noteFocusMode,
-              activeContext.data.currentAtomType?.lowercased() == "note",
-              let noteUUIDString = activeContext.data.currentAtomUUID,
-              let noteUUID = UUID(uuidString: noteUUIDString),
-              let body = activeContext.data.viewSpecificData["noteBody"] else {
-            return nil
+        if activeContext.type == .noteFocusMode,
+           activeContext.data.currentAtomType?.lowercased() == "note",
+           let noteUUIDString = activeContext.data.currentAtomUUID,
+           let noteUUID = UUID(uuidString: noteUUIDString),
+           let body = activeContext.data.viewSpecificData["noteBody"] {
+            return NoteStructureSourceSnapshot(
+                sourceNoteUUID: noteUUID,
+                sourceTitle: activeContext.data.currentAtomTitle ?? "Untitled Note",
+                body: body
+            )
         }
 
+        if activeContext.type == .thinkspaceCanvas,
+           let mentionedNote = mentionedAtoms.first(where: { $0.type == .note }),
+           let snapshot = noteStructureSnapshot(for: mentionedNote) {
+            return snapshot
+        }
+
+        return nil
+    }
+
+    private func noteStructureSnapshot(for atom: Atom) -> NoteStructureSourceSnapshot? {
+        guard atom.type == .note,
+              let noteUUID = UUID(uuidString: atom.uuid) else {
+            return nil
+        }
+        let body = DocumentElementContextFormatter.contextBody(for: atom)
         return NoteStructureSourceSnapshot(
             sourceNoteUUID: noteUUID,
-            sourceTitle: activeContext.data.currentAtomTitle ?? "Untitled Note",
+            sourceTitle: atom.title ?? "Untitled Note",
             body: body
         )
     }

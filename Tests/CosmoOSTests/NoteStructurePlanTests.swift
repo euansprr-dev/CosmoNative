@@ -199,6 +199,54 @@ final class NoteStructurePlanTests: XCTestCase {
     }
 
     @MainActor
+    func testCanvasContextProviderExposesCurrentThinkspaceUUIDForStructurePlanning() {
+        let targetID = UUID()
+        let spatialEngine = SpatialEngine()
+        spatialEngine.currentThinkspaceId = targetID.uuidString
+
+        let provider = CanvasContextProvider(
+            spatialEngine: spatialEngine,
+            thinkspaceId: targetID.uuidString
+        )
+        let contextData = provider.contextData
+
+        XCTAssertEqual(contextData.currentAtomUUID, targetID.uuidString)
+        XCTAssertEqual(contextData.currentAtomType, "thinkspace")
+        XCTAssertEqual(contextData.viewSpecificData["currentThinkspaceUUID"], targetID.uuidString)
+        XCTAssertEqual(contextData.viewSpecificData["targetThinkspaceUUID"], targetID.uuidString)
+    }
+
+    @MainActor
+    func testActiveNoteStructureSnapshotUsesMentionedNoteInsideThinkspace() {
+        let viewModel = CosmoWindowViewModel.shared
+        viewModel.clearMentions()
+        defer {
+            viewModel.clearMentions()
+            viewModel.clearContext()
+        }
+
+        let targetID = UUID()
+        let sourceBody = "Module A\n\nModule B"
+        let sourceNote = Atom.new(type: .note, title: "Course knowledge", body: sourceBody)
+        let spatialEngine = SpatialEngine()
+        spatialEngine.currentThinkspaceId = targetID.uuidString
+        let provider = CanvasContextProvider(
+            spatialEngine: spatialEngine,
+            thinkspaceId: targetID.uuidString
+        )
+
+        viewModel.updateContext(provider: provider)
+        viewModel.addMention(sourceNote)
+
+        let snapshot = viewModel.activeNoteStructureSnapshot()
+
+        XCTAssertEqual(snapshot?.sourceNoteUUID.uuidString, sourceNote.uuid)
+        XCTAssertEqual(snapshot?.sourceTitle, "Course knowledge")
+        XCTAssertEqual(snapshot?.body, sourceBody)
+        XCTAssertEqual(viewModel.resolvedTargetThinkspaceForNoteStructure(), targetID)
+    }
+
+    @MainActor
     func testCanvasOrganizerPromptMentionsNoteStructurePlanTool() {
         let profile = CustomAgentProfileStore.defaultProfileForTests(id: "canvas-organizer")
 

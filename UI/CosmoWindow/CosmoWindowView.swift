@@ -42,7 +42,7 @@ struct CosmoWindowView: View {
                 .onAppear(perform: handleAppear)
         } else if isFloating {
             panelShell
-                .padding(10)
+                .padding(CosmoWindowMetrics.floatingShadowOutset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
                 .onAppear(perform: handleAppear)
@@ -838,6 +838,13 @@ enum CosmoWindowMetrics {
     static let minHeight: CGFloat = 400
     static let maxWidth: CGFloat = 620
     static let maxHeight: CGFloat = 700
+    static let floatingShadowOutset: CGFloat = 48
+    static let floatingWindowDefaultWidth: CGFloat = defaultWidth + floatingShadowOutset * 2
+    static let floatingWindowDefaultHeight: CGFloat = defaultHeight + floatingShadowOutset * 2
+    static let floatingWindowMinWidth: CGFloat = minWidth + floatingShadowOutset * 2
+    static let floatingWindowMinHeight: CGFloat = minHeight + floatingShadowOutset * 2
+    static let floatingWindowMaxWidth: CGFloat = maxWidth + floatingShadowOutset * 2
+    static let floatingWindowMaxHeight: CGFloat = maxHeight + floatingShadowOutset * 2
 
     static let panelCornerRadius: CGFloat = 20
     static let headerHeight: CGFloat = 56

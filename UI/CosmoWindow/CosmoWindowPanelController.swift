@@ -27,6 +27,7 @@ final class CosmoWindowPanelController: NSWindowController {
     private let posYKey = "cosmoWindowPosY"
     private let widthKey = "cosmoWindowWidth"
     private let heightKey = "cosmoWindowHeight"
+    private let frameIncludesShadowOutsetKey = "cosmoWindowFrameIncludesShadowOutset"
 
     private var moveObserver: NSObjectProtocol?
     private var resizeObserver: NSObjectProtocol?
@@ -59,10 +60,11 @@ final class CosmoWindowPanelController: NSWindowController {
         panel.isMovableByWindowBackground = true
         panel.acceptsMouseMovedEvents = true
 
-        // Appearance — transparent window, system shadow for smooth rendering
+        // Appearance — transparent window with SwiftUI-owned shadow. The native
+        // window shadow creates a dark fringe around transparent rounded panels.
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
 
@@ -73,12 +75,12 @@ final class CosmoWindowPanelController: NSWindowController {
 
         // Size constraints
         panel.minSize = NSSize(
-            width: CosmoWindowMetrics.minWidth,
-            height: CosmoWindowMetrics.minHeight
+            width: CosmoWindowMetrics.floatingWindowMinWidth,
+            height: CosmoWindowMetrics.floatingWindowMinHeight
         )
         panel.maxSize = NSSize(
-            width: CosmoWindowMetrics.maxWidth,
-            height: CosmoWindowMetrics.maxHeight
+            width: CosmoWindowMetrics.floatingWindowMaxWidth,
+            height: CosmoWindowMetrics.floatingWindowMaxHeight
         )
 
         // Allow keyboard input (text field in chat)
@@ -231,6 +233,7 @@ final class CosmoWindowPanelController: NSWindowController {
         UserDefaults.standard.set(Double(frame.origin.y), forKey: posYKey)
         UserDefaults.standard.set(Double(frame.size.width), forKey: widthKey)
         UserDefaults.standard.set(Double(frame.size.height), forKey: heightKey)
+        UserDefaults.standard.set(true, forKey: frameIncludesShadowOutsetKey)
     }
 
     private static func loadSavedFrame() -> NSRect? {
@@ -241,10 +244,25 @@ final class CosmoWindowPanelController: NSWindowController {
         let y = defaults.double(forKey: "cosmoWindowPosY")
         let w = defaults.double(forKey: "cosmoWindowWidth")
         let h = defaults.double(forKey: "cosmoWindowHeight")
-        // If saved dimensions exceed current max, discard stale frame and use defaults
-        guard w <= CosmoWindowMetrics.maxWidth && h <= CosmoWindowMetrics.maxHeight else { return nil }
-        let clampedWidth = min(max(w, CosmoWindowMetrics.minWidth), CosmoWindowMetrics.maxWidth)
-        let clampedHeight = min(max(h, CosmoWindowMetrics.minHeight), CosmoWindowMetrics.maxHeight)
+        let includesShadowOutset = defaults.bool(forKey: "cosmoWindowFrameIncludesShadowOutset")
+        // If saved dimensions exceed current max, discard stale frame and use defaults.
+        // Old saved frames without the transparent shadow gutter are automatically
+        // expanded so the visible panel keeps its prior size.
+        let migratedWidth = includesShadowOutset ? w : w + CosmoWindowMetrics.floatingShadowOutset * 2
+        let migratedHeight = includesShadowOutset ? h : h + CosmoWindowMetrics.floatingShadowOutset * 2
+        if !includesShadowOutset {
+            defaults.set(true, forKey: "cosmoWindowFrameIncludesShadowOutset")
+        }
+        guard migratedWidth <= CosmoWindowMetrics.floatingWindowMaxWidth,
+              migratedHeight <= CosmoWindowMetrics.floatingWindowMaxHeight else { return nil }
+        let clampedWidth = min(
+            max(migratedWidth, CosmoWindowMetrics.floatingWindowMinWidth),
+            CosmoWindowMetrics.floatingWindowMaxWidth
+        )
+        let clampedHeight = min(
+            max(migratedHeight, CosmoWindowMetrics.floatingWindowMinHeight),
+            CosmoWindowMetrics.floatingWindowMaxHeight
+        )
         let frame = NSRect(x: x, y: y, width: clampedWidth, height: clampedHeight)
 
         // Validate the saved frame is on a visible screen
@@ -256,8 +274,8 @@ final class CosmoWindowPanelController: NSWindowController {
 
     private static func defaultFrame() -> NSRect {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let w = CosmoWindowMetrics.defaultWidth
-        let h = CosmoWindowMetrics.defaultHeight
+        let w = CosmoWindowMetrics.floatingWindowDefaultWidth
+        let h = CosmoWindowMetrics.floatingWindowDefaultHeight
         let x = screen.maxX - w - 20
         let y = screen.midY - h / 2
         return NSRect(x: x, y: y, width: w, height: h)

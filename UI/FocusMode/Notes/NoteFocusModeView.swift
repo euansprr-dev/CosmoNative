@@ -1460,6 +1460,7 @@ struct NoteFocusModeView: View {
                         plainContent = nextBodyPlainText
                         updateBodyHeadingOutline(from: nextBodyDocument)
                         updateTextAnalysisImmediately(for: nextBodyPlainText)
+                        refreshCosmoContextIfActive()
                     } else if !isInitialLoad, nextBodyPlainText != plainContent {
                         NoteFocusLog.debug("[FOCUS-NOTE] 🔔 observation SKIPPED body (not initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count) localLen=\(plainContent.count) ⚠️ DIVERGED=\(nextBodyPlainText != plainContent)")
                     }
@@ -1782,6 +1783,7 @@ struct NoteFocusModeView: View {
         titleDocument = document
         titlePlainText = RichDocumentPersistence.titlePlainText(from: document)
         titleUnderlineProgress = titlePlainText.isEmpty ? 0.28 : 1
+        refreshCosmoContextIfActive()
     }
 
     nonisolated private static func metadataString(for snapshot: NoteDocumentSnapshot, tags: [String]) -> String? {
@@ -2260,8 +2262,16 @@ class NoteContextProvider: CosmoContextProvider {
 
     var contextType: CosmoContextType { .noteFocusMode }
 
+    private var resolvedTitle: String {
+        let liveTitle = titleRef().trimmingCharacters(in: .whitespacesAndNewlines)
+        if !liveTitle.isEmpty {
+            return liveTitle
+        }
+        return atom.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
     var contextSummary: String {
-        let title = titleRef()
+        let title = resolvedTitle
         let words = contentRef().split(separator: " ").count
         return "Note: \(title.isEmpty ? "Untitled" : title) (\(words) words)"
     }
@@ -2272,7 +2282,7 @@ class NoteContextProvider: CosmoContextProvider {
         return CosmoContextData(
             currentAtomUUID: atom.uuid,
             currentAtomType: "note",
-            currentAtomTitle: titleRef(),
+            currentAtomTitle: resolvedTitle,
             viewSpecificData: [
                 "wordCount": "\(content.split(separator: " ").count)",
                 "tags": tags.joined(separator: ", "),

@@ -1104,6 +1104,8 @@ enum RichDocumentSerializer {
             let headingParagraph = NSMutableParagraphStyle()
             headingParagraph.lineSpacing = 4
             headingParagraph.paragraphSpacing = 12
+            headingParagraph.firstLineHeadIndent = 34
+            headingParagraph.headIndent = 34
             // Proportional top margin — larger headings get more breathing room
             switch headingLevel {
             case 1: headingParagraph.paragraphSpacingBefore = 32

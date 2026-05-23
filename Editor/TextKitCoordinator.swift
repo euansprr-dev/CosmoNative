@@ -73,8 +73,8 @@ final class CosmoTextView: NSTextView {
 
     override func draw(_ dirtyRect: NSRect) {
         drawElementBlockDecorations(in: dirtyRect)
-        drawHeadingDecorations(in: dirtyRect)
         super.draw(dirtyRect)
+        drawHeadingDecorations(in: dirtyRect)
     }
 
     override func paste(_ sender: Any?) {
@@ -218,6 +218,22 @@ final class CosmoTextView: NSTextView {
         super.scrollRangeToVisible(range)
     }
 
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let storage = textStorage,
+              storage.length > 0,
+              let layoutManager,
+              let textContainer else {
+            return
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        for decoration in headingDecorations(in: storage) {
+            guard let layout = headingLayout(for: decoration, storageLength: storage.length) else { continue }
+            addCursorRect(layout.hitRect, cursor: .pointingHand)
+        }
+    }
+
     private enum ElementHitArea {
         case collapseToggle
     }
@@ -297,7 +313,7 @@ final class CosmoTextView: NSTextView {
                   layout.hitRect.intersects(dirtyRect.insetBy(dx: -10, dy: -10)) else {
                 continue
             }
-            drawElementChevron(
+            drawHeadingDisclosureTriangle(
                 collapsed: decoration.isCollapsed,
                 in: layout.glyphRect,
                 color: headingChevronColor
@@ -411,14 +427,16 @@ final class CosmoTextView: NSTextView {
             return nil
         }
 
-        let hitSize: CGFloat = 24
+        let hitSize: CGFloat = 26
+        let glyphSize: CGFloat = 13
+        let glyphMinX = textContainerOrigin.x + lineRect.minX
+        let targetMidX = max(textContainerOrigin.x + (hitSize / 2), glyphMinX - 17)
         let hitRect = CGRect(
-            x: max(2, textContainerOrigin.x - 14),
+            x: targetMidX - (hitSize / 2),
             y: textContainerOrigin.y + lineRect.midY - (hitSize / 2),
             width: hitSize,
             height: hitSize
         )
-        let glyphSize: CGFloat = 8
         return (
             hitRect,
             CGRect(
@@ -491,6 +509,24 @@ final class CosmoTextView: NSTextView {
         elementBlockStrokeColor.setStroke()
         path.lineWidth = 0.8
         path.stroke()
+    }
+
+    private func drawHeadingDisclosureTriangle(collapsed: Bool, in rect: NSRect, color: NSColor) {
+        let path = NSBezierPath()
+
+        if collapsed {
+            path.move(to: NSPoint(x: rect.minX + 3, y: rect.minY + 2))
+            path.line(to: NSPoint(x: rect.maxX - 2, y: rect.midY))
+            path.line(to: NSPoint(x: rect.minX + 3, y: rect.maxY - 2))
+        } else {
+            path.move(to: NSPoint(x: rect.minX + 1.5, y: rect.minY + 3))
+            path.line(to: NSPoint(x: rect.maxX - 1.5, y: rect.minY + 3))
+            path.line(to: NSPoint(x: rect.midX, y: rect.maxY - 2))
+        }
+
+        path.close()
+        color.setFill()
+        path.fill()
     }
 
     private func drawElementChevron(collapsed: Bool, in rect: NSRect, color: NSColor) {
@@ -861,6 +897,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         textView.delegate = context.coordinator
         textView.shortcutDelegate = context.coordinator
+        textView.window?.invalidateCursorRects(for: textView)
     }
 
     private func baseParagraphStyle() -> NSParagraphStyle {
@@ -893,8 +930,25 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// after each setAttributedString call.
     func applyStorageOverrides(_ storage: NSTextStorage?) {
         guard let storage, storage.length > 0 else { return }
-        guard overrideTextColor != nil || overrideFont != nil else { return }
         let fullRange = NSRange(location: 0, length: storage.length)
+        var headingParagraphUpdates: [(range: NSRange, style: NSMutableParagraphStyle)] = []
+        if !singleLine, titleConfiguration == nil {
+            storage.enumerateAttribute(RichDocumentAttributeKeys.headingLevel, in: fullRange, options: []) { value, range, _ in
+                guard value != nil else { return }
+                let existingStyle = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+                let currentFirstLineIndent = existingStyle?.firstLineHeadIndent ?? 0
+                let currentHeadIndent = existingStyle?.headIndent ?? 0
+                guard currentFirstLineIndent < 34 || currentHeadIndent < 34 else { return }
+
+                let headingStyle = (existingStyle?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+                headingStyle.firstLineHeadIndent = max(currentFirstLineIndent, 34)
+                headingStyle.headIndent = max(currentHeadIndent, 34)
+                headingParagraphUpdates.append((range, headingStyle))
+            }
+        }
+
+        guard overrideTextColor != nil || overrideFont != nil || !headingParagraphUpdates.isEmpty else { return }
+
         storage.beginEditing()
         if let color = overrideTextColor {
             storage.enumerateAttribute(RichDocumentAttributeKeys.entityType, in: fullRange, options: []) { value, range, _ in
@@ -905,6 +959,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
         if let font = overrideFont {
             storage.addAttribute(.font, value: font, range: fullRange)
+        }
+        for update in headingParagraphUpdates {
+            storage.addAttribute(.paragraphStyle, value: update.style, range: update.range)
         }
         storage.endEditing()
     }
@@ -1998,6 +2055,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineSpacing = 4
             paragraphStyle.paragraphSpacing = 12
+            paragraphStyle.firstLineHeadIndent = 34
+            paragraphStyle.headIndent = 34
             // Proportional top margin — larger headings get more breathing room above
             switch level {
             case 1: paragraphStyle.paragraphSpacingBefore = 32
@@ -2031,6 +2090,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 textView.layoutManager?.ensureLayout(for: container)
             }
             textView.sizeToFit()
+            textView.window?.invalidateCursorRects(for: textView)
         }
 
         private func toggleBlockPrefix(_ prefix: String, kind: RichBlockKind, in textView: NSTextView) {
@@ -2415,6 +2475,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
             textView.needsDisplay = true
             textView.sizeToFit()
+            textView.window?.invalidateCursorRects(for: textView)
             notifyContentHeightChange(for: textView)
         }
 
@@ -2597,6 +2658,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             // notifyContentHeightChange fires 50ms later for the SwiftUI callback,
             // but AppKit needs to match right now to prevent a visible glitch).
             resizeAppKitFrameIfNeeded(for: textView)
+            textView.window?.invalidateCursorRects(for: textView)
 
             // Coalesce expensive attributedText sync + height measurement.
             // Fires after 50ms of inactivity — fast enough to feel instant,

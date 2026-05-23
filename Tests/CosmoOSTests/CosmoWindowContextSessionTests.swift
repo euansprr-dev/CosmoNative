@@ -147,6 +147,22 @@ final class CosmoWindowContextSessionTests: XCTestCase {
     }
 
     @MainActor
+    func testNoteContextProviderUsesAtomTitleUntilFocusTitleStateLoads() {
+        let atom = Atom.new(type: .note, title: "Course knowledge")
+        let provider = NoteContextProvider(
+            atom: atom,
+            titleRef: { "" },
+            contentRef: { "Creativity Module 1" },
+            tagsRef: { [] }
+        )
+
+        let contextData = provider.contextData
+
+        XCTAssertEqual(contextData.currentAtomTitle, "Course knowledge")
+        XCTAssertEqual(provider.contextSummary, "Note: Course knowledge (3 words)")
+    }
+
+    @MainActor
     func testBeginNewGlobalChatSessionClearsVisibleStateSynchronously() {
         let viewModel = CosmoWindowViewModel.shared
         let previousMessages = [

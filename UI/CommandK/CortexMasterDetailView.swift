@@ -28,7 +28,7 @@ struct CortexMasterDetailView: View {
                     .frame(width: 360)
 
                 Rectangle()
-                    .fill(DS.sepiaBorder)
+                    .fill(DS.commandChromeSeparatorStrong)
                     .frame(width: 0.5)
 
                 CortexDetailPane(subject: detailSubject)

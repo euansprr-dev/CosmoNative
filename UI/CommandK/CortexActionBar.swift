@@ -34,7 +34,7 @@ struct CortexActionBar: View {
             .accessibilityLabel("Open selection")
 
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(DS.commandChromeSeparator)
                 .frame(width: 0.5, height: 14)
 
             CortexActionsMenu(
@@ -45,7 +45,7 @@ struct CortexActionBar: View {
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space12)
         .overlay(alignment: .top) {
-            Rectangle().fill(DS.sepiaBorder).frame(height: 0.5)
+            Rectangle().fill(DS.commandChromeSeparatorStrong).frame(height: 0.5)
         }
     }
 

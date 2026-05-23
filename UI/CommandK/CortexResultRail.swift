@@ -365,7 +365,7 @@ struct CortexResultRail: View {
         if viewModel.recentItems.isEmpty {
             railHint("Search your mind, or pick a recent thread.")
         } else {
-            AtelierOrnamentalSectionLabel(label: "RECENTS")
+            CommandKSectionLabel(label: "RECENTS")
             ForEach(viewModel.recentItems) { item in
                 CortexRailRow(
                     title: item.title,
@@ -398,7 +398,7 @@ struct CortexResultRail: View {
             railHint(viewModel.currentPhase == .searching ? "Searching…" : "No matches yet.")
         } else {
             if let action = viewModel.primaryAction {
-                AtelierOrnamentalSectionLabel(label: "COMMAND")
+                CommandKSectionLabel(label: "COMMAND")
                 CortexRailRow(
                     title: action.title,
                     subtitle: action.subtitle ?? "Press return to run",
@@ -422,7 +422,7 @@ struct CortexResultRail: View {
             }
 
             if !viewModel.userCommandRows.isEmpty {
-                AtelierOrnamentalSectionLabel(label: "COMMANDS")
+                CommandKSectionLabel(label: "COMMANDS")
                 ForEach(viewModel.userCommandRows) { row in
                     CortexRailRow(
                         title: row.title,
@@ -450,7 +450,7 @@ struct CortexResultRail: View {
             }
 
             ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                AtelierOrnamentalSectionLabel(label: group.source.displayName.uppercased())
+                CommandKSectionLabel(label: group.source.displayName.uppercased())
                 ForEach(group.results) { result in
                     CortexRailRow(
                         title: result.title,
@@ -488,7 +488,7 @@ struct CortexResultRail: View {
         } else if tab == .ideas {
             ideaDomainSection(domainItems)
         } else {
-            AtelierOrnamentalSectionLabel(label: tab.title.uppercased())
+            CommandKSectionLabel(label: tab.title.uppercased())
             ForEach(domainItems) { item in
                 domainRow(item)
             }
@@ -503,7 +503,7 @@ struct CortexResultRail: View {
         }
         let sections = CommandKIdeaRailGrouping.sections(from: ideas)
 
-        AtelierOrnamentalSectionLabel(label: "IDEAS")
+        CommandKSectionLabel(label: "IDEAS")
         ForEach(sections) { section in
             ideaProfileHeader(section)
             ForEach(section.items, id: \.atomUUID) { idea in
@@ -603,7 +603,7 @@ private struct CortexRailRow: View {
                 .clipShape(.rect(cornerRadius: DS.radiusSmall))
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                        .strokeBorder(DS.sepiaSubtle, lineWidth: 0.5)
+                        .strokeBorder(DS.commandChromeSeparator, lineWidth: 0.5)
                 )
             VStack(alignment: .leading, spacing: DS.space2) {
                 Text(title)
@@ -651,13 +651,13 @@ private struct CortexRailRow: View {
 
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-            .fill(isSelected ? accent.opacity(0.10) : (isHovered ? DS.vellum : Color.clear))
+            .fill(isSelected ? accent.opacity(0.10) : (isHovered ? DS.commandChromeProminentFill : Color.clear))
     }
 
     private var rowBorder: some View {
         RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
             .strokeBorder(
-                isSelected ? accent.opacity(0.45) : (isHovered ? DS.sepiaSubtle : Color.clear),
+                isSelected ? accent.opacity(0.45) : (isHovered ? DS.commandChromeSeparator : Color.clear),
                 lineWidth: isSelected ? 1 : 0.5
             )
     }

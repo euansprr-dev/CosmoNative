@@ -15,7 +15,7 @@ struct CortexInformationTable: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
-            AtelierOrnamentalSectionLabel(label: "INFORMATION")
+            CommandKSectionLabel(label: "INFORMATION")
             row("Type", typeLabel)
             if let created {
                 row("Created", created)

@@ -92,7 +92,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
     // MARK: - Context Tracking
 
-    private weak var contextProvider: (any CosmoContextProvider)?
+    private var contextProvider: (any CosmoContextProvider)?
     private var previousContextType: CosmoContextType = .none
 
     // MARK: - Cancellation
@@ -515,6 +515,10 @@ final class CosmoWindowViewModel: ObservableObject {
         }
         if activeContext.type == .none {
             return "Global assistant"
+        }
+        if let title = activeContext.data.currentAtomTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
         }
         return activeContext.type.displayName
     }

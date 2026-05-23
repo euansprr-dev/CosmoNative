@@ -42,12 +42,12 @@ struct CortexKeycap: View {
                     .font(.system(size: 9, weight: .medium))
             }
         }
-        .foregroundStyle(DS.inkFaded)
+        .foregroundStyle(DS.commandCenterMutedText)
         .frame(width: 18, height: 18)
-        .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .background(DS.commandChromeControlFill, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .strokeBorder(DS.sepiaBorder, lineWidth: 0.5)
+                .strokeBorder(DS.commandChromeControlBorder, lineWidth: 0.5)
         )
     }
 }

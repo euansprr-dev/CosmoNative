@@ -48,8 +48,8 @@ struct CortexSearchBar: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(DS.textSecondary)
                     .frame(width: 28, height: 28)
-                    .background(DS.vellumDeep, in: Circle())
-                    .overlay(Circle().stroke(DS.sepiaBorder, lineWidth: 0.5))
+                    .background(DS.commandChromeControlFill, in: Circle())
+                    .overlay(Circle().stroke(DS.commandChromeControlBorder, lineWidth: 0.5))
             }
             .buttonStyle(.plain)
 

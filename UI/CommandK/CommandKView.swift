@@ -249,8 +249,8 @@ public struct CommandKView: View {
             }
             .padding(.horizontal, DS.space10)
             .padding(.vertical, DS.space6)
-            .background(DS.vellum, in: Capsule())
-            .overlay(Capsule().strokeBorder(DS.sepiaBorder, lineWidth: 0.5))
+            .background(DS.commandChromeControlFill, in: Capsule())
+            .overlay(Capsule().strokeBorder(DS.commandChromeControlBorder, lineWidth: 0.5))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

@@ -50,12 +50,12 @@ private struct FloatingOverlayPanelModifier: ViewModifier {
         content
             .background(
                 RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous)
-                    .fill(DS.vellum)
+                    .fill(DS.commandChromePanelFill)
             )
             .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous)
-                    .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                    .stroke(DS.commandChromeSeparatorStrong, lineWidth: 0.5)
             )
             .dsFloatingShadow()
     }
@@ -221,8 +221,8 @@ struct FloatingOverlayCloseButton: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(DS.inkFaded)
                 .frame(width: 28, height: 28)
-                .background(DS.vellumDeep, in: Circle())
-                .overlay(Circle().stroke(DS.sepiaBorder, lineWidth: 0.5))
+                .background(DS.commandChromeControlFill, in: Circle())
+                .overlay(Circle().stroke(DS.commandChromeControlBorder, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }

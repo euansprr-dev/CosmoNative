@@ -12,7 +12,7 @@ struct CortexCompactView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space24) {
-            AtelierOrnamentalSectionLabel(label: "SPACES")
+            CommandKSectionLabel(label: "SPACES")
                 .atelierStaggerIn(delay: 0.10, appeared: hasAppeared)
             domainCardsRow
             if !viewModel.recentItems.isEmpty {
@@ -46,7 +46,7 @@ struct CortexCompactView: View {
 
     private var recentsSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            AtelierOrnamentalSectionLabel(label: "RECENTS")
+            CommandKSectionLabel(label: "RECENTS")
                 .atelierStaggerIn(delay: 0.42, appeared: hasAppeared)
             recentsGrid
         }

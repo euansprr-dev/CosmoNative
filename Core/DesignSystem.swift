@@ -65,6 +65,18 @@ enum DS {
         return documentSepiaSubtle
     }
 
+    /// Fine dividers that sit directly on compact command/dashboard chrome.
+    static var commandChromeSeparator: Color {
+        if usesBlackMonoPaper { return palette.borderSubtle }
+        return documentSepiaSubtle
+    }
+
+    /// Stronger dividers for compact command/dashboard panel boundaries.
+    static var commandChromeSeparatorStrong: Color {
+        if usesBlackMonoPaper { return palette.border }
+        return documentSepiaBorder
+    }
+
     /// Stronger compact command/dashboard border.
     static var commandChromeProminentBorder: Color {
         if usesBlackMonoPaper { return palette.border }
@@ -111,14 +123,12 @@ enum DS {
     /// Command Center hairline separators on chrome, distinct from document paper
     /// separators so Black Mono does not draw white paper rules on black UI.
     static var commandCenterSeparator: Color {
-        if usesBlackMonoPaper { return palette.borderSubtle }
-        return documentSepiaSubtle
+        commandChromeSeparator
     }
 
     /// Stronger Command Center separator for panel boundaries.
     static var commandCenterSeparatorStrong: Color {
-        if usesBlackMonoPaper { return palette.border }
-        return documentSepiaBorder
+        commandChromeSeparatorStrong
     }
 
     /// Selected row fill for Command Center navigation.
@@ -436,7 +446,13 @@ enum DS {
         isUserCreated: Bool,
         usesExpandedContent: Bool
     ) -> Double {
-        if usesBlackMonoPaper || !palette.isDark {
+        if usesBlackMonoPaper {
+            if isDropTarget { return 0.045 }
+            if isUserCreated { return usesExpandedContent ? 0.038 : 0.032 }
+            return 0.024
+        }
+
+        if !palette.isDark {
             if isDropTarget { return 0.030 }
             if isUserCreated { return usesExpandedContent ? 0.026 : 0.022 }
             return 0.018
@@ -452,7 +468,13 @@ enum DS {
         isUserCreated: Bool,
         usesExpandedContent: Bool
     ) -> Double {
-        if usesBlackMonoPaper || !palette.isDark {
+        if usesBlackMonoPaper {
+            if isDropTarget { return 0.30 }
+            if isUserCreated { return usesExpandedContent ? 0.245 : 0.215 }
+            return 0.16
+        }
+
+        if !palette.isDark {
             if isDropTarget { return 0.22 }
             if isUserCreated { return usesExpandedContent ? 0.18 : 0.155 }
             return 0.12
@@ -470,7 +492,10 @@ enum DS {
     ) -> Double {
         if isDropTarget { return 0.96 }
         if isSelected { return 0.88 }
-        if usesBlackMonoPaper || !palette.isDark {
+        if usesBlackMonoPaper {
+            return isHovered ? 0.78 : 0.68
+        }
+        if !palette.isDark {
             return isHovered ? 0.68 : 0.54
         }
         return isHovered ? 0.52 : 0.36

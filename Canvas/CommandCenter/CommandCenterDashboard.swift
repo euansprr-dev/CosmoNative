@@ -8,15 +8,20 @@ import SwiftUI
 struct CommandCenterDashboard: View {
 
     @StateObject private var viewModel: CommandCenterDashboardViewModel
+    @StateObject private var contextProvider: CommandCenterContextProvider
     @State private var composer = CommandCenterComposerController()
     @State private var selectedTaskForDetail: TaskViewModel?
+    @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPaneContextOwner) private var isPaneContextOwner
     private let showsInternalSidebar: Bool
 
     init(
         viewModel: CommandCenterDashboardViewModel? = nil,
         showsInternalSidebar: Bool = true
     ) {
-        _viewModel = StateObject(wrappedValue: viewModel ?? CommandCenterDashboardViewModel())
+        let dashboardViewModel = viewModel ?? CommandCenterDashboardViewModel()
+        _viewModel = StateObject(wrappedValue: dashboardViewModel)
+        _contextProvider = StateObject(wrappedValue: CommandCenterContextProvider(viewModel: dashboardViewModel))
         self.showsInternalSidebar = showsInternalSidebar
     }
 
@@ -35,10 +40,23 @@ struct CommandCenterDashboard: View {
                 await viewModel.loadAreas()
                 await viewModel.loadAnytimeTasks()
                 await viewModel.loadSomedayTasks()
+                publishCommandCenterContext()
+            }
+            .onAppear(perform: publishCommandCenterContext)
+            .onChange(of: isPaneContextOwner) { _, _ in publishCommandCenterContext() }
+            .onReceive(viewModel.objectWillChange) { _ in
+                DispatchQueue.main.async {
+                    publishCommandCenterContext()
+                }
             }
 
             CommandCenterComposerHost(viewModel: viewModel, composer: composer)
         }
+    }
+
+    private func publishCommandCenterContext() {
+        guard !isPaneContext || isPaneContextOwner else { return }
+        CosmoWindowViewModel.shared.updateContext(provider: contextProvider)
     }
 
     // MARK: - Left Column (240px) — Things 3-style Navigation Sidebar
@@ -412,4 +430,96 @@ struct CommandCenterDashboard: View {
             .padding(.horizontal, -16) // edge-to-edge in center column
     }
 
+}
+
+@MainActor
+final class CommandCenterContextProvider: ObservableObject, CosmoContextProvider {
+    private weak var viewModel: CommandCenterDashboardViewModel?
+
+    init(viewModel: CommandCenterDashboardViewModel) {
+        self.viewModel = viewModel
+    }
+
+    var contextType: CosmoContextType { .commandCenter }
+
+    var contextSummary: String {
+        guard let viewModel else { return "Command Center" }
+        return [
+            "Command Center",
+            viewModel.viewMode.label,
+            "\(viewModel.currentVisibleTasks.count) visible tasks",
+            "\(viewModel.habits.count) habits"
+        ].joined(separator: " · ")
+    }
+
+    var contextData: CosmoContextData {
+        guard let viewModel else {
+            return CosmoContextData(viewSpecificData: ["surface": "Command Center"])
+        }
+
+        let visibleTasks = viewModel.currentVisibleTasks
+        return CosmoContextData(
+            viewSpecificData: [
+                "surface": "Command Center",
+                "viewMode": viewModel.viewMode.label,
+                "selectedDate": viewModel.dateText,
+                "overdueTasks": "\(viewModel.overdueTasks.count)",
+                "scheduledTasks": "\(viewModel.scheduledTasks.count)",
+                "unscheduledTasks": "\(viewModel.unscheduledTasks.count)",
+                "anytimeTasks": "\(viewModel.anytimeTasks.count)",
+                "somedayTasks": "\(viewModel.somedayTasks.count)",
+                "completedTodayTasks": "\(viewModel.completedTodayTasks.count)",
+                "trackedToday": "\(viewModel.todayTrackedMinutes)m",
+                "habits": habitSummary(for: viewModel.habits),
+                "objectives": objectiveSummary(for: viewModel.objectives),
+                "visibleTasks": taskSummary(for: visibleTasks)
+            ],
+            visibleItemCount: visibleTasks.count,
+            activeFilters: activeFilters(for: viewModel)
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+
+    private func activeFilters(for viewModel: CommandCenterDashboardViewModel) -> [String] {
+        var filters = [viewModel.viewMode.label]
+        if viewModel.showReports {
+            filters.append("Reports: \(viewModel.selectedReportTab.displayName)")
+        }
+        if let project = viewModel.projects.first(where: { $0.uuid == viewModel.selectedProjectUUID }) {
+            filters.append("Project: \(project.title ?? "Untitled")")
+        }
+        return filters
+    }
+
+    private func taskSummary(for tasks: [TaskViewModel]) -> String {
+        guard !tasks.isEmpty else { return "No visible tasks" }
+        return tasks.prefix(12).map { task in
+            var parts = [task.title]
+            if let time = task.timeInfo {
+                parts.append(time)
+            }
+            if task.isRecurring {
+                parts.append("Repeats")
+            }
+            if let projectName = task.projectName, !projectName.isEmpty {
+                parts.append(projectName)
+            }
+            return parts.joined(separator: " · ")
+        }.joined(separator: "\n")
+    }
+
+    private func habitSummary(for habits: [HabitState]) -> String {
+        guard !habits.isEmpty else { return "No habits visible" }
+        return habits.prefix(8)
+            .map { "\($0.title) \($0.todayCount)/\($0.targetCount)" }
+            .joined(separator: ", ")
+    }
+
+    private func objectiveSummary(for objectives: [ObjectiveState]) -> String {
+        guard !objectives.isEmpty else { return "No objectives visible" }
+        return objectives.prefix(5)
+            .map { "\($0.title) \(Int($0.progress * 100))%" }
+            .joined(separator: ", ")
+    }
 }

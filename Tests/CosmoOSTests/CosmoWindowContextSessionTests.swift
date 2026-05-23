@@ -289,6 +289,76 @@ final class CosmoWindowContextSessionTests: XCTestCase {
         XCTAssertEqual(loaded?.activeAtomUUID, "atom-1")
         XCTAssertEqual(loaded?.pinnedSourceIDs, ["source-1", "source-2"])
     }
+
+    @MainActor
+    func testCommandCenterProviderReplacesStaleNoteContextWithDashboardState() {
+        let viewModel = CosmoWindowViewModel.shared
+        let staleNote = TestCosmoContextProvider(
+            atomUUID: "note-1",
+            title: { "Personal brand plan" }
+        )
+        viewModel.updateContext(provider: staleNote)
+
+        let dashboard = CommandCenterDashboardViewModel(startsRefreshing: false)
+        dashboard.scheduledTasks = [
+            TaskViewModel(uuid: "task-1", title: "Create reel/thread for Ben", scheduledTime: Date(timeIntervalSince1970: 1_700_000_000))
+        ]
+        dashboard.unscheduledTasks = [
+            TaskViewModel(uuid: "task-2", title: "Plan newsletter type process for Ben A")
+        ]
+        dashboard.habits = [
+            HabitState(
+                id: "writing",
+                title: "Writing",
+                iconName: "pencil",
+                accentColor: .blue,
+                todayProgress: 0.5,
+                isTodayComplete: false,
+                last7Days: [true, false],
+                consistencyCount: 1,
+                allowManualComplete: true,
+                targetCount: 2,
+                todayCount: 1,
+                trackedMinutesToday: 30,
+                sourceBreakdown: HabitSourceBreakdown(taskCount: 1),
+                isBuiltIn: false,
+                isEditable: true,
+                linkedIntentSummary: "Content"
+            )
+        ]
+
+        let provider = CommandCenterContextProvider(viewModel: dashboard)
+        viewModel.updateContext(provider: provider)
+
+        XCTAssertEqual(viewModel.activeContext.type, .commandCenter)
+        XCTAssertEqual(viewModel.currentHeaderSubtitle, "Command Center")
+        XCTAssertNil(viewModel.activeContext.data.currentAtomTitle)
+        XCTAssertEqual(viewModel.activeContext.data.visibleItemCount, 2)
+        XCTAssertEqual(viewModel.activeContext.data.viewSpecificData["scheduledTasks"], "1")
+        XCTAssertEqual(viewModel.activeContext.data.viewSpecificData["habits"], "Writing 1/2")
+        XCTAssertTrue(viewModel.activeContext.data.toContextBlock().contains("Create reel/thread for Ben"))
+        XCTAssertFalse(viewModel.activeContext.data.toContextBlock().contains("Personal brand plan"))
+    }
+
+    @MainActor
+    func testContextProviderIsRetainedForLaterTitleRefreshes() {
+        let viewModel = CosmoWindowViewModel.shared
+        var title = "Loading title"
+
+        do {
+            let provider = TestCosmoContextProvider(
+                atomUUID: "note-course",
+                title: { title }
+            )
+            viewModel.updateContext(provider: provider)
+        }
+
+        title = "Course knowledge"
+        viewModel.refreshContextIfCurrentAtomMatches(atomUUID: "note-course")
+
+        XCTAssertEqual(viewModel.activeContext.data.currentAtomTitle, "Course knowledge")
+        XCTAssertEqual(viewModel.currentHeaderSubtitle, "Course knowledge")
+    }
 }
 
 @MainActor

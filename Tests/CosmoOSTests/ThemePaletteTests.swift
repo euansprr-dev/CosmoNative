@@ -159,6 +159,11 @@ final class ThemePaletteTests: XCTestCase {
         assertColor(DS.commandChromeProminentBorder, equalsHex: "242428")
         assertColor(DS.commandChromeControlFill, equalsHex: "171717")
         assertColor(DS.commandChromeControlBorder, equalsHex: "242428")
+        assertColor(DS.commandChromeSeparator, equalsHex: "17171A")
+        assertColor(DS.commandChromeSeparatorStrong, equalsHex: "242428")
+
+        assertColor(DS.documentSepiaSubtle, equalsHex: "F5F4F0")
+        assertColor(DS.documentSepiaBorder, equalsHex: "E8E8EC")
     }
 
     func testBlackMonoKeepsCanvasClustersBrightLikeLightMono() throws {
@@ -167,26 +172,26 @@ final class ThemePaletteTests: XCTestCase {
         assertColor(
             DS.canvasClusterSurfaceFill(isDropTarget: false, isUserCreated: true, usesExpandedContent: true),
             equalsHex: "FFFFFF",
-            alpha: 0.026
+            alpha: 0.038
         )
         assertColor(
             DS.canvasClusterSurfaceFill(isDropTarget: false, isUserCreated: true, usesExpandedContent: false),
             equalsHex: "FFFFFF",
-            alpha: 0.022
+            alpha: 0.032
         )
         XCTAssertEqual(
             DS.canvasClusterAccentWashOpacity(isDropTarget: false, isUserCreated: true, usesExpandedContent: true),
-            0.18,
+            0.245,
             accuracy: 0.001
         )
         XCTAssertEqual(
             DS.canvasClusterAccentWashOpacity(isDropTarget: false, isUserCreated: true, usesExpandedContent: false),
-            0.155,
+            0.215,
             accuracy: 0.001
         )
         XCTAssertEqual(
             DS.canvasClusterStrokeOpacity(isSelected: false, isHovered: false, isDropTarget: false),
-            0.54,
+            0.68,
             accuracy: 0.001
         )
     }

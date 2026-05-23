@@ -1853,6 +1853,16 @@ private struct CosmoThinkingCard: View {
 private struct CosmoContextBar: View {
     let context: CosmoActiveContext
 
+    private var primaryTitle: String {
+        let title = context.data.currentAtomTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? context.type.displayName : title
+    }
+
+    private var secondaryTitle: String? {
+        let title = context.data.currentAtomTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? nil : context.type.displayName
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: context.type.icon)
@@ -1862,13 +1872,13 @@ private struct CosmoContextBar: View {
                 .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(context.type.displayName)
+                Text(primaryTitle)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
 
-                if let title = context.data.currentAtomTitle, !title.isEmpty {
-                    Text(title)
+                if let secondaryTitle {
+                    Text(secondaryTitle)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(DS.textSecondary)
                         .lineLimit(1)

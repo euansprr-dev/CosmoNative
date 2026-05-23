@@ -291,8 +291,26 @@ private struct CommandKToolbarChipModifier: ViewModifier {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(isActive ? activeBorder : DS.sepiaSubtle, lineWidth: 0.5)
+                    .stroke(isActive ? activeBorder : DS.commandChromeSeparator, lineWidth: 0.5)
             )
+    }
+}
+
+struct CommandKSectionLabel: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: DS.space12) {
+            Text(label)
+                .font(DS.smallCaps)
+                .tracking(1.6)
+                .foregroundStyle(DS.commandCenterOrnamentText)
+                .fixedSize()
+            Rectangle()
+                .fill(DS.commandChromeSeparatorStrong)
+                .frame(height: 0.5)
+                .frame(maxWidth: .infinity)
+        }
     }
 }
 
@@ -332,7 +350,7 @@ private struct CommandKGalleryCardModifier: ViewModifier {
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(
-                        isSelected ? DS.gilt.opacity(0.4) : (isHovered ? DS.sepiaBorder : DS.sepiaSubtle),
+                        isSelected ? DS.gilt.opacity(0.4) : (isHovered ? DS.commandChromeSeparatorStrong : DS.commandChromeSeparator),
                         lineWidth: 0.5
                     )
                     .allowsHitTesting(false)

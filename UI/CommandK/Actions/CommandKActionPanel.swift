@@ -70,7 +70,7 @@ struct CommandKActionPanel: View {
                         emptyState
                     } else {
                         ForEach(filteredGroups, id: \.category.rawValue) { group in
-                            AtelierOrnamentalSectionLabel(label: group.category.rawValue.uppercased())
+                            CommandKSectionLabel(label: group.category.rawValue.uppercased())
                             ForEach(group.actions) { action in
                                 CommandKActionPanelRow(
                                     action: action,
@@ -121,7 +121,7 @@ struct CommandKActionPanel: View {
         .padding(.vertical, DS.space8)
         .background(DS.glassInputFill.opacity(0.24))
         .overlay(alignment: .top) {
-            Rectangle().fill(DS.sepiaBorder).frame(height: 0.5)
+            Rectangle().fill(DS.commandChromeSeparatorStrong).frame(height: 0.5)
         }
     }
 

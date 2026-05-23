@@ -29,10 +29,10 @@ struct DashboardHabitPanel: View {
             HStack(spacing: 6) {
                 Image(systemName: "repeat")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.giltMuted)
+                    .foregroundStyle(DS.commandCenterOrnamentText)
                 Text("Habits")
                     .font(DS.smallCaps)
-                    .foregroundStyle(DS.giltMuted)
+                    .foregroundStyle(DS.commandCenterOrnamentText)
             }
 
             Spacer()
@@ -42,7 +42,7 @@ struct DashboardHabitPanel: View {
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(DS.commandCenterMutedText)
                     .frame(width: 26, height: 26)
             }
             .accessibilityLabel("Manage habits")
@@ -178,7 +178,7 @@ private struct DashboardHabitOrbitCard: View {
         }
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(DS.sepiaSubtle.opacity(0.75))
+                .fill(DS.commandCenterSeparator)
                 .frame(height: 0.5)
         }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -257,7 +257,7 @@ private struct DashboardHabitOrbitCard: View {
             ForEach(Array(habit.last7Days.enumerated()), id: \.offset) { index, completed in
                 let isToday = index == 6
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(completed ? accent : (isToday ? Color.clear : DS.sepiaSubtle))
+                    .fill(completed ? accent : (isToday ? Color.clear : DS.commandCenterSeparatorStrong))
                     .frame(width: 6, height: 6)
                     .overlay {
                         if isToday && !completed {

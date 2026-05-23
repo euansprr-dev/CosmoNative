@@ -103,11 +103,11 @@ struct DashboardViewModeBar: View {
                 HStack(spacing: DS.space4) {
                     Image(systemName: mode.icon)
                         .font(DS.caption2)
-                        .foregroundStyle(isSelected ? mode.activeTint : DS.inkFaded)
+                        .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
 
                     Text(mode.label)
                         .font(isSelected ? DS.headline : DS.callout)
-                        .foregroundStyle(isSelected ? DS.inkWash : DS.inkFaded)
+                        .foregroundStyle(isSelected ? DS.commandCenterTitleText : DS.commandCenterMutedText)
 
                     if count > 0 {
                         badge(for: mode, count: count, isSelected: isSelected)
@@ -136,7 +136,7 @@ struct DashboardViewModeBar: View {
         return Text("\(count)")
             .font(DS.caption2)
             .contentTransition(.numericText(value: Double(count)))
-            .foregroundStyle(isSelected ? mode.activeTint : DS.inkFaded)
+            .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
             .frame(width: 16, height: 16)
             .background(
                 Circle()

@@ -40,6 +40,10 @@ struct CanvasConnectionGeometrySignature: Equatable {
     }
 }
 
+struct CanvasConnectionGeometryInvalidationKey: Equatable {
+    let blockDataRevision: Int
+}
+
 /// Renders knowledge pulse lines between related blocks on the canvas.
 /// Queries the graph for edges where both source and target are visible, then
 /// draws animated bezier connections. Supports tap-to-select and delete.
@@ -52,6 +56,7 @@ struct CanvasConnectionLinesLayer: View {
     // MARK: - Parameters
 
     let blocks: [CanvasBlock]
+    let geometryInvalidationKey: CanvasConnectionGeometryInvalidationKey
     let transform: CanvasViewportTransform
     let activeBlockDrag: ActiveCanvasDragState<String>
     var isActive: Bool = true
@@ -87,10 +92,6 @@ struct CanvasConnectionLinesLayer: View {
         static let edgePaddingGap: CGFloat = 6
         /// Pulse animation frame rate — 15fps is more than enough for subtle energy flow
         static let pulseFrameRate: TimeInterval = 1.0 / 15.0
-    }
-
-    private var blockGeometrySignature: CanvasConnectionGeometrySignature {
-        CanvasConnectionGeometrySignature(blocks: blocks)
     }
 
     /// Affine transform from raw canvas space to screen space.
@@ -148,16 +149,13 @@ struct CanvasConnectionLinesLayer: View {
         .onChange(of: edges) { _, _ in
             recomputeVisibleEdgesAndEndpoints()
         }
-        .onChange(of: blocks.map(\.entityUuid)) { _, _ in
+        .onChange(of: geometryInvalidationKey) { _, _ in
             fetchEdges()
             recomputeVisibleEdgesAndEndpoints()
         }
         // Cached endpoints are stored in canvas space. Pan/zoom only changes the
         // affine transform applied at render time, so endpoint recomputation is
         // reserved for actual block geometry changes.
-        .onChange(of: blockGeometrySignature) { _, _ in
-            recomputeEndpoints()
-        }
         .onChange(of: activeBlockDrag) { _, _ in
             throttledRecomputeEndpoints()
         }

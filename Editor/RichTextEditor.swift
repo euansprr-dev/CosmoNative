@@ -6,6 +6,31 @@
 import SwiftUI
 import AppKit
 
+enum EditorHeightUpdatePolicy {
+    static let defaultEpsilon: CGFloat = 1.0
+
+    static func normalizedHeight(_ height: CGFloat) -> CGFloat? {
+        guard height.isFinite, height > 1 else {
+            return nil
+        }
+        return ceil(height)
+    }
+
+    static func shouldPublish(
+        current: CGFloat,
+        next: CGFloat,
+        epsilon: CGFloat = defaultEpsilon
+    ) -> Bool {
+        guard let nextHeight = normalizedHeight(next) else {
+            return false
+        }
+        guard let currentHeight = normalizedHeight(current) else {
+            return true
+        }
+        return abs(nextHeight - currentHeight) > epsilon
+    }
+}
+
 struct RichTextEditor: View {
     @Binding var text: NSAttributedString
     @Binding var plainText: String
@@ -218,8 +243,7 @@ struct RichTextEditor: View {
                     dismissAllOverlays()
                 },
                 onContentHeightChange: { height in
-                    measuredContentHeight = height
-                    onContentHeightChange?(height)
+                    scheduleMeasuredContentHeightUpdate(height)
                 },
                 onActivate: onActivate,
                 onDeactivate: onDeactivate,
@@ -389,6 +413,25 @@ struct RichTextEditor: View {
     }
 
     // MARK: - Overlay Helpers
+
+    private func scheduleMeasuredContentHeightUpdate(_ height: CGFloat) {
+        guard let nextHeight = EditorHeightUpdatePolicy.normalizedHeight(height),
+              EditorHeightUpdatePolicy.shouldPublish(current: measuredContentHeight, next: nextHeight) else {
+            return
+        }
+
+        DispatchQueue.main.async {
+            guard EditorHeightUpdatePolicy.shouldPublish(current: measuredContentHeight, next: nextHeight) else {
+                return
+            }
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                measuredContentHeight = nextHeight
+            }
+            onContentHeightChange?(nextHeight)
+        }
+    }
 
     private func dismissAllOverlays(includeSelection: Bool = true) {
         showSlashMenu = false

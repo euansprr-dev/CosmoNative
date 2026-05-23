@@ -34,11 +34,11 @@ struct DashboardObjectivesBar: View {
         HStack(spacing: 6) {
             Image(systemName: "target")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(DS.giltMuted)
+                .foregroundStyle(DS.commandCenterOrnamentText)
 
             Text("Objectives")
                 .font(DS.smallCaps)
-                .foregroundStyle(DS.giltMuted)
+                .foregroundStyle(DS.commandCenterOrnamentText)
 
             Spacer()
 
@@ -50,7 +50,7 @@ struct DashboardObjectivesBar: View {
                 .background(DS.giltSoft.opacity(0.7), in: .rect(cornerRadius: 4))
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(DS.giltMuted.opacity(0.55), lineWidth: 0.5)
+                        .stroke(DS.commandCenterSeparatorStrong, lineWidth: 0.5)
                 )
         }
     }

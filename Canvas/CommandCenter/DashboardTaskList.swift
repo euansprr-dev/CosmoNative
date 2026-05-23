@@ -352,7 +352,7 @@ struct DashboardTaskList: View {
 
             // Anchoring line — extends to right edge like a ledger rule
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(DS.commandCenterSeparator)
                 .frame(height: 0.5)
                 .padding(.leading, DS.space8)
 
@@ -635,7 +635,7 @@ struct DashboardTaskList: View {
             }
             Text(text)
                 .font(DS.caption2)
-                .foregroundStyle(isOverdue ? DS.red : DS.inkFaded)
+                .foregroundStyle(isOverdue ? DS.red : DS.commandCenterMutedText)
         }
         .frame(width: 76, alignment: .trailing)
     }
@@ -653,7 +653,7 @@ struct DashboardTaskList: View {
         } label: {
             Image(systemName: isActive ? "pause.fill" : "play.fill")
                 .font(DS.caption2)
-                .foregroundStyle(isActive ? DS.accent : DS.inkFaded)
+                .foregroundStyle(isActive ? DS.accent : DS.commandCenterMutedText)
                 .frame(width: 24, height: 24)
                 .background(
                     Circle()
@@ -837,7 +837,7 @@ struct DashboardTaskList: View {
 
             Text(message)
                 .font(.system(size: 14, weight: .regular, design: .serif))
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(DS.commandCenterMutedText)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DS.space32)

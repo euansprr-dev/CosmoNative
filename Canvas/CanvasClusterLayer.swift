@@ -275,35 +275,27 @@ struct CanvasClusterLayer: View {
     }
 
     private func clusterSurfaceFill(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Color {
-        let opacity: Double
-        if isDropTarget {
-            opacity = DS.palette.isDark ? 0.050 : 0.030
-        } else if cluster.isUserCreated {
-            opacity = (cluster.viewMode != .canvas || isZone)
-                ? (DS.palette.isDark ? 0.040 : 0.026)
-                : (DS.palette.isDark ? 0.032 : 0.022)
-        } else {
-            opacity = DS.palette.isDark ? 0.026 : 0.018
-        }
-
-        return DS.palette.isDark ? Color.black.opacity(opacity) : Color.white.opacity(opacity)
+        DS.canvasClusterSurfaceFill(
+            isDropTarget: isDropTarget,
+            isUserCreated: cluster.isUserCreated,
+            usesExpandedContent: cluster.viewMode != .canvas || isZone
+        )
     }
 
     private func accentWashOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
-        if isDropTarget { return DS.palette.isDark ? 0.075 : 0.22 }
-        if cluster.isUserCreated {
-            return (cluster.viewMode != .canvas || isZone)
-                ? (DS.palette.isDark ? 0.040 : 0.18)
-                : (DS.palette.isDark ? 0.032 : 0.155)
-        }
-        return DS.palette.isDark ? 0.022 : 0.12
+        DS.canvasClusterAccentWashOpacity(
+            isDropTarget: isDropTarget,
+            isUserCreated: cluster.isUserCreated,
+            usesExpandedContent: cluster.viewMode != .canvas || isZone
+        )
     }
 
     private func clusterStrokeOpacity(isSelected: Bool, isHovered: Bool, isDropTarget: Bool) -> Double {
-        if isDropTarget { return 0.96 }
-        if isSelected { return 0.88 }
-        if isHovered { return DS.palette.isDark ? 0.52 : 0.68 }
-        return DS.palette.isDark ? 0.36 : 0.54
+        DS.canvasClusterStrokeOpacity(
+            isSelected: isSelected,
+            isHovered: isHovered,
+            isDropTarget: isDropTarget
+        )
     }
 
     private func clusterStrokeWidth(isSelected: Bool, isDropTarget: Bool) -> CGFloat {

@@ -59,19 +59,19 @@ struct CommandCenterSidebar: View {
 
                 Image(systemName: mode.icon)
                     .font(DS.callout)
-                    .foregroundStyle(isSelected ? mode.activeTint : DS.inkFaded)
+                    .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
                     .frame(width: DS.space20)
 
                 Text(mode.label)
                     .font(isSelected ? DS.headline : DS.callout)
-                    .foregroundStyle(isSelected ? DS.inkWash : DS.inkFaded)
+                    .foregroundStyle(isSelected ? DS.commandCenterTitleText : DS.commandCenterMutedText)
 
                 Spacer()
 
                 if count > 0 {
                     Text("\(count)")
                         .font(DS.footnote)
-                        .foregroundStyle(isSelected ? mode.activeTint : DS.inkFaded)
+                        .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
                         .monospacedDigit()
                 }
             }
@@ -79,7 +79,7 @@ struct CommandCenterSidebar: View {
             .padding(.vertical, DS.space6)
             .background(
                 isSelected
-                    ? RoundedRectangle(cornerRadius: 6).fill(DS.vellum)
+                    ? RoundedRectangle(cornerRadius: 6).fill(DS.commandCenterSelectedRowFill)
                     : nil
             )
             .contentShape(Rectangle())
@@ -133,11 +133,11 @@ struct CommandCenterSidebar: View {
         VStack(alignment: .leading, spacing: DS.space4) {
             Text(text)
                 .font(DS.smallCaps)
-                .foregroundStyle(DS.giltMuted)
+                .foregroundStyle(DS.commandCenterOrnamentText)
                 .padding(.horizontal, DS.space10)
 
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(DS.commandCenterSeparator)
                 .frame(height: 0.5)
                 .padding(.horizontal, DS.space10)
         }

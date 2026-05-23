@@ -2639,12 +2639,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 scrollView.invalidateIntrinsicContentSize()
             }
 
-            // Fire the SwiftUI callback NOW — keeps intrinsicContentSize and
-            // bodyEditorHeight/textContentHeight in sync so SwiftUI does a single
-            // layout pass, not two (which caused the visible double-jitter).
+            // Report SwiftUI-facing height changes on the next run loop. This helper
+            // can run from NSTextView delegate/layout work, where mutating SwiftUI
+            // state synchronously causes re-entrant render passes.
             if abs(newHeight - lastReportedHeight) > 1.0 {
                 lastReportedHeight = newHeight
-                parent.onContentHeightChange?(newHeight)
+                let callback = parent.onContentHeightChange
+                DispatchQueue.main.async {
+                    callback?(newHeight)
+                }
             }
 
             // Reset any internal scroll offset — in non-scrolling mode the clip

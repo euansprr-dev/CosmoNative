@@ -315,7 +315,7 @@ struct CommandCenterDashboard: View {
         }
         .overlay(alignment: .leading) {
             Rectangle()
-                .fill(DS.sepiaSubtle.opacity(0.7))
+                .fill(DS.commandCenterSeparator)
                 .frame(width: 0.5)
         }
     }
@@ -389,7 +389,7 @@ struct CommandCenterDashboard: View {
                     Text(title)
                         .font(.system(size: 12, weight: isActive ? .semibold : .medium))
                 }
-                .foregroundStyle(isActive ? DS.accent : DS.inkFaded)
+                .foregroundStyle(isActive ? DS.accent : DS.commandCenterMutedText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DS.space8)
 

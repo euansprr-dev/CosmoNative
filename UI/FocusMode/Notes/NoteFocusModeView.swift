@@ -40,6 +40,135 @@ enum NoteFocusHeaderLayoutPolicy {
     }
 }
 
+struct NoteHeadingEntry: Equatable, Sendable {
+    let level: Int
+    let text: String
+}
+
+struct NoteFocusTextAnalysis: Equatable, Sendable {
+    static let empty = NoteFocusTextAnalysis(
+        wordCount: 0,
+        estimatedReadingMinutes: 1,
+        outLinkCount: 0,
+        headings: []
+    )
+
+    let wordCount: Int
+    let estimatedReadingMinutes: Int
+    let outLinkCount: Int
+    let headings: [NoteHeadingEntry]
+
+    static func analyze(_ text: String, headingLimit: Int = 25) -> NoteFocusTextAnalysis {
+        var wordCount = 0
+        var outLinkCount = 0
+        var headings: [NoteHeadingEntry] = []
+        var currentWordHasLettersOrNumbers = false
+        var line = ""
+        var previousCharacter: Character?
+
+        func finishWord() {
+            if currentWordHasLettersOrNumbers {
+                wordCount += 1
+            }
+            currentWordHasLettersOrNumbers = false
+        }
+
+        func finishLine() {
+            if headings.count < headingLimit,
+               let heading = headingEntry(from: line) {
+                headings.append(heading)
+            }
+            line.removeAll(keepingCapacity: true)
+        }
+
+        for character in text {
+            if character == "[" && previousCharacter == "[" {
+                outLinkCount += 1
+            }
+
+            if character == "\n" {
+                finishWord()
+                finishLine()
+            } else {
+                line.append(character)
+                if character.isLetter || character.isNumber {
+                    currentWordHasLettersOrNumbers = true
+                } else if character.isWhitespace {
+                    finishWord()
+                }
+            }
+
+            previousCharacter = character
+        }
+
+        finishWord()
+        finishLine()
+
+        return NoteFocusTextAnalysis(
+            wordCount: wordCount,
+            estimatedReadingMinutes: max(1, Int(ceil(Double(wordCount) / 220.0))),
+            outLinkCount: outLinkCount,
+            headings: headings
+        )
+    }
+
+    private static func headingEntry(from line: String) -> NoteHeadingEntry? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("# ") {
+            return NoteHeadingEntry(level: 1, text: String(trimmed.dropFirst(2)))
+        } else if trimmed.hasPrefix("## ") {
+            return NoteHeadingEntry(level: 2, text: String(trimmed.dropFirst(3)))
+        } else if trimmed.hasPrefix("### ") {
+            return NoteHeadingEntry(level: 3, text: String(trimmed.dropFirst(4)))
+        }
+        return nil
+    }
+}
+
+enum NoteSaveKind: Equatable, Sendable {
+    case plainText
+    case richDocumentCheckpoint
+}
+
+struct NoteAutosavePolicy: Equatable, Sendable {
+    var richCheckpointCharacterThreshold: Int = 4_000
+    var richCheckpointInterval: TimeInterval = 30
+
+    func saveKind(
+        plainTextCharacterCount: Int,
+        now: Date,
+        lastRichCheckpointAt: Date?,
+        isClosing: Bool
+    ) -> NoteSaveKind {
+        if isClosing || plainTextCharacterCount < richCheckpointCharacterThreshold {
+            return .richDocumentCheckpoint
+        }
+
+        guard let lastRichCheckpointAt else {
+            return .richDocumentCheckpoint
+        }
+
+        return now.timeIntervalSince(lastRichCheckpointAt) >= richCheckpointInterval
+            ? .richDocumentCheckpoint
+            : .plainText
+    }
+}
+
+enum NoteAutosaveChangePolicy {
+    static func shouldAutosaveTextChange(isInitialLoad: Bool, didChange: Bool) -> Bool {
+        !isInitialLoad && didChange
+    }
+}
+
+enum NoteFocusLog {
+    static let isDebugEnabled = false
+
+    static func debug(_ message: @autoclosure () -> String) {
+        guard isDebugEnabled else { return }
+        print(message())
+    }
+}
+
 struct NoteFocusModeView: View {
     // MARK: - Properties
 
@@ -101,12 +230,16 @@ struct NoteFocusModeView: View {
     @State private var graphOverlayVisible: Bool = false
     @State private var backlinkPreviews: [NoteBacklinkPreview] = []
     @State private var mentionedInCounts: [AtomType: Int] = [:]
-    @State private var contentHeadings: [NoteHeadingEntry] = []
+    @State private var textAnalysis: NoteFocusTextAnalysis = .empty
+    @State private var textAnalysisTask: Task<Void, Never>?
     @State private var bodyHeadingOutline: [RichHeadingOutlineEntry] = []
     @State private var bodyNavigationTargetID: UUID?
+    @State private var saveGeneration: Int = 0
+    @State private var lastRichCheckpointAt: Date?
 
     private let database = CosmoDatabase.shared
     private let autoSaveDelay: TimeInterval = 0.5
+    private let autosavePolicy = NoteAutosavePolicy()
     private let titleStyle = SharedTitleSurfaceStyle.noteFocus
 
     @Environment(\.isPaneContext) private var isPaneContext
@@ -239,14 +372,15 @@ struct NoteFocusModeView: View {
             }
         }
         .onDisappear {
-            print("[FOCUS-NOTE] onDisappear — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+            NoteFocusLog.debug("[FOCUS-NOTE] onDisappear — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
             autoSaveTask?.cancel()
+            textAnalysisTask?.cancel()
             stopEditingLockRefresh()
             observationCancellable?.cancel()
             // Defer save by one frame so CosmoDocumentEditor's flushPendingSync()
             // can propagate the latest text via onDocumentChange first.
             DispatchQueue.main.async {
-                print("[FOCUS-NOTE] onDisappear(deferred) — saving uuid=\(atom.uuid) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+                NoteFocusLog.debug("[FOCUS-NOTE] onDisappear(deferred) — saving uuid=\(atom.uuid) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
                 saveClosed = true
                 saveAtomImmediately()
                 floatingBlocksManager.saveImmediately()
@@ -255,6 +389,7 @@ struct NoteFocusModeView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
             autoSaveTask?.cancel()
+            textAnalysisTask?.cancel()
             stopEditingLockRefresh()
             saveClosed = true
             saveAtomImmediately()
@@ -318,20 +453,13 @@ struct NoteFocusModeView: View {
     }
 
     private var estimatedReadingMinutes: Int {
-        max(1, Int(ceil(Double(wordCount) / 220.0)))
+        textAnalysis.estimatedReadingMinutes
     }
 
     private var inLinkCount: Int { backlinkPreviews.count }
 
     private var outLinkCount: Int {
-        // Heuristic: count [[wiki-link]] occurrences in plain content
-        var count = 0
-        var searchRange = plainContent.startIndex..<plainContent.endIndex
-        while let range = plainContent.range(of: "[[", range: searchRange) {
-            count += 1
-            searchRange = range.upperBound..<plainContent.endIndex
-        }
-        return count
+        textAnalysis.outLinkCount
     }
 
     // MARK: - Background Surface
@@ -527,20 +655,23 @@ struct NoteFocusModeView: View {
                         refreshCosmoContextIfActive()
                     },
                     onContentHeightChange: { newHeight in
-                        bodyEditorHeight = max(400, newHeight)
+                        let nextHeight = max(400, newHeight)
+                        if EditorHeightUpdatePolicy.shouldPublish(current: bodyEditorHeight, next: nextHeight) {
+                            bodyEditorHeight = nextHeight
+                        }
                     },
                     editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
                     navigationTargetID: bodyNavigationTargetID,
                     onDocumentChange: { document, plainText in
                         let changed = plainText != plainContent
-                        print("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
+                        NoteFocusLog.debug("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                         bodyDocument = document
                         plainContent = plainText
                         updateBodyHeadingOutline(from: document)
                         refreshCosmoContextIfActive()
-                        refreshHeadings()
-                        if !isInitialLoad {
-                            if changed { hasLocalBodyEdits = true }
+                        scheduleTextAnalysis(for: plainText)
+                        if NoteAutosaveChangePolicy.shouldAutosaveTextChange(isInitialLoad: isInitialLoad, didChange: changed) {
+                            hasLocalBodyEdits = true
                             triggerAutoSave()
                         }
                     }
@@ -889,22 +1020,33 @@ struct NoteFocusModeView: View {
         CosmoWindowViewModel.shared.refreshContextIfCurrentAtomMatches(atomUUID: atom.uuid)
     }
 
-    // MARK: - Heading Parser
+    // MARK: - Text Analysis
 
-    private func refreshHeadings() {
-        let lines = plainContent.split(separator: "\n", omittingEmptySubsequences: false)
-        var entries: [NoteHeadingEntry] = []
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("# ") {
-                entries.append(NoteHeadingEntry(level: 1, text: String(trimmed.dropFirst(2))))
-            } else if trimmed.hasPrefix("## ") {
-                entries.append(NoteHeadingEntry(level: 2, text: String(trimmed.dropFirst(3))))
-            } else if trimmed.hasPrefix("### ") {
-                entries.append(NoteHeadingEntry(level: 3, text: String(trimmed.dropFirst(4))))
+    private func scheduleTextAnalysis(for text: String) {
+        textAnalysisTask?.cancel()
+        textAnalysisTask = Task {
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+            } catch {
+                return
+            }
+
+            let analysis = await Task.detached(priority: .utility) {
+                NoteFocusTextAnalysis.analyze(text)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if plainContent == text {
+                    textAnalysis = analysis
+                }
             }
         }
-        contentHeadings = Array(entries.prefix(25))
+    }
+
+    private func updateTextAnalysisImmediately(for text: String) {
+        textAnalysisTask?.cancel()
+        textAnalysis = NoteFocusTextAnalysis.analyze(text)
     }
 
     private func updateBodyHeadingOutline(from document: RichDocument) {
@@ -968,7 +1110,10 @@ struct NoteFocusModeView: View {
                         scrollsInternally: false,
                         textAlignment: titleNSTextAlignment,
                         onContentHeightChange: { newHeight in
-                            titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
+                            let nextHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
+                            if EditorHeightUpdatePolicy.shouldPublish(current: titleEditorHeight, next: nextHeight) {
+                                titleEditorHeight = nextHeight
+                            }
                         },
                         onPlainTextChange: { plainText in
                             titlePlainText = plainText
@@ -978,14 +1123,17 @@ struct NoteFocusModeView: View {
                             }
                         },
                         onStructuredDocumentChange: { document, plainText in
-                            print("[FOCUS-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
+                            let changed = document != titleDocument || plainText != titlePlainText
+                            NoteFocusLog.debug("[FOCUS-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                             titleDocument = document
                             titlePlainText = plainText
                             refreshCosmoContextIfActive()
                             withAnimation(ProMotionSprings.bouncy) {
                                 titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
                             }
-                            if !isInitialLoad { triggerAutoSave() }
+                            if NoteAutosaveChangePolicy.shouldAutosaveTextChange(isInitialLoad: isInitialLoad, didChange: changed) {
+                                triggerAutoSave()
+                            }
                         },
                         onActivate: { isEditingTitle = true },
                         onDeactivate: { isEditingTitle = false },
@@ -1134,7 +1282,7 @@ struct NoteFocusModeView: View {
     // MARK: - Computed Properties
 
     private var wordCount: Int {
-        plainContent.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+        textAnalysis.wordCount
     }
 
     // MARK: - Sidebar Content
@@ -1290,15 +1438,15 @@ struct NoteFocusModeView: View {
                     )
                     let nextTitlePlainText = RichDocumentPersistence.titlePlainText(from: nextTitleDocument)
                     let nextBodyPlainText = nextBodyDocument.plainText
-                    print("[FOCUS-NOTE] 🔔 GRDB observation fired — uuid=\(atom.uuid) isInitialLoad=\(isInitialLoad) isEditingTitle=\(isEditingTitle) dbBodyLen=\(nextBodyPlainText.count) localBodyLen=\(plainContent.count) dbBodyPreview=\"\(String(nextBodyPlainText.prefix(60)))\" localBodyPreview=\"\(String(plainContent.prefix(60)))\"")
+                    NoteFocusLog.debug("[FOCUS-NOTE] 🔔 GRDB observation fired — uuid=\(atom.uuid) isInitialLoad=\(isInitialLoad) isEditingTitle=\(isEditingTitle) dbBodyLen=\(nextBodyPlainText.count) localBodyLen=\(plainContent.count) dbBodyPreview=\"\(String(nextBodyPlainText.prefix(60)))\" localBodyPreview=\"\(String(plainContent.prefix(60)))\"")
 
                     if !isEditingTitle,
                        (nextTitlePlainText != titlePlainText || nextTitleDocument != titleDocument) {
-                        print("[FOCUS-NOTE] 🔔 observation APPLYING title — uuid=\(atom.uuid)")
+                        NoteFocusLog.debug("[FOCUS-NOTE] 🔔 observation APPLYING title — uuid=\(atom.uuid)")
                         applyObservedTitleDocument(nextTitleDocument)
                     } else if isEditingTitle,
                               (nextTitlePlainText != titlePlainText || nextTitleDocument != titleDocument) {
-                        print("[FOCUS-NOTE] 🔔 observation DEFERRED title (editing) — uuid=\(atom.uuid)")
+                        NoteFocusLog.debug("[FOCUS-NOTE] 🔔 observation DEFERRED title (editing) — uuid=\(atom.uuid)")
                         pendingObservedTitleDocument = nextTitleDocument
                     }
 
@@ -1307,12 +1455,13 @@ struct NoteFocusModeView: View {
                     // from auto-save would overwrite text typed since save started.
                     if isInitialLoad,
                        nextBodyPlainText != plainContent || nextBodyDocument != bodyDocument {
-                        print("[FOCUS-NOTE] 🔔 observation APPLYING body (initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count)")
+                        NoteFocusLog.debug("[FOCUS-NOTE] 🔔 observation APPLYING body (initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count)")
                         bodyDocument = nextBodyDocument
                         plainContent = nextBodyPlainText
                         updateBodyHeadingOutline(from: nextBodyDocument)
+                        updateTextAnalysisImmediately(for: nextBodyPlainText)
                     } else if !isInitialLoad, nextBodyPlainText != plainContent {
-                        print("[FOCUS-NOTE] 🔔 observation SKIPPED body (not initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count) localLen=\(plainContent.count) ⚠️ DIVERGED=\(nextBodyPlainText != plainContent)")
+                        NoteFocusLog.debug("[FOCUS-NOTE] 🔔 observation SKIPPED body (not initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count) localLen=\(plainContent.count) ⚠️ DIVERGED=\(nextBodyPlainText != plainContent)")
                     }
 
                     tags = fetchedAtom.tagsList
@@ -1349,17 +1498,17 @@ struct NoteFocusModeView: View {
     }
 
     private func triggerAutoSave() {
-        print("[FOCUS-NOTE] triggerAutoSave() — \(autoSaveDelay)s debounce starting uuid=\(atom.uuid)")
+        NoteFocusLog.debug("[FOCUS-NOTE] triggerAutoSave() — \(autoSaveDelay)s debounce starting uuid=\(atom.uuid)")
         AtomRepository.shared.refreshEditingLock(uuid: atom.uuid)
         autoSaveTask?.cancel()
         autoSaveTask = Task {
             do {
                 try await Task.sleep(nanoseconds: UInt64(autoSaveDelay * 1_000_000_000))
                 guard !Task.isCancelled else {
-                    print("[FOCUS-NOTE] triggerAutoSave() CANCELLED uuid=\(atom.uuid)")
+                    NoteFocusLog.debug("[FOCUS-NOTE] triggerAutoSave() CANCELLED uuid=\(atom.uuid)")
                     return
                 }
-                print("[FOCUS-NOTE] triggerAutoSave() debounce elapsed, calling saveAtom() uuid=\(atom.uuid)")
+                NoteFocusLog.debug("[FOCUS-NOTE] triggerAutoSave() debounce elapsed, calling saveAtom() uuid=\(atom.uuid)")
                 await MainActor.run { saveAtom() }
             } catch {
                 // Cancelled
@@ -1369,12 +1518,19 @@ struct NoteFocusModeView: View {
 
     /// Debounced save with UI feedback (used during editing)
     private func saveAtom() {
-        print("[FOCUS-NOTE] saveAtom() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+        NoteFocusLog.debug("[FOCUS-NOTE] saveAtom() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+        let now = Date()
+        let saveKind = autosavePolicy.saveKind(
+            plainTextCharacterCount: plainContent.count,
+            now: now,
+            lastRichCheckpointAt: lastRichCheckpointAt,
+            isClosing: false
+        )
 
         withAnimation(ProMotionSprings.snappy) {
             saveState = .saving
         }
-        performSave { success in
+        performSave(kind: saveKind, requestedAt: now) { success in
             if success {
                 withAnimation(ProMotionSprings.snappy) {
                     saveState = .saved
@@ -1395,7 +1551,7 @@ struct NoteFocusModeView: View {
     /// Immediate synchronous save (used on close) — blocks until DB write completes.
     /// Guarantees data is persisted before the view/app exits.
     private func saveAtomImmediately() {
-        print("[FOCUS-NOTE] saveAtomImmediately() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+        NoteFocusLog.debug("[FOCUS-NOTE] saveAtomImmediately() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
         let titleDocumentCopy = titleDocument
         let bodyDocumentCopy = bodyDocument
         let plainContentCopy = plainContent
@@ -1452,6 +1608,7 @@ struct NoteFocusModeView: View {
             if plainContent == plainContentCopy {
                 hasLocalBodyEdits = false
             }
+            lastRichCheckpointAt = Date()
             postNoteFocusState(snapshot: snapshot, atomUUID: uuid, notifyRichDocumentObservers: false)
             // Sync: queue for Supabase push
             Task {
@@ -1468,7 +1625,11 @@ struct NoteFocusModeView: View {
     }
 
     /// Async save with completion callback (used for debounced auto-save during editing)
-    private func performSave(completion: ((Bool) -> Void)?) {
+    private func performSave(
+        kind: NoteSaveKind = .richDocumentCheckpoint,
+        requestedAt: Date = Date(),
+        completion: ((Bool) -> Void)?
+    ) {
         let titleDocumentCopy = titleDocument
         let bodyDocumentCopy = bodyDocument
         let titleCopy = titlePlainText
@@ -1476,69 +1637,128 @@ struct NoteFocusModeView: View {
         let tagsCopy = tags
         let uuid = atom.uuid
         let hasLocalBodyEditsCopy = hasLocalBodyEdits
+        saveGeneration += 1
+        let generation = saveGeneration
         AtomRepository.shared.refreshEditingLock(uuid: uuid)
-        print("[FOCUS-NOTE] performSave() — uuid=\(uuid) titleLen=\(titleCopy.count) bodyLen=\(contentCopy.count) bodyPreview=\"\(String(contentCopy.prefix(80)))\"")
 
         Task {
-            // Skip if sync save already ran on close — prevents stale async write
-            // from overwriting the final save
-            guard !saveClosed else {
-                print("[FOCUS-NOTE] performSave() SKIPPED — saveClosed=true uuid=\(uuid)")
+            guard await MainActor.run(body: { !saveClosed && saveGeneration == generation }) else {
                 return
             }
-            print("[FOCUS-NOTE] performSave() async DB write starting — uuid=\(uuid)")
+
             do {
-                let snapshot = try await database.asyncWrite { db -> NoteDocumentSnapshot in
+                switch kind {
+                case .plainText:
+                    try await database.asyncWrite { db in
+                        var existingMetadata: String?
+                        var existingBody: String?
+                        if let row = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                            existingMetadata = row["metadata"]
+                            existingBody = row["body"]
+                        }
+
+                        guard NoteWritePolicy.allowsBodyWrite(
+                            existingBody: existingBody,
+                            proposedBody: contentCopy,
+                            hasLocalEdits: hasLocalBodyEditsCopy
+                        ) else {
+                            throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
+                        }
+
+                        try db.execute(
+                            sql: """
+                            UPDATE atoms
+                            SET title = ?,
+                                body = ?,
+                                metadata = ?,
+                                updated_at = ?,
+                                _local_version = _local_version + 1,
+                                _local_pending = 1
+                            WHERE uuid = ?
+                            """,
+                            arguments: [
+                                RichDocumentPersistence.nilIfEmpty(titleCopy),
+                                contentCopy,
+                                Self.metadataString(existingMetadata: existingMetadata, tags: tagsCopy),
+                                ISO8601DateFormatter().string(from: Date()),
+                                uuid
+                            ]
+                        )
+                    }
+
+                    await MainActor.run {
+                        if plainContent == contentCopy {
+                            hasLocalBodyEdits = false
+                        }
+                        postNoteFocusState(title: titleCopy, body: contentCopy, atomUUID: uuid)
+                    }
+
+                case .richDocumentCheckpoint:
                     var existingMetadata: String?
-                    var existingBody: String?
-                    if let row = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                    if let row = try await database.asyncRead({ db in
+                        try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid])
+                    }) {
                         existingMetadata = row["metadata"]
-                        existingBody = row["body"]
                     }
 
-                    let snapshot = RichDocumentPersistence.noteSnapshot(
-                        existingMetadata: existingMetadata,
-                        titleDocument: titleDocumentCopy,
-                        bodyDocument: bodyDocumentCopy,
-                        plainBodyText: contentCopy
-                    )
-                    guard NoteWritePolicy.allowsBodyWrite(
-                        existingBody: existingBody,
-                        proposedBody: snapshot.bodyPlainText,
-                        hasLocalEdits: hasLocalBodyEditsCopy
-                    ) else {
-                        throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
-                    }
-                    let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
+                    let snapshot = await Task.detached(priority: .utility) {
+                        RichDocumentPersistence.noteSnapshot(
+                            existingMetadata: existingMetadata,
+                            titleDocument: titleDocumentCopy,
+                            bodyDocument: bodyDocumentCopy,
+                            plainBodyText: contentCopy
+                        )
+                    }.value
 
-                    try db.execute(
-                        sql: """
-                        UPDATE atoms
-                        SET title = ?,
-                            body = ?,
-                            metadata = ?,
-                            updated_at = ?,
-                            _local_version = _local_version + 1,
-                            _local_pending = 1
-                        WHERE uuid = ?
-                        """,
-                        arguments: [
-                            snapshot.atomTitle,
-                            snapshot.bodyPlainText,
-                            metadataString ?? snapshot.metadata,
-                            ISO8601DateFormatter().string(from: Date()),
-                            uuid
-                        ]
-                    )
-                    return snapshot
-                }
-                // Notify floating blocks to reload immediately (GRDB observation is backup)
-                await MainActor.run {
-                    if plainContent == contentCopy {
-                        hasLocalBodyEdits = false
+                    guard await MainActor.run(body: { !saveClosed && saveGeneration == generation }) else {
+                        return
                     }
-                    postNoteFocusState(snapshot: snapshot, atomUUID: uuid)
+
+                    try await database.asyncWrite { db in
+                        var existingBody: String?
+                        if let row = try Row.fetchOne(db, sql: "SELECT body FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                            existingBody = row["body"]
+                        }
+
+                        guard NoteWritePolicy.allowsBodyWrite(
+                            existingBody: existingBody,
+                            proposedBody: snapshot.bodyPlainText,
+                            hasLocalEdits: hasLocalBodyEditsCopy
+                        ) else {
+                            throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
+                        }
+                        let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
+
+                        try db.execute(
+                            sql: """
+                            UPDATE atoms
+                            SET title = ?,
+                                body = ?,
+                                metadata = ?,
+                                updated_at = ?,
+                                _local_version = _local_version + 1,
+                                _local_pending = 1
+                            WHERE uuid = ?
+                            """,
+                            arguments: [
+                                snapshot.atomTitle,
+                                snapshot.bodyPlainText,
+                                metadataString ?? snapshot.metadata,
+                                ISO8601DateFormatter().string(from: Date()),
+                                uuid
+                            ]
+                        )
+                    }
+
+                    await MainActor.run {
+                        if plainContent == contentCopy {
+                            hasLocalBodyEdits = false
+                        }
+                        lastRichCheckpointAt = requestedAt
+                        postNoteFocusState(snapshot: snapshot, atomUUID: uuid)
+                    }
                 }
+
                 // Sync: queue for Supabase push so notes sync to cloud
                 if let updatedAtom = try? await database.asyncRead({ db in
                     try Atom.filter(Column("uuid") == uuid).fetchOne(db)
@@ -1565,8 +1785,12 @@ struct NoteFocusModeView: View {
     }
 
     nonisolated private static func metadataString(for snapshot: NoteDocumentSnapshot, tags: [String]) -> String? {
+        metadataString(existingMetadata: snapshot.metadata, tags: tags)
+    }
+
+    nonisolated private static func metadataString(existingMetadata: String?, tags: [String]) -> String? {
         var metadataDict: [String: Any] = [:]
-        if let metadata = snapshot.metadata,
+        if let metadata = existingMetadata,
            let data = metadata.data(using: .utf8),
            let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             metadataDict = decoded
@@ -1601,14 +1825,21 @@ struct NoteFocusModeView: View {
             userInfo: ["atomUUID": atomUUID]
         )
     }
+
+    private func postNoteFocusState(title: String, body: String, atomUUID: String) {
+        NotificationCenter.default.post(
+            name: .noteFocusStateDidChange,
+            object: nil,
+            userInfo: [
+                "atomUUID": atomUUID,
+                "title": title,
+                "body": body
+            ]
+        )
+    }
 }
 
 // MARK: - V2 Support Types
-
-fileprivate struct NoteHeadingEntry: Equatable {
-    let level: Int
-    let text: String
-}
 
 fileprivate struct NoteBacklinkPreview: Equatable, Identifiable {
     var id: String { atomUUID }
@@ -2045,6 +2276,7 @@ class NoteContextProvider: CosmoContextProvider {
             viewSpecificData: [
                 "wordCount": "\(content.split(separator: " ").count)",
                 "tags": tags.joined(separator: ", "),
+                "noteBody": content,
                 "contentPreview": String(content.prefix(500))
             ],
             selectedText: selectedTextRef()

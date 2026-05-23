@@ -19,6 +19,10 @@ class ConversationMemoryService {
 
     func saveConversation(_ conversation: AgentConversation) async {
         var conv = conversation
+        guard !conv.messages.isEmpty else {
+            await deleteConversation(id: conv.id)
+            return
+        }
 
         // Auto-extract topics if not already set
         if conv.topics.isEmpty {
@@ -108,7 +112,16 @@ class ConversationMemoryService {
             return subtype == "agent_conversation"
         }
 
-        return convAtoms.prefix(limit).compactMap { decodeConversation(from: $0) }
+        return convAtoms
+            .compactMap { decodeConversation(from: $0) }
+            .filter { !$0.messages.isEmpty }
+            .sorted { lhs, rhs in
+                let lhsActivity = lhs.messages.last?.timestamp ?? lhs.createdAt
+                let rhsActivity = rhs.messages.last?.timestamp ?? rhs.createdAt
+                return lhsActivity > rhsActivity
+            }
+            .prefix(limit)
+            .map { $0 }
     }
 
     // MARK: - Semantic Search
@@ -499,7 +512,7 @@ class ConversationMemoryService {
             }
         }
 
-        var conv = AgentConversation(id: convId, source: source)
+        var conv = AgentConversation(id: convId, source: source, createdAt: createdAt)
         for msg in messages {
             conv.messages.append(msg)
         }

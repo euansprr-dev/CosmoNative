@@ -48,8 +48,8 @@ struct BlackMonoPalette: ThemePalette {
     let sepiaSubtle = Color(hex: "F5F4F0")
 
     // Borders
-    let border = Color(hex: "303034")
-    let borderSubtle = Color(hex: "202024")
+    let border = Color(hex: "242428")
+    let borderSubtle = Color(hex: "17171A")
     let borderActive = Color(hex: "F5F5F7")
     var focusRing: Color { Color.white.opacity(0.42) }
 

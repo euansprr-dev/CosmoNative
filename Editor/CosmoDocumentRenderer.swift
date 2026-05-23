@@ -1,10 +1,58 @@
 import SwiftUI
 
+enum CosmoDocumentRendererSurface: Equatable {
+    case fullDocument
+    case canvasPreview
+}
+
+enum CosmoDocumentRendererStackMode: Equatable {
+    case eager
+    case lazy
+}
+
+enum CosmoDocumentRendererStackPolicy {
+    static let canvasPreviewLazyBlockThreshold = 24
+
+    static func mode(
+        for surface: CosmoDocumentRendererSurface,
+        blockCount: Int
+    ) -> CosmoDocumentRendererStackMode {
+        switch surface {
+        case .canvasPreview:
+            return blockCount >= canvasPreviewLazyBlockThreshold ? .lazy : .eager
+        case .fullDocument:
+            return .eager
+        }
+    }
+}
+
+private struct IndexedRichBlock: Identifiable {
+    let offset: Int
+    let block: RichBlock
+
+    var id: UUID { block.id }
+}
+
+private struct IndexedRichBlocks: RandomAccessCollection {
+    typealias Index = Int
+    typealias Element = IndexedRichBlock
+
+    let blocks: [RichBlock]
+
+    var startIndex: Int { blocks.startIndex }
+    var endIndex: Int { blocks.endIndex }
+
+    subscript(position: Int) -> IndexedRichBlock {
+        IndexedRichBlock(offset: position, block: blocks[position])
+    }
+}
+
 struct CosmoDocumentRenderer: View {
     let document: RichDocument
     var fontSize: CGFloat = 16
     var darkMode: Bool = false
     var lineLimit: Int? = nil
+    var stackMode: CosmoDocumentRendererStackMode = .eager
 
     private var textColor: Color {
         darkMode ? .white : DS.documentText
@@ -19,11 +67,22 @@ struct CosmoDocumentRenderer: View {
     }
 
     private func blockStack(_ blocks: [RichBlock], depth: Int) -> AnyView {
-        AnyView(VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
-                blockView(block, at: index, in: blocks, depth: depth)
-            }
+        if stackMode == .lazy && depth == 0 {
+            return AnyView(LazyVStack(alignment: .leading, spacing: 8) {
+                blockRows(blocks, depth: depth)
+            })
+        }
+
+        return AnyView(VStack(alignment: .leading, spacing: 8) {
+            blockRows(blocks, depth: depth)
         })
+    }
+
+    @ViewBuilder
+    private func blockRows(_ blocks: [RichBlock], depth: Int) -> some View {
+        ForEach(IndexedRichBlocks(blocks: blocks)) { item in
+            blockView(item.block, at: item.offset, in: blocks, depth: depth)
+        }
     }
 
     private func blockView(_ block: RichBlock, at index: Int, in siblings: [RichBlock], depth: Int) -> AnyView {

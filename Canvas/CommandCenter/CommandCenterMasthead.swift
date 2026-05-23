@@ -21,28 +21,28 @@ struct CommandCenterMasthead: View {
             HStack(alignment: .firstTextBaseline, spacing: DS.space12) {
                 Text(viewModel.viewMode.label)
                     .font(.system(size: 30, weight: .semibold, design: .serif))
-                    .foregroundStyle(DS.inkWash)
+                    .foregroundStyle(DS.commandCenterTitleText)
 
                 Spacer(minLength: DS.space16)
 
                 Text(dateContext)
                     .font(DS.callout)
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(DS.commandCenterMutedText)
             }
 
             HStack(spacing: DS.space8) {
                 Image(systemName: viewModel.viewMode.icon)
                     .font(DS.caption)
-                    .foregroundStyle(DS.giltMuted)
+                    .foregroundStyle(DS.commandCenterOrnamentText)
 
                 Text(summaryText)
                     .font(DS.callout)
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(DS.commandCenterSecondaryText)
                     .lineLimit(1)
             }
 
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(DS.commandCenterSeparator)
                 .frame(height: 0.5)
                 .padding(.top, DS.space4)
         }
@@ -54,16 +54,16 @@ struct CommandCenterMasthead: View {
                 VStack(alignment: .leading, spacing: DS.space6) {
                     Text(viewModel.viewMode.label)
                         .font(.system(size: 30, weight: .semibold, design: .serif))
-                        .foregroundStyle(DS.inkWash)
+                        .foregroundStyle(DS.commandCenterTitleText)
 
                     HStack(spacing: DS.space8) {
                         Image(systemName: viewModel.viewMode.icon)
                             .font(DS.caption)
-                            .foregroundStyle(DS.giltMuted)
+                            .foregroundStyle(DS.commandCenterOrnamentText)
 
                         Text(summaryText)
                             .font(DS.callout)
-                            .foregroundStyle(DS.inkFaded)
+                            .foregroundStyle(DS.commandCenterSecondaryText)
                             .lineLimit(1)
                     }
                 }
@@ -75,7 +75,7 @@ struct CommandCenterMasthead: View {
                 VStack(alignment: .trailing, spacing: DS.space6) {
                     Text(dateContext)
                         .font(DS.callout)
-                        .foregroundStyle(DS.inkFaded)
+                        .foregroundStyle(DS.commandCenterMutedText)
 
                     upcomingRangeNavigation
                 }
@@ -84,7 +84,7 @@ struct CommandCenterMasthead: View {
             .frame(minHeight: 68)
 
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(DS.commandCenterSeparator)
                 .frame(height: 0.5)
         }
     }

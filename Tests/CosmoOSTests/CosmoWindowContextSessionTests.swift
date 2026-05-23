@@ -3,6 +3,72 @@ import XCTest
 
 final class CosmoWindowContextSessionTests: XCTestCase {
     @MainActor
+    func testConversationMemoryPreservesCreatedAtWhenLoadingHistory() async throws {
+        let service = ConversationMemoryService.shared
+        let conversationId = "cosmo-window-test-created-at-\(UUID().uuidString)"
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+        var conversation = AgentConversation(
+            id: conversationId,
+            source: .inApp,
+            createdAt: createdAt
+        )
+        conversation.append(.user("Keep my original timestamp."))
+
+        await service.saveConversation(conversation)
+
+        let maybeLoaded = await service.loadConversation(id: conversationId)
+        guard let loaded = maybeLoaded else {
+            await service.deleteConversation(id: conversationId)
+            XCTFail("Expected saved conversation to load")
+            return
+        }
+        await service.deleteConversation(id: conversationId)
+
+        XCTAssertEqual(loaded.createdAt.timeIntervalSince1970, createdAt.timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testChatHistoryExcludesEmptyConversations() async throws {
+        let service = ConversationMemoryService.shared
+        let viewModel = CosmoWindowViewModel.shared
+        let emptyId = "cosmo-window-test-empty-\(UUID().uuidString)"
+        let filledId = "cosmo-window-test-filled-\(UUID().uuidString)"
+
+        await service.saveConversation(AgentConversation(id: emptyId, source: .inApp))
+        var filled = AgentConversation(id: filledId, source: .inApp)
+        filled.append(.user("This chat should appear."))
+        await service.saveConversation(filled)
+
+        await viewModel.loadChatHistory()
+        let containsEmpty = viewModel.chatHistoryEntries.contains { $0.id == emptyId }
+        let containsFilled = viewModel.chatHistoryEntries.contains { $0.id == filledId }
+
+        await service.deleteConversation(id: emptyId)
+        await service.deleteConversation(id: filledId)
+
+        XCTAssertFalse(containsEmpty)
+        XCTAssertTrue(containsFilled)
+    }
+
+    func testWindowPersistencePreservesVisibleMessageTimestamps() {
+        let userDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let assistantDate = Date(timeIntervalSince1970: 1_700_000_060)
+        let visibleMessages: [CosmoWindowMessage] = [
+            CosmoWindowMessage(type: .user, content: "Original prompt", timestamp: userDate),
+            CosmoWindowMessage(type: .assistant, content: "Original response", timestamp: assistantDate)
+        ]
+
+        let merged = CosmoWindowViewModel.mergedConversationForPersistence(
+            existing: nil,
+            visibleMessages: visibleMessages,
+            conversationId: "conversation-1",
+            linkedAtomUUIDs: []
+        )
+
+        XCTAssertEqual(merged.messages.map(\.timestamp), [userDate, assistantDate])
+    }
+
+    @MainActor
     func testRefreshContextOnlyUpdatesMatchingActiveAtom() {
         let viewModel = CosmoWindowViewModel.shared
         var title = "Personal brand plan"

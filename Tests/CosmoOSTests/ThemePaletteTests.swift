@@ -130,9 +130,24 @@ final class ThemePaletteTests: XCTestCase {
         assertColor(DS.gilt, equalsHex: "D9D9DF")
         assertColor(DS.giltSoft, equalsHex: "151517")
         assertColor(DS.giltMuted, equalsHex: "8F9098")
-        assertColor(DS.border, equalsHex: "303034")
-        assertColor(DS.borderSubtle, equalsHex: "202024")
+        assertColor(DS.border, equalsHex: "242428")
+        assertColor(DS.borderSubtle, equalsHex: "17171A")
         assertColor(DS.borderActive, equalsHex: "F5F5F7")
+    }
+
+    func testBlackMonoUsesDarkCommandCenterSeparatorsAndReadableMastheadText() throws {
+        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+
+        assertColor(DS.commandCenterTitleText, equalsHex: "F5F5F7")
+        assertColor(DS.commandCenterSecondaryText, equalsHex: "B7B7C0")
+        assertColor(DS.commandCenterMutedText, equalsHex: "7C7D86")
+        assertColor(DS.commandCenterOrnamentText, equalsHex: "7C7D86")
+        assertColor(DS.commandCenterSeparator, equalsHex: "17171A")
+        assertColor(DS.commandCenterSeparatorStrong, equalsHex: "242428")
+        assertColor(DS.commandCenterSelectedRowFill, equalsHex: "101012")
+
+        assertColor(DS.documentSepiaSubtle, equalsHex: "F5F4F0")
+        assertColor(DS.documentSurface, equalsHex: "FFFFFF")
     }
 
     func testBlackMonoUsesDarkCommandChromeInsteadOfDocumentVellum() throws {
@@ -140,10 +155,40 @@ final class ThemePaletteTests: XCTestCase {
 
         assertColor(DS.commandChromePanelFill, equalsHex: "0B0B0D")
         assertColor(DS.commandChromeProminentFill, equalsHex: "101012")
-        assertColor(DS.commandChromeBorder, equalsHex: "303034")
-        assertColor(DS.commandChromeProminentBorder, equalsHex: "303034")
+        assertColor(DS.commandChromeBorder, equalsHex: "242428")
+        assertColor(DS.commandChromeProminentBorder, equalsHex: "242428")
         assertColor(DS.commandChromeControlFill, equalsHex: "171717")
-        assertColor(DS.commandChromeControlBorder, equalsHex: "303034")
+        assertColor(DS.commandChromeControlBorder, equalsHex: "242428")
+    }
+
+    func testBlackMonoKeepsCanvasClustersBrightLikeLightMono() throws {
+        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+
+        assertColor(
+            DS.canvasClusterSurfaceFill(isDropTarget: false, isUserCreated: true, usesExpandedContent: true),
+            equalsHex: "FFFFFF",
+            alpha: 0.026
+        )
+        assertColor(
+            DS.canvasClusterSurfaceFill(isDropTarget: false, isUserCreated: true, usesExpandedContent: false),
+            equalsHex: "FFFFFF",
+            alpha: 0.022
+        )
+        XCTAssertEqual(
+            DS.canvasClusterAccentWashOpacity(isDropTarget: false, isUserCreated: true, usesExpandedContent: true),
+            0.18,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            DS.canvasClusterAccentWashOpacity(isDropTarget: false, isUserCreated: true, usesExpandedContent: false),
+            0.155,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            DS.canvasClusterStrokeOpacity(isSelected: false, isHovered: false, isDropTarget: false),
+            0.54,
+            accuracy: 0.001
+        )
     }
 
     func testBlackMonoUsesMonoGlobalPanelMaterialAndReadableSidebarGlass() throws {

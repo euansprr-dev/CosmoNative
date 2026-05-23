@@ -11,6 +11,7 @@ struct PaneCanvasView: View {
     @StateObject private var spatialEngine = SpatialEngine()
     @StateObject private var clusterEngine = CanvasClusterEngine()
     @StateObject private var frameTracker = CanvasBlockFrameTracker()
+    @StateObject private var renderPipeline = CanvasRenderPipeline()
 
     // Canvas panning
     @State private var canvasOffset: CGSize = .zero
@@ -73,13 +74,38 @@ struct PaneCanvasView: View {
         )
     }
 
-    /// Blocks consumed by clusters in list/board/grid mode (rendered inside cluster, not individually)
-    private var clusterConsumedBlockUUIDs: Set<String> {
-        var s = Set<String>()
-        for c in clusterEngine.userClusters where c.viewMode != .canvas {
-            s.formUnion(c.blockUUIDs)
-        }
-        return s
+    private var hasLiveViewportGesture: Bool {
+        panOffset != .zero
+            || spacePanOffset != .zero
+            || abs(magnificationState - 1) > 0.0001
+    }
+
+    private func renderSnapshot(
+        for blocks: [CanvasBlock],
+        transform: CanvasViewportTransform
+    ) -> CanvasRenderSnapshot {
+        let snapshotTransform = CanvasViewportSnapshotPolicy.snapshotTransform(
+            for: transform,
+            isLiveGesture: hasLiveViewportGesture
+        )
+        let preloadInset = CanvasViewportSnapshotPolicy.preloadInset(
+            viewportSize: transform.viewportSize,
+            isLiveGesture: hasLiveViewportGesture,
+            blockCount: blocks.count
+        )
+
+        return renderPipeline.snapshot(
+            blocks: blocks,
+            blockDataRevision: spatialEngine.blocksDataRevision,
+            transform: snapshotTransform,
+            preloadInset: preloadInset,
+            userClusters: clusterEngine.userClusters,
+            clusterDataRevision: clusterEngine.userClustersDataRevision,
+            selectedBlockId: selectedBlockId,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
     }
 
     // MARK: - Body
@@ -99,6 +125,7 @@ struct PaneCanvasView: View {
                 maxScale: maxScale
             )
             let compositorTransform = CanvasCompositorTransform(viewportTransform: viewportTransform)
+            let snapshot = renderSnapshot(for: spatialEngine.blocks, transform: viewportTransform)
 
             ZStack {
                 // Background + pan/zoom gesture capture
@@ -123,8 +150,9 @@ struct PaneCanvasView: View {
                         }
                     )
 
-                    blocksLayer
+                    blocksLayer(snapshot: snapshot)
                 }
+                .cosmoGlassSceneSignalsEnabled(false)
                 .offset(
                     x: compositorTransform.contentOffset.width,
                     y: compositorTransform.contentOffset.height
@@ -438,8 +466,8 @@ struct PaneCanvasView: View {
     // MARK: - Blocks Layer
 
     @ViewBuilder
-    private var blocksLayer: some View {
-        ForEach(spatialEngine.blocks.filter { !clusterConsumedBlockUUIDs.contains($0.entityUuid) }, id: \.id) { block in
+    private func blocksLayer(snapshot: CanvasRenderSnapshot) -> some View {
+        ForEach(snapshot.renderableBlocks, id: \.id) { block in
             blockView(for: block)
                 .position(
                     x: block.position.x + (blockDragOffsets[block.id]?.width ?? 0),

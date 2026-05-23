@@ -1002,6 +1002,60 @@ class AgentToolRegistry {
                     ] as [String: Any],
                     "required": ["title", "rationale", "operations"]
                 ]
+            ),
+            LLMToolDefinition(
+                name: "propose_note_structure_plan",
+                description: "Propose a reviewable plan to split the active source note into exact-copy module notes inside clusters. Do not provide rewritten module bodies; provide UTF-16 source ranges only.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "Short review-card title for the note structure plan"] as [String: Any],
+                        "rationale": ["type": "string", "description": "Brief explanation of why this cluster structure helps"] as [String: Any],
+                        "sourceNoteUUID": ["type": "string", "description": "UUID of the active source note"] as [String: Any],
+                        "sourceTitle": ["type": "string", "description": "Title of the active source note"] as [String: Any],
+                        "sourceBodyHash": ["type": "string", "description": "Hash of the exact source body provided in active context"] as [String: Any],
+                        "targetThinkspaceUUID": ["type": "string", "description": "UUID of the thinkspace where clusters and module notes should be created"] as [String: Any],
+                        "keepOriginalVisible": ["type": "boolean", "description": "Defaults true. Keep the original source note visible unless the user explicitly requested otherwise."] as [String: Any],
+                        "clusters": [
+                            "type": "array",
+                            "description": "Clusters to create or update in the target thinkspace.",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "id": ["type": "string"] as [String: Any],
+                                    "name": ["type": "string"] as [String: Any],
+                                    "colorIndex": ["type": "integer"] as [String: Any],
+                                    "x": ["type": "number"] as [String: Any],
+                                    "y": ["type": "number"] as [String: Any],
+                                    "width": ["type": "number"] as [String: Any],
+                                    "height": ["type": "number"] as [String: Any],
+                                    "moduleIDs": ["type": "array", "items": ["type": "string"]] as [String: Any]
+                                ] as [String: Any],
+                                "required": ["id", "name", "colorIndex", "x", "y", "width", "height", "moduleIDs"]
+                            ] as [String: Any]
+                        ] as [String: Any],
+                        "modules": [
+                            "type": "array",
+                            "description": "Module note proposals. Body text is never provided here; the app extracts exact text from the source note by UTF-16 range.",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "id": ["type": "string"] as [String: Any],
+                                    "clusterID": ["type": "string"] as [String: Any],
+                                    "title": ["type": "string"] as [String: Any],
+                                    "startUTF16Offset": ["type": "integer"] as [String: Any],
+                                    "lengthUTF16": ["type": "integer"] as [String: Any],
+                                    "x": ["type": "number"] as [String: Any],
+                                    "y": ["type": "number"] as [String: Any],
+                                    "width": ["type": "number"] as [String: Any],
+                                    "height": ["type": "number"] as [String: Any]
+                                ] as [String: Any],
+                                "required": ["id", "clusterID", "title", "startUTF16Offset", "lengthUTF16", "x", "y"]
+                            ] as [String: Any]
+                        ] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["title", "rationale", "sourceNoteUUID", "sourceTitle", "sourceBodyHash", "targetThinkspaceUUID", "clusters", "modules"]
+                ]
             )
         ]
     }

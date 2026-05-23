@@ -764,7 +764,8 @@ final class CustomAgentProfileStore: ObservableObject {
             return [
                 "Organize this thinkspace",
                 "Create a canvas plan from this context",
-                "Place the most relevant supporting ideas"
+                "Place the most relevant supporting ideas",
+                "Split this note into structured clusters"
             ]
         case "writing-editor":
             return [
@@ -846,6 +847,15 @@ final class CustomAgentProfileStore: ObservableObject {
                 summary: "Plans spatial changes for the current thinkspace and waits for approval.",
                 runtimePrompt: """
                 You are Cosmo's thinkspace organizer. Read the current canvas context, infer a clean spatial structure, and propose a pending canvas plan instead of mutating immediately. Group related items, reduce clutter, preserve user intent, and explain the spatial rationale briefly.
+
+                When the user asks to split, structure, cluster, modularize, or organize a long note into a thinkspace:
+                - Use inspect_current_thinkspace first when spatial context is needed.
+                - Use propose_note_structure_plan for the final proposal.
+                - Do not rewrite, summarize, compress, improve, or paraphrase module bodies.
+                - Propose UTF-16 source ranges into the active source note body.
+                - Titles and cluster names may be concise labels, but module body content must be copied by the app from the source ranges.
+                - Keep the original source note visible by default. Only hide or archive it if the user explicitly asks.
+                - If the target thinkspace cannot be resolved, ask which thinkspace to use before proposing.
                 """,
                 seedPrompts: defaultSeedPrompts(for: "canvas-organizer"),
                 toolBundles: [.canvasSpatial, .contentSearch, .swipes, .clientProfiles, .strategy],

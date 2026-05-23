@@ -58,6 +58,8 @@ final class CosmoWindowViewModel: ObservableObject {
     @Published var selectedAgentProfileID: String? = nil
     @Published private(set) var agentProfiles: [CustomAgentProfile] = []
     @Published var pendingCanvasPlan: PendingCanvasPlan? = nil
+    @Published var pendingNoteStructurePlan: PendingNoteStructurePlan? = nil
+    @Published var pendingNoteStructurePreviewError: NoteStructurePlanError? = nil
     @Published var pendingProposedEdit: CosmoProposedEdit? = nil
 
     // MARK: - Edit State
@@ -652,6 +654,80 @@ final class CosmoWindowViewModel: ObservableObject {
         pendingCanvasPlan = nil
     }
 
+    func cancelPendingNoteStructurePlan() {
+        pendingNoteStructurePlan = nil
+        pendingNoteStructurePreviewError = nil
+    }
+
+    func revisePendingNoteStructurePlan() {
+        guard let plan = pendingNoteStructurePlan else { return }
+        inputText = "Revise the note structure plan named \(plan.title). Keep the original note visible and keep exact source ranges only."
+        cancelPendingNoteStructurePlan()
+    }
+
+    func applyPendingNoteStructurePlan() {
+        guard let plan = pendingNoteStructurePlan else { return }
+        if let validationError = validatePendingNoteStructurePlan(plan) {
+            pendingNoteStructurePreviewError = validationError
+            return
+        }
+
+        Task {
+            do {
+                let result = try await NoteStructureApplyService.shared.apply(plan)
+                await MainActor.run {
+                    self.pendingNoteStructurePlan = nil
+                    self.pendingNoteStructurePreviewError = nil
+                    self.messages.append(.system("Created \(result.notesCreated) exact-copy notes across \(result.clustersCreated) clusters. Original note stayed visible."))
+                }
+            } catch let error as NoteStructurePlanError {
+                await MainActor.run {
+                    self.pendingNoteStructurePreviewError = error
+                }
+            } catch {
+                await MainActor.run {
+                    self.error = "Could not apply the note structure plan: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func receivePendingNoteStructurePlan(_ plan: PendingNoteStructurePlan) {
+        pendingNoteStructurePlan = plan
+        pendingNoteStructurePreviewError = validatePendingNoteStructurePlan(plan)
+    }
+
+    func validatePendingNoteStructurePlan(_ plan: PendingNoteStructurePlan) -> NoteStructurePlanError? {
+        guard let snapshot = activeNoteStructureSnapshot() else {
+            return .missingSourceNote
+        }
+
+        do {
+            try plan.validate(against: snapshot)
+            return nil
+        } catch let error as NoteStructurePlanError {
+            return error
+        } catch {
+            return .sourceHashMismatch(expected: plan.sourceBodyHash, actual: snapshot.bodyHash)
+        }
+    }
+
+    var canApplyPendingNoteStructurePlan: Bool {
+        pendingNoteStructurePlan != nil && pendingNoteStructurePreviewError == nil
+    }
+
+    func noteStructurePreviewText(for module: NoteStructureModuleProposal) -> String {
+        guard let snapshot = activeNoteStructureSnapshot(),
+              let text = try? module.copiedText(in: snapshot.body) else {
+            return ""
+        }
+        let collapsed = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard collapsed.count > 180 else { return collapsed }
+        return "\(collapsed.prefix(180))..."
+    }
+
     func revisePendingCanvasPlan() {
         guard let plan = pendingCanvasPlan else { return }
         inputText = "Revise this canvas plan: \(plan.title). "
@@ -704,6 +780,38 @@ final class CosmoWindowViewModel: ObservableObject {
         guard let edit = pendingProposedEdit else { return }
         inputText = "Revise this proposed edit for \(edit.targetTitle): \(edit.proposedText)"
         pendingProposedEdit = nil
+    }
+
+    func activeNoteStructureSnapshot() -> NoteStructureSourceSnapshot? {
+        guard activeContext.type == .noteFocusMode,
+              activeContext.data.currentAtomType?.lowercased() == "note",
+              let noteUUIDString = activeContext.data.currentAtomUUID,
+              let noteUUID = UUID(uuidString: noteUUIDString),
+              let body = activeContext.data.viewSpecificData["noteBody"] else {
+            return nil
+        }
+
+        return NoteStructureSourceSnapshot(
+            sourceNoteUUID: noteUUID,
+            sourceTitle: activeContext.data.currentAtomTitle ?? "Untitled Note",
+            body: body
+        )
+    }
+
+    func resolvedTargetThinkspaceForNoteStructure() -> UUID? {
+        if let explicit = activeContext.data.viewSpecificData["targetThinkspaceUUID"],
+           let uuid = UUID(uuidString: explicit) {
+            return uuid
+        }
+        if let explicit = activeContext.data.viewSpecificData["currentThinkspaceUUID"],
+           let uuid = UUID(uuidString: explicit) {
+            return uuid
+        }
+        if let explicit = activeContext.data.viewSpecificData["thinkspaceUUID"],
+           let uuid = UUID(uuidString: explicit) {
+            return uuid
+        }
+        return nil
     }
 
     // MARK: - Conversation Lifecycle
@@ -991,7 +1099,7 @@ final class CosmoWindowViewModel: ObservableObject {
     /// Loads recent in-app chat sessions for the history popover.
     func loadChatHistory() async {
         let recent = await conversationMemory.getRecentConversations(limit: 20)
-        let inAppConversations = recent.filter { $0.source == .inApp }
+        let inAppConversations = recent.filter { $0.source == .inApp && !$0.messages.isEmpty }
 
         chatHistoryEntries = inAppConversations.map { conv in
             let preview: String
@@ -1094,6 +1202,11 @@ final class CosmoWindowViewModel: ObservableObject {
                 self?.pendingCanvasPlan = plan
             }
         }
+        toolExecutor.onNoteStructurePlan = { [weak self] plan in
+            Task { @MainActor in
+                self?.receivePendingNoteStructurePlan(plan)
+            }
+        }
 
         var forcedBundles = forcedToolBundles(for: text)
         if !writingModeAgentSelected {
@@ -1161,6 +1274,7 @@ final class CosmoWindowViewModel: ObservableObject {
         linkedAtomUUIDs.formUnion(toolExecutor.contextAtomUUIDs)
         toolExecutor.onActionButtons = nil
         toolExecutor.onCanvasPlan = nil
+        toolExecutor.onNoteStructurePlan = nil
         toolExecutor.contextAtomUUIDs = []
         toolExecutor.contextSourceIDs = []
         toolExecutor.contextConversationID = nil
@@ -1192,6 +1306,18 @@ final class CosmoWindowViewModel: ObservableObject {
         let contextBlock = activeContext.data.toContextBlock()
         if !contextBlock.isEmpty {
             lines.append(contextBlock)
+        }
+        if let noteSnapshot = activeNoteStructureSnapshot() {
+            lines.append("""
+
+            Active source note for structure planning:
+            sourceNoteUUID: \(noteSnapshot.sourceNoteUUID.uuidString)
+            sourceTitle: \(noteSnapshot.sourceTitle)
+            sourceBodyHash: \(noteSnapshot.bodyHash)
+            targetThinkspaceUUID: \(resolvedTargetThinkspaceForNoteStructure()?.uuidString ?? "unresolved")
+            keepOriginalVisible: true
+            Use UTF-16 ranges into the exact noteBody above. Do not rewrite module bodies.
+            """)
         }
 
         if !activeContext.actions.isEmpty {
@@ -1261,7 +1387,10 @@ final class CosmoWindowViewModel: ObservableObject {
         if containsAny(lower, ["swipe", "swipes", "examples", "reference ads", "hooks", "frameworks"]) {
             bundles.insert(.swipes)
         }
-        if containsAny(lower, ["canvas", "thinkspace", "move", "organize", "reorganize", "spatial", "cluster", "arrange", "place this"]) {
+        if containsAny(lower, [
+            "canvas", "thinkspace", "move", "organize", "reorganize", "spatial", "cluster", "arrange", "place this",
+            "split note", "structure note", "major concept", "major concepts", "module", "modules", "modularize"
+        ]) {
             bundles.insert(.canvasSpatial)
         }
         if containsAny(lower, ["docs", "notes", "database", "db", "content from", "reference docs", "library"]) {
@@ -1645,17 +1774,17 @@ final class CosmoWindowViewModel: ObservableObject {
         for msg in visibleMessages {
             switch msg.type {
             case .user:
-                uiConversation.append(.user(msg.content))
+                uiConversation.append(AgentMessage(role: .user, content: msg.content, timestamp: msg.timestamp))
             case .assistant:
-                uiConversation.append(.assistant(msg.content))
+                uiConversation.append(AgentMessage(role: .assistant, content: msg.content, timestamp: msg.timestamp))
             case .system:
-                uiConversation.append(.system(msg.content))
+                uiConversation.append(AgentMessage(role: .system, content: msg.content, timestamp: msg.timestamp))
             case .toolResult(let name, _, _):
-                uiConversation.append(.tool(callId: name, content: msg.content))
+                uiConversation.append(AgentMessage(role: .tool, content: msg.content, timestamp: msg.timestamp, toolCallId: name))
             case .contextTrace, .contextChange:
                 break
             case .actionButtons:
-                uiConversation.append(.assistant(msg.content))
+                uiConversation.append(AgentMessage(role: .assistant, content: msg.content, timestamp: msg.timestamp))
             }
         }
 

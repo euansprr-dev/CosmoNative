@@ -233,6 +233,9 @@ struct CanvasView: View {
                 // to prevent frame clipping at non-100% zoom levels)
                 CanvasConnectionLinesLayer(
                     blocks: currentRenderedBlocks,
+                    geometryInvalidationKey: CanvasConnectionGeometryInvalidationKey(
+                        blockDataRevision: spatialEngine.blocksDataRevision
+                    ),
                     transform: viewportTransform,
                     activeBlockDrag: blockDragState,
                     isActive: canvasIsActive

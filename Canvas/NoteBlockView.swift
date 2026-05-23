@@ -244,7 +244,11 @@ struct NoteBlockView: View {
                 } else {
                     CosmoDocumentRenderer(
                         document: noteBodyDocument,
-                        fontSize: bodyFontSize
+                        fontSize: bodyFontSize,
+                        stackMode: CosmoDocumentRendererStackPolicy.mode(
+                            for: .canvasPreview,
+                            blockCount: noteBodyDocument.blocks.count
+                        )
                     )
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }

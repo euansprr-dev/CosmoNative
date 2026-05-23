@@ -294,6 +294,16 @@ final class CanvasRenderSnapshotTests: XCTestCase {
         XCTAssertEqual(signature.blockKeys.first?.scale, 1_250)
     }
 
+    func testConnectionGeometryInvalidationKeyUsesScalarBlockRevision() {
+        let key = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 42)
+        let sameKey = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 42)
+        let changedKey = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 43)
+
+        XCTAssertEqual(key, sameKey)
+        XCTAssertNotEqual(key, changedKey)
+        XCTAssertEqual(key.blockDataRevision, 42)
+    }
+
     func testRenderDataSnapshotReusesDataAcrossViewportFiltering() {
         let visibleAtOrigin = CanvasBlock(
             id: "origin",

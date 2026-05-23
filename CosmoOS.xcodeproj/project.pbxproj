@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		C0DE5AFE0000000000000001 /* SupabaseSyncTrafficPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5AFE0000000000000002 /* SupabaseSyncTrafficPolicy.swift */; };
 		C0DE5AFE0000000000000003 /* SupabaseSyncTrafficPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5AFE0000000000000004 /* SupabaseSyncTrafficPolicyTests.swift */; };
+		C0DE4E0A0000000000000301 /* NoteStructureApplyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE4E0A0000000000000302 /* NoteStructureApplyService.swift */; };
+		C0DE4E0A0000000000000201 /* NoteStructurePlanModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE4E0A0000000000000202 /* NoteStructurePlanModels.swift */; };
+		C0DE4E0A0000000000000101 /* NoteStructurePlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE4E0A0000000000000102 /* NoteStructurePlanTests.swift */; };
 		C0D3C0D3C0D3C0D3C0D3C0D2 /* ThemePaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */; };
 		C0D3C0D3C0D3C0D3C0D3A002 /* CodexMonoPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */; };
 		B1AC0DE00000000000000002 /* BlackMonoPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AC0DE00000000000000001 /* BlackMonoPalette.swift */; };
@@ -1356,6 +1359,9 @@
 		9C69ABDF9A4B4311F06D02A4 /* CosmoCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoCore.swift; sourceTree = "<group>"; };
 		9D3E03F08DE5D490D0F8A51A /* CosmoWindowMessageRenderingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoWindowMessageRenderingTests.swift; sourceTree = "<group>"; };
 		9D8C7B6A5F4E3D2C1B0A1918 /* CanvasProjectionApplyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasProjectionApplyService.swift; sourceTree = "<group>"; };
+		C0DE4E0A0000000000000302 /* NoteStructureApplyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteStructureApplyService.swift; sourceTree = "<group>"; };
+		C0DE4E0A0000000000000202 /* NoteStructurePlanModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteStructurePlanModels.swift; sourceTree = "<group>"; };
+		C0DE4E0A0000000000000102 /* NoteStructurePlanTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NoteStructurePlanTests.swift; sourceTree = "<group>"; };
 		9DCF768BAACDB5326D6C8848 /* PersuasionCoachEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersuasionCoachEngine.swift; sourceTree = "<group>"; };
 		9DDC10BFB450A9C60FFFC0C2 /* .gitkeep */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitkeep; sourceTree = "<group>"; };
 		9E1F18BB25FB4CE6843D9EE6 /* InquiryCrystallizeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryCrystallizeSheet.swift; sourceTree = "<group>"; };
@@ -2740,6 +2746,8 @@
 				C6B9A09A5D0B4E51B74B92F0 /* InquiryThoughtRouter.swift */,
 				B1E04FC691494409CB049383 /* InquiryCrystallizationEngine.swift */,
 				9D8C7B6A5F4E3D2C1B0A1918 /* CanvasProjectionApplyService.swift */,
+				C0DE4E0A0000000000000302 /* NoteStructureApplyService.swift */,
+				C0DE4E0A0000000000000202 /* NoteStructurePlanModels.swift */,
 				4EC3E9D6EF949A62B0C585AA /* InsightExtractionEngine.swift */,
 				B90AB75E00232C7891DA8E55 /* IntentClassifier.swift */,
 				8DE16022D03AC9F103B3C927 /* KnowledgeContextAssembler.swift */,
@@ -3289,6 +3297,7 @@
 				BD510F9C30EB91E4C7AD39EE /* InstagramAutoTranscriberTests.swift */,
 				B993D1DCB71E6B8CD459ABF2 /* InstagramExtractorTests.swift */,
 				F1357ED05F9F30005021497D /* NotePersistenceRegressionTests.swift */,
+				C0DE4E0A0000000000000102 /* NoteStructurePlanTests.swift */,
 				5E8BA3C3558C805E340D746B /* PaneManagerBrowserPaneTests.swift */,
 				BEEF00000000000000001003 /* RichDocumentHeadingTests.swift */,
 				A586BF7761FADFC055F3E9C8 /* RichDocumentTests.swift */,
@@ -3627,6 +3636,7 @@
 				BAC651263BF68DF7819EC35B /* InstagramAutoTranscriberTests.swift in Sources */,
 				988864992B8541512AB009CA /* InstagramExtractorTests.swift in Sources */,
 				25E995274E48003B2668A05B /* NotePersistenceRegressionTests.swift in Sources */,
+				C0DE4E0A0000000000000101 /* NoteStructurePlanTests.swift in Sources */,
 				2C1CCDBAABFBF1049A4E79F2 /* PaneManagerBrowserPaneTests.swift in Sources */,
 				BEEF00000000000000001004 /* RichDocumentHeadingTests.swift in Sources */,
 				AE27DCBDB366291B203B26EA /* RichDocumentTests.swift in Sources */,
@@ -4078,6 +4088,8 @@
 				C6B9A09A5D0B4E51B74B92F1 /* InquiryThoughtRouter.swift in Sources */,
 				6612DD8016B9DA017C013D2D /* InquiryCrystallizationEngine.swift in Sources */,
 				8C7D6E5F4A3B291817161514 /* CanvasProjectionApplyService.swift in Sources */,
+				C0DE4E0A0000000000000301 /* NoteStructureApplyService.swift in Sources */,
+				C0DE4E0A0000000000000201 /* NoteStructurePlanModels.swift in Sources */,
 				A1C0DE000000000000000002 /* CaptureIntentClassifier.swift in Sources */,
 				A1C0DE000000000000000004 /* ConnectionRoutingEngine.swift in Sources */,
 				A1C0DE000000000000000006 /* ConnectionPromotionService.swift in Sources */,

@@ -2,6 +2,26 @@ import XCTest
 @testable import CosmoOS
 
 final class RichDocumentTests: XCTestCase {
+    func testCanvasPreviewUsesLazyDocumentStacksForLongNotes() {
+        XCTAssertEqual(
+            CosmoDocumentRendererStackPolicy.mode(
+                for: .canvasPreview,
+                blockCount: CosmoDocumentRendererStackPolicy.canvasPreviewLazyBlockThreshold
+            ),
+            .lazy
+        )
+    }
+
+    func testFullDocumentSurfaceKeepsEagerStacksForLongNotes() {
+        XCTAssertEqual(
+            CosmoDocumentRendererStackPolicy.mode(
+                for: .fullDocument,
+                blockCount: CosmoDocumentRendererStackPolicy.canvasPreviewLazyBlockThreshold * 4
+            ),
+            .eager
+        )
+    }
+
     func testLegacyMigrationParsesRequestedSlashBlocks() {
         let document = RichDocument.migrateLegacy(
             """
@@ -425,6 +445,25 @@ final class RichDocumentTests: XCTestCase {
         )
 
         XCTAssertEqual(loaded.plainText, fullBody)
+    }
+
+    func testLoadAtomDocumentPrefersFallbackPlainTextWhenMetadataBodyDiffersAtSameLength() {
+        let staleBody = "Alpha beta gamma"
+        let currentBody = "Delta zeta theta"
+        XCTAssertEqual(staleBody.count, currentBody.count)
+        let fields = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: nil,
+            bodyDocument: RichDocument.migrateLegacy(staleBody)
+        )
+
+        let loaded = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: fields.metadata,
+            fallbackPlainText: currentBody,
+            preferFallbackPlainTextWhenRicher: true
+        )
+
+        XCTAssertEqual(loaded.plainText, currentBody)
     }
 
     func testNoteSnapshotPrefersPlainBodyWhenStructuredDocumentLags() {

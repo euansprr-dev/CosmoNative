@@ -250,6 +250,19 @@ struct CosmoWindowView: View {
                             .transition(.opacity.combined(with: .scale(scale: 0.98)))
                         }
 
+                        if let plan = viewModel.pendingNoteStructurePlan {
+                            CosmoNoteStructurePlanReviewCard(
+                                plan: plan,
+                                error: viewModel.pendingNoteStructurePreviewError,
+                                previewText: viewModel.noteStructurePreviewText(for:),
+                                onApply: viewModel.applyPendingNoteStructurePlan,
+                                onRevise: viewModel.revisePendingNoteStructurePlan,
+                                onCancel: viewModel.cancelPendingNoteStructurePlan
+                            )
+                            .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        }
+
                         if let edit = viewModel.pendingProposedEdit {
                             CosmoProposedEditReviewCard(
                                 edit: edit,
@@ -983,6 +996,154 @@ private struct CosmoCanvasPlanReviewCard: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(DS.accent, in: Capsule())
+
+                Button("Revise", action: onRevise)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .cosmoWindowChip(isActive: true)
+
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .cosmoWindowChip()
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(14)
+        .cosmoWindowSectionChrome(cornerRadius: 16)
+    }
+}
+
+private struct CosmoNoteStructurePlanReviewCard: View {
+    let plan: PendingNoteStructurePlan
+    let error: NoteStructurePlanError?
+    let previewText: (NoteStructureModuleProposal) -> String
+    let onApply: () -> Void
+    let onRevise: () -> Void
+    let onCancel: () -> Void
+
+    private var applyDisabled: Bool {
+        error != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "rectangle.3.group")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 32, height: 32)
+                    .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plan.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+
+                    Text("\(plan.modules.count) exact-copy notes in \(plan.clusters.count) clusters")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            Text(plan.rationale)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Text(plan.sourceTitle)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .cosmoWindowChip()
+
+                if plan.keepOriginalVisible {
+                    Text("Original stays visible")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DS.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .cosmoWindowChip(isActive: true)
+                }
+            }
+
+            if let error {
+                Text(error.localizedDescription)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DS.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .background(DS.redSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(plan.clusters.prefix(4)) { cluster in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Text(cluster.name)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(DS.text)
+                                .lineLimit(1)
+
+                            Text("\(cluster.moduleIDs.count)")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(DS.textMuted)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .cosmoWindowChip()
+                        }
+
+                        ForEach(plan.modules.filter { $0.clusterID == cluster.id }.prefix(3)) { module in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(module.title)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(DS.text)
+                                    .lineLimit(1)
+
+                                Text(previewText(module))
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(DS.textSecondary)
+                                    .lineLimit(2)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                    }
+                }
+
+                if plan.clusters.count > 4 {
+                    Text("+ \(plan.clusters.count - 4) more clusters")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button("Apply", action: onApply)
+                    .buttonStyle(.plain)
+                    .disabled(applyDisabled)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textOnAccent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background((applyDisabled ? DS.glassBorder : DS.accent), in: Capsule())
+                    .opacity(applyDisabled ? 0.62 : 1)
 
                 Button("Revise", action: onRevise)
                     .buttonStyle(.plain)

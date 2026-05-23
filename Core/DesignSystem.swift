@@ -83,6 +83,50 @@ enum DS {
         return documentSepiaSubtle
     }
 
+    /// Primary Command Center text. Black Mono command chrome is dark, while
+    /// document paper remains light, so command surfaces cannot reuse ink tokens.
+    static var commandCenterTitleText: Color {
+        if usesBlackMonoPaper { return palette.text }
+        return documentInkWash
+    }
+
+    /// Secondary Command Center text on app chrome.
+    static var commandCenterSecondaryText: Color {
+        if usesBlackMonoPaper { return palette.textSecondary }
+        return documentInkFaded
+    }
+
+    /// Muted Command Center metadata text on app chrome.
+    static var commandCenterMutedText: Color {
+        if usesBlackMonoPaper { return palette.textMuted }
+        return documentInkFaded
+    }
+
+    /// Command Center ornamental text and icon color.
+    static var commandCenterOrnamentText: Color {
+        if usesBlackMonoPaper { return palette.textMuted }
+        return documentGiltMuted
+    }
+
+    /// Command Center hairline separators on chrome, distinct from document paper
+    /// separators so Black Mono does not draw white paper rules on black UI.
+    static var commandCenterSeparator: Color {
+        if usesBlackMonoPaper { return palette.borderSubtle }
+        return documentSepiaSubtle
+    }
+
+    /// Stronger Command Center separator for panel boundaries.
+    static var commandCenterSeparatorStrong: Color {
+        if usesBlackMonoPaper { return palette.border }
+        return documentSepiaBorder
+    }
+
+    /// Selected row fill for Command Center navigation.
+    static var commandCenterSelectedRowFill: Color {
+        if usesBlackMonoPaper { return commandChromeProminentFill }
+        return documentVellum
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // DOCUMENT PAPER — Stable light surfaces for notes, content drafts,
     // connection manuscripts, and other long-form reading/writing areas.
@@ -363,6 +407,74 @@ enum DS {
 
     /// Focused border on material
     static var glassBorderFocused: Color { palette.glassBorderFocused }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CANVAS CLUSTERS — Large-zone visual weight per theme
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Neutral cluster body wash. Black Mono intentionally uses the light-mode
+    /// wash model so clusters stay luminous against the black canvas.
+    static func canvasClusterSurfaceFill(
+        isDropTarget: Bool,
+        isUserCreated: Bool,
+        usesExpandedContent: Bool
+    ) -> Color {
+        let opacity = canvasClusterSurfaceFillOpacity(
+            isDropTarget: isDropTarget,
+            isUserCreated: isUserCreated,
+            usesExpandedContent: usesExpandedContent
+        )
+
+        if palette.isDark && !usesBlackMonoPaper {
+            return Color.black.opacity(opacity)
+        }
+        return Color.white.opacity(opacity)
+    }
+
+    static func canvasClusterSurfaceFillOpacity(
+        isDropTarget: Bool,
+        isUserCreated: Bool,
+        usesExpandedContent: Bool
+    ) -> Double {
+        if usesBlackMonoPaper || !palette.isDark {
+            if isDropTarget { return 0.030 }
+            if isUserCreated { return usesExpandedContent ? 0.026 : 0.022 }
+            return 0.018
+        }
+
+        if isDropTarget { return 0.050 }
+        if isUserCreated { return usesExpandedContent ? 0.040 : 0.032 }
+        return 0.026
+    }
+
+    static func canvasClusterAccentWashOpacity(
+        isDropTarget: Bool,
+        isUserCreated: Bool,
+        usesExpandedContent: Bool
+    ) -> Double {
+        if usesBlackMonoPaper || !palette.isDark {
+            if isDropTarget { return 0.22 }
+            if isUserCreated { return usesExpandedContent ? 0.18 : 0.155 }
+            return 0.12
+        }
+
+        if isDropTarget { return 0.075 }
+        if isUserCreated { return usesExpandedContent ? 0.040 : 0.032 }
+        return 0.022
+    }
+
+    static func canvasClusterStrokeOpacity(
+        isSelected: Bool,
+        isHovered: Bool,
+        isDropTarget: Bool
+    ) -> Double {
+        if isDropTarget { return 0.96 }
+        if isSelected { return 0.88 }
+        if usesBlackMonoPaper || !palette.isDark {
+            return isHovered ? 0.68 : 0.54
+        }
+        return isHovered ? 0.52 : 0.36
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // SIDEBAR MATERIAL — Semantic glass panel tokens
@@ -942,10 +1054,10 @@ struct AkashicSectionDivider: View {
     var body: some View {
         VStack(spacing: 2) {
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(DS.commandCenterSeparator)
                 .frame(height: 0.5)
             Rectangle()
-                .fill(DS.sepiaSubtle.opacity(0.5))
+                .fill(DS.commandCenterSeparator.opacity(0.5))
                 .frame(height: 0.5)
         }
         .padding(.horizontal, 16)

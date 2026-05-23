@@ -456,11 +456,17 @@ struct AgentMessage: Codable, Identifiable, Sendable {
         case tool
     }
 
-    init(role: MessageRole, content: String, toolCalls: [AgentToolCall]? = nil, toolCallId: String? = nil) {
+    init(
+        role: MessageRole,
+        content: String,
+        timestamp: Date = Date(),
+        toolCalls: [AgentToolCall]? = nil,
+        toolCallId: String? = nil
+    ) {
         self.id = UUID().uuidString
         self.role = role
         self.content = content
-        self.timestamp = Date()
+        self.timestamp = timestamp
         self.toolCalls = toolCalls
         self.toolCallId = toolCallId
     }

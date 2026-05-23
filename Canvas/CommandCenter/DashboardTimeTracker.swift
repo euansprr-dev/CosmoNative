@@ -24,11 +24,11 @@ struct DashboardTimeTracker: View {
             HStack(spacing: DS.space8) {
                 Image(systemName: "timer")
                     .font(DS.caption)
-                    .foregroundStyle(DS.giltMuted)
+                    .foregroundStyle(DS.commandCenterOrnamentText)
 
                 Text("Time Tracking")
                     .font(DS.smallCaps)
-                    .foregroundStyle(DS.giltMuted)
+                    .foregroundStyle(DS.commandCenterOrnamentText)
 
                 Text(formattedTodayTotal)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))

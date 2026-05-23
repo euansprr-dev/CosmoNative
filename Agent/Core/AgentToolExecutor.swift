@@ -2,6 +2,7 @@
 // Executes agent tools against CosmoOS services
 
 import Foundation
+import CoreGraphics
 
 @MainActor
 class AgentToolExecutor {
@@ -71,6 +72,7 @@ class AgentToolExecutor {
     /// Optional callback for non-mutating canvas plan proposals.
     /// The Cosmo window owns review/apply/cancel so tools never directly mutate canvas state.
     var onCanvasPlan: ((PendingCanvasPlan) -> Void)?
+    var onNoteStructurePlan: ((PendingNoteStructurePlan) -> Void)?
 
     private init() {}
 
@@ -129,6 +131,7 @@ class AgentToolExecutor {
         case "create_thinkspace": return try await createThinkspace(arguments)
         case "inspect_current_thinkspace": return try await inspectCurrentThinkspace(arguments)
         case "propose_canvas_plan": return try await proposeCanvasPlan(arguments)
+        case "propose_note_structure_plan": return try await proposeNoteStructurePlan(arguments)
         // Calendar / Schedule Blocks
         case "get_calendar_blocks": return try await getCalendarBlocks(arguments)
         case "create_block": return try await createBlock(arguments)
@@ -1792,6 +1795,114 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
+    private func proposeNoteStructurePlan(_ args: [String: Any]) async throws -> String {
+        guard let title = trimmedString(args["title"]) else {
+            return jsonError("Missing required parameter: title")
+        }
+        guard let rationale = trimmedString(args["rationale"]) else {
+            return jsonError("Missing required parameter: rationale")
+        }
+        guard let sourceNoteUUID = uuidValue(args["sourceNoteUUID"]) else {
+            return jsonError("Missing or invalid required parameter: sourceNoteUUID")
+        }
+        guard let sourceTitle = trimmedString(args["sourceTitle"]) else {
+            return jsonError("Missing required parameter: sourceTitle")
+        }
+        guard let sourceBodyHash = trimmedString(args["sourceBodyHash"]) else {
+            return jsonError("Missing required parameter: sourceBodyHash")
+        }
+        guard let targetThinkspaceUUID = uuidValue(args["targetThinkspaceUUID"]) else {
+            return jsonError("Missing or invalid required parameter: targetThinkspaceUUID")
+        }
+        guard let rawClusters = args["clusters"] as? [[String: Any]], !rawClusters.isEmpty else {
+            return jsonError("Missing required parameter: clusters")
+        }
+        guard let rawModules = args["modules"] as? [[String: Any]], !rawModules.isEmpty else {
+            return jsonError("Missing required parameter: modules")
+        }
+
+        let clusters = try rawClusters.map(parseNoteStructureCluster)
+        let modules = try rawModules.map(parseNoteStructureModule)
+        let plan = PendingNoteStructurePlan(
+            title: title,
+            rationale: rationale,
+            sourceNoteUUID: sourceNoteUUID,
+            sourceTitle: sourceTitle,
+            sourceBodyHash: sourceBodyHash,
+            targetThinkspaceUUID: targetThinkspaceUUID,
+            keepOriginalVisible: args["keepOriginalVisible"] as? Bool ?? true,
+            clusters: clusters,
+            modules: modules
+        )
+
+        onNoteStructurePlan?(plan)
+
+        return jsonEncode([
+            "success": true,
+            "pendingPlanId": plan.id.uuidString,
+            "clusterCount": clusters.count,
+            "moduleCount": modules.count,
+            "keepOriginalVisible": plan.keepOriginalVisible,
+            "message": "Note structure plan is ready for user review. Do not say it has been applied until the user clicks Apply."
+        ] as [String: Any])
+    }
+
+    private func parseNoteStructureCluster(_ raw: [String: Any]) throws -> NoteStructureClusterProposal {
+        guard let id = uuidValue(raw["id"]) else {
+            throw toolArgumentError("Invalid note structure cluster id")
+        }
+        guard let name = trimmedString(raw["name"]) else {
+            throw toolArgumentError("Missing note structure cluster name")
+        }
+        let colorIndex = intValue(raw["colorIndex"]) ?? 0
+        let x = doubleValue(raw["x"]) ?? 0
+        let y = doubleValue(raw["y"]) ?? 0
+        let width = doubleValue(raw["width"]) ?? 900
+        let height = doubleValue(raw["height"]) ?? 700
+        let moduleIDs = (raw["moduleIDs"] as? [String] ?? []).compactMap(UUID.init(uuidString:))
+
+        return NoteStructureClusterProposal(
+            id: id,
+            name: name,
+            colorIndex: colorIndex,
+            frame: CGRect(x: x, y: y, width: width, height: height),
+            moduleIDs: moduleIDs
+        )
+    }
+
+    private func parseNoteStructureModule(_ raw: [String: Any]) throws -> NoteStructureModuleProposal {
+        guard let id = uuidValue(raw["id"]) else {
+            throw toolArgumentError("Invalid note structure module id")
+        }
+        guard let clusterID = uuidValue(raw["clusterID"]) else {
+            throw toolArgumentError("Invalid note structure module clusterID")
+        }
+        guard let title = trimmedString(raw["title"]) else {
+            throw toolArgumentError("Missing note structure module title")
+        }
+        guard let start = intValue(raw["startUTF16Offset"]) else {
+            throw toolArgumentError("Missing note structure module startUTF16Offset")
+        }
+        guard let length = intValue(raw["lengthUTF16"]) else {
+            throw toolArgumentError("Missing note structure module lengthUTF16")
+        }
+
+        let x = doubleValue(raw["x"]) ?? 0
+        let y = doubleValue(raw["y"]) ?? 0
+        let width = doubleValue(raw["width"]) ?? Double(CanvasBlock.documentLayoutSize.width)
+        let height = doubleValue(raw["height"]) ?? Double(CanvasBlock.documentLayoutSize.height)
+
+        return NoteStructureModuleProposal(
+            id: id,
+            clusterID: clusterID,
+            title: title,
+            startUTF16Offset: start,
+            lengthUTF16: length,
+            position: CGPoint(x: x, y: y),
+            size: CGSize(width: width, height: height)
+        )
+    }
+
     private func stringifyCanvasPayload(_ raw: [String: Any]) -> [String: String] {
         var payload: [String: String] = [:]
         for (key, value) in raw where key != "summary" {
@@ -2965,6 +3076,35 @@ class AgentToolExecutor {
 
     private func jsonError(_ message: String) -> String {
         jsonEncode(["error": message])
+    }
+
+    private func trimmedString(_ value: Any?) -> String? {
+        guard let string = value as? String else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func uuidValue(_ value: Any?) -> UUID? {
+        guard let string = value as? String else { return nil }
+        return UUID(uuidString: string.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        return nil
+    }
+
+    private func doubleValue(_ value: Any?) -> Double? {
+        if let double = value as? Double { return double }
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = value as? String { return Double(string.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        return nil
+    }
+
+    private func toolArgumentError(_ message: String) -> NSError {
+        NSError(domain: "AgentToolExecutor", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     // MARK: - Batch Swipe Analysis Threshold

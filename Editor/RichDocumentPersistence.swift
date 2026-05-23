@@ -166,7 +166,7 @@ enum RichDocumentPersistence {
         let trimmedFallback = fallbackPlainText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedDocument = document.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard trimmedFallback.count > trimmedDocument.count + noteLagTolerance else {
+        guard trimmedFallback != trimmedDocument else {
             return document
         }
 

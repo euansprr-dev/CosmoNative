@@ -2,6 +2,124 @@ import XCTest
 @testable import CosmoOS
 
 final class NotePersistenceRegressionTests: XCTestCase {
+    func testNoteFocusTextAnalysisBuildsMetricsFromOneSnapshot() {
+        let text = """
+        # Opening
+        Some linked [[Alpha]] text with several words.
+        ## Middle
+        Another [[Beta]] paragraph.
+        ### Detail
+        """
+
+        let analysis = NoteFocusTextAnalysis.analyze(text)
+
+        XCTAssertEqual(analysis.wordCount, 13)
+        XCTAssertEqual(analysis.estimatedReadingMinutes, 1)
+        XCTAssertEqual(analysis.outLinkCount, 2)
+        XCTAssertEqual(
+            analysis.headings,
+            [
+                NoteHeadingEntry(level: 1, text: "Opening"),
+                NoteHeadingEntry(level: 2, text: "Middle"),
+                NoteHeadingEntry(level: 3, text: "Detail")
+            ]
+        )
+    }
+
+    func testNoteAutosavePolicyUsesPlainTextLaneForLargeTypingSaves() {
+        let policy = NoteAutosavePolicy(
+            richCheckpointCharacterThreshold: 4_000,
+            richCheckpointInterval: 30
+        )
+
+        let kind = policy.saveKind(
+            plainTextCharacterCount: 12_000,
+            now: Date(timeIntervalSince1970: 10),
+            lastRichCheckpointAt: Date(timeIntervalSince1970: 0),
+            isClosing: false
+        )
+
+        XCTAssertEqual(kind, .plainText)
+    }
+
+    func testNoteAutosavePolicyCheckpointsRichDocumentAfterIdleInterval() {
+        let policy = NoteAutosavePolicy(
+            richCheckpointCharacterThreshold: 4_000,
+            richCheckpointInterval: 30
+        )
+
+        let kind = policy.saveKind(
+            plainTextCharacterCount: 12_000,
+            now: Date(timeIntervalSince1970: 31),
+            lastRichCheckpointAt: Date(timeIntervalSince1970: 0),
+            isClosing: false
+        )
+
+        XCTAssertEqual(kind, .richDocumentCheckpoint)
+    }
+
+    func testNoteAutosavePolicyAlwaysCheckpointsWhenClosing() {
+        let policy = NoteAutosavePolicy(
+            richCheckpointCharacterThreshold: 4_000,
+            richCheckpointInterval: 30
+        )
+
+        let kind = policy.saveKind(
+            plainTextCharacterCount: 12_000,
+            now: Date(timeIntervalSince1970: 1),
+            lastRichCheckpointAt: Date(timeIntervalSince1970: 0),
+            isClosing: true
+        )
+
+        XCTAssertEqual(kind, .richDocumentCheckpoint)
+    }
+
+    func testNoteAutosaveChangePolicySkipsUnchangedEditorCallbacks() {
+        XCTAssertFalse(NoteAutosaveChangePolicy.shouldAutosaveTextChange(
+            isInitialLoad: false,
+            didChange: false
+        ))
+    }
+
+    func testNoteAutosaveChangePolicySavesChangedEditorCallbacksAfterInitialLoad() {
+        XCTAssertTrue(NoteAutosaveChangePolicy.shouldAutosaveTextChange(
+            isInitialLoad: false,
+            didChange: true
+        ))
+    }
+
+    func testNoteAutosaveChangePolicySkipsInitialLoadCallbacks() {
+        XCTAssertFalse(NoteAutosaveChangePolicy.shouldAutosaveTextChange(
+            isInitialLoad: true,
+            didChange: true
+        ))
+    }
+
+    func testEditorHeightUpdatePolicyIgnoresLayoutNoise() {
+        XCTAssertFalse(EditorHeightUpdatePolicy.shouldPublish(
+            current: 120,
+            next: 120.4
+        ))
+    }
+
+    func testEditorHeightUpdatePolicyPublishesMeaningfulHeightChanges() {
+        XCTAssertTrue(EditorHeightUpdatePolicy.shouldPublish(
+            current: 120,
+            next: 124
+        ))
+    }
+
+    func testEditorHeightUpdatePolicyRejectsInvalidHeights() {
+        XCTAssertFalse(EditorHeightUpdatePolicy.shouldPublish(
+            current: 120,
+            next: .infinity
+        ))
+        XCTAssertFalse(EditorHeightUpdatePolicy.shouldPublish(
+            current: 120,
+            next: 0
+        ))
+    }
+
     func testRelinkingBlockToSavedAtomPreservesCanvasIdentityAndUsesAtomContent() {
         var atom = Atom.new(
             type: .note,

@@ -53,7 +53,7 @@ struct DashboardHabitPanel: View {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 26, height: 26)
-                .foregroundStyle(DS.accent)
+                    .foregroundStyle(DS.accent)
             }
             .accessibilityLabel("Add habit")
         }
@@ -110,33 +110,13 @@ struct DashboardHabitPanel: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(DS.bg)
-                .frame(width: 48, height: 48)
-                .overlay(
-                    Image(systemName: "repeat")
-                        .font(.system(size: 18, weight: .light))
-                        .foregroundStyle(DS.textMuted)
-                )
-
-            Text("No habits yet")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.text)
-
-            Text("Create a custom habit, map it to task intents or keywords, and let completed tasks feed it automatically.")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(DS.textMuted)
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
+        CommandCenterEmptyPane(
+            icon: "repeat",
+            title: "No habits yet",
+            subtitle: "Create a habit and completed tasks can begin feeding progress automatically."
         )
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.space8)
     }
 }
 
@@ -150,6 +130,7 @@ private struct DashboardHabitOrbitCard: View {
     let composer: CommandCenterComposerController
 
     @State private var frame: CGRect = .zero
+    @State private var isHovered = false
 
     var body: some View {
         let isComplete = habit.isTodayComplete
@@ -171,21 +152,33 @@ private struct DashboardHabitOrbitCard: View {
         .padding(.horizontal, DS.space8)
         .padding(.vertical, DS.space8)
         .background {
-            if isComplete {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(habit.accentColor.opacity(0.045))
+            if isHovered || isComplete {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isComplete ? habit.accentColor.opacity(0.075) : DS.glassCardFill)
             }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(
+                    isHovered || isComplete ? habit.accentColor.opacity(isComplete ? 0.22 : 0.16) : Color.clear,
+                    lineWidth: 0.5
+                )
         }
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(DS.commandCenterSeparator)
+                .fill((isHovered || isComplete) ? Color.clear : DS.commandCenterSeparator)
                 .frame(height: 0.5)
         }
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .background(CommandCenterGlobalFrameReader(frame: $frame))
         .onTapGesture {
             guard let definition else { return }
             composer.present(.habitEditor(habit: definition, anchor: .init(sourceRect: frame, alignment: .trailing)))
+        }
+        .onHover { hovering in
+            withAnimation(reduceMotion ? .easeOut(duration: 0.01) : ProMotionSprings.hover) {
+                isHovered = hovering
+            }
         }
     }
 
@@ -322,9 +315,9 @@ private struct DashboardHabitOrbitCard: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(isDone ? accent.opacity(0.5) : accent)
                 .frame(width: 26, height: 26)
-                .background(isDone ? accent.opacity(0.10) : DS.bg, in: Circle())
+                .background(isDone ? accent.opacity(0.10) : DS.glassInputFill, in: Circle())
                 .overlay(
-                    Circle().stroke(isDone ? accent.opacity(0.15) : DS.borderSubtle, lineWidth: 1)
+                    Circle().stroke(isDone ? accent.opacity(0.15) : DS.glassBorder, lineWidth: 0.8)
                 )
         }
         .buttonStyle(.plain)

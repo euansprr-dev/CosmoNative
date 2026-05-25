@@ -347,6 +347,7 @@ struct DashboardTaskList: View {
             if let trailing {
                 Text(trailing)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .monospacedDigit()
                     .foregroundStyle(color.opacity(0.62))
             }
 
@@ -366,12 +367,8 @@ struct DashboardTaskList: View {
                         anchor: anchor
                     )
                 } label: {
-                    HStack(spacing: DS.space4) {
-                        Image(systemName: "calendar.badge.clock")
-                            .font(DS.caption2)
-                        Text("Reschedule")
-                            .font(DS.caption)
-                    }
+                    Label("Reschedule", systemImage: "calendar.badge.clock")
+                        .font(DS.caption)
                     .foregroundStyle(DS.red.opacity(0.85))
                     .padding(.horizontal, DS.space6)
                     .padding(.vertical, DS.space4)
@@ -443,9 +440,8 @@ struct DashboardTaskList: View {
             isAnimatingCompletion: isAnimatingCompletion,
             showsInlineActions: isHovered || isKeyboardSelected || isActiveSession || composer.isShowingTaskAction(for: task.uuid)
         )
-        .background(rowBackground(isActiveSession: isActiveSession, isMultiSelected: isMultiSelected, isKeyboardSelected: isKeyboardSelected, isHovered: isHovered))
+        .background(rowBackground(task: task, isActiveSession: isActiveSession, isMultiSelected: isMultiSelected, isKeyboardSelected: isKeyboardSelected, isHovered: isHovered))
         .overlay(alignment: .bottom) { rowPriorityWash(task, isAnimatingCompletion: isAnimatingCompletion) }
-        .overlay(rowBorder(isActiveSession: isActiveSession, isMultiSelected: isMultiSelected, isKeyboardSelected: isKeyboardSelected))
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isKeyboardSelected)
         .scaleEffect(completionState?.rowScale ?? 1)
@@ -699,15 +695,19 @@ struct DashboardTaskList: View {
         }
     }
 
-    private func rowBackground(isActiveSession: Bool, isMultiSelected: Bool, isKeyboardSelected: Bool, isHovered: Bool) -> some View {
-        let fill: Color = {
-            if isActiveSession { return DS.accentSoft.opacity(0.38) }
-            if isMultiSelected { return DS.accent.opacity(0.05) }
-            if isKeyboardSelected { return DS.accentSoft.opacity(0.42) }
-            if isHovered { return DS.vellum.opacity(0.32) }
-            return Color.clear
-        }()
-        return RoundedRectangle(cornerRadius: 6).fill(fill)
+    private func rowBackground(
+        task: TaskViewModel,
+        isActiveSession: Bool,
+        isMultiSelected: Bool,
+        isKeyboardSelected: Bool,
+        isHovered: Bool
+    ) -> some View {
+        CommandCenterRowGlass(
+            isActive: isActiveSession,
+            isSelected: isMultiSelected || isKeyboardSelected,
+            isHovered: isHovered,
+            tint: task.priority.color
+        )
     }
 
     @ViewBuilder
@@ -721,17 +721,6 @@ struct DashboardTaskList: View {
             .frame(height: 1)
             .clipShape(.rect(cornerRadius: 6))
         }
-    }
-
-    private func rowBorder(isActiveSession: Bool, isMultiSelected: Bool, isKeyboardSelected: Bool) -> some View {
-        let stroke: Color = {
-            if isActiveSession { return DS.accent.opacity(0.26) }
-            if isMultiSelected { return DS.accent.opacity(0.34) }
-            if isKeyboardSelected { return DS.accent.opacity(0.18) }
-            return Color.clear
-        }()
-        return RoundedRectangle(cornerRadius: 6)
-            .stroke(stroke, lineWidth: isMultiSelected ? 2 : 1)
     }
 
     @ViewBuilder
@@ -832,15 +821,32 @@ struct DashboardTaskList: View {
     // MARK: - Empty State
 
     private func emptyState(message: String, icon: String) -> some View {
-        VStack(spacing: DS.space10) {
-            OrnamentalRule(color: DS.giltMuted)
-
-            Text(message)
-                .font(.system(size: 14, weight: .regular, design: .serif))
-                .foregroundStyle(DS.commandCenterMutedText)
-        }
+        let presentation = emptyStatePresentation(message: message, icon: icon)
+        return CommandCenterEmptyPane(
+            icon: icon,
+            title: presentation.title,
+            subtitle: presentation.subtitle
+        )
         .frame(maxWidth: .infinity)
-        .padding(.vertical, DS.space32)
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space16)
+    }
+
+    private func emptyStatePresentation(message: String, icon: String) -> (title: String, subtitle: String) {
+        switch icon {
+        case "calendar":
+            return ("Today is clear", "Add a task or drag one into Today when you are ready to schedule it.")
+        case "checkmark.circle":
+            return ("No completed tasks yet", "Completed tasks will collect here as you finish the day.")
+        case "tray.full":
+            return ("No anytime tasks", "Tasks without a date will wait here until you are ready to plan them.")
+        case "archivebox":
+            return ("Someday is empty", "Park ideas here when they matter, but not today.")
+        case "folder":
+            return ("No tasks in this project yet", "Add the next concrete step and keep the project moving.")
+        default:
+            return (message, "Add a task when you are ready.")
+        }
     }
 
     private func handleTaskCompletionTap(_ task: TaskViewModel) {

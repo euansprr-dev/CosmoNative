@@ -439,8 +439,11 @@ struct SwipeStudyFocusModeView: View {
         VStack(alignment: .leading, spacing: DS.space12) {
             MarginaliaLabel("SOURCE")
 
-            contentDisplay(atom: atom)
-                .frame(maxWidth: .infinity, alignment: .center)
+            FocusModeMediaWell(maxWidth: isPaneContext ? 360 : 460) {
+                contentDisplay(atom: atom)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
 
             sourceMetadataLine(atom: atom)
         }
@@ -3030,100 +3033,101 @@ struct SwipeStudyFocusModeView: View {
     // MARK: - Right Panel
 
     private var rightPanel: some View {
-        VStack(alignment: .leading, spacing: DS.space24) {
-            MarginaliaLabel("TEARDOWN")
+        FocusModeGlassRail(cornerRadius: 24, contentPadding: DS.space12) {
+            VStack(alignment: .leading, spacing: DS.space20) {
+                MarginaliaLabel("TEARDOWN")
 
-            if isAnalyzing {
-                analysisShimmer
-            } else if let analysis = analysis {
-                HookAnalysisCard(analysis: analysis)
+                if isAnalyzing {
+                    analysisShimmer
+                } else if let analysis = analysis {
+                    HookAnalysisCard(analysis: analysis)
 
-                if let insight = analysis.keyInsight, !insight.isEmpty {
-                    marginaliaInsight(insight)
-                } else if isDeepAnalyzing {
-                    marginaliaAnalyzingState
-                }
+                    if let insight = analysis.keyInsight, !insight.isEmpty {
+                        marginaliaInsight(insight)
+                    } else if isDeepAnalyzing {
+                        marginaliaAnalyzingState
+                    }
 
-                if let sections = analysis.sections, !sections.isEmpty {
-                    StructureMapView(
-                        frameworkType: analysis.frameworkType,
-                        sections: sections,
-                        onSectionTap: { position in
-                            let timestamp = position * videoDuration
-                            currentTimestamp = timestamp
-                            if !isPlayerActive { isPlayerActive = true }
+                    if let sections = analysis.sections, !sections.isEmpty {
+                        StructureMapView(
+                            frameworkType: analysis.frameworkType,
+                            sections: sections,
+                            onSectionTap: { position in
+                                let timestamp = position * videoDuration
+                                currentTimestamp = timestamp
+                                if !isPlayerActive { isPlayerActive = true }
+                            }
+                        )
+                    } else {
+                        emptyAnalysisCard(
+                            title: "STRUCTURE",
+                            icon: "rectangle.3.group",
+                            message: "Transcript required for structural breakdown"
+                        )
+                    }
+
+                    if let physicsProfile = currentAtom?.bestPhysicsProfile {
+                        ContentPhysicsSection(profile: physicsProfile)
+                            .environment(\.codexLookup, codexLookup)
+
+                        if let walkthrough = currentAtom?.blueprintWalkthrough {
+                            walkthroughCard(walkthrough)
+                        }
+
+                        reExtractProfileButton
+                    } else {
+                        generateCodexProfileCard
+                    }
+
+                    TaxonomySection(
+                        analysis: Binding(
+                            get: { self.analysis },
+                            set: { self.analysis = $0 }
+                        ),
+                        currentAtom: Binding(
+                            get: { self.currentAtom },
+                            set: { self.currentAtom = $0 }
+                        ),
+                        isReclassifying: $isReclassifying,
+                        reclassifySuggestion: $reclassifySuggestion,
+                        onReclassify: { reclassifySwipe() },
+                        onAcceptReclassification: { acceptReclassification() },
+                        onRejectReclassification: { rejectReclassification() },
+                        onSaveTaxonomyChange: { saveTaxonomyOverride() },
+                        onOpenCreatorProfile: { creatorUUID in
+                            NotificationCenter.default.post(
+                                name: Notification.Name("openCreatorProfile"),
+                                object: nil,
+                                userInfo: ["creatorUUID": creatorUUID]
+                            )
+                        },
+                        onLinkCreator: { _, _ in
+                            saveTaxonomyOverride()
                         }
                     )
-                } else {
-                    emptyAnalysisCard(
-                        title: "STRUCTURE",
-                        icon: "rectangle.3.group",
-                        message: "Transcript required for structural breakdown"
+
+                    SimilarSwipesSection(
+                        currentHookType: analysis.hookType,
+                        currentFingerprint: analysis.fingerprint,
+                        currentEntityId: atom.id ?? -1,
+                        onSwipeTap: { newEntityId in
+                            reloadWithEntity(newEntityId)
+                        }
                     )
-                }
 
-                if let physicsProfile = currentAtom?.bestPhysicsProfile {
-                    ContentPhysicsSection(profile: physicsProfile)
-                        .environment(\.codexLookup, codexLookup)
-
-                    if let walkthrough = currentAtom?.blueprintWalkthrough {
-                        walkthroughCard(walkthrough)
+                    if isInstagramSource {
+                        instagramAnalysisPlaceholder
                     }
-
-                    reExtractProfileButton
                 } else {
-                    generateCodexProfileCard
+                    noAnalysisPlaceholder
                 }
-
-                TaxonomySection(
-                    analysis: Binding(
-                        get: { self.analysis },
-                        set: { self.analysis = $0 }
-                    ),
-                    currentAtom: Binding(
-                        get: { self.currentAtom },
-                        set: { self.currentAtom = $0 }
-                    ),
-                    isReclassifying: $isReclassifying,
-                    reclassifySuggestion: $reclassifySuggestion,
-                    onReclassify: { reclassifySwipe() },
-                    onAcceptReclassification: { acceptReclassification() },
-                    onRejectReclassification: { rejectReclassification() },
-                    onSaveTaxonomyChange: { saveTaxonomyOverride() },
-                    onOpenCreatorProfile: { creatorUUID in
-                        NotificationCenter.default.post(
-                            name: Notification.Name("openCreatorProfile"),
-                            object: nil,
-                            userInfo: ["creatorUUID": creatorUUID]
-                        )
-                    },
-                    onLinkCreator: { _, _ in
-                        saveTaxonomyOverride()
-                    }
-                )
-
-                SimilarSwipesSection(
-                    currentHookType: analysis.hookType,
-                    currentFingerprint: analysis.fingerprint,
-                    currentEntityId: atom.id ?? -1,
-                    onSwipeTap: { newEntityId in
-                        reloadWithEntity(newEntityId)
-                    }
-                )
-
-                if isInstagramSource {
-                    instagramAnalysisPlaceholder
-                }
-            } else {
-                noAnalysisPlaceholder
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private func marginaliaInsight(_ insight: String) -> some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            MarginaliaLabel("KEY INSIGHT")
+        FocusModeInspectorSection("KEY INSIGHT") {
             Text(insight)
                 .font(.system(size: 14, weight: .regular, design: .serif))
                 .foregroundStyle(DS.text)

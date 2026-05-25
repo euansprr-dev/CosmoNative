@@ -206,6 +206,8 @@
 		3F488FF5971C49BA446F7B66 /* DashboardTaskList.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9A534DF5BCF7054B468E171 /* DashboardTaskList.swift */; };
 		B54C83F74D7C4F05A758E205 /* CommandCenterSurfaceChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94F34728DF5446AE929A00FA /* CommandCenterSurfaceChrome.swift */; };
 		3F703B0142528750C52A4BE7 /* FocusModeEditorBlurTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C63C1EFB43C5364C679B93D0 /* FocusModeEditorBlurTests.swift */; };
+		F0C05A110000000000000002 /* FocusModeAppearanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C05A110000000000000001 /* FocusModeAppearanceTests.swift */; };
+		F0C05A110000000000000004 /* FocusModePremiumChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C05A110000000000000003 /* FocusModePremiumChrome.swift */; };
 		3FE94A25E8BD9B85B3B95735 /* CosmoMarkdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104DB71B6C8643EFDFB4D419 /* CosmoMarkdown.swift */; };
 		400FCEA9C0CB4202EDF7387D /* PhysicsEventTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CD6B87965F99BEA1804492D /* PhysicsEventTimelineView.swift */; };
 		402BE9519DC0A4970D99FF6B /* ContentFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD38B44989B1E14897B93302 /* ContentFocusModeView.swift */; };
@@ -1520,6 +1522,8 @@
 		C5BAAC474BAA9792770FB494 /* CodexConceptTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexConceptTag.swift; sourceTree = "<group>"; };
 		C5DF462BAC620E928CF473B5 /* CommandKUserCommandStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CommandKUserCommandStore.swift; sourceTree = "<group>"; };
 		C63C1EFB43C5364C679B93D0 /* FocusModeEditorBlurTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FocusModeEditorBlurTests.swift; sourceTree = "<group>"; };
+		F0C05A110000000000000001 /* FocusModeAppearanceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FocusModeAppearanceTests.swift; sourceTree = "<group>"; };
+		F0C05A110000000000000003 /* FocusModePremiumChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusModePremiumChrome.swift; sourceTree = "<group>"; };
 		C682396C67552945AECF6D6F /* CosmoRetrievalService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoRetrievalService.swift; sourceTree = "<group>"; };
 		C6A9BF85694702C1B35D4AE6 /* URLClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLClassifier.swift; sourceTree = "<group>"; };
 		C6B9A09A5D0B4E51B74B92F0 /* InquiryThoughtRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryThoughtRouter.swift; sourceTree = "<group>"; };
@@ -2321,6 +2325,7 @@
 			children = (
 				EBA2DB1D2FED586F3D63A5D0 /* AtelierPrimitives.swift */,
 				DC99E97105C0EDF16E4DD977 /* FocusCosmoPanel.swift */,
+				F0C05A110000000000000003 /* FocusModePremiumChrome.swift */,
 				86A32BC52B9460AC2F47FAB6 /* FocusTransitionCoordinator.swift */,
 				FE24A53E5EC1012BA30B1E29 /* FocusModeEditorBlur.swift */,
 			);
@@ -3321,6 +3326,7 @@
 				9D3E03F08DE5D490D0F8A51A /* CosmoWindowMessageRenderingTests.swift */,
 				CCFA9C92C9E16819CDAE31AF /* CosmoWindowRoutingTests.swift */,
 				40830DB846D9B1BD193E899E /* EditorLayoutMetricsTests.swift */,
+				F0C05A110000000000000001 /* FocusModeAppearanceTests.swift */,
 				C63C1EFB43C5364C679B93D0 /* FocusModeEditorBlurTests.swift */,
 				A48ECD25FED69403D785006B /* InquiryPlacementEngineTests.swift */,
 				BD510F9C30EB91E4C7AD39EE /* InstagramAutoTranscriberTests.swift */,
@@ -3660,6 +3666,7 @@
 				DFF91C9C1A5C8057CF27D91E /* CosmoWindowMessageRenderingTests.swift in Sources */,
 				3C5758AAA490A874A59DC78C /* CosmoWindowRoutingTests.swift in Sources */,
 				955C731079D93E7604469097 /* EditorLayoutMetricsTests.swift in Sources */,
+				F0C05A110000000000000002 /* FocusModeAppearanceTests.swift in Sources */,
 				3F703B0142528750C52A4BE7 /* FocusModeEditorBlurTests.swift in Sources */,
 				C116CF9FAE12F7E279CC9738 /* InquiryPlacementEngineTests.swift in Sources */,
 				BAC651263BF68DF7819EC35B /* InstagramAutoTranscriberTests.swift in Sources */,
@@ -4042,6 +4049,7 @@
 				F2037E10C38419116E288D81 /* FocusConnectionLinesLayer.swift in Sources */,
 				236482B8E69106DA73573E94 /* FocusContextDetector.swift in Sources */,
 				C91327F8D1EFEB99FAE5C811 /* FocusCosmoPanel.swift in Sources */,
+				F0C05A110000000000000004 /* FocusModePremiumChrome.swift in Sources */,
 				14E5D6BED84FCBB65D0AB83C /* FocusFloatingBlockView.swift in Sources */,
 				DB6D34123DB941338F32AD52 /* FocusFloatingBlocksManager.swift in Sources */,
 				6C40B3D777C7225B94532351 /* FocusModeView.swift in Sources */,

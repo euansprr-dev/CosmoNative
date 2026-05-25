@@ -1851,33 +1851,32 @@ extension IdeaFocusModeView {
 // MARK: - Marginalia Gutter (the intelligence, rendered as marginal notes)
 
 extension IdeaFocusModeView {
-    /// 260pt right gutter. Transparent, no dividers, no card chrome — just smallCaps
-    /// section labels and quiet rows. Each section reveals its full panel as a modal
-    /// sheet rather than dominating the gutter inline.
+    /// 260pt right gutter rendered as a quiet glass inspector. Sections stay compact;
+    /// deeper editing still opens sheets rather than dominating the manuscript.
     private var marginaliaGutter: some View {
-        VStack(alignment: .leading, spacing: DS.space24) {
-            marginaliaSwipesSection
-                .atelierStaggerIn(delay: 0.56, appeared: hasAppeared)
-            marginaliaFrameworkSection
-                .atelierStaggerIn(delay: 0.60, appeared: hasAppeared)
-            marginaliaBlueprintSection
-                .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
-            marginaliaResearchSection
-                .atelierStaggerIn(delay: 0.68, appeared: hasAppeared)
-            marginaliaCosmoSection
-                .atelierStaggerIn(delay: 0.72, appeared: hasAppeared)
+        FocusModeGlassRail(cornerRadius: 24, contentPadding: DS.space10) {
+            VStack(alignment: .leading, spacing: DS.space12) {
+                marginaliaSwipesSection
+                    .atelierStaggerIn(delay: 0.56, appeared: hasAppeared)
+                marginaliaFrameworkSection
+                    .atelierStaggerIn(delay: 0.60, appeared: hasAppeared)
+                marginaliaBlueprintSection
+                    .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
+                marginaliaResearchSection
+                    .atelierStaggerIn(delay: 0.68, appeared: hasAppeared)
+                marginaliaCosmoSection
+                    .atelierStaggerIn(delay: 0.72, appeared: hasAppeared)
+            }
         }
     }
 
     // MARK: Swipes — vertical list, up to 3 visible
 
     private var marginaliaSwipesSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("SWIPES",
-                            countText: viewModel.linkedSwipes.isEmpty
-                                ? nil
-                                : "\(viewModel.linkedSwipes.count) matched")
-
+        FocusModeInspectorSection(
+            "SWIPES",
+            countText: viewModel.linkedSwipes.isEmpty ? nil : "\(viewModel.linkedSwipes.count) matched"
+        ) {
             if viewModel.linkedSwipes.isEmpty {
                 Button {
                     viewModel.showLinkSwipesOverlay = true
@@ -1973,9 +1972,7 @@ extension IdeaFocusModeView {
     // MARK: Framework — name + confidence + change
 
     private var marginaliaFrameworkSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("FRAMEWORK")
-
+        FocusModeInspectorSection("FRAMEWORK") {
             if let framework = viewModel.selectedArcType ?? viewModel.arcRecommendations.first?.arcName {
                 VStack(alignment: .leading, spacing: DS.space4) {
                     Text(framework)
@@ -2029,9 +2026,7 @@ extension IdeaFocusModeView {
     // MARK: Blueprint — one-line summary, expand opens sheet
 
     private var marginaliaBlueprintSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("BLUEPRINT")
-
+        FocusModeInspectorSection("BLUEPRINT") {
             if let blueprint = viewModel.selectedBlueprint {
                 VStack(alignment: .leading, spacing: DS.space4) {
                     Button {
@@ -2104,9 +2099,7 @@ extension IdeaFocusModeView {
     // MARK: Research — stat lines, tap opens sheet
 
     private var marginaliaResearchSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("RESEARCH")
-
+        FocusModeInspectorSection("RESEARCH") {
             Button {
                 showResearchSheet = true
             } label: {

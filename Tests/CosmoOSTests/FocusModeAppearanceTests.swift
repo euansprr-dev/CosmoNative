@@ -58,6 +58,19 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertTrue(primitivesSource.contains(".fill(marginaliaRuleColor)"))
     }
 
+    func testPremiumFocusModesUseSharedGlassChromePrimitives() throws {
+        let premiumChromeSource = try source("UI/FocusMode/Shared/FocusModePremiumChrome.swift")
+        let ideaFocusSource = try source("UI/FocusMode/Ideas/IdeaFocusModeView.swift")
+        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+
+        XCTAssertTrue(premiumChromeSource.contains("struct FocusModeGlassRail"))
+        XCTAssertTrue(premiumChromeSource.contains("struct FocusModeInspectorSection"))
+        XCTAssertTrue(premiumChromeSource.contains("struct FocusModeMediaWell"))
+        XCTAssertTrue(ideaFocusSource.contains("FocusModeInspectorSection"))
+        XCTAssertTrue(swipeFocusSource.contains("FocusModeMediaWell"))
+        XCTAssertTrue(swipeFocusSource.contains("FocusModeInspectorSection"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         try String(contentsOf: packageRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }

@@ -48,12 +48,12 @@ struct FocusModeInspectorSection<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(contentPadding)
-        .background(DS.glassCardFill.opacity(0.78), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(DS.glassCardFill.opacity(0.58), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(DS.glassBorder.opacity(0.72), lineWidth: 0.5)
+                .stroke(DS.glassBorder.opacity(0.58), lineWidth: 0.5)
         }
-        .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 8)
+        .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 4)
     }
 }
 
@@ -82,6 +82,6 @@ struct FocusModeMediaWell<Content: View>: View {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(DS.glassBorder.opacity(0.8), lineWidth: 0.5)
             }
-            .shadow(color: Color.black.opacity(0.10), radius: 18, x: 0, y: 12)
+            .shadow(color: Color.black.opacity(0.075), radius: 16, x: 0, y: 10)
     }
 }

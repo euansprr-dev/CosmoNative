@@ -411,11 +411,9 @@ struct SwipeStudyFocusModeView: View {
             hasAppeared: hasAppeared,
             reduceMotion: reduceMotion
         ) {
-            sourceStage(atom: atom)
+            sourceAndTeardownRail(atom: atom)
         } transcript: {
             transcriptManuscript(atom: atom)
-        } marginalia: {
-            rightPanel
         }
     }
 
@@ -446,6 +444,14 @@ struct SwipeStudyFocusModeView: View {
             .frame(maxWidth: .infinity, alignment: .center)
 
             sourceMetadataLine(atom: atom)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func sourceAndTeardownRail(atom: Atom) -> some View {
+        VStack(alignment: .leading, spacing: DS.space24) {
+            sourceStage(atom: atom)
+            rightPanel
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -4410,7 +4416,7 @@ struct SwipeStudyFocusModeView: View {
 
 // MARK: - Atelier Shell Components
 
-private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Marginalia: View>: View {
+private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
     let size: CGSize
     let panelPadding: CGFloat
     let isPaneContext: Bool
@@ -4419,7 +4425,6 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Marginali
 
     private let source: Source
     private let transcript: Transcript
-    private let marginalia: Marginalia
 
     init(
         size: CGSize,
@@ -4428,8 +4433,7 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Marginali
         hasAppeared: Bool,
         reduceMotion: Bool,
         @ViewBuilder source: () -> Source,
-        @ViewBuilder transcript: () -> Transcript,
-        @ViewBuilder marginalia: () -> Marginalia
+        @ViewBuilder transcript: () -> Transcript
     ) {
         self.size = size
         self.panelPadding = panelPadding
@@ -4438,7 +4442,6 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Marginali
         self.reduceMotion = reduceMotion
         self.source = source()
         self.transcript = transcript()
-        self.marginalia = marginalia()
     }
 
     var body: some View {
@@ -4462,8 +4465,6 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Marginali
                 .swipeStudyStagger(index: 0, appeared: hasAppeared, reduceMotion: reduceMotion)
             transcript
                 .swipeStudyStagger(index: 1, appeared: hasAppeared, reduceMotion: reduceMotion)
-            marginalia
-                .swipeStudyStagger(index: 2, appeared: hasAppeared, reduceMotion: reduceMotion)
         }
         .padding(.horizontal, panelPadding)
         .padding(.top, DS.space12)
@@ -4471,20 +4472,16 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Marginali
     }
 
     private var wideTable: some View {
-        HStack(alignment: .top, spacing: DS.space32) {
+        HStack(alignment: .top, spacing: DS.space40) {
             source
-                .frame(width: min(340, max(280, size.width * 0.24)), alignment: .top)
+                .frame(width: min(500, max(380, size.width * 0.32)), alignment: .top)
                 .swipeStudyStagger(index: 0, appeared: hasAppeared, reduceMotion: reduceMotion)
 
             transcript
-                .frame(maxWidth: 660, alignment: .topLeading)
+                .frame(maxWidth: 820, alignment: .topLeading)
                 .swipeStudyStagger(index: 1, appeared: hasAppeared, reduceMotion: reduceMotion)
-
-            marginalia
-                .frame(width: min(320, max(280, size.width * 0.24)), alignment: .top)
-                .swipeStudyStagger(index: 2, appeared: hasAppeared, reduceMotion: reduceMotion)
         }
-        .frame(maxWidth: 1340, alignment: .top)
+        .frame(maxWidth: 1420, alignment: .top)
         .padding(.horizontal, DS.space32)
         .padding(.top, DS.space24)
         .padding(.bottom, DS.space48)

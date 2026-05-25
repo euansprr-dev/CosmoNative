@@ -71,6 +71,22 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertTrue(swipeFocusSource.contains("FocusModeInspectorSection"))
     }
 
+    func testIdeaFocusModeRemovesUnusedCosmoMarginaliaComposer() throws {
+        let ideaFocusSource = try source("UI/FocusMode/Ideas/IdeaFocusModeView.swift")
+
+        XCTAssertFalse(ideaFocusSource.contains("marginaliaCosmoSection"))
+        XCTAssertFalse(ideaFocusSource.contains("FocusCosmoPanel(session: cosmoSession"))
+    }
+
+    func testSwipeTeardownLivesBelowSourcePreviewInsteadOfThirdColumn() throws {
+        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+
+        XCTAssertTrue(swipeFocusSource.contains("sourceAndTeardownRail(atom: atom)"))
+        XCTAssertTrue(swipeFocusSource.contains("private func sourceAndTeardownRail(atom: Atom) -> some View"))
+        XCTAssertTrue(swipeFocusSource.contains("private struct SwipeStudyTeardownShell<Source: View, Transcript: View>"))
+        XCTAssertFalse(swipeFocusSource.contains("@ViewBuilder marginalia: () -> Marginalia"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         try String(contentsOf: packageRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }

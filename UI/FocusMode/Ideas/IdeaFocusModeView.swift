@@ -41,7 +41,7 @@ enum OutlineSlideNavigationDirection: Equatable {
 
 /// Full-screen thinking surface for an idea.
 /// Centered manuscript column: serif title, chromeless context editor, numbered hooks, outline.
-/// Right marginalia gutter: swipes, framework, blueprint, research, cosmo — all quiet, chromeless.
+/// Right marginalia gutter: swipes, framework, blueprint, research — all quiet, chromeless.
 /// Centered gilt-bracketed CTA at the bottom.
 struct IdeaFocusModeView: View {
     // MARK: - Properties
@@ -52,7 +52,6 @@ struct IdeaFocusModeView: View {
     // MARK: - State
 
     @StateObject private var viewModel: IdeaFocusModeViewModel
-    @StateObject private var cosmoSession: FocusCosmoSession
     @State private var newHookText: String = ""
     @State private var isPromoting: Bool = false
     @State private var showProfileEditor: Bool = false
@@ -62,7 +61,6 @@ struct IdeaFocusModeView: View {
     @State private var hasAppeared: Bool = false
     @State private var showBlueprintSheet: Bool = false
     @State private var showResearchSheet: Bool = false
-    @State private var chatExpanded: Bool = false
     @State private var showFrameworkSheet: Bool = false
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
@@ -84,11 +82,6 @@ struct IdeaFocusModeView: View {
         self.atom = atom
         self.onClose = onClose
         _viewModel = StateObject(wrappedValue: IdeaFocusModeViewModel(atom: atom))
-        _cosmoSession = StateObject(wrappedValue: FocusCosmoSession(
-            atomUUID: atom.uuid,
-            atomTitle: atom.title,
-            contextKind: .idea
-        ))
     }
 
     // MARK: - Body
@@ -105,8 +98,8 @@ struct IdeaFocusModeView: View {
                         manuscriptColumn
                             .frame(maxWidth: .infinity, alignment: .leading)
                         marginaliaGutter
-                            .frame(width: 220)
-                            .padding(.top, 64)
+                            .frame(width: 260)
+                            .padding(.top, 56)
                     }
                     .padding(.horizontal, DS.space24)
                     .padding(.top, DS.space4)
@@ -1851,22 +1844,18 @@ extension IdeaFocusModeView {
 // MARK: - Marginalia Gutter (the intelligence, rendered as marginal notes)
 
 extension IdeaFocusModeView {
-    /// 260pt right gutter rendered as a quiet glass inspector. Sections stay compact;
-    /// deeper editing still opens sheets rather than dominating the manuscript.
+    /// Quiet right gutter for lightweight intelligence controls. Each section is
+    /// independent so the rail does not read as a detached mini-app.
     private var marginaliaGutter: some View {
-        FocusModeGlassRail(cornerRadius: 24, contentPadding: DS.space10) {
-            VStack(alignment: .leading, spacing: DS.space12) {
-                marginaliaSwipesSection
-                    .atelierStaggerIn(delay: 0.56, appeared: hasAppeared)
-                marginaliaFrameworkSection
-                    .atelierStaggerIn(delay: 0.60, appeared: hasAppeared)
-                marginaliaBlueprintSection
-                    .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
-                marginaliaResearchSection
-                    .atelierStaggerIn(delay: 0.68, appeared: hasAppeared)
-                marginaliaCosmoSection
-                    .atelierStaggerIn(delay: 0.72, appeared: hasAppeared)
-            }
+        VStack(alignment: .leading, spacing: DS.space16) {
+            marginaliaSwipesSection
+                .atelierStaggerIn(delay: 0.56, appeared: hasAppeared)
+            marginaliaFrameworkSection
+                .atelierStaggerIn(delay: 0.60, appeared: hasAppeared)
+            marginaliaBlueprintSection
+                .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
+            marginaliaResearchSection
+                .atelierStaggerIn(delay: 0.68, appeared: hasAppeared)
         }
     }
 
@@ -2123,13 +2112,6 @@ extension IdeaFocusModeView {
             }
             .buttonStyle(.plain)
         }
-    }
-
-    // MARK: Cosmo — smart agent inline (Gemini 3 Flash, full tool access)
-
-    private var marginaliaCosmoSection: some View {
-        FocusCosmoPanel(session: cosmoSession, isExpanded: $chatExpanded)
-            .task { await cosmoSession.load() }
     }
 
 }

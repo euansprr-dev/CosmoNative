@@ -50,11 +50,14 @@ struct DashboardTimeTracker: View {
         }
         .padding(.horizontal, DS.space10)
         .padding(.vertical, DS.space8)
-        .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DS.commandChromePanelFill)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(DS.commandChromeBorder, lineWidth: 0.5)
-        )
+        }
     }
 
     @ViewBuilder
@@ -156,10 +159,10 @@ struct DashboardTimeTracker: View {
             }
         }
         .padding(DS.space12)
-        .background(DS.commandChromeProminentFill, in: .rect(cornerRadius: 10))
+        .background(DS.glassCardFill, in: .rect(cornerRadius: 10))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.commandChromeProminentBorder, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DS.glassBorder, lineWidth: 0.5)
         )
     }
 
@@ -174,10 +177,10 @@ struct DashboardTimeTracker: View {
             .foregroundStyle(isProminent ? DS.textOnAccent : DS.textSecondary)
             .padding(.horizontal, DS.space10)
             .padding(.vertical, DS.space6)
-            .background(isProminent ? DS.accent : DS.commandChromeControlFill, in: Capsule())
+            .background(isProminent ? DS.accent : DS.glassInputFill, in: Capsule())
             .overlay(
                 Capsule()
-                    .stroke(isProminent ? DS.accent.opacity(0.25) : DS.commandChromeControlBorder, lineWidth: 0.5)
+                    .stroke(isProminent ? DS.accent.opacity(0.25) : DS.glassBorder, lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)

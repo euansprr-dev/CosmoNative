@@ -19,9 +19,9 @@ struct DashboardObjectivesBar: View {
                 }
                 .padding(.horizontal, DS.space12)
                 .padding(.vertical, DS.space10)
-                .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 8))
+                .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 10))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(DS.commandChromeBorder, lineWidth: 0.5)
                 )
             }

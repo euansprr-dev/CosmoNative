@@ -273,68 +273,71 @@ struct CommandCenterDashboard: View {
     // MARK: - Right Column (280px) — Context-Sensitive Inspector
 
     private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: DS.space16) {
-            // Context-sensitive tab bar — no container, bottom indicator
-            HStack(spacing: 0) {
-                if selectedTaskForDetail != nil {
-                    rightColumnTab("Details", icon: "info.circle", isActive: showingDetailTab == .details)
-                }
-                rightColumnTab("Habits", icon: "checkmark.circle", isActive: showingDetailTab == .habits)
-                rightColumnTab("Reports", icon: "chart.bar", isActive: showingDetailTab == .reports)
+        CommandCenterGlassRail(cornerRadius: 22) {
+            VStack(alignment: .leading, spacing: DS.space16) {
+                rightColumnTabs
+                rightColumnContent
+                Spacer(minLength: 0)
             }
-
-            // Content
-            switch showingDetailTab {
-            case .details:
-                if let task = resolvedSelectedTask {
-                    TaskDetailPanel(
-                        task: task,
-                        viewModel: viewModel,
-                        composer: composer,
-                        onDeleted: { deletedTaskUUID in
-                            handleDeletedSelectedTask(uuid: deletedTaskUUID)
-                        }
-                    )
-                        .id(task.uuid)
-                        .cosmoGlassSceneSignal(
-                            id: "command-center-task-detail-\(task.uuid)",
-                            source: .commandTask,
-                            color: DS.entityTask,
-                            intensity: 0.26
-                        )
-                }
-            case .reports:
-                ScrollView(.vertical) {
-                    DashboardReportsPanel(viewModel: viewModel)
-                }
-                .scrollIndicators(.never)
-                .cosmoGlassSceneSignal(
-                    id: "command-center-reports",
-                    source: .commandCalendar,
-                    color: DS.info,
-                    intensity: 0.24
-                )
-            case .habits:
-                DashboardHabitPanel(viewModel: viewModel, composer: composer)
-                    .cosmoGlassSceneSignal(
-                        id: "command-center-habits",
-                        source: .commandHabit,
-                        color: DS.green,
-                        intensity: 0.28
-                    )
-            }
-
-            Spacer(minLength: 0)
         }
         .frame(width: 280)
         .padding(.leading, DS.space20)
         .onChange(of: visibleTaskUUIDs) { _, taskUUIDs in
             clearDeletedTaskState(visibleTaskUUIDs: taskUUIDs)
         }
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(DS.commandCenterSeparator)
-                .frame(width: 0.5)
+    }
+
+    private var rightColumnTabs: some View {
+        HStack(spacing: 0) {
+            if selectedTaskForDetail != nil {
+                rightColumnTab("Details", icon: "info.circle", isActive: showingDetailTab == .details)
+            }
+            rightColumnTab("Habits", icon: "checkmark.circle", isActive: showingDetailTab == .habits)
+            rightColumnTab("Reports", icon: "chart.bar", isActive: showingDetailTab == .reports)
+        }
+    }
+
+    @ViewBuilder
+    private var rightColumnContent: some View {
+        switch showingDetailTab {
+        case .details:
+            if let task = resolvedSelectedTask {
+                TaskDetailPanel(
+                    task: task,
+                    viewModel: viewModel,
+                    composer: composer,
+                    onDeleted: { deletedTaskUUID in
+                        handleDeletedSelectedTask(uuid: deletedTaskUUID)
+                    }
+                )
+                .id(task.uuid)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .cosmoGlassSceneSignal(
+                    id: "command-center-task-detail-\(task.uuid)",
+                    source: .commandTask,
+                    color: DS.entityTask,
+                    intensity: 0.26
+                )
+            }
+        case .reports:
+            ScrollView(.vertical) {
+                DashboardReportsPanel(viewModel: viewModel)
+            }
+            .scrollIndicators(.never)
+            .cosmoGlassSceneSignal(
+                id: "command-center-reports",
+                source: .commandCalendar,
+                color: DS.info,
+                intensity: 0.24
+            )
+        case .habits:
+            DashboardHabitPanel(viewModel: viewModel, composer: composer)
+                .cosmoGlassSceneSignal(
+                    id: "command-center-habits",
+                    source: .commandHabit,
+                    color: DS.green,
+                    intensity: 0.28
+                )
         }
     }
 

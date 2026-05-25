@@ -82,10 +82,10 @@ struct CommandCenterMasthead: View {
                     .foregroundStyle(DS.text)
                     .padding(.horizontal, DS.space12)
                     .frame(height: 30)
-                    .background(DS.surface, in: .rect(cornerRadius: 8))
+                    .background(DS.glassInputFill, in: .rect(cornerRadius: 8))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(DS.borderSubtle, lineWidth: 0.5)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(DS.glassBorder, lineWidth: 0.5)
                     )
             }
             .buttonStyle(.plain)
@@ -199,10 +199,10 @@ struct CommandCenterMasthead: View {
                     .foregroundStyle(DS.text)
                     .padding(.horizontal, DS.space12)
                     .frame(height: 30)
-                    .background(DS.surface, in: .rect(cornerRadius: 8))
+                    .background(DS.glassInputFill, in: .rect(cornerRadius: 8))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(DS.borderSubtle, lineWidth: 0.5)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(DS.glassBorder, lineWidth: 0.5)
                     )
             }
             .buttonStyle(.plain)

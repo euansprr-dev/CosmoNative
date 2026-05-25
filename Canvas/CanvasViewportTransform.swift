@@ -120,6 +120,18 @@ struct CanvasViewportTransform: Equatable {
     }
 }
 
+enum CanvasZoomPolicy {
+    private static let emptySpaceDoubleClickZoomFactor: CGFloat = 1.25
+
+    static func emptySpaceDoubleClickScale(
+        currentScale: CGFloat,
+        minScale: CGFloat,
+        maxScale: CGFloat
+    ) -> CGFloat {
+        min(max(currentScale * emptySpaceDoubleClickZoomFactor, minScale), maxScale)
+    }
+}
+
 /// Compositor-facing transform for the SwiftUI canvas world layer.
 /// Blocks and clusters remain positioned in raw canvas coordinates; the
 /// enclosing layer receives this offset and scale so pan/zoom can move the

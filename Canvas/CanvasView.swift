@@ -996,6 +996,9 @@ struct CanvasView: View {
         Color.clear
             .contentShape(Rectangle())
             .allowsHitTesting(drawingState.toolMode == .select && thinkspaceMode == .canvas)
+            .onTapGesture(count: 2) {
+                handleEmptyCanvasDoubleClick()
+            }
             .onTapGesture {
                 // Only deselect the previously selected block (not the whole array)
                 if let prevId = selectedBlockId,
@@ -3236,6 +3239,20 @@ struct CanvasView: View {
             let queryText = [block.title, block.subtitle ?? ""].joined(separator: " ")
             ambientEngine.updateContext(focusAtomUUID: block.entityUuid, currentText: queryText)
         }
+    }
+
+    private func handleEmptyCanvasDoubleClick() {
+        let newScale = CanvasZoomPolicy.emptySpaceDoubleClickScale(
+            currentScale: canvasScale,
+            minScale: minScale,
+            maxScale: maxScale
+        )
+        guard newScale != canvasScale else { return }
+
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            canvasScale = newScale
+        }
+        publishSceneTintImmediately()
     }
 
     private func openBlockInFocusMode(_ block: CanvasBlock) {

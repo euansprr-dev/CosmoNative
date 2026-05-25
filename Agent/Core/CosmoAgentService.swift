@@ -171,15 +171,8 @@ class CosmoAgentService: ObservableObject {
     private let baseMaxToolIterations = 12
     nonisolated static let recentToolResultsToKeepUncompressed = 8
 
-    nonisolated static func defaultModelTier(for intent: AgentIntent) -> AgentModelTier {
-        switch intent {
-        case .capture, .plan, .correct:
-            return .sensor
-        case .query, .brainstorm, .draft:
-            return .geminiFlashLatest
-        case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
-            return .strategist
-        }
+    nonisolated static func defaultModelTier(for _: AgentIntent) -> AgentModelTier {
+        .geminiFlashLatest
     }
 
     /// Returns the max tool iterations for a given intent. Creative/analytical

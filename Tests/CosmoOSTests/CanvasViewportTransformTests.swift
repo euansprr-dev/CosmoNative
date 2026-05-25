@@ -2,6 +2,26 @@ import XCTest
 @testable import CosmoOS
 
 final class CanvasViewportTransformTests: XCTestCase {
+    func testEmptySpaceDoubleClickZoomsInByTwentyFivePercent() {
+        let zoomedScale = CanvasZoomPolicy.emptySpaceDoubleClickScale(
+            currentScale: 1.2,
+            minScale: 0.25,
+            maxScale: 3.0
+        )
+
+        XCTAssertEqual(zoomedScale, 1.5, accuracy: 0.001)
+    }
+
+    func testEmptySpaceDoubleClickZoomRespectsMaximumScale() {
+        let zoomedScale = CanvasZoomPolicy.emptySpaceDoubleClickScale(
+            currentScale: 2.8,
+            minScale: 0.25,
+            maxScale: 3.0
+        )
+
+        XCTAssertEqual(zoomedScale, 3.0, accuracy: 0.001)
+    }
+
     func testCanvasPointRoundTripsThroughScreenSpace() {
         let transform = CanvasViewportTransform(
             viewportSize: CGSize(width: 1200, height: 800),

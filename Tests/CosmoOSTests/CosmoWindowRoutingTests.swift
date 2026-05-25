@@ -67,12 +67,15 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(AgentModelTier.geminiFlashLatest.maxTokens, 8192)
     }
 
-    func testDefaultModelTierKeepsCheapRoutesCheap() {
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .capture), .sensor)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .geminiFlashLatest)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .brainstorm), .geminiFlashLatest)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .draft), .geminiFlashLatest)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .analyze), .strategist)
+    func testAutoDefaultModelTierUsesGeminiForEveryIntent() {
+        let autoIntents: [AgentIntent] = [
+            .capture, .brainstorm, .plan, .query, .execute, .debrief,
+            .reflect, .correct, .meta, .strategy, .draft, .analyze
+        ]
+
+        XCTAssertTrue(autoIntents.allSatisfy {
+            CosmoAgentService.defaultModelTier(for: $0) == .geminiFlashLatest
+        })
     }
 
     func testCosmoModelPickerLabelsPinnedGeminiThreeFlashAsEverydayDefault() {
@@ -91,6 +94,19 @@ final class CosmoWindowRoutingTests: XCTestCase {
         ]
 
         XCTAssertFalse(autoIntents.contains { CosmoAgentService.defaultModelTier(for: $0) == .writer })
+    }
+
+    func testAutoDefaultFailoverChainsDoNotStartWithAnthropicModels() {
+        let autoIntents: [AgentIntent] = [
+            .capture, .brainstorm, .plan, .query, .execute, .debrief,
+            .reflect, .correct, .meta, .strategy, .draft, .analyze
+        ]
+
+        let startingModelIds = autoIntents.compactMap {
+            ModelFailoverChain.chain(for: CosmoAgentService.defaultModelTier(for: $0)).models.first?.modelId
+        }
+
+        XCTAssertFalse(startingModelIds.contains { $0.hasPrefix("anthropic/") })
     }
 
     func testExplicitPickerStillAllowsOpus() {

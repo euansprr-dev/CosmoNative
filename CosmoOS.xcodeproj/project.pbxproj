@@ -204,6 +204,7 @@
 		3ED6901336A81F53FC193443 /* TemplateBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84FB31331DA4A3431D78ED9 /* TemplateBuilderView.swift */; };
 		3EECE219778811FCD115369D /* VoiceCommandPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D75CAE353ADD41C2557D14 /* VoiceCommandPipeline.swift */; };
 		3F488FF5971C49BA446F7B66 /* DashboardTaskList.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9A534DF5BCF7054B468E171 /* DashboardTaskList.swift */; };
+		B54C83F74D7C4F05A758E205 /* CommandCenterSurfaceChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94F34728DF5446AE929A00FA /* CommandCenterSurfaceChrome.swift */; };
 		3F703B0142528750C52A4BE7 /* FocusModeEditorBlurTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C63C1EFB43C5364C679B93D0 /* FocusModeEditorBlurTests.swift */; };
 		3FE94A25E8BD9B85B3B95735 /* CosmoMarkdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104DB71B6C8643EFDFB4D419 /* CosmoMarkdown.swift */; };
 		400FCEA9C0CB4202EDF7387D /* PhysicsEventTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CD6B87965F99BEA1804492D /* PhysicsEventTimelineView.swift */; };
@@ -1639,6 +1640,7 @@
 		E90DD461B7D55B6C980EF1A8 /* InboxRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxRouting.swift; sourceTree = "<group>"; };
 		E91533B311A4C620985E49EF /* ContentAnalyticsEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentAnalyticsEngine.swift; sourceTree = "<group>"; };
 		E9A534DF5BCF7054B468E171 /* DashboardTaskList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardTaskList.swift; sourceTree = "<group>"; };
+		94F34728DF5446AE929A00FA /* CommandCenterSurfaceChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterSurfaceChrome.swift; sourceTree = "<group>"; };
 		E9B44BAE0B556C93D5C8444B /* CommandKUserCommandModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CommandKUserCommandModels.swift; sourceTree = "<group>"; };
 		EA2A5B88B6195CD725AF04E8 /* MidnightCronScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MidnightCronScheduler.swift; sourceTree = "<group>"; };
 		EAA2C1878D5A0EAF5145AD10 /* ClusterMetadataNormalizationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClusterMetadataNormalizationTests.swift; sourceTree = "<group>"; };
@@ -2076,6 +2078,7 @@
 				759FB3D9330E3F6B6524FCFD /* CommandCenterHabitEngine.swift */,
 				A1943C2AE5DCB2FE181A0073 /* CommandCenterMasthead.swift */,
 				AFFD4E616EC1DC94AE306CDF /* CommandCenterSidebar.swift */,
+				94F34728DF5446AE929A00FA /* CommandCenterSurfaceChrome.swift */,
 				E31816A8994B6F3E31F00139 /* CommandCenterTaskMenus.swift */,
 				BA38C0F35CDB0298E7C8011A /* CommandCenterZone.swift */,
 				4F5DCAB576D9C69F4DD5C196 /* DashboardFocusTimer.swift */,
@@ -3838,6 +3841,7 @@
 				257E1D0853CA208AB057EB37 /* CommandCenterHabitEngine.swift in Sources */,
 				880B414CD02570C482185ABF /* CommandCenterMasthead.swift in Sources */,
 				599DF28B9230FDA3DA5CEB2E /* CommandCenterSidebar.swift in Sources */,
+				B54C83F74D7C4F05A758E205 /* CommandCenterSurfaceChrome.swift in Sources */,
 				65A844AB902904122139A2E8 /* CommandCenterTaskMenus.swift in Sources */,
 				BC9DC6CEA394CE99E40208E0 /* CommandCenterZone.swift in Sources */,
 				7CADA7963ABFE8C31BF152D3 /* CommandHubCaptureController.swift in Sources */,

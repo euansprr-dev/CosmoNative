@@ -1,0 +1,158 @@
+import SwiftUI
+
+struct CommandCenterGlassRail<Content: View>: View {
+    let cornerRadius: CGFloat
+    let content: Content
+
+    init(cornerRadius: CGFloat = 22, @ViewBuilder content: () -> Content) {
+        self.cornerRadius = cornerRadius
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(DS.space12)
+            .cosmoGlassPanel(sceneMaterial: .neutral, role: .globalSidebar, cornerRadius: cornerRadius)
+    }
+}
+
+struct CommandCenterMaterialPanel<Content: View>: View {
+    let cornerRadius: CGFloat
+    let contentPadding: CGFloat
+    let content: Content
+
+    init(cornerRadius: CGFloat = 10, contentPadding: CGFloat = DS.space10, @ViewBuilder content: () -> Content) {
+        self.cornerRadius = cornerRadius
+        self.contentPadding = contentPadding
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(contentPadding)
+            .background(DS.commandChromePanelFill, in: .rect(cornerRadius: cornerRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(DS.commandChromeBorder, lineWidth: 0.5)
+            }
+    }
+}
+
+struct CommandCenterLedgerSectionHeader: View {
+    let title: String
+    let count: String?
+    let tint: Color
+    var actionTitle: String?
+    var actionIcon: String?
+    var action: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: DS.space6) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+
+            if let count {
+                Text(count)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(tint.opacity(0.62))
+                    .monospacedDigit()
+            }
+
+            Rectangle()
+                .fill(DS.commandCenterSeparator)
+                .frame(height: 0.5)
+                .padding(.leading, DS.space8)
+
+            Spacer(minLength: 0)
+
+            if let actionTitle, let actionIcon, let action {
+                Button(action: action) {
+                    Label(actionTitle, systemImage: actionIcon)
+                        .font(DS.caption)
+                        .foregroundStyle(tint.opacity(0.9))
+                        .padding(.horizontal, DS.space6)
+                        .padding(.vertical, DS.space4)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.top, DS.space12)
+        .padding(.bottom, DS.space6)
+    }
+}
+
+struct CommandCenterRowGlass: View {
+    let isActive: Bool
+    let isSelected: Bool
+    let isHovered: Bool
+    let tint: Color
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(fill)
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(stroke, lineWidth: isSelected ? 1 : 0.5)
+            }
+            .shadow(color: shadowColor, radius: shadowRadius, x: 0, y: shadowY)
+    }
+
+    private var fill: Color {
+        if isActive { return DS.glassInputFillFocused }
+        if isSelected { return tint.opacity(0.10) }
+        if isHovered { return DS.glassCardFill }
+        return Color.clear
+    }
+
+    private var stroke: Color {
+        if isActive { return tint.opacity(0.36) }
+        if isSelected { return tint.opacity(0.26) }
+        if isHovered { return DS.glassBorder }
+        return Color.clear
+    }
+
+    private var shadowColor: Color {
+        (isActive || isSelected || isHovered) ? Color.black.opacity(0.055) : Color.clear
+    }
+
+    private var shadowRadius: CGFloat {
+        isActive || isSelected ? 8 : (isHovered ? 4 : 0)
+    }
+
+    private var shadowY: CGFloat {
+        isActive || isSelected ? 2 : (isHovered ? 1 : 0)
+    }
+}
+
+struct CommandCenterEmptyPane: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(spacing: DS.space8) {
+            Image(systemName: icon)
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(DS.textMuted)
+                .frame(width: 44, height: 44)
+
+            Text(title)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+
+            Text(subtitle)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(maxWidth: 320)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.space24)
+        .padding(.horizontal, DS.space16)
+        .dsGlassCard(cornerRadius: 12)
+        .accessibilityElement(children: .combine)
+    }
+}

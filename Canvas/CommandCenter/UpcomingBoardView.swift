@@ -649,12 +649,12 @@ private struct UpcomingTimelineCalendarView: View {
 
             ForEach(Array(dates.enumerated()), id: \.element) { index, date in
                 Rectangle()
-                    .fill(Calendar.current.isDateInToday(date) ? DS.accent.opacity(0.035) : Color.clear)
+                    .fill(Calendar.current.isDateInToday(date) ? DS.accent.opacity(0.022) : Color.clear)
                     .frame(width: dayWidth, height: timelineHeight)
                     .offset(x: CommandCenterCalendarLayout.timeRailWidth + CGFloat(index) * dayWidth)
 
                 Rectangle()
-                    .fill(DS.borderSubtle)
+                    .fill(DS.borderSubtle.opacity(0.78))
                     .frame(width: 0.5, height: timelineHeight)
                     .offset(x: CommandCenterCalendarLayout.timeRailWidth + CGFloat(index) * dayWidth)
             }
@@ -817,13 +817,17 @@ private struct CalendarDayHeaderCell: View {
         VStack(spacing: DS.space2) {
             Text(weekdayText)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Calendar.current.isDateInToday(date) ? DS.accent : DS.textSecondary)
+                .foregroundStyle(isToday ? DS.accent : DS.textSecondary)
 
             Text(dayText)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Calendar.current.isDateInToday(date) ? DS.textOnAccent : DS.text)
+                .foregroundStyle(isToday ? DS.textOnAccent : DS.text)
                 .frame(width: 28, height: 24)
-                .background(Calendar.current.isDateInToday(date) ? DS.accent : Color.clear, in: Capsule())
+                .background(isToday ? DS.accent : Color.clear, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(isToday ? DS.glassBorderFocused.opacity(0.52) : Color.clear, lineWidth: 0.5)
+                }
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
@@ -837,6 +841,10 @@ private struct CalendarDayHeaderCell: View {
 
     private var dayText: String {
         "\(Calendar.current.component(.day, from: date))"
+    }
+
+    private var isToday: Bool {
+        Calendar.current.isDateInToday(date)
     }
 }
 
@@ -860,10 +868,14 @@ private struct AllDayLaneCell: View {
                                 .font(.system(size: 10, weight: .semibold))
                                 .lineLimit(1)
                         }
-                        .foregroundStyle(entry.accent)
+                        .foregroundStyle(entry.isEditableTask ? entry.accent : DS.textSecondary)
                         .padding(.horizontal, DS.space6)
                         .frame(height: 20)
-                        .background(entry.accent.opacity(0.13), in: Capsule())
+                        .background(DS.glassCardFill, in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(entry.accent.opacity(0.22), lineWidth: 0.5)
+                        }
                     }
                     .buttonStyle(.plain)
                     .disabled(!entry.isEditableTask)
@@ -1029,20 +1041,26 @@ private struct CalendarEntryBlock: View {
             .padding(.vertical, density == .compact ? 2 : DS.space4)
             .frame(maxHeight: .infinity, alignment: density == .compact ? .center : .top)
         }
-        .background(blockFill, in: .rect(cornerRadius: 5))
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(blockFill)
+
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(entry.accent.opacity(entry.source == .draft ? 0.10 : 0.045))
+        }
         .overlay(
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .stroke(borderColor, lineWidth: isSelected ? 1 : 0.5)
         )
-        .shadow(color: .black.opacity(isSelected ? 0.10 : 0.05), radius: isSelected ? 4 : 1, x: 0, y: isSelected ? 2 : 1)
+        .shadow(color: .black.opacity(isSelected ? 0.12 : 0.04), radius: isSelected ? 5 : 1, x: 0, y: isSelected ? 3 : 1)
         .opacity(entry.source == .draft ? 0.78 : 1)
-        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
     private var blockFill: Color {
-        if entry.source == .draft { return DS.accent.opacity(0.14) }
-        return entry.accent.opacity(DS.palette.isDark ? 0.14 : 0.08)
+        if entry.source == .draft { return DS.glassSectionFill }
+        return DS.glassCardFill
     }
 
     private var borderColor: Color {
@@ -1301,12 +1319,7 @@ private struct CalendarEditorPopover: View {
             actionRow
         }
         .padding(DS.space12)
-        .background(.regularMaterial, in: .rect(cornerRadius: 18))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(DS.glassBorderFocused.opacity(0.65), lineWidth: 0.8)
-        )
-        .dsFloatingShadow()
+        .cosmoGlassPanel(sceneMaterial: .neutral, role: .floatingAssistant, cornerRadius: 18)
         .onAppear { titleFocused = true }
         .onExitCommand(perform: onDismiss)
     }

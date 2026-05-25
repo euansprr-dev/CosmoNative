@@ -477,6 +477,9 @@ class AtomRepository: ObservableObject {
             }
             if atom.metadata != nil { merged.metadata = atom.metadata }
             if atom.links != nil { merged.links = atom.links }
+            if atom.isDeleted {
+                merged.isDeleted = true
+            }
             merged.updatedAt = ISO8601DateFormatter().string(from: Date())
             merged.localVersion += 1
 

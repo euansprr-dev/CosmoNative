@@ -395,7 +395,11 @@ struct CortexResultRail: View {
     private var resultsSections: some View {
         let groups = viewModel.unifiedGroupedResults.filter { !$0.results.isEmpty }
         if viewModel.primaryAction == nil && groups.isEmpty {
-            railHint(viewModel.currentPhase == .searching ? "Searching…" : "No matches yet.")
+            if viewModel.searchFeedback.matches(query: viewModel.query) {
+                railHint("No matches yet.")
+            } else {
+                Color.clear.frame(height: 1)
+            }
         } else {
             if let action = viewModel.primaryAction {
                 CommandKSectionLabel(label: "COMMAND")
@@ -449,7 +453,7 @@ struct CortexResultRail: View {
                 }
             }
 
-            ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+            ForEach(groups, id: \.source) { group in
                 CommandKSectionLabel(label: group.source.displayName.uppercased())
                 ForEach(group.results) { result in
                     CortexRailRow(

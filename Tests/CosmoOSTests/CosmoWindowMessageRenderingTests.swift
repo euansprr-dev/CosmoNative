@@ -27,6 +27,18 @@ final class CosmoWindowMessageRenderingTests: XCTestCase {
         XCTAssertFalse(CosmoWindowMessageRenderingPolicy.usesLazyTimelineStack)
     }
 
+    func testEmptyStreamingAssistantPlaceholderIsHiddenFromTimeline() {
+        let placeholder = CosmoWindowMessage(
+            type: .assistant,
+            content: "",
+            isStreaming: true
+        )
+
+        XCTAssertFalse(placeholder.shouldRenderInCosmoWindowTimeline)
+        XCTAssertTrue(CosmoWindowMessage.assistant("Working on it", isStreaming: true).shouldRenderInCosmoWindowTimeline)
+        XCTAssertTrue(CosmoWindowMessage.user("Can you check this?").shouldRenderInCosmoWindowTimeline)
+    }
+
     func testWindowPersistencePreservesAgentToolContext() {
         let toolCall = AgentToolCall(
             id: "call_profile",

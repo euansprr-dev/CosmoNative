@@ -1409,6 +1409,7 @@ class AgentToolExecutor {
         ideaMetadata.platform = platform
         ideaMetadata.contentFormat = contentFormat
         ideaMetadata.clientUUID = resolvedClientUUID
+        ideaMetadata.clientName = resolvedClientName ?? clientName
         ideaMetadata.captureSource = "telegram"
         ideaMetadata.originSwipeUUID = swipeUUID
         ideaMetadata.linkedSwipeIds = [swipeUUID]

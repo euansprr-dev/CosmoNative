@@ -159,6 +159,25 @@ final class CommandCenterComposerTests: XCTestCase {
     }
 
     @MainActor
+    func testRecurringCleanupDropsPastActiveRepeatWhenOccurrenceWasCompletedToday() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+
+        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
+            from: [
+                .init(uuid: "missed-yesterday", parentUUID: "daily", occurrenceDate: yesterday, isCompleted: false, createdAt: yesterday),
+                .init(uuid: "completed-today", parentUUID: "daily", occurrenceDate: today, isCompleted: true, createdAt: today)
+            ],
+            referenceDate: today,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(deletions, ["missed-yesterday"])
+    }
+
+    @MainActor
     func testRecurringCleanupDropsOrphanedGeneratedInstances() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

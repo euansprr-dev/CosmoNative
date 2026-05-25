@@ -690,6 +690,15 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
     /// Persisted presentation metadata for completed assistant responses.
     var responseMeta: CosmoResponseMeta?
 
+    var shouldRenderInCosmoWindowTimeline: Bool {
+        if case .assistant = type {
+            return !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || responseMeta?.hasVisibleContent == true
+                || !isStreaming
+        }
+        return true
+    }
+
     init(
         id: UUID = UUID(),
         type: CosmoWindowMessageType,

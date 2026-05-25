@@ -28,6 +28,28 @@ private enum TranscriptDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+private enum SwipeTranscriptCardPalette {
+    static var fill: Color {
+        DS.palette.isDark ? DS.surfaceCard : DS.vellumDeep
+    }
+
+    static var border: Color {
+        DS.palette.isDark ? DS.focusImmersiveBorder : DS.sepiaBorder
+    }
+
+    static var text: Color {
+        DS.palette.isDark ? DS.text : DS.inkWash
+    }
+
+    static var secondaryText: Color {
+        DS.palette.isDark ? DS.textSecondary : DS.inkFaded
+    }
+
+    static var mutedText: Color {
+        DS.palette.isDark ? DS.textMuted : DS.inkFaded
+    }
+}
+
 struct SwipeStudyFocusModeView: View {
     let atom: Atom
     let onClose: () -> Void
@@ -121,7 +143,7 @@ struct SwipeStudyFocusModeView: View {
 
     var body: some View {
         ZStack {
-            DS.bg.ignoresSafeArea()
+            DS.focusImmersiveBackground.ignoresSafeArea()
 
             if let displayAtom = currentAtom {
                 VStack(spacing: 0) {
@@ -190,6 +212,7 @@ struct SwipeStudyFocusModeView: View {
             onClose()
             return .handled
         }
+        .focusImmersiveEntryTransition()
         .overlay {
             if showTaxonomyManagement {
                 ZStack {
@@ -1910,10 +1933,10 @@ struct SwipeStudyFocusModeView: View {
                         }
                     }
                     .padding(DS.space12)
-                    .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                    .background(SwipeTranscriptCardPalette.fill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                     .overlay(
                         RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .stroke(activeCommentSlideIndex == index ? gold.opacity(0.35) : DS.sepiaBorder, lineWidth: 0.5)
+                            .stroke(activeCommentSlideIndex == index ? gold.opacity(0.35) : SwipeTranscriptCardPalette.border, lineWidth: 0.5)
                     )
                 }
 
@@ -1949,14 +1972,14 @@ struct SwipeStudyFocusModeView: View {
 
                     Text(caption)
                         .font(DS.callout)
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(SwipeTranscriptCardPalette.secondaryText)
                         .textSelection(.enabled)
                         .padding(DS.space12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DS.vellumDeep, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                        .background(SwipeTranscriptCardPalette.fill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                         .overlay(
                             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                                .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                                .stroke(SwipeTranscriptCardPalette.border, lineWidth: 0.5)
                         )
                 }
             }
@@ -2049,15 +2072,15 @@ struct SwipeStudyFocusModeView: View {
 
             Text(slide.text.isEmpty ? "No text captured for this slide." : slide.text)
                 .font(DS.callout)
-                .foregroundStyle(slide.text.isEmpty ? DS.textMuted : DS.text)
+                .foregroundStyle(slide.text.isEmpty ? SwipeTranscriptCardPalette.mutedText : SwipeTranscriptCardPalette.text)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(10)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .background(SwipeTranscriptCardPalette.fill, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.border, lineWidth: 1)
+                .stroke(SwipeTranscriptCardPalette.border, lineWidth: 1)
         )
     }
 
@@ -5295,16 +5318,18 @@ private struct SlideTextEditor: NSViewRepresentable {
     @Binding var text: String
     @Binding var focusRequestID: UUID?
     var onNewSlide: () -> Void
+    var textColor: Color = SwipeTranscriptCardPalette.text
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
         let textView = scrollView.documentView as! NSTextView
 
+        let editorTextColor = NSColor(textColor)
         textView.isRichText = false
         textView.font = .systemFont(ofSize: 13)
-        textView.textColor = NSColor(DS.text)
+        textView.textColor = editorTextColor
         textView.backgroundColor = .clear
-        textView.insertionPointColor = NSColor(DS.text)
+        textView.insertionPointColor = editorTextColor
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextCompletionEnabled = false
@@ -5319,7 +5344,7 @@ private struct SlideTextEditor: NSViewRepresentable {
         textView.defaultParagraphStyle = paragraphStyle
         textView.typingAttributes = [
             .font: NSFont.systemFont(ofSize: 13),
-            .foregroundColor: NSColor(DS.text),
+            .foregroundColor: editorTextColor,
             .paragraphStyle: paragraphStyle,
         ]
         textView.delegate = context.coordinator
@@ -5338,6 +5363,9 @@ private struct SlideTextEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let textView = scrollView.documentView as! NSTextView
+        let editorTextColor = NSColor(textColor)
+        textView.textColor = editorTextColor
+        textView.insertionPointColor = editorTextColor
         if textView.string != text {
             let selectedRange = textView.selectedRange()
             let isFirstResponder = textView.window?.firstResponder === textView
@@ -5346,7 +5374,7 @@ private struct SlideTextEditor: NSViewRepresentable {
             paragraphStyle.paragraphSpacing = 6
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 13),
-                .foregroundColor: NSColor(DS.text),
+                .foregroundColor: editorTextColor,
                 .paragraphStyle: paragraphStyle,
             ]
             textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: attrs))

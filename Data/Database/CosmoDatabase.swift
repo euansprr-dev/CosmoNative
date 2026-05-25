@@ -99,6 +99,13 @@ class CosmoDatabase: ObservableObject {
 
     // MARK: - Database Path
     static var databasePath: URL {
+        if isRunningTests {
+            return FileManager.default.temporaryDirectory
+                .appendingPathComponent("CosmoOSTests-\(ProcessInfo.processInfo.processIdentifier)")
+                .appendingPathComponent("databases")
+                .appendingPathComponent("Databases.db")
+        }
+
         // CRITICAL: Same path as web app's SQLite for seamless migration
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
@@ -110,6 +117,16 @@ class CosmoDatabase: ObservableObject {
             .appendingPathComponent("Cosmo")
             .appendingPathComponent("databases")
             .appendingPathComponent("Databases.db")
+    }
+
+    private static var isRunningTests: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["XCTestConfigurationFilePath"] != nil {
+            return true
+        }
+        return ProcessInfo.processInfo.arguments.contains { argument in
+            argument.hasSuffix(".xctest") || argument.contains("/XCTest")
+        }
     }
 
     // MARK: - Database Migrator
@@ -2158,6 +2175,8 @@ class CosmoDatabase: ObservableObject {
                 _server_version INTEGER DEFAULT 0,
                 _sync_version INTEGER DEFAULT 0,
                 _local_pending INTEGER DEFAULT 0,
+                thinkspace_id TEXT,
+                is_pinned INTEGER DEFAULT 0,
                 atom_uuid TEXT
             );
 

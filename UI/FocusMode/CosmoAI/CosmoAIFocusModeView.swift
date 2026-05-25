@@ -27,7 +27,7 @@ struct CosmoAIFocusModeView: View {
     var body: some View {
         ZStack {
             // Background
-            DS.bg
+            DS.focusImmersiveBackground
                 .ignoresSafeArea()
 
             // Subtle ambient purple glow
@@ -66,6 +66,7 @@ struct CosmoAIFocusModeView: View {
                 }
             }
         }
+        .focusImmersiveEntryTransition()
         .overlay(alignment: .topLeading) {
             FocusSidebarTrigger(isVisible: $sidebarVisible)
                 .frame(maxHeight: .infinity)

@@ -102,6 +102,35 @@ enum CortexDetailSubject {
         }
     }
 
+    var selectionIdentity: String {
+        switch self {
+        case .empty: return "empty"
+        case .recent(let item): return item.id
+        case .result(let result): return result.selectionID
+        case .library(let item): return item.uuid
+        case .swipe(let item): return item.atomUUID
+        case .idea(let item): return item.atomUUID
+        case .readwise(let book): return "readwise-\(book.id)"
+        case .action(let action): return action.id
+        }
+    }
+
+    var renderSignature: String {
+        [
+            selectionIdentity,
+            title,
+            typeLabel,
+            metaLine ?? "",
+            previewText ?? "",
+            atomUUID ?? ""
+        ].joined(separator: "\u{1F}")
+    }
+
+    var isEmpty: Bool {
+        if case .empty = self { return true }
+        return false
+    }
+
     var isConnection: Bool {
         if case .recent(let i) = self { return i.type == .connection }
         if case .result(let r) = self { return r.atomType == .connection }

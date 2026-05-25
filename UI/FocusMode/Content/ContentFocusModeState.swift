@@ -36,6 +36,10 @@ enum ContentStep: String, Codable, CaseIterable {
         case .polish: return 3
         }
     }
+
+    var enablesPolishHighlights: Bool {
+        self == .polish
+    }
 }
 
 // MARK: - Outline Item

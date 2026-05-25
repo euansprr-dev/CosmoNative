@@ -128,6 +128,22 @@ final class CommandKIdeaLifecycleTests: XCTestCase {
         XCTAssertEqual(item.context, "The body should become preview context when metadata has no context.")
     }
 
+    func testPersistedClientNameFallback() throws {
+        let metadata = """
+        {"ideaStatus":"spark","clientUUID":"missing-client-uuid","clientName":"Ben A","captureSource":"telegram_cloud"}
+        """
+        let atom = Atom.new(
+            type: .idea,
+            title: "Telegram idea",
+            body: nil,
+            metadata: metadata
+        )
+
+        let item = try XCTUnwrap(atom.toIdeaGalleryItem())
+        XCTAssertEqual(item.clientUUID, "missing-client-uuid")
+        XCTAssertEqual(item.clientName, "Ben A")
+    }
+
     func testMatchesIdeaCreationNotificationFromTelegramAgentPayload() {
         let atom = Atom.new(type: .idea, title: "TG capture", body: nil, metadata: nil)
         let notification = Notification(

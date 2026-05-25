@@ -250,6 +250,20 @@ enum CommandCenterTodayTaskSectioning {
     }
 }
 
+enum CommandCenterDateSelection {
+    static func dateForCurrentDayChange(
+        selectedDate: Date,
+        previousToday: Date,
+        newToday: Date,
+        calendar: Calendar = .current
+    ) -> Date {
+        if calendar.isDate(selectedDate, inSameDayAs: previousToday) {
+            return calendar.startOfDay(for: newToday)
+        }
+        return selectedDate
+    }
+}
+
 enum CommandCenterTaskScheduling {
     @discardableResult
     static func moveCalendarTime(
@@ -509,6 +523,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     private var inFlightRefreshes: [DashboardRefreshDomain: Task<Void, Never>] = [:]
     private var queuedRefreshDomains = Set<DashboardRefreshDomain>()
     private var lastAtomRefreshSignature: DashboardAtomRefreshSignature?
+    private var lastObservedTodayStart = Calendar.current.startOfDay(for: Date())
 
     // MARK: - Computed
 
@@ -554,6 +569,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Bindings
 
     private func setupBindings() {
+        TaskRecurrenceEngine.shared.scheduleMidnightRefresh()
+
         // React to date changes
         $selectedDate
             .removeDuplicates { Calendar.current.isDate($0, inSameDayAs: $1) }
@@ -597,6 +614,25 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     }
                     self?.selectedTaskIndex = nil
                 }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+            .sink { [weak self] _ in
+                self?.handleCurrentDayChange()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .NSSystemClockDidChange)
+            .sink { [weak self] _ in
+                self?.handleCurrentDayChange()
+            }
+            .store(in: &cancellables)
+
+        Timer.publish(every: 60, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] now in
+                self?.handleCurrentDayChange(now: now)
             }
             .store(in: &cancellables)
 
@@ -780,6 +816,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
         do {
             try? await TaskRecurrenceEngine.shared.generateTodayInstances()
+            try? await generateInstancesForSelectedDayIfNeeded()
 
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
 
@@ -805,6 +842,15 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
         // Load completed tasks independently (todayTasks excludes completed)
         await loadCompletedTasks()
+    }
+
+    private func generateInstancesForSelectedDayIfNeeded() async throws {
+        let calendar = Calendar.current
+        let todayStart = calendar.startOfDay(for: Date())
+        let selectedDayStart = calendar.startOfDay(for: selectedDate)
+        guard selectedDayStart >= todayStart else { return }
+        let selectedDayEnd = calendar.date(byAdding: .day, value: 1, to: selectedDayStart) ?? selectedDayStart
+        try await TaskRecurrenceEngine.shared.generateInstances(in: DateInterval(start: selectedDayStart, end: selectedDayEnd))
     }
 
     // MARK: - Upcoming Tasks
@@ -980,6 +1026,17 @@ class CommandCenterDashboardViewModel: ObservableObject {
         shiftUpcomingRange(by: offset)
     }
 
+    func shiftSelectedDay(by offset: Int) {
+        let calendar = Calendar.current
+        selectedDate = calendar.startOfDay(
+            for: calendar.date(byAdding: .day, value: offset, to: selectedDate) ?? selectedDate
+        )
+    }
+
+    func resetSelectedDateToToday() {
+        selectedDate = Calendar.current.startOfDay(for: Date())
+    }
+
     func resetUpcomingToToday() {
         upcomingCalendarScope = .week
         upcomingAnchorDate = Calendar.current.startOfDay(for: Date())
@@ -1023,6 +1080,65 @@ class CommandCenterDashboardViewModel: ObservableObject {
         let selected = CommandCenterCalendarLayout.mondayStartingWeek(containing: upcomingAnchorDate, calendar: calendar)
         let daysDiff = calendar.dateComponents([.day], from: today, to: selected).day ?? 0
         upcomingWeekOffset = daysDiff / 7
+    }
+
+    private func handleCurrentDayChange(now: Date = Date()) {
+        let calendar = Calendar.current
+        let newToday = calendar.startOfDay(for: now)
+        guard !calendar.isDate(newToday, inSameDayAs: lastObservedTodayStart) else { return }
+
+        let previousToday = lastObservedTodayStart
+        lastObservedTodayStart = newToday
+        let adjustedSelectedDate = CommandCenterDateSelection.dateForCurrentDayChange(
+            selectedDate: selectedDate,
+            previousToday: previousToday,
+            newToday: newToday,
+            calendar: calendar
+        )
+
+        if !calendar.isDate(adjustedSelectedDate, inSameDayAs: selectedDate) {
+            selectedDate = adjustedSelectedDate
+        }
+
+        if viewMode == .upcoming {
+            syncUpcomingWeekOffset()
+        }
+
+        Task {
+            try? await TaskRecurrenceEngine.shared.generateTodayInstances()
+            await refreshDateSensitiveCollectionsAfterDayChange()
+        }
+    }
+
+    private func refreshDateSensitiveCollectionsAfterDayChange() async {
+        switch viewMode {
+        case .today:
+            await refreshTasks()
+        case .upcoming:
+            await loadUpcomingTasks()
+            await loadCompletedTasks()
+        case .logbook:
+            await loadCompletedTasks()
+        case .anytime:
+            await loadAnytimeTasks()
+            await loadCompletedTasks()
+        case .someday:
+            await loadSomedayTasks()
+            await loadCompletedTasks()
+        case .project:
+            if let uuid = selectedProjectUUID {
+                await loadProjectTasks(projectUUID: uuid)
+            }
+            await loadCompletedTasks()
+        case .area:
+            await loadCompletedTasks()
+        }
+
+        refreshCalendarEvents()
+        await loadHabits()
+        await loadTodayTimeData()
+        await loadTodaySessions()
+        await loadWeeklyReport()
     }
 
     // MARK: - Completed Tasks

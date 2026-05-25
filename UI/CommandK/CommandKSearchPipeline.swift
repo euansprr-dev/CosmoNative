@@ -73,21 +73,38 @@ struct CommandKAction: Identifiable, Equatable {
     }
 
     var id: String {
-        [
-            kind.rawValue,
-            payload.url,
-            payload.title,
-            payload.destinationName,
-            payload.subroute?.rawValue,
-            payload.domain,
-            payload.atomUUID,
-            payload.thinkspaceID,
-            payload.queryText,
-            payload.quicklinkID,
-            payload.body
-        ]
-        .compactMap { $0 }
-        .joined(separator: "|")
+        let components: [String?]
+        switch kind {
+        case .captureSwipe, .captureSwipeWithIdea, .captureResearch:
+            components = [kind.rawValue]
+        case .captureLane:
+            components = [kind.rawValue, payload.destinationName, payload.subroute?.rawValue]
+        case .createCaptureLane:
+            components = [kind.rawValue, payload.destinationName]
+        case .createIdea:
+            components = [kind.rawValue, payload.clientName]
+        case .createTask, .createContent, .createThinkspace, .askCosmo:
+            components = [kind.rawValue]
+        case .navigateCommandCenter, .navigateLastThinkspace, .openCosmoPane, .openCosmoWindow:
+            components = [kind.rawValue]
+        case .openBrowser:
+            components = [kind.rawValue]
+        case .openDomain:
+            components = [kind.rawValue, payload.domain, payload.quicklinkID]
+        case .openAtom:
+            components = [kind.rawValue, payload.atomUUID, payload.quicklinkID]
+        case .openThinkspace:
+            components = [kind.rawValue, payload.thinkspaceID, payload.quicklinkID]
+        case .savedSearch:
+            components = [kind.rawValue, payload.queryText, payload.quicklinkID]
+        case .openApp:
+            components = [kind.rawValue, payload.title]
+        }
+
+        return components
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "|")
     }
 
     var isExecutable: Bool {
@@ -522,30 +539,64 @@ enum CommandKActionParser {
 
     private static func parseScopedIdeaCapture(_ text: String) -> CommandKAction? {
         let lower = text.lowercased()
-        let prefix = "idea for "
-        guard lower.hasPrefix(prefix) else { return nil }
+        let legacyPrefix = "idea for "
+        if lower.hasPrefix(legacyPrefix) {
+            let remainder = String(text.dropFirst(legacyPrefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let delimiterIndex = remainder.firstIndex(of: ":") else {
+                return nil
+            }
 
-        let remainder = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let delimiterIndex = remainder.firstIndex(of: ":") else {
+            return scopedIdeaCapture(from: remainder, delimiterIndex: delimiterIndex, rawText: text)
+        }
+
+        let shorthandPrefix = "idea "
+        guard lower.hasPrefix(shorthandPrefix) else {
             return nil
         }
 
+        let remainder = String(text.dropFirst(shorthandPrefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remainder.isEmpty else { return nil }
+
+        if let delimiterIndex = remainder.firstIndex(of: ":") {
+            return scopedIdeaCapture(from: remainder, delimiterIndex: delimiterIndex, rawText: text)
+        }
+
+        return makeScopedIdeaCapture(clientName: remainder, content: "", rawText: text)
+    }
+
+    private static func scopedIdeaCapture(
+        from remainder: String,
+        delimiterIndex: String.Index,
+        rawText: String
+    ) -> CommandKAction? {
         let clientName = String(remainder[..<delimiterIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clientName.isEmpty else { return nil }
 
         let contentStart = remainder.index(after: delimiterIndex)
         let content = String(remainder[contentStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
 
+        return makeScopedIdeaCapture(clientName: clientName, content: content, rawText: rawText)
+    }
+
+    private static func makeScopedIdeaCapture(
+        clientName: String,
+        content: String,
+        rawText: String
+    ) -> CommandKAction? {
+        let trimmedClientName = clientName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedClientName.isEmpty else { return nil }
+        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+
         return CommandKAction(
             kind: .createIdea,
-            title: "Create idea for \(clientName)",
-            subtitle: content.isEmpty ? "For \(clientName) · Type the idea after :" : "For \(clientName) · \(content)",
+            title: "Create idea for \(trimmedClientName)",
+            subtitle: trimmedContent.isEmpty ? "For \(trimmedClientName) · Type the idea after :" : "For \(trimmedClientName) · \(trimmedContent)",
             icon: "lightbulb.fill",
             payload: CommandKActionPayload(
-                title: content.isEmpty ? nil : content,
-                body: content.isEmpty ? nil : content,
-                clientName: clientName,
-                rawText: text
+                title: trimmedContent.isEmpty ? nil : trimmedContent,
+                body: trimmedContent.isEmpty ? nil : trimmedContent,
+                clientName: trimmedClientName,
+                rawText: rawText
             )
         )
     }

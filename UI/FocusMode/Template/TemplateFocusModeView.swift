@@ -54,6 +54,8 @@ struct TemplateFocusModeView: View {
                 }
             }
         }
+        .background(DS.focusImmersiveBackground.ignoresSafeArea())
+        .focusImmersiveEntryTransition()
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             loadData()

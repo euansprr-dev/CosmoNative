@@ -214,6 +214,10 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
         Self.plainText(for: blocks, depth: 0)
     }
 
+    var containsCollapsedHiddenContent: Bool {
+        Self.containsCollapsedHiddenContent(in: blocks)
+    }
+
     private static func plainText(for blocks: [RichBlock], depth: Int) -> String {
         blocks.enumerated().map { index, block in
             let indentation = String(repeating: "  ", count: depth)
@@ -264,6 +268,26 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
             return line
         }
         .joined(separator: "\n")
+    }
+
+    private static func containsCollapsedHiddenContent(in blocks: [RichBlock]) -> Bool {
+        for block in blocks {
+            if block.heading?.isCollapsed == true,
+               !(block.heading?.collapsedBlocks.isEmpty ?? true) {
+                return true
+            }
+            if block.element?.isCollapsed == true, !block.children.isEmpty {
+                return true
+            }
+            if containsCollapsedHiddenContent(in: block.children) {
+                return true
+            }
+            if let collapsedBlocks = block.heading?.collapsedBlocks,
+               containsCollapsedHiddenContent(in: collapsedBlocks) {
+                return true
+            }
+        }
+        return false
     }
 
     static func migrateLegacy(_ text: String) -> RichDocument {
@@ -478,6 +502,7 @@ enum RichDocumentSerializer {
             if block.kind == .element {
                 result.append(elementHeaderAttributedString(for: block, depth: depth, fontSize: fontSize, darkMode: darkMode))
                 if !(block.element?.isCollapsed ?? false), !block.children.isEmpty {
+                    let childIndentStart = result.length
                     result.append(NSAttributedString(string: "\n", attributes: attributesWithDepth(
                         baseAttributes(
                             fontSize: fontSize,
@@ -497,6 +522,12 @@ enum RichDocumentSerializer {
                         baseFontWeight: baseFontWeight,
                         titleMode: titleMode
                     ))
+                    applyChildIndent(
+                        to: result,
+                        from: childIndentStart,
+                        depth: depth + 1,
+                        fontSize: fontSize
+                    )
                 }
                 continue
             }
@@ -920,25 +951,24 @@ enum RichDocumentSerializer {
     }
 
     private static func elementHeaderAttributedString(for block: RichBlock, depth: Int, fontSize: CGFloat, darkMode: Bool) -> NSAttributedString {
-        let elementName = block.element?.titleSnapshot ?? "Untitled Element"
-        let instanceTitle = block.element?.instanceTitleSnapshot ?? elementName
+        let fallback = block.element?.titleSnapshot ?? "Untitled"
+        let instanceTitle = block.element?.instanceTitleSnapshot ?? fallback
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = 0
-        paragraphStyle.minimumLineHeight = max(42, fontSize + 24)
-        paragraphStyle.maximumLineHeight = max(42, fontSize + 24)
-        paragraphStyle.paragraphSpacing = 10
-        paragraphStyle.paragraphSpacingBefore = 8
+        paragraphStyle.minimumLineHeight = DocumentElementHeaderLayout.headerHeight
+        paragraphStyle.maximumLineHeight = DocumentElementHeaderLayout.headerHeight
+        paragraphStyle.paragraphSpacing = 8
+        paragraphStyle.paragraphSpacingBefore = 6
         let titleInset = DocumentElementHeaderLayout.titleLeadingInset(
             depth: depth,
-            fontSize: fontSize,
-            elementName: elementName
+            fontSize: fontSize
         )
         paragraphStyle.firstLineHeadIndent = titleInset
         paragraphStyle.headIndent = titleInset
 
         var attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: max(14, fontSize - 1), weight: .medium),
-            .foregroundColor: (darkMode ? NSColor.white : NSColor(DS.documentText)).withAlphaComponent(darkMode ? 0.82 : 0.78),
+            .font: NSFont.systemFont(ofSize: 13.5, weight: .medium),
+            .foregroundColor: (darkMode ? NSColor.white : NSColor(DS.documentText)).withAlphaComponent(darkMode ? 0.95 : 0.88),
             .paragraphStyle: paragraphStyle,
             RichDocumentAttributeKeys.elementDepth: depth
         ]
@@ -969,6 +999,36 @@ enum RichDocumentSerializer {
             value: depth,
             range: NSRange(location: start, length: length)
         )
+    }
+
+    private static let childContentIndent: CGFloat = 16
+
+    private static func applyChildIndent(
+        to attributedString: NSMutableAttributedString,
+        from start: Int,
+        depth: Int,
+        fontSize: CGFloat
+    ) {
+        let length = attributedString.length - start
+        guard length > 0 else { return }
+        let range = NSRange(location: start, length: length)
+        let nestedInset = CGFloat(max(0, depth - 1)) * DocumentElementHeaderLayout.nestedIndent
+        let indent = DocumentElementHeaderLayout.leadingPadding + nestedInset + childContentIndent
+
+        attributedString.enumerateAttribute(.paragraphStyle, in: range, options: []) { value, subRange, _ in
+            let base = (value as? NSParagraphStyle) ?? NSParagraphStyle.default
+            let isElementHeader = attributedString.attribute(
+                RichDocumentAttributeKeys.elementDefinitionID,
+                at: subRange.location,
+                effectiveRange: nil
+            ) != nil
+            if isElementHeader { return }
+
+            guard let updated = base.mutableCopy() as? NSMutableParagraphStyle else { return }
+            updated.firstLineHeadIndent = indent
+            updated.headIndent = indent
+            attributedString.addAttribute(.paragraphStyle, value: updated, range: subRange)
+        }
     }
 
     private static func attributesWithDepth(

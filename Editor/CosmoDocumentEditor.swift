@@ -13,6 +13,13 @@ struct EditorSelectionSnapshot: Equatable {
     )
 }
 
+enum EditorBoundaryCommand: Equatable {
+    case moveToPreviousBlock
+    case moveToNextBlock
+    case deleteBackwardAtStart
+    case insertNewlineOnEmptyFinalLine
+}
+
 struct CosmoDocumentEditor: View {
     @Binding var document: RichDocument
 
@@ -21,7 +28,6 @@ struct CosmoDocumentEditor: View {
     @State private var isApplyingExternalUpdate = false
     @State private var isSyncingFromEditor = false
     @State private var documentSyncWorkItem: DispatchWorkItem?
-    @State private var directChangeWorkItem: DispatchWorkItem?
     @State private var lastEmittedPlainText = ""
 
     var fontSize: CGFloat = 16
@@ -30,10 +36,12 @@ struct CosmoDocumentEditor: View {
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
     var overrideFont: NSFont? = nil
+    var headingDisclosureColor: NSColor? = .black
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowSelectionMenu: Bool = true
     var allowImages: Bool = true
+    var rendersElementChrome: Bool = true
     var singleLine: Bool = false
     var titleConfiguration: TitleEditorConfiguration? = nil
     var baseFontWeight: NSFont.Weight = .regular
@@ -57,6 +65,7 @@ struct CosmoDocumentEditor: View {
     var onActivate: (() -> Void)? = nil
     var onDeactivate: (() -> Void)? = nil
     var onCommit: (() -> Void)? = nil
+    var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
     var autoFocus: Bool = false
 
     var body: some View {
@@ -69,10 +78,12 @@ struct CosmoDocumentEditor: View {
             darkMode: darkMode,
             overrideTextColor: overrideTextColor,
             overrideFont: overrideFont,
+            headingDisclosureColor: headingDisclosureColor,
             allowSlashCommands: allowSlashCommands,
             allowMentions: allowMentions,
             allowSelectionMenu: allowSelectionMenu,
             allowImages: allowImages,
+            rendersElementChrome: rendersElementChrome,
             singleLine: singleLine,
             titleConfiguration: titleConfiguration,
             baseFontWeight: baseFontWeight,
@@ -93,6 +104,7 @@ struct CosmoDocumentEditor: View {
                 onActivate: onActivate,
             onDeactivate: onDeactivate,
             onCommit: onCommit,
+            onBoundaryCommand: onBoundaryCommand,
             onPlainTextDidChange: { plainText in
                 // Direct per-keystroke callback from the NSTextView coordinator.
                 // This bypasses the SwiftUI @Binding→onChange chain which can
@@ -169,15 +181,11 @@ struct CosmoDocumentEditor: View {
         // Fire onPlainTextChange per-keystroke — it's lightweight (sets a String @State).
         // This keeps noteText/newItemText accurate for saves.
         onPlainTextChange?(resolvedPlainText)
-        // Throttle onDocumentChange to ~100ms — it triggers SwiftUI view body re-evaluation
-        // and updateNSView, which causes visible text jitter if fired per-keystroke.
-        directChangeWorkItem?.cancel()
-        let capturedPlainText = resolvedPlainText
-        let workItem = DispatchWorkItem {
-            onDocumentChange?(document, capturedPlainText)
-        }
-        directChangeWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+        // Do not emit onDocumentChange from this plain-text-only path. The structured
+        // RichDocument is produced from attributedText in syncDocumentFromEditor().
+        // Emitting here with the previous document races parent views into writing
+        // stale structured state back into the editor, which can reset selection/scroll
+        // after Backspace or Return.
     }
 
     private func syncDocumentFromEditor() {
@@ -186,13 +194,6 @@ struct CosmoDocumentEditor: View {
         if titleConfiguration != nil {
             syncTitleDocumentFromEditor()
             return
-        }
-
-        // Immediately update plain text (cheap) for downstream consumers
-        let currentPlain = attributedText.string
-        if currentPlain != plainTextMirror {
-            plainTextMirror = currentPlain
-            onDocumentChange?(document, currentPlain)
         }
 
         // Debounce expensive RichDocument serialization (parses every line)
@@ -205,7 +206,9 @@ struct CosmoDocumentEditor: View {
             document = updated
             onStructuredDocumentChange?(updated, updated.plainText)
             onDocumentChange?(updated, updated.plainText)
-            isSyncingFromEditor = false
+            DispatchQueue.main.async {
+                isSyncingFromEditor = false
+            }
         }
         documentSyncWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
@@ -252,12 +255,6 @@ struct CosmoDocumentEditor: View {
     /// authoritative plain-text source to avoid losing the last keystrokes.
     private func flushPendingSync() {
         documentSyncWorkItem?.cancel()
-        // Fire any pending throttled direct change immediately before disappearing
-        if let pending = directChangeWorkItem {
-            pending.cancel()
-            directChangeWorkItem = nil
-            onDocumentChange?(document, plainTextMirror)
-        }
         guard !isApplyingExternalUpdate else { return }
 
         // plainTextMirror is synced immediately from NSTextView on every keystroke.
@@ -286,7 +283,11 @@ struct CosmoDocumentEditor: View {
         guard updated != document || plainTextDiverged else { return }
         isSyncingFromEditor = true
         document = updated
-        let emitPlainText = plainTextDiverged ? latestPlainText : updated.plainText
+        let emitPlainText = plainTextForEmission(
+            latestPlainText: latestPlainText,
+            parsedDocument: updated,
+            plainTextDiverged: plainTextDiverged
+        )
         plainTextMirror = emitPlainText
         onStructuredDocumentChange?(updated, emitPlainText)
         onDocumentChange?(updated, emitPlainText)
@@ -312,6 +313,22 @@ struct CosmoDocumentEditor: View {
         titleConfiguration == nil
             ? plainText
             : RichDocumentPersistence.normalizedTitleString(plainText)
+    }
+
+    private func plainTextForEmission(
+        latestPlainText: String,
+        parsedDocument: RichDocument,
+        plainTextDiverged: Bool
+    ) -> String {
+        guard titleConfiguration == nil else {
+            return plainTextDiverged
+                ? RichDocumentPersistence.normalizedTitleString(latestPlainText)
+                : RichDocumentPersistence.titlePlainText(from: parsedDocument)
+        }
+        if parsedDocument.containsCollapsedHiddenContent {
+            return parsedDocument.plainText
+        }
+        return plainTextDiverged ? latestPlainText : parsedDocument.plainText
     }
 }
 

@@ -52,6 +52,34 @@ final class CosmoScrollView: NSScrollView {
     }
 }
 
+final class CosmoClipView: NSClipView {
+    weak var owningScrollView: CosmoScrollView?
+
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var bounds = super.constrainBoundsRect(proposedBounds)
+        if owningScrollView?.forwardsScrollEvents == true {
+            bounds.origin = .zero
+        }
+        return bounds
+    }
+
+    override func scroll(to newOrigin: NSPoint) {
+        guard owningScrollView?.forwardsScrollEvents == true else {
+            super.scroll(to: newOrigin)
+            return
+        }
+        super.scroll(to: .zero)
+    }
+
+    override func setBoundsOrigin(_ newOrigin: NSPoint) {
+        guard owningScrollView?.forwardsScrollEvents == true else {
+            super.setBoundsOrigin(newOrigin)
+            return
+        }
+        super.setBoundsOrigin(.zero)
+    }
+}
+
 // MARK: - Custom NSTextView
 
 final class CosmoTextView: NSTextView {
@@ -68,11 +96,16 @@ final class CosmoTextView: NSTextView {
     var onResignFirstResponder: (() -> Void)?
     var onToggleElementCollapse: ((UUID) -> Void)?
     var onToggleHeadingCollapse: ((NSRange) -> Void)?
+    var rendersElementChrome: Bool = true
     var elementBlockDarkMode: Bool = false
     var elementBlockBaseFontSize: CGFloat = 16
+    var headingDisclosureColor: NSColor?
+    private var disclosureTrackingArea: NSTrackingArea?
 
     override func draw(_ dirtyRect: NSRect) {
-        drawElementBlockDecorations(in: dirtyRect)
+        if rendersElementChrome {
+            drawElementBlockDecorations(in: dirtyRect)
+        }
         super.draw(dirtyRect)
         drawHeadingDecorations(in: dirtyRect)
     }
@@ -143,7 +176,9 @@ final class CosmoTextView: NSTextView {
             return
         }
         let localPoint = convert(event.locationInWindow, from: nil)
-        if let hit = elementHitTest(at: localPoint), hit.area == .collapseToggle {
+        if rendersElementChrome,
+           let hit = elementHitTest(at: localPoint),
+           hit.area == .collapseToggle {
             onToggleElementCollapse?(hit.instanceID)
             return
         }
@@ -152,6 +187,37 @@ final class CosmoTextView: NSTextView {
             return
         }
         super.mouseDown(with: event)
+    }
+
+    override func updateTrackingAreas() {
+        if let disclosureTrackingArea {
+            removeTrackingArea(disclosureTrackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.activeAlways, .inVisibleRect, .mouseMoved, .cursorUpdate],
+            owner: self,
+            userInfo: nil
+        )
+        disclosureTrackingArea = trackingArea
+        addTrackingArea(trackingArea)
+        super.updateTrackingAreas()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if updateDisclosureCursor(at: localPoint) {
+            return
+        }
+        super.cursorUpdate(with: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if updateDisclosureCursor(at: localPoint) {
+            return
+        }
+        super.mouseMoved(with: event)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -228,10 +294,26 @@ final class CosmoTextView: NSTextView {
         }
 
         layoutManager.ensureLayout(for: textContainer)
+        if rendersElementChrome {
+            for decoration in DocumentElementEditorDecoration.decorations(in: storage) {
+                guard let layout = elementHeaderLayout(for: decoration, storageLength: storage.length) else { continue }
+                addCursorRect(layout.chevronHitRect, cursor: .pointingHand)
+            }
+        }
         for decoration in headingDecorations(in: storage) {
             guard let layout = headingLayout(for: decoration, storageLength: storage.length) else { continue }
             addCursorRect(layout.hitRect, cursor: .pointingHand)
         }
+    }
+
+    private func updateDisclosureCursor(at point: NSPoint) -> Bool {
+        guard isEditable else { return false }
+        if (rendersElementChrome && elementHitTest(at: point)?.area == .collapseToggle) ||
+            headingHitTest(at: point)?.area == .collapseToggle {
+            NSCursor.pointingHand.set()
+            return true
+        }
+        return false
     }
 
     private enum ElementHitArea {
@@ -280,17 +362,12 @@ final class CosmoTextView: NSTextView {
             drawElementChevron(
                 collapsed: decoration.isCollapsed,
                 in: headerLayout.chevronGlyphRect,
-                color: elementBlockSecondaryColor
+                color: elementBlockChevronColor
             )
             drawElementBlockSymbol(
                 name: decoration.systemIcon,
                 in: headerLayout.iconRect,
-                color: elementBlockSecondaryColor
-            )
-            drawElementName(
-                decoration.title,
-                in: headerLayout.nameRect,
-                color: elementBlockSecondaryColor
+                color: elementBlockIconColor
             )
         }
     }
@@ -427,10 +504,10 @@ final class CosmoTextView: NSTextView {
             return nil
         }
 
-        let hitSize: CGFloat = 26
-        let glyphSize: CGFloat = 13
+        let hitSize: CGFloat = 36
+        let glyphSize: CGFloat = 14
         let glyphMinX = textContainerOrigin.x + lineRect.minX
-        let targetMidX = max(textContainerOrigin.x + (hitSize / 2), glyphMinX - 17)
+        let targetMidX = max(textContainerOrigin.x + (hitSize / 2), glyphMinX - 18)
         let hitRect = CGRect(
             x: targetMidX - (hitSize / 2),
             y: textContainerOrigin.y + lineRect.midY - (hitSize / 2),
@@ -488,26 +565,35 @@ final class CosmoTextView: NSTextView {
         let blockMaxY = max(headerGlyphRect.maxY, blockGlyphRect.maxY)
         let chromeRect = NSRect(
             x: textContainerOrigin.x,
-            y: textContainerOrigin.y + blockMinY - 8,
+            y: textContainerOrigin.y + blockMinY - 4,
             width: max(80, bounds.width - (textContainerOrigin.x * 2)),
-            height: max(blockMaxY - blockMinY + 16, elementBlockBaseFontSize + 28)
+            height: max(blockMaxY - blockMinY + 10, DocumentElementHeaderLayout.headerHeight + 4)
         )
         return DocumentElementHeaderLayout(
             chromeRect: chromeRect,
             headerMidY: textContainerOrigin.y + headerGlyphRect.midY,
-            elementName: decoration.title,
-            instanceTitle: decoration.instanceTitle,
             depth: decoration.depth,
             fontSize: elementBlockBaseFontSize
         )
     }
 
     private func drawElementBlockChrome(in rect: NSRect) {
-        let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let bodyRect = rect.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: bodyRect, xRadius: 10, yRadius: 10)
+
+        context.saveGState()
+        context.setShadow(
+            offset: CGSize(width: 0, height: -1),
+            blur: 2.0,
+            color: elementBlockShadowColor.cgColor
+        )
         elementBlockFillColor.setFill()
         path.fill()
+        context.restoreGState()
+
         elementBlockStrokeColor.setStroke()
-        path.lineWidth = 0.8
+        path.lineWidth = 0.7
         path.stroke()
     }
 
@@ -531,18 +617,18 @@ final class CosmoTextView: NSTextView {
 
     private func drawElementChevron(collapsed: Bool, in rect: NSRect, color: NSColor) {
         let path = NSBezierPath()
-        path.lineWidth = 1.45
+        path.lineWidth = 1.3
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
 
         if collapsed {
-            path.move(to: NSPoint(x: rect.minX + 3, y: rect.minY + 1.5))
-            path.line(to: NSPoint(x: rect.maxX - 2, y: rect.midY))
-            path.line(to: NSPoint(x: rect.minX + 3, y: rect.maxY - 1.5))
+            path.move(to: NSPoint(x: rect.minX + 2, y: rect.minY + 1))
+            path.line(to: NSPoint(x: rect.maxX - 1.5, y: rect.midY))
+            path.line(to: NSPoint(x: rect.minX + 2, y: rect.maxY - 1))
         } else {
-            path.move(to: NSPoint(x: rect.minX + 1.5, y: rect.minY + 3))
-            path.line(to: NSPoint(x: rect.midX, y: rect.maxY - 2))
-            path.line(to: NSPoint(x: rect.maxX - 1.5, y: rect.minY + 3))
+            path.move(to: NSPoint(x: rect.minX + 1, y: rect.minY + 2.5))
+            path.line(to: NSPoint(x: rect.midX, y: rect.maxY - 1.5))
+            path.line(to: NSPoint(x: rect.maxX - 1, y: rect.minY + 2.5))
         }
 
         color.setStroke()
@@ -554,7 +640,7 @@ final class CosmoTextView: NSTextView {
         guard let baseImage = NSImage(systemSymbolName: validName, accessibilityDescription: nil) else { return }
         let configuration = NSImage.SymbolConfiguration(
             pointSize: min(rect.width, rect.height),
-            weight: .medium
+            weight: .regular
         )
         let image = baseImage.withSymbolConfiguration(configuration) ?? baseImage
         image.isTemplate = true
@@ -562,27 +648,34 @@ final class CosmoTextView: NSTextView {
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 
-    private func drawElementName(_ name: String, in rect: NSRect, color: NSColor) {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineBreakMode = .byTruncatingTail
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: max(12, elementBlockBaseFontSize - 3), weight: .medium),
-            .foregroundColor: color,
-            .paragraphStyle: paragraphStyle
-        ]
-        NSString(string: name).draw(in: rect, withAttributes: attributes)
-    }
-
     private var elementBlockFillColor: NSColor {
         effectiveElementBlockDarkMode
-            ? NSColor(red: 0.12, green: 0.125, blue: 0.13, alpha: 0.98)
-            : NSColor.white.withAlphaComponent(0.98)
+            ? NSColor(red: 0.105, green: 0.108, blue: 0.115, alpha: 1.0)
+            : NSColor.white
     }
 
     private var elementBlockStrokeColor: NSColor {
         effectiveElementBlockDarkMode
-            ? NSColor.white.withAlphaComponent(0.11)
-            : NSColor.black.withAlphaComponent(0.10)
+            ? NSColor.white.withAlphaComponent(0.08)
+            : NSColor.black.withAlphaComponent(0.07)
+    }
+
+    private var elementBlockShadowColor: NSColor {
+        effectiveElementBlockDarkMode
+            ? NSColor.black.withAlphaComponent(0.30)
+            : NSColor.black.withAlphaComponent(0.04)
+    }
+
+    private var elementBlockChevronColor: NSColor {
+        effectiveElementBlockDarkMode
+            ? NSColor.white.withAlphaComponent(0.48)
+            : NSColor(DS.documentTextMuted).withAlphaComponent(0.78)
+    }
+
+    private var elementBlockIconColor: NSColor {
+        effectiveElementBlockDarkMode
+            ? NSColor.white.withAlphaComponent(0.65)
+            : NSColor(DS.documentTextSecondary).withAlphaComponent(0.85)
     }
 
     private var elementBlockSecondaryColor: NSColor {
@@ -592,7 +685,10 @@ final class CosmoTextView: NSTextView {
     }
 
     private var headingChevronColor: NSColor {
-        effectiveElementBlockDarkMode
+        if let headingDisclosureColor {
+            return headingDisclosureColor
+        }
+        return effectiveElementBlockDarkMode
             ? NSColor.white.withAlphaComponent(0.50)
             : NSColor(DS.documentTextSecondary).withAlphaComponent(0.70)
     }
@@ -631,6 +727,10 @@ final class CosmoTextView: NSTextView {
 extension CosmoTextView {
     static func scrollableCosmoTextView() -> CosmoScrollView {
         let scrollView = CosmoScrollView()
+        let clipView = CosmoClipView()
+        clipView.owningScrollView = scrollView
+        scrollView.contentView = clipView
+
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -698,10 +798,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
     var overrideFont: NSFont? = nil
+    var headingDisclosureColor: NSColor? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowImages: Bool = true
     var allowSelectionMenu: Bool = true
+    var rendersElementChrome: Bool = true
     var singleLine: Bool = false
     var titleConfiguration: TitleEditorConfiguration? = nil
     var baseFontWeight: NSFont.Weight = .regular
@@ -725,6 +827,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var onActivate: (() -> Void)?
     var onDeactivate: (() -> Void)?
     var onCommit: (() -> Void)?
+    var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)?
     /// Direct per-keystroke plain text callback — fires from syncBindings immediately,
     /// bypassing the SwiftUI @Binding→onChange chain which can coalesce/skip updates.
     var onPlainTextDidChange: ((String) -> Void)?
@@ -837,8 +940,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             coordinator?.parent.onDeactivate?()
         }
         textView.scrollsInternally = scrollsInternally
+        textView.rendersElementChrome = rendersElementChrome
         textView.elementBlockDarkMode = darkMode
         textView.elementBlockBaseFontSize = fontSize
+        textView.headingDisclosureColor = headingDisclosureColor
+        textView.window?.acceptsMouseMovedEvents = true
         textView.onToggleElementCollapse = { [weak coordinator = context.coordinator] instanceID in
             guard let coordinator, let textView = coordinator.textViewReference else { return }
             coordinator.toggleElementCollapse(instanceID: instanceID, in: textView)
@@ -1458,6 +1564,24 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return true
             }
 
+            if commandSelector == #selector(NSResponder.moveUp(_:)),
+               selectionIsOnFirstLine(in: textView),
+               parent.onBoundaryCommand?(.moveToPreviousBlock) == true {
+                return true
+            }
+
+            if commandSelector == #selector(NSResponder.moveDown(_:)),
+               selectionIsOnLastLine(in: textView),
+               parent.onBoundaryCommand?(.moveToNextBlock) == true {
+                return true
+            }
+
+            if commandSelector == #selector(NSResponder.deleteBackward(_:)),
+               selectionIsAtDocumentStart(in: textView),
+               parent.onBoundaryCommand?(.deleteBackwardAtStart) == true {
+                return true
+            }
+
             // Shift+Enter — always continue current block
             if commandSelector == #selector(NSResponder.insertLineBreak(_:)) {
                 if activeBlockMode != .none, let prefix = continuationPrefix(for: textView) {
@@ -1471,6 +1595,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 if parent.singleLine || parent.titleConfiguration?.commitsOnReturn == true || parent.onCommit != nil {
                     dismissMenus()
                     parent.onCommit?()
+                    return true
+                }
+
+                if selectionIsOnEmptyFinalLine(in: textView),
+                   parent.onBoundaryCommand?(.insertNewlineOnEmptyFinalLine) == true {
                     return true
                 }
 
@@ -1519,30 +1648,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     }
                 }
 
-                // Default Enter: reset typing attributes BEFORE inserting newline
-                // so the \n character itself doesn't carry heading/bold attributes
-                resetToNormalTypingAttributes(textView)
-                textView.insertText("\n", replacementRange: textView.selectedRange())
-
-                // Stamp normal attributes on the \n character we just inserted,
-                // so adjacent text insertion (slash command prefixes) won't inherit heading font.
-                // Batch inside beginEditing/endEditing so a single processEditing fires
-                // (instead of separate cycles for addAttributes + removeAttribute).
-                let cursorPos = textView.selectedRange().location
-                if cursorPos > 0 {
-                    let nlRange = NSRange(location: cursorPos - 1, length: 1)
-                    textView.textStorage?.beginEditing()
-                    textView.textStorage?.addAttributes([
-                        .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
-                        .foregroundColor: parent.resolvedEditorTextColor,
-                        .paragraphStyle: defaultParagraphStyle()
-                    ], range: nlRange)
-                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: nlRange)
-                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: nlRange)
-                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: nlRange)
-                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: nlRange)
-                    textView.textStorage?.endEditing()
-                }
+                insertNormalNewline(in: textView)
                 return true
             }
 
@@ -1555,6 +1661,31 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         // MARK: - Block Continuation Helpers
+
+        private func selectionIsOnFirstLine(in textView: NSTextView) -> Bool {
+            let selection = textView.selectedRange()
+            guard selection.length == 0 else { return false }
+            return currentLineRange(in: textView).location == 0
+        }
+
+        private func selectionIsOnLastLine(in textView: NSTextView) -> Bool {
+            let selection = textView.selectedRange()
+            guard selection.length == 0 else { return false }
+            let lineRange = currentLineRange(in: textView)
+            return NSMaxRange(lineRange) >= textView.string.utf16.count
+        }
+
+        private func selectionIsAtDocumentStart(in textView: NSTextView) -> Bool {
+            let selection = textView.selectedRange()
+            return selection.location == 0 && selection.length == 0
+        }
+
+        private func selectionIsOnEmptyFinalLine(in textView: NSTextView) -> Bool {
+            guard selectionIsOnLastLine(in: textView) else { return false }
+            let lineRange = currentLineRange(in: textView)
+            let lineText = (textView.string as NSString).substring(with: lineRange)
+            return lineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
 
         private func continuationPrefix(for textView: NSTextView) -> String? {
             switch activeBlockMode {
@@ -1639,6 +1770,22 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             textView.needsDisplay = true
             textView.sizeToFit()
             notifyContentHeightChange(for: textView)
+        }
+
+        private func insertNormalNewline(in textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+
+            let replacementRange = textView.selectedRange()
+            guard NSMaxRange(replacementRange) <= storage.length,
+                  textView.shouldChangeText(in: replacementRange, replacementString: "\n") else {
+                return
+            }
+
+            resetToNormalTypingAttributes(textView)
+            let newline = NSAttributedString(string: "\n", attributes: elementInsertionBaseAttributes())
+            storage.replaceCharacters(in: replacementRange, with: newline)
+            textView.setSelectedRange(NSRange(location: replacementRange.location + newline.length, length: 0))
+            textView.didChangeText()
         }
 
         // MARK: - Menu State
@@ -1738,6 +1885,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         @objc private func handleInsertMentionInEditor(_ notification: Notification) {
             guard let textView = activeTextView else { return }
+            guard acceptsActiveEditorCommand(notification, textView: textView) else { return }
 
             guard let rawType = notification.userInfo?["entityType"] as? String,
                   let type = EntityType(rawValue: rawType),
@@ -1756,6 +1904,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         @objc private func handlePerformMentionSelection(_ notification: Notification) {
             guard let textView = activeTextView else { return }
+            guard acceptsActiveEditorCommand(notification, textView: textView) else { return }
 
             guard let rawType = notification.userInfo?["entityType"] as? String,
                   let type = EntityType(rawValue: rawType),
@@ -1802,6 +1951,19 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             return parent.editorTargetID == targetID
         }
 
+        private func acceptsActiveEditorCommand(_ notification: Notification, textView: NSTextView) -> Bool {
+            if let targetID = notification.userInfo?["targetEditorID"] as? String,
+               !targetID.isEmpty {
+                guard parent.editorTargetID == targetID else { return false }
+                if textView.window?.firstResponder !== textView {
+                    textView.window?.makeFirstResponder(textView)
+                }
+                return true
+            }
+
+            return textView.window?.firstResponder === textView
+        }
+
         @objc private func handleSetTypingAttributes(_ notification: Notification) {
             guard let textView = activeTextView,
                   textView.window?.firstResponder === textView,
@@ -1835,11 +1997,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         @objc private func handlePerformSlashCommand(_ notification: Notification) {
             guard parent.allowSlashCommands,
                   let textView = activeTextView,
-                  textView.window?.firstResponder === textView,
                   let command = notification.userInfo?["command"] as? SlashCommand,
                   let storage = textView.textStorage else {
                 return
             }
+            guard acceptsActiveEditorCommand(notification, textView: textView) else { return }
 
             var insertionPoint = textView.selectedRange().location
             if insertionPoint > 0 {
@@ -2347,6 +2509,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             return nil
         }
 
+        private func intAttribute(_ key: NSAttributedString.Key, at location: Int, in storage: NSTextStorage) -> Int? {
+            guard location < storage.length else { return nil }
+            let value = storage.attribute(key, at: location, effectiveRange: nil)
+            if let value = value as? Int { return value }
+            if let value = value as? NSNumber { return value.intValue }
+            return nil
+        }
+
         private func resetToNormalTypingAttributes(_ textView: NSTextView) {
             isInHeadingMode = false
             activeBlockMode = .none
@@ -2443,7 +2613,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             storage.replaceCharacters(in: NSRange(location: safeInsertionPoint, length: 0), with: replacement)
             textView.setSelectedRange(NSRange(location: safeInsertionPoint + replacement.length, length: 0))
             resetToNormalTypingAttributes(textView)
-            syncBindings(from: textView)
+            syncStructuralEditBindings(from: textView)
         }
 
         func toggleElementCollapse(instanceID: UUID, in textView: NSTextView) {
@@ -2468,7 +2638,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let safeLength = min(selectedRange.length, storage.length - safeLocation)
             textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
             resetToNormalTypingAttributes(textView)
-            syncBindings(from: textView)
+            syncStructuralEditBindings(from: textView)
 
             if let container = textView.textContainer {
                 textView.layoutManager?.ensureLayout(for: container)
@@ -2489,24 +2659,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             ensureHeadingBlockID(in: storage, headingRange: headingRange)
 
             let selectedRange = textView.selectedRange()
-            let headingID = headingBlockID(in: storage, location: headingRange.location)
-            guard let headingID else { return }
-
-            let document = RichDocumentSerializer.document(from: storage)
-            let updated = RichDocumentHeadings.toggledCollapse(headingID: headingID, in: document)
-            guard updated != document else { return }
-
-            let serialized = RichDocumentSerializer.attributedString(
-                from: updated,
-                fontSize: parent.fontSize,
-                darkMode: parent.darkMode,
-                singleLine: parent.singleLine,
-                baseFontWeight: parent.baseFontWeight,
-                titleMode: parent.titleConfiguration != nil
-            )
-
-            storage.setAttributedString(serialized)
-            let fallbackLocation = min(NSMaxRange(headingRange), storage.length)
+            let fallbackLocation: Int
+            if boolAttribute(RichDocumentAttributeKeys.headingCollapsed, at: headingRange.location, in: storage) == true {
+                fallbackLocation = expandHeadingInPlace(headingRange: headingRange, in: storage)
+            } else {
+                fallbackLocation = collapseHeadingInPlace(headingRange: headingRange, in: storage)
+            }
+            parent.applyStorageOverrides(storage)
             let safeLocation = min(selectedRange.location, storage.length)
             let safeLength = min(selectedRange.length, storage.length - safeLocation)
             let restoredRange = NSRange(
@@ -2515,14 +2674,109 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             )
             textView.setSelectedRange(restoredRange)
             resetToNormalTypingAttributes(textView)
-            syncBindings(from: textView)
 
             if let container = textView.textContainer {
                 textView.layoutManager?.ensureLayout(for: container)
             }
             textView.needsDisplay = true
-            textView.sizeToFit()
-            notifyContentHeightChange(for: textView)
+            syncStructuralEditBindings(from: textView)
+        }
+
+        private func collapseHeadingInPlace(headingRange: NSRange, in storage: NSTextStorage) -> Int {
+            guard let level = intAttribute(RichDocumentAttributeKeys.headingLevel, at: headingRange.location, in: storage) else {
+                return min(NSMaxRange(headingRange), storage.length)
+            }
+            let string = storage.string as NSString
+            let headingLineRange = string.lineRange(for: headingRange)
+            let contentRange = sectionContentRange(after: headingLineRange, headingLevel: level, in: storage)
+            let hiddenBlocks: [RichBlock]
+            if contentRange.length > 0 {
+                hiddenBlocks = RichDocumentSerializer.document(from: storage.attributedSubstring(from: contentRange)).blocks
+            } else {
+                hiddenBlocks = []
+            }
+            var headingAttributes: [NSAttributedString.Key: Any] = [
+                RichDocumentAttributeKeys.headingCollapsed: NSNumber(value: true)
+            ]
+            if let data = try? JSONEncoder().encode(hiddenBlocks),
+               let json = String(data: data, encoding: .utf8) {
+                headingAttributes[RichDocumentAttributeKeys.headingCollapsedChildrenJSON] = json
+            }
+
+            storage.beginEditing()
+            storage.addAttributes(headingAttributes, range: headingRange)
+            if contentRange.length > 0 {
+                storage.deleteCharacters(in: contentRange)
+            }
+            storage.endEditing()
+            return min(NSMaxRange(headingLineRange), storage.length)
+        }
+
+        private func expandHeadingInPlace(headingRange: NSRange, in storage: NSTextStorage) -> Int {
+            let string = storage.string as NSString
+            let headingLineRange = string.lineRange(for: headingRange)
+            let insertionLocation = min(NSMaxRange(headingLineRange), storage.length)
+            let collapsedBlocks = collapsedBlocksAttribute(in: storage, at: headingRange.location)
+            let restored = RichDocumentSerializer.attributedString(
+                from: RichDocument(blocks: collapsedBlocks),
+                fontSize: parent.fontSize,
+                darkMode: parent.darkMode,
+                singleLine: parent.singleLine,
+                baseFontWeight: parent.baseFontWeight,
+                titleMode: parent.titleConfiguration != nil
+            )
+
+            storage.beginEditing()
+            storage.addAttribute(RichDocumentAttributeKeys.headingCollapsed, value: NSNumber(value: false), range: headingRange)
+            storage.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: headingRange)
+            if restored.length > 0 {
+                if headingLineRange.length == headingRange.length && insertionLocation == storage.length {
+                    storage.insert(NSAttributedString(string: "\n", attributes: elementInsertionBaseAttributes()), at: insertionLocation)
+                    storage.insert(restored, at: insertionLocation + 1)
+                } else {
+                    storage.insert(restored, at: insertionLocation)
+                }
+            }
+            storage.endEditing()
+            return insertionLocation
+        }
+
+        private func sectionContentRange(after headingLineRange: NSRange, headingLevel: Int, in storage: NSTextStorage) -> NSRange {
+            let string = storage.string as NSString
+            let fullRange = NSRange(location: 0, length: storage.length)
+            var cursor = min(NSMaxRange(headingLineRange), storage.length)
+            let start = cursor
+
+            while cursor < storage.length {
+                let lineRange = string.lineRange(for: NSRange(location: cursor, length: 0))
+                let safeRange = NSIntersectionRange(lineRange, fullRange)
+                let trimmedRange = trimmingTrailingNewline(from: safeRange, in: string)
+                if trimmedRange.length > 0,
+                   let nextLevel = intAttribute(RichDocumentAttributeKeys.headingLevel, at: trimmedRange.location, in: storage),
+                   nextLevel <= headingLevel {
+                    break
+                }
+                cursor = lineRange.location + lineRange.length
+                if cursor <= safeRange.location {
+                    break
+                }
+            }
+
+            return NSRange(location: start, length: max(0, cursor - start))
+        }
+
+        private func collapsedBlocksAttribute(in storage: NSTextStorage, at location: Int) -> [RichBlock] {
+            guard location < storage.length,
+                  let json = storage.attribute(
+                    RichDocumentAttributeKeys.headingCollapsedChildrenJSON,
+                    at: location,
+                    effectiveRange: nil
+                  ) as? String,
+                  let data = json.data(using: .utf8),
+                  let blocks = try? JSONDecoder().decode([RichBlock].self, from: data) else {
+                return []
+            }
+            return blocks
         }
 
         private func elementInsertionBaseAttributes() -> [NSAttributedString.Key: Any] {
@@ -2646,7 +2900,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         private func syncBindings(from textView: NSTextView) {
             // Lightweight per-keystroke sync: plain text + cursor position only
-            let currentString = textView.string
+            let currentString = plainTextForBinding(from: textView)
             parent.plainText = currentString
             parent.cursorPosition = textView.selectedRange().location
             // Fire direct callback immediately — SwiftUI's @Binding→onChange chain
@@ -2673,6 +2927,66 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
             deferredSyncWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
+        }
+
+        private func syncStructuralEditBindings(from textView: NSTextView) {
+            deferredSyncWorkItem?.cancel()
+
+            let currentAttributedText = textView.attributedString()
+            let currentString = plainTextForBinding(from: textView, attributedText: currentAttributedText)
+            parent.plainText = currentString
+            parent.cursorPosition = textView.selectedRange().location
+            parent.onPlainTextDidChange?(currentString)
+
+            isUpdatingFromTextView = true
+            parent.attributedText = currentAttributedText
+            resizeAppKitFrameIfNeeded(for: textView)
+            textView.window?.invalidateCursorRects(for: textView)
+
+            DispatchQueue.main.async { [weak self] in
+                self?.isUpdatingFromTextView = false
+            }
+        }
+
+        private func plainTextForBinding(
+            from textView: NSTextView,
+            attributedText providedAttributedText: NSAttributedString? = nil
+        ) -> String {
+            guard parent.titleConfiguration == nil else {
+                return textView.string
+            }
+            let attributedText = providedAttributedText ?? textView.attributedString()
+            guard attributedTextContainsHiddenContent(attributedText) else {
+                return textView.string
+            }
+            return RichDocumentSerializer.document(from: attributedText).plainText
+        }
+
+        private func attributedTextContainsHiddenContent(_ attributedText: NSAttributedString) -> Bool {
+            guard attributedText.length > 0 else { return false }
+            var containsHiddenContent = false
+            attributedText.enumerateAttributes(
+                in: NSRange(location: 0, length: attributedText.length),
+                options: [.longestEffectiveRangeNotRequired]
+            ) { attributes, _, stop in
+                if attributes[RichDocumentAttributeKeys.headingCollapsedChildrenJSON] != nil {
+                    containsHiddenContent = true
+                    stop.pointee = true
+                    return
+                }
+                if boolAttributeValue(attributes[RichDocumentAttributeKeys.elementCollapsed]) == true,
+                   attributes[RichDocumentAttributeKeys.elementChildrenJSON] != nil {
+                    containsHiddenContent = true
+                    stop.pointee = true
+                }
+            }
+            return containsHiddenContent
+        }
+
+        private func boolAttributeValue(_ value: Any?) -> Bool? {
+            if let value = value as? Bool { return value }
+            if let value = value as? NSNumber { return value.boolValue }
+            return nil
         }
 
         /// Immediate AppKit resize + single coordinated SwiftUI update.

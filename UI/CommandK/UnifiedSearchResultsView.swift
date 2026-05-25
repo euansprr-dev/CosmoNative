@@ -14,7 +14,7 @@ struct UnifiedSearchResultsView: View {
     private let cardSpacing: CGFloat = CommandKMetrics.cardSpacing
 
     var body: some View {
-        if viewModel.unifiedFlatResults.isEmpty && viewModel.currentPhase != .searching {
+        if viewModel.unifiedFlatResults.isEmpty && viewModel.searchFeedback.matches(query: viewModel.query) {
             emptyState
         } else {
             GeometryReader { geometry in

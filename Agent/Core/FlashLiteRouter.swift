@@ -434,6 +434,9 @@ final class FlashLiteRouter {
             ideaMeta.ideaStatus = ideaMeta.ideaStatus ?? .spark
             if let clientAtom = resolvedClientAtom {
                 ideaMeta.clientUUID = clientAtom.uuid
+                ideaMeta.clientName = clientAtom.title ?? clientName
+            } else if let clientName, !clientName.isEmpty {
+                ideaMeta.clientName = clientName
             }
             if let f = formatStr {
                 ideaMeta.contentFormat = ContentFormat(rawValue: f)

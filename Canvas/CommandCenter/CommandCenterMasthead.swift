@@ -18,33 +18,90 @@ struct CommandCenterMasthead: View {
 
     private var standardMasthead: some View {
         VStack(alignment: .leading, spacing: DS.space6) {
-            HStack(alignment: .firstTextBaseline, spacing: DS.space12) {
-                Text(viewModel.viewMode.label)
-                    .font(.system(size: 30, weight: .semibold, design: .serif))
-                    .foregroundStyle(DS.commandCenterTitleText)
+            ZStack(alignment: .topTrailing) {
+                VStack(alignment: .leading, spacing: DS.space6) {
+                    Text(viewModel.viewMode.label)
+                        .font(.system(size: 30, weight: .semibold, design: .serif))
+                        .foregroundStyle(DS.commandCenterTitleText)
 
-                Spacer(minLength: DS.space16)
+                    HStack(spacing: DS.space8) {
+                        Image(systemName: viewModel.viewMode.icon)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.commandCenterOrnamentText)
 
-                Text(dateContext)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.commandCenterMutedText)
+                        Text(summaryText)
+                            .font(DS.callout)
+                            .foregroundStyle(DS.commandCenterSecondaryText)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .trailing, spacing: DS.space6) {
+                    Text(dateContext)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.commandCenterMutedText)
+
+                    if viewModel.viewMode == .today {
+                        todayDayNavigation
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topTrailing)
             }
-
-            HStack(spacing: DS.space8) {
-                Image(systemName: viewModel.viewMode.icon)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.commandCenterOrnamentText)
-
-                Text(summaryText)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.commandCenterSecondaryText)
-                    .lineLimit(1)
-            }
+            .frame(minHeight: viewModel.viewMode == .today ? 68 : 46)
 
             Rectangle()
                 .fill(DS.commandCenterSeparator)
                 .frame(height: 0.5)
                 .padding(.top, DS.space4)
+        }
+    }
+
+    private var todayDayNavigation: some View {
+        HStack(spacing: 0) {
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.shiftSelectedDay(by: -1)
+                }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Previous Day")
+
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.resetSelectedDateToToday()
+                }
+            } label: {
+                Text("Today")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .padding(.horizontal, DS.space12)
+                    .frame(height: 30)
+                    .background(DS.surface, in: .rect(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(DS.borderSubtle, lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.shiftSelectedDay(by: 1)
+                }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Next Day")
         }
     }
 

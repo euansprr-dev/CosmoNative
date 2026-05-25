@@ -35,7 +35,6 @@ struct CortexSearchBar: View {
         Image(systemName: viewModel.isTaskCreationMode ? "plus.circle.fill" : "magnifyingglass")
             .font(DS.title2)
             .foregroundStyle(viewModel.isTaskCreationMode ? DS.accent : (isSearchFocused.wrappedValue ? DS.accent : DS.textSecondary))
-            .symbolEffect(.pulse, isActive: viewModel.currentPhase == .searching)
             .frame(width: 22)
     }
 
@@ -101,11 +100,6 @@ struct CortexSearchBar: View {
 
         voiceButton
 
-        if viewModel.currentPhase == .searching {
-            ProgressView()
-                .scaleEffect(0.8)
-                .tint(DS.textSecondary)
-        }
     }
 
     private var voiceButton: some View {

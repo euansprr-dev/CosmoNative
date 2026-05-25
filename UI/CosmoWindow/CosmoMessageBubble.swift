@@ -3,6 +3,7 @@
 // March 2026
 
 import SwiftUI
+import AppKit
 
 enum CosmoWindowMessageRenderingPolicy {
     static let allowsTimelineTextSelection = false
@@ -14,6 +15,7 @@ struct CosmoMessageBubble: View {
     var onEdit: ((CosmoWindowMessage) -> Void)? = nil
 
     @State private var isHovering = false
+    @State private var didCopy = false
 
     var body: some View {
         switch message.type {
@@ -51,6 +53,8 @@ struct CosmoMessageBubble: View {
                     .cosmoWindowTimelineTextSelection()
 
                 HStack(spacing: 8) {
+                    copyButton
+
                     Text("You")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(DS.accent)
@@ -136,6 +140,8 @@ struct CosmoMessageBubble: View {
                 if let responseMeta = message.responseMeta, responseMeta.hasVisibleContent {
                     ResponseProvenanceCard(meta: responseMeta)
                 }
+
+                copyFooter
             }
             .frame(maxWidth: messageMaxWidth, alignment: .leading)
             .padding(.horizontal, 16)
@@ -203,6 +209,8 @@ struct CosmoMessageBubble: View {
                 Text(formattedTime)
                     .font(DS.timestamp)
                     .foregroundColor(DS.textMuted)
+
+                copyButton
             }
             .frame(maxWidth: messageMaxWidth, alignment: .leading)
             .padding(.horizontal, 16)
@@ -237,6 +245,8 @@ struct CosmoMessageBubble: View {
                     .font(.system(size: 12))
                     .foregroundColor(DS.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                copyFooter
             }
             .frame(maxWidth: messageMaxWidth, alignment: .leading)
             .padding(.horizontal, 14)
@@ -276,6 +286,8 @@ struct CosmoMessageBubble: View {
                 }
 
                 ContextTraceSectionsView(sections: sections)
+
+                copyFooter
             }
             .frame(maxWidth: messageMaxWidth, alignment: .leading)
             .padding(.horizontal, 16)
@@ -317,6 +329,10 @@ struct CosmoMessageBubble: View {
             Rectangle()
                 .fill(DS.glassBorder)
                 .frame(height: 1)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            copyButton
+                .offset(y: 22)
         }
         .padding(.horizontal, CosmoWindowMetrics.contentPadding)
     }
@@ -373,6 +389,177 @@ struct CosmoMessageBubble: View {
 
     private var messageMaxWidth: CGFloat {
         CosmoWindowMetrics.maxMessageWidth
+    }
+
+    private var copyFooter: some View {
+        HStack {
+            copyButton
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var copyButton: some View {
+        Button {
+            copyMessage()
+        } label: {
+            Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(didCopy ? DS.green : DS.textSecondary)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(DS.glassSectionFill))
+                .overlay(Circle().stroke(DS.glassBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(didCopy ? "Copied" : "Copy message")
+        .disabled(copyableContent.isEmpty)
+        .opacity(copyableContent.isEmpty ? 0 : 1)
+    }
+
+    private var copyableContent: String {
+        message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func copyMessage() {
+        CosmoMessagePasteboardWriter.copy(markdown: copyableContent)
+        withAnimation(ProMotionSprings.snappy) {
+            didCopy = true
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            withAnimation(ProMotionSprings.snappy) {
+                didCopy = false
+            }
+        }
+    }
+}
+
+private enum CosmoMessagePasteboardWriter {
+    static func copy(markdown: String) {
+        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let html = CosmoMarkdownHTMLRenderer.render(trimmed)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(trimmed, forType: .string)
+        pasteboard.setString(html, forType: .html)
+
+        guard let htmlData = html.data(using: .utf8),
+              let attributed = try? NSAttributedString(
+                data: htmlData,
+                options: [
+                    .documentType: NSAttributedString.DocumentType.html,
+                    .characterEncoding: String.Encoding.utf8.rawValue
+                ],
+                documentAttributes: nil
+              ),
+              let rtfData = try? attributed.data(
+                from: NSRange(location: 0, length: attributed.length),
+                documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+              ) else {
+            return
+        }
+
+        pasteboard.setData(rtfData, forType: .rtf)
+    }
+}
+
+private enum CosmoMarkdownHTMLRenderer {
+    static func render(_ markdown: String) -> String {
+        let body = CosmoMarkdownParser.parse(markdown)
+            .map(htmlBlock)
+            .joined(separator: "\n")
+
+        return """
+        <!doctype html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; font-size: 14px; line-height: 1.45; color: #111827; }
+        h1, h2, h3 { margin: 0.85em 0 0.35em; font-weight: 700; line-height: 1.2; }
+        h1 { font-size: 1.55em; }
+        h2 { font-size: 1.35em; }
+        h3 { font-size: 1.15em; }
+        p { margin: 0.55em 0; }
+        ul, ol { margin: 0.55em 0; padding-left: 1.45em; }
+        li { margin: 0.2em 0; }
+        blockquote { margin: 0.7em 0; padding-left: 0.9em; border-left: 3px solid #D1D5DB; color: #4B5563; }
+        pre { margin: 0.7em 0; padding: 0.75em; background: #F3F4F6; border-radius: 8px; white-space: pre-wrap; }
+        code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        </style>
+        </head>
+        <body>
+        \(body)
+        </body>
+        </html>
+        """
+    }
+
+    private static func htmlBlock(_ block: CosmoMarkdownBlock) -> String {
+        switch block {
+        case .heading(let level, let text):
+            let tag = "h\(min(max(level, 1), 3))"
+            return "<\(tag)>\(inlineHTML(text))</\(tag)>"
+        case .paragraph(let text):
+            return "<p>\(inlineHTML(text).replacingOccurrences(of: "\n", with: "<br>"))</p>"
+        case .bullet(let items):
+            return "<ul>\(items.map { "<li>\(inlineHTML($0))</li>" }.joined())</ul>"
+        case .ordered(let items):
+            return "<ol>\(items.map { "<li>\(inlineHTML($0))</li>" }.joined())</ol>"
+        case .quote(let text):
+            return "<blockquote>\(inlineHTML(text).replacingOccurrences(of: "\n", with: "<br>"))</blockquote>"
+        case .code(let code):
+            return "<pre><code>\(escapedHTML(code))</code></pre>"
+        }
+    }
+
+    private static func inlineHTML(_ text: String) -> String {
+        var output = ""
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            if text[index...].hasPrefix("**"),
+               let close = text[text.index(index, offsetBy: 2)..<text.endIndex].range(of: "**") {
+                let start = text.index(index, offsetBy: 2)
+                output += "<strong>\(inlineHTML(String(text[start..<close.lowerBound])))</strong>"
+                index = close.upperBound
+            } else if text[index...].hasPrefix("__"),
+                      let close = text[text.index(index, offsetBy: 2)..<text.endIndex].range(of: "__") {
+                let start = text.index(index, offsetBy: 2)
+                output += "<strong>\(inlineHTML(String(text[start..<close.lowerBound])))</strong>"
+                index = close.upperBound
+            } else if text[index] == "`",
+                      let close = text[text.index(after: index)..<text.endIndex].firstIndex(of: "`") {
+                let start = text.index(after: index)
+                output += "<code>\(escapedHTML(String(text[start..<close])))</code>"
+                index = text.index(after: close)
+            } else if text[index] == "*",
+                      let close = text[text.index(after: index)..<text.endIndex].firstIndex(of: "*") {
+                let start = text.index(after: index)
+                output += "<em>\(inlineHTML(String(text[start..<close])))</em>"
+                index = text.index(after: close)
+            } else if text[index] == "_",
+                      let close = text[text.index(after: index)..<text.endIndex].firstIndex(of: "_") {
+                let start = text.index(after: index)
+                output += "<em>\(inlineHTML(String(text[start..<close])))</em>"
+                index = text.index(after: close)
+            } else {
+                output += escapedHTML(String(text[index]))
+                index = text.index(after: index)
+            }
+        }
+
+        return output
+    }
+
+    private static func escapedHTML(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }
 

@@ -118,54 +118,65 @@ struct CosmoDocumentRenderer: View {
     private func elementBlockView(_ block: RichBlock, depth: Int) -> some View {
         let visibleChildren = DocumentElementRendering.visibleChildBlocks(for: block)
         let collapsed = DocumentElementRendering.isCollapsed(block)
-        let elementName = DocumentElementRendering.title(for: block)
         let instanceTitle = DocumentElementRendering.instanceTitle(for: block)
 
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(secondaryTextColor)
-                    .frame(width: 28, height: 28)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(elementChevronColor)
+                    .frame(width: 14, height: 14)
 
                 Image(systemName: DocumentElementRendering.systemIcon(for: block))
                     .symbolRenderingMode(.monochrome)
-                    .font(.system(size: max(13, min(15, fontSize - 2)), weight: .medium))
-                    .foregroundStyle(secondaryTextColor)
-                    .frame(width: 15, height: 15)
-
-                Text(elementName)
-                    .font(.system(size: max(12, fontSize - 4), weight: .medium))
-                    .foregroundStyle(secondaryTextColor)
-                    .lineLimit(1)
-                    .frame(minWidth: 56, maxWidth: 150, alignment: .leading)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(elementIconColor)
+                    .frame(width: 16, height: 16)
 
                 Text(instanceTitle)
-                    .font(.system(size: max(14, fontSize - 1), weight: .medium))
-                    .foregroundStyle(textColor.opacity(darkMode ? 0.82 : 0.78))
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(elementTitleColor)
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
             }
-            .frame(minHeight: max(42, fontSize + 24), alignment: .center)
-            .padding(.horizontal, 8)
+            .frame(minHeight: 38, alignment: .center)
+            .padding(.horizontal, 12)
 
             if !visibleChildren.isEmpty {
                 blockStack(visibleChildren, depth: depth + 1)
-                    .padding(.top, 8)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
+                    .padding(.top, 2)
+                    .padding(.leading, 12)
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 10)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(elementBackgroundColor(depth: depth))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(elementBorderColor, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(elementBorderColor, lineWidth: 0.7)
         )
+        .shadow(color: elementShadowColor, radius: 1.5, x: 0, y: 1)
+    }
+
+    private var elementChevronColor: Color {
+        darkMode ? Color.white.opacity(0.48) : DS.documentTextMuted.opacity(0.78)
+    }
+
+    private var elementIconColor: Color {
+        darkMode ? Color.white.opacity(0.65) : DS.documentTextSecondary.opacity(0.85)
+    }
+
+    private var elementTitleColor: Color {
+        darkMode ? Color.white.opacity(0.95) : textColor.opacity(0.88)
+    }
+
+    private var elementShadowColor: Color {
+        darkMode ? Color.black.opacity(0.30) : Color.black.opacity(0.04)
     }
 
     private func inlineText(for block: RichBlock, at index: Int, in siblings: [RichBlock]) -> Text {
@@ -240,12 +251,12 @@ struct CosmoDocumentRenderer: View {
 
     private func elementBackgroundColor(depth: Int) -> Color {
         if darkMode {
-            return Color(red: 0.12, green: 0.125, blue: 0.13).opacity(depth == 0 ? 0.98 : 0.94)
+            return Color(red: 0.105, green: 0.108, blue: 0.115)
         }
         return Color.white
     }
 
     private var elementBorderColor: Color {
-        darkMode ? Color.white.opacity(0.11) : Color.black.opacity(0.10)
+        darkMode ? Color.white.opacity(0.08) : Color.black.opacity(0.07)
     }
 }

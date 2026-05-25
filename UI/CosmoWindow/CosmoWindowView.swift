@@ -3,6 +3,7 @@
 // March 2026
 
 import SwiftUI
+import AppKit
 
 struct CosmoWindowView: View {
     @ObservedObject private var viewModel = CosmoWindowViewModel.shared
@@ -42,6 +43,9 @@ struct CosmoWindowView: View {
                 .onAppear(perform: handleAppear)
         } else if isFloating {
             panelShell
+                .overlay {
+                    CosmoWindowVisibleResizeOverlay()
+                }
                 .padding(CosmoWindowMetrics.floatingShadowOutset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
@@ -213,6 +217,10 @@ struct CosmoWindowView: View {
         }
     }
 
+    private var timelineMessages: [CosmoWindowMessage] {
+        viewModel.messages.filter(\.shouldRenderInCosmoWindowTimeline)
+    }
+
     private var messageStage: some View {
         ScrollViewReader { proxy in
             GeometryReader { stageProxy in
@@ -228,7 +236,7 @@ struct CosmoWindowView: View {
                             .frame(maxWidth: CosmoWindowMetrics.readyStateMaxWidth)
                             .frame(maxWidth: .infinity)
                         } else {
-                            ForEach(viewModel.messages) { message in
+                            ForEach(timelineMessages) { message in
                                 CosmoMessageBubble(
                                     message: message,
                                     onEdit: message.type == .user ? { msg in
@@ -845,6 +853,8 @@ enum CosmoWindowMetrics {
     static let floatingWindowMinHeight: CGFloat = minHeight + floatingShadowOutset * 2
     static let floatingWindowMaxWidth: CGFloat = maxWidth + floatingShadowOutset * 2
     static let floatingWindowMaxHeight: CGFloat = maxHeight + floatingShadowOutset * 2
+    static let visibleResizeHandleThickness: CGFloat = 6
+    static let visibleResizeCornerSize: CGFloat = 14
 
     static let panelCornerRadius: CGFloat = 20
     static let headerHeight: CGFloat = 56
@@ -870,6 +880,130 @@ enum CosmoWindowLayoutPolicy {
     ) -> CGFloat {
         let remainingHeight = availableHeight - headerHeight - composerHeight - dividerHeight
         return max(CosmoWindowMetrics.minimumMessageStageHeight, remainingHeight)
+    }
+}
+
+private struct CosmoWindowVisibleResizeOverlay: View {
+    var body: some View {
+        ZStack {
+            resizeHandle(.top)
+                .frame(height: CosmoWindowMetrics.visibleResizeHandleThickness)
+                .frame(maxHeight: .infinity, alignment: .top)
+
+            resizeHandle(.bottom)
+                .frame(height: CosmoWindowMetrics.visibleResizeHandleThickness)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+
+            resizeHandle(.left)
+                .frame(width: CosmoWindowMetrics.visibleResizeHandleThickness)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            resizeHandle(.right)
+                .frame(width: CosmoWindowMetrics.visibleResizeHandleThickness)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+
+            cornerHandle(.topLeft)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            cornerHandle(.topRight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+
+            cornerHandle(.bottomLeft)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+
+            cornerHandle(.bottomRight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        }
+        .allowsHitTesting(true)
+    }
+
+    private func cornerHandle(_ edge: CosmoWindowResizeEdge) -> some View {
+        resizeHandle(edge)
+            .frame(
+                width: CosmoWindowMetrics.visibleResizeCornerSize,
+                height: CosmoWindowMetrics.visibleResizeCornerSize
+            )
+    }
+
+    private func resizeHandle(_ edge: CosmoWindowResizeEdge) -> some View {
+        Rectangle()
+            .fill(Color.clear)
+            .contentShape(Rectangle())
+            .gesture(CosmoWindowResizeGesture(edge: edge))
+            .onHover { isHovering in
+                if isHovering {
+                    edge.cursor.set()
+                }
+            }
+    }
+}
+
+enum CosmoWindowResizeEdge {
+    case top
+    case bottom
+    case left
+    case right
+    case topLeft
+    case topRight
+    case bottomLeft
+    case bottomRight
+
+    var cursor: NSCursor {
+        switch self {
+        case .left, .right:
+            return .resizeLeftRight
+        case .top, .bottom:
+            return .resizeUpDown
+        case .topLeft, .bottomRight:
+            return .resizeLeftRight
+        case .topRight, .bottomLeft:
+            return .resizeLeftRight
+        }
+    }
+
+    var adjustsLeft: Bool {
+        switch self {
+        case .left, .topLeft, .bottomLeft: return true
+        default: return false
+        }
+    }
+
+    var adjustsRight: Bool {
+        switch self {
+        case .right, .topRight, .bottomRight: return true
+        default: return false
+        }
+    }
+
+    var adjustsTop: Bool {
+        switch self {
+        case .top, .topLeft, .topRight: return true
+        default: return false
+        }
+    }
+
+    var adjustsBottom: Bool {
+        switch self {
+        case .bottom, .bottomLeft, .bottomRight: return true
+        default: return false
+        }
+    }
+}
+
+private struct CosmoWindowResizeGesture: Gesture {
+    let edge: CosmoWindowResizeEdge
+
+    var body: some Gesture {
+        DragGesture(minimumDistance: 1)
+            .onChanged { _ in
+                guard let window = NSApp.keyWindow as? CosmoKeyablePanel else { return }
+                window.resizeFromVisiblePanelEdge(edge)
+            }
+            .onEnded { _ in
+                guard let window = NSApp.keyWindow as? CosmoKeyablePanel else { return }
+                window.resizeFromVisiblePanelEdge(edge)
+                window.finishVisiblePanelResize()
+            }
     }
 }
 

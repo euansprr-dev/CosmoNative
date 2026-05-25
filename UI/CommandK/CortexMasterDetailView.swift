@@ -14,8 +14,11 @@ struct CortexMasterDetailView: View {
     @State private var isActionPanelPresented = false
     @State private var actionSearchQuery = ""
     @State private var actionErrorMessage: String?
+    @State private var cachedDetailSubject: CortexDetailSubject = .empty
 
     var body: some View {
+        let subject = visibleDetailSubject
+
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 CortexResultRail(
@@ -31,8 +34,13 @@ struct CortexMasterDetailView: View {
                     .fill(DS.commandChromeSeparatorStrong)
                     .frame(width: 0.5)
 
-                CortexDetailPane(subject: detailSubject)
+                CortexDetailPane(subject: subject)
                     .frame(maxWidth: .infinity)
+                    .id(subject.selectionIdentity)
+                    .transaction { transaction in
+                        transaction.animation = nil
+                        transaction.disablesAnimations = true
+                    }
             }
             .frame(maxHeight: .infinity)
 
@@ -55,6 +63,9 @@ struct CortexMasterDetailView: View {
             }
         }
         .animation(ProMotionSprings.snappy, value: isActionPanelPresented)
+        .onAppear { syncCachedDetailSubject() }
+        .onChange(of: detailSubject.renderSignature) { _, _ in syncCachedDetailSubject() }
+        .onChange(of: viewModel.selectedNodeId) { _, _ in syncCachedDetailSubject() }
         .task(id: domainLoadKey) { await loadDomainDataIfNeeded() }
         .onChange(of: domainSelectionIDs) { _, _ in syncDomainNavigation() }
         .onChange(of: viewModel.cortexMode) { _, _ in syncDomainNavigation() }
@@ -100,14 +111,13 @@ struct CortexMasterDetailView: View {
     }
 
     private var hasSelection: Bool {
-        if case .empty = detailSubject { return false }
-        return true
+        !visibleDetailSubject.isEmpty
     }
 
     private var actionContext: CommandKActionContext {
         CommandKActionContext(
             query: viewModel.query,
-            subject: detailSubject,
+            subject: visibleDetailSubject,
             hydratedAtom: nil,
             mode: viewModel.cortexMode,
             activeInquirySessionUUID: nil,
@@ -125,6 +135,27 @@ struct CortexMasterDetailView: View {
 
     private var primaryAction: CommandKContextualAction? {
         contextualActions.first { $0.category == .primary }
+    }
+
+    private var visibleDetailSubject: CortexDetailSubject {
+        let current = detailSubject
+        guard current.isEmpty,
+              let selectedID = viewModel.selectedNodeId,
+              cachedDetailSubject.selectionIdentity == selectedID else {
+            return current
+        }
+        return cachedDetailSubject
+    }
+
+    private func syncCachedDetailSubject() {
+        let current = detailSubject
+        if current.isEmpty {
+            if viewModel.selectedNodeId == nil {
+                cachedDetailSubject = .empty
+            }
+        } else {
+            cachedDetailSubject = current
+        }
     }
 
     private var isExpandedDomain: Bool {

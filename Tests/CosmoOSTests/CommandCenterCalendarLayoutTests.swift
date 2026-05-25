@@ -315,6 +315,35 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         XCTAssertEqual(Set(sections.overdue.map(\.uuid)), ["other-recurring", "normal-overdue"])
     }
 
+    func testDateSelectionAdvancesWhenViewingPreviousCurrentDayAtMidnight() throws {
+        let previousToday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2, hour: 9)))
+        let newToday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 3, hour: 1)))
+
+        let selected = CommandCenterDateSelection.dateForCurrentDayChange(
+            selectedDate: previousToday,
+            previousToday: previousToday,
+            newToday: newToday,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(calendar.isDate(selected, inSameDayAs: newToday))
+    }
+
+    func testDateSelectionKeepsManualFutureSelectionAtMidnight() throws {
+        let previousToday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2, hour: 9)))
+        let newToday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 3, hour: 1)))
+        let manualFuture = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 4, hour: 10)))
+
+        let selected = CommandCenterDateSelection.dateForCurrentDayChange(
+            selectedDate: manualFuture,
+            previousToday: previousToday,
+            newToday: newToday,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(calendar.isDate(selected, inSameDayAs: manualFuture))
+    }
+
     func testReschedulingTimedTaskMovesCalendarTimeToTargetDay() throws {
         let yesterday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 18, hour: 9)))
         let targetDay = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19)))

@@ -346,7 +346,7 @@ class TaskRecurrenceEngine {
         }
 
         let parentsWithReferenceDayInstance = Set(
-            activeSnapshots.compactMap { snapshot -> String? in
+            snapshots.compactMap { snapshot -> String? in
                 calendar.isDate(snapshot.occurrenceDate, inSameDayAs: referenceDay)
                     ? snapshot.parentUUID
                     : nil

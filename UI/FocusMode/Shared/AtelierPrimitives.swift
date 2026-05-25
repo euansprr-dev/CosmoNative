@@ -50,7 +50,7 @@ struct MarginaliaLabel: View {
                 .tracking(1.6)
                 .foregroundStyle(DS.giltMuted)
             Rectangle()
-                .fill(DS.sepiaSubtle)
+                .fill(marginaliaRuleColor)
                 .frame(height: 0.5)
             if let countText {
                 Text(countText)
@@ -58,6 +58,10 @@ struct MarginaliaLabel: View {
                     .foregroundStyle(DS.inkFaded)
             }
         }
+    }
+
+    private var marginaliaRuleColor: Color {
+        DS.usesImmersiveFocusAppearance ? DS.focusImmersiveBorder.opacity(0.9) : DS.sepiaSubtle
     }
 }
 

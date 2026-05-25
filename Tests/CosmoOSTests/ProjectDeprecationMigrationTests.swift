@@ -19,8 +19,9 @@ final class ProjectDeprecationMigrationTests: XCTestCase {
 
     func testProjectMigrationMovesColorAndLinksToRootThinkspace() async throws {
         let projectColor = "#A8CCE8"
+        let projectTitle = "Project migration fixture \(UUID().uuidString)"
         let project = try await AtomRepository.shared.createProject(
-            title: "Legacy Client Project",
+            title: projectTitle,
             color: projectColor
         )
         cleanupUUIDs.append(project.uuid)
@@ -53,5 +54,35 @@ final class ProjectDeprecationMigrationTests: XCTestCase {
 
         let deletedProject = try await AtomRepository.shared.fetch(uuid: project.uuid)
         XCTAssertNil(deletedProject)
+    }
+
+    func testThinkspaceManagerDeletePersistsSoftDelete() async throws {
+        let metadata = ThinkspaceMetadata(
+            name: "Delete persistence regression \(UUID().uuidString)",
+            accentColorHex: "#A8CCE8"
+        )
+        let atom = Atom.new(
+            type: .thinkspace,
+            title: metadata.name,
+            metadata: try String(data: JSONEncoder().encode(metadata), encoding: .utf8)
+        )
+        let saved = try await AtomRepository.shared.create(atom)
+        cleanupUUIDs.append(saved.uuid)
+
+        await ThinkspaceManager.shared.loadThinkspaces()
+        guard let thinkspace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == saved.uuid }) else {
+            XCTFail("Expected created thinkspace to load")
+            return
+        }
+
+        await ThinkspaceManager.shared.delete(thinkspace)
+
+        let live = try await AtomRepository.shared.fetch(uuid: saved.uuid)
+        XCTAssertNil(live)
+
+        let deleted = try await AtomRepository.shared.fetchAllIncludingDeleted(type: .thinkspace)
+            .first { $0.uuid == saved.uuid }
+        XCTAssertEqual(deleted?.isDeleted, true)
+        XCTAssertFalse(ThinkspaceManager.shared.thinkspaces.contains { $0.id == saved.uuid })
     }
 }

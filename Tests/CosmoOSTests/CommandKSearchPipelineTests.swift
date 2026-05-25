@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import CosmoOS
 
@@ -115,6 +116,48 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertTrue(composer.rows(for: "co").contains { $0.action.kind == .openCosmoPane })
         XCTAssertTrue(composer.rows(for: "sw").contains { $0.action.kind == .openDomain && $0.action.payload.domain == "swipeGallery" })
         XCTAssertTrue(composer.rows(for: "id").contains { $0.action.kind == .openDomain && $0.action.payload.domain == "ideas" })
+    }
+
+    @MainActor
+    func testLiveSearchKeepsExistingRailResultsUntilReplacementArrives() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        let existing = UnifiedSearchResult(
+            id: "atom-existing",
+            source: .atoms,
+            resultKind: .atom,
+            title: "Existing result",
+            subtitle: "Idea",
+            snippet: "Already visible before the next keystroke",
+            icon: "lightbulb.fill",
+            accentColor: DS.entityIdea,
+            relevance: 0.9,
+            atomUUID: "existing-result",
+            atomType: .idea,
+            thinkspaceId: nil,
+            projectUUID: nil,
+            projectName: nil,
+            thinkspaceNames: [],
+            readwiseBookId: nil
+        )
+        viewModel.cortexMode = .searchResults
+        viewModel.isUnifiedSearchActive = true
+        viewModel.unifiedGroupedResults = [(.atoms, [existing])]
+        viewModel.unifiedFlatResults = [existing]
+        viewModel.selectedNodeId = existing.selectionID
+
+        await viewModel.performSearch(query: "unlikely-match-\(UUID().uuidString)")
+
+        XCTAssertEqual(viewModel.unifiedFlatResults.map(\.id), ["atom-existing"])
+        XCTAssertEqual(viewModel.selectedNodeId, existing.selectionID)
     }
 
     @MainActor
@@ -519,6 +562,31 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(summary.topNarrativeStyles.first?.style, .storytelling)
         XCTAssertEqual(summary.topNarrativeStyles.first?.count, 2)
         XCTAssertEqual(summary.averageHookScore, 7)
+    }
+
+    @MainActor
+    func testSwipeGalleryMostRecentSortUsesParsedDates() async {
+        let older = SwipeGalleryItem(
+            atomUUID: "swipe-older",
+            title: "Older whole second capture",
+            createdAt: "2026-05-24T10:00:00Z"
+        )
+        let newer = SwipeGalleryItem(
+            atomUUID: "swipe-newer",
+            title: "Newer fractional second capture",
+            createdAt: "2026-05-24T10:00:00.999Z"
+        )
+        let viewModel = CommandKViewModel()
+        viewModel.swipeGalleryItems = [older, newer]
+        viewModel.swipeSortMode = .recent
+
+        viewModel.recomputeFilteredSwipes()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(viewModel.cachedFilteredSwipes.map(\.atomUUID), [
+            "swipe-newer",
+            "swipe-older",
+        ])
     }
 
     func testCommandKAnimationPolicyLimitsEntranceAnimationsToFirstScreen() {
@@ -1073,10 +1141,195 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(action?.payload.body, "turn onboarding calls into a story bank")
     }
 
+    func testActionParserParsesShorthandClientIdeaCaptureWithColon() {
+        let action = CommandKActionParser.parse("idea Euan: turn onboarding calls into a story bank")
+
+        XCTAssertEqual(action?.kind, .createIdea)
+        XCTAssertEqual(action?.title, "Create idea for Euan")
+        XCTAssertEqual(action?.payload.clientName, "Euan")
+        XCTAssertEqual(action?.payload.title, "turn onboarding calls into a story bank")
+        XCTAssertEqual(action?.payload.body, "turn onboarding calls into a story bank")
+    }
+
+    func testScopedIdeaCaptureIdentityDoesNotChangeWhileDraftChanges() throws {
+        let draft = try XCTUnwrap(CommandKActionParser.parse("idea Euan:"))
+        let firstWord = try XCTUnwrap(CommandKActionParser.parse("idea Euan: turn"))
+        let longerDraft = try XCTUnwrap(CommandKActionParser.parse("idea Euan: turn onboarding calls into a story bank"))
+        let otherClient = try XCTUnwrap(CommandKActionParser.parse("idea Ben: turn"))
+
+        XCTAssertEqual(draft.id, firstWord.id)
+        XCTAssertEqual(firstWord.id, longerDraft.id)
+        XCTAssertNotEqual(firstWord.id, otherClient.id)
+    }
+
+    func testActionParserUsesShorthandClientIdeaCaptureAsDraftTargetBeforeColon() {
+        let action = CommandKActionParser.parse("idea Euan")
+
+        XCTAssertEqual(action?.kind, .createIdea)
+        XCTAssertEqual(action?.title, "Create idea for Euan")
+        XCTAssertEqual(action?.payload.clientName, "Euan")
+        XCTAssertNil(action?.payload.title)
+        XCTAssertFalse(action?.isExecutable ?? true)
+        XCTAssertEqual(action?.scopedIdeaPreviewText, "Type the idea after :")
+    }
+
+    func testActionParserKeepsIdeaColonAsRegularIdeaCreation() {
+        let action = CommandKActionParser.parse("idea: turn onboarding calls into a story bank")
+
+        XCTAssertEqual(action?.kind, .createIdea)
+        XCTAssertEqual(action?.title, "Create idea")
+        XCTAssertNil(action?.payload.clientName)
+        XCTAssertEqual(action?.payload.title, "turn onboarding calls into a story bank")
+    }
+
     func testActionParserDoesNotUseSemicolonForScopedIdeaCapture() {
         let action = CommandKActionParser.parse("idea for Ben; turn onboarding calls into a story bank")
 
         XCTAssertNil(action)
+    }
+
+    @MainActor
+    func testScopedIdeaTypingKeepsSelectedPreviewStableAcrossDraftChanges() async throws {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        await viewModel.performSearch(query: "idea Euan:")
+        let initialSelection = try XCTUnwrap(viewModel.selectedNodeId)
+        XCTAssertEqual(viewModel.primaryAction?.id, initialSelection)
+
+        var selectionEvents: [String?] = []
+        let cancellable = viewModel.$selectedNodeId
+            .dropFirst()
+            .sink { selectionEvents.append($0) }
+        defer { cancellable.cancel() }
+
+        await viewModel.performSearch(query: "idea Euan: turn")
+
+        XCTAssertEqual(viewModel.selectedNodeId, initialSelection)
+        XCTAssertEqual(viewModel.primaryAction?.id, initialSelection)
+        XCTAssertTrue(selectionEvents.isEmpty)
+    }
+
+    @MainActor
+    func testSearchPhaseChangesDoNotInvalidateCommandKSurface() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        var invalidationCount = 0
+        let cancellable = viewModel.objectWillChange
+            .sink { invalidationCount += 1 }
+        defer { cancellable.cancel() }
+
+        viewModel.testingSetSearchPhase(.searching)
+        viewModel.testingSetSearchPhase(.instant)
+        viewModel.testingSetSearchPhase(.complete)
+
+        XCTAssertEqual(invalidationCount, 0)
+        XCTAssertEqual(viewModel.currentPhase, .complete)
+    }
+
+    @MainActor
+    func testSearchCompletionKeepsFirstSelectionAndPreviewIdentityStable() async throws {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        await viewModel.performSearch(query: "idea Euan:")
+        let initialSelection = try XCTUnwrap(viewModel.selectedNodeId)
+        let initialPreviewIdentity = try XCTUnwrap(viewModel.primaryAction?.id)
+
+        var selectionEvents: [String?] = []
+        var previewEvents: [String?] = []
+        let selectionCancellable = viewModel.$selectedNodeId
+            .dropFirst()
+            .sink { selectionEvents.append($0) }
+        let previewCancellable = viewModel.$primaryAction
+            .dropFirst()
+            .sink { previewEvents.append($0?.id) }
+        defer {
+            selectionCancellable.cancel()
+            previewCancellable.cancel()
+        }
+
+        viewModel.testingSetSearchPhase(.searching)
+        viewModel.testingSetSearchPhase(.complete)
+
+        XCTAssertEqual(viewModel.selectedNodeId, initialSelection)
+        XCTAssertEqual(viewModel.primaryAction?.id, initialPreviewIdentity)
+        XCTAssertTrue(selectionEvents.isEmpty)
+        XCTAssertTrue(previewEvents.isEmpty)
+    }
+
+    @MainActor
+    func testVisibleResultsClearSearchFeedbackImmediately() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        viewModel.testingSetSearchFeedback(.empty(query: "missing"))
+        await viewModel.performSearch(query: "idea Euan: stable draft")
+
+        XCTAssertEqual(viewModel.searchFeedback, .none)
+        XCTAssertEqual(viewModel.primaryAction?.kind, .createIdea)
+    }
+
+    @MainActor
+    func testSearchFeedbackPublishesEmptyOnlyForCurrentEmptyQuery() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        viewModel.query = "unlikely-\(UUID().uuidString)"
+        viewModel.testingRefreshSearchFeedback(for: viewModel.query)
+
+        XCTAssertEqual(viewModel.searchFeedback, .empty(query: viewModel.query))
+
+        viewModel.query = "idea Euan: new draft"
+        viewModel.testingRefreshSearchFeedback(for: viewModel.query)
+
+        XCTAssertEqual(viewModel.searchFeedback, .none)
+    }
+
+    func testCommandKSearchChromeDoesNotExposeLoadingIndicatorForTyping() {
+        XCTAssertFalse(CommandKSearchChromePolicy.showsTypingProgressIndicator)
+    }
+
+    func testSearchFeedbackEmptyMatchesOnlyCurrentQuery() {
+        XCTAssertTrue(CommandKSearchFeedback.empty(query: "alpha").matches(query: " alpha "))
+        XCTAssertFalse(CommandKSearchFeedback.empty(query: "alpha").matches(query: "beta"))
+        XCTAssertFalse(CommandKSearchFeedback.none.matches(query: "alpha"))
     }
 
     @MainActor

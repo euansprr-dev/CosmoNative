@@ -98,6 +98,30 @@ final class ThemePaletteTests: XCTestCase {
         assertColor(DS.documentBorderSubtle, equalsHex: "F0F0F2")
     }
 
+    func testBlackMonoUsesImmersiveDarkFocusTokens() throws {
+        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+
+        XCTAssertTrue(DS.usesImmersiveFocusAppearance)
+        assertColor(DS.focusImmersiveBackground, equalsHex: "000000")
+        assertColor(DS.focusImmersiveSurface, equalsHex: "0B0B0D")
+        assertColor(DS.focusImmersiveSurfaceElevated, equalsHex: "101012")
+        assertColor(DS.focusImmersiveText, equalsHex: "F5F5F7")
+        assertColor(DS.focusImmersiveTextSecondary, equalsHex: "B7B7C0")
+        assertColor(DS.focusImmersiveTextMuted, equalsHex: "7C7D86")
+        assertColor(DS.focusImmersiveBorder, equalsHex: "242428")
+
+        assertColor(DS.documentSurface, equalsHex: "FFFFFF")
+        assertColor(DS.documentText, equalsHex: "1A1A1F")
+    }
+
+    func testCodexMonoDoesNotUseImmersiveFocusTokens() {
+        DS.palette = CodexMonoPalette()
+
+        XCTAssertFalse(DS.usesImmersiveFocusAppearance)
+        assertColor(DS.focusImmersiveBackground, equalsHex: "FDFDFC")
+        assertColor(DS.focusImmersiveText, equalsHex: "1F2024")
+    }
+
     func testBlackMonoInvertsMonoChromeToBlackAndWhite() throws {
         let palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
 

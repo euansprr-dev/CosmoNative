@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B10C0DEC0000000000000002 /* BlockSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000001 /* BlockSplitter.swift */; };
+		B10C0DEC0000000000000004 /* BlockFocusCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000003 /* BlockFocusCoordinator.swift */; };
+		B10C0DEC0000000000000006 /* TextRegionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000005 /* TextRegionView.swift */; };
+		B10C0DEC0000000000000008 /* ElementBlockHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000007 /* ElementBlockHeader.swift */; };
+		B10C0DEC000000000000000A /* ElementBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000009 /* ElementBlockView.swift */; };
+		B10C0DEC000000000000000D /* BlockListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC000000000000000C /* BlockListView.swift */; };
 		C0DE5AFE0000000000000001 /* SupabaseSyncTrafficPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5AFE0000000000000002 /* SupabaseSyncTrafficPolicy.swift */; };
 		C0DE5AFE0000000000000003 /* SupabaseSyncTrafficPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5AFE0000000000000004 /* SupabaseSyncTrafficPolicyTests.swift */; };
 		C0DE4E0A0000000000000301 /* NoteStructureApplyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE4E0A0000000000000302 /* NoteStructureApplyService.swift */; };
@@ -878,6 +884,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B10C0DEC0000000000000001 /* BlockSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSplitter.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000003 /* BlockFocusCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockFocusCoordinator.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000005 /* TextRegionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextRegionView.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000007 /* ElementBlockHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElementBlockHeader.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000009 /* ElementBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElementBlockView.swift; sourceTree = "<group>"; };
+		B10C0DEC000000000000000C /* BlockListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockListView.swift; sourceTree = "<group>"; };
 		0026BBD3C76F26E7404D03D3 /* ProjectSidebarRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectSidebarRow.swift; sourceTree = "<group>"; };
 		003B6654A8DD4C532DE8BC77 /* SwipeGalleryTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeGalleryTab.swift; sourceTree = "<group>"; };
 		00B623B09251CAB2BE0D0CF1 /* SanctuarySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SanctuarySettingsView.swift; sourceTree = "<group>"; };
@@ -1920,6 +1932,7 @@
 		27F378A57ECFCBFED71E3986 /* Editor */ = {
 			isa = PBXGroup;
 			children = (
+				B10C0DEC000000000000000B /* BlockEditor */,
 				FD68C45DC95E71CB45EE73C9 /* AIWritingAssistant.swift */,
 				0220E592A9AF696EEB1E0FEE /* ConnectionEditorView.swift */,
 				4E6CE9282452A76A2C00250F /* ContentEditorView.swift */,
@@ -1949,6 +1962,19 @@
 				6D5D858437A48A688B7AD2F6 /* NoteWritePolicy.swift */,
 			);
 			path = Editor;
+			sourceTree = "<group>";
+		};
+		B10C0DEC000000000000000B /* BlockEditor */ = {
+			isa = PBXGroup;
+			children = (
+				B10C0DEC0000000000000003 /* BlockFocusCoordinator.swift */,
+				B10C0DEC000000000000000C /* BlockListView.swift */,
+				B10C0DEC0000000000000005 /* TextRegionView.swift */,
+				B10C0DEC0000000000000007 /* ElementBlockHeader.swift */,
+				B10C0DEC0000000000000009 /* ElementBlockView.swift */,
+				B10C0DEC0000000000000001 /* BlockSplitter.swift */,
+			);
+			path = BlockEditor;
 			sourceTree = "<group>";
 		};
 		299313275DEAFC47E20729B5 /* UnifiedSidebar */ = {
@@ -3909,6 +3935,12 @@
 				72E2B429DE6274BD8FE34B75 /* CosmoCore.swift in Sources */,
 				3D8B5CC1799FE3B9C20CD8CD /* CosmoDatabase.swift in Sources */,
 				4155173AE5ED17A1B4DBD95D /* CosmoDocumentEditor.swift in Sources */,
+				B10C0DEC0000000000000004 /* BlockFocusCoordinator.swift in Sources */,
+				B10C0DEC000000000000000D /* BlockListView.swift in Sources */,
+				B10C0DEC0000000000000006 /* TextRegionView.swift in Sources */,
+				B10C0DEC0000000000000008 /* ElementBlockHeader.swift in Sources */,
+				B10C0DEC000000000000000A /* ElementBlockView.swift in Sources */,
+				B10C0DEC0000000000000002 /* BlockSplitter.swift in Sources */,
 				9B4DCC663814AFEDFE4D0ACA /* CosmoDocumentRenderer.swift in Sources */,
 				807415AF357D1574ABAA26AD /* CosmoFunctionGemmaConfig.swift in Sources */,
 				E1E1A0B0C0D0E0F011223351 /* DocumentElements.swift in Sources */,

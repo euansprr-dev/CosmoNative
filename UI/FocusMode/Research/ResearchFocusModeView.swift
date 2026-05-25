@@ -99,6 +99,8 @@ struct ResearchFocusModeView: View {
             }
         }
         .focusBlockInspector(manager: floatingBlocksManager)
+        .background(DS.focusImmersiveBackground.ignoresSafeArea())
+        .focusImmersiveEntryTransition()
         .overlay(alignment: .topLeading) {
             FocusSidebarTrigger(isVisible: $sidebarVisible)
                 .frame(maxHeight: .infinity)

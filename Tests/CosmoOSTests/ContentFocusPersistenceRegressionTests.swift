@@ -2,6 +2,27 @@ import XCTest
 @testable import CosmoOS
 
 final class ContentFocusPersistenceRegressionTests: XCTestCase {
+    func testPolishHighlightsAreOnlyEnabledDuringPolishStep() throws {
+        XCTAssertFalse(ContentStep.brainstorm.enablesPolishHighlights)
+        XCTAssertFalse(ContentStep.draft.enablesPolishHighlights)
+        XCTAssertTrue(ContentStep.polish.enablesPolishHighlights)
+    }
+
+    func testContentFocusEditorHighlightsFollowCurrentStep() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let packageRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let focusViewURL = packageRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift")
+        let source = try String(contentsOf: focusViewURL, encoding: .utf8)
+
+        XCTAssertTrue(
+            source.contains("polishHighlights: viewModel.state.currentStep.enablesPolishHighlights ? polishAnalysis : nil"),
+            "The content editor must clear polish highlights as soon as the user returns to Draft."
+        )
+    }
+
     func testAsyncContentFocusWriteRechecksFreshnessInsideDatabaseTransaction() throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let packageRoot = testFileURL

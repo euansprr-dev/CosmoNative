@@ -196,6 +196,8 @@ struct ConnectionFocusModeView: View {
             )
         }
         .focusBlockInspector(manager: floatingBlocksManager)
+        .background(DS.focusImmersiveBackground.ignoresSafeArea())
+        .focusImmersiveEntryTransition()
         // The governed workspace is anchored; user-added atom blocks still
         // float on the canvas around it.
         .overlay(alignment: .topTrailing) {

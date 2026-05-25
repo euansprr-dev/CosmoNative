@@ -498,7 +498,7 @@ struct TaskDetailPanel: View {
 
     private var deleteSection: some View {
         Button(role: .destructive) {
-            let scope = task.recurrenceParentUUID == nil ? .currentOnly : titleEditScope
+            let scope: RecurringTaskTitleEditScope = task.isRecurring ? .currentAndFuture : .currentOnly
             onDeleted(task.uuid)
             Task {
                 await viewModel.deleteTask(uuid: task.uuid, recurrenceScope: scope)

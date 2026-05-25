@@ -132,77 +132,60 @@ struct DocumentElementHeaderLayout: Equatable {
     var chevronHitRect: CGRect
     var chevronGlyphRect: CGRect
     var iconRect: CGRect
-    var nameRect: CGRect
     var titleRect: CGRect
+
+    static let headerHeight: CGFloat = 38
+    static let chevronWidth: CGFloat = 22
+    static let iconSize: CGFloat = 14
+    static let leadingPadding: CGFloat = 12
+    static let nestedIndent: CGFloat = 16
 
     init(
         chromeRect: CGRect,
         headerMidY: CGFloat,
-        elementName: String,
-        instanceTitle: String,
         depth: Int,
         fontSize: CGFloat
     ) {
-        let nestedInset = CGFloat(max(0, depth)) * 18
+        let nestedInset = CGFloat(max(0, depth)) * Self.nestedIndent
         let chevronHitRect = CGRect(
-            x: chromeRect.minX + 8 + nestedInset,
-            y: headerMidY - 14,
-            width: 28,
-            height: 28
+            x: chromeRect.minX + Self.leadingPadding + nestedInset,
+            y: headerMidY - (Self.headerHeight / 2),
+            width: Self.chevronWidth,
+            height: Self.headerHeight
         )
-        let symbolSize = max(13, min(15, fontSize - 2))
         let iconRect = CGRect(
-            x: chevronHitRect.maxX + 6,
-            y: headerMidY - (symbolSize / 2),
-            width: symbolSize,
-            height: symbolSize
+            x: chevronHitRect.maxX + 2,
+            y: headerMidY - (Self.iconSize / 2),
+            width: Self.iconSize,
+            height: Self.iconSize
         )
-        let nameX = iconRect.maxX + 10
-        let measuredNameWidth = Self.measuredWidth(
-            elementName,
-            font: NSFont.systemFont(ofSize: max(12, fontSize - 4), weight: .medium)
-        )
-        let nameWidth = min(max(measuredNameWidth + 8, 56), 150)
-        let titleX = nameX + nameWidth + 22
+        let titleX = iconRect.maxX + 8
 
         self.chromeRect = chromeRect
         self.chevronHitRect = chevronHitRect
         self.chevronGlyphRect = CGRect(
-            x: chevronHitRect.midX - 4.5,
-            y: headerMidY - 4.5,
-            width: 9,
-            height: 9
+            x: chevronHitRect.midX - 4,
+            y: headerMidY - 4,
+            width: 8,
+            height: 8
         )
         self.iconRect = iconRect
-        self.nameRect = CGRect(
-            x: nameX,
-            y: headerMidY - 9,
-            width: nameWidth,
-            height: 18
-        )
         self.titleRect = CGRect(
             x: titleX,
-            y: headerMidY - 12,
-            width: max(80, chromeRect.maxX - titleX - 14),
-            height: 24
+            y: headerMidY - 9,
+            width: max(80, chromeRect.maxX - titleX - Self.leadingPadding),
+            height: 18
         )
     }
 
-    static func titleLeadingInset(depth: Int, fontSize: CGFloat, elementName: String = "Untitled Element") -> CGFloat {
+    static func titleLeadingInset(depth: Int, fontSize: CGFloat) -> CGFloat {
         let layout = DocumentElementHeaderLayout(
-            chromeRect: CGRect(x: 0, y: 0, width: 720, height: 44),
-            headerMidY: 22,
-            elementName: elementName,
-            instanceTitle: "Title",
+            chromeRect: CGRect(x: 0, y: 0, width: 720, height: headerHeight),
+            headerMidY: headerHeight / 2,
             depth: depth,
             fontSize: fontSize
         )
         return layout.titleRect.minX
-    }
-
-    private static func measuredWidth(_ string: String, font: NSFont) -> CGFloat {
-        let size = (string as NSString).size(withAttributes: [.font: font])
-        return ceil(size.width)
     }
 }
 

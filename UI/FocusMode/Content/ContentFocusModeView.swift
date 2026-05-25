@@ -108,9 +108,6 @@ struct ContentFocusModeView: View {
     /// Currently selected text in the draft editor (empty when no selection)
     @State private var selectedText: String = ""
 
-    /// Polish mode: when active, highlights appear on text + right sidebar swaps to polish analysis
-    @State private var isPolishModeActive: Bool = false
-
     /// Polish analysis for Hemingway highlights
     @State private var polishAnalysis: WritingAnalysis?
 
@@ -134,6 +131,16 @@ struct ContentFocusModeView: View {
     @State private var autoSaveTask: Task<Void, Never>?
     @State private var saveState: DraftSaveState = .idle
     private let autoSaveDelay: TimeInterval = 1.5
+
+    private var focusBackground: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveBackground : DS.documentBackground }
+    private var focusSurface: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveSurface : DS.documentSurface }
+    private var focusSurfaceElevated: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveSurfaceElevated : DS.documentSurface }
+    private var focusText: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveText : DS.documentText }
+    private var focusTextSecondary: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveTextSecondary : DS.documentTextSecondary }
+    private var focusTextMuted: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveTextMuted : DS.documentTextMuted }
+    private var focusBorder: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveBorder : DS.documentBorder }
+    /// Polish mode derives from the selected step so Draft can never keep stale polish highlights.
+    private var isPolishModeActive: Bool { viewModel.state.currentStep.enablesPolishHighlights }
 
     // Debounced polish analysis
     @State private var polishDebounceTask: Task<Void, Never>?
@@ -332,7 +339,7 @@ struct ContentFocusModeView: View {
 
     var body: some View {
         ZStack {
-            DS.documentBackground
+            focusBackground
                 .ignoresSafeArea()
                 .overlay {
                     FocusModeEditorBlurTapLayer()
@@ -373,6 +380,7 @@ struct ContentFocusModeView: View {
         .animation(.easeOut(duration: 0.4), value: viewModel.xpAwarded)
         .animation(ProMotionSprings.snappy, value: zenMode)
         .animation(ProMotionSprings.snappy, value: isPolishModeActive)
+        .focusImmersiveEntryTransition()
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             viewModel.loadState()
@@ -394,7 +402,6 @@ struct ContentFocusModeView: View {
                 viewModel.state.currentStep = .draft
             }
             if viewModel.state.currentStep == .polish {
-                isPolishModeActive = true
                 updatePolishAnalysis()
             }
             // Check if this mount is a direct continuation from Idea Focus
@@ -498,6 +505,12 @@ struct ContentFocusModeView: View {
         .onChange(of: viewModel.state.currentStep) { oldStep, newStep in
             // Clear selection when switching steps
             selectedText = ""
+            if newStep.enablesPolishHighlights {
+                updatePolishAnalysis()
+            } else {
+                polishDebounceTask?.cancel()
+                polishAnalysis = nil
+            }
             // Extract lessons when advancing phases (user may have edited AI draft)
             extractLessonsIfEdited()
 
@@ -776,7 +789,7 @@ struct ContentFocusModeView: View {
             TextField("untitled content", text: $editableTitle, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(DS.displaySerif)
-                .foregroundStyle(DS.documentText)
+                .foregroundStyle(focusText)
                 .tracking(-0.5)
                 .lineLimit(1...3)
                 .onChange(of: editableTitle) { _, newTitle in
@@ -796,7 +809,7 @@ struct ContentFocusModeView: View {
             }
             .font(DS.dateSerif)
             .italic()
-            .foregroundStyle(DS.inkFaded)
+            .foregroundStyle(focusTextMuted)
 
             Rectangle()
                 .fill(DS.sepiaSubtle)
@@ -811,13 +824,14 @@ struct ContentFocusModeView: View {
                 document: $draftDocument,
                 fontSize: 17,
                 placeholder: "begin writing…",
-                overrideTextColor: NSColor(DS.documentText),
+                darkMode: DS.usesImmersiveFocusAppearance,
+                overrideTextColor: NSColor(focusText),
                 allowSlashCommands: true,
                 allowMentions: true,
                 allowSelectionMenu: true,
                 allowImages: true,
                 typewriterMode: typewriterMode,
-                polishHighlights: isPolishModeActive ? polishAnalysis : nil,
+                polishHighlights: viewModel.state.currentStep.enablesPolishHighlights ? polishAnalysis : nil,
                 onSelectionChanged: { snapshot in
                     handleSelectionChange(
                         DraftSelectionInfo(
@@ -883,7 +897,7 @@ struct ContentFocusModeView: View {
                 Button(action: toggleSidebar) {
                     Image(systemName: "sidebar.left")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(sidebarLocked || sidebarVisible ? DS.documentText : DS.inkFaded)
+                        .foregroundStyle(sidebarLocked || sidebarVisible ? focusText : focusTextMuted)
                         .frame(width: 28, height: 28)
                         .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
                         .overlay(
@@ -905,7 +919,7 @@ struct ContentFocusModeView: View {
                             .font(DS.dateSerif)
                             .italic()
                     }
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(focusTextMuted)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -921,7 +935,7 @@ struct ContentFocusModeView: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.inkFaded)
+                        .foregroundStyle(focusTextMuted)
                         .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }
@@ -944,7 +958,7 @@ struct ContentFocusModeView: View {
             } label: {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(showWritingAICard ? DS.gilt : DS.inkFaded)
+                    .foregroundStyle(showWritingAICard ? DS.gilt : focusTextMuted)
                     .frame(width: 28, height: 28)
                     .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(
@@ -967,7 +981,7 @@ struct ContentFocusModeView: View {
             } label: {
                 Image(systemName: "textformat.size")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(focusTextMuted)
                     .frame(width: 28, height: 28)
                     .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.glassBorder, lineWidth: 0.5))
@@ -995,7 +1009,7 @@ struct ContentFocusModeView: View {
             } label: {
                 Image(systemName: focusBandMode == .off ? "scope" : "scope")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(focusBandMode == .off ? DS.inkFaded : DS.gilt)
+                    .foregroundStyle(focusBandMode == .off ? focusTextMuted : DS.gilt)
                     .frame(width: 28, height: 28)
                     .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.glassBorder, lineWidth: 0.5))
@@ -1066,7 +1080,6 @@ struct ContentFocusModeView: View {
                 .padding(.horizontal, DS.space8)
             stepLedgerNumeral("ii", label: "polish", isCurrent: currentStep == .polish, isCompleted: false) {
                 viewModel.goToStep(.polish)
-                isPolishModeActive = true
                 updatePolishAnalysis()
             }
             Spacer()
@@ -1082,7 +1095,7 @@ struct ContentFocusModeView: View {
                 Text(label)
                     .font(DS.smallCaps)
                     .tracking(1.6)
-                    .foregroundStyle(isCurrent ? DS.documentText : DS.inkFaded)
+                    .foregroundStyle(isCurrent ? focusText : focusTextMuted)
                 if isCurrent {
                     Rectangle()
                         .fill(DS.gilt)
@@ -1132,7 +1145,7 @@ struct ContentFocusModeView: View {
                                 .frame(width: 10, alignment: .leading)
                             Text(entry.title)
                                 .font(entry.level == 1 ? DS.caption : DS.caption2)
-                                .foregroundStyle(entry.level == 1 ? DS.documentText : DS.inkFaded)
+                                .foregroundStyle(entry.level == 1 ? focusText : focusTextMuted)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1155,7 +1168,7 @@ struct ContentFocusModeView: View {
                 Text("no outline yet")
                     .font(DS.dateSerif)
                     .italic()
-                    .foregroundStyle(DS.inkFaded.opacity(0.6))
+                    .foregroundStyle(focusTextMuted.opacity(0.6))
             } else {
                 ForEach(Array(viewModel.state.outline.enumerated()), id: \.element.id) { idx, item in
                     HStack(alignment: .top, spacing: DS.space8) {
@@ -1167,7 +1180,7 @@ struct ContentFocusModeView: View {
                         TextField("Outline item", text: marginaliaOutlineTitleBinding(for: item.id), axis: .vertical)
                             .textFieldStyle(.plain)
                             .font(DS.callout)
-                            .foregroundStyle(DS.documentText)
+                            .foregroundStyle(focusText)
                             .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1183,7 +1196,7 @@ struct ContentFocusModeView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 14, weight: .regular, design: .serif))
                 .italic()
-                .foregroundStyle(DS.documentText)
+                .foregroundStyle(focusText)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1223,7 +1236,7 @@ struct ContentFocusModeView: View {
             Text("analyzing…")
                 .font(DS.dateSerif)
                 .italic()
-                .foregroundStyle(DS.inkFaded.opacity(0.6))
+                .foregroundStyle(focusTextMuted.opacity(0.6))
             // Full scorecard dimension render will ship in V1.5 — polish analysis
             // (WritingAnalyzer) still drives inline highlights via polishAnalysis.
         }
@@ -1274,7 +1287,7 @@ struct ContentFocusModeView: View {
                 } label: {
                     Text("improve selected text")
                         .font(DS.caption2)
-                        .foregroundStyle(DS.inkFaded)
+                        .foregroundStyle(focusTextMuted)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1302,13 +1315,13 @@ struct ContentFocusModeView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(idea.title ?? "untitled idea")
                                 .font(.system(size: 14, weight: .regular, design: .serif))
-                                .foregroundStyle(DS.documentText)
+                                .foregroundStyle(focusText)
                                 .fixedSize(horizontal: false, vertical: true)
                             if let body = idea.body, !body.isEmpty {
                                 Text(body)
                                     .font(DS.dateSerif)
                                     .italic()
-                                    .foregroundStyle(DS.inkFaded)
+                                    .foregroundStyle(focusTextMuted)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -1341,7 +1354,7 @@ struct ContentFocusModeView: View {
                     Text("select blueprint →")
                         .font(DS.dateSerif)
                         .italic()
-                        .foregroundStyle(DS.inkFaded.opacity(0.7))
+                        .foregroundStyle(focusTextMuted.opacity(0.7))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1396,12 +1409,12 @@ struct ContentFocusModeView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(swipe.title ?? "untitled")
                             .font(DS.callout)
-                            .foregroundStyle(DS.documentText)
+                            .foregroundStyle(focusText)
                             .fixedSize(horizontal: false, vertical: true)
                         if let hook = swipe.researchMetadata?.hook {
                             Text(hook)
                                 .font(DS.caption2)
-                                .foregroundStyle(DS.inkFaded)
+                                .foregroundStyle(focusTextMuted)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -1427,7 +1440,7 @@ struct ContentFocusModeView: View {
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(focusTextMuted)
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.plain)
@@ -1459,7 +1472,7 @@ struct ContentFocusModeView: View {
             MarginaliaLabel("FRAMEWORK")
             Text(framework)
                 .font(.system(size: 14, weight: .regular, design: .serif))
-                .foregroundStyle(DS.documentText)
+                .foregroundStyle(focusText)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1505,7 +1518,7 @@ struct ContentFocusModeView: View {
             HStack(spacing: DS.space6) {
                 Text(brandMenuTitle)
                     .font(.system(size: 14, weight: .regular, design: .serif))
-                    .foregroundStyle(DS.documentText)
+                    .foregroundStyle(focusText)
                     .fixedSize(horizontal: false, vertical: true)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
@@ -1540,7 +1553,7 @@ struct ContentFocusModeView: View {
                         Text(bullet)
                             .font(DS.dateSerif)
                             .italic()
-                            .foregroundStyle(DS.documentText)
+                            .foregroundStyle(focusText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1588,7 +1601,7 @@ struct ContentFocusModeView: View {
                     TextField("Hook", text: marginaliaHookBinding(at: idx), axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(DS.caption)
-                        .foregroundStyle(DS.documentText)
+                        .foregroundStyle(focusText)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1639,21 +1652,21 @@ struct ContentFocusModeView: View {
             HStack(spacing: DS.space8) {
                 Text("\(words)")
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(focusTextMuted)
                 Text(words == 1 ? "word" : "words")
                     .font(DS.dateSerif)
                     .italic()
-                    .foregroundStyle(DS.inkFaded.opacity(0.7))
+                    .foregroundStyle(focusTextMuted.opacity(0.7))
                 Text("·")
                     .font(.system(size: 11))
                     .foregroundStyle(DS.sepiaSubtle)
                 Text("\(chars)")
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(focusTextMuted)
                 Text(chars == 1 ? "char" : "chars")
                     .font(DS.dateSerif)
                     .italic()
-                    .foregroundStyle(DS.inkFaded.opacity(0.7))
+                    .foregroundStyle(focusTextMuted.opacity(0.7))
             }
             if isSelection {
                 Text("selection")
@@ -1732,7 +1745,6 @@ struct ContentFocusModeView: View {
         switch viewModel.state.currentStep {
         case .brainstorm, .draft:
             viewModel.goToPhase(.polish)
-            isPolishModeActive = true
             updatePolishAnalysis()
         case .polish:
             viewModel.goToPhase(.scheduled)
@@ -1867,6 +1879,10 @@ struct ContentFocusModeView: View {
         polishDebounceTask = Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
+            guard viewModel.state.currentStep.enablesPolishHighlights else {
+                polishAnalysis = nil
+                return
+            }
             updatePolishAnalysis()
         }
     }
@@ -1899,19 +1915,19 @@ struct ContentFocusModeView: View {
                     .font(DS.subheadline)
                 Text("AI Suggestion")
                     .font(DS.buttonText)
-                    .foregroundStyle(DS.documentText)
+                    .foregroundStyle(focusText)
                 Spacer()
                 Button(action: { dismissInlineAI() }) {
                     Image(systemName: "xmark")
                         .font(DS.caption2)
-                        .foregroundStyle(DS.documentTextMuted)
+                        .foregroundStyle(focusTextMuted)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
 
-            Rectangle().fill(DS.documentBorder).frame(height: 1)
+            Rectangle().fill(focusBorder).frame(height: 1)
 
             // Body
             if inlineAssistant.isProcessing {
@@ -1919,7 +1935,7 @@ struct ContentFocusModeView: View {
                     ProgressView().scaleEffect(0.7).tint(DS.accent)
                     Text("Generating...")
                         .font(DS.footnote)
-                        .foregroundStyle(DS.documentTextSecondary)
+                        .foregroundStyle(focusTextSecondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
@@ -1932,7 +1948,7 @@ struct ContentFocusModeView: View {
                         .foregroundStyle(.orange)
                     Text(error)
                         .font(DS.footnote)
-                        .foregroundStyle(DS.documentTextSecondary)
+                        .foregroundStyle(focusTextSecondary)
                     Button(action: { dismissInlineAI() }) {
                         Text("Dismiss")
                             .font(DS.caption)
@@ -1946,7 +1962,7 @@ struct ContentFocusModeView: View {
         .frame(width: 320)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .fill(DS.documentSurface)
+                .fill(focusSurface)
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusMedium)
                         .stroke(DS.borderActive, lineWidth: 1)
@@ -1983,7 +1999,7 @@ struct ContentFocusModeView: View {
                 }
                 .frame(maxHeight: 120)
                 .padding(8)
-                .background(RoundedRectangle(cornerRadius: 6).fill(DS.documentBorderSubtle))
+                .background(RoundedRectangle(cornerRadius: 6).fill(focusBorder))
             } else {
                 let diffWords = inlineAssistant.computeWordDiff(
                     original: result.originalText,
@@ -1995,7 +2011,7 @@ struct ContentFocusModeView: View {
                 }
                 .frame(maxHeight: 120)
                 .padding(8)
-                .background(RoundedRectangle(cornerRadius: 6).fill(DS.documentBorderSubtle))
+                .background(RoundedRectangle(cornerRadius: 6).fill(focusBorder))
             }
 
             // Accept / Reject
@@ -2016,9 +2032,9 @@ struct ContentFocusModeView: View {
                         Image(systemName: "xmark").font(DS.caption2)
                         Text("Reject").font(DS.caption)
                     }
-                    .foregroundStyle(DS.documentTextSecondary)
+                    .foregroundStyle(focusTextSecondary)
                     .padding(.horizontal, 14).padding(.vertical, 6)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(DS.documentBorder))
+                    .background(RoundedRectangle(cornerRadius: 6).fill(focusBorder))
                 }
                 .buttonStyle(.plain)
             }
@@ -2406,7 +2422,7 @@ struct ContentFocusModeView: View {
         }
 
         let attributed = NSMutableAttributedString(
-            attributedString: RichDocumentSerializer.attributedString(from: draftDocument, fontSize: 16, darkMode: false)
+            attributedString: RichDocumentSerializer.attributedString(from: draftDocument, fontSize: 16, darkMode: DS.usesImmersiveFocusAppearance)
         )
         let attributedPlainText = attributed.string as NSString
 
@@ -2420,7 +2436,7 @@ struct ContentFocusModeView: View {
                 string: replacement,
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 16),
-                    .foregroundColor: NSColor(DS.documentText)
+                    .foregroundColor: NSColor(focusText)
                 ]
             )
         )
@@ -2440,7 +2456,7 @@ struct ContentFocusModeView: View {
 
         let insertion = (insertionLocation == 0 ? "" : "\n\n") + text
         let attributed = NSMutableAttributedString(
-            attributedString: RichDocumentSerializer.attributedString(from: draftDocument, fontSize: 16, darkMode: false)
+            attributedString: RichDocumentSerializer.attributedString(from: draftDocument, fontSize: 16, darkMode: DS.usesImmersiveFocusAppearance)
         )
         let safeLocation = min(insertionLocation, attributed.length)
         attributed.replaceCharacters(
@@ -2449,7 +2465,7 @@ struct ContentFocusModeView: View {
                 string: insertion,
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 16),
-                    .foregroundColor: NSColor(DS.documentText)
+                    .foregroundColor: NSColor(focusText)
                 ]
             )
         )
@@ -2565,11 +2581,11 @@ private struct PremiumManuscriptScrollbar: View {
 
             ZStack(alignment: .top) {
                 Capsule()
-                    .fill(DS.inkFaded.opacity(0.10))
+                    .fill(DS.focusImmersiveTextMuted.opacity(0.10))
                     .frame(width: 2)
 
                 Capsule()
-                    .fill(DS.inkFaded.opacity(0.62))
+                    .fill(DS.focusImmersiveTextMuted.opacity(0.62))
                     .frame(width: 2.5, height: thumbHeight)
                     .offset(y: travel * metrics.progress)
             }
@@ -3487,15 +3503,15 @@ struct ContentSwipeAttachmentEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().background(DS.documentBorder)
+            Divider().background(DS.focusImmersiveBorder)
             searchField
-            Divider().background(DS.documentBorder)
+            Divider().background(DS.focusImmersiveBorder)
             swipeList
-            Divider().background(DS.documentBorder)
+            Divider().background(DS.focusImmersiveBorder)
             footer
         }
         .frame(width: 760, height: 620)
-        .background(DS.documentBackground)
+        .background(DS.focusImmersiveBackground)
         .task { await loadAllSwipes() }
     }
 
@@ -3508,10 +3524,10 @@ struct ContentSwipeAttachmentEditor: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Swipe References")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(DS.documentText)
+                    .foregroundStyle(DS.focusImmersiveText)
                 Text("Choose supporting swipes and the primary blueprint.")
                     .font(.system(size: 11))
-                    .foregroundStyle(DS.documentTextMuted)
+                    .foregroundStyle(DS.focusImmersiveTextMuted)
             }
 
             Spacer()
@@ -3521,9 +3537,9 @@ struct ContentSwipeAttachmentEditor: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DS.documentTextSecondary)
+                    .foregroundStyle(DS.focusImmersiveTextSecondary)
                     .padding(8)
-                    .background(DS.documentBorder, in: Circle())
+                    .background(DS.focusImmersiveBorder, in: Circle())
             }
             .buttonStyle(.plain)
         }
@@ -3535,16 +3551,16 @@ struct ContentSwipeAttachmentEditor: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13))
-                .foregroundStyle(DS.documentTextMuted)
+                .foregroundStyle(DS.focusImmersiveTextMuted)
 
             TextField("Search swipes by hook, topic, creator...", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .foregroundStyle(DS.documentText)
+                .foregroundStyle(DS.focusImmersiveText)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(DS.documentBorderSubtle)
+        .background(DS.focusImmersiveBorder)
     }
 
     private var swipeList: some View {
@@ -3554,7 +3570,7 @@ struct ContentSwipeAttachmentEditor: View {
                     ProgressView()
                     Text("Loading swipe library...")
                         .font(.system(size: 12))
-                        .foregroundStyle(DS.documentTextMuted)
+                        .foregroundStyle(DS.focusImmersiveTextMuted)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 80)
@@ -3562,10 +3578,10 @@ struct ContentSwipeAttachmentEditor: View {
                 VStack(spacing: 12) {
                     Image(systemName: "doc.text.magnifyingglass")
                         .font(.system(size: 28))
-                        .foregroundStyle(DS.documentTextMuted)
+                        .foregroundStyle(DS.focusImmersiveTextMuted)
                     Text(searchText.isEmpty ? "No swipes found" : "No swipes match '\(searchText)'")
                         .font(.system(size: 13))
-                        .foregroundStyle(DS.documentTextMuted)
+                        .foregroundStyle(DS.focusImmersiveTextMuted)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 80)
@@ -3612,7 +3628,7 @@ struct ContentSwipeAttachmentEditor: View {
             } label: {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 18))
-                    .foregroundStyle(isSelected ? DS.entityContent : DS.documentTextMuted)
+                    .foregroundStyle(isSelected ? DS.entityContent : DS.focusImmersiveTextMuted)
             }
             .buttonStyle(.plain)
 
@@ -3625,13 +3641,13 @@ struct ContentSwipeAttachmentEditor: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(swipe.title ?? "Untitled Swipe")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(DS.documentText)
+                            .foregroundStyle(DS.focusImmersiveText)
                             .lineLimit(1)
 
                         if !hookText.isEmpty {
                             Text(String(hookText.prefix(100)))
                                 .font(.system(size: 11))
-                                .foregroundStyle(DS.documentTextSecondary)
+                                .foregroundStyle(DS.focusImmersiveTextSecondary)
                                 .lineLimit(2)
                         }
                     }
@@ -3673,10 +3689,10 @@ struct ContentSwipeAttachmentEditor: View {
             .opacity(!isSelected && !isBlueprint ? 0.45 : 1)
         }
         .padding(10)
-        .background(DS.documentSurface, in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.focusImmersiveSurface, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(isBlueprint ? DS.entityContent.opacity(0.35) : DS.documentBorder, lineWidth: 1)
+                .stroke(isBlueprint ? DS.entityContent.opacity(0.35) : DS.focusImmersiveBorder, lineWidth: 1)
         )
     }
 
@@ -3689,15 +3705,15 @@ struct ContentSwipeAttachmentEditor: View {
                     image.resizable().scaledToFill()
                 } placeholder: {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(DS.documentBorder)
+                        .fill(DS.focusImmersiveBorder)
                 }
             } else {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.documentBorder)
+                    .fill(DS.focusImmersiveBorder)
                     .overlay(
                         Image(systemName: "doc.text")
                             .font(.system(size: 14))
-                            .foregroundStyle(DS.documentTextMuted)
+                            .foregroundStyle(DS.focusImmersiveTextMuted)
                     )
             }
         }
@@ -3709,7 +3725,7 @@ struct ContentSwipeAttachmentEditor: View {
         HStack(spacing: 12) {
             Text("\(selectedSwipeUUIDs.count) selected")
                 .font(.system(size: 11))
-                .foregroundStyle(DS.documentTextMuted)
+                .foregroundStyle(DS.focusImmersiveTextMuted)
 
             Spacer()
 
@@ -3718,10 +3734,10 @@ struct ContentSwipeAttachmentEditor: View {
             } label: {
                 Text("Cancel")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.documentTextSecondary)
+                    .foregroundStyle(DS.focusImmersiveTextSecondary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
-                    .background(DS.documentBorder, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.focusImmersiveBorder, in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
 

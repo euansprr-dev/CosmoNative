@@ -383,8 +383,8 @@ struct ElementCreationMenu: View {
     var darkMode: Bool = false
 
     @State private var title = ""
-    @State private var icon = ElementIconPickerCategory.organize.options.first?.systemIcon ?? "square.dashed"
-    @State private var selectedCategory: ElementIconPickerCategory = .organize
+    @State private var icon = ElementIconPickerCategory.structure.options.first?.systemIcon ?? "square.dashed"
+    @State private var selectedCategory: ElementIconPickerCategory = .structure
     @FocusState private var titleFocused: Bool
 
     private let menuWidth: CGFloat = 330
@@ -488,52 +488,72 @@ private struct ElementIconOption: Identifiable, Hashable {
 }
 
 private enum ElementIconPickerCategory: String, CaseIterable, Identifiable {
-    case organize = "Organize"
+    case structure = "Structure"
     case people = "People"
     case writing = "Writing"
     case media = "Media"
     case status = "Status"
+    case symbols = "Symbols"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .organize: return "square.grid.2x2"
+        case .structure: return "square.dashed"
         case .people: return "person.2"
-        case .writing: return "text.book.closed"
-        case .media: return "photo.on.rectangle"
+        case .writing: return "pencil.line"
+        case .media: return "photo"
         case .status: return "checkmark.circle"
+        case .symbols: return "sparkle"
         }
     }
 
     var options: [ElementIconOption] {
         switch self {
-        case .organize:
+        case .structure:
             return [
-                .init(defaultTitle: "Element", systemIcon: DocumentElementSymbol.fallback),
+                .init(defaultTitle: "Section", systemIcon: "square.dashed"),
                 .init(defaultTitle: "Folder", systemIcon: "folder"),
+                .init(defaultTitle: "List", systemIcon: "list.bullet.rectangle"),
+                .init(defaultTitle: "Grid", systemIcon: "rectangle.grid.2x2"),
                 .init(defaultTitle: "Stack", systemIcon: "square.stack.3d.up"),
-                .init(defaultTitle: "Board", systemIcon: "rectangle.grid.2x2"),
                 .init(defaultTitle: "Map", systemIcon: "map"),
-                .init(defaultTitle: "Target", systemIcon: "target")
+                .init(defaultTitle: "Target", systemIcon: "target"),
+                .init(defaultTitle: "Layers", systemIcon: "square.3.stack.3d"),
+                .init(defaultTitle: "Tree", systemIcon: "point.3.connected.trianglepath.dotted"),
+                .init(defaultTitle: "Pillar", systemIcon: "rectangle.split.3x1"),
+                .init(defaultTitle: "Hierarchy", systemIcon: "rectangle.connected.to.line.below"),
+                .init(defaultTitle: "Group", systemIcon: "rectangle.3.group")
             ]
         case .people:
             return [
-                .init(defaultTitle: "Audience", systemIcon: "person.2.fill"),
+                .init(defaultTitle: "Audience", systemIcon: "person.2"),
                 .init(defaultTitle: "Customer", systemIcon: "person.crop.circle"),
                 .init(defaultTitle: "Community", systemIcon: "person.3"),
-                .init(defaultTitle: "Voice", systemIcon: "quote.bubble"),
+                .init(defaultTitle: "Voice", systemIcon: "bubble.left"),
                 .init(defaultTitle: "Interview", systemIcon: "person.wave.2"),
-                .init(defaultTitle: "Persona", systemIcon: "face.smiling")
+                .init(defaultTitle: "Persona", systemIcon: "face.smiling"),
+                .init(defaultTitle: "Team", systemIcon: "person.2.crop.square.stack"),
+                .init(defaultTitle: "Profile", systemIcon: "person.text.rectangle"),
+                .init(defaultTitle: "Contact", systemIcon: "at"),
+                .init(defaultTitle: "Network", systemIcon: "network"),
+                .init(defaultTitle: "Conversation", systemIcon: "bubble.left.and.bubble.right"),
+                .init(defaultTitle: "Quote", systemIcon: "quote.opening")
             ]
         case .writing:
             return [
                 .init(defaultTitle: "Idea", systemIcon: "lightbulb"),
                 .init(defaultTitle: "Draft", systemIcon: "doc.text"),
-                .init(defaultTitle: "Outline", systemIcon: "list.bullet.rectangle"),
-                .init(defaultTitle: "Hook", systemIcon: "quote.opening"),
+                .init(defaultTitle: "Outline", systemIcon: "list.bullet.indent"),
+                .init(defaultTitle: "Hook", systemIcon: "text.quote"),
                 .init(defaultTitle: "Script", systemIcon: "text.alignleft"),
-                .init(defaultTitle: "Research", systemIcon: "books.vertical")
+                .init(defaultTitle: "Research", systemIcon: "books.vertical"),
+                .init(defaultTitle: "Note", systemIcon: "note.text"),
+                .init(defaultTitle: "Page", systemIcon: "doc"),
+                .init(defaultTitle: "Pen", systemIcon: "pencil.line"),
+                .init(defaultTitle: "Highlight", systemIcon: "highlighter"),
+                .init(defaultTitle: "Bookmark", systemIcon: "bookmark"),
+                .init(defaultTitle: "Tag", systemIcon: "tag")
             ]
         case .media:
             return [
@@ -542,16 +562,43 @@ private enum ElementIconPickerCategory: String, CaseIterable, Identifiable {
                 .init(defaultTitle: "Audio", systemIcon: "waveform"),
                 .init(defaultTitle: "Clip", systemIcon: "film"),
                 .init(defaultTitle: "Swipe", systemIcon: "rectangle.on.rectangle"),
-                .init(defaultTitle: "Asset", systemIcon: "shippingbox")
+                .init(defaultTitle: "Asset", systemIcon: "shippingbox"),
+                .init(defaultTitle: "Camera", systemIcon: "camera"),
+                .init(defaultTitle: "Music", systemIcon: "music.note"),
+                .init(defaultTitle: "Mic", systemIcon: "mic"),
+                .init(defaultTitle: "Link", systemIcon: "link"),
+                .init(defaultTitle: "Gallery", systemIcon: "photo.on.rectangle.angled"),
+                .init(defaultTitle: "Cast", systemIcon: "antenna.radiowaves.left.and.right")
             ]
         case .status:
             return [
-                .init(defaultTitle: "Todo", systemIcon: "checklist"),
+                .init(defaultTitle: "Todo", systemIcon: "circle"),
                 .init(defaultTitle: "Done", systemIcon: "checkmark.circle"),
                 .init(defaultTitle: "Question", systemIcon: "questionmark.circle"),
                 .init(defaultTitle: "Warning", systemIcon: "exclamationmark.triangle"),
                 .init(defaultTitle: "Insight", systemIcon: "sparkles"),
-                .init(defaultTitle: "Priority", systemIcon: "flag")
+                .init(defaultTitle: "Priority", systemIcon: "flag"),
+                .init(defaultTitle: "Pinned", systemIcon: "pin"),
+                .init(defaultTitle: "Locked", systemIcon: "lock"),
+                .init(defaultTitle: "Progress", systemIcon: "hourglass"),
+                .init(defaultTitle: "Schedule", systemIcon: "calendar"),
+                .init(defaultTitle: "Goal", systemIcon: "scope"),
+                .init(defaultTitle: "Notice", systemIcon: "bell")
+            ]
+        case .symbols:
+            return [
+                .init(defaultTitle: "Spark", systemIcon: "sparkle"),
+                .init(defaultTitle: "Star", systemIcon: "star"),
+                .init(defaultTitle: "Heart", systemIcon: "heart"),
+                .init(defaultTitle: "Compass", systemIcon: "safari"),
+                .init(defaultTitle: "Globe", systemIcon: "globe"),
+                .init(defaultTitle: "Cube", systemIcon: "cube"),
+                .init(defaultTitle: "Brain", systemIcon: "brain"),
+                .init(defaultTitle: "Atom", systemIcon: "atom"),
+                .init(defaultTitle: "Wand", systemIcon: "wand.and.stars"),
+                .init(defaultTitle: "Diamond", systemIcon: "diamond"),
+                .init(defaultTitle: "Hexagon", systemIcon: "hexagon"),
+                .init(defaultTitle: "Crown", systemIcon: "crown")
             ]
         }
     }

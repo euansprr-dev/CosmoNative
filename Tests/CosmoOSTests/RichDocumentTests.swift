@@ -2,6 +2,211 @@ import XCTest
 @testable import CosmoOS
 
 final class RichDocumentTests: XCTestCase {
+    @MainActor
+    func testBlockFocusCoordinatorMovesWithinRegisteredBlocks() {
+        let first = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let second = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let third = UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!
+        let coordinator = BlockFocusCoordinator()
+
+        coordinator.register(first)
+        coordinator.register(second)
+        coordinator.register(third)
+        coordinator.focus(second)
+
+        coordinator.focusNext()
+        XCTAssertEqual(coordinator.focusedBlockID, third)
+        XCTAssertFalse(coordinator.focusNext())
+        XCTAssertEqual(coordinator.focusedBlockID, third)
+
+        coordinator.focusPrevious()
+        XCTAssertEqual(coordinator.focusedBlockID, second)
+    }
+
+    @MainActor
+    func testBlockFocusCoordinatorDoesNotJumpToFirstBlockWhenFocusIsUnknown() {
+        let first = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let second = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let coordinator = BlockFocusCoordinator()
+
+        coordinator.register(first)
+        coordinator.register(second)
+
+        XCTAssertFalse(coordinator.focusNext())
+        XCTAssertNil(coordinator.focusedBlockID)
+        XCTAssertFalse(coordinator.focusPrevious())
+        XCTAssertNil(coordinator.focusedBlockID)
+    }
+
+    @MainActor
+    func testBlockFocusCoordinatorRoutesBaseCommandTargetToFocusedBlockOnly() {
+        let first = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let second = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let coordinator = BlockFocusCoordinator()
+
+        coordinator.register(first)
+        coordinator.register(second)
+        coordinator.focus(second)
+
+        XCTAssertEqual(coordinator.commandTargetID(for: second, baseTargetID: "note-body"), "note-body")
+        XCTAssertEqual(
+            coordinator.commandTargetID(for: first, baseTargetID: "note-body"),
+            "note-body:block:\(first.uuidString)"
+        )
+    }
+
+    func testBlockSplitterGroupsTextRunsAroundElementBlocks() {
+        let audience = DocumentElementDefinition(
+            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            title: "Audience",
+            systemIcon: "person.2"
+        )
+        let offer = DocumentElementDefinition(
+            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+            title: "Offer",
+            systemIcon: "sparkles"
+        )
+        let blocks: [RichBlock] = [
+            .paragraph("Intro"),
+            RichBlock(kind: .heading2, inlines: [.text("Context")]),
+            .element(audience),
+            RichBlock(kind: .bulletList, inlines: [.text("One")]),
+            RichBlock(kind: .checklist, inlines: [.text("Done")], checked: false),
+            .element(offer)
+        ]
+
+        let regions = BlockSplitter.split(blocks)
+
+        XCTAssertEqual(regions.map(\.range), [0..<2, 2..<3, 3..<5, 5..<6])
+        XCTAssertEqual(regions.map(\.kind), [.text, .element, .text, .element])
+        XCTAssertEqual(regions[0].blocks.map(\.kind), [.paragraph, .heading2])
+        XCTAssertEqual(regions[2].blocks.map(\.kind), [.bulletList, .checklist])
+    }
+
+    func testTextRegionIdentitySurvivesParagraphSplits() {
+        let anchorID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let insertedID = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let before = BlockSplitter.split([
+            RichBlock(id: anchorID, kind: .paragraph, inlines: [.text("First")])
+        ])
+        let after = BlockSplitter.split([
+            RichBlock(id: anchorID, kind: .paragraph, inlines: [.text("First")]),
+            RichBlock(id: insertedID, kind: .paragraph, inlines: [.text("Second")])
+        ])
+
+        XCTAssertEqual(before.first?.id, after.first?.id)
+    }
+
+    func testTextRegionResolvedRangeFollowsCurrentTextRunAfterParagraphSplit() {
+        let anchorID = UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!
+        let insertedID = UUID(uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD")!
+        let staleRegion = BlockRegion(
+            kind: .text,
+            range: 0..<1,
+            blocks: [
+                RichBlock(id: anchorID, kind: .paragraph, inlines: [.text("First")])
+            ]
+        )
+        let currentBlocks = [
+            RichBlock(id: anchorID, kind: .paragraph, inlines: [.text("First")]),
+            RichBlock(id: insertedID, kind: .paragraph, inlines: [.text("Second")])
+        ]
+
+        XCTAssertEqual(
+            BlockRegionReplacement.resolvedRange(for: staleRegion, in: currentBlocks),
+            0..<2
+        )
+    }
+
+    func testTextRegionResolvedRangeStopsAtElementBoundary() {
+        let definition = DocumentElementDefinition(
+            id: UUID(uuidString: "EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEEEEEE")!,
+            title: "Insight",
+            systemIcon: "sparkles"
+        )
+        let staleRegion = BlockRegion(
+            kind: .text,
+            range: 0..<1,
+            blocks: [.paragraph("First")]
+        )
+        let currentBlocks: [RichBlock] = [
+            .paragraph("First"),
+            .paragraph("Second"),
+            .element(definition),
+            .paragraph("Third")
+        ]
+
+        XCTAssertEqual(
+            BlockRegionReplacement.resolvedRange(for: staleRegion, in: currentBlocks),
+            0..<2
+        )
+    }
+
+    func testBlockSplitterDoesNotGroupDividerImageOrElementIntoTextRegions() {
+        let definition = DocumentElementDefinition(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            title: "Insight",
+            systemIcon: "sparkles"
+        )
+        let blocks: [RichBlock] = [
+            .paragraph("Before"),
+            RichBlock(kind: .divider),
+            RichBlock(kind: .image, inlines: [
+                .image(RichImageReference(path: "images/test.png", width: 320, height: 180))
+            ]),
+            .element(definition),
+            .paragraph("After")
+        ]
+
+        let regions = BlockSplitter.split(blocks)
+
+        XCTAssertEqual(regions.map(\.range), [0..<1, 1..<2, 2..<3, 3..<4, 4..<5])
+        XCTAssertEqual(regions.map(\.kind), [.text, .unsupported, .unsupported, .element, .text])
+    }
+
+    func testBlockRegionReplacementSkipsFlushWhenExpandedBlocksAreAlreadyApplied() {
+        let paragraph = RichBlock.paragraph("Intro")
+        let element = RichBlock.element(
+            DocumentElementDefinition(
+                id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+                title: "Map",
+                systemIcon: "map"
+            ),
+            instanceTitle: "Map"
+        )
+        let trailing = RichBlock.paragraph("")
+        let blocks = [paragraph, element, trailing]
+
+        let updated = BlockRegionReplacement.replacingBlocks(
+            in: blocks,
+            range: 0..<1,
+            with: blocks
+        )
+
+        XCTAssertEqual(updated, blocks)
+    }
+
+    func testBlockRegionReplacementExpandsRegionWhenInsertionIsNotYetApplied() {
+        let paragraph = RichBlock.paragraph("Intro")
+        let element = RichBlock.element(
+            DocumentElementDefinition(
+                id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+                title: "Insight",
+                systemIcon: "sparkles"
+            ),
+            instanceTitle: "Insight"
+        )
+        let trailing = RichBlock.paragraph("")
+
+        let updated = BlockRegionReplacement.replacingBlocks(
+            in: [paragraph],
+            range: 0..<1,
+            with: [paragraph, element, trailing]
+        )
+
+        XCTAssertEqual(updated, [paragraph, element, trailing])
+    }
+
     func testCanvasPreviewUsesLazyDocumentStacksForLongNotes() {
         XCTAssertEqual(
             CosmoDocumentRendererStackPolicy.mode(
@@ -312,6 +517,20 @@ final class RichDocumentTests: XCTestCase {
             RichDocumentPersistence.loadAtomDocument(field: .body, metadata: fields.metadata, fallbackPlainText: nil),
             bodyDocument
         )
+    }
+
+    func testNoteFocusInitialDocumentsHydrateBodyFromAtomBeforeObservation() {
+        let atom = Atom.new(
+            type: .note,
+            title: "Focus title",
+            body: "Line one\nLine two"
+        )
+
+        let initialDocuments = NoteFocusInitialDocuments.from(atom: atom)
+
+        XCTAssertEqual(initialDocuments.titlePlainText, "Focus title")
+        XCTAssertEqual(initialDocuments.plainContent, "Line one\nLine two")
+        XCTAssertEqual(initialDocuments.bodyDocument.plainText, "Line one\nLine two")
     }
 
     func testAttributedSerializerRoundTripsInlineMarksAndMentionMetadata() {

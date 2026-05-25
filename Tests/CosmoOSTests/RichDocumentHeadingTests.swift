@@ -127,4 +127,39 @@ final class RichDocumentHeadingTests: XCTestCase {
         XCTAssertEqual(roundTripped.blocks.first?.heading?.isCollapsed, false)
         XCTAssertEqual(roundTripped.blocks.first?.heading?.collapsedBlocks, [])
     }
+
+    func testNestedCollapsedHeadingsPreserveHiddenContentAcrossVisibleRoundTrip() throws {
+        let parentID = UUID(uuidString: "77777777-7777-7777-7777-777777777777")!
+        let childID = UUID(uuidString: "88888888-8888-8888-8888-888888888888")!
+        let hiddenID = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
+        let document = RichDocument(blocks: [
+            RichBlock(id: parentID, kind: .heading1, inlines: [.text("Parent")]),
+            RichBlock(
+                id: childID,
+                kind: .heading2,
+                inlines: [.text("Child")],
+                heading: RichHeadingMetadata(isCollapsed: true, collapsedBlocks: [
+                    RichBlock(id: hiddenID, kind: .paragraph, inlines: [.text("Hidden child body")])
+                ])
+            ),
+            .paragraph("Visible parent body"),
+            RichBlock(kind: .heading1, inlines: [.text("Next")])
+        ])
+        let collapsedParent = RichDocumentHeadings.toggledCollapse(headingID: parentID, in: document)
+
+        let attributed = RichDocumentSerializer.attributedString(from: collapsedParent)
+
+        XCTAssertFalse(attributed.string.contains("Child"))
+        XCTAssertFalse(attributed.string.contains("Hidden child body"))
+
+        let roundTripped = RichDocumentSerializer.document(from: attributed)
+        XCTAssertEqual(roundTripped.plainText, document.plainText)
+        XCTAssertTrue(roundTripped.containsCollapsedHiddenContent)
+
+        let expandedParent = RichDocumentHeadings.toggledCollapse(headingID: parentID, in: roundTripped)
+        let child = try XCTUnwrap(expandedParent.blocks.first { $0.id == childID })
+        XCTAssertEqual(child.heading?.isCollapsed, true)
+        XCTAssertEqual(child.heading?.collapsedBlocks.first?.id, hiddenID)
+        XCTAssertEqual(child.heading?.collapsedBlocks.first?.plainInlineText, "Hidden child body")
+    }
 }

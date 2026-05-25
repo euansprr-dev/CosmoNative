@@ -95,7 +95,7 @@ struct IdeaFocusModeView: View {
 
     var body: some View {
         ZStack {
-            DS.bg.ignoresSafeArea()
+            DS.focusImmersiveBackground.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 atelierHeader
@@ -122,6 +122,7 @@ struct IdeaFocusModeView: View {
                 clearManuscriptEditingFocus()
             }
         }
+        .focusImmersiveEntryTransition()
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
@@ -185,7 +186,7 @@ struct IdeaFocusModeView: View {
             }
         }
         .frame(width: 720, height: 640)
-        .background(DS.bg)
+        .background(DS.focusImmersiveBackground)
     }
 
     @ViewBuilder
@@ -200,7 +201,7 @@ struct IdeaFocusModeView: View {
             .padding(DS.space24)
         }
         .frame(width: 720, height: 640)
-        .background(DS.bg)
+        .background(DS.focusImmersiveBackground)
     }
 
     @ViewBuilder
@@ -234,7 +235,7 @@ struct IdeaFocusModeView: View {
             }
         }
         .frame(width: 560, height: 540)
-        .background(DS.bg)
+        .background(DS.focusImmersiveBackground)
     }
 
     private func atelierFrameworkRow(_ rec: ArcRecommendation) -> some View {
@@ -414,14 +415,14 @@ extension IdeaFocusModeView {
                     .foregroundStyle(DS.inkFaded)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .medium))
-                    .foregroundStyle(DS.inkFaded.opacity(0.6))
+                    .foregroundStyle(DS.focusImmersiveTextMuted.opacity(0.75))
             }
             .contentShape(Rectangle())
         } else {
             Text("no client")
                 .font(DS.dateSerif)
                 .italic()
-                .foregroundStyle(DS.inkFaded.opacity(0.7))
+                .foregroundStyle(DS.focusImmersiveTextMuted.opacity(0.8))
                 .contentShape(Rectangle())
         }
     }
@@ -507,7 +508,7 @@ extension IdeaFocusModeView {
             }
             .font(DS.dateSerif)
             .italic()
-            .foregroundStyle(DS.inkFaded)
+            .foregroundStyle(DS.focusImmersiveTextMuted)
 
             Rectangle()
                 .fill(DS.sepiaSubtle)
@@ -524,9 +525,10 @@ extension IdeaFocusModeView {
     private var formattedCreatedDate: String {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let date = iso.date(from: atom.createdAt)
-            ?? ISO8601DateFormatter().date(from: atom.createdAt)
-            ?? Date()
+        guard let date = iso.date(from: viewModel.idea.createdAt)
+            ?? ISO8601DateFormatter().date(from: viewModel.idea.createdAt) else {
+            return "undated"
+        }
         let formatter = DateFormatter()
         formatter.dateFormat = "MMMM d"
         return formatter.string(from: date).lowercased()
@@ -543,7 +545,7 @@ extension IdeaFocusModeView {
                     Text("What's the angle?")
                         .font(.system(size: 17, weight: .regular, design: .serif))
                         .italic()
-                        .foregroundStyle(DS.inkFaded.opacity(0.6))
+                        .foregroundStyle(DS.focusImmersiveTextMuted.opacity(0.85))
                         .padding(.top, 8)
                         .padding(.leading, 6)
                         .allowsHitTesting(false)

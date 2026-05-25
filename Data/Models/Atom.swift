@@ -2044,6 +2044,7 @@ struct IdeaMetadata: Codable, Sendable {
     var contentFormat: ContentFormat?
     var platform: IdeaPlatform?
     var clientUUID: String?
+    var clientName: String?
     var accountHandle: String?
     var statusChangedAt: String?
     var captureSource: String?
@@ -2938,7 +2939,7 @@ extension Atom {
             status: meta?.ideaStatus ?? .spark,
             contentFormat: meta?.contentFormat,
             platform: meta?.platform,
-            clientName: clientName,
+            clientName: clientName ?? meta?.clientName,
             clientUUID: meta?.clientUUID,
             tags: meta?.tags ?? [],
             insightScore: meta?.insightScore,

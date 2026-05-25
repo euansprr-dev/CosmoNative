@@ -28,6 +28,34 @@ final class DocumentPaperThemeTests: XCTestCase {
         assertColor(DS.documentBorderSubtle, equalsHex: "E8E8EC")
     }
 
+    func testBlackMonoCanvasDocumentsUseSoftWhitePaperWithDarkInk() throws {
+        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
+        DS.palette = theme.palette
+
+        assertColor(DS.canvasDocumentSurface, equalsHex: "F7F7F5")
+        assertColor(DS.canvasDocumentText, equalsHex: "1A1A1F")
+        assertColor(DS.canvasDocumentBorder, equalsHex: "E8E8EC")
+    }
+
+    func testBlackMonoFocusEditorUsesDarkModeInkWithoutChangingPaperTokens() throws {
+        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
+        DS.palette = theme.palette
+
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("Immersive text")])
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(
+            from: document,
+            fontSize: 16,
+            darkMode: true
+        )
+
+        let color = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        assertColor(color, equalsHex: "FFFFFF")
+        assertColor(DS.documentText, equalsHex: "1A1A1F")
+    }
+
     func testBlackMonoKeepsVellumPaperWhiteWithDarkInk() throws {
         let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
         DS.palette = theme.palette

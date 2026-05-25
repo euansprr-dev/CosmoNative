@@ -54,10 +54,12 @@ struct RichTextEditor: View {
     var darkMode: Bool = false  // Dark mode for Thinkspace blocks
     var overrideTextColor: NSColor? = nil
     var overrideFont: NSFont? = nil
+    var headingDisclosureColor: NSColor? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowSelectionMenu: Bool = true
     var allowImages: Bool = true
+    var rendersElementChrome: Bool = true
     var singleLine: Bool = false
     var titleConfiguration: TitleEditorConfiguration? = nil
     var baseFontWeight: NSFont.Weight = .regular
@@ -78,6 +80,7 @@ struct RichTextEditor: View {
     var onActivate: (() -> Void)? = nil
     var onDeactivate: (() -> Void)? = nil
     var onCommit: (() -> Void)? = nil
+    var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
     var onPlainTextDidChange: ((String) -> Void)? = nil
     var autoFocus: Bool = false
 
@@ -117,10 +120,12 @@ struct RichTextEditor: View {
         darkMode: Bool = false,
         overrideTextColor: NSColor? = nil,
         overrideFont: NSFont? = nil,
+        headingDisclosureColor: NSColor? = nil,
         allowSlashCommands: Bool = true,
         allowMentions: Bool = true,
         allowSelectionMenu: Bool = true,
         allowImages: Bool = true,
+        rendersElementChrome: Bool = true,
         singleLine: Bool = false,
         titleConfiguration: TitleEditorConfiguration? = nil,
         baseFontWeight: NSFont.Weight = .regular,
@@ -141,6 +146,7 @@ struct RichTextEditor: View {
         onActivate: (() -> Void)? = nil,
         onDeactivate: (() -> Void)? = nil,
         onCommit: (() -> Void)? = nil,
+        onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil,
         onPlainTextDidChange: ((String) -> Void)? = nil,
         autoFocus: Bool = false,
         onSave: ((NSAttributedString) -> Void)? = nil
@@ -153,10 +159,12 @@ struct RichTextEditor: View {
         self.darkMode = darkMode
         self.overrideTextColor = overrideTextColor
         self.overrideFont = overrideFont
+        self.headingDisclosureColor = headingDisclosureColor
         self.allowSlashCommands = allowSlashCommands
         self.allowMentions = allowMentions
         self.allowSelectionMenu = allowSelectionMenu
         self.allowImages = allowImages
+        self.rendersElementChrome = rendersElementChrome
         self.singleLine = singleLine
         self.titleConfiguration = titleConfiguration
         self.baseFontWeight = baseFontWeight
@@ -177,6 +185,7 @@ struct RichTextEditor: View {
         self.onActivate = onActivate
         self.onDeactivate = onDeactivate
         self.onCommit = onCommit
+        self.onBoundaryCommand = onBoundaryCommand
         self.onPlainTextDidChange = onPlainTextDidChange
         self.autoFocus = autoFocus
         self.onSave = onSave
@@ -195,10 +204,12 @@ struct RichTextEditor: View {
                 darkMode: darkMode,
                 overrideTextColor: overrideTextColor,
                 overrideFont: overrideFont,
+                headingDisclosureColor: headingDisclosureColor,
                 allowSlashCommands: allowSlashCommands,
                 allowMentions: allowMentions,
                 allowImages: allowImages,
                 allowSelectionMenu: allowSelectionMenu,
+                rendersElementChrome: rendersElementChrome,
                 singleLine: singleLine,
                 titleConfiguration: titleConfiguration,
                 baseFontWeight: baseFontWeight,
@@ -248,6 +259,7 @@ struct RichTextEditor: View {
                 onActivate: onActivate,
                 onDeactivate: onDeactivate,
                 onCommit: onCommit,
+                onBoundaryCommand: onBoundaryCommand,
                 onPlainTextDidChange: onPlainTextDidChange
             )
             .frame(maxWidth: .infinity)
@@ -552,24 +564,32 @@ struct RichTextEditor: View {
     private func insertSlashCommand(_ command: SlashCommand) {
         // Delegate all text manipulation to TextKitCoordinator to ensure
         // atomic operations on the text storage and avoid binding desync.
+        var userInfo: [String: Any] = ["command": command]
+        if let editorTargetID, !editorTargetID.isEmpty {
+            userInfo["targetEditorID"] = editorTargetID
+        }
         NotificationCenter.default.post(
             name: .performSlashCommand,
             object: nil,
-            userInfo: ["command": command]
+            userInfo: userInfo
         )
     }
 
     // MARK: - Mention Insertion
     private func performMentionSelection(_ entity: MentionEntity) {
+        var userInfo: [String: Any] = [
+            "entityType": entity.type.rawValue,
+            "entityId": entity.entityID as Any,
+            "entityUUID": entity.uuid,
+            "title": entity.title
+        ]
+        if let editorTargetID, !editorTargetID.isEmpty {
+            userInfo["targetEditorID"] = editorTargetID
+        }
         NotificationCenter.default.post(
             name: .performMentionSelection,
             object: nil,
-            userInfo: [
-                "entityType": entity.type.rawValue,
-                "entityId": entity.entityID as Any,
-                "entityUUID": entity.uuid,
-                "title": entity.title
-            ]
+            userInfo: userInfo
         )
     }
 }

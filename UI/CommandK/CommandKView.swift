@@ -172,7 +172,6 @@ public struct CommandKView: View {
             Image(systemName: searchIcon)
                 .font(DS.title2)
                 .foregroundStyle(isSearchFocused ? DS.accent : DS.textSecondary)
-                .symbolEffect(.pulse, isActive: viewModel.currentPhase == .searching)
                 .frame(width: 22)
 
             // Text field
@@ -211,12 +210,6 @@ public struct CommandKView: View {
                 commandKeyBadge
             }
 
-            // Loading spinner
-            if viewModel.currentPhase == .searching {
-                ProgressView()
-                    .scaleEffect(0.7)
-                    .tint(DS.textSecondary)
-            }
         }
         .padding(.horizontal, DS.space20)
         .frame(width: searchBarWidth(for: geometry), height: CommandKMetrics.searchBarHeight)

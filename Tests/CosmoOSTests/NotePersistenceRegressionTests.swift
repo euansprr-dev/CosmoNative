@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import CosmoOS
 
@@ -118,6 +119,44 @@ final class NotePersistenceRegressionTests: XCTestCase {
             current: 120,
             next: 0
         ))
+    }
+
+    func testNonScrollingTextEditorRejectsProgrammaticClipScrolling() {
+        let scrollView = CosmoTextView.scrollableCosmoTextView()
+        scrollView.forwardsScrollEvents = true
+        scrollView.frame = NSRect(x: 0, y: 0, width: 320, height: 120)
+        scrollView.documentView?.frame = NSRect(x: 0, y: 0, width: 320, height: 600)
+
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 80))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+
+        XCTAssertEqual(scrollView.contentView.bounds.origin, .zero)
+    }
+
+    func testScrollingTextEditorAllowsProgrammaticClipScrolling() {
+        let scrollView = CosmoTextView.scrollableCosmoTextView()
+        scrollView.forwardsScrollEvents = false
+        scrollView.frame = NSRect(x: 0, y: 0, width: 320, height: 120)
+        scrollView.documentView?.frame = NSRect(x: 0, y: 0, width: 320, height: 600)
+
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 80))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+
+        XCTAssertEqual(scrollView.contentView.bounds.origin.y, 80)
+    }
+
+    func testNonScrollingTextEditorRejectsAnimatedClipScrolling() {
+        let scrollView = CosmoTextView.scrollableCosmoTextView()
+        scrollView.forwardsScrollEvents = true
+        scrollView.frame = NSRect(x: 0, y: 0, width: 320, height: 120)
+        scrollView.documentView?.frame = NSRect(x: 0, y: 0, width: 320, height: 600)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: 80))
+        }
+
+        XCTAssertEqual(scrollView.contentView.bounds.origin, .zero)
     }
 
     func testRelinkingBlockToSavedAtomPreservesCanvasIdentityAndUsesAtomContent() {

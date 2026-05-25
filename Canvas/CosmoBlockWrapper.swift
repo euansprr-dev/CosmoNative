@@ -299,7 +299,7 @@ struct CosmoBlockWrapper<Content: View>: View {
     private var baseSurface: Color {
         switch surfaceStyle {
         case .vellum: return DS.vellum
-        case .crisp:  return DS.documentSurface
+        case .crisp:  return DS.canvasDocumentSurface
         }
     }
 

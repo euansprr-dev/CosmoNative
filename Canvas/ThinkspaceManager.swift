@@ -550,15 +550,7 @@ class ThinkspaceManager: ObservableObject {
     /// Delete a Thinkspace (soft delete)
     func delete(_ thinkspace: Thinkspace) async {
         do {
-            guard var atom = try await repository.fetch(uuid: thinkspace.id) else {
-                print("❌ Thinkspace not found for deletion")
-                return
-            }
-
-            atom.isDeleted = true
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
-
-            try await repository.update(atom)
+            try await repository.delete(uuid: thinkspace.id)
             try? await InquiryRepository.shared.handleThinkspaceDeleted(thinkspace.id)
             await loadThinkspaces()
 
@@ -576,15 +568,7 @@ class ThinkspaceManager: ObservableObject {
     /// Soft delete a Thinkspace by ID
     func softDelete(_ thinkspaceId: String) async {
         do {
-            guard var atom = try await repository.fetch(uuid: thinkspaceId) else {
-                print("❌ Thinkspace not found for soft deletion")
-                return
-            }
-
-            atom.isDeleted = true
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
-
-            try await repository.update(atom)
+            try await repository.delete(uuid: thinkspaceId)
             await loadThinkspaces()
 
             // Switch to default if deleted current

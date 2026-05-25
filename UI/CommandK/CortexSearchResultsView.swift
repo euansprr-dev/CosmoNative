@@ -55,10 +55,9 @@ struct CortexSearchResultsView: View {
                         }
                     }
 
-                    if viewModel.currentPhase == .searching {
-                        loadingState
-                    } else if viewModel.primaryAction == nil,
-                              viewModel.unifiedGroupedResults.allSatisfy({ $0.results.isEmpty }) && viewModel.currentPhase == .complete {
+                    if viewModel.primaryAction == nil,
+                       viewModel.unifiedGroupedResults.allSatisfy({ $0.results.isEmpty }),
+                       viewModel.searchFeedback.matches(query: viewModel.query) {
                         emptyState
                     }
                 }
@@ -72,19 +71,6 @@ struct CortexSearchResultsView: View {
                 }
             }
         }
-    }
-
-    private var loadingState: some View {
-        VStack(spacing: DS.space8) {
-            ProgressView()
-                .scaleEffect(0.8)
-                .tint(DS.textMuted)
-            Text("Searching...")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, DS.space32)
     }
 
     private var emptyState: some View {

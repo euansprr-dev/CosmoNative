@@ -24,6 +24,12 @@ enum DS {
         palette.name == "Black Mono"
     }
 
+    /// Full-screen focus modes in Black Mono should feel like immersive dark
+    /// rooms, while document cards and previews keep stable paper styling.
+    static var usesImmersiveFocusAppearance: Bool {
+        usesBlackMonoPaper
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // SURFACES — Dynamic per theme
     // ═══════════════════════════════════════════════════════════════
@@ -138,6 +144,46 @@ enum DS {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // FOCUS MODE — Immersive full-screen chrome for Black Mono.
+    // These are intentionally separate from document paper tokens.
+    // ═══════════════════════════════════════════════════════════════
+
+    static var focusImmersiveBackground: Color {
+        if usesBlackMonoPaper { return palette.bg }
+        return documentBackground
+    }
+
+    static var focusImmersiveSurface: Color {
+        if usesBlackMonoPaper { return palette.surfaceElevated }
+        return documentSurface
+    }
+
+    static var focusImmersiveSurfaceElevated: Color {
+        if usesBlackMonoPaper { return palette.surfaceCard }
+        return documentSurface
+    }
+
+    static var focusImmersiveText: Color {
+        if usesBlackMonoPaper { return palette.text }
+        return documentText
+    }
+
+    static var focusImmersiveTextSecondary: Color {
+        if usesBlackMonoPaper { return palette.textSecondary }
+        return documentTextSecondary
+    }
+
+    static var focusImmersiveTextMuted: Color {
+        if usesBlackMonoPaper { return palette.textMuted }
+        return documentTextMuted
+    }
+
+    static var focusImmersiveBorder: Color {
+        if usesBlackMonoPaper { return palette.border }
+        return documentBorder
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // DOCUMENT PAPER — Stable light surfaces for notes, content drafts,
     // connection manuscripts, and other long-form reading/writing areas.
     // Dark app chrome can change, but paper should remain paper.
@@ -151,6 +197,21 @@ enum DS {
     static var documentSurface: Color {
         if usesBlackMonoPaper { return palette.vellum }
         return palette.isDark ? Color(hex: "FFFFFF") : palette.surfaceElevated
+    }
+
+    /// Canvas document cards stay paper-like in Black Mono, but use a softened
+    /// near-white to avoid glowing against the black dotted canvas.
+    static var canvasDocumentSurface: Color {
+        if usesBlackMonoPaper { return Color(hex: "F7F7F5") }
+        return documentSurface
+    }
+
+    static var canvasDocumentText: Color {
+        documentText
+    }
+
+    static var canvasDocumentBorder: Color {
+        documentBorderSubtle
     }
 
     static var documentSurfaceHover: Color {
@@ -767,6 +828,39 @@ struct DSPrimaryButtonStyle: ButtonStyle {
             .clipShape(.rect(cornerRadius: DS.radiusSmall))
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.spring(duration: 0.2, bounce: 0.0), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Focus Mode Entry Transition
+
+private struct FocusImmersiveEntryTransitionModifier: ViewModifier {
+    @State private var showScrim = true
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if DS.usesImmersiveFocusAppearance && showScrim {
+                    DS.canvasDocumentSurface
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
+            .onAppear {
+                guard DS.usesImmersiveFocusAppearance else {
+                    showScrim = false
+                    return
+                }
+                withAnimation(.easeOut(duration: 0.24)) {
+                    showScrim = false
+                }
+            }
+    }
+}
+
+extension View {
+    func focusImmersiveEntryTransition() -> some View {
+        modifier(FocusImmersiveEntryTransitionModifier())
     }
 }
 

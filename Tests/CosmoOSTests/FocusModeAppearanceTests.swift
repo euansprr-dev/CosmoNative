@@ -67,7 +67,6 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertTrue(premiumChromeSource.contains("struct FocusModeInspectorSection"))
         XCTAssertTrue(premiumChromeSource.contains("struct FocusModeMediaWell"))
         XCTAssertTrue(ideaFocusSource.contains("FocusModeInspectorSection"))
-        XCTAssertTrue(swipeFocusSource.contains("FocusModeMediaWell"))
         XCTAssertTrue(swipeFocusSource.contains("FocusModeInspectorSection"))
     }
 
@@ -85,6 +84,27 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertTrue(swipeFocusSource.contains("private func sourceAndTeardownRail(atom: Atom) -> some View"))
         XCTAssertTrue(swipeFocusSource.contains("private struct SwipeStudyTeardownShell<Source: View, Transcript: View>"))
         XCTAssertFalse(swipeFocusSource.contains("@ViewBuilder marginalia: () -> Marginalia"))
+    }
+
+    func testSwipeSourcePreviewAvoidsDoubleContainerChrome() throws {
+        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+
+        XCTAssertTrue(swipeFocusSource.contains("sourcePreviewCard(atom: atom)"))
+        XCTAssertFalse(swipeFocusSource.contains("FocusModeMediaWell(maxWidth: isPaneContext ? 360 : 460)"))
+    }
+
+    func testSwipeTeardownStartsWithInsightStructureAndPhysics() throws {
+        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+
+        XCTAssertFalse(swipeFocusSource.contains("HookAnalysisCard(analysis: analysis)"))
+        XCTAssertFalse(swipeFocusSource.contains("MarginaliaLabel(\"TEARDOWN\")"))
+
+        let insightRange = try XCTUnwrap(swipeFocusSource.range(of: "marginaliaInsight(insight)"))
+        let structureRange = try XCTUnwrap(swipeFocusSource.range(of: "StructureMapView("))
+        let physicsRange = try XCTUnwrap(swipeFocusSource.range(of: "ContentPhysicsSection(profile: physicsProfile)"))
+
+        XCTAssertLessThan(insightRange.lowerBound, structureRange.lowerBound)
+        XCTAssertLessThan(structureRange.lowerBound, physicsRange.lowerBound)
     }
 
     private func source(_ relativePath: String) throws -> String {

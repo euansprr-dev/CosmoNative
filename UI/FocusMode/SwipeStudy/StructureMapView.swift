@@ -9,6 +9,7 @@ import SwiftUI
 struct StructureMapView: View {
     let frameworkType: SwipeFrameworkType?
     let sections: [SwipeSection]
+    var showsHeader: Bool = true
     var onSectionTap: ((Double) -> Void)? = nil
 
     @State private var appeared: [String: Bool] = [:]
@@ -26,7 +27,9 @@ struct StructureMapView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            MarginaliaLabel("STRUCTURE")
+            if showsHeader {
+                MarginaliaLabel("STRUCTURE")
+            }
 
             if validSections.isEmpty {
                 placeholderView

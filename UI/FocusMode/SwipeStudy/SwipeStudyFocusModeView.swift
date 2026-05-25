@@ -437,15 +437,18 @@ struct SwipeStudyFocusModeView: View {
         VStack(alignment: .leading, spacing: DS.space12) {
             MarginaliaLabel("SOURCE")
 
-            FocusModeMediaWell(maxWidth: isPaneContext ? 360 : 460) {
-                contentDisplay(atom: atom)
-                    .frame(maxWidth: .infinity, alignment: .center)
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
+            sourcePreviewCard(atom: atom)
 
             sourceMetadataLine(atom: atom)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func sourcePreviewCard(atom: Atom) -> some View {
+        contentDisplay(atom: atom)
+            .frame(maxWidth: isPaneContext ? 360 : 460, alignment: .center)
+            .shadow(color: Color.black.opacity(0.09), radius: 20, x: 0, y: 14)
+            .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private func sourceAndTeardownRail(atom: Atom) -> some View {
@@ -530,6 +533,14 @@ struct SwipeStudyFocusModeView: View {
                 .accessibilityLabel("Open source")
             }
         }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space8)
+        .background(DS.glassCardFill.opacity(0.42), in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(DS.glassBorder.opacity(0.48), lineWidth: 0.5)
+        }
+        .shadow(color: Color.black.opacity(0.035), radius: 8, x: 0, y: 5)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -1161,8 +1172,15 @@ struct SwipeStudyFocusModeView: View {
                 }
             }
         }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space8)
+        .background(DS.glassCardFill.opacity(0.42), in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(DS.glassBorder.opacity(0.48), lineWidth: 0.5)
+        }
+        .shadow(color: Color.black.opacity(0.035), radius: 8, x: 0, y: 5)
         .frame(maxWidth: isCarouselContent ? 400 : 320)
-        .padding(.horizontal, 8)
     }
 
     // MARK: - IG Player Methods
@@ -3039,40 +3057,45 @@ struct SwipeStudyFocusModeView: View {
     // MARK: - Right Panel
 
     private var rightPanel: some View {
-        FocusModeGlassRail(cornerRadius: 24, contentPadding: DS.space12) {
-            VStack(alignment: .leading, spacing: DS.space20) {
-                MarginaliaLabel("TEARDOWN")
+        VStack(alignment: .leading, spacing: DS.space16) {
+            if isAnalyzing {
+                analysisShimmer
+            } else if let analysis = analysis {
+                if let insight = analysis.keyInsight, !insight.isEmpty {
+                    marginaliaInsight(insight)
+                } else if isDeepAnalyzing {
+                    marginaliaAnalyzingState
+                } else {
+                    emptyAnalysisCard(
+                        title: "KEY INSIGHTS",
+                        icon: "sparkles",
+                        message: "Run a teardown to extract the first useful insight"
+                    )
+                }
 
-                if isAnalyzing {
-                    analysisShimmer
-                } else if let analysis = analysis {
-                    HookAnalysisCard(analysis: analysis)
-
-                    if let insight = analysis.keyInsight, !insight.isEmpty {
-                        marginaliaInsight(insight)
-                    } else if isDeepAnalyzing {
-                        marginaliaAnalyzingState
-                    }
-
-                    if let sections = analysis.sections, !sections.isEmpty {
+                if let sections = analysis.sections, !sections.isEmpty {
+                    FocusModeInspectorSection("STRUCTURE") {
                         StructureMapView(
                             frameworkType: analysis.frameworkType,
                             sections: sections,
+                            showsHeader: false,
                             onSectionTap: { position in
                                 let timestamp = position * videoDuration
                                 currentTimestamp = timestamp
                                 if !isPlayerActive { isPlayerActive = true }
                             }
                         )
-                    } else {
-                        emptyAnalysisCard(
-                            title: "STRUCTURE",
-                            icon: "rectangle.3.group",
-                            message: "Transcript required for structural breakdown"
-                        )
                     }
+                } else {
+                    emptyAnalysisCard(
+                        title: "STRUCTURE",
+                        icon: "rectangle.3.group",
+                        message: "Transcript required for structural breakdown"
+                    )
+                }
 
-                    if let physicsProfile = currentAtom?.bestPhysicsProfile {
+                if let physicsProfile = currentAtom?.bestPhysicsProfile {
+                    FocusModeInspectorSection("PHYSICS") {
                         ContentPhysicsSection(profile: physicsProfile)
                             .environment(\.codexLookup, codexLookup)
 
@@ -3081,52 +3104,52 @@ struct SwipeStudyFocusModeView: View {
                         }
 
                         reExtractProfileButton
-                    } else {
-                        generateCodexProfileCard
-                    }
-
-                    TaxonomySection(
-                        analysis: Binding(
-                            get: { self.analysis },
-                            set: { self.analysis = $0 }
-                        ),
-                        currentAtom: Binding(
-                            get: { self.currentAtom },
-                            set: { self.currentAtom = $0 }
-                        ),
-                        isReclassifying: $isReclassifying,
-                        reclassifySuggestion: $reclassifySuggestion,
-                        onReclassify: { reclassifySwipe() },
-                        onAcceptReclassification: { acceptReclassification() },
-                        onRejectReclassification: { rejectReclassification() },
-                        onSaveTaxonomyChange: { saveTaxonomyOverride() },
-                        onOpenCreatorProfile: { creatorUUID in
-                            NotificationCenter.default.post(
-                                name: Notification.Name("openCreatorProfile"),
-                                object: nil,
-                                userInfo: ["creatorUUID": creatorUUID]
-                            )
-                        },
-                        onLinkCreator: { _, _ in
-                            saveTaxonomyOverride()
-                        }
-                    )
-
-                    SimilarSwipesSection(
-                        currentHookType: analysis.hookType,
-                        currentFingerprint: analysis.fingerprint,
-                        currentEntityId: atom.id ?? -1,
-                        onSwipeTap: { newEntityId in
-                            reloadWithEntity(newEntityId)
-                        }
-                    )
-
-                    if isInstagramSource {
-                        instagramAnalysisPlaceholder
                     }
                 } else {
-                    noAnalysisPlaceholder
+                    generateCodexProfileCard
                 }
+
+                TaxonomySection(
+                    analysis: Binding(
+                        get: { self.analysis },
+                        set: { self.analysis = $0 }
+                    ),
+                    currentAtom: Binding(
+                        get: { self.currentAtom },
+                        set: { self.currentAtom = $0 }
+                    ),
+                    isReclassifying: $isReclassifying,
+                    reclassifySuggestion: $reclassifySuggestion,
+                    onReclassify: { reclassifySwipe() },
+                    onAcceptReclassification: { acceptReclassification() },
+                    onRejectReclassification: { rejectReclassification() },
+                    onSaveTaxonomyChange: { saveTaxonomyOverride() },
+                    onOpenCreatorProfile: { creatorUUID in
+                        NotificationCenter.default.post(
+                            name: Notification.Name("openCreatorProfile"),
+                            object: nil,
+                            userInfo: ["creatorUUID": creatorUUID]
+                        )
+                    },
+                    onLinkCreator: { _, _ in
+                        saveTaxonomyOverride()
+                    }
+                )
+
+                SimilarSwipesSection(
+                    currentHookType: analysis.hookType,
+                    currentFingerprint: analysis.fingerprint,
+                    currentEntityId: atom.id ?? -1,
+                    onSwipeTap: { newEntityId in
+                        reloadWithEntity(newEntityId)
+                    }
+                )
+
+                if isInstagramSource {
+                    instagramAnalysisPlaceholder
+                }
+            } else {
+                noAnalysisPlaceholder
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -3801,9 +3824,9 @@ struct SwipeStudyFocusModeView: View {
     // MARK: - Analysis Shimmer Skeleton
 
     private var analysisShimmer: some View {
-        VStack(spacing: DS.space24) {
+        VStack(spacing: DS.space16) {
             VStack(alignment: .leading, spacing: 12) {
-                MarginaliaLabel("HOOK")
+                MarginaliaLabel("KEY INSIGHTS")
                 ShimmerLine(width: 0.75, height: 18)
                 HStack(spacing: 8) {
                     ShimmerPill(width: 90)

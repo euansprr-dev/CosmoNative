@@ -23,6 +23,8 @@ struct TextRegionView: View {
     var onBoundaryCommand: ((EditorBoundaryCommand, BlockRegion) -> Bool)?
     var onDocumentChange: ((RichDocument, String) -> Void)?
 
+    @State private var structuralRefreshID = UUID()
+
     var body: some View {
         CosmoDocumentEditor(
             document: regionDocumentBinding,
@@ -47,6 +49,7 @@ struct TextRegionView: View {
             },
             autoFocus: autoFocus || focusCoordinator.focusedBlockID == region.focusID
         )
+        .id(structuralRefreshID)
         .onAppear { focusCoordinator.register(region.focusID) }
         .onDisappear { focusCoordinator.unregister(region.focusID) }
     }
@@ -67,6 +70,7 @@ struct TextRegionView: View {
         let insertedElementID = firstInsertedElementID(in: updatedRegion.blocks, comparedTo: existingBlocks)
         let mergedDocument = replaceRegionBlocks(with: updatedRegion.blocks)
         if let insertedElementID {
+            structuralRefreshID = UUID()
             focusCoordinator.focus(insertedElementID)
         }
         onDocumentChange?(mergedDocument, mergedDocument.plainText)

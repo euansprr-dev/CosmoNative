@@ -122,6 +122,13 @@ final class ThemePaletteTests: XCTestCase {
         assertColor(DS.focusImmersiveText, equalsHex: "1F2024")
     }
 
+    func testSwipeLibraryBackgroundMatchesCommandCenterRootInCodexMono() {
+        DS.palette = CodexMonoPalette()
+
+        assertColor(DS.swipeLibraryBackground, equalsHex: "FDFDFC")
+        assertColor(DS.bg, equalsHex: "FDFDFC")
+    }
+
     func testBlackMonoInvertsMonoChromeToBlackAndWhite() throws {
         let palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
 
@@ -188,6 +195,13 @@ final class ThemePaletteTests: XCTestCase {
 
         assertColor(DS.documentSepiaSubtle, equalsHex: "F5F4F0")
         assertColor(DS.documentSepiaBorder, equalsHex: "E8E8EC")
+    }
+
+    func testSwipeLibraryBackgroundMatchesCommandCenterRootInBlackMono() throws {
+        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+
+        assertColor(DS.swipeLibraryBackground, equalsHex: "000000")
+        assertColor(DS.bg, equalsHex: "000000")
     }
 
     func testBlackMonoKeepsCanvasClustersBrightLikeLightMono() throws {

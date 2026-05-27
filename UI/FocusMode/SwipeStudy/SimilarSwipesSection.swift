@@ -17,37 +17,63 @@ struct SimilarSwipesSection: View {
     @State private var patternFormula: PatternFormula?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            MarginaliaLabel("PATTERNS")
+        VStack(alignment: .leading, spacing: DS.space16) {
+            FocusModeInspectorSection("PATTERNS") {
+                patternsContent
+            }
 
-            if !hasLoaded {
-                VStack(alignment: .leading, spacing: DS.space8) {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(DS.sepiaSubtle)
-                        .frame(width: 180, height: 12)
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(DS.sepiaSubtle.opacity(0.7))
-                        .frame(width: 124, height: 12)
-                }
-                .padding(.vertical, DS.space8)
-            } else if similarSwipes.isEmpty {
-                placeholderView
-            } else {
-                if let formula = patternFormula {
-                    patternFormulaCard(formula)
-                }
-
-                scrollContent
+            FocusModeInspectorSection("RELATED") {
+                relatedContent
             }
         }
         .onAppear { loadSimilarSwipes() }
+    }
+
+    // MARK: - Section Content
+
+    @ViewBuilder
+    private var patternsContent: some View {
+        if !hasLoaded {
+            loadingLines
+        } else if let formula = patternFormula {
+            patternFormulaCard(formula)
+        } else {
+            subtleEmptyState(
+                icon: "sparkles.rectangle.stack",
+                text: "No repeatable formula yet"
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var relatedContent: some View {
+        if !hasLoaded {
+            loadingLines
+        } else if similarSwipes.isEmpty {
+            placeholderView
+        } else {
+            scrollContent
+        }
+    }
+
+    private var loadingLines: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(DS.sepiaSubtle)
+                .frame(width: 180, height: 12)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(DS.sepiaSubtle.opacity(0.7))
+                .frame(width: 124, height: 12)
+        }
+        .padding(.vertical, DS.space6)
+        .redacted(reason: .placeholder)
     }
 
     // MARK: - Scroll Content
 
     private var scrollContent: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            HStack(spacing: DS.space10) {
                 ForEach(similarSwipes) { match in
                     Button {
                         onSwipeTap(match.item.entityId)
@@ -64,68 +90,88 @@ struct SimilarSwipesSection: View {
 
     private func similarCard(_ match: SimilarSwipeMatch) -> some View {
         let item = match.item
-        return VStack(alignment: .leading, spacing: 6) {
-            // Thumbnail area
-            ZStack {
-                if let thumbUrl = item.thumbnailUrl, let url = URL(string: thumbUrl) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        default:
-                            cardPlaceholder
-                        }
-                    }
-                } else {
-                    cardPlaceholder
-                }
-            }
-            .frame(width: 140, height: 50)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+        return VStack(alignment: .leading, spacing: DS.space8) {
+            thumbnailWell(item: item)
 
-            // Title
             Text(item.title)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(DS.text)
-                .lineLimit(1)
-                .frame(width: 140, alignment: .leading)
+                .lineLimit(2)
+                .frame(width: 148, height: 32, alignment: .topLeading)
 
-            // Hook type pill + similarity score
             HStack(spacing: 6) {
                 if let hookType = item.hookType {
-                    Text(hookType.displayName)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(hookType.color)
+                    miniPill(hookType.displayName, color: hookType.color)
                 }
 
                 Spacer()
 
                 if let similarity = match.similarity {
-                    Text("\(Int(similarity * 100))%")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(similarityColor(similarity))
+                    scoreChip("\(Int(similarity * 100))%", color: similarityColor(similarity))
                 } else if let score = item.hookScore {
-                    Text(String(format: "%.1f", score))
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(item.scoreColor)
+                    scoreChip(String(format: "%.1f", score), color: item.scoreColor)
                 }
             }
-            .frame(width: 140)
+            .frame(width: 148)
         }
-        .padding(.vertical, DS.space4)
-        .frame(width: 156, height: 110)
+        .frame(width: 164, height: 136)
+        .contentShape(.rect(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private func thumbnailWell(item: SwipeGalleryItem) -> some View {
+        ZStack {
+            if let thumbUrl = item.thumbnailUrl, let url = URL(string: thumbUrl) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    default:
+                        cardPlaceholder
+                    }
+                }
+            } else {
+                cardPlaceholder
+            }
+        }
+        .frame(width: 148, height: 58)
+        .clipShape(.rect(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DS.glassBorder.opacity(0.55), lineWidth: 0.5)
+        }
+        .shadow(color: Color.black.opacity(0.035), radius: 6, x: 0, y: 3)
     }
 
     private var cardPlaceholder: some View {
-        Rectangle()
-            .fill(DS.vellumDeep)
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(DS.glassCardFill.opacity(0.48))
             .overlay(
                 Image(systemName: "doc.fill")
                     .font(.system(size: 14))
                     .foregroundStyle(DS.inkFaded)
             )
+    }
+
+    private func miniPill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.10), in: Capsule())
+    }
+
+    private func scoreChip(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(DS.glassCardFill.opacity(0.5), in: Capsule())
     }
 
     private func similarityColor(_ similarity: Double) -> Color {
@@ -138,7 +184,6 @@ struct SimilarSwipesSection: View {
 
     private func patternFormulaCard(_ formula: PatternFormula) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Header
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 10))
@@ -148,40 +193,28 @@ struct SimilarSwipesSection: View {
                     .foregroundStyle(DS.entitySwipe)
             }
 
-            // Formula pills
             HStack(spacing: 6) {
                 if let hookType = formula.hookType {
-                    Text(hookType.displayName)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(hookType.color)
+                    formulaPill(hookType.displayName, color: hookType.color)
                 }
 
                 if formula.hookType != nil && formula.frameworkType != nil {
-                    Text("+")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(DS.inkFaded)
+                    formulaPlus
                 }
 
                 if let frameworkType = formula.frameworkType {
-                    Text(frameworkType.abbreviation)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(frameworkType.color)
+                    formulaPill(frameworkType.abbreviation, color: frameworkType.color)
                 }
 
                 if formula.topTechnique != nil && (formula.hookType != nil || formula.frameworkType != nil) {
-                    Text("+")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(DS.inkFaded)
+                    formulaPlus
                 }
 
                 if let technique = formula.topTechnique {
-                    Text(technique.displayName)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(technique.color)
+                    formulaPill(technique.displayName, color: technique.color)
                 }
             }
 
-            // Stats line
             HStack(spacing: 4) {
                 Text("Found in \(formula.matchCount) swipes")
                     .font(.system(size: 11))
@@ -199,6 +232,22 @@ struct SimilarSwipesSection: View {
         }
         .padding(.vertical, DS.space6)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func formulaPill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(color.opacity(0.10), in: Capsule())
+            .overlay(Capsule().stroke(color.opacity(0.16), lineWidth: 0.5))
+    }
+
+    private var formulaPlus: some View {
+        Text("+")
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(DS.inkFaded)
     }
 
     // MARK: - Data Loading
@@ -289,11 +338,18 @@ struct SimilarSwipesSection: View {
     // MARK: - Placeholder
 
     private var placeholderView: some View {
+        subtleEmptyState(
+            icon: "square.stack.3d.up",
+            text: "Save more swipes to see related posts"
+        )
+    }
+
+    private func subtleEmptyState(icon: String, text: String) -> some View {
         VStack(spacing: 8) {
-            Image(systemName: "square.stack.3d.up")
+            Image(systemName: icon)
                 .font(.system(size: 20))
                 .foregroundStyle(DS.inkFaded)
-            Text("Save more swipes to see patterns")
+            Text(text)
                 .font(.system(size: 12))
                 .foregroundStyle(DS.inkFaded)
         }

@@ -27,15 +27,13 @@ struct SwipeGalleryCardView: View {
 
     private var previewHeight: CGFloat {
         if hasThumbnail {
-            switch item.platform {
-            case "youtube":
+            switch previewAspect {
+            case .wide:
                 return cardWidth * 9 / 16
-            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
-                return min(cardWidth * 16 / 9, 420)
-            case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post", "instagram":
+            case .vertical:
+                return min(cardWidth * 16 / 9, 384)
+            case .portrait:
                 return cardWidth * 5 / 4
-            default:
-                return cardWidth * 9 / 16
             }
         }
         return 92
@@ -50,20 +48,49 @@ struct SwipeGalleryCardView: View {
         let hasThumbnail = item.thumbnailUrl != nil || item.instagramId != nil
         let previewHeight: CGFloat
         if hasThumbnail {
-            switch item.platform {
-            case "youtube":
+            switch previewAspect(for: item) {
+            case .wide:
                 previewHeight = cardWidth * 9 / 16
-            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
-                previewHeight = min(cardWidth * 16 / 9, 420)
-            case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post", "instagram":
+            case .vertical:
+                previewHeight = min(cardWidth * 16 / 9, 384)
+            case .portrait:
                 previewHeight = cardWidth * 5 / 4
-            default:
-                previewHeight = cardWidth * 9 / 16
             }
         } else {
             previewHeight = 80
         }
         return previewHeight + infoHeight
+    }
+
+    private enum PreviewAspect {
+        case wide
+        case portrait
+        case vertical
+    }
+
+    private var previewAspect: PreviewAspect {
+        Self.previewAspect(for: item)
+    }
+
+    private static func previewAspect(for item: SwipeGalleryItem) -> PreviewAspect {
+        switch item.platform {
+        case "youtube":
+            return .wide
+        case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
+            return .vertical
+        case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post":
+            return .portrait
+        case "instagram":
+            if item.swipeContentFormat?.isVideoFormat == true {
+                return .vertical
+            }
+            return .portrait
+        default:
+            if item.swipeContentFormat?.isVideoFormat == true {
+                return .vertical
+            }
+            return .wide
+        }
     }
 
     private static let platformColors: [String: Color] = [

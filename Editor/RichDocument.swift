@@ -600,7 +600,7 @@ enum RichDocumentSerializer {
         var lines: [ParsedAttributedLine] = []
         var lineStart = 0
 
-        while lineStart <= string.length {
+        while lineStart < string.length {
             let lineRange = string.lineRange(for: NSRange(location: min(lineStart, max(0, string.length - 1)), length: 0))
             if lineRange.location + lineRange.length > attributedString.length {
                 break
@@ -612,6 +612,13 @@ enum RichDocumentSerializer {
 
             lineStart = lineRange.location + lineRange.length
             if lineStart >= string.length { break }
+        }
+
+        if string.length > 0 {
+            let lastCharacter = string.substring(with: NSRange(location: string.length - 1, length: 1))
+            if lastCharacter == "\n" || lastCharacter == "\r" {
+                lines.append(parsedLine(from: NSAttributedString(string: "")))
+            }
         }
 
         var index = 0

@@ -6,6 +6,8 @@ import SwiftUI
 
 struct DashboardTaskList: View {
 
+    private let rowChromeInset: CGFloat = DS.space8
+
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
     @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
     let composer: CommandCenterComposerController
@@ -440,7 +442,16 @@ struct DashboardTaskList: View {
             isAnimatingCompletion: isAnimatingCompletion,
             showsInlineActions: isHovered || isKeyboardSelected || isActiveSession || composer.isShowingTaskAction(for: task.uuid)
         )
-        .background(rowBackground(task: task, isActiveSession: isActiveSession, isMultiSelected: isMultiSelected, isKeyboardSelected: isKeyboardSelected, isHovered: isHovered))
+        .background(
+            rowBackground(
+                task: task,
+                isActiveSession: isActiveSession,
+                isMultiSelected: isMultiSelected,
+                isKeyboardSelected: isKeyboardSelected,
+                isHovered: isHovered
+            )
+            .padding(.horizontal, rowChromeInset)
+        )
         .overlay(alignment: .bottom) { rowPriorityWash(task, isAnimatingCompletion: isAnimatingCompletion) }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isKeyboardSelected)

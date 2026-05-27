@@ -107,6 +107,36 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertLessThan(structureRange.lowerBound, physicsRange.lowerBound)
     }
 
+    func testSwipeAnalysisRailUsesInspectorContainersForLowerSections() throws {
+        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+        let similarSwipesSource = try source("UI/FocusMode/SwipeStudy/SimilarSwipesSection.swift")
+
+        XCTAssertTrue(swipeFocusSource.contains("FocusModeInspectorSection(\"TAXONOMY\")"))
+        XCTAssertTrue(similarSwipesSource.contains("FocusModeInspectorSection(\"PATTERNS\")"))
+        XCTAssertTrue(similarSwipesSource.contains("FocusModeInspectorSection(\"RELATED\")"))
+        XCTAssertFalse(swipeFocusSource.contains("instagramAnalysisPlaceholder"))
+        XCTAssertFalse(swipeFocusSource.contains("Coming Soon"))
+    }
+
+    func testSwipeAnalysisRailPlacesPhysicsAtBottom() throws {
+        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+
+        let taxonomyRange = try XCTUnwrap(swipeFocusSource.range(of: "FocusModeInspectorSection(\"TAXONOMY\")"))
+        let relatedRange = try XCTUnwrap(swipeFocusSource.range(of: "SimilarSwipesSection("))
+        let physicsRange = try XCTUnwrap(swipeFocusSource.range(of: "FocusModeInspectorSection(\"PHYSICS\")"))
+
+        XCTAssertLessThan(taxonomyRange.lowerBound, relatedRange.lowerBound)
+        XCTAssertLessThan(relatedRange.lowerBound, physicsRange.lowerBound)
+    }
+
+    func testSwipeStudyUsesThinCustomScrollChrome() throws {
+        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+
+        XCTAssertTrue(swipeFocusSource.contains("@State private var teardownScrollMetrics = CortexScrollMetrics()"))
+        XCTAssertTrue(swipeFocusSource.contains("CortexScrollViewIntrospector"))
+        XCTAssertTrue(swipeFocusSource.contains("CortexThinScrollbar(metrics: teardownScrollMetrics)"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         try String(contentsOf: packageRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }

@@ -63,6 +63,7 @@ struct SwipeStudyFocusModeView: View {
     @State private var showWalkthroughSheet = false
     @State private var hasAppeared = false
     @State private var codexLookup = CodexConceptLookup()
+    @State private var teardownScrollMetrics = CortexScrollMetrics()
 
     // YouTube player state
     @State private var isPlayerActive = false
@@ -409,11 +410,17 @@ struct SwipeStudyFocusModeView: View {
             panelPadding: panelPadding,
             isPaneContext: isPaneContext,
             hasAppeared: hasAppeared,
-            reduceMotion: reduceMotion
+            reduceMotion: reduceMotion,
+            scrollMetrics: $teardownScrollMetrics
         ) {
             sourceAndTeardownRail(atom: atom)
         } transcript: {
             transcriptManuscript(atom: atom)
+        }
+        .overlay(alignment: .trailing) {
+            CortexThinScrollbar(metrics: teardownScrollMetrics)
+                .padding(.trailing, DS.space4)
+                .padding(.vertical, DS.space16)
         }
     }
 
@@ -3094,6 +3101,44 @@ struct SwipeStudyFocusModeView: View {
                     )
                 }
 
+                FocusModeInspectorSection("TAXONOMY") {
+                    TaxonomySection(
+                        analysis: Binding(
+                            get: { self.analysis },
+                            set: { self.analysis = $0 }
+                        ),
+                        currentAtom: Binding(
+                            get: { self.currentAtom },
+                            set: { self.currentAtom = $0 }
+                        ),
+                        isReclassifying: $isReclassifying,
+                        reclassifySuggestion: $reclassifySuggestion,
+                        onReclassify: { reclassifySwipe() },
+                        onAcceptReclassification: { acceptReclassification() },
+                        onRejectReclassification: { rejectReclassification() },
+                        onSaveTaxonomyChange: { saveTaxonomyOverride() },
+                        onOpenCreatorProfile: { creatorUUID in
+                            NotificationCenter.default.post(
+                                name: Notification.Name("openCreatorProfile"),
+                                object: nil,
+                                userInfo: ["creatorUUID": creatorUUID]
+                            )
+                        },
+                        onLinkCreator: { _, _ in
+                            saveTaxonomyOverride()
+                        }
+                    )
+                }
+
+                SimilarSwipesSection(
+                    currentHookType: analysis.hookType,
+                    currentFingerprint: analysis.fingerprint,
+                    currentEntityId: atom.id ?? -1,
+                    onSwipeTap: { newEntityId in
+                        reloadWithEntity(newEntityId)
+                    }
+                )
+
                 if let physicsProfile = currentAtom?.bestPhysicsProfile {
                     FocusModeInspectorSection("PHYSICS") {
                         ContentPhysicsSection(profile: physicsProfile)
@@ -3107,46 +3152,6 @@ struct SwipeStudyFocusModeView: View {
                     }
                 } else {
                     generateCodexProfileCard
-                }
-
-                TaxonomySection(
-                    analysis: Binding(
-                        get: { self.analysis },
-                        set: { self.analysis = $0 }
-                    ),
-                    currentAtom: Binding(
-                        get: { self.currentAtom },
-                        set: { self.currentAtom = $0 }
-                    ),
-                    isReclassifying: $isReclassifying,
-                    reclassifySuggestion: $reclassifySuggestion,
-                    onReclassify: { reclassifySwipe() },
-                    onAcceptReclassification: { acceptReclassification() },
-                    onRejectReclassification: { rejectReclassification() },
-                    onSaveTaxonomyChange: { saveTaxonomyOverride() },
-                    onOpenCreatorProfile: { creatorUUID in
-                        NotificationCenter.default.post(
-                            name: Notification.Name("openCreatorProfile"),
-                            object: nil,
-                            userInfo: ["creatorUUID": creatorUUID]
-                        )
-                    },
-                    onLinkCreator: { _, _ in
-                        saveTaxonomyOverride()
-                    }
-                )
-
-                SimilarSwipesSection(
-                    currentHookType: analysis.hookType,
-                    currentFingerprint: analysis.fingerprint,
-                    currentEntityId: atom.id ?? -1,
-                    onSwipeTap: { newEntityId in
-                        reloadWithEntity(newEntityId)
-                    }
-                )
-
-                if isInstagramSource {
-                    instagramAnalysisPlaceholder
                 }
             } else {
                 noAnalysisPlaceholder
@@ -3799,28 +3804,6 @@ struct SwipeStudyFocusModeView: View {
             || sourceType == .instagramPost || sourceType == .instagramCarousel
     }
 
-    // MARK: - Instagram Analysis Placeholder
-
-    private var instagramAnalysisPlaceholder: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            MarginaliaLabel("INSTAGRAM")
-
-            VStack(spacing: 8) {
-                Image(systemName: "camera.fill")
-                    .font(DS.title1)
-                    .foregroundStyle(DS.inkFaded.opacity(0.55))
-                Text("Instagram Analysis")
-                    .font(DS.callout)
-                    .foregroundStyle(DS.inkFaded)
-                Text("Coming Soon")
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.inkFaded)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
-        }
-    }
-
     // MARK: - Analysis Shimmer Skeleton
 
     private var analysisShimmer: some View {
@@ -4445,6 +4428,7 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
     let isPaneContext: Bool
     let hasAppeared: Bool
     let reduceMotion: Bool
+    @Binding var scrollMetrics: CortexScrollMetrics
 
     private let source: Source
     private let transcript: Transcript
@@ -4455,6 +4439,7 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
         isPaneContext: Bool,
         hasAppeared: Bool,
         reduceMotion: Bool,
+        scrollMetrics: Binding<CortexScrollMetrics>,
         @ViewBuilder source: () -> Source,
         @ViewBuilder transcript: () -> Transcript
     ) {
@@ -4463,17 +4448,27 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
         self.isPaneContext = isPaneContext
         self.hasAppeared = hasAppeared
         self.reduceMotion = reduceMotion
+        self._scrollMetrics = scrollMetrics
         self.source = source()
         self.transcript = transcript()
     }
 
     var body: some View {
         ScrollView {
-            if isCompact {
-                compactStack
-            } else {
-                wideTable
+            Group {
+                if isCompact {
+                    compactStack
+                } else {
+                    wideTable
+                }
             }
+            .background(
+                CortexScrollViewIntrospector { metrics in
+                    if metrics != scrollMetrics {
+                        scrollMetrics = metrics
+                    }
+                }
+            )
         }
         .scrollIndicators(.hidden)
     }
@@ -4652,19 +4647,9 @@ private struct TaxonomySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            HStack(spacing: DS.space8) {
-                Text("TAXONOMY")
-                    .font(DS.smallCaps)
-                    .tracking(1.6)
-                    .foregroundStyle(DS.giltMuted)
-                    .fixedSize()
-
-                Rectangle()
-                    .fill(DS.sepiaSubtle)
-                    .frame(height: 0.5)
-
+            HStack(spacing: DS.space6) {
                 classificationSourceBadge
-
+                Spacer(minLength: DS.space8)
                 reclassifyButton
             }
 
@@ -4672,7 +4657,7 @@ private struct TaxonomySection: View {
                 reclassifySuggestionBanner(suggestion)
             }
 
-            VStack(spacing: DS.space10) {
+            VStack(spacing: DS.space8) {
                 narrativeRow
                 secondaryNarrativeRow
                 contentFormatRow
@@ -4694,11 +4679,11 @@ private struct TaxonomySection: View {
                     .font(DS.caption2)
             }
             .foregroundStyle(source == .ai ? DS.green : DS.orange)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(
                 Capsule()
-                    .fill((source == .ai ? DS.green : DS.orange).opacity(0.12))
+                    .fill((source == .ai ? DS.green : DS.orange).opacity(0.11))
             )
         }
 
@@ -4706,6 +4691,9 @@ private struct TaxonomySection: View {
             Text("\(Int(confidence * 100))%")
                 .font(DS.caption2.monospacedDigit())
                 .foregroundStyle(DS.textMuted)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(DS.glassCardFill.opacity(0.45), in: Capsule())
         }
     }
 
@@ -4728,9 +4716,10 @@ private struct TaxonomySection: View {
                     .font(DS.caption2)
             }
             .foregroundStyle(gold.opacity(0.8))
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 9)
             .padding(.vertical, 4)
-            .background(gold.opacity(0.1), in: Capsule())
+            .background(gold.opacity(0.09), in: Capsule())
+            .overlay(Capsule().stroke(gold.opacity(0.16), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
         .disabled(isReclassifying)
@@ -4792,10 +4781,10 @@ private struct TaxonomySection: View {
             }
         }
         .padding(10)
-        .background(gold.opacity(0.06), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .background(gold.opacity(0.045), in: RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(gold.opacity(0.2), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                .stroke(gold.opacity(0.14), lineWidth: 0.5)
         )
     }
 
@@ -4831,6 +4820,7 @@ private struct TaxonomySection: View {
                 narrativeDropdownLabel
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
         }
     }
 
@@ -4848,26 +4838,13 @@ private struct TaxonomySection: View {
 
     private var narrativeDropdownLabel: some View {
         let narrative = analysis?.primaryNarrative
-        return HStack(spacing: 4) {
-            if let n = narrative {
-                Circle()
-                    .fill(n.color)
-                    .frame(width: 6, height: 6)
-                Text(n.displayName)
-                    .font(DS.caption)
-                    .foregroundStyle(n.color)
-            } else {
-                Text("Select...")
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
-            }
-            Image(systemName: "chevron.down")
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
+        return taxonomyValuePill(
+            title: narrative?.displayName ?? "Select...",
+            color: narrative?.color ?? DS.textMuted,
+            dotColor: narrative?.color,
+            systemImage: narrative?.icon,
+            showsChevron: true
+        )
     }
 
     private var secondaryNarrativeRow: some View {
@@ -4890,6 +4867,7 @@ private struct TaxonomySection: View {
                 secondaryDropdownLabel
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
         }
     }
 
@@ -4907,26 +4885,13 @@ private struct TaxonomySection: View {
 
     private var secondaryDropdownLabel: some View {
         let narrative = analysis?.secondaryNarrative
-        return HStack(spacing: 4) {
-            if let n = narrative {
-                Circle()
-                    .fill(n.color)
-                    .frame(width: 6, height: 6)
-                Text(n.displayName)
-                    .font(DS.caption)
-                    .foregroundStyle(n.color)
-            } else {
-                Text("None")
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
-            }
-            Image(systemName: "chevron.down")
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
+        return taxonomyValuePill(
+            title: narrative?.displayName ?? "None",
+            color: narrative?.color ?? DS.textMuted,
+            dotColor: narrative?.color,
+            systemImage: narrative?.icon,
+            showsChevron: true
+        )
     }
 
     private var contentFormatRow: some View {
@@ -4948,6 +4913,7 @@ private struct TaxonomySection: View {
                 formatDropdownLabel
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
         }
     }
 
@@ -4965,44 +4931,27 @@ private struct TaxonomySection: View {
 
     private var formatDropdownLabel: some View {
         let format = analysis?.swipeContentFormat
-        return HStack(spacing: 4) {
-            if let f = format {
-                Circle()
-                    .fill(f.color)
-                    .frame(width: 6, height: 6)
-                Text(f.displayName)
-                    .font(DS.caption)
-                    .foregroundStyle(f.color)
-            } else {
-                Text("Select...")
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
-            }
-            Image(systemName: "chevron.down")
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
+        return taxonomyValuePill(
+            title: format?.displayName ?? "Select...",
+            color: format?.color ?? DS.textMuted,
+            dotColor: format?.color,
+            systemImage: format?.icon,
+            showsChevron: true
+        )
     }
 
     private var nicheRow: some View {
         taxonomyDropdownRow(label: "Niche", icon: nil, iconColor: .clear) {
-            HStack(spacing: 4) {
-                if let niche = analysis?.niche, !niche.isEmpty {
-                    Text(niche)
-                        .font(DS.caption)
-                        .foregroundStyle(gold.opacity(0.8))
-                } else {
-                    Text("No niche")
-                        .font(DS.footnote)
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
+            taxonomyValuePill(
+                title: {
+                    if let niche = analysis?.niche, !niche.isEmpty { return niche }
+                    return "No niche"
+                }(),
+                color: analysis?.niche?.isEmpty == false ? gold.opacity(0.85) : DS.textMuted,
+                dotColor: nil,
+                systemImage: nil,
+                showsChevron: false
+            )
         }
     }
 
@@ -5055,12 +5004,12 @@ private struct TaxonomySection: View {
                 .font(DS.caption)
                 .foregroundStyle(gold.opacity(0.9))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(gold.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(gold.opacity(0.08), in: Capsule())
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(gold.opacity(0.2), lineWidth: 1)
+            Capsule()
+                .strokeBorder(gold.opacity(0.18), lineWidth: 0.5)
         )
         .onAppear {
             if linkedCreatorName == nil {
@@ -5082,9 +5031,10 @@ private struct TaxonomySection: View {
                     .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(DS.glassCardFill.opacity(0.45), in: Capsule())
+            .overlay(Capsule().stroke(DS.glassBorder.opacity(0.45), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }
@@ -5112,11 +5062,11 @@ private struct TaxonomySection: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.border, in: RoundedRectangle(cornerRadius: 6))
+            .padding(.vertical, 5)
+            .background(DS.glassCardFill.opacity(0.5), in: Capsule())
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(gold.opacity(0.3), lineWidth: 1)
+                Capsule()
+                    .strokeBorder(gold.opacity(0.2), lineWidth: 0.5)
             )
 
             // Results dropdown
@@ -5296,12 +5246,47 @@ private struct TaxonomySection: View {
                     .font(DS.caption2)
                     .foregroundStyle(DS.textSecondary)
             }
-            .frame(width: 80, alignment: .leading)
+            .frame(width: 76, alignment: .leading)
 
             content()
 
             Spacer()
         }
+    }
+
+    private func taxonomyValuePill(
+        title: String,
+        color: Color,
+        dotColor: Color?,
+        systemImage: String?,
+        showsChevron: Bool
+    ) -> some View {
+        HStack(spacing: 5) {
+            if let dotColor {
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 6, height: 6)
+            } else if let systemImage {
+                Image(systemName: systemImage)
+                    .font(DS.caption2)
+                    .foregroundStyle(color.opacity(0.75))
+            }
+
+            Text(title)
+                .font(DS.caption)
+                .foregroundStyle(color)
+                .lineLimit(1)
+
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(DS.glassCardFill.opacity(0.48), in: Capsule())
+        .overlay(Capsule().stroke(DS.glassBorder.opacity(0.46), lineWidth: 0.5))
     }
 }
 

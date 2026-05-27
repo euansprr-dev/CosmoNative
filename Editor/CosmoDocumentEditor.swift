@@ -111,6 +111,7 @@ struct CosmoDocumentEditor: View {
                 // coalesce/skip updates when mutations come from AppKit.
                 handleDirectPlainTextChange(plainText)
             },
+            onStructuredDocumentChange: handleDirectStructuredDocumentChange,
             autoFocus: autoFocus,
             onSave: { _ in syncDocumentFromEditor() }
         )
@@ -186,6 +187,29 @@ struct CosmoDocumentEditor: View {
         // Emitting here with the previous document races parent views into writing
         // stale structured state back into the editor, which can reset selection/scroll
         // after Backspace or Return.
+    }
+
+    /// Immediate structured update for edits that change block topology, such as
+    /// Return-driven line splits and element insertion. Keeping these on the
+    /// debounced plain typing path leaves the active NSTextView displaying stale
+    /// block structure while SwiftUI waits to mount the real block views.
+    private func handleDirectStructuredDocumentChange(_ updated: RichDocument, plainText: String) {
+        guard !isApplyingExternalUpdate else { return }
+
+        documentSyncWorkItem?.cancel()
+        let resolvedPlainText = resolvedPlainTextForCallbacks(from: plainText)
+        lastEmittedPlainText = resolvedPlainText
+        plainTextMirror = resolvedPlainText
+
+        guard updated != document else { return }
+
+        isSyncingFromEditor = true
+        document = updated
+        onStructuredDocumentChange?(updated, resolvedPlainText)
+        onDocumentChange?(updated, resolvedPlainText)
+        DispatchQueue.main.async {
+            isSyncingFromEditor = false
+        }
     }
 
     private func syncDocumentFromEditor() {

@@ -1825,6 +1825,7 @@ class CosmoAgentService: ObservableObject {
         case "get_beat_patterns": return "Analyzing beat patterns"
         case "capture_swipe": return "Capturing swipe"
         case "create_content": return title.isEmpty ? "Creating content\(clientSuffix)" : "Creating: \(title)"
+        case "create_note": return title.isEmpty ? "Creating note" : "Creating note: \(title)"
         case "create_idea": return title.isEmpty ? "Creating idea" : "Creating idea: \(title)"
         case "web_search": return "Searching the web for \"\(args["query"] ?? "")\""
         case "list_all_swipes": return "Loading swipe library"

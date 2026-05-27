@@ -82,6 +82,7 @@ struct RichTextEditor: View {
     var onCommit: (() -> Void)? = nil
     var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
     var onPlainTextDidChange: ((String) -> Void)? = nil
+    var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
     var autoFocus: Bool = false
 
     // Geometry for menu clamping
@@ -148,6 +149,7 @@ struct RichTextEditor: View {
         onCommit: (() -> Void)? = nil,
         onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil,
         onPlainTextDidChange: ((String) -> Void)? = nil,
+        onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil,
         autoFocus: Bool = false,
         onSave: ((NSAttributedString) -> Void)? = nil
     ) {
@@ -187,6 +189,7 @@ struct RichTextEditor: View {
         self.onCommit = onCommit
         self.onBoundaryCommand = onBoundaryCommand
         self.onPlainTextDidChange = onPlainTextDidChange
+        self.onStructuredDocumentChange = onStructuredDocumentChange
         self.autoFocus = autoFocus
         self.onSave = onSave
     }
@@ -260,7 +263,8 @@ struct RichTextEditor: View {
                 onDeactivate: onDeactivate,
                 onCommit: onCommit,
                 onBoundaryCommand: onBoundaryCommand,
-                onPlainTextDidChange: onPlainTextDidChange
+                onPlainTextDidChange: onPlainTextDidChange,
+                onStructuredDocumentChange: onStructuredDocumentChange
             )
             .frame(maxWidth: .infinity)
             .frame(height: (!scrollsInternally && measuredContentHeight > 1) ? measuredContentHeight : nil)

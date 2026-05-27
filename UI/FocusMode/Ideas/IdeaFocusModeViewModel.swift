@@ -516,7 +516,11 @@ class IdeaFocusModeViewModel: ObservableObject {
             NotificationCenter.default.post(
                 name: CosmoNotification.Navigation.openBlockInFocusMode,
                 object: nil,
-                userInfo: ["atomUUID": contentAtom.uuid, "autoGenerate": true]
+                userInfo: [
+                    "atomUUID": contentAtom.uuid,
+                    "autoGenerate": true,
+                    "restoreCommandKOnFocusClose": false
+                ]
             )
 
         } catch {

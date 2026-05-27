@@ -266,7 +266,7 @@ class AgentToolRegistry {
             ),
             LLMToolDefinition(
                 name: "create_content",
-                description: "Create a new content piece in the pipeline with full metadata. Supports client linking, source idea inheritance, framework/hook/swipe context.",
+                description: "Create a new content piece in the pipeline with full metadata. Supports client linking, source idea inheritance, framework/hook/swipe context. Do not use for general notes, note atoms, copied documents, or reference material; use create_note instead.",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
@@ -279,6 +279,19 @@ class AgentToolRegistry {
                         "framework": ["type": "string", "description": "Framework to use (e.g. AIDA, PAS, storyLoop, beforeAfter)"] as [String: Any],
                         "hooks": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Hook texts inherited from swipe analysis"] as [String: Any],
                         "swipeUUIDs": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "UUIDs of matched swipe files for structural reference"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["title"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "create_note",
+                description: "Create a new note atom/document for general knowledge, copied text, plans, profiles, meeting notes, or longform reference material. Use this whenever the user asks for a note, note atom, document note, or asks to paste/copy material into a note.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "Note title"] as [String: Any],
+                        "body": ["type": "string", "description": "Full note body text to save"] as [String: Any],
+                        "sourceUUID": ["type": "string", "description": "Optional UUID of the source atom this note was copied or derived from"] as [String: Any]
                     ] as [String: Any],
                     "required": ["title"]
                 ]

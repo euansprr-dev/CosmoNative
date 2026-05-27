@@ -2,11 +2,19 @@ import XCTest
 @testable import CosmoOS
 
 final class CosmoWindowRoutingTests: XCTestCase {
+    @MainActor
+    func testAgentToolRegistryExposesCreateNoteTool() {
+        let names = Set(AgentToolRegistry.shared.allTools.map(\.name))
+
+        XCTAssertTrue(names.contains("create_note"))
+    }
+
     func testExpandedAgentModelTiersUseExactOpenRouterIds() {
         XCTAssertEqual(AgentModelTier.gpt55Thinking.modelId, "openai/gpt-5.5")
         XCTAssertEqual(AgentModelTier.opus47.modelId, "anthropic/claude-opus-4.7")
         XCTAssertEqual(AgentModelTier.gptChatLatest.modelId, "openai/gpt-chat-latest")
         XCTAssertEqual(AgentModelTier.geminiFlashLatest.modelId, "google/gemini-3-flash-preview")
+        XCTAssertEqual(AgentModelTier.gemini35Flash.modelId, "google/gemini-3.5-flash")
     }
 
     func testExpandedAgentModelTiersExposeReadableLabels() {
@@ -14,6 +22,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(AgentModelTier.opus47.displayLabel, "Opus 4.7")
         XCTAssertEqual(AgentModelTier.gptChatLatest.displayLabel, "GPT Chat Latest")
         XCTAssertEqual(AgentModelTier.geminiFlashLatest.displayLabel, "Gemini 3 Flash")
+        XCTAssertEqual(AgentModelTier.gemini35Flash.displayLabel, "Gemini 3.5 Flash")
     }
 
     func testExplicitModelFailoverChainsStartWithSelectedModel() {
@@ -21,6 +30,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(ModelFailoverChain.chain(for: .opus47).models.first?.modelId, "anthropic/claude-opus-4.7")
         XCTAssertEqual(ModelFailoverChain.chain(for: .gptChatLatest).models.first?.modelId, "openai/gpt-chat-latest")
         XCTAssertEqual(ModelFailoverChain.chain(for: .geminiFlashLatest).models.first?.modelId, "google/gemini-3-flash-preview")
+        XCTAssertEqual(ModelFailoverChain.chain(for: .gemini35Flash).models.first?.modelId, "google/gemini-3.5-flash")
     }
 
     func testGeminiFlashLatestFailoverNeverFallsBackToOpus() {
@@ -36,6 +46,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertTrue(ids.contains("anthropic/claude-opus-4.7"))
         XCTAssertTrue(ids.contains("openai/gpt-chat-latest"))
         XCTAssertTrue(ids.contains("google/gemini-3-flash-preview"))
+        XCTAssertTrue(ids.contains("google/gemini-3.5-flash"))
         XCTAssertFalse(ids.contains("~google/gemini-flash-latest"))
         XCTAssertFalse(ids.contains("google/gemini-3.1-flash-lite-preview"))
     }
@@ -58,6 +69,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertTrue(ids.contains("opus47"))
         XCTAssertTrue(ids.contains("gptChatLatest"))
         XCTAssertTrue(ids.contains("geminiFlashLatest"))
+        XCTAssertTrue(ids.contains("gemini35Flash"))
     }
 
     func testAgentModelTierMaxTokensForNewModels() {
@@ -65,6 +77,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(AgentModelTier.opus47.maxTokens, 16384)
         XCTAssertEqual(AgentModelTier.gptChatLatest.maxTokens, 8192)
         XCTAssertEqual(AgentModelTier.geminiFlashLatest.maxTokens, 8192)
+        XCTAssertEqual(AgentModelTier.gemini35Flash.maxTokens, 8192)
     }
 
     func testAutoDefaultModelTierUsesGeminiForEveryIntent() {
@@ -81,10 +94,13 @@ final class CosmoWindowRoutingTests: XCTestCase {
     func testCosmoModelPickerLabelsPinnedGeminiThreeFlashAsEverydayDefault() {
         let autoOption = CosmoModelOption.all.first { $0.id == "auto" }
         let geminiOption = CosmoModelOption.all.first { $0.id == "geminiFlashLatest" }
+        let gemini35Option = CosmoModelOption.all.first { $0.id == "gemini35Flash" }
 
         XCTAssertEqual(autoOption?.detail, "Gemini 3 Flash by default")
         XCTAssertEqual(geminiOption?.title, "Gemini 3 Flash")
         XCTAssertEqual(geminiOption?.detail, "Pinned everyday search and brainstorming")
+        XCTAssertEqual(gemini35Option?.title, "Gemini 3.5 Flash")
+        XCTAssertEqual(gemini35Option?.detail, "Higher-cost agentic and deepening work")
     }
 
     func testAutoModelRoutingNeverUsesOpusWriterTier() {
@@ -232,5 +248,46 @@ final class ClientProfileToolTests: XCTestCase {
         let documents = try XCTUnwrap(payload["documents"] as? [[String: Any]])
         XCTAssertEqual(documents.first?["content"] as? String, fullDocument)
         XCTAssertEqual(documents.first?["sourceURL"] as? String, "https://example.com/reel")
+    }
+}
+
+@MainActor
+final class AgentNoteCreationToolTests: XCTestCase {
+    private var createdUUIDs: [String] = []
+
+    override func tearDown() async throws {
+        let uuids = createdUUIDs.reversed()
+        createdUUIDs.removeAll()
+
+        for uuid in uuids {
+            try? await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
+        }
+
+        try await super.tearDown()
+    }
+
+    func testCreateNoteToolCreatesNoteAtomWithBody() async throws {
+        let title = "Agent Note Creation Test \(UUID().uuidString)"
+        let body = "This should be saved as a real note atom, not a content atom."
+
+        let result = try await AgentToolExecutor.shared.execute(
+            toolName: "create_note",
+            arguments: [
+                "title": title,
+                "body": body
+            ]
+        )
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any]
+        )
+        let uuid = try XCTUnwrap(payload["uuid"] as? String)
+        createdUUIDs.append(uuid)
+
+        let fetchedAtom = try await AtomRepository.shared.fetch(uuid: uuid)
+        let atom = try XCTUnwrap(fetchedAtom)
+        XCTAssertEqual(atom.type, .note)
+        XCTAssertEqual(atom.title, title)
+        XCTAssertEqual(atom.body, body)
+        XCTAssertEqual(payload["message"] as? String, "Note created: \(title)")
     }
 }

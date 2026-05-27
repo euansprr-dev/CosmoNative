@@ -316,6 +316,7 @@ class AgentWorkflowPlanner {
         - get_content_pipeline: Get content pipeline status
         - advance_pipeline_phase: Advance content to next phase
         - create_content: Create new content piece
+        - create_note: Create a new note atom/document
         - get_content: Get content details
         - create_thinkspace: Create a new thinkspace
         - get_calendar_blocks: Get schedule blocks for a date
@@ -448,6 +449,12 @@ class AgentWorkflowPlanner {
 
         case "create_content":
             args["title"] = quotedMatches.first ?? "Untitled Content"
+
+        case "create_note":
+            args["title"] = quotedMatches.first ?? "Untitled Note"
+            if quotedMatches.count > 1 {
+                args["body"] = quotedMatches[1]
+            }
 
         case "create_block":
             args["title"] = quotedMatches.first ?? "Untitled Block"

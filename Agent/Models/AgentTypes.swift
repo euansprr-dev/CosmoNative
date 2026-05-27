@@ -55,6 +55,7 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
         ("openai/gpt-5.5", "GPT 5.5 Thinking"),
         ("anthropic/claude-opus-4.7", "Claude Opus 4.7"),
         ("openai/gpt-chat-latest", "GPT Chat Latest"),
+        ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
         ("google/gemini-3-flash-preview", "Gemini 3 Flash"),
         ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
         ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
@@ -369,6 +370,7 @@ enum AgentModelTier: String, Codable, Sendable {
     case opus47
     case gptChatLatest
     case geminiFlashLatest
+    case gemini35Flash
 
     var modelId: String {
         switch self {
@@ -379,6 +381,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .opus47: return "anthropic/claude-opus-4.7"
         case .gptChatLatest: return "openai/gpt-chat-latest"
         case .geminiFlashLatest: return "google/gemini-3-flash-preview"
+        case .gemini35Flash: return "google/gemini-3.5-flash"
         }
     }
 
@@ -391,6 +394,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .opus47: return "Opus 4.7"
         case .gptChatLatest: return "GPT Chat Latest"
         case .geminiFlashLatest: return "Gemini 3 Flash"
+        case .gemini35Flash: return "Gemini 3.5 Flash"
         }
     }
 
@@ -403,6 +407,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .opus47: return 16384
         case .gptChatLatest: return 8192
         case .geminiFlashLatest: return 8192
+        case .gemini35Flash: return 8192
         }
     }
 
@@ -415,6 +420,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .opus47: return 1_000_000
         case .gptChatLatest: return 400_000
         case .geminiFlashLatest: return 1_048_576
+        case .gemini35Flash: return 1_048_576
         }
     }
 }
@@ -796,6 +802,11 @@ struct ModelFailoverChain: Sendable {
         FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
     ])
 
+    static let gemini35FlashChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "google/gemini-3.5-flash", maxRetries: 1, label: "Gemini 3.5 Flash"),
+        FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
+    ])
+
     /// Get the appropriate failover chain for a model tier
     static func chain(for tier: AgentModelTier) -> ModelFailoverChain {
         switch tier {
@@ -806,6 +817,7 @@ struct ModelFailoverChain: Sendable {
         case .opus47: return .opus47Chain
         case .gptChatLatest: return .gptChatLatestChain
         case .geminiFlashLatest: return .geminiFlashLatestChain
+        case .gemini35Flash: return .gemini35FlashChain
         }
     }
 }

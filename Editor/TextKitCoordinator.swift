@@ -831,6 +831,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// Direct per-keystroke plain text callback — fires from syncBindings immediately,
     /// bypassing the SwiftUI @Binding→onChange chain which can coalesce/skip updates.
     var onPlainTextDidChange: ((String) -> Void)?
+    /// Direct structured callback for edits that change block topology and need
+    /// SwiftUI block views to update immediately.
+    var onStructuredDocumentChange: ((RichDocument, String) -> Void)?
 
     var resolvedEditorTextColor: NSColor {
         overrideTextColor ?? (darkMode ? NSColor.white : NSColor(DS.documentText))
@@ -1138,6 +1141,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         var isUpdatingFromTextView = false
         /// Guards against delegate callbacks writing bindings during SwiftUI's layout pass
         var isUpdatingFromSwiftUI = false
+        /// Guards structural edits that call didChangeText only for TextKit/undo
+        /// bookkeeping; bindings are synced once through syncStructuralEditBindings.
+        private var isApplyingStructuralEdit = false
         /// Deferred attributedText sync — 50ms debounce for performance.
         /// Must be cancellable from resignFirstResponder to flush final state.
         var deferredSyncWorkItem: DispatchWorkItem?
@@ -1346,6 +1352,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             // Skip when triggered by setAttributedString inside updateNSView —
             // writing bindings here would cause "Modifying state during view update".
             guard !isUpdatingFromSwiftUI else { return }
+            guard !isApplyingStructuralEdit else { return }
 
             normalizeSingleLineViewport(for: textView)
             syncBindings(from: textView)
@@ -1783,9 +1790,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             resetToNormalTypingAttributes(textView)
             let newline = NSAttributedString(string: "\n", attributes: elementInsertionBaseAttributes())
+            isApplyingStructuralEdit = true
+            defer { isApplyingStructuralEdit = false }
             storage.replaceCharacters(in: replacementRange, with: newline)
             textView.setSelectedRange(NSRange(location: replacementRange.location + newline.length, length: 0))
             textView.didChangeText()
+            syncStructuralEditBindings(from: textView)
         }
 
         // MARK: - Menu State
@@ -2610,8 +2620,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             replacement.append(elementAttributedString)
             replacement.append(NSAttributedString(string: "\n", attributes: elementInsertionBaseAttributes()))
 
-            storage.replaceCharacters(in: NSRange(location: safeInsertionPoint, length: 0), with: replacement)
+            let replacementRange = NSRange(location: safeInsertionPoint, length: 0)
+            guard textView.shouldChangeText(in: replacementRange, replacementString: replacement.string) else {
+                return
+            }
+
+            isApplyingStructuralEdit = true
+            defer { isApplyingStructuralEdit = false }
+            storage.replaceCharacters(in: replacementRange, with: replacement)
             textView.setSelectedRange(NSRange(location: safeInsertionPoint + replacement.length, length: 0))
+            textView.didChangeText()
             resetToNormalTypingAttributes(textView)
             syncStructuralEditBindings(from: textView)
         }
@@ -2939,6 +2957,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             parent.onPlainTextDidChange?(currentString)
 
             isUpdatingFromTextView = true
+            let currentDocument = RichDocumentSerializer.document(from: currentAttributedText)
+            parent.onStructuredDocumentChange?(currentDocument, currentString)
             parent.attributedText = currentAttributedText
             resizeAppKitFrameIfNeeded(for: textView)
             textView.window?.invalidateCursorRects(for: textView)

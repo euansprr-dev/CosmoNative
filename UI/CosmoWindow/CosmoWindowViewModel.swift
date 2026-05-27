@@ -1977,6 +1977,13 @@ struct CosmoModelOption: Identifiable {
             icon: "bolt"
         ),
         CosmoModelOption(
+            id: "gemini35Flash",
+            tier: .gemini35Flash,
+            title: "Gemini 3.5 Flash",
+            detail: "Higher-cost agentic and deepening work",
+            icon: "bolt.badge.clock"
+        ),
+        CosmoModelOption(
             id: "gpt55Thinking",
             tier: .gpt55Thinking,
             title: "GPT 5.5 Thinking",

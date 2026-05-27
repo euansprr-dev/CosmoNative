@@ -154,8 +154,11 @@ struct SidebarThinkspaceSection: View {
                     .frame(maxWidth: .infinity)
             } else {
                 Text("Thinkspaces")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DS.text)
+                    .font(.system(size: 10, weight: .semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(DS.textMuted)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 4)
 
                 Spacer()
 

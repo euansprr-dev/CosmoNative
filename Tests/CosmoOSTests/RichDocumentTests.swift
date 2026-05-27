@@ -207,6 +207,35 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertEqual(updated, [paragraph, element, trailing])
     }
 
+    func testAttributedSerializerPreservesTrailingEmptyLineAfterReturn() {
+        let attributed = NSAttributedString(string: "Intro\n")
+
+        let document = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(document.blocks.count, 2)
+        XCTAssertEqual(document.blocks.first?.plainInlineText, "Intro")
+        XCTAssertEqual(document.blocks.last?.kind, .paragraph)
+        XCTAssertEqual(document.blocks.last?.plainInlineText, "")
+    }
+
+    func testElementInsertionSerializationKeepsEditableParagraphAfterElement() {
+        let definition = DocumentElementDefinition(
+            id: UUID(uuidString: "66666666-5555-4444-3333-222222222222")!,
+            title: "Map",
+            systemIcon: "map"
+        )
+        let element = RichBlock.element(definition, instanceTitle: "Map")
+        let attributed = NSMutableAttributedString()
+        attributed.append(RichDocumentSerializer.attributedString(from: RichDocument(blocks: [element])))
+        attributed.append(NSAttributedString(string: "\n"))
+
+        let document = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(document.blocks.map(\.kind), [.element, .paragraph])
+        XCTAssertEqual(document.blocks.first?.element?.instanceTitleSnapshot, "Map")
+        XCTAssertEqual(document.blocks.last?.plainInlineText, "")
+    }
+
     func testCanvasPreviewUsesLazyDocumentStacksForLongNotes() {
         XCTAssertEqual(
             CosmoDocumentRendererStackPolicy.mode(

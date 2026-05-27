@@ -49,6 +49,10 @@ enum DS {
     /// Canvas background
     static var canvas: Color { palette.canvas }
 
+    /// Swipe File uses the same root workspace background as Command Center.
+    /// Keep this separate from document paper tokens so mono themes stay exact.
+    static var swipeLibraryBackground: Color { bg }
+
     /// Hover state tint for interactive surfaces
     static var surfaceHover: Color { palette.surfaceHover }
 

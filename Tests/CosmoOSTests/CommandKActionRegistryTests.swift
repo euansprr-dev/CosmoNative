@@ -236,6 +236,15 @@ final class CommandKActionRegistryTests: XCTestCase {
         XCTAssertGreaterThan(state.searchFocusRequest, firstFocusRequest)
     }
 
+    func testFocusReplacementCanDiscardCommandKReturnTab() {
+        let returnTab = CommandKFocusRestorePolicy.returnTab(
+            .ideas,
+            restoreOnFocusClose: false
+        )
+
+        XCTAssertNil(returnTab)
+    }
+
     func testInstantSwipeCaptureCreatesPendingInstagramAtomWithoutMediaExtraction() throws {
         let atom = try CommandKInstantSwipeCapture().pendingAtom(
             for: "https://www.instagram.com/p/DXCBs_uDKau/"

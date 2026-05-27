@@ -616,8 +616,8 @@ struct CosmoWebBrowserPane: View {
 
             CosmoBrowserToolbarButton(
                 systemName: browserState.isCurrentSitePinned ? "pin.fill" : "pin",
-                help: browserState.isCurrentSitePinned ? "Unpin site" : "Pin site",
-                action: browserState.toggleCurrentSitePin
+                help: "Pin site",
+                action: browserState.pinCurrentSite
             )
 
             CosmoBrowserToolbarButton(systemName: "safari", help: "Open in external browser") {
@@ -722,7 +722,7 @@ struct CosmoWebBrowserPane: View {
                             Button(role: .destructive) {
                                 browserState.unpin(pin)
                             } label: {
-                                Label("Unpin", systemImage: "pin.slash")
+                                Label("Delete", systemImage: "trash")
                             }
                         }
                     }
@@ -1194,34 +1194,21 @@ final class CosmoWebBrowserState: ObservableObject {
         )
     }
 
-    func toggleCurrentSitePin() {
+    func pinCurrentSite() {
         guard let currentURL else { return }
-        let host = CosmoBrowserPinnedSite.normalizedHost(for: currentURL)
         let profileID = profile.id
 
-        if isCurrentSitePinned {
-            session.unpin(host: host)
-            pins.removeAll { $0.host == host }
+        session.recordVisit(url: currentURL, title: displayTitle)
+        guard let pin = session.pinCurrentSite() else { return }
+        pins.removeAll { $0.host == pin.host }
+        pins.append(pin)
+        pins.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
 
-            Task {
-                guard let savedPins = try? await store.removePin(host: host, for: profileID) else { return }
-                guard profile.id == profileID else { return }
-                pins = savedPins
-                session.pinnedSites = savedPins
-            }
-        } else {
-            session.recordVisit(url: currentURL, title: displayTitle)
-            guard let pin = session.pinCurrentSite() else { return }
-            pins.removeAll { $0.host == pin.host }
-            pins.append(pin)
-            pins.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-
-            Task {
-                guard let savedPins = try? await store.upsertPin(pin, for: profileID) else { return }
-                guard profile.id == profileID else { return }
-                pins = savedPins
-                session.pinnedSites = savedPins
-            }
+        Task {
+            guard let savedPins = try? await store.upsertPin(pin, for: profileID) else { return }
+            guard profile.id == profileID else { return }
+            pins = savedPins
+            session.pinnedSites = savedPins
         }
     }
 

@@ -2,6 +2,13 @@ import XCTest
 @testable import CosmoOS
 
 final class SidebarLayoutPolicyTests: XCTestCase {
+    func testVisibleSidebarContextsUseRequestedTopLevelOrder() {
+        XCTAssertEqual(
+            SidebarContext.allCases.map(\.title),
+            ["Home", "Command", "Inbox", "Swipe File"]
+        )
+    }
+
     func testRightClickRoutingUsesLatestSidebarWidthAfterMonitorSetup() {
         let state = MainRightClickRoutingState()
         state.updateSidebar(isHidden: false, interactionWidth: 0)
@@ -109,7 +116,13 @@ final class SidebarLayoutPolicyTests: XCTestCase {
     }
 
     func testNonCanvasDestinationsReserveSidebarSpaceWithoutChangingShell() {
-        let destinations: [SidebarDestination] = [.commandCenter, .inbox, .codex]
+        let destinations: [SidebarDestination] = [
+            .commandCenter,
+            .inbox,
+            .codex,
+            .discover,
+            .swipeFile(section: .all)
+        ]
 
         for destination in destinations {
             let inset = MainSidebarContentLayoutPolicy.contentLeadingInset(
@@ -205,6 +218,26 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(mainView.contains(".offset(x: contentPushOffset)"))
     }
 
+    func testThinkspacesSidebarHeaderMatchesContextSectionLabelTreatment() throws {
+        let thinkspaceSection = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/UnifiedSidebar/SidebarThinkspaceSection.swift"),
+            encoding: .utf8
+        )
+        let sectionHeader = try XCTUnwrap(
+            thinkspaceSection.slice(
+                from: "private var sectionHeader: some View",
+                to: "// MARK: - New Thinkspace Row"
+            )
+        )
+
+        XCTAssertTrue(sectionHeader.contains("Text(\"Thinkspaces\")"))
+        XCTAssertTrue(sectionHeader.contains(".font(.system(size: 10, weight: .semibold))"))
+        XCTAssertTrue(sectionHeader.contains(".textCase(.uppercase)"))
+        XCTAssertTrue(sectionHeader.contains(".foregroundStyle(DS.textMuted)"))
+        XCTAssertTrue(sectionHeader.contains(".padding(.horizontal, 8)"))
+        XCTAssertTrue(sectionHeader.contains(".padding(.top, 4)"))
+    }
+
     func testContentFocusSidebarSurfacesDoNotHardTruncateWritingContext() throws {
         let contentFocusView = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
@@ -279,5 +312,18 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+}
+
+private extension String {
+    func slice(from startMarker: String, to endMarker: String) -> String? {
+        guard
+            let startRange = range(of: startMarker),
+            let endRange = range(of: endMarker, range: startRange.upperBound..<endIndex)
+        else {
+            return nil
+        }
+
+        return String(self[startRange.lowerBound..<endRange.lowerBound])
     }
 }

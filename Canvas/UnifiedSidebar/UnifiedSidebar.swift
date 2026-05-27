@@ -10,6 +10,8 @@ enum SidebarDestination: Equatable, Hashable {
     case commandCenter
     case inbox
     case codex
+    case discover
+    case swipeFile(section: SwipeLibrarySectionSelection)
     case thinkspace(id: String)
 }
 
@@ -72,13 +74,19 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
     case thinkspaces
     case commandCenter
     case inbox
+    case swipeFile
     case search
+
+    static var allCases: [SidebarContext] {
+        [.thinkspaces, .commandCenter, .inbox, .swipeFile]
+    }
 
     var title: String {
         switch self {
-        case .thinkspaces: return "Thinkspaces"
+        case .thinkspaces: return "Home"
         case .commandCenter: return "Command"
         case .inbox: return "Inbox"
+        case .swipeFile: return "Swipe File"
         case .search: return "Search"
         }
     }
@@ -88,6 +96,7 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
         case .thinkspaces: return "Home"
         case .commandCenter: return "Command"
         case .inbox: return "Inbox"
+        case .swipeFile: return "Swipe"
         case .search: return "Search"
         }
     }
@@ -97,6 +106,7 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
         case .thinkspaces: return "house"
         case .commandCenter: return "target"
         case .inbox: return "tray"
+        case .swipeFile: return "rectangle.stack"
         case .search: return "magnifyingglass"
         }
     }
@@ -106,6 +116,7 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
         case .thinkspaces: return "house.fill"
         case .commandCenter: return "target"
         case .inbox: return "tray.fill"
+        case .swipeFile: return "rectangle.stack.fill"
         case .search: return "magnifyingglass"
         }
     }
@@ -389,6 +400,9 @@ struct UnifiedSidebar: View {
         .animation(motionAnimation, value: panelWidth)
         .animation(motionAnimation, value: activeContext)
         .onAppear {
+            if !SidebarContext.allCases.contains(activeContext) {
+                activeContext = .thinkspaces
+            }
             let persistedWidth = UnifiedSidebarMetrics.clampedExpandedWidth(
                 StatePersistence.shared.getSidebarWidth()
             )
@@ -484,6 +498,19 @@ struct UnifiedSidebar: View {
                 } label: {
                     Label("New Capture Lane", systemImage: "tray.2")
                 }
+            case .swipeFile:
+                Button {
+                    currentDestination = .discover
+                    onNavigate()
+                } label: {
+                    Label("Open Discover", systemImage: "safari")
+                }
+                Button {
+                    currentDestination = .swipeFile(section: .all)
+                    onNavigate()
+                } label: {
+                    Label("Open Swipe File", systemImage: "rectangle.stack")
+                }
             case .search:
                 Button {
                     NotificationCenter.default.post(name: .showCommandPalette, object: nil)
@@ -570,6 +597,13 @@ struct UnifiedSidebar: View {
                 SidebarInboxContext(
                     currentDestination: $currentDestination,
                     inboxRoute: $inboxRoute,
+                    onNavigate: onNavigate
+                )
+            }
+        case .swipeFile:
+            UnifiedSidebarSection(isCollapsed: false) {
+                SidebarSwipeFileContext(
+                    currentDestination: $currentDestination,
                     onNavigate: onNavigate
                 )
             }
@@ -978,6 +1012,19 @@ private struct SidebarInboxContext: View {
                     open(.manageCommands)
                 }
             }
+
+            VStack(alignment: .leading, spacing: 4) {
+                SidebarContextLabel(title: "Library")
+                SidebarContextRow(
+                    title: "Books",
+                    icon: "books.vertical",
+                    subtitle: "Codex library",
+                    isActive: currentDestination == .codex,
+                    tint: DS.textSecondary
+                ) {
+                    openBooks()
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
@@ -1080,6 +1127,238 @@ private struct SidebarInboxContext: View {
         }
         onNavigate()
     }
+
+    private func openBooks() {
+        withAnimation(ProMotionSprings.snappy) {
+            currentDestination = .codex
+        }
+        onNavigate()
+    }
+}
+
+// MARK: - Swipe File Context
+
+private struct SidebarSwipeFileContext: View {
+    @Binding var currentDestination: SidebarDestination
+    var onNavigate: () -> Void = {}
+
+    @State private var localBoards: [SidebarSwipeBoard] = SidebarSwipeBoard.defaultBoards
+    @State private var isCreatingBoard = false
+    @State private var draftBoardName = ""
+    @FocusState private var isBoardNameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                SidebarContextLabel(title: "Discover")
+                SidebarContextRow(
+                    title: "Discover",
+                    icon: "safari",
+                    subtitle: "Explore what is working",
+                    isActive: currentDestination == .discover,
+                    tint: DS.accent
+                ) {
+                    openDiscover()
+                }
+                SidebarContextRow(
+                    title: "High-Performers",
+                    icon: "chart.line.uptrend.xyaxis",
+                    subtitle: "Cross-platform feed",
+                    isActive: false,
+                    tint: DS.textSecondary
+                ) {
+                    openDiscover()
+                }
+                SidebarContextRow(
+                    title: "Creators",
+                    icon: "person.2",
+                    subtitle: "Profiles to study",
+                    isActive: false
+                ) {
+                    openDiscover()
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                SidebarContextLabel(title: "Swipe File")
+                sectionRow(.all, icon: "rectangle.stack", subtitle: "Everything saved")
+                sectionRow(.recentlyAdded, icon: "clock.arrow.circlepath", subtitle: "Latest saves")
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    SidebarContextLabel(title: "Custom Boards")
+
+                    Spacer(minLength: 6)
+
+                    Button("New board", systemImage: "plus") {
+                        beginCreatingBoard()
+                    }
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 24, height: 24)
+                    .background(DS.accentSoft, in: .rect(cornerRadius: 8))
+                    .buttonStyle(.plain)
+                    .help("New Custom Board")
+                }
+
+                if isCreatingBoard {
+                    newBoardRow
+                }
+
+                ForEach(localBoards) { board in
+                    boardRow(board)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func sectionRow(
+        _ section: SwipeLibrarySectionSelection,
+        icon: String,
+        title: String? = nil,
+        subtitle: String? = nil
+    ) -> some View {
+        SidebarContextRow(
+            title: title ?? section.title,
+            icon: icon,
+            subtitle: subtitle,
+            isActive: currentDestination == .swipeFile(section: section),
+            tint: DS.textSecondary
+        ) {
+            open(section)
+        }
+    }
+
+    private func boardRow(_ board: SidebarSwipeBoard) -> some View {
+        SidebarContextRow(
+            title: board.name,
+            icon: board.icon,
+            count: board.count,
+            subtitle: board.subtitle,
+            isActive: currentDestination == .swipeFile(section: .board(board.id)),
+            tint: board.tint
+        ) {
+            open(.board(board.id))
+        }
+    }
+
+    private var newBoardRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "rectangle.stack.badge.plus")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 22, height: 22)
+                .background(DS.accentSoft, in: .rect(cornerRadius: 7))
+
+            TextField("Board name", text: $draftBoardName)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.text)
+                .focused($isBoardNameFocused)
+                .onSubmit { createBoard() }
+
+            Button("Cancel", systemImage: "xmark") {
+                withAnimation(ProMotionSprings.snappy) {
+                    isCreatingBoard = false
+                    draftBoardName = ""
+                }
+            }
+            .labelStyle(.iconOnly)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(DS.textMuted)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+        .background(DS.bg, in: .rect(cornerRadius: 9))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+    }
+
+    private func beginCreatingBoard() {
+        withAnimation(ProMotionSprings.snappy) {
+            isCreatingBoard = true
+            draftBoardName = ""
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            isBoardNameFocused = true
+        }
+    }
+
+    private func createBoard() {
+        let trimmed = draftBoardName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        withAnimation(ProMotionSprings.snappy) {
+            let board = SidebarSwipeBoard(
+                id: trimmed.lowercased().replacingOccurrences(of: " ", with: "-"),
+                name: trimmed,
+                icon: "rectangle.stack",
+                subtitle: "Custom swipe file",
+                count: nil,
+                tint: DS.textSecondary
+            )
+            localBoards.append(board)
+            draftBoardName = ""
+            isCreatingBoard = false
+            open(.board(board.id))
+        }
+    }
+
+    private func open(_ section: SwipeLibrarySectionSelection) {
+        withAnimation(ProMotionSprings.snappy) {
+            currentDestination = .swipeFile(section: section)
+        }
+        onNavigate()
+    }
+
+    private func openDiscover() {
+        withAnimation(ProMotionSprings.snappy) {
+            currentDestination = .discover
+        }
+        onNavigate()
+    }
+}
+
+private struct SidebarSwipeBoard: Identifiable {
+    let id: String
+    let name: String
+    let icon: String
+    let subtitle: String?
+    let count: Int?
+    let tint: Color
+
+    static let defaultBoards: [SidebarSwipeBoard] = [
+        SidebarSwipeBoard(
+            id: "thread-hooks",
+            name: "Thread Hooks",
+            icon: "text.alignleft",
+            subtitle: "Long-form openers",
+            count: 12,
+            tint: DS.textSecondary
+        ),
+        SidebarSwipeBoard(
+            id: "reel-ideas",
+            name: "Reel Ideas",
+            icon: "play.rectangle",
+            subtitle: "Short-form angles",
+            count: 8,
+            tint: DS.textSecondary
+        ),
+        SidebarSwipeBoard(
+            id: "client-proof",
+            name: "Client Proof",
+            icon: "checkmark.seal",
+            subtitle: "Trust builders",
+            count: nil,
+            tint: DS.textSecondary
+        )
+    ]
 }
 
 // MARK: - Search Context

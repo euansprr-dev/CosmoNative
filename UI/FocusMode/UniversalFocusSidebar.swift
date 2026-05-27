@@ -50,6 +50,7 @@ struct UniversalFocusSidebar<Content: View>: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 12)
                     }
+                    .scrollIndicators(.hidden)
                 }
             }
             .frame(width: sidebarWidth)

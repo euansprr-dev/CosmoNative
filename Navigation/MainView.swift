@@ -55,6 +55,15 @@ struct CommandKPresentationState: Equatable {
     }
 }
 
+enum CommandKFocusRestorePolicy {
+    static func returnTab(
+        _ currentReturnTab: CommandKTab?,
+        restoreOnFocusClose: Bool
+    ) -> CommandKTab? {
+        restoreOnFocusClose ? currentReturnTab : nil
+    }
+}
+
 enum MainKeyboardShortcutPolicy {
     static func isTextInputFocused(in window: NSWindow?) -> Bool {
         isTypingTarget(window?.firstResponder)
@@ -143,6 +152,7 @@ struct MainView: View {
     @State private var currentDestination: SidebarDestination = .commandCenter
     @State private var inboxRoute: SidebarInboxRoute = .global
     @StateObject private var commandCenterViewModel = CommandCenterDashboardViewModel()
+    @StateObject private var swipeLibraryViewModel = SwipeLibraryViewModel()
     // Simple sidebar state: closed/open. Open sidebar reserves layout space.
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @AppStorage("unifiedSidebarContext") private var activeSidebarContext: SidebarContext = .thinkspaces
@@ -625,6 +635,10 @@ struct MainView: View {
                 break
             case .codex:
                 break
+            case .discover:
+                break
+            case .swipeFile:
+                break
             }
             syncSidebarContext(with: newDest)
             // Update Cosmo Window context (panel is now system-wide, always update)
@@ -637,6 +651,8 @@ struct MainView: View {
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
             case .codex:
+                vm.updateContextManually(type: .commandCenter)
+            case .discover, .swipeFile:
                 vm.updateContextManually(type: .commandCenter)
             }
         }
@@ -781,7 +797,12 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openBlockInFocusMode)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
             let shouldOpenAsPane = notification.userInfo?["asPane"] as? Bool == true
-            handleOpenBlockInFocusMode(atomUUID: atomUUID, asPane: shouldOpenAsPane)
+            let shouldRestoreCommandK = notification.userInfo?["restoreCommandKOnFocusClose"] as? Bool ?? true
+            handleOpenBlockInFocusMode(
+                atomUUID: atomUUID,
+                asPane: shouldOpenAsPane,
+                restoreCommandKOnFocusClose: shouldRestoreCommandK
+            )
         }
     }
 
@@ -1186,7 +1207,11 @@ struct MainView: View {
         case .thinkspace:
             activeSidebarContext = .thinkspaces
         case .codex:
-            break
+            activeSidebarContext = .inbox
+        case .discover:
+            activeSidebarContext = .swipeFile
+        case .swipeFile:
+            activeSidebarContext = .swipeFile
         }
     }
 
@@ -1219,7 +1244,7 @@ struct MainView: View {
         switch currentDestination {
         case .thinkspace:
             return canvasSceneTint.dampened(0.58)
-        case .commandCenter, .inbox, .codex:
+        case .commandCenter, .inbox, .codex, .discover, .swipeFile:
             return .neutral
         }
     }
@@ -1236,7 +1261,7 @@ struct MainView: View {
                 base: canvasSceneMaterial.dampened(0.82),
                 extraSignals: routeSceneSignals.filter { $0.source == .canvasBlock || $0.source == .canvasCluster }
             )
-        case .commandCenter, .inbox:
+        case .commandCenter, .inbox, .discover, .swipeFile:
             return sidebarRouteSceneMaterial
         case .codex:
             return .neutral
@@ -1362,6 +1387,8 @@ struct MainView: View {
         case .thinkspace(let id): return id
         case .inbox: return nil
         case .codex: return nil
+        case .discover: return nil
+        case .swipeFile: return nil
         }
     }
 
@@ -1411,6 +1438,18 @@ struct MainView: View {
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
                     .transition(.opacity)
+            } else if case .discover = currentDestination {
+                SwipeFileDiscoverPlaceholderView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DS.bg)
+                    .offset(x: contentPushOffset)
+                    .transition(.opacity)
+            } else if case .swipeFile(let section) = currentDestination {
+                SwipeFileHomeView(viewModel: swipeLibraryViewModel, section: section)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DS.bg)
+                    .offset(x: contentPushOffset)
+                    .transition(.opacity)
             }
         }
     }
@@ -1444,7 +1483,11 @@ struct MainView: View {
 
     /// Handles the openBlockInFocusMode notification (from promoteToContent, context panels, etc.)
     /// Fetches the atom by UUID, determines its type, and navigates to the appropriate focus mode.
-    private func handleOpenBlockInFocusMode(atomUUID: String, asPane: Bool = false) {
+    private func handleOpenBlockInFocusMode(
+        atomUUID: String,
+        asPane: Bool = false,
+        restoreCommandKOnFocusClose: Bool = true
+    ) {
         if asPane {
             Task { @MainActor in
                 do {
@@ -1477,6 +1520,10 @@ struct MainView: View {
         }
 
         // Close any overlays that might be open
+        commandKReturnTab = CommandKFocusRestorePolicy.returnTab(
+            commandKReturnTab,
+            restoreOnFocusClose: restoreCommandKOnFocusClose
+        )
         closeCommandK(clearViewModel: false)
 
         Task { @MainActor in

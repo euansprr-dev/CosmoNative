@@ -129,10 +129,33 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
             store: store
         )
 
-        state.toggleCurrentSitePin()
+        state.pinCurrentSite()
         let pins = try await waitForPins(in: store, profileID: CosmoBrowserProfile.standard.id, count: 2)
 
         XCTAssertEqual(Set(pins.map(\.host)), ["first.example", "second.example"])
+
+        try? FileManager.default.removeItem(at: stateURL)
+    }
+
+    func testPinButtonDoesNotRemoveExistingPinForCurrentSite() async throws {
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CosmoBrowserStore(fileURL: stateURL)
+        let state = CosmoWebBrowserState(
+            initialURL: URL(string: "https://www.example.com")!,
+            title: "Example",
+            store: store
+        )
+
+        state.pinCurrentSite()
+        _ = try await waitForPins(in: store, profileID: CosmoBrowserProfile.standard.id, count: 1)
+
+        state.pinCurrentSite()
+        let pins = try await waitForPins(in: store, profileID: CosmoBrowserProfile.standard.id, count: 1)
+
+        XCTAssertEqual(pins.map(\.host), ["example.com"])
+        XCTAssertEqual(state.pins.map(\.host), ["example.com"])
 
         try? FileManager.default.removeItem(at: stateURL)
     }

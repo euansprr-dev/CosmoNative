@@ -127,6 +127,7 @@ class AgentToolExecutor {
         case "get_content_pipeline": return try await getContentPipeline(arguments)
         case "advance_pipeline_phase": return try await advancePipelinePhase(arguments)
         case "create_content": return try await createContent(arguments)
+        case "create_note": return try await createNote(arguments)
         case "get_content": return try await getContent(arguments)
         case "create_thinkspace": return try await createThinkspace(arguments)
         case "inspect_current_thinkspace": return try await inspectCurrentThinkspace(arguments)
@@ -1707,6 +1708,41 @@ class AgentToolExecutor {
         }
         if let swipeUUIDs = swipeUUIDs {
             response["linkedSwipes"] = swipeUUIDs.count
+        }
+        return jsonEncode(response)
+    }
+
+    private func createNote(_ args: [String: Any]) async throws -> String {
+        guard let title = args["title"] as? String else {
+            return jsonError("Missing required parameter: title")
+        }
+
+        let body = args["body"] as? String ?? args["content"] as? String
+        let sourceUUID = args["sourceUUID"] as? String ?? args["sourceAtomUUID"] as? String
+
+        var links: [AtomLink] = []
+        if let sourceUUID, !sourceUUID.isEmpty {
+            links.append(AtomLink.related(sourceUUID))
+        }
+
+        let atom = try await atomRepo.create(
+            type: .note,
+            title: title,
+            body: body,
+            links: links.isEmpty ? nil : links
+        )
+
+        await rememberContextAtom(atom)
+
+        var response: [String: Any] = [
+            "success": true,
+            "uuid": atom.uuid,
+            "title": title,
+            "type": AtomType.note.rawValue,
+            "message": "Note created: \(title)"
+        ]
+        if let body {
+            response["bodyLength"] = body.count
         }
         return jsonEncode(response)
     }

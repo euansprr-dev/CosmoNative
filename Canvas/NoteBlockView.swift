@@ -36,6 +36,8 @@ struct NoteBlockView: View {
 
     // Prevents GRDB observation updates from triggering auto-save
     @State private var isSyncingFromDB = false
+    @State private var lastLocalSaveEchoBodyPlainText: String?
+    @State private var lastLocalSaveEchoBodyDocument: RichDocument?
 
     // GRDB observation
     @State private var observationCancellable: AnyCancellable?
@@ -211,28 +213,25 @@ struct NoteBlockView: View {
     @ViewBuilder
     private var bodyView: some View {
         if isEditingBody {
-            CosmoDocumentEditor(
-                document: $noteBodyDocument,
-                fontSize: bodyFontSize,
-                compact: true,
-                placeholder: "Press / for commands...",
-                allowSlashCommands: true,
-                allowMentions: true,
-                allowSelectionMenu: true,
-                allowImages: true,
-                isEditable: true,
-                scrollsInternally: true,
-                onPlainTextChange: { plainText in
-                    applyBodyPlainTextChange(plainText)
-                },
-                onDocumentChange: { _, plainText in
-                    let changed = plainText != noteText
-                    print("[BLOCK-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
-                    applyBodyPlainTextChange(plainText)
-                },
-                onDeactivate: { isEditingBody = false },
-                autoFocus: true
-            )
+            ScrollView(.vertical, showsIndicators: false) {
+                BlockListView(
+                    document: $noteBodyDocument,
+                    fontSize: bodyFontSize,
+                    placeholder: "Press / for commands...",
+                    allowSlashCommands: true,
+                    allowMentions: true,
+                    allowSelectionMenu: true,
+                    allowImages: true,
+                    scrollsInternally: false,
+                    autoFocusFirstTextRegion: true,
+                    onDocumentChange: { document, plainText in
+                        applyBodyDocumentChange(document, plainText: plainText)
+                    }
+                )
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .contentMargins(.top, 4, for: .scrollContent)
+            .contentMargins(.bottom, 8, for: .scrollContent)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             ScrollView(.vertical, showsIndicators: false) {
@@ -305,10 +304,12 @@ struct NoteBlockView: View {
                         }
                     },
                     onStructuredDocumentChange: { document, plainText in
-                        print("[BLOCK-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
+                        let changed = document != noteTitleDocument || plainText != noteTitleText
                         noteTitleDocument = document
                         noteTitleText = plainText
-                        markLocalEditAndScheduleSave()
+                        if changed {
+                            markLocalEditAndScheduleSave()
+                        }
                     },
                     onDeactivate: { isEditingTitle = false },
                     onCommit: { isEditingTitle = false },
@@ -345,8 +346,7 @@ struct NoteBlockView: View {
         noteBodyDocument = RichDocumentPersistence.loadBlockDocument(
             key: RichDocumentMetadataKeys.bodyDocument,
             metadata: block.metadata,
-            fallbackPlainText: block.metadata["content"],
-            preferFallbackPlainTextWhenRicher: true
+            fallbackPlainText: block.metadata["content"]
         )
         noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
         noteText = noteBodyDocument.plainText
@@ -394,8 +394,7 @@ struct NoteBlockView: View {
                             noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
                                 field: .body,
                                 metadata: atom.metadata,
-                                fallbackPlainText: atom.body,
-                                preferFallbackPlainTextWhenRicher: true
+                                fallbackPlainText: atom.body
                             )
                             noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
                             noteText = noteBodyDocument.plainText
@@ -443,14 +442,14 @@ struct NoteBlockView: View {
                     let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .body,
                         metadata: atom.metadata,
-                        fallbackPlainText: atom.body,
-                        preferFallbackPlainTextWhenRicher: true
+                        fallbackPlainText: atom.body
                     )
                     let newTitle = RichDocumentPersistence.titlePlainText(from: newTitleDocument)
                     let newBody = newBodyDocument.plainText
                     DispatchQueue.main.async {
-                        print("[BLOCK-NOTE] 🔔 GRDB observation fired — uuid=\(uuid) isEditingTitle=\(isEditingTitle) isEditingBody=\(isEditingBody) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbBodyPreview=\"\(String(newBody.prefix(60)))\" localBodyPreview=\"\(String(noteText.prefix(60)))\"")
+                        print("[BLOCK-NOTE] 🔔 GRDB observation fired — uuid=\(uuid) isEditingTitle=\(isEditingTitle) isEditingBody=\(isEditingBody) hasLocalEdits=\(hasLocalEdits) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbBodyPreview=\"\(String(newBody.prefix(60)))\" localBodyPreview=\"\(String(noteText.prefix(60)))\"")
                         var didApplyDatabaseState = false
+                        var didApplyObservedBody = false
 
                         if !isEditingTitle,
                            newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
@@ -466,20 +465,31 @@ struct NoteBlockView: View {
                         // Only overwrite body from DB when NOT actively editing —
                         // otherwise the observation echo from auto-save overwrites
                         // text the user typed since the save was initiated.
-                        if !isEditingBody,
-                           newBody != noteText || newBodyDocument != noteBodyDocument {
+                        let observedBodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument
+                        let isLocalSaveEcho = newBody == lastLocalSaveEchoBodyPlainText
+                            && newBodyDocument == lastLocalSaveEchoBodyDocument
+                        if NoteWritePolicy.shouldApplyObservedBody(
+                            isEditingBody: isEditingBody,
+                            hasLocalEdits: hasLocalEdits,
+                            observedBodyChanged: observedBodyChanged,
+                            isLocalSaveEcho: isLocalSaveEcho
+                        ) {
                             print("[BLOCK-NOTE] 🔔 observation APPLYING body — uuid=\(uuid) overwriting localLen=\(noteText.count) with dbLen=\(newBody.count)")
                             didApplyDatabaseState = true
+                            didApplyObservedBody = true
                             noteBodyDocument = newBodyDocument
                             noteText = newBody
                             noteWordCount = Self.wordCount(in: newBody)
-                        } else if isEditingBody, newBody != noteText {
-                            print("[BLOCK-NOTE] 🔔 observation SKIPPED body (editing) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
+                        } else if observedBodyChanged {
+                            print("[BLOCK-NOTE] 🔔 observation SKIPPED body (local/editing/echo) — uuid=\(uuid) isEditingBody=\(isEditingBody) hasLocalEdits=\(hasLocalEdits) isLocalSaveEcho=\(isLocalSaveEcho) dbLen=\(newBody.count) localLen=\(noteText.count)")
                         }
 
                         guard didApplyDatabaseState else { return }
-                        // DB state was applied — local content now matches DB, so no local edits to protect.
-                        hasLocalEdits = false
+                        // Only a body apply proves local body content now matches DB.
+                        // A title-only DB update must not clear pending body edits.
+                        if didApplyObservedBody {
+                            hasLocalEdits = false
+                        }
                         isSyncingFromDB = true
                         DispatchQueue.main.async {
                             isSyncingFromDB = false
@@ -494,8 +504,9 @@ struct NoteBlockView: View {
         noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
     }
 
-    private func applyBodyPlainTextChange(_ plainText: String) {
-        let changed = plainText != noteText
+    private func applyBodyDocumentChange(_ document: RichDocument, plainText: String) {
+        let changed = plainText != noteText || document != noteBodyDocument
+        noteBodyDocument = document
         noteText = plainText
         noteWordCount = Self.wordCount(in: plainText)
 
@@ -581,6 +592,8 @@ struct NoteBlockView: View {
         // Also update the atom in the database (for blocks linked to entities)
         let uuid = trackedEntityUuid
         if !uuid.isEmpty {
+            lastLocalSaveEchoBodyPlainText = blockSnapshot.bodyPlainText
+            lastLocalSaveEchoBodyDocument = blockSnapshot.bodyDocument
             let titleDoc = effectiveTitleDocument
             let titleText = blockSnapshot.titlePlainText
             let bodyDoc = noteBodyDocument
@@ -599,6 +612,13 @@ struct NoteBlockView: View {
                 }
                 guard capturedStateIsCurrent else {
                     print("[BLOCK-NOTE] saveNote() async SKIPPED — stale snapshot uuid=\(uuid)")
+                    await MainActor.run {
+                        if lastLocalSaveEchoBodyPlainText == blockSnapshot.bodyPlainText,
+                           lastLocalSaveEchoBodyDocument == blockSnapshot.bodyDocument {
+                            lastLocalSaveEchoBodyPlainText = nil
+                            lastLocalSaveEchoBodyDocument = nil
+                        }
+                    }
                     return
                 }
                 print("[BLOCK-NOTE] saveNote() async DB write starting — uuid=\(uuid) bodyLen=\(bodyText.count)")
@@ -696,6 +716,13 @@ struct NoteBlockView: View {
                         }
                     }
                 } catch {
+                    await MainActor.run {
+                        if lastLocalSaveEchoBodyPlainText == blockSnapshot.bodyPlainText,
+                           lastLocalSaveEchoBodyDocument == blockSnapshot.bodyDocument {
+                            lastLocalSaveEchoBodyPlainText = nil
+                            lastLocalSaveEchoBodyDocument = nil
+                        }
+                    }
                     print("NoteBlock: Failed to save to atom: \(error)")
                 }
             }
@@ -724,6 +751,8 @@ struct NoteBlockView: View {
             bodyDocument: noteBodyDocument,
             plainBodyText: noteText
         )
+        lastLocalSaveEchoBodyPlainText = blockSnapshot.bodyPlainText
+        lastLocalSaveEchoBodyDocument = blockSnapshot.bodyDocument
 
         NotificationCenter.default.post(
             name: .updateBlockContent,
@@ -850,6 +879,11 @@ struct NoteBlockView: View {
             }
             hasLocalEdits = false
         } catch {
+            if lastLocalSaveEchoBodyPlainText == blockSnapshot.bodyPlainText,
+               lastLocalSaveEchoBodyDocument == blockSnapshot.bodyDocument {
+                lastLocalSaveEchoBodyPlainText = nil
+                lastLocalSaveEchoBodyDocument = nil
+            }
             print("NoteBlock: sync save failed: \(error)")
         }
     }

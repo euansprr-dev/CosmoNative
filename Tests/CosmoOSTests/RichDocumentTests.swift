@@ -2,6 +2,28 @@ import XCTest
 @testable import CosmoOS
 
 final class RichDocumentTests: XCTestCase {
+    func testContentAndResearchBlocksRoundTripThroughCodable() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .content, inlines: [.text("Draft the story")]),
+            RichBlock(kind: .research, inlines: [.text("Find source material")])
+        ])
+
+        let data = try JSONEncoder().encode(document)
+        let decoded = try JSONDecoder().decode(RichDocument.self, from: data)
+
+        XCTAssertEqual(decoded.blocks.map(\.kind), [.content, .research])
+        XCTAssertEqual(decoded.blocks.map(\.plainInlineText), ["Draft the story", "Find source material"])
+    }
+
+    func testContentAndResearchBlocksContributePlainText() {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .content, inlines: [.text("Draft the story")]),
+            RichBlock(kind: .research, inlines: [.text("Find source material")])
+        ])
+
+        XCTAssertEqual(document.plainText, "Draft the story\nFind source material")
+    }
+
     @MainActor
     func testBlockFocusCoordinatorMovesWithinRegisteredBlocks() {
         let first = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
@@ -234,6 +256,23 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertEqual(document.blocks.map(\.kind), [.element, .paragraph])
         XCTAssertEqual(document.blocks.first?.element?.instanceTitleSnapshot, "Map")
         XCTAssertEqual(document.blocks.last?.plainInlineText, "")
+    }
+
+    func testTextRegionStructuralEditTrackerPreservesInsertedElementAfterEagerBindingUpdate() {
+        let original = [RichBlock.paragraph("")]
+        let definition = DocumentElementDefinition(
+            id: UUID(uuidString: "77777777-5555-4444-3333-222222222222")!,
+            title: "Audience",
+            systemIcon: "person.2"
+        )
+        let inserted = RichBlock.element(definition, instanceTitle: "Audience")
+        let replacement = [inserted, RichBlock.paragraph("")]
+
+        var tracker = TextRegionStructuralEditTracker()
+        tracker.recordUpdate(from: original, to: replacement)
+
+        XCTAssertEqual(tracker.consumeInsertedElementID(), inserted.id)
+        XCTAssertNil(tracker.consumeInsertedElementID())
     }
 
     func testCanvasPreviewUsesLazyDocumentStacksForLongNotes() {

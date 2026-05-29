@@ -65,7 +65,13 @@ struct CortexSearchBar: View {
     // MARK: - Search Field
 
     private var searchField: some View {
-        TextField(placeholder, text: $viewModel.query)
+        TextField(
+            placeholder,
+            text: Binding(
+                get: { viewModel.query },
+                set: { viewModel.updateQuery($0) }
+            )
+        )
             .textFieldStyle(.plain)
             .font(DS.title2)
             .foregroundStyle(DS.text)

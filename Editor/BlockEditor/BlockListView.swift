@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct BlockListView: View {
+    @Environment(\.undoManager) private var undoManager
+
     @Binding var document: RichDocument
 
     var fontSize: CGFloat = 17
@@ -17,17 +19,19 @@ struct BlockListView: View {
     var editorTargetID: String? = nil
     var navigationTargetID: UUID? = nil
     var focusCoordinator: BlockFocusCoordinator? = nil
+    var autoFocusFirstTextRegion: Bool = false
     var onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil
     var onContentHeightChange: ((CGFloat) -> Void)? = nil
     var onExitFinalEmptyTextRegion: (() -> Bool)? = nil
     var onDocumentChange: ((RichDocument, String) -> Void)? = nil
 
     @State private var ownedFocusCoordinator = BlockFocusCoordinator()
+    @State private var undoRegistrar = BlockUndoRegistrar()
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            ForEach(regions) { region in
-                regionView(for: region)
+            ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
+                rowView(for: block, at: .root(index: index))
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -36,17 +40,28 @@ struct BlockListView: View {
         } action: { newHeight in
             onContentHeightChange?(newHeight)
         }
+        .onAppear {
+            configureUndoRegistrar()
+            scheduleEnsureEditableDocument()
+        }
+        .onChange(of: document.blocks.isEmpty) { _, isEmpty in
+            if isEmpty {
+                scheduleEnsureEditableDocument()
+            }
+        }
     }
 
     @ViewBuilder
-    private func regionView(for region: BlockRegion) -> some View {
-        switch region.kind {
-        case .text, .unsupported:
-            textRegionView(for: region)
-        case .element:
-            if let block = region.blocks.first {
+    private func rowView(for block: RichBlock, at path: BlockPath) -> some View {
+        BlockRowView(block: block, path: path, darkMode: darkMode, onMove: moveBlock) {
+            switch block.kind {
+            case .divider:
+                dividerRow
+            case .image:
+                imageRow(for: block)
+            case .element:
                 ElementBlockView(
-                    block: blockBinding(for: region, fallback: block),
+                    block: blockBinding(at: path, fallback: block),
                     focusCoordinator: resolvedFocusCoordinator,
                     fontSize: fontSize,
                     darkMode: darkMode,
@@ -59,20 +74,32 @@ struct BlockListView: View {
                     editorTargetID: editorTargetID,
                     navigationTargetID: navigationTargetID,
                     onSelectionChanged: onSelectionChanged,
-                    onExitBody: { insertParagraph(after: region) },
+                    onExitBody: { insertParagraph(after: path) },
                     onElementChange: emitDocumentChange
                 )
+            case .content, .research:
+                VStack(alignment: .leading, spacing: 6) {
+                    blockKindBadge(for: block.kind)
+                    textBlockRow(for: block, at: path)
+                }
+            default:
+                textBlockRow(for: block, at: path)
             }
         }
     }
 
-    private func textRegionView(for region: BlockRegion) -> some View {
-        TextRegionView(
+    private func textBlockRow(for block: RichBlock, at path: BlockPath) -> some View {
+        BlockTextEditorRow(
             document: $document,
-            region: region,
+            path: path,
+            blockID: block.id,
             focusCoordinator: resolvedFocusCoordinator,
             fontSize: fontSize,
-            placeholder: placeholder,
+            placeholder: BlockPlaceholderPolicy.shouldShowBodyPlaceholder(
+                for: block,
+                at: path,
+                in: document
+            ) ? placeholder : "",
             darkMode: darkMode,
             overrideTextColor: overrideTextColor,
             allowSlashCommands: allowSlashCommands,
@@ -83,11 +110,47 @@ struct BlockListView: View {
             scrollsInternally: scrollsInternally,
             editorTargetID: editorTargetID,
             navigationTargetID: navigationTargetID,
-            autoFocus: false,
+            autoFocus: autoFocusFirstTextRegion && path.indices == [0],
             onSelectionChanged: onSelectionChanged,
-            onBoundaryCommand: handleBoundaryCommand,
-            onDocumentChange: onDocumentChange
+            onDocumentChange: onDocumentChange,
+            onExitFinalEmptyTextRegion: onExitFinalEmptyTextRegion
         )
+    }
+
+    private var dividerRow: some View {
+        Rectangle()
+            .fill((darkMode ? Color.white : DS.documentTextSecondary).opacity(0.28))
+            .frame(height: 1)
+            .padding(.vertical, 10)
+    }
+
+    private func imageRow(for block: RichBlock) -> some View {
+        Group {
+            if let image = block.inlines.compactMap(\.image).first,
+               let nsImage = ImageStore.load(path: image.path) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: min(680, image.width))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                Text("[Image]")
+                    .font(.system(size: fontSize, weight: .medium))
+                    .foregroundStyle(darkMode ? Color.white.opacity(0.62) : DS.documentTextSecondary)
+                    .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private func blockKindBadge(for kind: RichBlockKind) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: kind == .content ? "doc.text" : "magnifyingglass.circle")
+                .font(.system(size: 11, weight: .medium))
+            Text(kind == .content ? "Content" : "Research")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundStyle(darkMode ? Color.white.opacity(0.58) : DS.documentTextMuted)
+        .padding(.leading, 2)
     }
 
     private var regions: [BlockRegion] {
@@ -102,85 +165,91 @@ struct BlockListView: View {
         focusCoordinator ?? ownedFocusCoordinator
     }
 
-    private func blockBinding(for region: BlockRegion, fallback: RichBlock) -> Binding<RichBlock> {
+    private func blockBinding(at path: BlockPath, fallback: RichBlock) -> Binding<RichBlock> {
         Binding(
             get: {
-                block(at: region.range.lowerBound) ?? fallback
+                (try? BlockOperations.currentBlock(in: document, at: path)) ?? fallback
             },
             set: { nextBlock in
-                replaceBlock(at: region.range.lowerBound, with: nextBlock)
+                replaceBlock(at: path, with: nextBlock)
             }
         )
     }
 
-    private func block(at index: Int) -> RichBlock? {
-        guard document.blocks.indices.contains(index) else { return nil }
-        return document.blocks[index]
-    }
-
-    private func replaceBlock(at index: Int, with nextBlock: RichBlock) {
-        guard document.blocks.indices.contains(index),
-              document.blocks[index] != nextBlock else {
+    private func replaceBlock(at path: BlockPath, with nextBlock: RichBlock) {
+        guard let result = try? BlockOperations.replaceBlock(in: document, at: path, with: nextBlock),
+              result.document != document else {
             return
         }
-        document.blocks[index] = nextBlock
+        commit(result, undoActionName: "Edit Block")
     }
 
     private func emitDocumentChange() {
         onDocumentChange?(document, document.plainText)
     }
 
-    private func handleBoundaryCommand(_ command: EditorBoundaryCommand, in region: BlockRegion) -> Bool {
-        resolvedFocusCoordinator.focus(region.focusID)
-
-        switch command {
-        case .moveToPreviousBlock:
-            return resolvedFocusCoordinator.focusPrevious()
-        case .moveToNextBlock:
-            return resolvedFocusCoordinator.focusNext()
-        case .deleteBackwardAtStart:
-            return handleDeleteBackwardAtStart(in: region)
-        case .insertNewlineOnEmptyFinalLine:
-            return onExitFinalEmptyTextRegion?() ?? false
-        }
-    }
-
-    private func handleDeleteBackwardAtStart(in region: BlockRegion) -> Bool {
-        guard region.kind == .text,
-              let firstBlock = region.blocks.first,
-              firstBlock.isEmptyParagraphBlock,
-              region.range.lowerBound > 0,
-              document.blocks.indices.contains(region.range.lowerBound) else {
-            return false
-        }
-
-        let previousIndex = region.range.lowerBound - 1
-        let previousID = document.blocks.indices.contains(previousIndex) ? document.blocks[previousIndex].id : nil
-        document.blocks.remove(at: region.range.lowerBound)
-        emitDocumentChange()
-        resolvedFocusCoordinator.focus(previousID)
-        return true
-    }
-
-    private func insertParagraph(after region: BlockRegion) {
+    private func insertParagraph(after path: BlockPath) {
         let paragraph = RichBlock.paragraph("")
-        let insertionIndex = min(region.range.upperBound, document.blocks.count)
-        document.blocks.insert(paragraph, at: insertionIndex)
+        guard let result = try? BlockOperations.insertBlock(paragraph, in: document, after: path) else {
+            return
+        }
+        commit(result, undoActionName: "Insert Text Block")
+    }
+
+    private func moveBlock(_ payload: BlockDragPayload, target: BlockDropTarget) {
+        guard let result = try? BlockOperations.moveBlock(in: document, from: payload.sourcePath, to: target) else {
+            return
+        }
+        commit(result, undoActionName: "Move Block")
+    }
+
+    private func commit(_ result: BlockOperationResult, undoActionName: String) {
+        let before = document
+        document = result.document
+        undoRegistrar.register(
+            undoManager: undoManager,
+            before: before,
+            after: result.document,
+            actionName: undoActionName
+        )
         emitDocumentChange()
-        resolvedFocusCoordinator.focus(paragraph.id)
+        if let focusPath = result.focusPath,
+           let focusedBlock = try? BlockOperations.currentBlock(in: result.document, at: focusPath) {
+            resolvedFocusCoordinator.focus(focusedBlock.id)
+        }
+    }
+
+    private func configureUndoRegistrar() {
+        undoRegistrar.applyDocument = { nextDocument in
+            document = nextDocument
+            emitDocumentChange()
+        }
+    }
+
+    private func scheduleEnsureEditableDocument() {
+        DispatchQueue.main.async {
+            ensureEditableDocument()
+        }
+    }
+
+    private func ensureEditableDocument() {
+        guard document.blocks.isEmpty else { return }
+        document.blocks = [.paragraph("")]
     }
 }
 
-private extension RichBlock {
-    var isEmptyParagraphBlock: Bool {
-        guard kind == .paragraph, children.isEmpty else { return false }
-        return inlines.allSatisfy { inline in
-            switch inline.kind {
-            case .text:
-                return inline.text?.isEmpty ?? true
-            case .mention, .imageRef:
-                return false
-            }
+enum BlockPlaceholderPolicy {
+    static func shouldShowBodyPlaceholder(
+        for block: RichBlock,
+        at path: BlockPath,
+        in document: RichDocument
+    ) -> Bool {
+        guard path.indices == [0],
+              document.blocks.first?.id == block.id,
+              block.kind.isTextEditableBlock,
+              block.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
         }
+        return true
     }
 }

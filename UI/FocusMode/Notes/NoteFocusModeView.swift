@@ -158,6 +158,19 @@ enum NoteAutosaveChangePolicy {
     static func shouldAutosaveTextChange(isInitialLoad: Bool, didChange: Bool) -> Bool {
         !isInitialLoad && didChange
     }
+
+    static func shouldAutosaveDocumentChange(
+        isInitialLoad: Bool,
+        previousDocument: RichDocument,
+        nextDocument: RichDocument,
+        previousPlainText: String,
+        nextPlainText: String
+    ) -> Bool {
+        !isInitialLoad && (
+            previousPlainText != nextPlainText
+                || previousDocument != nextDocument
+        )
+    }
 }
 
 enum NoteFocusLog {
@@ -186,8 +199,7 @@ struct NoteFocusInitialDocuments: Equatable {
         let bodyDocument = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: atom.metadata,
-            fallbackPlainText: atom.body,
-            preferFallbackPlainTextWhenRicher: true
+            fallbackPlainText: atom.body
         )
         let titlePlainText = RichDocumentPersistence.titlePlainText(from: titleDocument)
         let plainContent = bodyDocument.plainText
@@ -252,7 +264,6 @@ struct NoteFocusModeView: View {
     @State private var contentAppeared = false
     @State private var titleUnderlineProgress: CGFloat = 0
     @State private var titleEditorHeight: CGFloat = 76
-    @State private var bodyEditorHeight: CGFloat = 400
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var pendingObservedTitleDocument: RichDocument?
     @State private var titleDocumentAtEditStart: RichDocument = .empty
@@ -384,7 +395,6 @@ struct NoteFocusModeView: View {
             loadLinkedAtoms()
             listenForAtomPicker()
             titleEditorHeight = titleMinHeight
-            bodyEditorHeight = 400
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 withAnimation(ProMotionSprings.cardEntrance) {
                     contentAppeared = true
@@ -706,23 +716,21 @@ struct NoteFocusModeView: View {
                         selectedText = snapshot.text
                         refreshCosmoContextIfActive()
                     },
-                    onContentHeightChange: { newHeight in
-                        let nextHeight = max(400, newHeight)
-                        if EditorHeightUpdatePolicy.shouldPublish(current: bodyEditorHeight, next: nextHeight) {
-                            withoutImplicitAnimation {
-                                bodyEditorHeight = nextHeight
-                            }
-                        }
-                    },
                     onDocumentChange: { document, plainText in
-                        let changed = plainText != plainContent
+                        let changed = NoteAutosaveChangePolicy.shouldAutosaveDocumentChange(
+                            isInitialLoad: isInitialLoad,
+                            previousDocument: bodyDocument,
+                            nextDocument: document,
+                            previousPlainText: plainContent,
+                            nextPlainText: plainText
+                        )
                         NoteFocusLog.debug("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                         bodyDocument = document
                         plainContent = plainText
                         updateBodyHeadingOutline(from: document)
                         refreshCosmoContextIfActive()
                         scheduleTextAnalysis(for: plainText)
-                        if NoteAutosaveChangePolicy.shouldAutosaveTextChange(isInitialLoad: isInitialLoad, didChange: changed) {
+                        if changed {
                             hasLocalBodyEdits = true
                             triggerAutoSave()
                         }
@@ -730,7 +738,7 @@ struct NoteFocusModeView: View {
                 )
                 .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
                 .frame(
-                    minHeight: max(bodyEditorHeight, scrollViewportHeight - 200),
+                    minHeight: max(400, scrollViewportHeight - 200),
                     alignment: .topLeading
                 )
                 .padding(.top, isEmptyNote ? DS.space32 : DS.space24)
@@ -1185,7 +1193,13 @@ struct NoteFocusModeView: View {
                             }
                         },
                         onStructuredDocumentChange: { document, plainText in
-                            let changed = document != titleDocument || plainText != titlePlainText
+                            let changed = NoteAutosaveChangePolicy.shouldAutosaveDocumentChange(
+                                isInitialLoad: isInitialLoad,
+                                previousDocument: titleDocument,
+                                nextDocument: document,
+                                previousPlainText: titlePlainText,
+                                nextPlainText: plainText
+                            )
                             NoteFocusLog.debug("[FOCUS-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                             titleDocument = document
                             titlePlainText = plainText
@@ -1193,7 +1207,7 @@ struct NoteFocusModeView: View {
                             withAnimation(ProMotionSprings.bouncy) {
                                 titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
                             }
-                            if NoteAutosaveChangePolicy.shouldAutosaveTextChange(isInitialLoad: isInitialLoad, didChange: changed) {
+                            if changed {
                                 triggerAutoSave()
                             }
                         },
@@ -1495,8 +1509,7 @@ struct NoteFocusModeView: View {
                     let nextBodyDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .body,
                         metadata: fetchedAtom.metadata,
-                        fallbackPlainText: fetchedAtom.content,
-                        preferFallbackPlainTextWhenRicher: true
+                        fallbackPlainText: fetchedAtom.content
                     )
                     let nextTitlePlainText = RichDocumentPersistence.titlePlainText(from: nextTitleDocument)
                     let nextBodyPlainText = nextBodyDocument.plainText
@@ -1712,21 +1725,34 @@ struct NoteFocusModeView: View {
             do {
                 switch kind {
                 case .plainText:
-                    try await database.asyncWrite { db in
-                        var existingMetadata: String?
-                        var existingBody: String?
-                        if let row = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid]) {
-                            existingMetadata = row["metadata"]
-                            existingBody = row["body"]
-                        }
+                    var existingMetadata: String?
+                    var existingBody: String?
+                    if let row = try await database.asyncRead({ db in
+                        try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid])
+                    }) {
+                        existingMetadata = row["metadata"]
+                        existingBody = row["body"]
+                    }
+                    let existingBodyForWrite = existingBody
 
+                    let snapshot = await Task.detached(priority: .utility) {
+                        RichDocumentPersistence.noteSnapshot(
+                            existingMetadata: existingMetadata,
+                            titleDocument: titleDocumentCopy,
+                            bodyDocument: bodyDocumentCopy,
+                            plainBodyText: contentCopy
+                        )
+                    }.value
+
+                    try await database.asyncWrite { db in
                         guard NoteWritePolicy.allowsBodyWrite(
-                            existingBody: existingBody,
-                            proposedBody: contentCopy,
+                            existingBody: existingBodyForWrite,
+                            proposedBody: snapshot.bodyPlainText,
                             hasLocalEdits: hasLocalBodyEditsCopy
                         ) else {
                             throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
                         }
+                        let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
 
                         try db.execute(
                             sql: """
@@ -1740,9 +1766,9 @@ struct NoteFocusModeView: View {
                             WHERE uuid = ?
                             """,
                             arguments: [
-                                RichDocumentPersistence.nilIfEmpty(titleCopy),
-                                contentCopy,
-                                Self.metadataString(existingMetadata: existingMetadata, tags: tagsCopy),
+                                snapshot.atomTitle ?? RichDocumentPersistence.nilIfEmpty(titleCopy),
+                                snapshot.bodyPlainText,
+                                metadataString ?? snapshot.metadata,
                                 ISO8601DateFormatter().string(from: Date()),
                                 uuid
                             ]
@@ -1753,7 +1779,7 @@ struct NoteFocusModeView: View {
                         if plainContent == contentCopy {
                             hasLocalBodyEdits = false
                         }
-                        postNoteFocusState(title: titleCopy, body: contentCopy, atomUUID: uuid)
+                        postNoteFocusState(snapshot: snapshot, atomUUID: uuid)
                     }
 
                 case .richDocumentCheckpoint:

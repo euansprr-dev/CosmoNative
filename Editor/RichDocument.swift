@@ -21,13 +21,41 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
     case checklist
     case image
     case element
+    case content
+    case research
 
     var headingLevelInt: Int? {
         switch self {
         case .heading1: return 1
         case .heading2: return 2
         case .heading3: return 3
-        default: return nil
+            default: return nil
+        }
+    }
+
+    var isTextEditableBlock: Bool {
+        switch self {
+        case .paragraph, .heading1, .heading2, .heading3, .quote, .bulletList, .numberedList, .checklist, .content, .research:
+            return true
+        case .divider, .image, .element:
+            return false
+        }
+    }
+
+    var splitContinuationKind: RichBlockKind {
+        switch self {
+        case .heading1, .heading2, .heading3, .quote, .content, .research:
+            return .paragraph
+        case .bulletList:
+            return .bulletList
+        case .numberedList:
+            return .numberedList
+        case .checklist:
+            return .checklist
+        case .paragraph:
+            return .paragraph
+        case .divider, .image, .element:
+            return .paragraph
         }
     }
 }
@@ -248,6 +276,10 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
                 prefix = "\(listPosition). "
             case .checklist:
                 prefix = (block.checked ?? false) ? "☑ " : "☐ "
+            case .content:
+                prefix = ""
+            case .research:
+                prefix = ""
             case .image:
                 return indentation + "[Image]"
             case .element:
@@ -1049,7 +1081,7 @@ enum RichDocumentSerializer {
 
     private static func blockPrefix(for block: RichBlock, listPosition: Int) -> String {
         switch block.kind {
-        case .paragraph, .image, .element:
+        case .paragraph, .image, .element, .content, .research:
             return ""
         case .heading1, .heading2, .heading3:
             return ""  // Headings use attribute-based detection, no visible prefix

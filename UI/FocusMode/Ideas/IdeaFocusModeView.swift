@@ -156,6 +156,15 @@ struct IdeaFocusModeView: View {
         .sheet(isPresented: $showBlueprintSheet) { atelierBlueprintSheet }
         .sheet(isPresented: $showResearchSheet) { atelierResearchSheet }
         .sheet(isPresented: $showFrameworkSheet) { atelierFrameworkSheet }
+        .onChange(of: viewModel.researchResults) { _, _ in
+            viewModel.scheduleAutoSave()
+        }
+        .onChange(of: viewModel.arcRecommendations) { _, _ in
+            viewModel.scheduleAutoSave()
+        }
+        .onChange(of: viewModel.chatHistory) { _, _ in
+            viewModel.scheduleAutoSave()
+        }
     }
 
     // MARK: - Marginalia sheets
@@ -235,6 +244,7 @@ struct IdeaFocusModeView: View {
         let isSelected = viewModel.selectedArcType == rec.arcName
         return Button {
             viewModel.selectedArcType = rec.arcName
+            viewModel.scheduleAutoSave()
         } label: {
             VStack(alignment: .leading, spacing: DS.space6) {
                 HStack(spacing: DS.space8) {
@@ -815,11 +825,11 @@ extension IdeaFocusModeView {
         }
         .onAppear {
             if viewModel.codexOutline == nil {
-                viewModel.codexOutline = CodexOutlineModel(arcShape: nil, slides: [
+                viewModel.replaceCodexOutline(CodexOutlineModel(arcShape: nil, slides: [
                     CodexOutlineSlide(id: UUID(), position: 1, speechAct: nil,
                         readerDeltas: [], frame: nil, distance: nil,
                         techniques: [], transition: nil, note: nil)
-                ])
+                ]))
             }
         }
     }
@@ -907,9 +917,7 @@ extension IdeaFocusModeView {
                 viewModel.codexOutline?.slides.first(where: { $0.id == slideId })?.note ?? ""
             },
             set: { newValue in
-                if let idx = viewModel.codexOutline?.slides.firstIndex(where: { $0.id == slideId }) {
-                    viewModel.codexOutline?.slides[idx].note = newValue
-                }
+                viewModel.updateOutlineSlideNote(slideId: slideId, note: newValue)
             }
         )
     }
@@ -1065,27 +1073,27 @@ extension IdeaFocusModeView {
                 distance: nil, techniques: [], transition: nil, note: nil
             )
         }
-        viewModel.codexOutline = CodexOutlineModel(arcShape: arcName, slides: slides)
+        viewModel.replaceCodexOutline(CodexOutlineModel(arcShape: arcName, slides: slides))
         if let arcName { viewModel.selectedArcType = arcName }
     }
 
     private func addNewSlide() {
         guard var outline = viewModel.codexOutline else { return }
         _ = CodexOutlineEditing.insertSlide(after: outline.slides.last?.id ?? UUID(), in: &outline)
-        viewModel.codexOutline = outline
+        viewModel.replaceCodexOutline(outline)
     }
 
     private func removeSlide(_ id: UUID) {
         guard var outline = viewModel.codexOutline else { return }
         outline.slides.removeAll { $0.id == id }
         CodexOutlineEditing.renumberSlides(in: &outline)
-        viewModel.codexOutline = outline
+        viewModel.replaceCodexOutline(outline)
     }
 
     private func insertSlideAfterFocusedSlide(_ slideID: UUID) {
         guard var outline = viewModel.codexOutline else { return }
         let newID = CodexOutlineEditing.insertSlide(after: slideID, in: &outline)
-        viewModel.codexOutline = outline
+        viewModel.replaceCodexOutline(outline)
         focusOutlineSlide(newID)
     }
 
@@ -1095,7 +1103,7 @@ extension IdeaFocusModeView {
             return .ignored
         }
 
-        viewModel.codexOutline = outline
+        viewModel.replaceCodexOutline(outline)
         focusOutlineSlide(previousID)
         return .handled
     }
@@ -1136,7 +1144,7 @@ extension IdeaFocusModeView {
         case "transition": outline.slides[idx].transition = name
         default: break
         }
-        viewModel.codexOutline = outline
+        viewModel.replaceCodexOutline(outline)
     }
 
     private func removeElementFromSlide(slideId: UUID, field: String, name: String) {
@@ -1151,7 +1159,7 @@ extension IdeaFocusModeView {
         case "technique": outline.slides[idx].techniques.removeAll { $0 == name }
         default: break
         }
-        viewModel.codexOutline = outline
+        viewModel.replaceCodexOutline(outline)
     }
 }
 
@@ -2006,6 +2014,7 @@ extension IdeaFocusModeView {
     private func refreshArcRecommendations() {
         isLoadingArcRecs = true
         viewModel.arcRecommendations = []
+        viewModel.scheduleAutoSave()
         Task {
             await viewModel.generateArcRecommendations()
             isLoadingArcRecs = false

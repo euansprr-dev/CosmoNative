@@ -589,7 +589,8 @@ struct MainView: View {
             handleOpenCollaboratorPane(atomUUID: payload.atomUUID, presetId: payload.presetId)
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
-            if newValue != nil {
+            if let newValue {
+                recordFocusModeAccess(for: newValue)
                 cancelSidebarHoverClose()
                 isHoveringSidebarRevealTrigger = false
                 isHoveringSidebarPanel = false
@@ -1559,6 +1560,12 @@ struct MainView: View {
                     showActivationLoading = false
                 }
             }
+        }
+    }
+
+    private func recordFocusModeAccess(for selection: EntitySelection) {
+        Task {
+            _ = try? await AtomRepository.shared.recordAccess(entityId: selection.id, accessType: .view)
         }
     }
 

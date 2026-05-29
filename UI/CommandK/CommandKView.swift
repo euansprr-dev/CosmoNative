@@ -19,6 +19,7 @@ public struct CommandKView: View {
     @StateObject private var viewModel: CommandKViewModel
     @FocusState private var isSearchFocused: Bool
     @Namespace private var cortexNamespace
+    @State private var searchText = ""
     @State private var isExpandedBrowserMounted = false
     @State private var domainTransitionTask: Task<Void, Never>?
     @State private var searchFocusTask: Task<Void, Never>?
@@ -63,6 +64,7 @@ public struct CommandKView: View {
             }
             .ignoresSafeArea()
             .onAppear {
+                searchText = viewModel.query
                 viewModel.initialExpandedTab = initialTab
                 viewModel.setSurfaceActive(isActive)
                 if isActive {
@@ -87,6 +89,14 @@ public struct CommandKView: View {
             }
             .onChange(of: searchFocusRequest) { _, _ in
                 requestSearchFocus()
+            }
+            .onChange(of: searchText) { _, newValue in
+                viewModel.updateQuery(newValue)
+            }
+            .onChange(of: viewModel.querySyncToken) { _, _ in
+                if searchText != viewModel.query {
+                    searchText = viewModel.query
+                }
             }
             .onChange(of: viewModel.cortexMode) { _, mode in
                 switch mode {
@@ -175,7 +185,7 @@ public struct CommandKView: View {
                 .frame(width: 22)
 
             // Text field
-            TextField(searchPlaceholder, text: $viewModel.query)
+            TextField(searchPlaceholder, text: $searchText)
                 .textFieldStyle(.plain)
                 .font(DS.title2)
                 .foregroundStyle(DS.text)
@@ -204,7 +214,7 @@ public struct CommandKView: View {
             // Voice button
             voiceButton
 
-            if !viewModel.query.isEmpty {
+            if !searchText.isEmpty {
                 clearQueryButton
             } else if viewModel.cortexMode == .compact {
                 commandKeyBadge
@@ -461,7 +471,7 @@ public struct CommandKView: View {
     private var clearQueryButton: some View {
         Button {
             withAnimation(ProMotionSprings.snappy) {
-                viewModel.query = ""
+                searchText = ""
             }
         } label: {
             Image(systemName: "xmark.circle.fill")
@@ -582,7 +592,7 @@ public struct CommandKView: View {
                 closeExpandedDomain()
             }
         case .searchResults:
-            viewModel.query = ""
+            searchText = ""
         case .compact:
             NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
         }

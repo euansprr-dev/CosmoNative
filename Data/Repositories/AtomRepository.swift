@@ -323,6 +323,14 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// Mark a user-facing atom as opened when navigation only has the legacy entity id.
+    @discardableResult
+    func recordAccess(entityId: Int64, accessType: AccessType = .view) async throws -> Atom? {
+        guard let atom = try await fetch(id: entityId) else { return nil }
+        try await NodeGraphEngine.shared.recordAccess(atomUUID: atom.uuid, type: accessType)
+        return atom
+    }
+
     /// Search atoms by title or body content (basic keyword search)
     func search(query: String, limit: Int = 50) async throws -> [Atom] {
         let userTypes: [AtomType] = [.idea, .note, .task, .research, .content, .connection, .project, .journalEntry, .image]

@@ -5,6 +5,31 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum EditorImmediateResizePolicy {
+    static func shouldApplyImmediateResize(
+        newHeight: CGFloat,
+        textViewHeight: CGFloat,
+        scrollViewHeight: CGFloat,
+        intrinsicHeight: CGFloat?,
+        widthChanged: Bool,
+        plainText: String
+    ) -> Bool {
+        if widthChanged { return true }
+
+        let currentIntrinsicHeight = intrinsicHeight ?? newHeight
+        let wouldShrinkHeight = newHeight + 0.5 < scrollViewHeight
+            || newHeight + 0.5 < textViewHeight
+            || newHeight + 0.5 < currentIntrinsicHeight
+
+        guard wouldShrinkHeight else { return true }
+
+        // Empty split blocks can briefly inherit the previous editor's large
+        // frame/intrinsic height. Let those rows shrink immediately so Return
+        // creates line-sized blocks instead of page-sized gaps.
+        return plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 @MainActor
 fileprivate protocol CosmoTextViewShortcutDelegate: AnyObject {
     func textViewDidRequestFormattingShortcut(_ shortcut: FormattingType)
@@ -24,6 +49,26 @@ fileprivate extension NSView {
     }
 }
 
+// MARK: - Implicit-animation suppression
+
+/// CALayer action map used by every Cosmo editor view (text view, scroll view,
+/// clip view) to disable Core Animation's default ~0.25s animations on geometry
+/// changes. SwiftUI re-layout writes new frames directly to the hosting NSView's
+/// layer; without this map, every Return / typing-driven height change would
+/// animate, producing the visible "ghost line above" jitter the user sees.
+let suppressedLayerActions: [String: any CAAction] = [
+    "bounds": NSNull(),
+    "position": NSNull(),
+    "frame": NSNull(),
+    "frameOrigin": NSNull(),
+    "frameSize": NSNull(),
+    "transform": NSNull(),
+    "sublayers": NSNull(),
+    "onOrderIn": NSNull(),
+    "onOrderOut": NSNull(),
+    "contents": NSNull()
+]
+
 // MARK: - Scroll-Transparent NSScrollView
 
 /// When `forwardsScrollEvents` is true, scroll wheel events pass through to the
@@ -37,6 +82,12 @@ final class CosmoScrollView: NSScrollView {
             width: NSView.noIntrinsicMetric,
             height: intrinsicHeight ?? NSView.noIntrinsicMetric
         )
+    }
+
+    override func makeBackingLayer() -> CALayer {
+        let layer = super.makeBackingLayer()
+        layer.actions = suppressedLayerActions
+        return layer
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -54,6 +105,12 @@ final class CosmoScrollView: NSScrollView {
 
 final class CosmoClipView: NSClipView {
     weak var owningScrollView: CosmoScrollView?
+
+    override func makeBackingLayer() -> CALayer {
+        let layer = super.makeBackingLayer()
+        layer.actions = suppressedLayerActions
+        return layer
+    }
 
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
         var bounds = super.constrainBoundsRect(proposedBounds)
@@ -84,6 +141,12 @@ final class CosmoClipView: NSClipView {
 
 final class CosmoTextView: NSTextView {
     fileprivate weak var shortcutDelegate: CosmoTextViewShortcutDelegate?
+
+    override func makeBackingLayer() -> CALayer {
+        let layer = super.makeBackingLayer()
+        layer.actions = suppressedLayerActions
+        return layer
+    }
 
     /// When true, scroll events are handled by the enclosing NSScrollView
     /// instead of being forwarded up the responder chain (canvas zoom).
@@ -280,7 +343,9 @@ final class CosmoTextView: NSTextView {
         // internal scroll-to-cursor. NSTextView calls this during insertText,
         // which shifts the clip view BEFORE the frame has grown to fit the new
         // content — causing a visible upward jitter on newline insertion.
-        guard scrollsInternally else { return }
+        guard scrollsInternally else {
+            return
+        }
         super.scrollRangeToVisible(range)
     }
 
@@ -750,6 +815,26 @@ extension CosmoTextView {
         )
 
         scrollView.documentView = textView
+
+        // ── Disable implicit Core Animation on geometry keys ─────────────────
+        // The "ghost line above" jitter on Return / typing is Core Animation
+        // implicitly animating bounds/position/frame whenever the layer's
+        // geometry changes. We already wrap our own setFrameSize calls in an
+        // NSAnimationContext with duration=0, but when SwiftUI (driven by our
+        // `invalidateIntrinsicContentSize`) writes new frames to the hosting
+        // NSView, those writes go through the default CA action map and
+        // animate with the default ~0.25s curve. During that animation, both
+        // the old and new layer positions are rendered, which the user sees
+        // as the previous line "ghosting" above itself for a frame.
+        //
+        // The subclasses (CosmoScrollView/CosmoClipView/CosmoTextView) also
+        // override `makeBackingLayer()` to set these actions on every layer
+        // creation, so this loop just primes any layer that already exists.
+        for view in [scrollView as NSView, clipView, textView] {
+            view.wantsLayer = true
+            view.layer?.actions = suppressedLayerActions
+        }
+
         return scrollView
     }
 }
@@ -1080,18 +1165,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     }
 
     private func resolvedTextInsets() -> NSSize {
-        if singleLine {
-            let verticalInset = EditorLayoutMetrics.singleLineVerticalInset(fontSize: fontSize, compact: compact)
-            return NSSize(width: compact ? 0 : 2, height: verticalInset)
-        }
-        if titleConfiguration != nil {
-            let verticalInset = EditorLayoutMetrics.titleVerticalInset(fontSize: fontSize, compact: compact)
-            return NSSize(width: compact ? 0 : 2, height: verticalInset)
-        }
-        if compact {
-            return NSSize(width: 10, height: 8)
-        }
-        return NSSize(width: 16, height: 16)
+        EditorTextInsetPolicy.textContainerInset(
+            scrollsInternally: scrollsInternally,
+            singleLine: singleLine,
+            isTitleMode: titleConfiguration != nil,
+            compact: compact,
+            fontSize: fontSize
+        )
     }
 
     private func resolvedSingleLineHeight() -> CGFloat {
@@ -1153,6 +1233,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private var selectionChangeWorkItem: DispatchWorkItem?
         /// Grace period after opening a menu — ignores auto-scroll dismiss
         private var menuOpenedAt: CFAbsoluteTime = 0
+
+        private struct AncestorScrollSnapshot {
+            let scrollView: NSScrollView
+            let origin: NSPoint
+        }
 
         init(_ parent: TextKitEditorRepresentable) {
             self.parent = parent
@@ -1244,6 +1329,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             lastObservedFrameWidth = newWidth
             notifyContentHeightChange(for: textView)
         }
+
 
         func applyPolishHighlights(to textView: NSTextView) {
             guard let storage = textView.textStorage else { return }
@@ -1351,8 +1437,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             guard let textView = notification.object as? CosmoTextView else { return }
             // Skip when triggered by setAttributedString inside updateNSView —
             // writing bindings here would cause "Modifying state during view update".
-            guard !isUpdatingFromSwiftUI else { return }
-            guard !isApplyingStructuralEdit else { return }
+            guard !isUpdatingFromSwiftUI else {
+                return
+            }
+            guard !isApplyingStructuralEdit else {
+                return
+            }
 
             normalizeSingleLineViewport(for: textView)
             syncBindings(from: textView)
@@ -1372,6 +1462,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 } else {
                     ensureScrollMargin(textView)
                 }
+            } else if parent.typewriterMode {
+                scheduleAncestorTypewriterScroll(for: textView)
             }
         }
 
@@ -1403,6 +1495,67 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: targetY))
             }
             scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+
+        private func shouldUseAncestorTypewriterScroll(for textView: NSTextView) -> Bool {
+            guard parent.typewriterMode,
+                  !parent.scrollsInternally,
+                  !parent.singleLine else {
+                return false
+            }
+            return textView.nearestAncestorScrollView(excluding: textView.enclosingScrollView) != nil
+        }
+
+        private func scheduleAncestorTypewriterScroll(for textView: NSTextView) {
+            guard shouldUseAncestorTypewriterScroll(for: textView) else { return }
+
+            let selectedRange = textView.selectedRange()
+
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.scrollCursorToAncestorTypewriterBand(textView, selectedRange: selectedRange)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.scrollCursorToAncestorTypewriterBand(textView, selectedRange: selectedRange)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.scrollCursorToAncestorTypewriterBand(textView, selectedRange: selectedRange)
+            }
+        }
+
+        private func scrollCursorToAncestorTypewriterBand(_ textView: NSTextView, selectedRange: NSRange) {
+            guard shouldUseAncestorTypewriterScroll(for: textView),
+                  let ancestorScrollView = textView.nearestAncestorScrollView(excluding: textView.enclosingScrollView),
+                  let documentView = ancestorScrollView.documentView,
+                  let cursorRect = cursorRectInAncestorDocument(
+                    for: textView,
+                    selectedRange: selectedRange,
+                    ancestorScrollView: ancestorScrollView
+                  ) else {
+                return
+            }
+
+            let visibleRect = ancestorScrollView.documentVisibleRect
+            let visibleHeight = max(visibleRect.height, 1)
+            let targetY = visibleRect.minY + visibleHeight * 0.44
+            let delta = cursorRect.midY - targetY
+            guard abs(delta) > 10 else { return }
+
+            let documentHeight = max(documentView.bounds.height, visibleHeight)
+            let maxY = max(0, documentHeight - visibleHeight)
+            let targetOriginY = min(max(0, visibleRect.minY + delta), maxY)
+            guard abs(targetOriginY - visibleRect.minY) > 0.5 else { return }
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                ancestorScrollView.contentView.animator().setBoundsOrigin(
+                    NSPoint(x: visibleRect.minX, y: targetOriginY)
+                )
+            }
+            ancestorScrollView.reflectScrolledClipView(ancestorScrollView.contentView)
         }
 
         // MARK: - Scroll Margin (30% Bottom)
@@ -1594,6 +1747,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 if activeBlockMode != .none, let prefix = continuationPrefix(for: textView) {
                     textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
                     syncBindings(from: textView)
+                    scheduleAncestorTypewriterScroll(for: textView)
                     return true
                 }
             }
@@ -1644,6 +1798,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
                             textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
                             syncBindings(from: textView)
+                            scheduleAncestorTypewriterScroll(for: textView)
                             return true
                         }
                     } else if let prefix = continuationPrefix(for: textView) {
@@ -1651,6 +1806,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                         textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
                         resetInlineFormattingOnly(textView)
                         syncBindings(from: textView)
+                        scheduleAncestorTypewriterScroll(for: textView)
                         return true
                     }
                 }
@@ -1777,6 +1933,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             textView.needsDisplay = true
             textView.sizeToFit()
             notifyContentHeightChange(for: textView)
+            scheduleAncestorTypewriterScroll(for: textView)
         }
 
         private func insertNormalNewline(in textView: NSTextView) {
@@ -1788,14 +1945,25 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return
             }
 
+            let shouldUseAncestorTypewriterScroll = shouldUseAncestorTypewriterScroll(for: textView)
+            let ancestorSnapshot = shouldUseAncestorTypewriterScroll ? nil : captureAncestorScrollSnapshot(for: textView)
             resetToNormalTypingAttributes(textView)
             let newline = NSAttributedString(string: "\n", attributes: elementInsertionBaseAttributes())
             isApplyingStructuralEdit = true
             defer { isApplyingStructuralEdit = false }
             storage.replaceCharacters(in: replacementRange, with: newline)
             textView.setSelectedRange(NSRange(location: replacementRange.location + newline.length, length: 0))
+            if !shouldUseAncestorTypewriterScroll {
+                restoreAncestorScrollSnapshot(ancestorSnapshot)
+            }
             textView.didChangeText()
-            syncStructuralEditBindings(from: textView)
+            syncBindings(from: textView)
+            if shouldUseAncestorTypewriterScroll {
+                scheduleAncestorTypewriterScroll(for: textView)
+            } else {
+                restoreAncestorScrollSnapshot(ancestorSnapshot)
+                scheduleAncestorScrollSnapshotRestores(ancestorSnapshot)
+            }
         }
 
         // MARK: - Menu State
@@ -2033,6 +2201,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             case .elements:
                 break
             case .newElement:
+                break
+            case .content:
+                break
+            case .research:
                 break
             case .element:
                 guard let definition = command.elementDefinition else { return }
@@ -2511,6 +2683,55 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             ancestorScrollView.reflectScrolledClipView(ancestorScrollView.contentView)
         }
 
+        private func cursorRectInAncestorDocument(
+            for textView: NSTextView,
+            selectedRange: NSRange,
+            ancestorScrollView: NSScrollView
+        ) -> CGRect? {
+            guard !textView.string.isEmpty,
+                  let documentView = ancestorScrollView.documentView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else {
+                return nil
+            }
+
+            layoutManager.ensureLayout(for: textContainer)
+            let textLength = textView.string.utf16.count
+            let characterLocation = min(max(selectedRange.location, 0), textLength)
+            let nsText = textView.string as NSString
+
+            var usesExtraLineFragment = false
+            var cursorRect: CGRect
+            if characterLocation == textLength,
+               textLength > 0,
+               nsText.substring(with: NSRange(location: textLength - 1, length: 1)) == "\n",
+               !layoutManager.extraLineFragmentRect.isEmpty {
+                usesExtraLineFragment = true
+                cursorRect = layoutManager.extraLineFragmentRect
+            } else {
+                let measuredLocation = min(characterLocation, max(textLength - 1, 0))
+                let glyphRange = layoutManager.glyphRange(
+                    forCharacterRange: NSRange(location: measuredLocation, length: 1),
+                    actualCharacterRange: nil
+                )
+                cursorRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            }
+
+            if cursorRect.isEmpty {
+                cursorRect = CGRect(x: 0, y: 0, width: 1, height: textView.font?.pointSize ?? parent.fontSize)
+            } else if characterLocation >= textLength, !usesExtraLineFragment {
+                cursorRect.origin.x = cursorRect.maxX
+                cursorRect.size.width = 1
+            } else {
+                cursorRect.size.width = max(cursorRect.width, 1)
+            }
+            cursorRect.size.height = max(cursorRect.height, textView.font?.pointSize ?? parent.fontSize)
+
+            let textContainerOrigin = textView.textContainerOrigin
+            let rectInTextView = cursorRect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            return textView.convert(rectInTextView, to: documentView)
+        }
+
         private func boolAttribute(_ key: NSAttributedString.Key, at location: Int, in storage: NSTextStorage) -> Bool? {
             guard location < storage.length else { return nil }
             let value = storage.attribute(key, at: location, effectiveRange: nil)
@@ -2952,16 +3173,22 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             let currentAttributedText = textView.attributedString()
             let currentString = plainTextForBinding(from: textView, attributedText: currentAttributedText)
+
+            isUpdatingFromTextView = true
+
+            // Settle AppKit-side geometry before invalidating SwiftUI for true
+            // structural edits. Ordinary Return uses the lightweight typing path;
+            // this path remains for edits that must remount block UI immediately.
+            resizeAppKitFrameIfNeeded(for: textView)
+            textView.window?.invalidateCursorRects(for: textView)
+
             parent.plainText = currentString
             parent.cursorPosition = textView.selectedRange().location
             parent.onPlainTextDidChange?(currentString)
 
-            isUpdatingFromTextView = true
             let currentDocument = RichDocumentSerializer.document(from: currentAttributedText)
             parent.onStructuredDocumentChange?(currentDocument, currentString)
             parent.attributedText = currentAttributedText
-            resizeAppKitFrameIfNeeded(for: textView)
-            textView.window?.invalidateCursorRects(for: textView)
 
             DispatchQueue.main.async { [weak self] in
                 self?.isUpdatingFromTextView = false
@@ -2980,6 +3207,61 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return textView.string
             }
             return RichDocumentSerializer.document(from: attributedText).plainText
+        }
+
+        private func captureAncestorScrollSnapshot(for textView: NSTextView) -> AncestorScrollSnapshot? {
+            guard !parent.scrollsInternally,
+                  let ancestorScrollView = textView.nearestAncestorScrollView(excluding: textView.enclosingScrollView) else {
+                return nil
+            }
+
+            return AncestorScrollSnapshot(
+                scrollView: ancestorScrollView,
+                origin: ancestorScrollView.contentView.bounds.origin
+            )
+        }
+
+        private func scheduleAncestorScrollSnapshotRestores(_ snapshot: AncestorScrollSnapshot?) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.restoreAncestorScrollSnapshot(snapshot)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+                guard let self else { return }
+                self.restoreAncestorScrollSnapshot(snapshot)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self else { return }
+                self.restoreAncestorScrollSnapshot(snapshot)
+            }
+        }
+
+        private func restoreAncestorScrollSnapshot(_ snapshot: AncestorScrollSnapshot?) {
+            guard !parent.scrollsInternally,
+                  let snapshot,
+                  let documentView = snapshot.scrollView.documentView else {
+                return
+            }
+
+            let clipView = snapshot.scrollView.contentView
+            let maxX = max(0, documentView.bounds.width - clipView.bounds.width)
+            let maxY = max(0, documentView.bounds.height - clipView.bounds.height)
+            let targetOrigin = NSPoint(
+                x: min(max(0, snapshot.origin.x), maxX),
+                y: min(max(0, snapshot.origin.y), maxY)
+            )
+            let currentOrigin = clipView.bounds.origin
+            guard abs(currentOrigin.x - targetOrigin.x) > 0.05
+                    || abs(currentOrigin.y - targetOrigin.y) > 0.05 else {
+                return
+            }
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                context.allowsImplicitAnimation = false
+                clipView.setBoundsOrigin(targetOrigin)
+            }
+            snapshot.scrollView.reflectScrolledClipView(clipView)
         }
 
         private func attributedTextContainsHiddenContent(_ attributedText: NSAttributedString) -> Bool {
@@ -3026,9 +3308,41 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 ?? ceil(usedRect.height + (textView.textContainerInset.height * 2))
             let newHeight = max(0, measuredHeight)
 
-            let currentWidth = max(scrollView.contentSize.width, textView.frame.width)
-            if textView.frame.height != newHeight || abs(textView.frame.width - currentWidth) > 0.5 {
-                textView.setFrameSize(NSSize(width: currentWidth, height: newHeight))
+            let currentWidth = max(scrollView.contentSize.width, scrollView.frame.width, textView.frame.width)
+            // Jitter guard. Inside the per-keystroke path NSLayoutManager.usedRect
+            // can briefly return a height that is 1-2 pt smaller than the settled
+            // value — the just-edited storage isn't fully reflected yet. When that
+            // happens we shrink the wrapper + intrinsic to the stale measurement,
+            // the deferred sync 50 ms later re-measures the correct value, and
+            // the wrapper grows back. The user sees a visible 52→50→52 oscillation
+            // on every keystroke and Return — what they describe as a "ghost" of
+            // every line. Only allow this immediate path to grow OR keep the same
+            // height; let `notifyContentHeightChange` (which runs after layout has
+            // fully settled) handle any genuine shrink.
+            let widthChanged = abs(scrollView.frame.width - currentWidth) > 0.5
+                || abs(textView.frame.width - currentWidth) > 0.5
+            let shouldApplyImmediateResize = EditorImmediateResizePolicy.shouldApplyImmediateResize(
+                newHeight: newHeight,
+                textViewHeight: textView.frame.height,
+                scrollViewHeight: scrollView.frame.height,
+                intrinsicHeight: scrollView.intrinsicHeight,
+                widthChanged: widthChanged,
+                plainText: textView.string
+            )
+            if !shouldApplyImmediateResize {
+                return
+            }
+
+            // Tolerance-based comparison: see notifyContentHeightChange for the
+            // full reasoning. SwiftUI sub-pixel positioning (e.g. h=356.72) vs.
+            // our ceil'd integer measurement (356) was driving a subpixel resize
+            // loop on every layout pass.
+            if abs(textView.frame.height - newHeight) > 0.5 || abs(textView.frame.width - currentWidth) > 0.5 {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0
+                    context.allowsImplicitAnimation = false
+                    textView.setFrameSize(NSSize(width: currentWidth, height: newHeight))
+                }
             }
             if abs((scrollView.intrinsicHeight ?? 0) - newHeight) > 1.0 {
                 scrollView.intrinsicHeight = newHeight
@@ -3103,7 +3417,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if !parent.scrollsInternally,
                let scrollView = textView.enclosingScrollView as? CosmoScrollView {
                 let currentWidth = nonScrollingViewportWidth ?? max(scrollView.contentSize.width, textView.frame.width)
-                if textView.frame.height != newHeight || abs(textView.frame.width - currentWidth) > 0.5 {
+                // Use tolerance (> 0.5pt) for the height comparison as well — `newHeight`
+                // is always ceil()'d to an integer, while SwiftUI/AppKit position views
+                // at sub-pixel boundaries for Retina alignment (e.g. frame.h=356.72).
+                // A raw `!=` triggers a resize on every layout pass, which AppKit re-
+                // positions to subpixel, which triggers another measure → another
+                // resize. That positive feedback loop is the visible "ghost line"
+                // jitter — every layout pass nudges the inner frame, the SwiftUI
+                // ScrollView re-anchors, and the user sees the content shimmer.
+                if abs(textView.frame.height - newHeight) > 0.5 || abs(textView.frame.width - currentWidth) > 0.5 {
                     textView.setFrameSize(NSSize(width: currentWidth, height: newHeight))
                 }
                 if abs((scrollView.intrinsicHeight ?? 0) - newHeight) > 1.0 {

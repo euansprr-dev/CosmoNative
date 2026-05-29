@@ -1243,6 +1243,40 @@ final class CommandKSearchPipelineTests: XCTestCase {
     }
 
     @MainActor
+    func testTypingQueryDoesNotInvalidateCommandKSurfaceBeforeSearchPublishes() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        var invalidationCount = 0
+        let cancellable = viewModel.objectWillChange
+            .sink { invalidationCount += 1 }
+        defer { cancellable.cancel() }
+
+        viewModel.updateQuery("i")
+        viewModel.updateQuery("id")
+        viewModel.updateQuery("ide")
+
+        XCTAssertEqual(viewModel.query, "ide")
+        XCTAssertEqual(invalidationCount, 0)
+    }
+
+    func testCommandKPreviewPaneDoesNotForceRemountOnSelectionIdentity() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/CommandK/CortexMasterDetailView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertFalse(source.contains(".id(subject.selectionIdentity)"))
+    }
+
+    @MainActor
     func testSearchCompletionKeepsFirstSelectionAndPreviewIdentityStable() async throws {
         let viewModel = CommandKViewModel(
             userCommandStore: CommandKUserCommandStore(
@@ -1278,6 +1312,84 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(viewModel.primaryAction?.id, initialPreviewIdentity)
         XCTAssertTrue(selectionEvents.isEmpty)
         XCTAssertTrue(previewEvents.isEmpty)
+    }
+
+    @MainActor
+    func testScopedIdeaDraftChangesDoNotRepublishStablePrimaryAction() async throws {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        await viewModel.performSearch(query: "idea Euan: turn")
+        let initialSelection = try XCTUnwrap(viewModel.selectedNodeId)
+        let initialAction = try XCTUnwrap(viewModel.primaryAction)
+
+        var previewEvents: [String?] = []
+        let cancellable = viewModel.$primaryAction
+            .dropFirst()
+            .sink { previewEvents.append($0?.id) }
+        defer { cancellable.cancel() }
+
+        await viewModel.performSearch(query: "idea Euan: turn onboarding calls into a story bank")
+
+        XCTAssertEqual(viewModel.selectedNodeId, initialSelection)
+        XCTAssertEqual(viewModel.primaryAction, initialAction)
+        XCTAssertTrue(previewEvents.isEmpty)
+    }
+
+    @MainActor
+    func testLegacyRankedResultPassDoesNotStealActiveCommandSelection() async throws {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        let action = CommandKAction(
+            kind: .openDomain,
+            title: "Open Ideas",
+            subtitle: "Switch Command-K domain",
+            icon: "lightbulb.fill",
+            payload: CommandKActionPayload(domain: "ideas", rawText: "ideas")
+        )
+        let legacyResult = RankedResult(
+            atomUUID: "atom-result-that-is-not-the-visible-command",
+            atomType: .idea,
+            title: "A matching idea",
+            snippet: "Legacy ranked results are not the visible top command row",
+            semanticWeight: 0.5,
+            structuralWeight: 0.5,
+            recencyWeight: 0.5,
+            usageWeight: 0.5,
+            updatedAt: ISO8601DateFormatter().string(from: Date()),
+            accessCount: 0
+        )
+
+        viewModel.primaryAction = action
+        viewModel.selectedNodeId = action.id
+        viewModel.selectedResultIndex = 0
+
+        var selectionEvents: [String?] = []
+        let cancellable = viewModel.$selectedNodeId
+            .dropFirst()
+            .sink { selectionEvents.append($0) }
+        defer { cancellable.cancel() }
+
+        viewModel.testingApplyUnfilteredResults([legacyResult])
+
+        XCTAssertEqual(viewModel.selectedNodeId, action.id)
+        XCTAssertEqual(viewModel.selectedResultIndex, 0)
+        XCTAssertTrue(selectionEvents.isEmpty)
     }
 
     @MainActor
@@ -1453,5 +1565,12 @@ final class CommandKSearchPipelineTests: XCTestCase {
         var atom = atom
         atom.updatedAt = updatedAt
         return atom
+    }
+
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 }

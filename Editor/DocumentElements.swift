@@ -463,7 +463,7 @@ enum DocumentElementContextFormatter {
             return "\(numberedListPosition(in: siblings, before: index)). "
         case .checklist:
             return (block.checked ?? false) ? "[x] " : "[ ] "
-        case .divider, .image, .element:
+        case .divider, .image, .element, .content, .research:
             return ""
         }
     }

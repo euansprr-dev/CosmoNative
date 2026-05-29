@@ -115,7 +115,6 @@ struct ContentFocusModeView: View {
     @State private var selectionInfo: DraftSelectionInfo = .empty
     @State private var inlineAIState: InlineAIState = .idle
     @StateObject private var inlineAssistant = AIWritingAssistant()
-    @State private var textContentHeight: CGFloat = 400
     @State private var draftEditorOrigin: CGPoint = .zero
     @State private var selectedRephraseIndex: Int = 0
     @State private var showWritingAICard = false
@@ -306,24 +305,8 @@ struct ContentFocusModeView: View {
         )
     }
 
-    private func estimatedDraftEditorHeight(availableWidth: CGFloat) -> CGFloat {
-        let text = localDraftContent.isEmpty ? draftDocument.plainText : localDraftContent
-        guard !text.isEmpty else { return 400 }
-
-        let writingWidth = manuscriptWidth(availableWidth: availableWidth)
-        let textWidth = max(260, writingWidth - 32)
-        let averageCharacterWidth: CGFloat = 8.5
-        let charactersPerLine = max(24, Int(textWidth / averageCharacterWidth))
-        let visualLineCount = text
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .reduce(0) { total, line in
-                total + max(1, Int(ceil(Double(line.count + 1) / Double(charactersPerLine))))
-            }
-
-        let lineHeight: CGFloat = 29
-        let paragraphSpacing: CGFloat = 12
-        let paragraphCount = max(1, text.components(separatedBy: "\n\n").count)
-        return CGFloat(visualLineCount) * lineHeight + CGFloat(paragraphCount - 1) * paragraphSpacing + 80
+    private var manuscriptEditorHeightOffset: CGFloat {
+        zenMode ? 96 : 200
     }
 
     // MARK: - Initialization
@@ -638,20 +621,22 @@ struct ContentFocusModeView: View {
             scriptoriumHeader
                 .atelierStaggerIn(delay: continuationStagger(0.05), appeared: hasAppeared)
 
-            // Page-wide title hero + step ledger — centered to the whole window,
-            // not just the manuscript column. This is what makes the page feel
-            // like a single composition rather than a left-heavy layout.
-            VStack(spacing: DS.space20) {
-                scriptoriumTitleHero
-                    .atelierStaggerIn(delay: continuationStagger(0.12), appeared: hasAppeared)
-                scriptoriumStepLedger
-                    .atelierStaggerIn(delay: continuationStagger(0.20), appeared: hasAppeared)
+            if !zenMode {
+                // Page-wide title hero + step ledger — centered to the whole window,
+                // not just the manuscript column. This is what makes the page feel
+                // like a single composition rather than a left-heavy layout.
+                VStack(spacing: DS.space20) {
+                    scriptoriumTitleHero
+                        .atelierStaggerIn(delay: continuationStagger(0.12), appeared: hasAppeared)
+                    scriptoriumStepLedger
+                        .atelierStaggerIn(delay: continuationStagger(0.20), appeared: hasAppeared)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, DS.space12)
+                .padding(.bottom, DS.space24)
+                .background(FocusModeEditorBlurTapLayer())
+                .transition(.opacity.combined(with: .offset(y: -12)))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.top, DS.space12)
-            .padding(.bottom, DS.space24)
-            .background(FocusModeEditorBlurTapLayer())
-            .opacity(zenMode ? 0 : 1)
 
             GeometryReader { geo in
                 let showMarginaliaRails = ContentFocusLayoutPolicy.showsMarginaliaRails(
@@ -785,16 +770,10 @@ struct ContentFocusModeView: View {
 
     private func scriptoriumManuscript(height: CGFloat, availableWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: DS.space20) {
-            // Title editor — serif display, chromeless (matches Atelier)
-            TextField("untitled content", text: $editableTitle, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(DS.displaySerif)
-                .foregroundStyle(focusText)
-                .tracking(-0.5)
-                .lineLimit(1...3)
-                .onChange(of: editableTitle) { _, newTitle in
-                    viewModel.updateTitle(newTitle)
-                }
+            if !zenMode {
+                manuscriptTitleEditor
+                    .transition(.opacity.combined(with: .offset(y: -16)))
+            }
 
             // Metadata line
             HStack(spacing: DS.space8) {
@@ -841,9 +820,6 @@ struct ContentFocusModeView: View {
                         )
                     )
                 },
-                onContentHeightChange: { measuredHeight in
-                    textContentHeight = max(400, measuredHeight)
-                },
                 onAIAction: { action in triggerInlineAction(action) },
                 onCustomPrompt: { prompt in triggerCustomPrompt(prompt) },
                 onWritingAIRequest: { openWritingAI() },
@@ -867,11 +843,7 @@ struct ContentFocusModeView: View {
                 }
             )
             .frame(
-                minHeight: max(
-                    textContentHeight,
-                    estimatedDraftEditorHeight(availableWidth: availableWidth),
-                    height - 200
-                ),
+                minHeight: max(400, height - manuscriptEditorHeightOffset),
                 alignment: .top
             )
             .background(
@@ -892,58 +864,66 @@ struct ContentFocusModeView: View {
     // MARK: - Scriptorium header (quiet nav + zen ornament)
 
     private var scriptoriumHeader: some View {
-        HStack(spacing: DS.space12) {
-            if !isPaneContext {
-                Button(action: toggleSidebar) {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(sidebarLocked || sidebarVisible ? focusText : focusTextMuted)
-                        .frame(width: 28, height: 28)
-                        .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(DS.glassBorder, lineWidth: 0.5)
-                        )
-                }
-                .buttonStyle(.plain)
-                .help(sidebarLocked || sidebarVisible ? "Hide sidebar" : "Show sidebar")
-                .opacity(zenMode ? 0 : 1)
-                .allowsHitTesting(!zenMode)
-            }
-            if !isPaneContext {
-                Button(action: onClose) {
-                    HStack(spacing: DS.space6) {
-                        Image(systemName: "chevron.left")
+        ZStack {
+            HStack(spacing: DS.space12) {
+                if !isPaneContext {
+                    Button(action: toggleSidebar) {
+                        Image(systemName: "sidebar.left")
                             .font(.system(size: 11, weight: .medium))
-                        Text("back")
-                            .font(DS.dateSerif)
-                            .italic()
+                            .foregroundStyle(sidebarLocked || sidebarVisible ? focusText : focusTextMuted)
+                            .frame(width: 28, height: 28)
+                            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(DS.glassBorder, lineWidth: 0.5)
+                            )
                     }
-                    .foregroundStyle(focusTextMuted)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .help(sidebarLocked || sidebarVisible ? "Hide sidebar" : "Show sidebar")
+                    .opacity(zenMode ? 0 : 1)
+                    .allowsHitTesting(!zenMode)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Go back")
-                .opacity(zenMode ? 0 : 1)
-                .allowsHitTesting(!zenMode)
-            }
-            Spacer()
-            writingSurfaceControls
-            // Zen ornament is always visible — it's the only way to exit zen mode
-            ZenOrnament(isOn: $zenMode)
-            if isPaneContext {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .medium))
+                if !isPaneContext {
+                    Button(action: onClose) {
+                        HStack(spacing: DS.space6) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 11, weight: .medium))
+                            Text("back")
+                                .font(DS.dateSerif)
+                                .italic()
+                        }
                         .foregroundStyle(focusTextMuted)
-                        .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Go back")
+                    .opacity(zenMode ? 0 : 1)
+                    .allowsHitTesting(!zenMode)
                 }
-                .buttonStyle(.plain)
-                .padding(.leading, DS.space8)
-                .accessibilityLabel("Close pane")
-                .opacity(zenMode ? 0 : 1)
-                .allowsHitTesting(!zenMode)
+                Spacer()
+                writingSurfaceControls
+                // Zen ornament is always visible — it's the only way to exit zen mode
+                ZenOrnament(isOn: $zenMode)
+                if isPaneContext {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(focusTextMuted)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, DS.space8)
+                    .accessibilityLabel("Close pane")
+                    .opacity(zenMode ? 0 : 1)
+                    .allowsHitTesting(!zenMode)
+                }
+            }
+
+            if zenMode {
+                scriptoriumFixedTitleHeader
+                    .padding(.horizontal, isPaneContext ? 72 : 180)
+                    .transition(.opacity.combined(with: .offset(y: 14)))
             }
         }
         .padding(.horizontal, DS.space20)
@@ -1034,6 +1014,33 @@ struct ContentFocusModeView: View {
         }
     }
 
+    private var manuscriptTitleEditor: some View {
+        TextField("untitled content", text: $editableTitle, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(DS.displaySerif)
+            .foregroundStyle(focusText)
+            .tracking(-0.5)
+            .lineLimit(1...3)
+            .onChange(of: editableTitle) { _, newTitle in
+                viewModel.updateTitle(newTitle)
+            }
+    }
+
+    private var scriptoriumFixedTitleHeader: some View {
+        TextField("untitled content", text: $editableTitle, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 15, weight: .semibold, design: .serif))
+            .foregroundStyle(focusText)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .multilineTextAlignment(.center)
+            .onChange(of: editableTitle) { _, newTitle in
+                viewModel.updateTitle(newTitle)
+            }
+            .frame(maxWidth: 760)
+            .accessibilityLabel("Content title")
+    }
+
     // MARK: - Title hero (smallCaps status ornament)
 
     private var scriptoriumTitleHero: some View {
@@ -1117,15 +1124,23 @@ struct ContentFocusModeView: View {
             if isPolishModeActive, viewModel.state.contentScorecard != nil {
                 scoreMarginaliaSection
             }
-            if !viewModel.state.hooks.isEmpty {
-                hooksMarginaliaSection
-            }
-            if !draftHeadingOutline.isEmpty {
-                draftSectionsMarginaliaSection
-            }
-            outlineMarginaliaSection
+            hooksAndOutlineMarginaliaGroup
             if !viewModel.state.contentDescription.isEmpty {
                 coreIdeaMarginaliaSection
+            }
+        }
+    }
+
+    private var hooksAndOutlineMarginaliaGroup: some View {
+        scriptoriumMarginaliaContainer {
+            VStack(alignment: .leading, spacing: DS.space18) {
+                if !viewModel.state.hooks.isEmpty {
+                    hooksMarginaliaSection
+                }
+                if !draftHeadingOutline.isEmpty {
+                    draftSectionsMarginaliaSection
+                }
+                outlineMarginaliaSection
             }
         }
     }
@@ -1245,7 +1260,16 @@ struct ContentFocusModeView: View {
     // MARK: - Right marginalia (SOURCE · SWIPES · FRAMEWORK · BRAND · HOOKS)
 
     private var scriptoriumRightMargin: some View {
-        VStack(alignment: .leading, spacing: DS.space24) {
+        scriptoriumMarginaliaContainer {
+            VStack(alignment: .leading, spacing: DS.space18) {
+                rightMarginaliaSections
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var rightMarginaliaSections: some View {
+        Group {
             if sourceIdeaAtom != nil {
                 sourceMarginaliaSection
             }
@@ -1260,6 +1284,37 @@ struct ContentFocusModeView: View {
             }
             cosmoWritingMarginaliaSection
         }
+    }
+
+    private func scriptoriumMarginaliaContainer<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .fill(scriptoriumMarginaliaContainerFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(scriptoriumMarginaliaContainerBorder, lineWidth: 0.5)
+            )
+    }
+
+    private var scriptoriumMarginaliaContainerFill: Color {
+        if DS.usesImmersiveFocusAppearance {
+            return DS.focusImmersiveSurface.opacity(0.34)
+        }
+        return DS.vellumDeep.opacity(0.58)
+    }
+
+    private var scriptoriumMarginaliaContainerBorder: Color {
+        if DS.usesImmersiveFocusAppearance {
+            return DS.focusImmersiveBorder.opacity(0.62)
+        }
+        return DS.sepiaSubtle.opacity(0.86)
     }
 
     private var cosmoWritingMarginaliaSection: some View {

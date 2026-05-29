@@ -36,7 +36,7 @@ struct CosmoDocumentEditor: View {
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
     var overrideFont: NSFont? = nil
-    var headingDisclosureColor: NSColor? = .black
+    var headingDisclosureColor: NSColor? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowSelectionMenu: Bool = true
@@ -66,6 +66,7 @@ struct CosmoDocumentEditor: View {
     var onDeactivate: (() -> Void)? = nil
     var onCommit: (() -> Void)? = nil
     var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
+    var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
     var autoFocus: Bool = false
 
     var body: some View {
@@ -105,6 +106,7 @@ struct CosmoDocumentEditor: View {
             onDeactivate: onDeactivate,
             onCommit: onCommit,
             onBoundaryCommand: onBoundaryCommand,
+            onSlashCommandSelected: onSlashCommandSelected,
             onPlainTextDidChange: { plainText in
                 // Direct per-keystroke callback from the NSTextView coordinator.
                 // This bypasses the SwiftUI @Binding→onChange chain which can
@@ -189,10 +191,10 @@ struct CosmoDocumentEditor: View {
         // after Backspace or Return.
     }
 
-    /// Immediate structured update for edits that change block topology, such as
-    /// Return-driven line splits and element insertion. Keeping these on the
-    /// debounced plain typing path leaves the active NSTextView displaying stale
-    /// block structure while SwiftUI waits to mount the real block views.
+    /// Immediate structured update for edits that must remount block UI, such as
+    /// element insertion and collapse changes. Ordinary typing, including Return,
+    /// stays on the lightweight path to avoid forcing the enclosing SwiftUI scroll
+    /// view to relayout from inside AppKit's key handling.
     private func handleDirectStructuredDocumentChange(_ updated: RichDocument, plainText: String) {
         guard !isApplyingExternalUpdate else { return }
 

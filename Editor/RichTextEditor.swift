@@ -31,6 +31,113 @@ enum EditorHeightUpdatePolicy {
     }
 }
 
+struct EditorTextPadding: Equatable {
+    var top: CGFloat
+    var leading: CGFloat
+    var bottom: CGFloat
+    var trailing: CGFloat
+
+    static let zero = EditorTextPadding(top: 0, leading: 0, bottom: 0, trailing: 0)
+
+    var edgeInsets: EdgeInsets {
+        EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing)
+    }
+
+    var vertical: CGFloat {
+        top + bottom
+    }
+}
+
+enum EditorTextInsetPolicy {
+    static func usesExternalTextPadding(
+        scrollsInternally: Bool,
+        singleLine: Bool,
+        isTitleMode: Bool
+    ) -> Bool {
+        !scrollsInternally && !singleLine && !isTitleMode
+    }
+
+    static func textContainerInset(
+        scrollsInternally: Bool,
+        singleLine: Bool,
+        isTitleMode: Bool,
+        compact: Bool,
+        fontSize: CGFloat
+    ) -> NSSize {
+        if usesExternalTextPadding(
+            scrollsInternally: scrollsInternally,
+            singleLine: singleLine,
+            isTitleMode: isTitleMode
+        ) {
+            return .zero
+        }
+
+        let padding = visualPadding(
+            singleLine: singleLine,
+            isTitleMode: isTitleMode,
+            compact: compact,
+            fontSize: fontSize
+        )
+        return NSSize(width: padding.leading, height: padding.top)
+    }
+
+    static func externalTextPadding(
+        scrollsInternally: Bool,
+        singleLine: Bool,
+        isTitleMode: Bool,
+        compact: Bool,
+        fontSize: CGFloat
+    ) -> EditorTextPadding {
+        guard usesExternalTextPadding(
+            scrollsInternally: scrollsInternally,
+            singleLine: singleLine,
+            isTitleMode: isTitleMode
+        ) else {
+            return .zero
+        }
+
+        return visualPadding(
+            singleLine: singleLine,
+            isTitleMode: isTitleMode,
+            compact: compact,
+            fontSize: fontSize
+        )
+    }
+
+    static func visualPadding(
+        singleLine: Bool,
+        isTitleMode: Bool,
+        compact: Bool,
+        fontSize: CGFloat
+    ) -> EditorTextPadding {
+        if singleLine {
+            let verticalInset = EditorLayoutMetrics.singleLineVerticalInset(fontSize: fontSize, compact: compact)
+            return EditorTextPadding(
+                top: verticalInset,
+                leading: compact ? 0 : 2,
+                bottom: verticalInset,
+                trailing: 2
+            )
+        }
+
+        if isTitleMode {
+            let verticalInset = EditorLayoutMetrics.titleVerticalInset(fontSize: fontSize, compact: compact)
+            return EditorTextPadding(
+                top: verticalInset,
+                leading: compact ? 0 : 2,
+                bottom: verticalInset,
+                trailing: 2
+            )
+        }
+
+        if compact {
+            return EditorTextPadding(top: 8, leading: 10, bottom: 8, trailing: 10)
+        }
+
+        return EditorTextPadding(top: 16, leading: 16, bottom: 16, trailing: 16)
+    }
+}
+
 struct RichTextEditor: View {
     @Binding var text: NSAttributedString
     @Binding var plainText: String
@@ -81,6 +188,7 @@ struct RichTextEditor: View {
     var onDeactivate: (() -> Void)? = nil
     var onCommit: (() -> Void)? = nil
     var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
+    var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
     var onPlainTextDidChange: ((String) -> Void)? = nil
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
     var autoFocus: Bool = false
@@ -148,6 +256,7 @@ struct RichTextEditor: View {
         onDeactivate: (() -> Void)? = nil,
         onCommit: (() -> Void)? = nil,
         onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil,
+        onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil,
         onPlainTextDidChange: ((String) -> Void)? = nil,
         onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil,
         autoFocus: Bool = false,
@@ -188,6 +297,7 @@ struct RichTextEditor: View {
         self.onDeactivate = onDeactivate
         self.onCommit = onCommit
         self.onBoundaryCommand = onBoundaryCommand
+        self.onSlashCommandSelected = onSlashCommandSelected
         self.onPlainTextDidChange = onPlainTextDidChange
         self.onStructuredDocumentChange = onStructuredDocumentChange
         self.autoFocus = autoFocus
@@ -227,24 +337,27 @@ struct RichTextEditor: View {
                 scrollsInternally: scrollsInternally,
                 onSlashCommand: { position in
                     guard allowSlashCommands else { return }
-                    slashMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 528, height: 340), in: containerSize)
+                    let adjustedPosition = positionFromTextKit(position)
+                    slashMenuPosition = clampMenuPosition(adjustedPosition, menuSize: CGSize(width: 528, height: 340), in: containerSize)
                     showSlashMenu = true
                 },
                 onMention: { position, query in
                     guard allowMentions else { return }
-                    mentionMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 360, height: 320), in: containerSize)
+                    let adjustedPosition = positionFromTextKit(position)
+                    mentionMenuPosition = clampMenuPosition(adjustedPosition, menuSize: CGSize(width: 360, height: 320), in: containerSize)
                     mentionSearchQuery = query
                     showMentionMenu = true
                 },
                 onSelectionChange: { snapshot in
-                    onSelectionChanged?(snapshot)
-                    if snapshot.range.length > 0 {
+                    let adjustedSnapshot = snapshotFromTextKit(snapshot)
+                    onSelectionChanged?(adjustedSnapshot)
+                    if adjustedSnapshot.range.length > 0 {
                         if allowSelectionMenu && !showSlashMenu && !showMentionMenu {
                             let menuHeight: CGFloat = 52
                             // Y: place menu center above selection top
-                            let menuY = snapshot.rectInEditor.minY - (menuHeight / 2) - 8
+                            let menuY = adjustedSnapshot.rectInEditor.minY - (menuHeight / 2) - 8
                             // X: center on selection midpoint (no clamping — menu uses .fixedSize())
-                            selectionMenuPosition = CGPoint(x: snapshot.rectInEditor.midX, y: menuY)
+                            selectionMenuPosition = CGPoint(x: adjustedSnapshot.rectInEditor.midX, y: menuY)
                             showSelectionMenu = true
                         }
                     } else {
@@ -266,8 +379,14 @@ struct RichTextEditor: View {
                 onPlainTextDidChange: onPlainTextDidChange,
                 onStructuredDocumentChange: onStructuredDocumentChange
             )
+            // Non-scrolling editors report their live height through
+            // CosmoScrollView.intrinsicContentSize. Do not also pin this view to
+            // measuredContentHeight: that SwiftUI @State update lands one layout
+            // pass later than TextKit's own frame growth, producing a one-frame
+            // mismatch on Return.
+            .fixedSize(horizontal: false, vertical: !scrollsInternally)
+            .padding(externalTextPadding.edgeInsets)
             .frame(maxWidth: .infinity)
-            .frame(height: (!scrollsInternally && measuredContentHeight > 1) ? measuredContentHeight : nil)
             // Prevent overlay show/hide animations from spring-animating the editor frame
             .transaction { $0.animation = nil }
             // Ensure the entire editor area is clickable, even when empty
@@ -445,8 +564,39 @@ struct RichTextEditor: View {
             withTransaction(transaction) {
                 measuredContentHeight = nextHeight
             }
-            onContentHeightChange?(nextHeight)
+            onContentHeightChange?(visualHeight(forTextKitHeight: nextHeight))
         }
+    }
+
+    private var externalTextPadding: EditorTextPadding {
+        EditorTextInsetPolicy.externalTextPadding(
+            scrollsInternally: scrollsInternally,
+            singleLine: singleLine,
+            isTitleMode: titleConfiguration != nil,
+            compact: compact,
+            fontSize: fontSize
+        )
+    }
+
+    private func visualHeight(forTextKitHeight height: CGFloat) -> CGFloat {
+        height + externalTextPadding.vertical
+    }
+
+    private func positionFromTextKit(_ position: CGPoint) -> CGPoint {
+        let padding = externalTextPadding
+        return CGPoint(
+            x: position.x + padding.leading,
+            y: position.y + padding.top
+        )
+    }
+
+    private func snapshotFromTextKit(_ snapshot: EditorSelectionSnapshot) -> EditorSelectionSnapshot {
+        let padding = externalTextPadding
+        return EditorSelectionSnapshot(
+            range: snapshot.range,
+            text: snapshot.text,
+            rectInEditor: snapshot.rectInEditor.offsetBy(dx: padding.leading, dy: padding.top)
+        )
     }
 
     private func dismissAllOverlays(includeSelection: Bool = true) {
@@ -540,34 +690,32 @@ struct RichTextEditor: View {
     }
 
     private var editorInsets: EdgeInsets {
-        if singleLine {
-            return EdgeInsets(top: compact ? 4 : max(4, floor(fontSize * 0.12)),
-                              leading: compact ? 0 : 2,
-                              bottom: compact ? 4 : max(4, floor(fontSize * 0.12)),
-                              trailing: 2)
-        }
-
-        if titleConfiguration != nil {
-            let verticalInset = EditorLayoutMetrics.titleVerticalInset(fontSize: fontSize, compact: compact)
-            return EdgeInsets(
-                top: verticalInset,
-                leading: compact ? 0 : 2,
-                bottom: verticalInset,
-                trailing: 2
-            )
-        }
-
-        if compact {
-            return EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10)
-        }
-
-        return EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
+        EditorTextInsetPolicy.visualPadding(
+            singleLine: singleLine,
+            isTitleMode: titleConfiguration != nil,
+            compact: compact,
+            fontSize: fontSize
+        ).edgeInsets
     }
 
     // MARK: - Slash Command Insertion
     private func insertSlashCommand(_ command: SlashCommand) {
+        if command.type.requiresTextKitMutationBeforeSemanticHandling {
+            postSlashCommand(command)
+            _ = onSlashCommandSelected?(command, plainText)
+            return
+        }
+
+        if onSlashCommandSelected?(command, plainText) == true {
+            return
+        }
+
         // Delegate all text manipulation to TextKitCoordinator to ensure
         // atomic operations on the text storage and avoid binding desync.
+        postSlashCommand(command)
+    }
+
+    private func postSlashCommand(_ command: SlashCommand) {
         var userInfo: [String: Any] = ["command": command]
         if let editorTargetID, !editorTargetID.isEmpty {
             userInfo["targetEditorID"] = editorTargetID
@@ -647,9 +795,20 @@ enum SlashCommandType: Equatable {
     case elements
     case element
     case newElement
+    case content
+    case research
     case heading1, heading2, heading3
     case bulletList, numberedList, checkbox
     case quote, divider
+
+    var requiresTextKitMutationBeforeSemanticHandling: Bool {
+        switch self {
+        case .content, .research:
+            return true
+        default:
+            return false
+        }
+    }
 
     var stableID: String {
         switch self {
@@ -658,6 +817,8 @@ enum SlashCommandType: Equatable {
         case .elements: return "elements"
         case .element: return "element"
         case .newElement: return "new-element"
+        case .content: return "content"
+        case .research: return "research"
         case .heading1: return "heading-1"
         case .heading2: return "heading-2"
         case .heading3: return "heading-3"
@@ -679,6 +840,8 @@ enum SlashCommandCatalog {
         SlashCommand(type: .heading3, title: "Heading 3", subtitle: "Small section heading", icon: "textformat.size.smaller", shortcut: nil),
         SlashCommand(type: .quote, title: "Quote", subtitle: "Add a block quote", icon: "text.quote", shortcut: nil),
         SlashCommand(type: .divider, title: "Divider", subtitle: "Visual separation between sections", icon: "minus", shortcut: nil),
+        SlashCommand(type: .content, title: "Content Block", subtitle: "Draft with the content workflow", icon: "doc.text", shortcut: nil, searchAliases: ["content", "draft", "post"]),
+        SlashCommand(type: .research, title: "Research Block", subtitle: "Collect sources and notes", icon: "magnifyingglass.circle", shortcut: nil, searchAliases: ["research", "source", "citation"]),
         SlashCommand(type: .bulletList, title: "Bullet List", subtitle: "Create a bullet list", icon: "list.bullet", shortcut: nil),
         SlashCommand(type: .numberedList, title: "Numbered List", subtitle: "Create a numbered list", icon: "list.number", shortcut: nil),
         SlashCommand(type: .checkbox, title: "Checklist", subtitle: "Track tasks with checkboxes", icon: "checklist", shortcut: nil),

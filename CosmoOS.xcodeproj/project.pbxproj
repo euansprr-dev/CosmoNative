@@ -121,6 +121,7 @@
 		23C919888D21860BD7061A1E /* TemplateBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090597754446D78C195A77C1 /* TemplateBlockView.swift */; };
 		23FBB186AF6D46EB1BE06A3E /* ContentPipelineBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709437D7412018C3AB023EDD /* ContentPipelineBar.swift */; };
 		2405AFE00000000000000002 /* ContentFocusPersistenceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2405AFE00000000000000001 /* ContentFocusPersistenceRegressionTests.swift */; };
+		1DEA0F0C0000000000000002 /* IdeaFocusPersistenceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DEA0F0C0000000000000001 /* IdeaFocusPersistenceRegressionTests.swift */; };
 		243E55F8D4DEA8FFB64BDAB5 /* ContentContextPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3941E21C0691A2C9D94A7965 /* ContentContextPanel.swift */; };
 		24DE5DF1BA508ADD325E18FA /* InlineUndoAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA676F005BD2AE33F5AEAD79 /* InlineUndoAction.swift */; };
 		24F4EE4D9D4D3DC5835CBD55 /* CosmoChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078263DA1CD2E018ADBBDB2A /* CosmoChatView.swift */; };
@@ -579,6 +580,13 @@
 		B10C0DEC0000000000000008 /* ElementBlockHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000007 /* ElementBlockHeader.swift */; };
 		B10C0DEC000000000000000A /* ElementBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000009 /* ElementBlockView.swift */; };
 		B10C0DEC000000000000000D /* BlockListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC000000000000000C /* BlockListView.swift */; };
+		B10C0DEC0000000000000011 /* BlockPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000021 /* BlockPath.swift */; };
+		B10C0DEC0000000000000012 /* BlockOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000022 /* BlockOperation.swift */; };
+		B10C0DEC0000000000000013 /* BlockOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000023 /* BlockOperations.swift */; };
+		B10C0DEC0000000000000014 /* BlockCommandCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000024 /* BlockCommandCatalog.swift */; };
+		B10C0DEC0000000000000015 /* BlockDropController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000025 /* BlockDropController.swift */; };
+		B10C0DEC0000000000000016 /* BlockRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000026 /* BlockRowView.swift */; };
+		B10C0DEC0000000000000017 /* BlockTextEditorRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000027 /* BlockTextEditorRow.swift */; };
 		B16FBDB0FB29C9132CE58BDF /* ResearchProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E92D4FF3D3DBFAC9828187 /* ResearchProcessor.swift */; };
 		B170BC53B59C90F0BDDF3A3C /* ContentStrategyEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 878A7FC3C7C03D82AB3C7565 /* ContentStrategyEngine.swift */; };
 		B19504252A5A827DAF7AD035 /* MidnightStudyPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC149ACC3006F00A22775DE /* MidnightStudyPalette.swift */; };
@@ -631,6 +639,9 @@
 		BEEE7F64B0BC92829F6568DA /* URLClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6A9BF85694702C1B35D4AE6 /* URLClassifier.swift */; };
 		BEEF00000000000000001002 /* RichDocumentHeadings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEF00000000000000001001 /* RichDocumentHeadings.swift */; };
 		BEEF00000000000000001004 /* RichDocumentHeadingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEF00000000000000001003 /* RichDocumentHeadingTests.swift */; };
+		B10C0DEC0000000000000031 /* BlockOperationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000041 /* BlockOperationsTests.swift */; };
+		B10C0DEC0000000000000032 /* BlockCommandCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000042 /* BlockCommandCatalogTests.swift */; };
+		B10C0DEC0000000000000033 /* BlockDragDropTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000043 /* BlockDragDropTests.swift */; };
 		BEF784BB8D8942E2E26FBFB6 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDFE4C3CD1479410FF798EE4 /* LibraryView.swift */; };
 		BEF9682D651DC5637CB1D386 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 4BBB2F51A36C8A2BB20EEE3F /* Shaders.metal */; };
 		BF1255A0CEC4840DF1A1B91D /* EmbeddingCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9C0D4E8F5CA25F2A202C4CD /* EmbeddingCache.swift */; };
@@ -1446,6 +1457,16 @@
 		B10C0DEC0000000000000007 /* ElementBlockHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElementBlockHeader.swift; sourceTree = "<group>"; };
 		B10C0DEC0000000000000009 /* ElementBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElementBlockView.swift; sourceTree = "<group>"; };
 		B10C0DEC000000000000000C /* BlockListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockListView.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000021 /* BlockPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockPath.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000022 /* BlockOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockOperation.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000023 /* BlockOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockOperations.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000024 /* BlockCommandCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockCommandCatalog.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000025 /* BlockDropController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockDropController.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000026 /* BlockRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRowView.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000027 /* BlockTextEditorRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockTextEditorRow.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000041 /* BlockOperationsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BlockOperationsTests.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000042 /* BlockCommandCatalogTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BlockCommandCatalogTests.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000043 /* BlockDragDropTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BlockDragDropTests.swift; sourceTree = "<group>"; };
 		B1AC0DE00000000000000001 /* BlackMonoPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlackMonoPalette.swift; sourceTree = "<group>"; };
 		B1B17D591EB53827D2E99B0B /* CosmoWindowContextSessionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoWindowContextSessionTests.swift; sourceTree = "<group>"; };
 		B1E04FC691494409CB049383 /* InquiryCrystallizationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryCrystallizationEngine.swift; sourceTree = "<group>"; };
@@ -1675,6 +1696,7 @@
 		F02AC1167F3869612EDB3A14 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		F0C05A110000000000000001 /* FocusModeAppearanceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FocusModeAppearanceTests.swift; sourceTree = "<group>"; };
 		F0C05A110000000000000003 /* FocusModePremiumChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusModePremiumChrome.swift; sourceTree = "<group>"; };
+		1DEA0F0C0000000000000001 /* IdeaFocusPersistenceRegressionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = IdeaFocusPersistenceRegressionTests.swift; sourceTree = "<group>"; };
 		F1357ED05F9F30005021497D /* NotePersistenceRegressionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NotePersistenceRegressionTests.swift; sourceTree = "<group>"; };
 		F1A2B3C4D5E6F708192A3B4C /* CaptureLanesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureLanesView.swift; sourceTree = "<group>"; };
 		F1AF485FE6C2D36D42D1BAD5 /* ShortcutsSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettingsTab.swift; sourceTree = "<group>"; };
@@ -2904,6 +2926,13 @@
 			children = (
 				B10C0DEC0000000000000003 /* BlockFocusCoordinator.swift */,
 				B10C0DEC000000000000000C /* BlockListView.swift */,
+				B10C0DEC0000000000000024 /* BlockCommandCatalog.swift */,
+				B10C0DEC0000000000000025 /* BlockDropController.swift */,
+				B10C0DEC0000000000000022 /* BlockOperation.swift */,
+				B10C0DEC0000000000000023 /* BlockOperations.swift */,
+				B10C0DEC0000000000000021 /* BlockPath.swift */,
+				B10C0DEC0000000000000026 /* BlockRowView.swift */,
+				B10C0DEC0000000000000027 /* BlockTextEditorRow.swift */,
 				B10C0DEC0000000000000005 /* TextRegionView.swift */,
 				B10C0DEC0000000000000007 /* ElementBlockHeader.swift */,
 				B10C0DEC0000000000000009 /* ElementBlockView.swift */,
@@ -3317,6 +3346,9 @@
 			children = (
 				24723A7EFFDA43AA45B076A1 /* ApifyInstagramProviderTests.swift */,
 				07337815F2F380341D96946F /* AtomWindowStandaloneCreationTests.swift */,
+				B10C0DEC0000000000000042 /* BlockCommandCatalogTests.swift */,
+				B10C0DEC0000000000000043 /* BlockDragDropTests.swift */,
+				B10C0DEC0000000000000041 /* BlockOperationsTests.swift */,
 				FC7A07BB7E92F9A25CDDEA91 /* CanvasClusterEngineTests.swift */,
 				3D85C8CA68D9A306993FC4B6 /* CanvasRenderSnapshotTests.swift */,
 				B062D18BA42572B0BC19A59F /* CanvasSceneSignalBuilderTests.swift */,
@@ -3341,6 +3373,7 @@
 				40830DB846D9B1BD193E899E /* EditorLayoutMetricsTests.swift */,
 				F0C05A110000000000000001 /* FocusModeAppearanceTests.swift */,
 				C63C1EFB43C5364C679B93D0 /* FocusModeEditorBlurTests.swift */,
+				1DEA0F0C0000000000000001 /* IdeaFocusPersistenceRegressionTests.swift */,
 				A48ECD25FED69403D785006B /* InquiryPlacementEngineTests.swift */,
 				BD510F9C30EB91E4C7AD39EE /* InstagramAutoTranscriberTests.swift */,
 				B993D1DCB71E6B8CD459ABF2 /* InstagramExtractorTests.swift */,
@@ -3667,6 +3700,9 @@
 			files = (
 				B2B6A6109E037534CB15DA5B /* ApifyInstagramProviderTests.swift in Sources */,
 				41D184B87F55FBA10DDFCD5B /* AtomWindowStandaloneCreationTests.swift in Sources */,
+				B10C0DEC0000000000000032 /* BlockCommandCatalogTests.swift in Sources */,
+				B10C0DEC0000000000000033 /* BlockDragDropTests.swift in Sources */,
+				B10C0DEC0000000000000031 /* BlockOperationsTests.swift in Sources */,
 				9AF4708475E5FA719E54E64A /* CanvasClusterEngineTests.swift in Sources */,
 				4C6798C999797544F19C6DA4 /* CanvasRenderSnapshotTests.swift in Sources */,
 				17ECE5AF65889553BA071B3E /* CanvasSceneSignalBuilderTests.swift in Sources */,
@@ -3691,6 +3727,7 @@
 				955C731079D93E7604469097 /* EditorLayoutMetricsTests.swift in Sources */,
 				F0C05A110000000000000002 /* FocusModeAppearanceTests.swift in Sources */,
 				3F703B0142528750C52A4BE7 /* FocusModeEditorBlurTests.swift in Sources */,
+				1DEA0F0C0000000000000002 /* IdeaFocusPersistenceRegressionTests.swift in Sources */,
 				C116CF9FAE12F7E279CC9738 /* InquiryPlacementEngineTests.swift in Sources */,
 				BAC651263BF68DF7819EC35B /* InstagramAutoTranscriberTests.swift in Sources */,
 				988864992B8541512AB009CA /* InstagramExtractorTests.swift in Sources */,
@@ -3972,6 +4009,13 @@
 				4155173AE5ED17A1B4DBD95D /* CosmoDocumentEditor.swift in Sources */,
 				B10C0DEC0000000000000004 /* BlockFocusCoordinator.swift in Sources */,
 				B10C0DEC000000000000000D /* BlockListView.swift in Sources */,
+				B10C0DEC0000000000000014 /* BlockCommandCatalog.swift in Sources */,
+				B10C0DEC0000000000000015 /* BlockDropController.swift in Sources */,
+				B10C0DEC0000000000000012 /* BlockOperation.swift in Sources */,
+				B10C0DEC0000000000000013 /* BlockOperations.swift in Sources */,
+				B10C0DEC0000000000000011 /* BlockPath.swift in Sources */,
+				B10C0DEC0000000000000016 /* BlockRowView.swift in Sources */,
+				B10C0DEC0000000000000017 /* BlockTextEditorRow.swift in Sources */,
 				B10C0DEC0000000000000006 /* TextRegionView.swift in Sources */,
 				B10C0DEC0000000000000008 /* ElementBlockHeader.swift in Sources */,
 				B10C0DEC000000000000000A /* ElementBlockView.swift in Sources */,

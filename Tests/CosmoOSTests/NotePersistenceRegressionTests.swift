@@ -3,6 +3,197 @@ import XCTest
 @testable import CosmoOS
 
 final class NotePersistenceRegressionTests: XCTestCase {
+    private var packageRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    func testOrdinaryReturnUsesLightweightTypingSyncInsteadOfSynchronousStructuralRelayout() throws {
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/TextKitCoordinator.swift"),
+            encoding: .utf8
+        )
+        let newlineRange = try XCTUnwrap(source.range(of: "private func insertNormalNewline"))
+        let menuRange = try XCTUnwrap(
+            source.range(
+                of: "// MARK: - Menu State",
+                range: newlineRange.lowerBound..<source.endIndex
+            )
+        )
+        let newlineSource = String(source[newlineRange.lowerBound..<menuRange.lowerBound])
+
+        let elementRange = try XCTUnwrap(source.range(of: "func insertElement"))
+        let collapseRange = try XCTUnwrap(
+            source.range(
+                of: "func toggleElementCollapse",
+                range: elementRange.lowerBound..<source.endIndex
+            )
+        )
+        let elementSource = String(source[elementRange.lowerBound..<collapseRange.lowerBound])
+
+        XCTAssertTrue(newlineSource.contains("syncBindings(from: textView)"))
+        XCTAssertFalse(newlineSource.contains("syncStructuralEditBindings(from: textView)"))
+        XCTAssertTrue(newlineSource.contains("shouldUseAncestorTypewriterScroll"))
+        XCTAssertTrue(newlineSource.contains("scheduleAncestorTypewriterScroll(for: textView)"))
+        XCTAssertTrue(newlineSource.contains("captureAncestorScrollSnapshot"))
+        XCTAssertTrue(newlineSource.contains("restoreAncestorScrollSnapshot"))
+        XCTAssertTrue(elementSource.contains("syncStructuralEditBindings(from: textView)"))
+    }
+
+    func testTypewriterReturnScrollsAncestorInsteadOfRestoringOldScrollSnapshot() throws {
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/TextKitCoordinator.swift"),
+            encoding: .utf8
+        )
+        let newlineRange = try XCTUnwrap(source.range(of: "private func insertNormalNewline"))
+        let menuRange = try XCTUnwrap(
+            source.range(
+                of: "// MARK: - Menu State",
+                range: newlineRange.lowerBound..<source.endIndex
+            )
+        )
+        let newlineSource = String(source[newlineRange.lowerBound..<menuRange.lowerBound])
+
+        XCTAssertTrue(newlineSource.contains("let shouldUseAncestorTypewriterScroll = shouldUseAncestorTypewriterScroll(for: textView)"))
+        XCTAssertTrue(newlineSource.contains("let ancestorSnapshot = shouldUseAncestorTypewriterScroll ? nil : captureAncestorScrollSnapshot(for: textView)"))
+        XCTAssertTrue(newlineSource.contains("if shouldUseAncestorTypewriterScroll"))
+        XCTAssertTrue(newlineSource.contains("scheduleAncestorTypewriterScroll(for: textView)"))
+        XCTAssertTrue(newlineSource.contains("scheduleAncestorScrollSnapshotRestores(ancestorSnapshot)"))
+    }
+
+    func testAncestorTypewriterScrollUsesTrailingNewlineCaretGeometry() throws {
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/TextKitCoordinator.swift"),
+            encoding: .utf8
+        )
+        let rectRange = try XCTUnwrap(source.range(of: "private func cursorRectInAncestorDocument"))
+        let nextRange = try XCTUnwrap(
+            source.range(
+                of: "private func boolAttribute",
+                range: rectRange.lowerBound..<source.endIndex
+            )
+        )
+        let rectSource = String(source[rectRange.lowerBound..<nextRange.lowerBound])
+
+        XCTAssertTrue(rectSource.contains("layoutManager.extraLineFragmentRect"))
+        XCTAssertTrue(rectSource.contains("characterLocation == textLength"))
+        XCTAssertTrue(rectSource.contains("substring(with: NSRange(location: textLength - 1, length: 1)) == \"\\n\""))
+        XCTAssertTrue(source.contains("visibleHeight * 0.44"))
+    }
+
+    func testNonScrollingResizeDoesNotFightSwiftUILayoutByResizingRepresentableRoot() throws {
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/TextKitCoordinator.swift"),
+            encoding: .utf8
+        )
+        let resizeRange = try XCTUnwrap(source.range(of: "private func resizeAppKitFrameIfNeeded"))
+        let notifyRange = try XCTUnwrap(
+            source.range(
+                of: "fileprivate func notifyContentHeightChange",
+                range: resizeRange.lowerBound..<source.endIndex
+            )
+        )
+        let resizeSource = String(source[resizeRange.lowerBound..<notifyRange.lowerBound])
+
+        XCTAssertTrue(resizeSource.contains("textView.setFrameSize"))
+        XCTAssertFalse(resizeSource.contains("scrollView.setFrameSize"))
+        XCTAssertFalse(resizeSource.contains("scrollView.contentView.setFrameSize"))
+    }
+
+    func testNonScrollingBodyEditorsMoveVisualPaddingOutsideTextKitInset() throws {
+        let textKitSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/TextKitCoordinator.swift"),
+            encoding: .utf8
+        )
+        let richTextSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/RichTextEditor.swift"),
+            encoding: .utf8
+        )
+
+        let insetRange = try XCTUnwrap(textKitSource.range(of: "private func resolvedTextInsets"))
+        let singleLineHeightRange = try XCTUnwrap(
+            textKitSource.range(
+                of: "private func resolvedSingleLineHeight",
+                range: insetRange.lowerBound..<textKitSource.endIndex
+            )
+        )
+        let insetSource = String(textKitSource[insetRange.lowerBound..<singleLineHeightRange.lowerBound])
+
+        XCTAssertTrue(insetSource.contains("EditorTextInsetPolicy.textContainerInset"))
+        XCTAssertTrue(richTextSource.contains("externalTextPadding"))
+        XCTAssertTrue(richTextSource.contains(".padding(externalTextPadding.edgeInsets)"))
+    }
+
+    func testEditorTextInsetPolicyKeepsJitterProneBodyPaddingOutsideTextKitOnly() {
+        let nonScrollingBodyInset = EditorTextInsetPolicy.textContainerInset(
+            scrollsInternally: false,
+            singleLine: false,
+            isTitleMode: false,
+            compact: false,
+            fontSize: 17
+        )
+        let nonScrollingBodyPadding = EditorTextInsetPolicy.externalTextPadding(
+            scrollsInternally: false,
+            singleLine: false,
+            isTitleMode: false,
+            compact: false,
+            fontSize: 17
+        )
+
+        XCTAssertEqual(nonScrollingBodyInset.width, 0)
+        XCTAssertEqual(nonScrollingBodyInset.height, 0)
+        XCTAssertEqual(nonScrollingBodyPadding.leading, 16)
+        XCTAssertEqual(nonScrollingBodyPadding.top, 16)
+
+        let internallyScrollingBodyInset = EditorTextInsetPolicy.textContainerInset(
+            scrollsInternally: true,
+            singleLine: false,
+            isTitleMode: false,
+            compact: false,
+            fontSize: 17
+        )
+        let internallyScrollingBodyPadding = EditorTextInsetPolicy.externalTextPadding(
+            scrollsInternally: true,
+            singleLine: false,
+            isTitleMode: false,
+            compact: false,
+            fontSize: 17
+        )
+
+        XCTAssertEqual(internallyScrollingBodyInset.width, 16)
+        XCTAssertEqual(internallyScrollingBodyInset.height, 16)
+        XCTAssertEqual(internallyScrollingBodyPadding, .zero)
+
+        let titleInset = EditorTextInsetPolicy.textContainerInset(
+            scrollsInternally: false,
+            singleLine: false,
+            isTitleMode: true,
+            compact: false,
+            fontSize: 30
+        )
+
+        XCTAssertGreaterThan(titleInset.height, 0)
+    }
+
+    func testCosmoTextViewDoesNotOverrideSetFrameSizeForTextContainerInsetWorkaround() throws {
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/TextKitCoordinator.swift"),
+            encoding: .utf8
+        )
+        let classRange = try XCTUnwrap(source.range(of: "final class CosmoTextView: NSTextView"))
+        let extensionRange = try XCTUnwrap(
+            source.range(
+                of: "extension CosmoTextView",
+                range: classRange.lowerBound..<source.endIndex
+            )
+        )
+        let classSource = String(source[classRange.lowerBound..<extensionRange.lowerBound])
+
+        XCTAssertFalse(classSource.contains("override func setFrameSize"))
+    }
+
     func testNoteFocusTextAnalysisBuildsMetricsFromOneSnapshot() {
         let text = """
         # Opening
@@ -94,6 +285,46 @@ final class NotePersistenceRegressionTests: XCTestCase {
             isInitialLoad: true,
             didChange: true
         ))
+    }
+
+    func testNoteAutosaveChangePolicySavesRichDocumentChangesWhenPlainTextIsUnchanged() {
+        let previous = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("Same words")])
+        ])
+        let next = RichDocument(blocks: [
+            RichBlock(kind: .heading1, inlines: [.text("Same words")])
+        ])
+
+        XCTAssertTrue(NoteAutosaveChangePolicy.shouldAutosaveDocumentChange(
+            isInitialLoad: false,
+            previousDocument: previous,
+            nextDocument: next,
+            previousPlainText: previous.plainText,
+            nextPlainText: next.plainText
+        ))
+    }
+
+    func testNoteInitialDocumentsPreferStoredRichDocumentOverLossyPlainBody() {
+        let richBody = RichDocument(blocks: [
+            RichBlock(kind: .heading1, inlines: [.text("This is a title test")]),
+            RichBlock(kind: .quote, inlines: [.text("This is a quote")])
+        ])
+        let fields = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: nil,
+            titleDocument: RichDocument.migrateLegacy("Test note"),
+            bodyDocument: richBody
+        )
+        let atom = Atom.new(
+            type: .note,
+            title: fields.title,
+            body: "TITLEThis is a quote///TITLEThis is a quote///",
+            metadata: fields.metadata
+        )
+
+        let initialDocuments = NoteFocusInitialDocuments.from(atom: atom)
+
+        XCTAssertEqual(initialDocuments.bodyDocument, richBody)
+        XCTAssertEqual(initialDocuments.plainContent, richBody.plainText)
     }
 
     func testEditorHeightUpdatePolicyIgnoresLayoutNoise() {
@@ -213,6 +444,32 @@ final class NotePersistenceRegressionTests: XCTestCase {
             hasLocalEdits: false,
             entityId: 42,
             entityUUID: "note-uuid"
+        ))
+    }
+
+    func testNoteObservationPolicySkipsBodyEchoWhileLocalEditsArePending() {
+        XCTAssertFalse(NoteWritePolicy.shouldApplyObservedBody(
+            isEditingBody: false,
+            hasLocalEdits: true,
+            observedBodyChanged: true
+        ))
+    }
+
+    func testNoteObservationPolicyAppliesExternalBodyWhenBlockIsCleanAndInactive() {
+        XCTAssertTrue(NoteWritePolicy.shouldApplyObservedBody(
+            isEditingBody: false,
+            hasLocalEdits: false,
+            observedBodyChanged: true,
+            isLocalSaveEcho: false
+        ))
+    }
+
+    func testNoteObservationPolicySkipsLocalSaveEchoAfterEditFlagClears() {
+        XCTAssertFalse(NoteWritePolicy.shouldApplyObservedBody(
+            isEditingBody: false,
+            hasLocalEdits: false,
+            observedBodyChanged: true,
+            isLocalSaveEcho: true
         ))
     }
 }

@@ -1249,8 +1249,12 @@ public final class CommandKViewModel: ObservableObject {
 
     // MARK: - Published State
 
-    /// Current search query
-    @Published public var query: String = ""
+    /// Current search query. Live typing is kept non-published so each
+    /// keystroke does not invalidate the entire Command-K surface.
+    public var query: String = ""
+
+    /// Bumped only when the view model changes the field programmatically.
+    @Published public private(set) var querySyncToken: Int = 0
 
     /// Current search results
     @Published public private(set) var results: [RankedResult] = []
@@ -1440,6 +1444,8 @@ public final class CommandKViewModel: ObservableObject {
     /// Inline status for the action preview row.
     @Published var actionStatusMessage: String? = nil
 
+    private var executablePrimaryAction: CommandKAction? = nil
+
     var activeCommandAction: CommandKAction? {
         if let primaryAction,
            selectedNodeId == nil || selectedNodeId == primaryAction.id {
@@ -1450,9 +1456,24 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     private func setPrimaryAction(_ action: CommandKAction?) {
-        if primaryAction != action {
-            primaryAction = action
+        executablePrimaryAction = action
+        guard shouldPublishPrimaryActionUpdate(from: primaryAction, to: action) else {
+            return
         }
+        primaryAction = action
+    }
+
+    private func shouldPublishPrimaryActionUpdate(
+        from current: CommandKAction?,
+        to next: CommandKAction?
+    ) -> Bool {
+        guard current != next else { return false }
+        guard let current, let next else { return true }
+        if current.isStableScopedIdeaPreview(of: next),
+           current.isExecutable == next.isExecutable {
+            return false
+        }
+        return true
     }
 
     private func setActionStatusMessage(_ message: String?) {
@@ -1507,6 +1528,11 @@ public final class CommandKViewModel: ObservableObject {
 
     func testingSetSearchPhase(_ phase: SearchPhase) {
         setCurrentPhase(phase)
+    }
+
+    func testingApplyUnfilteredResults(_ rankedResults: [RankedResult]) {
+        unfilteredResults = rankedResults
+        applyFiltersToResults()
     }
     #endif
 
@@ -1599,6 +1625,7 @@ public final class CommandKViewModel: ObservableObject {
     private var searchIndexTask: Task<Void, Never>?
     private var unifiedSearchEnrichmentTask: Task<Void, Never>?
     private var swipeFilterTask: Task<Void, Never>?
+    private var queryDebounceTask: Task<Void, Never>?
     private var swipeFilterGeneration = 0
     private var isSurfaceActive = true
     private let userCommandStore: CommandKUserCommandStore
@@ -1616,7 +1643,6 @@ public final class CommandKViewModel: ObservableObject {
 
     init(userCommandStore: CommandKUserCommandStore) {
         self.userCommandStore = userCommandStore
-        setupQueryDebounce()
         setupFilterObserver()
         setupSwipeFilterPipeline()
         setupSwipeRefreshListener()
@@ -1632,6 +1658,7 @@ public final class CommandKViewModel: ObservableObject {
             prewarmSearchIndexIfNeeded()
         } else {
             searchTask?.cancel()
+            queryDebounceTask?.cancel()
             instantIndexSearchTask?.cancel()
             ideaGalleryReloadTask?.cancel()
             commandKRefreshTask?.cancel()
@@ -1644,18 +1671,27 @@ public final class CommandKViewModel: ObservableObject {
 
     // MARK: - Query Handling
 
-    private func setupQueryDebounce() {
-        $query
-            .dropFirst()
-            .debounce(for: .seconds(searchDebounce), scheduler: DispatchQueue.main)
-            .removeDuplicates()
-            .sink { [weak self] query in
-                Task { @MainActor [weak self] in
-                    guard let self, self.isSurfaceActive else { return }
-                    await self.performSearch(query: query)
-                }
-            }
-            .store(in: &cancellables)
+    public func updateQuery(_ newQuery: String) {
+        guard query != newQuery else { return }
+        query = newQuery
+
+        queryDebounceTask?.cancel()
+        let debounce = UInt64(searchDebounce * 1_000_000_000)
+        queryDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: debounce)
+            guard let self, !Task.isCancelled, self.isSurfaceActive else { return }
+            await self.performSearch(query: newQuery)
+        }
+    }
+
+    private func setQueryProgrammatically(_ newQuery: String) {
+        queryDebounceTask?.cancel()
+        guard query != newQuery else {
+            querySyncToken &+= 1
+            return
+        }
+        query = newQuery
+        querySyncToken &+= 1
     }
 
     private func setupFilterObserver() {
@@ -2152,12 +2188,6 @@ public final class CommandKViewModel: ObservableObject {
 
         // Build flat navigable list (for keyboard navigation across groups)
         flatNavigableResults = sorted.flatMap { $0.value }
-
-        // Reset selection
-        selectedResultIndex = flatNavigableResults.isEmpty ? -1 : 0
-        if let first = flatNavigableResults.first {
-            selectedNodeId = first.atomUUID
-        }
     }
 
     /// Quick-create an atom from search query
@@ -2191,7 +2221,7 @@ public final class CommandKViewModel: ObservableObject {
         }
 
         // Clear query and close
-        query = ""
+        setQueryProgrammatically("")
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 
@@ -2269,7 +2299,7 @@ public final class CommandKViewModel: ObservableObject {
         }
 
         // Clear query and close
-        query = ""
+        setQueryProgrammatically("")
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 
@@ -2494,7 +2524,8 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     public func performPrimaryAction() {
-        guard let action = primaryAction, !isExecutingAction else { return }
+        let action = executablePrimaryAction ?? primaryAction
+        guard let action, !isExecutingAction else { return }
         performAction(action)
     }
 
@@ -2622,8 +2653,8 @@ public final class CommandKViewModel: ObservableObject {
             if let domain = action.payload.domain,
                let tab = CommandKTab(rawValue: domain) {
                 transitionToExpanded(tab)
-                query = ""
-                primaryAction = nil
+                setQueryProgrammatically("")
+                setPrimaryAction(nil)
                 actionStatusMessage = nil
             }
 
@@ -2651,9 +2682,9 @@ public final class CommandKViewModel: ObservableObject {
 
         case .savedSearch:
             guard let savedQuery = action.payload.queryText else { return }
-            primaryAction = nil
+            setPrimaryAction(nil)
             actionStatusMessage = nil
-            query = savedQuery
+            setQueryProgrammatically(savedQuery)
             await performSearch(query: savedQuery)
 
         case .openApp:
@@ -2721,8 +2752,8 @@ public final class CommandKViewModel: ObservableObject {
 
     private func finishAction() {
         actionStatusMessage = nil
-        query = ""
-        primaryAction = nil
+        setQueryProgrammatically("")
+        setPrimaryAction(nil)
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 
@@ -2730,8 +2761,8 @@ public final class CommandKViewModel: ObservableObject {
         activeTypePrefix = nil
         selectedTypeFilters.removeAll()
         actionStatusMessage = nil
-        query = ""
-        primaryAction = nil
+        setQueryProgrammatically("")
+        setPrimaryAction(nil)
         userCommandRows = []
         results = []
         unfilteredResults = []
@@ -2781,7 +2812,7 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Return to compact mode from expanded or search
     public func returnToCompact(refreshRecents: Bool = true) {
-        query = ""
+        setQueryProgrammatically("")
         cortexMode = .compact
         isUnifiedSearchActive = false
         selectedResultIndex = -1
@@ -4024,7 +4055,7 @@ public final class CommandKViewModel: ObservableObject {
         instantIndexSearchTask?.cancel()
         unifiedSearchEnrichmentTask?.cancel()
         swipeFilterTask?.cancel()
-        query = ""
+        setQueryProgrammatically("")
         results = []
         unfilteredResults = []
         filterCounts = [:]
@@ -4052,7 +4083,7 @@ public final class CommandKViewModel: ObservableObject {
         flatNavigableResults = []
         selectedResultIndex = -1
         activeTypePrefix = nil
-        primaryAction = nil
+        setPrimaryAction(nil)
         isExecutingAction = false
         actionStatusMessage = nil
         isUnifiedSearchActive = false
@@ -4062,6 +4093,17 @@ public final class CommandKViewModel: ObservableObject {
         expandedDomainSelectionIDs = []
         expandedDomainOpenTargets = [:]
         domainPresentation = .empty
+    }
+}
+
+private extension CommandKAction {
+    func isStableScopedIdeaPreview(of next: CommandKAction) -> Bool {
+        kind == .createIdea &&
+        next.kind == .createIdea &&
+        scopedIdeaClientName != nil &&
+        id == next.id &&
+        title == next.title &&
+        icon == next.icon
     }
 }
 

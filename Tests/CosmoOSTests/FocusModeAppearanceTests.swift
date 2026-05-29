@@ -50,6 +50,53 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertTrue(wrapperSource.contains("DS.canvasDocumentSurface"))
     }
 
+    func testCanvasNoteBodyUsesBlockListEditorForStructuredElements() throws {
+        let noteBlockSource = try source("Canvas/NoteBlockView.swift")
+        let bodyViewRange = try XCTUnwrap(noteBlockSource.range(of: "private var bodyView: some View"))
+        let footerRange = try XCTUnwrap(noteBlockSource.range(of: "private var noteFooter: some View"))
+        let bodyViewSource = String(noteBlockSource[bodyViewRange.lowerBound..<footerRange.lowerBound])
+
+        XCTAssertTrue(bodyViewSource.contains("BlockListView("))
+        XCTAssertFalse(bodyViewSource.contains("CosmoDocumentEditor("))
+    }
+
+    func testHeadingDisclosureColorDefaultsToAdaptiveRendererColor() throws {
+        let editorSource = try source("Editor/CosmoDocumentEditor.swift")
+
+        XCTAssertTrue(editorSource.contains("var headingDisclosureColor: NSColor? = nil"))
+        XCTAssertFalse(editorSource.contains("var headingDisclosureColor: NSColor? = .black"))
+    }
+
+    func testNoteFocusBodyDoesNotFeedTypingHeightBackIntoScrollLayout() throws {
+        let noteFocusSource = try source("UI/FocusMode/Notes/NoteFocusModeView.swift")
+        let centerColumnRange = try XCTUnwrap(noteFocusSource.range(of: "private var centerColumn: some View"))
+        let dividerRange = try XCTUnwrap(noteFocusSource.range(of: "private var giltDivider: some View"))
+        let centerColumnSource = String(noteFocusSource[centerColumnRange.lowerBound..<dividerRange.lowerBound])
+
+        XCTAssertFalse(centerColumnSource.contains("bodyEditorHeight"))
+        XCTAssertFalse(centerColumnSource.contains("onContentHeightChange: { newHeight in"))
+        XCTAssertTrue(centerColumnSource.contains("minHeight: max(400, scrollViewportHeight - 200)"))
+    }
+
+    func testContentFocusDraftDoesNotFeedTypingHeightBackIntoScrollLayout() throws {
+        let contentFocusSource = try source("UI/FocusMode/Content/ContentFocusModeView.swift")
+        let draftEditorRange = try XCTUnwrap(contentFocusSource.range(of: "// Main draft editor"))
+        let ctaRange = try XCTUnwrap(
+            contentFocusSource.range(
+                of: "scriptoriumCTA",
+                range: draftEditorRange.lowerBound..<contentFocusSource.endIndex
+            )
+        )
+        let draftEditorSource = String(contentFocusSource[draftEditorRange.lowerBound..<ctaRange.lowerBound])
+
+        XCTAssertFalse(contentFocusSource.contains("@State private var textContentHeight"))
+        XCTAssertFalse(contentFocusSource.contains("private func estimatedDraftEditorHeight"))
+        XCTAssertFalse(draftEditorSource.contains("onContentHeightChange: { measuredHeight in"))
+        XCTAssertFalse(draftEditorSource.contains("textContentHeight"))
+        XCTAssertFalse(draftEditorSource.contains("estimatedDraftEditorHeight"))
+        XCTAssertTrue(draftEditorSource.contains("minHeight: max(400, height - 200)"))
+    }
+
     func testMarginaliaLabelsUseSubtleFocusRulesInBlackMono() throws {
         let primitivesSource = try source("UI/FocusMode/Shared/AtelierPrimitives.swift")
 

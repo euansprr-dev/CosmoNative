@@ -143,6 +143,25 @@ final class AtomWindowStandaloneCreationTests: XCTestCase {
         XCTAssertFalse(recents.contains { $0.atom.uuid == merelyUpdated.uuid })
     }
 
+    func testRecordAccessByEntityIdMakesContentVisibleInRecentlyOpened() async throws {
+        let content = try await AtomRepository.shared.create(type: .content, title: "Activated content recents")
+        createdUUIDs.append(content.uuid)
+
+        let before = try await AtomRepository.shared.fetchRecentlyOpened(limit: 25)
+        XCTAssertFalse(before.contains { $0.atom.uuid == content.uuid })
+
+        guard let entityId = content.id else {
+            XCTFail("Expected persisted content to have an entity id")
+            return
+        }
+
+        try await AtomRepository.shared.recordAccess(entityId: entityId, accessType: .view)
+
+        let after = try await AtomRepository.shared.fetchRecentlyOpened(limit: 25)
+        XCTAssertEqual(after.first?.atom.uuid, content.uuid)
+        XCTAssertGreaterThan(after.first?.accessCount ?? 0, 0)
+    }
+
     private func canvasBlockCount(for atomUUID: String) async throws -> Int {
         try await CosmoDatabase.shared.asyncRead { db in
             try Int.fetchOne(

@@ -24,6 +24,7 @@ struct TextRegionView: View {
     var onDocumentChange: ((RichDocument, String) -> Void)?
 
     @State private var structuralRefreshID = UUID()
+    @State private var structuralEditTracker = TextRegionStructuralEditTracker()
 
     var body: some View {
         CosmoDocumentEditor(
@@ -60,6 +61,10 @@ struct TextRegionView: View {
                 RichDocument(blocks: currentRegionBlocks())
             },
             set: { nextDocument in
+                structuralEditTracker.recordUpdate(
+                    from: currentRegionBlocks(),
+                    to: nextDocument.blocks
+                )
                 replaceRegionBlocks(with: nextDocument.blocks)
             }
         )
@@ -67,7 +72,8 @@ struct TextRegionView: View {
 
     private func handleRegionDocumentChange(_ updatedRegion: RichDocument, _: String) {
         let existingBlocks = currentRegionBlocks()
-        let insertedElementID = firstInsertedElementID(in: updatedRegion.blocks, comparedTo: existingBlocks)
+        let insertedElementID = structuralEditTracker.consumeInsertedElementID()
+            ?? TextRegionStructuralEditTracker.firstInsertedElementID(in: updatedRegion.blocks, comparedTo: existingBlocks)
         let mergedDocument = replaceRegionBlocks(with: updatedRegion.blocks)
         if let insertedElementID {
             structuralRefreshID = UUID()
@@ -115,8 +121,21 @@ struct TextRegionView: View {
         }
         return result
     }
+}
 
-    private func firstInsertedElementID(in nextBlocks: [RichBlock], comparedTo existingBlocks: [RichBlock]) -> UUID? {
+struct TextRegionStructuralEditTracker {
+    private var insertedElementID: UUID?
+
+    mutating func recordUpdate(from existingBlocks: [RichBlock], to nextBlocks: [RichBlock]) {
+        insertedElementID = Self.firstInsertedElementID(in: nextBlocks, comparedTo: existingBlocks)
+    }
+
+    mutating func consumeInsertedElementID() -> UUID? {
+        defer { insertedElementID = nil }
+        return insertedElementID
+    }
+
+    static func firstInsertedElementID(in nextBlocks: [RichBlock], comparedTo existingBlocks: [RichBlock]) -> UUID? {
         let existingElementIDs = Set(existingBlocks.filter { $0.kind == .element }.map(\.id))
         return nextBlocks.first { block in
             block.kind == .element && !existingElementIDs.contains(block.id)

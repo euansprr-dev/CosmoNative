@@ -36,7 +36,6 @@ struct CortexMasterDetailView: View {
 
                 CortexDetailPane(subject: subject)
                     .frame(maxWidth: .infinity)
-                    .id(subject.selectionIdentity)
                     .transaction { transaction in
                         transaction.animation = nil
                         transaction.disablesAnimations = true

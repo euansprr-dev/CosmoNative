@@ -2,8 +2,103 @@
 // ViewModel for Idea Focus Mode brainstorm workspace
 // February 2026
 
+import GRDB
 import SwiftUI
 import Combine
+
+enum IdeaFocusWritePolicy {
+    static func allowsWrite(existingMetadata: String?, snapshotLastModified: Date) -> Bool {
+        guard let existingModified = persistedModifiedTime(from: existingMetadata) else {
+            return true
+        }
+
+        return snapshotLastModified.timeIntervalSince1970 + 0.000001 >= existingModified
+    }
+
+    private static func persistedModifiedTime(from metadata: String?) -> TimeInterval? {
+        guard let metadata,
+              let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        if let unix = dict["lastModifiedUnix"] as? TimeInterval {
+            return unix
+        }
+
+        return nil
+    }
+}
+
+private struct IdeaFocusSaveSnapshot: Sendable {
+    let uuid: String
+    let title: String?
+    let body: String?
+    let tags: [String]
+    let selectedStatus: IdeaStatus
+    let selectedFormat: ContentFormat?
+    let selectedPlatform: IdeaPlatform?
+    let editableHooks: [String]
+    let editableDescription: String
+    let mentionedAtomUUIDs: [String]
+    let editableContext: String
+    let selectedArcType: String?
+    let editableCreativeDirection: String
+    let selectedBlueprintUUID: String?
+    let selectedContentType: String?
+    let researchResults: [IdeaResearchResult]
+    let chatHistory: [IdeaChatMessage]
+    let arcRecommendations: [ArcRecommendation]
+    let codexOutline: CodexOutlineModel?
+    let lastModified: Date
+
+    func metadataJSON(merging existingMetadata: String?) -> String? {
+        var meta = decodeExistingMetadata(existingMetadata)
+        meta.tags = tags.isEmpty ? nil : tags
+        meta.contentFormat = selectedFormat
+        meta.platform = selectedPlatform
+        meta.ideaStatus = selectedStatus
+        meta.hooks = editableHooks.isEmpty ? nil : editableHooks
+        meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
+        meta.mentionedAtomUUIDs = mentionedAtomUUIDs.isEmpty ? nil : mentionedAtomUUIDs
+        meta.context = editableContext.isEmpty ? nil : editableContext
+        meta.arcType = selectedArcType
+        meta.creativeDirection = editableCreativeDirection.isEmpty ? nil : editableCreativeDirection
+        meta.blueprintUUID = selectedBlueprintUUID
+        meta.ideaContentType = selectedContentType
+        meta.researchResults = encodedNonEmpty(researchResults)
+        meta.chatHistory = encodedNonEmpty(chatHistory)
+        meta.arcRecommendations = encodedNonEmpty(arcRecommendations)
+        meta.codexOutline = encoded(codexOutline)
+        meta.lastModifiedUnix = lastModified.timeIntervalSince1970
+        return encoded(meta)
+    }
+
+    private func decodeExistingMetadata(_ metadata: String?) -> IdeaMetadata {
+        guard let metadata,
+              let data = metadata.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(IdeaMetadata.self, from: data) else {
+            return IdeaMetadata()
+        }
+        return decoded
+    }
+
+    private func encoded<T: Encodable>(_ value: T?) -> String? {
+        guard let value,
+              let data = try? JSONEncoder().encode(value) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func encodedNonEmpty<T: Encodable>(_ value: [T]) -> String? {
+        guard !value.isEmpty,
+              let data = try? JSONEncoder().encode(value) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+}
 
 // MARK: - Idea Focus Mode ViewModel
 
@@ -79,6 +174,8 @@ class IdeaFocusModeViewModel: ObservableObject {
     private var terminationCancellable: AnyCancellable?
     private let autoSaveDelay: TimeInterval = 1.5
     private let autoEnrichDelay: TimeInterval = 1.5
+    private var saveSequence: UInt64 = 0
+    private var lastModified: Date = Date()
 
     // MARK: - Initialization
 
@@ -268,6 +365,7 @@ class IdeaFocusModeViewModel: ObservableObject {
                 blueprintTitles: bpTitles
             )
             self.arcRecommendations = result.arcRecommendations
+            scheduleAutoSave()
         } catch {
             print("Arc recommendation failed: \(error)")
         }
@@ -943,46 +1041,14 @@ class IdeaFocusModeViewModel: ObservableObject {
 
     // MARK: - Save
 
-    /// Persist current editable fields (title, body, tags, format, platform) to the atom.
+    /// Persist current editable fields to the atom.
     func save() async {
-        var updatedAtom = idea
-        updatedAtom.title = editableTitle.isEmpty ? nil : editableTitle
-        updatedAtom.body = editableBody.isEmpty ? nil : editableBody
-
-        updatedAtom = updatedAtom.withUpdatedIdeaMetadata { meta in
-            meta.tags = tags.isEmpty ? nil : tags
-            meta.contentFormat = selectedFormat
-            meta.platform = selectedPlatform
-            meta.ideaStatus = selectedStatus
-            meta.hooks = editableHooks.isEmpty ? nil : editableHooks
-            meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
-
-            // Mentioned atoms
-            meta.mentionedAtomUUIDs = mentionedAtoms.isEmpty ? nil : mentionedAtoms.map(\.uuid)
-
-            // Codex-era fields
-            meta.context = editableContext.isEmpty ? nil : editableContext
-            meta.arcType = selectedArcType
-            meta.creativeDirection = editableCreativeDirection.isEmpty ? nil : editableCreativeDirection
-            meta.blueprintUUID = selectedBlueprintUUID
-            meta.ideaContentType = selectedContentType
-            if !researchResults.isEmpty, let data = try? JSONEncoder().encode(researchResults) {
-                meta.researchResults = String(data: data, encoding: .utf8)
-            }
-            if !chatHistory.isEmpty, let data = try? JSONEncoder().encode(chatHistory) {
-                meta.chatHistory = String(data: data, encoding: .utf8)
-            }
-            if !arcRecommendations.isEmpty, let data = try? JSONEncoder().encode(arcRecommendations) {
-                meta.arcRecommendations = String(data: data, encoding: .utf8)
-            }
-            if let outline = codexOutline, let data = try? JSONEncoder().encode(outline) {
-                meta.codexOutline = String(data: data, encoding: .utf8)
-            }
-        }
-        // Note: AtomRepository.update() handles updatedAt and localVersion internally
-
+        let sequence = nextSaveSequence(markModified: true)
+        let snapshot = makeSaveSnapshot()
         do {
-            idea = try await AtomRepository.shared.update(updatedAtom)
+            if let savedAtom = try await writeSnapshot(snapshot, sequence: sequence) {
+                idea = savedAtom
+            }
         } catch {
             print("IdeaFocusMode: save failed: \(error)")
         }
@@ -991,63 +1057,180 @@ class IdeaFocusModeViewModel: ObservableObject {
     /// Schedule a debounced auto-save (call after each keystroke in text fields).
     func scheduleAutoSave() {
         autoSaveTask?.cancel()
+        let sequence = nextSaveSequence(markModified: true)
+        let snapshot = makeSaveSnapshot()
         autoSaveTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(autoSaveDelay * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            await save()
+            await saveScheduledSnapshot(snapshot, sequence: sequence)
         }
+    }
+
+    func updateOutlineSlideNote(slideId: UUID, note: String) {
+        guard let idx = codexOutline?.slides.firstIndex(where: { $0.id == slideId }) else { return }
+        codexOutline?.slides[idx].note = note.isEmpty ? nil : note
+        scheduleAutoSave()
+    }
+
+    func replaceCodexOutline(_ outline: CodexOutlineModel?) {
+        codexOutline = outline
+        scheduleAutoSave()
     }
 
     /// Force immediate synchronous save — blocks until the DB write completes.
     /// Guarantees data is persisted before the view/app exits.
     func saveOnClose() {
         autoSaveTask?.cancel()
+        let sequence = nextSaveSequence(markModified: true)
+        let snapshot = makeSaveSnapshot()
         sessionState.selectedHookIndex = selectedHookIndex
         sessionState.save()
 
-        var updatedAtom = idea
-        updatedAtom.title = editableTitle.isEmpty ? nil : editableTitle
-        updatedAtom.body = editableBody.isEmpty ? nil : editableBody
-
-        updatedAtom = updatedAtom.withUpdatedIdeaMetadata { meta in
-            meta.tags = tags.isEmpty ? nil : tags
-            meta.contentFormat = selectedFormat
-            meta.platform = selectedPlatform
-            meta.ideaStatus = selectedStatus
-            meta.hooks = editableHooks.isEmpty ? nil : editableHooks
-            meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
-
-            // Codex-era fields
-            meta.context = editableContext.isEmpty ? nil : editableContext
-            meta.arcType = selectedArcType
-            meta.creativeDirection = editableCreativeDirection.isEmpty ? nil : editableCreativeDirection
-            meta.blueprintUUID = selectedBlueprintUUID
-            meta.ideaContentType = selectedContentType
-            if !researchResults.isEmpty, let data = try? JSONEncoder().encode(researchResults) {
-                meta.researchResults = String(data: data, encoding: .utf8)
-            }
-            if !chatHistory.isEmpty, let data = try? JSONEncoder().encode(chatHistory) {
-                meta.chatHistory = String(data: data, encoding: .utf8)
-            }
-            if !arcRecommendations.isEmpty, let data = try? JSONEncoder().encode(arcRecommendations) {
-                meta.arcRecommendations = String(data: data, encoding: .utf8)
-            }
-            if let outline = codexOutline, let data = try? JSONEncoder().encode(outline) {
-                meta.codexOutline = String(data: data, encoding: .utf8)
-            }
-        }
-
         do {
-            idea = try AtomRepository.shared.updateSync(updatedAtom)
-            // Sync: queue for Supabase push so idea data syncs to cloud
-            Task {
-                if let savedAtom = try? await AtomRepository.shared.fetch(uuid: idea.uuid) {
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: savedAtom)
-                }
+            if let savedAtom = try writeSnapshotSync(snapshot, sequence: sequence) {
+                idea = savedAtom
             }
         } catch {
             print("IdeaFocusMode: sync save failed: \(error)")
         }
+    }
+
+    private func saveScheduledSnapshot(_ snapshot: IdeaFocusSaveSnapshot, sequence: UInt64) async {
+        do {
+            if let savedAtom = try await writeSnapshot(snapshot, sequence: sequence) {
+                idea = savedAtom
+            }
+        } catch {
+            print("IdeaFocusMode: autosave failed: \(error)")
+        }
+    }
+
+    private func nextSaveSequence(markModified: Bool) -> UInt64 {
+        if markModified {
+            lastModified = Date()
+        }
+        saveSequence += 1
+        return saveSequence
+    }
+
+    private func makeSaveSnapshot() -> IdeaFocusSaveSnapshot {
+        IdeaFocusSaveSnapshot(
+            uuid: idea.uuid,
+            title: editableTitle.isEmpty ? nil : editableTitle,
+            body: editableBody.isEmpty ? nil : editableBody,
+            tags: tags,
+            selectedStatus: selectedStatus,
+            selectedFormat: selectedFormat,
+            selectedPlatform: selectedPlatform,
+            editableHooks: editableHooks,
+            editableDescription: editableDescription,
+            mentionedAtomUUIDs: mentionedAtoms.map(\.uuid),
+            editableContext: editableContext,
+            selectedArcType: selectedArcType,
+            editableCreativeDirection: editableCreativeDirection,
+            selectedBlueprintUUID: selectedBlueprintUUID,
+            selectedContentType: selectedContentType,
+            researchResults: researchResults,
+            chatHistory: chatHistory,
+            arcRecommendations: arcRecommendations,
+            codexOutline: codexOutline,
+            lastModified: lastModified
+        )
+    }
+
+    private func writeSnapshot(_ snapshot: IdeaFocusSaveSnapshot, sequence: UInt64) async throws -> Atom? {
+        guard sequence == saveSequence else {
+            print("IdeaFocusMode: skipped stale autosave seq=\(sequence) latest=\(saveSequence)")
+            return nil
+        }
+
+        let didWrite = try await CosmoDatabase.shared.asyncWrite { db -> Bool in
+            let existingMetadata = try Self.existingMetadata(for: snapshot.uuid, db: db)
+            guard IdeaFocusWritePolicy.allowsWrite(
+                existingMetadata: existingMetadata,
+                snapshotLastModified: snapshot.lastModified
+            ) else {
+                print("IdeaFocusMode: skipped stale metadata write seq=\(sequence)")
+                return false
+            }
+
+            try Self.write(snapshot: snapshot, existingMetadata: existingMetadata, db: db)
+            return db.changesCount > 0
+        }
+
+        guard didWrite,
+              let savedAtom = try await CosmoDatabase.shared.asyncRead({ db in
+                  try Atom.filter(Column("uuid") == snapshot.uuid).fetchOne(db)
+              }) else {
+            return nil
+        }
+
+        await ChangeTracker.shared.trackUpdate(table: Atom.databaseTableName, entity: savedAtom, skipVersionIncrement: true)
+        AtomRepository.shared.refreshEditingLock(uuid: snapshot.uuid)
+        return savedAtom
+    }
+
+    private func writeSnapshotSync(_ snapshot: IdeaFocusSaveSnapshot, sequence: UInt64) throws -> Atom? {
+        guard sequence == saveSequence else {
+            print("IdeaFocusMode: skipped stale sync save seq=\(sequence) latest=\(saveSequence)")
+            return nil
+        }
+
+        let didWrite = try CosmoDatabase.shared.write { db -> Bool in
+            let existingMetadata = try Self.existingMetadata(for: snapshot.uuid, db: db)
+            guard IdeaFocusWritePolicy.allowsWrite(
+                existingMetadata: existingMetadata,
+                snapshotLastModified: snapshot.lastModified
+            ) else {
+                print("IdeaFocusMode: skipped stale sync metadata write seq=\(sequence)")
+                return false
+            }
+
+            try Self.write(snapshot: snapshot, existingMetadata: existingMetadata, db: db)
+            return db.changesCount > 0
+        }
+
+        guard didWrite,
+              let savedAtom = try CosmoDatabase.shared.read({ db in
+                  try Atom.filter(Column("uuid") == snapshot.uuid).fetchOne(db)
+              }) else {
+            return nil
+        }
+
+        Task {
+            await ChangeTracker.shared.trackUpdate(table: Atom.databaseTableName, entity: savedAtom, skipVersionIncrement: true)
+        }
+        AtomRepository.shared.refreshEditingLock(uuid: snapshot.uuid)
+        return savedAtom
+    }
+
+    nonisolated private static func existingMetadata(for uuid: String, db: Database) throws -> String? {
+        guard let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) else {
+            return nil
+        }
+        return row["metadata"]
+    }
+
+    nonisolated private static func write(snapshot: IdeaFocusSaveSnapshot, existingMetadata: String?, db: Database) throws {
+        try db.execute(
+            sql: """
+            UPDATE atoms
+            SET title = ?,
+                body = ?,
+                metadata = ?,
+                updated_at = ?,
+                _local_version = _local_version + 1,
+                _local_pending = 1
+            WHERE uuid = ?
+            """,
+            arguments: [
+                snapshot.title,
+                snapshot.body,
+                snapshot.metadataJSON(merging: existingMetadata),
+                ISO8601DateFormatter().string(from: Date()),
+                snapshot.uuid
+            ]
+        )
     }
 
     // MARK: - Client Profiles

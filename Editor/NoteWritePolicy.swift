@@ -23,4 +23,13 @@ enum NoteWritePolicy {
     ) -> Bool {
         hasLocalEdits && (entityId > 0 || !entityUUID.isEmpty)
     }
+
+    static func shouldApplyObservedBody(
+        isEditingBody: Bool,
+        hasLocalEdits: Bool,
+        observedBodyChanged: Bool,
+        isLocalSaveEcho: Bool = false
+    ) -> Bool {
+        observedBodyChanged && !isEditingBody && !hasLocalEdits && !isLocalSaveEcho
+    }
 }

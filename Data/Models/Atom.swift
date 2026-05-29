@@ -2074,6 +2074,7 @@ struct IdeaMetadata: Codable, Sendable {
     var researchResults: String?
     var chatHistory: String?
     var arcRecommendations: String?
+    var lastModifiedUnix: Double?
 }
 
 // MARK: - Image Metadata

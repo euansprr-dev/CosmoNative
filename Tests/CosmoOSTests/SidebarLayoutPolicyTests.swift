@@ -120,8 +120,9 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             .commandCenter,
             .inbox,
             .codex,
-            .discover,
-            .swipeFile(section: .all)
+            .discover(section: .discover),
+            .discover(section: .creators),
+            .swipeFile(section: .all),
         ]
 
         for destination in destinations {
@@ -136,6 +137,13 @@ final class SidebarLayoutPolicyTests: XCTestCase {
 
             XCTAssertEqual(inset, 320)
         }
+    }
+
+    func testVisibleSidebarContextsUseSwipeFileTopLevelOrder() {
+        XCTAssertEqual(
+            SidebarContext.allCases.map(\.title),
+            ["Home", "Command", "Inbox", "Swipe File"]
+        )
     }
 
     func testTransientHoverRevealPushesCommandCenterContent() {
@@ -271,7 +279,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         )
 
         XCTAssertTrue(mainView.contains("let shouldOpenAsPane = notification.userInfo?[\"asPane\"] as? Bool == true"))
-        XCTAssertTrue(mainView.contains("handleOpenBlockInFocusMode(atomUUID: atomUUID, asPane: shouldOpenAsPane)"))
+        XCTAssertTrue(mainView.contains("handleOpenBlockInFocusMode("))
+        XCTAssertTrue(mainView.contains("asPane: shouldOpenAsPane"))
         XCTAssertTrue(mainView.contains("if asPane {"))
         XCTAssertTrue(mainView.contains("paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))"))
         XCTAssertTrue(ideaFocusView.contains("openAtomInPane(blueprint.uuid)"))

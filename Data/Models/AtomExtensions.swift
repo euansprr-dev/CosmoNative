@@ -348,6 +348,11 @@ extension Atom {
         set { updateResearchMetadata { $0.contentSource = newValue } }
     }
 
+    var swipeBoardIDs: [String]? {
+        get { researchMetadata?.swipeBoardIDs }
+        set { updateResearchMetadata { $0.swipeBoardIDs = newValue } }
+    }
+
     // Rich content from structured data
     var richContent: ResearchRichContent? {
         structuredData(as: ResearchStructured.self).flatMap { structured in

@@ -87,6 +87,9 @@ enum SwipeLibraryFiltering {
         case .unstudied:
             filters.onlyUnstudied = true
         case .board(let boardName):
+            if !boardName.isEmpty {
+                filters.boardID = boardName
+            }
             if boardName.localizedCaseInsensitiveContains("fear") {
                 filters.smartPreset = .fearHooks
             } else if boardName.localizedCaseInsensitiveContains("thread") {
@@ -161,6 +164,10 @@ enum SwipeLibraryFiltering {
         }
 
         if let minimumHookScore = filters.minimumHookScore, (item.hookScore ?? 0) < minimumHookScore {
+            return false
+        }
+
+        if let boardID = filters.boardID, !item.boardIDs.contains(boardID) {
             return false
         }
 

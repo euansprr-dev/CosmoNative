@@ -45,7 +45,7 @@ enum SocialFollowerRange: Equatable, Sendable {
     }
 }
 
-enum SocialPostedWindow: String, CaseIterable, Codable, Equatable, Sendable {
+enum SocialPostedWindow: String, CaseIterable, Codable, Equatable, Hashable, Sendable {
     case lastWeek
     case lastMonth
     case lastThreeMonths
@@ -76,7 +76,7 @@ enum SocialPostedWindow: String, CaseIterable, Codable, Equatable, Sendable {
     }
 }
 
-enum SocialDiscoverySort: String, CaseIterable, Codable, Equatable, Sendable {
+enum SocialDiscoverySort: String, CaseIterable, Codable, Equatable, Hashable, Sendable {
     case highestOutlier
     case newest
     case mostViewed

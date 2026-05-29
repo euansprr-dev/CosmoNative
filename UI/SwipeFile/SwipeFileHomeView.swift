@@ -757,7 +757,7 @@ private struct SwipeFileDetailPreview: View {
     var onAddToCanvas: (SwipeGalleryItem) -> Void
 
     var body: some View {
-        CommandCenterGlassRail(cornerRadius: 24) {
+        CosmoGlassPanel(cornerRadius: 24) {
             Group {
                 if let item {
                     selectedContent(item)
@@ -881,36 +881,910 @@ private struct SwipeFileEmptyState: View {
     }
 }
 
-struct SwipeFileDiscoverPlaceholderView: View {
+struct SwipeFileDiscoverView: View {
+    let section: SwipeDiscoverySectionSelection
+    @ObservedObject var swipeLibraryViewModel: SwipeLibraryViewModel
+
+    @StateObject private var viewModel = SwipeFileDiscoverViewModel()
+    @State private var showingFilters = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 26) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Discover")
-                    .font(.system(size: 44, weight: .bold))
-                    .foregroundStyle(DS.text)
-                Text("High-performing posts across platforms")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 24) {
+                SwipeDiscoverHeader(
+                    section: section,
+                    query: $viewModel.query,
+                    isShowingFilters: $showingFilters,
+                    onRefresh: { Task { await viewModel.reload() } }
+                )
+
+                SwipeDiscoverPillarStrip()
+                SwipeDiscoverPlatformStrip(query: $viewModel.query)
+
+                if section == .creators {
+                    SwipeDiscoverCreatorDirectory(viewModel: viewModel)
+                } else {
+                    SwipeDiscoverFeed(
+                        section: section,
+                        viewModel: viewModel
+                    )
+                }
+            }
+            .padding(36)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(SwipeFileBackground())
+        .task {
+            await viewModel.loadIfNeeded()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.creatorDataChanged)) { _ in
+            Task { await viewModel.reload() }
+        }
+    }
+}
+
+@MainActor
+private final class SwipeFileDiscoverViewModel: ObservableObject {
+    @Published var query = SocialDiscoveryQuery()
+    @Published var creatorSearchText = ""
+    @Published var creatorSortMode: SocialDiscoverySort = .highestOutlier
+    @Published private(set) var posts: [SocialPostSnapshot] = []
+    @Published private(set) var creators: [SwipeDiscoverCreatorRecord] = []
+    @Published private(set) var isLoading = false
+    @Published var errorMessage: String?
+    @Published var saveMessage: String?
+
+    private var hasLoaded = false
+
+    var visiblePosts: [SocialPostSnapshot] {
+        SocialDiscoveryStore(query: query, posts: posts).visiblePosts
+    }
+
+    var highPerformingPosts: [SocialPostSnapshot] {
+        var highQuery = query
+        highQuery.minimumOutlierMultiplier = max(query.minimumOutlierMultiplier ?? 10, 10)
+        highQuery.sort = .highestOutlier
+        return SocialDiscoveryStore(query: highQuery, posts: posts).visiblePosts
+    }
+
+    var filteredCreators: [SwipeDiscoverCreatorRecord] {
+        let trimmedQuery = creatorSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var filtered = creators
+        if !trimmedQuery.isEmpty {
+            filtered = filtered.filter {
+                $0.name.lowercased().contains(trimmedQuery) ||
+                $0.handle.lowercased().contains(trimmedQuery) ||
+                ($0.niche?.lowercased().contains(trimmedQuery) ?? false)
+            }
+        }
+
+        switch creatorSortMode {
+        case .highestOutlier:
+            filtered.sort { ($0.topOutlierMultiplier ?? 0) > ($1.topOutlierMultiplier ?? 0) }
+        case .mostViewed:
+            filtered.sort { $0.totalViews > $1.totalViews }
+        case .mostLiked:
+            filtered.sort { $0.totalLikes > $1.totalLikes }
+        case .mostCommented:
+            filtered.sort { $0.totalComments > $1.totalComments }
+        case .mostShared:
+            filtered.sort { $0.postCount > $1.postCount }
+        case .newest:
+            filtered.sort { ($0.latestPostDate ?? .distantPast) > ($1.latestPostDate ?? .distantPast) }
+        }
+        return filtered
+    }
+
+    func loadIfNeeded() async {
+        guard !hasLoaded else { return }
+        await reload()
+    }
+
+    func reload() async {
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            let creatorAtoms = try await AtomRepository.shared.fetchCreators()
+            let loaded = loadCatalogSnapshots(from: creatorAtoms)
+            creators = loaded.records
+            posts = loaded.posts
+            hasLoaded = true
+        } catch {
+            errorMessage = "Could not load discovery data: \(error.localizedDescription)"
+        }
+
+        isLoading = false
+    }
+
+    func save(_ post: SocialPostSnapshot, boardID: String? = nil) {
+        Task {
+            do {
+                try await savePost(post, boardID: boardID)
+                saveMessage = boardID == nil ? "Saved to All Swipes" : "Saved to board"
+            } catch {
+                saveMessage = "Save failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func loadCatalogSnapshots(from creatorAtoms: [Atom]) -> (posts: [SocialPostSnapshot], records: [SwipeDiscoverCreatorRecord]) {
+        var allPosts: [SocialPostSnapshot] = []
+        var records: [SwipeDiscoverCreatorRecord] = []
+
+        for creator in creatorAtoms {
+            guard let metadata = creator.metadataValue(as: CreatorMetadata.self),
+                  let catalogPosts = CatalogStore.load(creatorUUID: creator.uuid),
+                  !catalogPosts.isEmpty else {
+                continue
             }
 
+            let handle = (metadata.handle ?? creator.title ?? "unknown")
+                .replacingOccurrences(of: "@", with: "")
+            let profile = ImportedCreatorProfile(
+                username: handle,
+                fullName: creator.title,
+                biography: metadata.bio,
+                followerCount: metadata.followerCount ?? 0,
+                followingCount: metadata.followingCount ?? 0,
+                postsCount: metadata.postsCount ?? catalogPosts.count,
+                profilePicUrl: metadata.thumbnailUrl,
+                isPrivate: false,
+                isVerified: false
+            )
+
+            let basePosts = catalogPosts.map {
+                SocialInstagramMapper.snapshot(post: $0, profile: profile)
+            }
+            let scoredPosts = score(posts: basePosts)
+            allPosts.append(contentsOf: scoredPosts)
+
+            records.append(
+                SwipeDiscoverCreatorRecord(
+                    id: creator.uuid,
+                    name: creator.title ?? profile.fullName ?? handle,
+                    handle: "@\(handle)",
+                    platform: .instagram,
+                    avatarURL: metadata.thumbnailUrl.flatMap(URL.init(string:)),
+                    followerCount: metadata.followerCount,
+                    niche: metadata.niche,
+                    bio: metadata.bio,
+                    postCount: scoredPosts.count,
+                    totalViews: scoredPosts.compactMap(\.metrics.views).reduce(0, +),
+                    totalLikes: scoredPosts.compactMap(\.metrics.likes).reduce(0, +),
+                    totalComments: scoredPosts.compactMap(\.metrics.comments).reduce(0, +),
+                    topOutlierMultiplier: scoredPosts.compactMap(\.derived.outlierMultiplier).max(),
+                    latestPostDate: scoredPosts.compactMap(\.publishedAt).max(),
+                    topPosts: Array(scoredPosts.sorted { ($0.derived.outlierMultiplier ?? 0) > ($1.derived.outlierMultiplier ?? 0) }.prefix(3))
+                )
+            )
+        }
+
+        return (allPosts, records)
+    }
+
+    private func score(posts: [SocialPostSnapshot]) -> [SocialPostSnapshot] {
+        posts.map { post in
+            let score = SocialOutlierScorer.score(post: post, creatorPosts: posts)
+            let derived = SocialDerivedMetrics(
+                outlierMultiplier: score.multiplier,
+                outlierGrade: score.grade,
+                engagementRate: engagementRate(for: post)
+            )
+            return post.replacing(derived: derived)
+        }
+    }
+
+    private func engagementRate(for post: SocialPostSnapshot) -> Double? {
+        guard let followerCount = post.author.followerCount, followerCount > 0 else { return nil }
+        let engagements = (post.metrics.likes ?? 0)
+            + (post.metrics.comments ?? 0)
+            + (post.metrics.shares ?? 0)
+            + (post.metrics.reposts ?? 0)
+        return Double(engagements) / Double(followerCount)
+    }
+
+    private func savePost(_ post: SocialPostSnapshot, boardID: String?) async throws {
+        let hook = post.title ?? post.body?.components(separatedBy: .newlines).first
+        var atom = Research.newSwipeFile(
+            url: post.canonicalURL.absoluteString,
+            hook: hook,
+            sourceType: sourceType(for: post),
+            contentSource: .import_
+        )
+        atom.title = hook ?? post.author.displayName
+        atom.body = post.body
+        atom.thumbnailUrl = post.media.first(where: { $0.kind == .thumbnail || $0.kind == .image })?.url.absoluteString
+        atom.contentSource = "creator_import"
+        atom.swipeBoardIDs = boardID.map { [$0] }
+
+        var analysis = SwipeAnalysis(
+            analysisVersion: 1,
+            isFullyAnalyzed: false,
+            likesCount: post.metrics.likes,
+            viewsCount: post.metrics.views,
+            commentsCount: post.metrics.comments,
+            sharesCount: post.metrics.shares,
+            engagementRate: post.derived.engagementRate,
+            publishedAt: post.publishedAt,
+            postShortcode: post.providerPostID
+        )
+        analysis.hookText = hook
+        atom = atom.withSwipeAnalysis(analysis)
+
+        _ = try await AtomRepository.shared.create(atom)
+        NotificationCenter.default.post(name: CosmoNotification.SwipeFile.creatorDataChanged, object: nil)
+    }
+
+    private func sourceType(for post: SocialPostSnapshot) -> ResearchRichContent.SourceType {
+        switch post.platform {
+        case .instagram:
+            switch post.format {
+            case .shortVideo: return .instagramReel
+            case .carousel: return .instagramCarousel
+            default: return .instagramPost
+            }
+        case .youtube: return post.format == .shortVideo ? .youtubeShort : .youtube
+        case .tiktok: return .tiktok
+        case .threads: return .threads
+        case .x, .twitter: return .xPost
+        default: return .website
+        }
+    }
+}
+
+private struct SwipeDiscoverCreatorRecord: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let handle: String
+    let platform: SocialPlatform
+    let avatarURL: URL?
+    let followerCount: Int?
+    let niche: String?
+    let bio: String?
+    let postCount: Int
+    let totalViews: Int
+    let totalLikes: Int
+    let totalComments: Int
+    let topOutlierMultiplier: Double?
+    let latestPostDate: Date?
+    let topPosts: [SocialPostSnapshot]
+}
+
+private struct SwipeDiscoverHeader: View {
+    let section: SwipeDiscoverySectionSelection
+    @Binding var query: SocialDiscoveryQuery
+    @Binding var isShowingFilters: Bool
+    var onRefresh: () -> Void
+
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(section.title)
+                        .font(.system(size: 44, weight: .bold))
+                        .foregroundStyle(DS.text)
+                    Text(section.subtitle)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(DS.textMuted)
+                }
+
+                Spacer(minLength: 16)
+
+                Button {
+                    isShowingFilters.toggle()
+                } label: {
+                    Label(SwipeDiscoveryFilterPresentation.summary(for: query), systemImage: "slider.horizontal.3")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DS.textSecondary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.75))
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $isShowingFilters, arrowEdge: .top) {
+                    SwipeDiscoverFilterPanel(query: $query)
+                        .frame(width: 360)
+                        .padding(14)
+                }
+
+                Button("Reload", systemImage: "arrow.clockwise", action: onRefresh)
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 0.75))
+                    .buttonStyle(.plain)
+                    .help("Reload discovery")
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
+
+                TextField("Search for a handle, keyword, or profile URL...", text: $query.searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(DS.text)
+                    .focused($searchFocused)
+
+                if !query.searchText.isEmpty {
+                    Button("Clear", systemImage: "xmark.circle.fill") {
+                        query.searchText = ""
+                    }
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 46)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(searchFocused ? DS.borderActive : DS.borderSubtle, lineWidth: 1)
+            )
+        }
+    }
+}
+
+private struct SwipeDiscoverPillarStrip: View {
+    var body: some View {
+        ScrollView(.horizontal) {
             HStack(spacing: 12) {
                 DiscoverSignalCard(title: "Productivity", systemImage: "bolt", tint: Color(hex: "#34D399"))
                 DiscoverSignalCard(title: "Self-improvement", systemImage: "sparkles", tint: Color(hex: "#818CF8"))
                 DiscoverSignalCard(title: "Business", systemImage: "briefcase", tint: Color(hex: "#F59E0B"))
                 DiscoverSignalCard(title: "Psychology", systemImage: "brain.head.profile", tint: Color(hex: "#38BDF8"))
+                DiscoverSignalCard(title: "Content creation", systemImage: "camera", tint: DS.entitySwipe)
+            }
+        }
+        .scrollIndicators(.never)
+    }
+}
+
+private struct SwipeDiscoverPlatformStrip: View {
+    @Binding var query: SocialDiscoveryQuery
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                SwipeFilterChip(
+                    title: "All",
+                    systemImage: "square.grid.2x2",
+                    isSelected: query.platforms.isEmpty
+                ) {
+                    query.platforms = []
+                }
+
+                ForEach(SwipeDiscoveryFilterPresentation.primaryPlatforms, id: \.rawValue) { platform in
+                    SwipeFilterChip(
+                        title: platform.displayName,
+                        systemImage: platform.iconName,
+                        isSelected: query.platforms.contains(platform)
+                    ) {
+                        if query.platforms.contains(platform) {
+                            query.platforms.remove(platform)
+                        } else {
+                            query.platforms.insert(platform)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 1)
+        }
+        .scrollIndicators(.never)
+    }
+}
+
+private struct SwipeDiscoverFeed: View {
+    let section: SwipeDiscoverySectionSelection
+    @ObservedObject var viewModel: SwipeFileDiscoverViewModel
+
+    private var posts: [SocialPostSnapshot] {
+        section == .highPerformers ? viewModel.highPerformingPosts : viewModel.visiblePosts
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(section == .highPerformers ? "High-Performing Matches" : "All Matches")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(DS.text)
+                Text("\(posts.count)")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.textMuted)
+                    .monospacedDigit()
             }
 
-            SwipeFileEmptyState(
-                title: "Discovery engine pending",
-                subtitle: "The feed shell is ready for platform imports.",
-                systemImage: "chart.line.uptrend.xyaxis"
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if viewModel.isLoading {
+                SwipeDiscoverSkeletonGrid()
+            } else if let error = viewModel.errorMessage {
+                SwipeFileEmptyState(title: "Discovery unavailable", subtitle: error, systemImage: "exclamationmark.triangle")
+                    .frame(maxWidth: .infinity, minHeight: 360)
+            } else if posts.isEmpty {
+                SwipeFileEmptyState(
+                    title: "No discovered posts yet",
+                    subtitle: "Import creator catalogs to populate the cross-platform feed.",
+                    systemImage: "chart.line.uptrend.xyaxis"
+                )
+                .frame(maxWidth: .infinity, minHeight: 360)
+            } else {
+                SwipeDiscoverMasonryGrid(posts: posts, onSave: viewModel.save)
+            }
         }
-        .padding(36)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(SwipeFileBackground())
     }
+}
+
+private struct SwipeDiscoverMasonryGrid: View {
+    let posts: [SocialPostSnapshot]
+    let onSave: (SocialPostSnapshot, String?) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let columnCount = max(2, min(5, Int(proxy.size.width / 284)))
+            let spacing: CGFloat = 16
+            let cardWidth = max(230, (proxy.size.width - CGFloat(columnCount - 1) * spacing) / CGFloat(columnCount))
+            let columns = distribute(columnCount: columnCount)
+
+            HStack(alignment: .top, spacing: spacing) {
+                ForEach(columns.indices, id: \.self) { index in
+                    LazyVStack(spacing: spacing) {
+                        ForEach(columns[index]) { post in
+                            SwipeDiscoverPostCard(post: post, onSave: onSave)
+                                .frame(width: cardWidth)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(minHeight: max(420, CGFloat(posts.count / 3 + 1) * 340))
+    }
+
+    private func distribute(columnCount: Int) -> [[SocialPostSnapshot]] {
+        var columns = Array(repeating: [SocialPostSnapshot](), count: columnCount)
+        for (index, post) in posts.enumerated() {
+            columns[index % columnCount].append(post)
+        }
+        return columns
+    }
+}
+
+private struct SwipeDiscoverPostCard: View {
+    let post: SocialPostSnapshot
+    let onSave: (SocialPostSnapshot, String?) -> Void
+
+    @State private var isHovered = false
+
+    private var thumbnailURL: URL? {
+        post.media.first(where: { $0.kind == .thumbnail || $0.kind == .image })?.url
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            mediaHeader
+            VStack(alignment: .leading, spacing: 12) {
+                authorRow
+                Text(post.body ?? post.title ?? post.canonicalURL.absoluteString)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(6)
+                metricRow
+                footerRow
+            }
+            .padding(14)
+        }
+        .background(DS.surface.opacity(0.74), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isHovered ? DS.accent.opacity(0.32) : DS.borderSubtle, lineWidth: 0.85)
+        )
+        .scaleEffect(isHovered ? 1.012 : 1)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var mediaHeader: some View {
+        if let thumbnailURL {
+            AsyncImage(url: thumbnailURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case .failure:
+                    placeholderMedia
+                case .empty:
+                    placeholderMedia.redacted(reason: .placeholder)
+                @unknown default:
+                    placeholderMedia
+                }
+            }
+            .frame(height: post.format == .text ? 120 : 210)
+            .clipped()
+            .overlay(alignment: .topLeading) {
+                platformBadge
+                    .padding(10)
+            }
+            .overlay(alignment: .topTrailing) {
+                outlierBadge
+                    .padding(10)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                platformBadge
+                Text(post.body ?? post.title ?? "")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(8)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
+            .background(DS.commandChromePanelFill)
+            .overlay(alignment: .topTrailing) {
+                outlierBadge
+                    .padding(10)
+            }
+        }
+    }
+
+    private var placeholderMedia: some View {
+        Rectangle()
+            .fill(DS.commandChromePanelFill)
+            .overlay {
+                Image(systemName: post.platform.iconName)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(DS.textMuted)
+            }
+    }
+
+    private var authorRow: some View {
+        HStack(spacing: 8) {
+            Text(post.author.displayName)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+            Text("@\(post.author.handle)")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+    }
+
+    private var metricRow: some View {
+        HStack(spacing: 12) {
+            metric("eye", post.metrics.views)
+            metric("heart", post.metrics.likes)
+            metric("bubble.left", post.metrics.comments)
+            metric("arrow.2.squarepath", post.metrics.shares ?? post.metrics.reposts)
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(DS.textMuted)
+    }
+
+    private var footerRow: some View {
+        HStack {
+            if let date = post.publishedAt {
+                Text(date, style: .relative)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            Spacer()
+
+            Menu {
+                Button("All Swipes", systemImage: "rectangle.stack.badge.plus") {
+                    onSave(post, nil)
+                }
+                Divider()
+                Button("Thread Hooks", systemImage: "text.alignleft") {
+                    onSave(post, "thread-hooks")
+                }
+                Button("Reel Ideas", systemImage: "play.rectangle") {
+                    onSave(post, "reel-ideas")
+                }
+                Button("Client Proof", systemImage: "checkmark.seal") {
+                    onSave(post, "client-proof")
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(DS.text)
+                    .frame(width: 30, height: 30)
+                    .background(DS.surfaceElevated, in: Circle())
+                    .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 0.75))
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .help("Add to board")
+        }
+    }
+
+    private var platformBadge: some View {
+        Label(post.platform.displayName, systemImage: post.platform.iconName)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(DS.text)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(.regularMaterial, in: Capsule())
+    }
+
+    private var outlierBadge: some View {
+        Text(post.derived.outlierMultiplier.map { "\(Int($0.rounded()))x" } ?? "new")
+            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .foregroundStyle(post.derived.outlierMultiplier == nil ? DS.textMuted : DS.accent)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(DS.surfaceElevated, in: Capsule())
+    }
+
+    private func metric(_ systemImage: String, _ value: Int?) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+            Text(value.map(formatCount) ?? "-")
+        }
+    }
+}
+
+private struct SwipeDiscoverCreatorDirectory: View {
+    @ObservedObject var viewModel: SwipeFileDiscoverViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(DS.textMuted)
+                    TextField("Search creators or paste a profile URL...", text: $viewModel.creatorSearchText)
+                        .textFieldStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 40)
+                .background(.regularMaterial, in: .rect(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.borderSubtle, lineWidth: 0.75))
+
+                Menu {
+                    ForEach(SocialDiscoverySort.allCases, id: \.rawValue) { sort in
+                        Button(sort.displayName) {
+                            viewModel.creatorSortMode = sort
+                        }
+                    }
+                } label: {
+                    SwipeMenuLabel(title: viewModel.creatorSortMode.displayName, systemImage: "arrow.up.arrow.down", isSelected: true)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+            }
+
+            if viewModel.isLoading {
+                SwipeDiscoverSkeletonGrid()
+            } else if viewModel.filteredCreators.isEmpty {
+                SwipeFileEmptyState(
+                    title: "No creators imported yet",
+                    subtitle: "Import a creator catalog to study their best posts here.",
+                    systemImage: "person.2"
+                )
+                .frame(maxWidth: .infinity, minHeight: 360)
+            } else {
+                LazyVStack(spacing: 12) {
+                    ForEach(viewModel.filteredCreators) { creator in
+                        SwipeDiscoverCreatorRow(creator: creator)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SwipeDiscoverCreatorRow: View {
+    let creator: SwipeDiscoverCreatorRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                AsyncImage(url: creator.avatarURL) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        Circle().fill(DS.accentSoft)
+                    }
+                }
+                .frame(width: 46, height: 46)
+                .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(creator.name)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(DS.text)
+                    Text([creator.handle, creator.niche].compactMap { $0 }.joined(separator: " · "))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DS.textMuted)
+                }
+
+                Spacer()
+
+                creatorMetric("Followers", creator.followerCount)
+                creatorMetric("Posts", creator.postCount)
+                creatorMetric("Top", creator.topOutlierMultiplier.map { Int($0.rounded()) }, suffix: "x")
+            }
+
+            if !creator.topPosts.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(creator.topPosts.prefix(3)) { post in
+                        Text(post.body ?? post.title ?? post.canonicalURL.absoluteString)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(DS.textSecondary)
+                            .lineLimit(3)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
+                            .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 10))
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(DS.surface.opacity(0.72), in: .rect(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.borderSubtle, lineWidth: 0.75))
+    }
+
+    private func creatorMetric(_ title: String, _ value: Int?, suffix: String = "") -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(value.map { formatCount($0) + suffix } ?? "-")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(DS.text)
+                .monospacedDigit()
+            Text(title)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DS.textMuted)
+                .textCase(.uppercase)
+        }
+    }
+}
+
+private struct SwipeDiscoverFilterPanel: View {
+    @Binding var query: SocialDiscoveryQuery
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            filterSection("Platforms") {
+                ForEach(SwipeDiscoveryFilterPresentation.primaryPlatforms, id: \.rawValue) { platform in
+                    Toggle(isOn: platformBinding(platform)) {
+                        Label(platform.displayName, systemImage: platform.iconName)
+                    }
+                }
+            }
+
+            filterSection("Posted") {
+                Picker("Posted", selection: $query.postedWindow) {
+                    ForEach(SocialPostedWindow.allCases, id: \.rawValue) { window in
+                        Text(window.displayName).tag(window)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            filterSection("Min Outlier Score") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(SwipeDiscoveryFilterPresentation.minimumOutlierOptions.indices, id: \.self) { index in
+                        let option = SwipeDiscoveryFilterPresentation.minimumOutlierOptions[index]
+                        Button {
+                            query.minimumOutlierMultiplier = option
+                        } label: {
+                            HStack {
+                                Image(systemName: "bolt.fill")
+                                Text(option.map { "\(Int($0))x or more" } ?? "Any")
+                                Spacer()
+                                if query.minimumOutlierMultiplier == option {
+                                    Image(systemName: "checkmark.circle.fill")
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            filterSection("Followers") {
+                HStack {
+                    followerButton("Any", range: .any)
+                    followerButton("1K-20K", range: .range(min: 1_000, max: 20_000))
+                    followerButton("20K-100K", range: .range(min: 20_000, max: 100_000))
+                    followerButton("100K-1M", range: .range(min: 100_000, max: 1_000_000))
+                    followerButton("1M+", range: .range(min: 1_000_000, max: nil))
+                }
+            }
+        }
+    }
+
+    private func filterSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(DS.textMuted)
+                .textCase(.uppercase)
+            content()
+        }
+    }
+
+    private func platformBinding(_ platform: SocialPlatform) -> Binding<Bool> {
+        Binding {
+            query.platforms.contains(platform)
+        } set: { isOn in
+            if isOn {
+                query.platforms.insert(platform)
+            } else {
+                query.platforms.remove(platform)
+            }
+        }
+    }
+
+    private func followerButton(_ title: String, range: SocialFollowerRange) -> some View {
+        Button(title) {
+            query.followerRange = range
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(query.followerRange == range ? DS.accent : DS.textSecondary)
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(query.followerRange == range ? DS.accentSoft : DS.surface, in: Capsule())
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SwipeDiscoverSkeletonGrid: View {
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
+            ForEach(0..<8, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(DS.surface)
+                    .frame(height: 260)
+                    .redacted(reason: .placeholder)
+            }
+        }
+    }
+}
+
+private extension SocialPostSnapshot {
+    func replacing(derived: SocialDerivedMetrics) -> SocialPostSnapshot {
+        SocialPostSnapshot(
+            id: id,
+            platform: platform,
+            provider: provider,
+            providerPostID: providerPostID,
+            canonicalURL: canonicalURL,
+            title: title,
+            body: body,
+            media: media,
+            author: author,
+            publishedAt: publishedAt,
+            detectedLanguage: detectedLanguage,
+            format: format,
+            metrics: metrics,
+            derived: derived,
+            transcriptState: transcriptState,
+            saveState: saveState,
+            rawProviderPayload: rawProviderPayload
+        )
+    }
+}
+
+private func formatCount(_ value: Int) -> String {
+    let absValue = abs(value)
+    if absValue >= 1_000_000 {
+        return String(format: "%.1fM", Double(value) / 1_000_000)
+    }
+    if absValue >= 1_000 {
+        return String(format: "%.1fK", Double(value) / 1_000)
+    }
+    return "\(value)"
 }
 
 private struct DiscoverSignalCard: View {

@@ -2,6 +2,24 @@ import XCTest
 @testable import CosmoOS
 
 final class SwipeLibraryFilteringTests: XCTestCase {
+    func testDiscoveryFilterPresentationMatchesRequestedDefaultControls() {
+        let query = SocialDiscoveryQuery()
+
+        XCTAssertEqual(
+            SwipeDiscoveryFilterPresentation.primaryPlatforms,
+            [.x, .youtube, .substack, .instagram, .tiktok, .linkedin]
+        )
+        XCTAssertEqual(SwipeDiscoveryFilterPresentation.minimumOutlierOptions, [nil, 3, 5, 10, 20])
+        XCTAssertEqual(SwipeDiscoveryFilterPresentation.summary(for: query), "All · Last 3 months · 10x")
+    }
+
+    func testDiscoverySidebarSectionsAreDistinctDestinations() {
+        XCTAssertEqual(
+            SwipeDiscoverySectionSelection.allCases.map(\.title),
+            ["Discover", "High-Performers", "Creators"]
+        )
+    }
+
     func testFearHooksPresetMatchesNarrativeHookTypesAndWarningKeywords() {
         let items = [
             makeItem(title: "Stop making this client mistake", hookType: .question, narrative: nil),

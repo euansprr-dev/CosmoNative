@@ -636,9 +636,7 @@ struct MainView: View {
                 break
             case .codex:
                 break
-            case .discover:
-                break
-            case .swipeFile:
+            case .discover, .swipeFile:
                 break
             }
             syncSidebarContext(with: newDest)
@@ -1209,9 +1207,7 @@ struct MainView: View {
             activeSidebarContext = .thinkspaces
         case .codex:
             activeSidebarContext = .inbox
-        case .discover:
-            activeSidebarContext = .swipeFile
-        case .swipeFile:
+        case .discover, .swipeFile:
             activeSidebarContext = .swipeFile
         }
     }
@@ -1439,8 +1435,8 @@ struct MainView: View {
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
                     .transition(.opacity)
-            } else if case .discover = currentDestination {
-                SwipeFileDiscoverPlaceholderView()
+            } else if case .discover(let section) = currentDestination {
+                SwipeFileDiscoverView(section: section, swipeLibraryViewModel: swipeLibraryViewModel)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .offset(x: contentPushOffset)

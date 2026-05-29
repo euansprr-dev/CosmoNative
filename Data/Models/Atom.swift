@@ -2608,6 +2608,7 @@ struct ResearchMetadata: Codable, Sendable {
     var structureType: String?
     var isSwipeFile: Bool?
     var contentSource: String?
+    var swipeBoardIDs: [String]?
 }
 
 // MARK: - Knowledge Crystallization

@@ -780,6 +780,7 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     public let likesCount: Int?
     public let viewsCount: Int?
     public let commentsCount: Int?
+    public let boardIDs: [String]
     // Processing state (nil, "pending", "extracting", "extraction_failed", "complete")
     public let processingStatus: String?
 
@@ -811,6 +812,7 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         likesCount: Int? = nil,
         viewsCount: Int? = nil,
         commentsCount: Int? = nil,
+        boardIDs: [String] = [],
         processingStatus: String? = nil
     ) {
         self.id = atomUUID
@@ -838,6 +840,7 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.likesCount = likesCount
         self.viewsCount = viewsCount
         self.commentsCount = commentsCount
+        self.boardIDs = boardIDs
         self.processingStatus = processingStatus
         self.searchableText = CommandKSearchMatcher.searchableText(
             from: [title, hookText, author, niche, creatorName]
@@ -1035,6 +1038,7 @@ extension Atom {
             likesCount: analysis?.likesCount,
             viewsCount: analysis?.viewsCount,
             commentsCount: analysis?.commentsCount,
+            boardIDs: meta?.swipeBoardIDs ?? [],
             processingStatus: meta?.processingStatus
         )
     }

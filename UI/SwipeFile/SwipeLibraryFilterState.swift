@@ -75,6 +75,86 @@ enum SwipeLibrarySectionSelection: Equatable, Hashable {
     }
 }
 
+enum SwipeDiscoverySectionSelection: String, CaseIterable, Identifiable, Equatable, Hashable {
+    case discover
+    case highPerformers
+    case creators
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .discover: return "Discover"
+        case .highPerformers: return "High-Performers"
+        case .creators: return "Creators"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .discover: return "High-performing posts across platforms"
+        case .highPerformers: return "Cross-platform feed"
+        case .creators: return "Profiles to study"
+        }
+    }
+}
+
+enum SwipeDiscoveryFilterPresentation {
+    static let primaryPlatforms: [SocialPlatform] = [
+        .x,
+        .youtube,
+        .substack,
+        .instagram,
+        .tiktok,
+        .linkedin
+    ]
+
+    static let minimumOutlierOptions: [Double?] = [nil, 3, 5, 10, 20]
+
+    static func summary(for query: SocialDiscoveryQuery) -> String {
+        let platformSummary = query.platforms.isEmpty
+            ? "All"
+            : query.platforms
+                .sorted { $0.displayName < $1.displayName }
+                .map(\.displayName)
+                .joined(separator: ", ")
+
+        let outlierSummary: String
+        if let minimum = query.minimumOutlierMultiplier {
+            outlierSummary = "\(Int(minimum))x"
+        } else {
+            outlierSummary = "Any score"
+        }
+
+        return "\(platformSummary) · \(query.postedWindow.displayName) · \(outlierSummary)"
+    }
+}
+
+extension SocialPostedWindow {
+    var displayName: String {
+        switch self {
+        case .lastWeek: return "Last week"
+        case .lastMonth: return "Last month"
+        case .lastThreeMonths: return "Last 3 months"
+        case .lastYear: return "Last year"
+        case .allTime: return "All time"
+        }
+    }
+}
+
+extension SocialDiscoverySort {
+    var displayName: String {
+        switch self {
+        case .highestOutlier: return "Highest outlier"
+        case .newest: return "Newest"
+        case .mostViewed: return "Most viewed"
+        case .mostLiked: return "Most liked"
+        case .mostCommented: return "Most commented"
+        case .mostShared: return "Most shared"
+        }
+    }
+}
+
 enum SwipeLibraryShelfID: String, CaseIterable, Identifiable {
     case recentlyAdded
     case highPerforming
@@ -128,6 +208,7 @@ struct SwipeLibraryFilterState: Equatable {
     var onlyStudied = false
     var onlyUnstudied = false
     var minimumHookScore: Double?
+    var boardID: String?
 
     var hasActiveFilters: Bool {
         smartPreset != .all ||
@@ -140,7 +221,8 @@ struct SwipeLibraryFilterState: Equatable {
         niche != nil ||
         onlyStudied ||
         onlyUnstudied ||
-        minimumHookScore != nil
+        minimumHookScore != nil ||
+        boardID != nil
     }
 
     mutating func reset() {

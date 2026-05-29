@@ -10,7 +10,7 @@ enum SidebarDestination: Equatable, Hashable {
     case commandCenter
     case inbox
     case codex
-    case discover
+    case discover(section: SwipeDiscoverySectionSelection)
     case swipeFile(section: SwipeLibrarySectionSelection)
     case thinkspace(id: String)
 }
@@ -500,7 +500,7 @@ struct UnifiedSidebar: View {
                 }
             case .swipeFile:
                 Button {
-                    currentDestination = .discover
+                    currentDestination = .discover(section: .discover)
                     onNavigate()
                 } label: {
                     Label("Open Discover", systemImage: "safari")
@@ -1151,32 +1151,9 @@ private struct SidebarSwipeFileContext: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 SidebarContextLabel(title: "Discover")
-                SidebarContextRow(
-                    title: "Discover",
-                    icon: "safari",
-                    subtitle: "Explore what is working",
-                    isActive: currentDestination == .discover,
-                    tint: DS.accent
-                ) {
-                    openDiscover()
-                }
-                SidebarContextRow(
-                    title: "High-Performers",
-                    icon: "chart.line.uptrend.xyaxis",
-                    subtitle: "Cross-platform feed",
-                    isActive: false,
-                    tint: DS.textSecondary
-                ) {
-                    openDiscover()
-                }
-                SidebarContextRow(
-                    title: "Creators",
-                    icon: "person.2",
-                    subtitle: "Profiles to study",
-                    isActive: false
-                ) {
-                    openDiscover()
-                }
+                discoveryRow(.discover, icon: "safari", tint: DS.accent)
+                discoveryRow(.highPerformers, icon: "chart.line.uptrend.xyaxis")
+                discoveryRow(.creators, icon: "person.2")
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -1188,9 +1165,7 @@ private struct SidebarSwipeFileContext: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     SidebarContextLabel(title: "Custom Boards")
-
                     Spacer(minLength: 6)
-
                     Button("New board", systemImage: "plus") {
                         beginCreatingBoard()
                     }
@@ -1215,14 +1190,29 @@ private struct SidebarSwipeFileContext: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func discoveryRow(
+        _ section: SwipeDiscoverySectionSelection,
+        icon: String,
+        tint: Color = DS.textSecondary
+    ) -> some View {
+        SidebarContextRow(
+            title: section.title,
+            icon: icon,
+            subtitle: section.subtitle,
+            isActive: currentDestination == .discover(section: section),
+            tint: tint
+        ) {
+            open(section)
+        }
+    }
+
     private func sectionRow(
         _ section: SwipeLibrarySectionSelection,
         icon: String,
-        title: String? = nil,
         subtitle: String? = nil
     ) -> some View {
         SidebarContextRow(
-            title: title ?? section.title,
+            title: section.title,
             icon: icon,
             subtitle: subtitle,
             isActive: currentDestination == .swipeFile(section: section),
@@ -1310,16 +1300,16 @@ private struct SidebarSwipeFileContext: View {
         }
     }
 
-    private func open(_ section: SwipeLibrarySectionSelection) {
+    private func open(_ section: SwipeDiscoverySectionSelection) {
         withAnimation(ProMotionSprings.snappy) {
-            currentDestination = .swipeFile(section: section)
+            currentDestination = .discover(section: section)
         }
         onNavigate()
     }
 
-    private func openDiscover() {
+    private func open(_ section: SwipeLibrarySectionSelection) {
         withAnimation(ProMotionSprings.snappy) {
-            currentDestination = .discover
+            currentDestination = .swipeFile(section: section)
         }
         onNavigate()
     }

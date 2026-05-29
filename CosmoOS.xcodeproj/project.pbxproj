@@ -225,6 +225,8 @@
 		47352522F9F291FF22C58A7A /* SwipePatternMiner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E128F1FB451CB1A016D313 /* SwipePatternMiner.swift */; };
 		475C183C4EA9A8C2EAE92F10 /* SwipeProcessingServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98B5CB58628EE8E88057C0EF /* SwipeProcessingServiceTests.swift */; };
 		D15C0DE52900000100000002 /* SocialDiscoveryCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000001 /* SocialDiscoveryCoreTests.swift */; };
+		D15C0DE52900000100000202 /* SocialDiscoveryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000201 /* SocialDiscoveryStoreTests.swift */; };
+		D15C0DE52900000100000302 /* SocialInstagramMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000301 /* SocialInstagramMapperTests.swift */; };
 		47AED86EF3F1A170B5312A38 /* DeepWorkVoiceCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0621FB96A611D5CE3DEC42DA /* DeepWorkVoiceCommands.swift */; };
 		48BA6EED11991BD49E8477DE /* GuidedStoryCreatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6F5A41B5D7C68854F1AFB2 /* GuidedStoryCreatorView.swift */; };
 		49A015A34F77B11D799F0046 /* FloatingOverlayChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73B0C96C1B06A950D96E00C1 /* FloatingOverlayChrome.swift */; };
@@ -406,6 +408,9 @@
 		D15C0DE52900000100000104 /* SocialPlatformResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000103 /* SocialPlatformResolver.swift */; };
 		D15C0DE52900000100000106 /* SocialProviderRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000105 /* SocialProviderRegistry.swift */; };
 		D15C0DE52900000100000108 /* SocialOutlierScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000107 /* SocialOutlierScorer.swift */; };
+		D15C0DE52900000100000212 /* SocialDiscoveryQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000211 /* SocialDiscoveryQuery.swift */; };
+		D15C0DE52900000100000214 /* SocialDiscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000213 /* SocialDiscoveryStore.swift */; };
+		D15C0DE52900000100000312 /* SocialInstagramMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000311 /* SocialInstagramMapper.swift */; };
 		8244F40A7631AA44ADB03570 /* CommandKViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFC7FDEB605D173EFA4C750 /* CommandKViewModel.swift */; };
 		824E18463FFD8A000048B797 /* CodexCardHoverModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F82B23729674C5100B6F8F54 /* CodexCardHoverModifier.swift */; };
 		829444BC2CC9EC73C9A88001 /* CosmoVoiceDaemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 891FE94AF6E3DE3235B5036C /* CosmoVoiceDaemon.swift */; };
@@ -1233,6 +1238,9 @@
 		D15C0DE52900000100000103 /* SocialPlatformResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialPlatformResolver.swift; sourceTree = "<group>"; };
 		D15C0DE52900000100000105 /* SocialProviderRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialProviderRegistry.swift; sourceTree = "<group>"; };
 		D15C0DE52900000100000107 /* SocialOutlierScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialOutlierScorer.swift; sourceTree = "<group>"; };
+		D15C0DE52900000100000211 /* SocialDiscoveryQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialDiscoveryQuery.swift; sourceTree = "<group>"; };
+		D15C0DE52900000100000213 /* SocialDiscoveryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialDiscoveryStore.swift; sourceTree = "<group>"; };
+		D15C0DE52900000100000311 /* SocialInstagramMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialInstagramMapper.swift; sourceTree = "<group>"; };
 		6A8EC2193252996B68895CE6 /* CompareCreatorsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompareCreatorsView.swift; sourceTree = "<group>"; };
 		6ACCE6DA8AE2A5880F0379F7 /* AtomWindowPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomWindowPanelController.swift; sourceTree = "<group>"; };
 		6AE730BB7E83526112F67C61 /* InboxSpatialModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxSpatialModels.swift; sourceTree = "<group>"; };
@@ -1365,6 +1373,8 @@
 		9878ED45CAF6B5A5F4D2EDE6 /* AreaSidebarSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AreaSidebarSection.swift; sourceTree = "<group>"; };
 		98B5CB58628EE8E88057C0EF /* SwipeProcessingServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SwipeProcessingServiceTests.swift; sourceTree = "<group>"; };
 		D15C0DE52900000100000001 /* SocialDiscoveryCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SocialDiscoveryCoreTests.swift; sourceTree = "<group>"; };
+		D15C0DE52900000100000201 /* SocialDiscoveryStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SocialDiscoveryStoreTests.swift; sourceTree = "<group>"; };
+		D15C0DE52900000100000301 /* SocialInstagramMapperTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SocialInstagramMapperTests.swift; sourceTree = "<group>"; };
 		9921443077DE6CE48283EDE9 /* ImportedPostCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportedPostCard.swift; sourceTree = "<group>"; };
 		997F1855A7823A35592FBB4F /* HealthKitAtomFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitAtomFactory.swift; sourceTree = "<group>"; };
 		99A5DC1BBE0073CB59851018 /* ConnectionCanvasLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionCanvasLayer.swift; sourceTree = "<group>"; };
@@ -3397,6 +3407,8 @@
 				F54F95C2F42A19860FFD4286 /* SwipeIdeaCaptureParserTests.swift */,
 				98B5CB58628EE8E88057C0EF /* SwipeProcessingServiceTests.swift */,
 				D15C0DE52900000100000001 /* SocialDiscoveryCoreTests.swift */,
+				D15C0DE52900000100000201 /* SocialDiscoveryStoreTests.swift */,
+				D15C0DE52900000100000301 /* SocialInstagramMapperTests.swift */,
 				C0DE5AFE0000000000000004 /* SupabaseSyncTrafficPolicyTests.swift */,
 				C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */,
 				DE1A3A8D61EEEB003E266A2C /* TelegramCaptureCommandParserTests.swift */,
@@ -3557,6 +3569,9 @@
 			isa = PBXGroup;
 			children = (
 				D15C0DE52900000100000101 /* SocialDiscoveryModels.swift */,
+				D15C0DE52900000100000211 /* SocialDiscoveryQuery.swift */,
+				D15C0DE52900000100000213 /* SocialDiscoveryStore.swift */,
+				D15C0DE52900000100000311 /* SocialInstagramMapper.swift */,
 				D15C0DE52900000100000107 /* SocialOutlierScorer.swift */,
 				D15C0DE52900000100000103 /* SocialPlatformResolver.swift */,
 				D15C0DE52900000100000105 /* SocialProviderRegistry.swift */,
@@ -3764,6 +3779,8 @@
 				4D14B3EEE460D81D58DE398F /* SwipeIdeaCaptureParserTests.swift in Sources */,
 				475C183C4EA9A8C2EAE92F10 /* SwipeProcessingServiceTests.swift in Sources */,
 				D15C0DE52900000100000002 /* SocialDiscoveryCoreTests.swift in Sources */,
+				D15C0DE52900000100000202 /* SocialDiscoveryStoreTests.swift in Sources */,
+				D15C0DE52900000100000302 /* SocialInstagramMapperTests.swift in Sources */,
 				C0DE5AFE0000000000000003 /* SupabaseSyncTrafficPolicyTests.swift in Sources */,
 				C0D3C0D3C0D3C0D3C0D3C0D2 /* ThemePaletteTests.swift in Sources */,
 				28885BC1D149750314D61518 /* TelegramCaptureCommandParserTests.swift in Sources */,
@@ -4429,6 +4446,9 @@
 				9AA563E8F4E76E49275B105D /* SwipeAdaptationEngine.swift in Sources */,
 				81BCDCC33782CB46BC0A778C /* SwipeAnalysis.swift in Sources */,
 				D15C0DE52900000100000102 /* SocialDiscoveryModels.swift in Sources */,
+				D15C0DE52900000100000212 /* SocialDiscoveryQuery.swift in Sources */,
+				D15C0DE52900000100000214 /* SocialDiscoveryStore.swift in Sources */,
+				D15C0DE52900000100000312 /* SocialInstagramMapper.swift in Sources */,
 				D15C0DE52900000100000108 /* SocialOutlierScorer.swift in Sources */,
 				D15C0DE52900000100000104 /* SocialPlatformResolver.swift in Sources */,
 				D15C0DE52900000100000106 /* SocialProviderRegistry.swift in Sources */,

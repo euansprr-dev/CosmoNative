@@ -7,6 +7,8 @@ import { config, validateConfig } from './config';
 import { handleUpdate, initWebhook } from './telegram/webhook';
 import { startScheduler } from './scheduler/standing';
 import { writingRouter } from './api/writing';
+import { discoveryRouter } from './api/discovery';
+import { startDiscoveryScheduler } from './discovery/scheduler';
 
 const app = express();
 app.use(express.json());
@@ -29,6 +31,7 @@ app.get('/health', (_req, res) => {
 // ============================================================
 
 app.use('/api/writing', writingRouter);
+app.use('/api/discovery', discoveryRouter);
 
 // ============================================================
 // Telegram webhook endpoint
@@ -60,6 +63,7 @@ async function start(): Promise<void> {
 
   // Start standing instruction scheduler
   startScheduler();
+  startDiscoveryScheduler();
 
   // Start Express server — extended timeouts for long-running writing sessions
   const server = app.listen(config.port, () => {
@@ -67,6 +71,7 @@ async function start(): Promise<void> {
     console.log(`   Webhook: ${config.telegramWebhookUrl || 'not set (use polling fallback)'}/telegram/webhook`);
     console.log(`   Health: http://localhost:${config.port}/health`);
     console.log(`   Standing instructions: checking every 60s`);
+    console.log(`   Discovery API: /api/discovery`);
     console.log('');
   });
   server.timeout = 900_000;          // 15 min — single session can take 8-12 min

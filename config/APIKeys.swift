@@ -30,6 +30,8 @@ struct APIKeys {
         case supabaseServiceRole = "supabase_service_role_key"
         case supabaseAuthToken = "supabase_auth_token"
         case supabaseUserId = "supabase_user_id"
+        case discoveryApiBaseURL = "discovery_api_base_url"
+        case discoveryApiKey = "discovery_api_key"
     }
 
     // MARK: - In-Memory Cache (thread-safe via lock)
@@ -168,6 +170,14 @@ struct APIKeys {
         cachedValue(.supabaseKey, envKey: "SUPABASE_ANON_KEY")
     }
 
+    static var discoveryApiBaseURL: String? {
+        cachedValue(.discoveryApiBaseURL, envKey: "DISCOVERY_API_BASE_URL")
+    }
+
+    static var discoveryApiKey: String? {
+        cachedValue(.discoveryApiKey, envKey: "DISCOVERY_API_KEY")
+    }
+
     // MARK: - Supabase Project Configuration
     // Project: https://cskxozkzpzxyefqmgsgg.supabase.co
     // Publishable (anon) key for client-side auth + REST
@@ -217,6 +227,9 @@ struct APIKeys {
     static var hasXTwitter: Bool { xTwitter?.isEmpty == false }
     static var hasYouTubeChannelId: Bool { youtubeChannelId?.isEmpty == false }
     static var hasAgentLLM: Bool { agentLLM?.isEmpty == false }
+    static var hasDiscoveryAPI: Bool {
+        discoveryApiBaseURL?.isEmpty == false && discoveryApiKey?.isEmpty == false
+    }
     static var hasTelegramBot: Bool { telegramBotToken?.isEmpty == false }
     static var hasWhisper: Bool { whisperAPIKey?.isEmpty == false }
     static var hasApify: Bool { apify?.isEmpty == false }
@@ -240,6 +253,7 @@ struct APIKeys {
         print("   Whisper: \(hasWhisper ? "Configured" : "Optional (for voice transcription)")")
         print("   Apify: \(hasApify ? "Configured" : "Optional (for creator import)")")
         print("   Supabase: \(hasSupabase ? "Configured" : "Not set (Sync Disabled)")")
+        print("   Discovery API: \(hasDiscoveryAPI ? "Configured" : "Optional (for Swipe File Discover)")")
     }
 
     // MARK: - Save & Delete (update Keychain + cache)
@@ -284,6 +298,8 @@ struct APIKeys {
         case "supabase_service_role_key": return .supabaseServiceRole
         case "supabase_auth_token": return .supabaseAuthToken
         case "supabase_user_id": return .supabaseUserId
+        case "discovery_api_base_url": return .discoveryApiBaseURL
+        case "discovery_api_key": return .discoveryApiKey
         default: return nil
         }
     }

@@ -410,6 +410,7 @@
 		D15C0DE52900000100000108 /* SocialOutlierScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000107 /* SocialOutlierScorer.swift */; };
 		D15C0DE52900000100000212 /* SocialDiscoveryQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000211 /* SocialDiscoveryQuery.swift */; };
 		D15C0DE52900000100000214 /* SocialDiscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000213 /* SocialDiscoveryStore.swift */; };
+		D15C0DE52900000100000216 /* SocialDiscoveryRemoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000215 /* SocialDiscoveryRemoteStore.swift */; };
 		D15C0DE52900000100000312 /* SocialInstagramMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0DE52900000100000311 /* SocialInstagramMapper.swift */; };
 		8244F40A7631AA44ADB03570 /* CommandKViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFC7FDEB605D173EFA4C750 /* CommandKViewModel.swift */; };
 		824E18463FFD8A000048B797 /* CodexCardHoverModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F82B23729674C5100B6F8F54 /* CodexCardHoverModifier.swift */; };
@@ -1240,6 +1241,7 @@
 		D15C0DE52900000100000107 /* SocialOutlierScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialOutlierScorer.swift; sourceTree = "<group>"; };
 		D15C0DE52900000100000211 /* SocialDiscoveryQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialDiscoveryQuery.swift; sourceTree = "<group>"; };
 		D15C0DE52900000100000213 /* SocialDiscoveryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialDiscoveryStore.swift; sourceTree = "<group>"; };
+		D15C0DE52900000100000215 /* SocialDiscoveryRemoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialDiscoveryRemoteStore.swift; sourceTree = "<group>"; };
 		D15C0DE52900000100000311 /* SocialInstagramMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialInstagramMapper.swift; sourceTree = "<group>"; };
 		6A8EC2193252996B68895CE6 /* CompareCreatorsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompareCreatorsView.swift; sourceTree = "<group>"; };
 		6ACCE6DA8AE2A5880F0379F7 /* AtomWindowPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomWindowPanelController.swift; sourceTree = "<group>"; };
@@ -3571,6 +3573,7 @@
 				D15C0DE52900000100000101 /* SocialDiscoveryModels.swift */,
 				D15C0DE52900000100000211 /* SocialDiscoveryQuery.swift */,
 				D15C0DE52900000100000213 /* SocialDiscoveryStore.swift */,
+				D15C0DE52900000100000215 /* SocialDiscoveryRemoteStore.swift */,
 				D15C0DE52900000100000311 /* SocialInstagramMapper.swift */,
 				D15C0DE52900000100000107 /* SocialOutlierScorer.swift */,
 				D15C0DE52900000100000103 /* SocialPlatformResolver.swift */,
@@ -4448,6 +4451,7 @@
 				D15C0DE52900000100000102 /* SocialDiscoveryModels.swift in Sources */,
 				D15C0DE52900000100000212 /* SocialDiscoveryQuery.swift in Sources */,
 				D15C0DE52900000100000214 /* SocialDiscoveryStore.swift in Sources */,
+				D15C0DE52900000100000216 /* SocialDiscoveryRemoteStore.swift in Sources */,
 				D15C0DE52900000100000312 /* SocialInstagramMapper.swift in Sources */,
 				D15C0DE52900000100000108 /* SocialOutlierScorer.swift in Sources */,
 				D15C0DE52900000100000104 /* SocialPlatformResolver.swift in Sources */,

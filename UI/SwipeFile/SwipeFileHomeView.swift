@@ -935,6 +935,7 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
     @Published var saveMessage: String?
 
     private var hasLoaded = false
+    private let remoteStore = SocialDiscoveryRemoteStore()
 
     var visiblePosts: [SocialPostSnapshot] {
         SocialDiscoveryStore(query: query, posts: posts).visiblePosts
@@ -985,13 +986,39 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         errorMessage = nil
 
         do {
-            let creatorAtoms = try await AtomRepository.shared.fetchCreators()
-            let loaded = loadCatalogSnapshots(from: creatorAtoms)
+            if remoteStore.isConfigured {
+                var remoteQuery = query
+                remoteQuery.platforms = []
+                remoteQuery.minimumOutlierMultiplier = nil
+                remoteQuery.postedWindow = .lastYear
+                let remotePosts = try await remoteStore.fetchPosts(query: remoteQuery)
+                let remoteCreators = try await remoteStore.fetchCreators()
+
+                if !remotePosts.isEmpty {
+                    posts = remotePosts
+                    creators = remoteCreatorRecords(creators: remoteCreators, posts: remotePosts)
+                    hasLoaded = true
+                    isLoading = false
+                    return
+                }
+
+                errorMessage = "Cloud discovery is connected, but the feed has no posts yet. Showing local imports."
+            }
+
+            let loaded = try await loadLocalCatalog()
             creators = loaded.records
             posts = loaded.posts
             hasLoaded = true
         } catch {
-            errorMessage = "Could not load discovery data: \(error.localizedDescription)"
+            do {
+                let loaded = try await loadLocalCatalog()
+                creators = loaded.records
+                posts = loaded.posts
+                errorMessage = "Cloud discovery failed: \(error.localizedDescription). Showing local imports."
+                hasLoaded = true
+            } catch {
+                errorMessage = "Could not load discovery data: \(error.localizedDescription)"
+            }
         }
 
         isLoading = false
@@ -1005,6 +1032,64 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
             } catch {
                 saveMessage = "Save failed: \(error.localizedDescription)"
             }
+        }
+    }
+
+    func addCreatorFromSearch() {
+        let rawInput = creatorSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawInput.isEmpty else { return }
+        guard remoteStore.isConfigured else {
+            errorMessage = "Discovery API is not configured. Add DISCOVERY_API_BASE_URL and DISCOVERY_API_KEY first."
+            return
+        }
+        guard let identity = SocialPlatformResolver.resolve(input: rawInput) else {
+            errorMessage = "Paste a profile URL or use platform:handle, like youtube:aliabdaal."
+            return
+        }
+
+        Task {
+            do {
+                try await remoteStore.addCreator(identity: identity)
+                creatorSearchText = ""
+                saveMessage = "Creator added to discovery graph"
+                hasLoaded = false
+                await reload()
+            } catch {
+                errorMessage = "Could not add creator: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func loadLocalCatalog() async throws -> (posts: [SocialPostSnapshot], records: [SwipeDiscoverCreatorRecord]) {
+        let creatorAtoms = try await AtomRepository.shared.fetchCreators()
+        return loadCatalogSnapshots(from: creatorAtoms)
+    }
+
+    private func remoteCreatorRecords(
+        creators remoteCreators: [SocialDiscoveryRemoteCreator],
+        posts: [SocialPostSnapshot]
+    ) -> [SwipeDiscoverCreatorRecord] {
+        let postsByCreator = Dictionary(grouping: posts, by: { $0.author.platformID })
+
+        return remoteCreators.map { creator in
+            let creatorPosts = postsByCreator[creator.uuid] ?? []
+            return SwipeDiscoverCreatorRecord(
+                id: creator.uuid,
+                name: creator.displayName ?? creator.handle,
+                handle: "@\(creator.handle)",
+                platform: creator.platform,
+                avatarURL: creator.avatarURL,
+                followerCount: creator.followerCount,
+                niche: nil,
+                bio: creator.bio,
+                postCount: creatorPosts.count,
+                totalViews: creatorPosts.compactMap(\.metrics.views).reduce(0, +),
+                totalLikes: creatorPosts.compactMap(\.metrics.likes).reduce(0, +),
+                totalComments: creatorPosts.compactMap(\.metrics.comments).reduce(0, +),
+                topOutlierMultiplier: creatorPosts.compactMap(\.derived.outlierMultiplier).max(),
+                latestPostDate: creatorPosts.compactMap(\.publishedAt).max(),
+                topPosts: Array(creatorPosts.sorted { ($0.derived.outlierMultiplier ?? 0) > ($1.derived.outlierMultiplier ?? 0) }.prefix(3))
+            )
         }
     }
 
@@ -1085,6 +1170,12 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
     }
 
     private func savePost(_ post: SocialPostSnapshot, boardID: String?) async throws {
+        if post.provider == "cloud-discovery", remoteStore.isConfigured {
+            try await remoteStore.savePost(postID: post.id, boardID: boardID)
+            NotificationCenter.default.post(name: CosmoNotification.SwipeFile.creatorDataChanged, object: nil)
+            return
+        }
+
         let hook = post.title ?? post.body?.components(separatedBy: .newlines).first
         var atom = Research.newSwipeFile(
             url: post.canonicalURL.absoluteString,
@@ -1545,11 +1636,26 @@ private struct SwipeDiscoverCreatorDirectory: View {
                         .foregroundStyle(DS.textMuted)
                     TextField("Search creators or paste a profile URL...", text: $viewModel.creatorSearchText)
                         .textFieldStyle(.plain)
+                        .onSubmit {
+                            viewModel.addCreatorFromSearch()
+                        }
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 40)
                 .background(.regularMaterial, in: .rect(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.borderSubtle, lineWidth: 0.75))
+
+                Button("Add", systemImage: "plus") {
+                    viewModel.addCreatorFromSearch()
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DS.text)
+                .frame(height: 40)
+                .padding(.horizontal, 12)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.75))
+                .buttonStyle(.plain)
+                .disabled(viewModel.creatorSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 Menu {
                     ForEach(SocialDiscoverySort.allCases, id: \.rawValue) { sort in

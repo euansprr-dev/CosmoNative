@@ -42,6 +42,19 @@ export const config = {
   // Writing API (for Mac app to call cloud engine directly)
   writingApiKey: process.env.WRITING_API_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || 'cosmo-native-writing-2026',
 
+  // Discovery API (for Swipe File Discover/Creators)
+  discoveryApiKey: process.env.DISCOVERY_API_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  youtubeApiKey: process.env.YOUTUBE_API_KEY || '',
+  brightDataApiKey: process.env.BRIGHT_DATA_API_KEY || '',
+  brightDataDatasets: {
+    instagram: process.env.BRIGHT_DATA_DATASET_INSTAGRAM || '',
+    tiktok: process.env.BRIGHT_DATA_DATASET_TIKTOK || '',
+    linkedin: process.env.BRIGHT_DATA_DATASET_LINKEDIN || '',
+    x: process.env.BRIGHT_DATA_DATASET_X || '',
+  },
+  apifyApiKey: process.env.APIFY_API_KEY || '',
+  xBearerToken: process.env.X_BEARER_TOKEN || '',
+
   // Exemplar Codex integration — when true, writing engine uses full Codex + walkthrough
   // instead of old methodology + QuarkProfile. Set to false to revert to legacy behavior.
   useExemplarCodex: process.env.USE_EXEMPLAR_CODEX !== 'false', // default true
@@ -99,6 +112,17 @@ export function validateConfig(): void {
   if (missing.length > 0) {
     console.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
     process.exit(1);
+  }
+
+  const missingDiscoveryProviders = [
+    ['DISCOVERY_API_KEY', config.discoveryApiKey],
+    ['YOUTUBE_API_KEY', config.youtubeApiKey],
+    ['BRIGHT_DATA_API_KEY', config.brightDataApiKey],
+    ['APIFY_API_KEY', config.apifyApiKey],
+  ].filter(([, value]) => !value).map(([key]) => key);
+
+  if (missingDiscoveryProviders.length > 0) {
+    console.warn(`⚠️ Discovery providers not fully configured: ${missingDiscoveryProviders.join(', ')}`);
   }
 
   console.log('✅ Config validated');

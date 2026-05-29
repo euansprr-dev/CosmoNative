@@ -100,6 +100,7 @@ public enum ContentPhase: String, Codable, CaseIterable, Sendable {
 /// Supported social media platforms
 public enum SocialPlatform: String, Codable, CaseIterable, Sendable {
     case twitter
+    case x
     case linkedin
     case instagram
     case tiktok
@@ -113,6 +114,7 @@ public enum SocialPlatform: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .twitter: return "Twitter/X"
+        case .x: return "X"
         case .linkedin: return "LinkedIn"
         case .instagram: return "Instagram"
         case .tiktok: return "TikTok"
@@ -128,6 +130,7 @@ public enum SocialPlatform: String, Codable, CaseIterable, Sendable {
     var iconName: String {
         switch self {
         case .twitter: return "bird"
+        case .x: return "xmark"
         case .linkedin: return "link"
         case .instagram: return "camera"
         case .tiktok: return "music.note"
@@ -144,6 +147,7 @@ public enum SocialPlatform: String, Codable, CaseIterable, Sendable {
     var viralityThreshold: (impressions: Int, engagementRate: Double) {
         switch self {
         case .twitter: return (100_000, 0.05)
+        case .x: return (100_000, 0.05)
         case .linkedin: return (50_000, 0.03)
         case .instagram: return (50_000, 0.04)
         case .tiktok: return (100_000, 0.10)

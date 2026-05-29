@@ -343,6 +343,8 @@ actor PerformancePredictionEngine {
         switch platform {
         case .twitter:
             baseline = (5_000, 0.02)
+        case .x:
+            baseline = (5_000, 0.02)
         case .linkedin:
             baseline = (3_000, 0.025)
         case .instagram:

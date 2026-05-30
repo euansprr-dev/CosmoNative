@@ -47,10 +47,24 @@ export const config = {
   youtubeApiKey: process.env.YOUTUBE_API_KEY || '',
   brightDataApiKey: process.env.BRIGHT_DATA_API_KEY || '',
   brightDataDatasets: {
-    instagram: process.env.BRIGHT_DATA_DATASET_INSTAGRAM || '',
-    tiktok: process.env.BRIGHT_DATA_DATASET_TIKTOK || '',
-    linkedin: process.env.BRIGHT_DATA_DATASET_LINKEDIN || '',
-    x: process.env.BRIGHT_DATA_DATASET_X || '',
+    instagram: {
+      profilesByUrl: process.env.BRIGHT_DATA_INSTAGRAM_PROFILES_BY_URL || process.env.BRIGHT_DATA_DATASET_INSTAGRAM || '',
+      profilesByUsername: process.env.BRIGHT_DATA_INSTAGRAM_PROFILES_BY_USERNAME || '',
+      reelsByUrl: process.env.BRIGHT_DATA_INSTAGRAM_REELS_BY_URL || '',
+      postsByUrl: process.env.BRIGHT_DATA_INSTAGRAM_POSTS_BY_URL || '',
+    },
+    tiktok: {
+      profilesByUrl: process.env.BRIGHT_DATA_TIKTOK_PROFILES_BY_URL || process.env.BRIGHT_DATA_DATASET_TIKTOK || '',
+      postsByUrl: process.env.BRIGHT_DATA_TIKTOK_POSTS_BY_URL || '',
+    },
+    linkedin: {
+      profilesByUrl: process.env.BRIGHT_DATA_LINKEDIN_PROFILES_BY_URL || process.env.BRIGHT_DATA_DATASET_LINKEDIN || '',
+      postsByUrl: process.env.BRIGHT_DATA_LINKEDIN_POSTS_BY_URL || '',
+    },
+    x: {
+      profilesByUrl: process.env.BRIGHT_DATA_X_PROFILES_BY_URL || process.env.BRIGHT_DATA_DATASET_X || '',
+      postsByUrl: process.env.BRIGHT_DATA_X_POSTS_BY_URL || '',
+    },
   },
   apifyApiKey: process.env.APIFY_API_KEY || '',
   xBearerToken: process.env.X_BEARER_TOKEN || '',

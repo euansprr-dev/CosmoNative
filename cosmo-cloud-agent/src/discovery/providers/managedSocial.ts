@@ -4,6 +4,9 @@ import type { DiscoveryProvider, DiscoveryRefreshResult } from './provider';
 import { DiscoveryProviderNotConfiguredError } from './provider';
 
 type ManagedPlatform = Extract<SocialPlatform, 'instagram' | 'tiktok' | 'linkedin' | 'x'>;
+type BrightDataInput = { url: string } | { username: string };
+
+type BrightDataDatasetConfig = typeof config.brightDataDatasets;
 
 interface ManagedSocialPayload {
   posts?: Array<Record<string, unknown>>;
@@ -33,6 +36,74 @@ function numberValue(payload: Record<string, unknown>, keys: string[]): number |
 
 function arrayPayload(payload: ManagedSocialPayload): Array<Record<string, unknown>> {
   return payload.posts ?? payload.data ?? payload.items ?? [];
+}
+
+function sourceValue(source: SocialSourceRow): string {
+  return source.profile_url ?? source.query ?? source.label;
+}
+
+function isInstagramReelURL(value: string): boolean {
+  return /instagram\.com\/reel\//i.test(value);
+}
+
+function isInstagramPostURL(value: string): boolean {
+  return /instagram\.com\/p\//i.test(value);
+}
+
+function isPlatformPostURL(platform: ManagedPlatform, value: string): boolean {
+  switch (platform) {
+    case 'instagram':
+      return isInstagramReelURL(value) || isInstagramPostURL(value);
+    case 'tiktok':
+      return /tiktok\.com\/@[^/]+\/video\//i.test(value);
+    case 'linkedin':
+      return /linkedin\.com\/posts\/|linkedin\.com\/feed\/update\//i.test(value);
+    case 'x':
+      return /(?:x|twitter)\.com\/[^/]+\/status\//i.test(value);
+  }
+}
+
+function cleanUsername(value: string): string {
+  return value
+    .replace(/^@/, '')
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split(/[/?#]/)[0]
+    .trim();
+}
+
+export function brightDataInputForSource(source: SocialSourceRow): BrightDataInput[] {
+  const value = sourceValue(source);
+  if (/^https?:\/\//i.test(value)) {
+    return [{ url: value }];
+  }
+  return [{ username: cleanUsername(value) }];
+}
+
+export function brightDataDatasetForSource(
+  source: SocialSourceRow,
+  datasets: BrightDataDatasetConfig = config.brightDataDatasets
+): string | null {
+  if (!source.platform || !['instagram', 'tiktok', 'linkedin', 'x'].includes(source.platform)) {
+    return null;
+  }
+
+  const platform = source.platform as ManagedPlatform;
+  const value = sourceValue(source);
+  if (platform === 'instagram') {
+    const platformDatasets = datasets.instagram;
+    if (isInstagramReelURL(value)) return platformDatasets.reelsByUrl || null;
+    if (isInstagramPostURL(value)) return platformDatasets.postsByUrl || null;
+    if (/^https?:\/\//i.test(value)) return platformDatasets.profilesByUrl || null;
+    return platformDatasets.profilesByUsername || platformDatasets.profilesByUrl || null;
+  }
+
+  const platformDatasets = datasets[platform];
+  if (isPlatformPostURL(platform, value)) {
+    return platformDatasets.postsByUrl || null;
+  }
+
+  return platformDatasets.profilesByUrl || platformDatasets.postsByUrl || null;
 }
 
 export function managedSocialRecordToPost(
@@ -90,7 +161,10 @@ export class ManagedSocialDiscoveryProvider implements DiscoveryProvider {
   readonly platforms = ['instagram', 'tiktok', 'linkedin', 'x'] as const;
 
   isConfigured(): boolean {
-    return config.brightDataApiKey.length > 0;
+    return config.brightDataApiKey.length > 0
+      && Object.values(config.brightDataDatasets).some(platformConfig => (
+        Object.values(platformConfig).some(Boolean)
+      ));
   }
 
   canRefresh(source: SocialSourceRow): boolean {
@@ -106,20 +180,20 @@ export class ManagedSocialDiscoveryProvider implements DiscoveryProvider {
     }
 
     const platform = source.platform as ManagedPlatform;
-    const datasetId = config.brightDataDatasets[platform];
+    const datasetId = brightDataDatasetForSource(source);
     if (!datasetId) {
-      throw new DiscoveryProviderNotConfiguredError(this.id, `BRIGHT_DATA_DATASET_${platform.toUpperCase()}`);
+      throw new DiscoveryProviderNotConfiguredError(this.id, `Bright Data ${platform} endpoint dataset ID`);
     }
 
     const response = await fetch(
       `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(datasetId)}&include_errors=true`,
       {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.brightDataApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ input: [{ url: source.profile_url ?? source.query ?? source.label }] }),
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.brightDataApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(brightDataInputForSource(source)),
       }
     );
 

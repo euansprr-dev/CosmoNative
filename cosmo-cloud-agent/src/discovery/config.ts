@@ -14,6 +14,12 @@ export interface DiscoveryProviderAvailability {
   reason?: string;
 }
 
+function brightDataEndpointCount(): number {
+  return Object.values(config.brightDataDatasets).reduce((count, platformConfig) => (
+    count + Object.values(platformConfig).filter(Boolean).length
+  ), 0);
+}
+
 export function discoveryProviderAvailability(): DiscoveryProviderAvailability[] {
   return [
     {
@@ -29,9 +35,13 @@ export function discoveryProviderAvailability(): DiscoveryProviderAvailability[]
     },
     {
       name: 'brightdata',
-      configured: config.brightDataApiKey.length > 0,
+      configured: config.brightDataApiKey.length > 0 && brightDataEndpointCount() > 0,
       platforms: ['instagram', 'tiktok', 'linkedin', 'x'],
-      reason: config.brightDataApiKey ? undefined : 'Missing BRIGHT_DATA_API_KEY',
+      reason: !config.brightDataApiKey
+        ? 'Missing BRIGHT_DATA_API_KEY'
+        : brightDataEndpointCount() === 0
+          ? 'Missing Bright Data endpoint dataset IDs'
+          : undefined,
     },
     {
       name: 'apify-instagram',

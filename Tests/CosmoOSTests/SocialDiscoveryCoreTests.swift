@@ -30,6 +30,17 @@ final class SocialDiscoveryCoreTests: XCTestCase {
         XCTAssertNil(SocialPlatformResolver.resolve(input: "sahilbloom"))
     }
 
+    func testDiscoveryRemoteStoreNormalizesBareRailwayDomains() {
+        XCTAssertEqual(
+            SocialDiscoveryRemoteStore.normalizedDiscoveryAPIBaseURL("cosmonative-production.up.railway.app"),
+            "https://cosmonative-production.up.railway.app"
+        )
+        XCTAssertEqual(
+            SocialDiscoveryRemoteStore.normalizedDiscoveryAPIBaseURL("https://cosmonative-production.up.railway.app/"),
+            "https://cosmonative-production.up.railway.app"
+        )
+    }
+
     func testProviderRegistryChoosesProviderByPlatformAndCapability() {
         let registry = SocialProviderRegistry(providers: [
             StubSocialProvider(id: "youtube-official", platforms: [.youtube], capabilities: [.creatorLookup, .keywordDiscovery]),

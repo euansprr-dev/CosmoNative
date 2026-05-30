@@ -236,7 +236,8 @@ final class SocialDiscoveryRemoteStore: Sendable {
     private func makeRequest(path: String, queryItems: [URLQueryItem] = []) throws -> URLRequest {
         guard let base = APIKeys.discoveryApiBaseURL,
               let key = APIKeys.discoveryApiKey,
-              var components = URLComponents(string: base.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+              let normalizedBase = Self.normalizedDiscoveryAPIBaseURL(base),
+              var components = URLComponents(string: normalizedBase)
         else {
             throw RemoteStoreError.missingConfiguration
         }
@@ -253,6 +254,26 @@ final class SocialDiscoveryRemoteStore: Sendable {
         }
         request.timeoutInterval = 30
         return request
+    }
+
+    static func normalizedDiscoveryAPIBaseURL(_ rawBaseURL: String) -> String? {
+        let trimmed = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let absoluteBase = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard var components = URLComponents(string: absoluteBase),
+              components.scheme?.isEmpty == false,
+              components.host?.isEmpty == false
+        else {
+            return nil
+        }
+
+        while components.path.hasSuffix("/") {
+            components.path.removeLast()
+        }
+        components.query = nil
+        components.fragment = nil
+        return components.string
     }
 
     private func validate(data: Data, response: URLResponse) throws {

@@ -1080,6 +1080,9 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
             do {
                 let sourceID = try await remoteStore.addCreator(identity: identity)
                 creatorSearchText = ""
+                creatorImportMessage = "Creator added. Loading profile..."
+                hasLoaded = false
+                await reload()
                 creatorImportMessage = "Creator added. Importing their latest posts..."
 
                 do {

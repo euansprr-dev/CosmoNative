@@ -40,6 +40,14 @@ export async function refreshDiscoverySource(source: SocialSourceRow): Promise<{
     throw new Error(message);
   }
 
+  console.log('[discovery-job] provider selected', {
+    sourceUuid: source.uuid,
+    platform: source.platform,
+    kind: source.kind,
+    provider: provider.id,
+    configured: provider.isConfigured(),
+  });
+
   try {
     const result = await provider.refreshSource(source);
     let upserted = 0;

@@ -195,6 +195,14 @@ export class ManagedSocialDiscoveryProvider implements DiscoveryProvider {
     if (!datasetId) {
       throw new DiscoveryProviderNotConfiguredError(this.id, `Bright Data ${platform} endpoint dataset ID`);
     }
+    const brightDataInput = brightDataInputForSource(source);
+    console.log('[discovery-brightdata] trigger', {
+      sourceUuid: source.uuid,
+      platform,
+      datasetId,
+      inputMode: 'url' in brightDataInput[0] ? 'url' : 'username',
+      inputCount: brightDataInput.length,
+    });
 
     const response = await fetch(
       `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(datasetId)}&include_errors=true`,
@@ -204,9 +212,16 @@ export class ManagedSocialDiscoveryProvider implements DiscoveryProvider {
           Authorization: `Bearer ${config.brightDataApiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(brightDataInputForSource(source)),
+        body: JSON.stringify(brightDataInput),
       }
     );
+
+    console.log('[discovery-brightdata] response', {
+      sourceUuid: source.uuid,
+      platform,
+      status: response.status,
+      ok: response.ok,
+    });
 
     if (!response.ok) {
       const body = await response.text();

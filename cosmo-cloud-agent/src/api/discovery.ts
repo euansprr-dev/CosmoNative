@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { isDiscoveryWriteAuthorized, discoveryProviderAvailability } from '../discovery/config';
 import {
   createSource,
@@ -13,6 +14,19 @@ import { supabase, userId } from '../db/client';
 import type { SocialPlatform, SocialSourceKind, SocialSourceRow } from '../discovery/types';
 
 export const discoveryRouter = express.Router();
+
+const discoveryBuild = 'discovery-source-graph-2026-05-30T1118';
+
+discoveryRouter.use((req, res, next) => {
+  const startedAt = Date.now();
+  const requestId = randomUUID();
+  res.locals.discoveryRequestId = requestId;
+  console.log(`[discovery:${requestId}] ${req.method} ${req.originalUrl} start`);
+  res.on('finish', () => {
+    console.log(`[discovery:${requestId}] ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - startedAt}ms`);
+  });
+  next();
+});
 
 function parsePlatforms(value: unknown): SocialPlatform[] | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
@@ -77,6 +91,15 @@ discoveryRouter.post('/sources', async (req, res) => {
     return;
   }
 
+  console.log(`[discovery:${res.locals.discoveryRequestId}] create source`, {
+    build: discoveryBuild,
+    kind: body.kind ?? 'tracked_creator',
+    platform: body.platform ?? null,
+    label: body.label ?? null,
+    hasProfileUrl: Boolean(body.profileUrl),
+    hasQuery: Boolean(body.query),
+  });
+
   const creatorInput = creatorInputFromSourceRequest(body);
   const creator = creatorInput ? await upsertCreator(creatorInput) : null;
 
@@ -92,7 +115,13 @@ discoveryRouter.post('/sources', async (req, res) => {
     cadenceMinutes: body.cadenceMinutes,
   });
 
-  res.status(201).json({ source, creator });
+  console.log(`[discovery:${res.locals.discoveryRequestId}] source created`, {
+    sourceUuid: source.uuid,
+    creatorUuid: creator?.uuid ?? null,
+    platform: source.platform,
+  });
+
+  res.status(201).json({ build: discoveryBuild, source, creator });
 });
 
 discoveryRouter.post('/sources/:uuid/refresh', async (req, res) => {
@@ -108,6 +137,14 @@ discoveryRouter.post('/sources/:uuid/refresh', async (req, res) => {
     res.status(404).json({ error: 'Source not found' });
     return;
   }
+
+  console.log(`[discovery:${res.locals.discoveryRequestId}] refresh source`, {
+    sourceUuid: req.params.uuid,
+    platform: data.platform,
+    kind: data.kind,
+    hasProfileUrl: Boolean(data.profile_url),
+    query: data.query,
+  });
 
   const result = await refreshDiscoverySource(data as SocialSourceRow);
   res.json(result);
@@ -148,6 +185,7 @@ discoveryRouter.get('/health', async (_req, res) => {
   ]);
 
   res.json({
+    build: discoveryBuild,
     providers: discoveryProviderAvailability(),
     postCount: postCount ?? 0,
     newestPost: newest?.[0] ?? null,

@@ -52,7 +52,7 @@ const endpointConfig = {
 const instagramProfileURL = source({
   profile_url: 'https://www.instagram.com/cats_of_world_/',
 });
-assert.equal(brightDataDatasetForSource(instagramProfileURL, endpointConfig), 'gd_instagram_profile_url');
+assert.equal(brightDataDatasetForSource(instagramProfileURL, endpointConfig), 'gd_instagram_reel_url');
 assert.deepEqual(brightDataInputForSource(instagramProfileURL), [
   { url: 'https://www.instagram.com/cats_of_world_/' },
 ]);

@@ -63,6 +63,10 @@ function isPlatformPostURL(platform: ManagedPlatform, value: string): boolean {
   }
 }
 
+function isCreatorSource(source: SocialSourceRow): boolean {
+  return source.kind === 'tracked_creator' || source.kind === 'curated_creator';
+}
+
 function cleanUsername(value: string): string {
   return value
     .replace(/^@/, '')
@@ -94,6 +98,13 @@ export function brightDataDatasetForSource(
     const platformDatasets = datasets.instagram;
     if (isInstagramReelURL(value)) return platformDatasets.reelsByUrl || null;
     if (isInstagramPostURL(value)) return platformDatasets.postsByUrl || null;
+    if (isCreatorSource(source) && /^https?:\/\//i.test(value)) {
+      return platformDatasets.reelsByUrl
+        || platformDatasets.postsByUrl
+        || platformDatasets.profilesByUsername
+        || platformDatasets.profilesByUrl
+        || null;
+    }
     if (/^https?:\/\//i.test(value)) return platformDatasets.profilesByUrl || null;
     return platformDatasets.profilesByUsername || platformDatasets.profilesByUrl || null;
   }

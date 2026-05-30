@@ -19,6 +19,17 @@ export function apifyInstagramInputForSource(source: SocialSourceRow): Record<st
     throw new Error('Instagram creator source is missing a handle.');
   }
 
+  const cutoff = incrementalCutoff(source.last_successful_posted_at);
+  if (cutoff) {
+    return {
+      username: [handle],
+      resultsLimit: Math.min(config.apifyInstagramIncrementalPostLimit, config.apifyInstagramPostLimit),
+      dataDetailLevel: 'detailedData',
+      onlyPostsNewerThan: cutoff,
+      skipPinnedPosts: true,
+    };
+  }
+
   return {
     username: [handle],
     resultsLimit: config.apifyInstagramPostLimit,
@@ -131,6 +142,15 @@ export function instagramHandle(source: SocialSourceRow): string {
     .replace(/^instagram\.com\//i, '')
     .split(/[/?#]/)[0]
     .trim();
+}
+
+function incrementalCutoff(lastSuccessfulPostedAt: string | null): string | null {
+  if (!lastSuccessfulPostedAt) return null;
+  const parsed = new Date(lastSuccessfulPostedAt);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const overlapMs = 72 * 60 * 60_000;
+  return new Date(parsed.getTime() - overlapMs).toISOString();
 }
 
 async function waitForRun(runId: string, apiKey: string): Promise<void> {

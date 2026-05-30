@@ -148,6 +148,9 @@ export interface SocialSourceRow {
   last_run_at: string | null;
   next_run_at: string | null;
   last_error: string | null;
+  last_successful_run_at: string | null;
+  last_successful_posted_at: string | null;
+  refresh_cursor: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }

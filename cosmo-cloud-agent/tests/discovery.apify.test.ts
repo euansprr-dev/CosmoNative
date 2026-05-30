@@ -25,6 +25,9 @@ function source(overrides: Partial<SocialSourceRow>): SocialSourceRow {
     last_run_at: null,
     next_run_at: null,
     last_error: null,
+    last_successful_run_at: null,
+    last_successful_posted_at: null,
+    refresh_cursor: null,
     created_at: '2026-05-30T00:00:00.000Z',
     updated_at: '2026-05-30T00:00:00.000Z',
     ...overrides,
@@ -48,6 +51,17 @@ assert.deepEqual(apifyInstagramInputForSource(source({
   username: ['theandrewlamb'],
   resultsLimit: config.apifyInstagramPostLimit,
   dataDetailLevel: 'detailedData',
+});
+
+assert.deepEqual(apifyInstagramInputForSource(source({
+  profile_url: 'https://www.instagram.com/theandrewlamb/',
+  last_successful_posted_at: '2026-05-29T12:00:00.000Z',
+})), {
+  username: ['theandrewlamb'],
+  resultsLimit: 50,
+  dataDetailLevel: 'detailedData',
+  onlyPostsNewerThan: '2026-05-26T12:00:00.000Z',
+  skipPinnedPosts: true,
 });
 
 const enriched = enrichInstagramRecord(

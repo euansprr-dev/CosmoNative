@@ -24,6 +24,61 @@ struct SocialDiscoveryRemoteCreator: Codable, Equatable, Identifiable, Sendable 
     var id: String { uuid }
 }
 
+struct SocialDiscoveryLocalCache {
+    struct Payload: Codable, Equatable, Sendable {
+        let cachedAt: Date
+        let posts: [SocialPostSnapshot]
+        let creators: [SocialDiscoveryRemoteCreator]
+    }
+
+    private let directory: URL
+    private let fileManager: FileManager
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+
+    init(
+        directory: URL = SocialDiscoveryLocalCache.defaultDirectory,
+        fileManager: FileManager = .default
+    ) {
+        self.directory = directory
+        self.fileManager = fileManager
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        self.encoder = encoder
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        self.decoder = decoder
+    }
+
+    func load() -> Payload? {
+        let url = directory.appendingPathComponent("feed-cache.json")
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        do {
+            let data = try Data(contentsOf: url)
+            return try decoder.decode(Payload.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
+    func save(posts: [SocialPostSnapshot], creators: [SocialDiscoveryRemoteCreator]) throws {
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let payload = Payload(cachedAt: Date(), posts: posts, creators: creators)
+        let data = try encoder.encode(payload)
+        try data.write(to: directory.appendingPathComponent("feed-cache.json"), options: [.atomic])
+    }
+
+    static var defaultDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("Cosmo", isDirectory: true)
+            .appendingPathComponent("Discovery", isDirectory: true)
+    }
+}
+
 final class SocialDiscoveryRemoteStore: Sendable {
     enum RemoteStoreError: LocalizedError {
         case missingConfiguration

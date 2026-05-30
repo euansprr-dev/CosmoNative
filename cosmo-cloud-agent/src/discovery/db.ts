@@ -176,6 +176,7 @@ export async function createSource(params: {
       cadence_minutes: params.cadenceMinutes ?? 1440,
       status: 'active',
       next_run_at: nowISO(),
+      refresh_cursor: {},
     })
     .select('*')
     .single();
@@ -213,17 +214,35 @@ export async function fetchActiveSources(limit = 25): Promise<SocialSourceRow[]>
   return data as SocialSourceRow[];
 }
 
-export async function updateSourceAfterRun(source: SocialSourceRow, status: 'active' | 'error' | 'rate_limited', errorMessage?: string): Promise<void> {
+export async function updateSourceAfterRun(
+  source: SocialSourceRow,
+  status: 'active' | 'error' | 'rate_limited',
+  errorMessage?: string,
+  latestSuccessfulPostedAt?: string | null
+): Promise<void> {
   const next = new Date(Date.now() + source.cadence_minutes * 60_000).toISOString();
+  const updates: Record<string, unknown> = {
+    status,
+    last_run_at: nowISO(),
+    next_run_at: status === 'active' ? next : new Date(Date.now() + 60 * 60_000).toISOString(),
+    last_error: errorMessage ?? null,
+    updated_at: nowISO(),
+  };
+
+  if (status === 'active') {
+    updates.last_successful_run_at = nowISO();
+    if (latestSuccessfulPostedAt) {
+      updates.last_successful_posted_at = latestSuccessfulPostedAt;
+      updates.refresh_cursor = {
+        ...(source.refresh_cursor ?? {}),
+        latestPostedAt: latestSuccessfulPostedAt,
+      };
+    }
+  }
+
   await supabase
     .from('social_sources')
-    .update({
-      status,
-      last_run_at: nowISO(),
-      next_run_at: status === 'active' ? next : new Date(Date.now() + 60 * 60_000).toISOString(),
-      last_error: errorMessage ?? null,
-      updated_at: nowISO(),
-    })
+    .update(updates)
     .eq('uuid', source.uuid)
     .eq('user_id', userId);
 }

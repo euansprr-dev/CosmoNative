@@ -959,6 +959,7 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
 
     private var hasLoaded = false
     private let remoteStore = SocialDiscoveryRemoteStore()
+    private let localCache = SocialDiscoveryLocalCache()
 
     var visiblePosts: [SocialPostSnapshot] {
         SocialDiscoveryStore(query: query, posts: posts).visiblePosts
@@ -1013,34 +1014,24 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
     }
 
     func reload() async {
-        isLoading = true
         errorMessage = nil
 
         do {
             if remoteStore.isConfigured {
-                var remoteQuery = query
-                remoteQuery.searchText = ""
-                remoteQuery.platforms = []
-                remoteQuery.minimumOutlierMultiplier = nil
-                remoteQuery.postedWindow = .allTime
-                remoteQuery.limit = 1_000
-
-                let remoteCreators = try await remoteStore.fetchCreators()
-                creators = remoteCreatorRecords(creators: remoteCreators, posts: posts)
-                hasLoaded = true
-
-                do {
-                    let remotePosts = try await remoteStore.fetchPosts(query: remoteQuery, creators: remoteCreators)
-                    posts = remotePosts
-                    creators = remoteCreatorRecords(creators: remoteCreators, posts: remotePosts)
-                } catch {
-                    errorMessage = "Cloud posts are still loading: \(error.localizedDescription)"
+                if let cached = localCache.load() {
+                    posts = cached.posts
+                    creators = remoteCreatorRecords(creators: cached.creators, posts: cached.posts)
+                    hasLoaded = true
+                    isLoading = false
+                    Task { await loadRemoteDiscovery(showLoading: false) }
+                    return
                 }
 
-                isLoading = false
+                await loadRemoteDiscovery(showLoading: true)
                 return
             }
 
+            isLoading = true
             let loaded = try await loadLocalCatalog()
             creators = loaded.records
             posts = loaded.posts
@@ -1060,6 +1051,57 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         isLoading = false
     }
 
+    private func loadRemoteDiscovery(showLoading: Bool) async {
+        if showLoading {
+            isLoading = true
+        }
+        errorMessage = nil
+
+        var remoteQuery = query
+        remoteQuery.searchText = ""
+        remoteQuery.platforms = []
+        remoteQuery.minimumOutlierMultiplier = nil
+        remoteQuery.postedWindow = .allTime
+        remoteQuery.limit = 1_000
+
+        do {
+            let remoteCreators = try await remoteStore.fetchCreators()
+            if posts.isEmpty {
+                creators = remoteCreatorRecords(creators: remoteCreators, posts: posts)
+                hasLoaded = true
+            }
+
+            do {
+                let remotePosts = try await remoteStore.fetchPosts(query: remoteQuery, creators: remoteCreators)
+                posts = remotePosts
+                creators = remoteCreatorRecords(creators: remoteCreators, posts: remotePosts)
+                try? localCache.save(posts: remotePosts, creators: remoteCreators)
+            } catch {
+                errorMessage = "Cloud posts are still loading: \(error.localizedDescription)"
+            }
+
+            hasLoaded = true
+        } catch {
+            if posts.isEmpty {
+                do {
+                    let loaded = try await loadLocalCatalog()
+                    creators = loaded.records
+                    posts = loaded.posts
+                    errorMessage = "Cloud discovery failed: \(error.localizedDescription). Showing local imports."
+                    hasLoaded = true
+                } catch {
+                    errorMessage = "Could not load discovery data: \(error.localizedDescription)"
+                }
+            } else {
+                errorMessage = "Cloud discovery failed: \(error.localizedDescription). Showing cached results."
+            }
+        }
+
+        if showLoading {
+            isLoading = false
+        }
+    }
+
     func refreshDiscovery() async {
         guard remoteStore.isConfigured else {
             await reload()
@@ -1076,7 +1118,8 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
             errorMessage = "Cloud refresh failed: \(error.localizedDescription). Showing cached results."
         }
 
-        await reload()
+        await loadRemoteDiscovery(showLoading: false)
+        isLoading = false
     }
 
     func save(_ post: SocialPostSnapshot, boardID: String? = nil) {
@@ -1125,8 +1168,7 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
                     creatorImportError = "Creator was added, but the import did not finish: \(error.localizedDescription)"
                 }
 
-                hasLoaded = false
-                await reload()
+                await loadRemoteDiscovery(showLoading: false)
                 if creatorImportError == nil {
                     creatorImportMessage = "Creator imported"
                     saveMessage = "Creator imported"

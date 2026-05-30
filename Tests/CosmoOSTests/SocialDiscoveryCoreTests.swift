@@ -41,6 +41,35 @@ final class SocialDiscoveryCoreTests: XCTestCase {
         )
     }
 
+    func testDiscoveryLocalCacheRoundTripsFeedAndCreators() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cosmo-discovery-cache-\(UUID().uuidString)", isDirectory: true)
+        let cache = SocialDiscoveryLocalCache(directory: directory)
+        let creator = SocialDiscoveryRemoteCreator(
+            uuid: "creator-1",
+            platform: .instagram,
+            handle: "theandrewlamb",
+            displayName: "Andrew Lamb",
+            bio: nil,
+            avatarURL: nil,
+            profileURL: URL(string: "https://instagram.com/theandrewlamb"),
+            followerCount: 257_000
+        )
+        let post = SocialPostSnapshot.fixture(
+            id: "post-1",
+            platform: .instagram,
+            format: .shortVideo,
+            metrics: .init(views: 100_000, likes: 3_000)
+        )
+
+        try cache.save(posts: [post], creators: [creator])
+        let cached = try XCTUnwrap(cache.load())
+
+        XCTAssertEqual(cached.posts, [post])
+        XCTAssertEqual(cached.creators, [creator])
+        XCTAssertGreaterThan(cached.cachedAt.timeIntervalSince1970, 0)
+    }
+
     func testProviderRegistryChoosesProviderByPlatformAndCapability() {
         let registry = SocialProviderRegistry(providers: [
             StubSocialProvider(id: "youtube-official", platforms: [.youtube], capabilities: [.creatorLookup, .keywordDiscovery]),

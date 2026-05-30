@@ -55,9 +55,14 @@ export async function refreshDiscoverySource(
   try {
     const result = await provider.refreshSource(source, context);
     let upserted = 0;
+    let latestPostedAt: string | null = source.last_successful_posted_at ?? null;
     for (const input of result.posts) {
-      await upsertDiscoveredPost(normalizeDiscoveredPost(input));
+      const normalized = normalizeDiscoveredPost(input);
+      await upsertDiscoveredPost(normalized);
       upserted += 1;
+      if (normalized.posted_at && (!latestPostedAt || normalized.posted_at > latestPostedAt)) {
+        latestPostedAt = normalized.posted_at;
+      }
     }
     await recordDiscoveryRun({
       sourceUuid: source.uuid,
@@ -67,7 +72,7 @@ export async function refreshDiscoverySource(
       postsFound: result.posts.length,
       postsUpserted: upserted,
     });
-    await updateSourceAfterRun(source, 'active');
+    await updateSourceAfterRun(source, 'active', undefined, latestPostedAt);
     return { found: result.posts.length, upserted, provider: result.provider };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

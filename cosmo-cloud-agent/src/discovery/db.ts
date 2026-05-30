@@ -25,11 +25,25 @@ function reachFor(row: Pick<SocialDiscoveredPostRow, 'view_count' | 'like_count'
 }
 
 export async function upsertCreator(input: DiscoveryCreatorInput): Promise<SocialCreatorRow> {
+  const normalizedHandle = handle(input.handle);
+  const { data: existing } = await supabase
+    .from('social_creators')
+    .select('source_tags')
+    .eq('user_id', userId)
+    .eq('platform', input.platform)
+    .eq('handle', normalizedHandle)
+    .maybeSingle();
+  const existingSourceTags = Array.isArray(existing?.source_tags) ? existing.source_tags : [];
+  const mergedSourceTags = Array.from(new Set([
+    ...existingSourceTags,
+    ...(input.sourceTags ?? []),
+  ]));
+
   const row = {
     user_id: userId,
     platform: input.platform,
     platform_creator_id: input.platformCreatorId ?? null,
-    handle: handle(input.handle),
+    handle: normalizedHandle,
     display_name: input.displayName ?? input.handle,
     bio: input.bio ?? null,
     avatar_url: input.avatarUrl ?? null,
@@ -39,7 +53,7 @@ export async function upsertCreator(input: DiscoveryCreatorInput): Promise<Socia
     post_count: input.postCount ?? null,
     language: input.language ?? null,
     niche_tags: input.nicheTags ?? [],
-    source_tags: input.sourceTags ?? [],
+    source_tags: mergedSourceTags,
     last_seen_at: nowISO(),
     updated_at: nowISO(),
   };
@@ -267,10 +281,29 @@ export async function fetchDiscoveryFeed(filters: {
 }
 
 export async function fetchCreators(limit = 200): Promise<SocialCreatorRow[]> {
+  const { data: sourceRows, error: sourceError } = await supabase
+    .from('social_sources')
+    .select('creator_uuid')
+    .eq('user_id', userId)
+    .in('kind', ['tracked_creator', 'curated_creator'])
+    .not('creator_uuid', 'is', null)
+    .limit(limit);
+
+  if (sourceError || !sourceRows) return [];
+
+  const creatorUuids = Array.from(new Set(
+    sourceRows
+      .map(row => row.creator_uuid)
+      .filter((uuid): uuid is string => typeof uuid === 'string' && uuid.length > 0)
+  ));
+
+  if (!creatorUuids.length) return [];
+
   const { data, error } = await supabase
     .from('social_creators')
     .select('*')
     .eq('user_id', userId)
+    .in('uuid', creatorUuids)
     .order('follower_count', { ascending: false, nullsFirst: false })
     .limit(limit);
 

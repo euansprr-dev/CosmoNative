@@ -212,7 +212,7 @@ function numberValue(record: Record<string, unknown>, keys: string[]): number | 
   return undefined;
 }
 
-function enrichInstagramRecord(
+export function enrichInstagramRecord(
   record: Record<string, unknown>,
   profile: Record<string, unknown> | null,
   handle: string,
@@ -220,18 +220,18 @@ function enrichInstagramRecord(
 ): Record<string, unknown> {
   if (!profile) {
     return {
+      ...record,
       ownerUsername: handle,
       ownerUrl: source.profile_url ?? `https://www.instagram.com/${handle}/`,
-      ...record,
     };
   }
 
   return {
+    ...record,
     ownerUsername: stringValue(profile, ['username']) ?? handle,
     ownerFullName: stringValue(profile, ['fullName', 'full_name', 'name']),
     ownerProfilePicUrl: stringValue(profile, ['profilePicUrl', 'profilePicUrlHD', 'profile_pic_url']),
     ownerFollowersCount: numberValue(profile, ['followersCount', 'followedByCount', 'followers', 'follower_count']),
     ownerUrl: source.profile_url ?? `https://www.instagram.com/${handle}/`,
-    ...record,
   };
 }

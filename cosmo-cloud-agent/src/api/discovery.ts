@@ -16,7 +16,7 @@ import type { DiscoveryProviderContext } from '../discovery/providers/provider';
 
 export const discoveryRouter = express.Router();
 
-const discoveryBuild = 'discovery-source-graph-2026-05-30T1118';
+const discoveryBuild = 'discovery-source-graph-2026-05-30T1508';
 
 discoveryRouter.use((req, res, next) => {
   const startedAt = Date.now();

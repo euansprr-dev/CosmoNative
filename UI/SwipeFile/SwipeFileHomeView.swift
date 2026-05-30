@@ -895,7 +895,10 @@ struct SwipeFileDiscoverView: View {
                 SwipeDiscoverHeader(
                     section: section,
                     query: $viewModel.query,
+                    creatorSearchText: $viewModel.creatorSearchText,
+                    isAddingCreator: viewModel.isAddingCreator,
                     isShowingFilters: $showingFilters,
+                    onAddCreator: viewModel.addCreatorFromSearch,
                     onRefresh: { Task { await viewModel.refreshDiscovery() } }
                 )
 
@@ -1096,21 +1099,21 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         isAddingCreator = true
         creatorImportError = nil
         creatorImportMessage = "Adding \(identity.handle) to the discovery graph..."
+        creatorSearchText = ""
 
         Task {
             defer { isAddingCreator = false }
 
             do {
                 let sourceID = try await remoteStore.addCreator(identity: identity)
-                creatorSearchText = ""
                 creatorImportMessage = "Creator added. Loading profile..."
                 hasLoaded = false
                 await reload()
                 creatorImportMessage = "Creator added. Importing posts from Apify. This can take a few minutes..."
 
                 do {
-                    try await remoteStore.refreshSource(sourceID: sourceID)
-                    creatorImportMessage = "Import finished. Reloading creators..."
+                    let result = try await remoteStore.refreshSource(sourceID: sourceID)
+                    creatorImportMessage = "Import finished. \(result.upserted) posts added from \(result.provider). Reloading creators..."
                 } catch {
                     creatorImportError = "Creator was added, but the import did not finish: \(error.localizedDescription)"
                 }
@@ -1339,10 +1342,27 @@ private struct SwipeDiscoverCreatorRecord: Identifiable, Equatable {
 private struct SwipeDiscoverHeader: View {
     let section: SwipeDiscoverySectionSelection
     @Binding var query: SocialDiscoveryQuery
+    @Binding var creatorSearchText: String
+    let isAddingCreator: Bool
     @Binding var isShowingFilters: Bool
+    var onAddCreator: () -> Void
     var onRefresh: () -> Void
 
     @FocusState private var searchFocused: Bool
+
+    private var activeSearchText: Binding<String> {
+        section == .creators ? $creatorSearchText : $query.searchText
+    }
+
+    private var searchPlaceholder: String {
+        section == .creators
+            ? "Search creators or paste a profile URL..."
+            : "Search for a handle, keyword, or profile URL..."
+    }
+
+    private var canAddCreator: Bool {
+        !creatorSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isAddingCreator
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1387,34 +1407,64 @@ private struct SwipeDiscoverHeader: View {
                     .help("Reload discovery")
             }
 
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
+            HStack(spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
 
-                TextField("Search for a handle, keyword, or profile URL...", text: $query.searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(DS.text)
-                    .focused($searchFocused)
+                    TextField(searchPlaceholder, text: activeSearchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(DS.text)
+                        .focused($searchFocused)
+                        .onSubmit {
+                            if section == .creators {
+                                onAddCreator()
+                            }
+                        }
 
-                if !query.searchText.isEmpty {
-                    Button("Clear", systemImage: "xmark.circle.fill") {
-                        query.searchText = ""
+                    if !activeSearchText.wrappedValue.isEmpty {
+                        Button("Clear", systemImage: "xmark.circle.fill") {
+                            activeSearchText.wrappedValue = ""
+                        }
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DS.textMuted)
+                        .buttonStyle(.plain)
                     }
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 46)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(searchFocused ? DS.borderActive : DS.borderSubtle, lineWidth: 1)
+                )
+
+                if section == .creators {
+                    Button(action: onAddCreator) {
+                        HStack(spacing: 7) {
+                            if isAddingCreator {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .scaleEffect(0.72)
+                            } else {
+                                Image(systemName: "plus")
+                            }
+                            Text(isAddingCreator ? "Adding" : "Add")
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.text)
+                        .padding(.horizontal, 14)
+                        .frame(height: 46)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.75))
+                    }
                     .buttonStyle(.plain)
+                    .disabled(!canAddCreator)
                 }
             }
-            .padding(.horizontal, 14)
-            .frame(height: 46)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(searchFocused ? DS.borderActive : DS.borderSubtle, lineWidth: 1)
-            )
         }
     }
 }
@@ -1516,33 +1566,16 @@ private struct SwipeDiscoverMasonryGrid: View {
     let posts: [SocialPostSnapshot]
     let onSave: (SocialPostSnapshot, String?) -> Void
 
-    var body: some View {
-        GeometryReader { proxy in
-            let columnCount = max(2, min(5, Int(proxy.size.width / 284)))
-            let spacing: CGFloat = 16
-            let cardWidth = max(230, (proxy.size.width - CGFloat(columnCount - 1) * spacing) / CGFloat(columnCount))
-            let columns = distribute(columnCount: columnCount)
+    private let columns = [
+        GridItem(.adaptive(minimum: 230, maximum: 340), spacing: 16, alignment: .top)
+    ]
 
-            HStack(alignment: .top, spacing: spacing) {
-                ForEach(columns.indices, id: \.self) { index in
-                    LazyVStack(spacing: spacing) {
-                        ForEach(columns[index]) { post in
-                            SwipeDiscoverPostCard(post: post, onSave: onSave)
-                                .frame(width: cardWidth)
-                        }
-                    }
-                }
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
+            ForEach(posts) { post in
+                SwipeDiscoverPostCard(post: post, onSave: onSave)
             }
         }
-        .frame(minHeight: max(420, CGFloat(posts.count / 3 + 1) * 340))
-    }
-
-    private func distribute(columnCount: Int) -> [[SocialPostSnapshot]] {
-        var columns = Array(repeating: [SocialPostSnapshot](), count: columnCount)
-        for (index, post) in posts.enumerated() {
-            columns[index % columnCount].append(post)
-        }
-        return columns
     }
 }
 
@@ -1554,6 +1587,40 @@ private struct SwipeDiscoverPostCard: View {
 
     private var thumbnailURL: URL? {
         post.media.first(where: { $0.kind == .thumbnail || $0.kind == .image })?.url
+    }
+
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+    }
+
+    private enum PreviewAspect {
+        case wide
+        case portrait
+        case vertical
+    }
+
+    private var previewAspect: PreviewAspect {
+        switch post.platform {
+        case .youtube:
+            return post.format == .shortVideo ? .vertical : .wide
+        case .instagram:
+            if post.format == .shortVideo {
+                return .vertical
+            }
+            return .portrait
+        case .tiktok:
+            return .vertical
+        default:
+            return post.format == .shortVideo ? .vertical : .wide
+        }
+    }
+
+    private var mediaAspectRatio: CGFloat {
+        switch previewAspect {
+        case .wide: return 16.0 / 9.0
+        case .portrait: return 1.0
+        case .vertical: return 9.0 / 16.0
+        }
     }
 
     var body: some View {
@@ -1570,12 +1637,14 @@ private struct SwipeDiscoverPostCard: View {
             }
             .padding(14)
         }
-        .background(DS.surface.opacity(0.74), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(DS.surface.opacity(0.74), in: cardShape)
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            cardShape
                 .stroke(isHovered ? DS.accent.opacity(0.32) : DS.borderSubtle, lineWidth: 0.85)
         )
-        .scaleEffect(isHovered ? 1.012 : 1)
+        .clipShape(cardShape)
+        .contentShape(cardShape)
         .animation(ProMotionSprings.hover, value: isHovered)
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
@@ -1598,7 +1667,8 @@ private struct SwipeDiscoverPostCard: View {
                     placeholderMedia
                 }
             }
-            .frame(height: post.format == .text ? 120 : 210)
+            .frame(maxWidth: .infinity)
+            .aspectRatio(mediaAspectRatio, contentMode: .fill)
             .clipped()
             .overlay(alignment: .topLeading) {
                 platformBadge
@@ -1618,6 +1688,7 @@ private struct SwipeDiscoverPostCard: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
+            .aspectRatio(post.format == .text ? 4.0 / 3.0 : mediaAspectRatio, contentMode: .fit)
             .background(DS.commandChromePanelFill)
             .overlay(alignment: .topTrailing) {
                 outlierBadge
@@ -1731,42 +1802,15 @@ private struct SwipeDiscoverCreatorDirectory: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(DS.textMuted)
-                    TextField("Search creators or paste a profile URL...", text: $viewModel.creatorSearchText)
-                        .textFieldStyle(.plain)
-                        .onSubmit {
-                            viewModel.addCreatorFromSearch()
-                        }
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 40)
-                .background(.regularMaterial, in: .rect(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.borderSubtle, lineWidth: 0.75))
+                Text("Creator Library")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(DS.text)
+                Text("\(viewModel.filteredCreators.count)")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.textMuted)
+                    .monospacedDigit()
 
-                Button {
-                    viewModel.addCreatorFromSearch()
-                } label: {
-                    HStack(spacing: 6) {
-                        if viewModel.isAddingCreator {
-                            ProgressView()
-                                .controlSize(.small)
-                                .scaleEffect(0.72)
-                        } else {
-                            Image(systemName: "plus")
-                        }
-                        Text(viewModel.isAddingCreator ? "Adding" : "Add")
-                    }
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(DS.text)
-                .frame(height: 40)
-                .padding(.horizontal, 12)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.75))
-                .buttonStyle(.plain)
-                .disabled(viewModel.creatorSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isAddingCreator)
+                Spacer(minLength: 12)
 
                 Menu {
                     ForEach(SocialDiscoverySort.allCases, id: \.rawValue) { sort in
@@ -1791,7 +1835,7 @@ private struct SwipeDiscoverCreatorDirectory: View {
                 )
             }
 
-            if viewModel.isLoading {
+            if viewModel.isLoading && viewModel.creators.isEmpty {
                 SwipeDiscoverSkeletonGrid()
             } else if viewModel.filteredCreators.isEmpty {
                 SwipeFileEmptyState(
@@ -1864,6 +1908,10 @@ private struct SwipeDiscoverCreatorRow: View {
     let creator: SwipeDiscoverCreatorRecord
     let onSelect: () -> Void
 
+    private var rowShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+    }
+
     var body: some View {
         Button(action: onSelect) {
             VStack(alignment: .leading, spacing: 14) {
@@ -1918,8 +1966,9 @@ private struct SwipeDiscoverCreatorRow: View {
                 }
             }
             .padding(14)
-            .background(DS.surface.opacity(0.72), in: .rect(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.borderSubtle, lineWidth: 0.75))
+            .background(DS.surface.opacity(0.72), in: rowShape)
+            .overlay(rowShape.stroke(DS.borderSubtle, lineWidth: 0.75))
+            .contentShape(rowShape)
         }
         .buttonStyle(.plain)
     }

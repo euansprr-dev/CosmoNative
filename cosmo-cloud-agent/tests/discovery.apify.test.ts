@@ -3,6 +3,7 @@ import { config } from '../src/config';
 import {
   ApifyInstagramDiscoveryProvider,
   apifyInstagramInputForSource,
+  enrichInstagramRecord,
   instagramHandle,
 } from '../src/discovery/providers/apifyInstagram';
 import type { SocialSourceRow } from '../src/discovery/types';
@@ -48,5 +49,28 @@ assert.deepEqual(apifyInstagramInputForSource(source({
   resultsLimit: config.apifyInstagramPostLimit,
   dataDetailLevel: 'detailedData',
 });
+
+const enriched = enrichInstagramRecord(
+  {
+    shortCode: 'abc123',
+    ownerUsername: 'collab_account',
+    ownerFullName: 'Collaborator',
+    ownerFollowersCount: 12,
+    url: 'https://www.instagram.com/p/abc123/',
+  },
+  {
+    username: 'theandrewlamb',
+    fullName: 'Andrew Lamb',
+    followersCount: 257_900,
+    profilePicUrl: 'https://example.com/avatar.jpg',
+  },
+  'theandrewlamb',
+  source({ profile_url: 'https://www.instagram.com/theandrewlamb/' })
+);
+
+assert.equal(enriched.ownerUsername, 'theandrewlamb');
+assert.equal(enriched.ownerFullName, 'Andrew Lamb');
+assert.equal(enriched.ownerFollowersCount, 257_900);
+assert.equal(enriched.ownerProfilePicUrl, 'https://example.com/avatar.jpg');
 
 console.log('discovery.apify.test.ts passed');

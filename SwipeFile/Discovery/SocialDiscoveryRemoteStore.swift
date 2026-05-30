@@ -58,6 +58,12 @@ final class SocialDiscoveryRemoteStore: Sendable {
         let uuid: String
     }
 
+    struct RefreshSourceResponse: Decodable, Sendable {
+        let found: Int
+        let upserted: Int
+        let provider: String
+    }
+
     struct PostRow: Decodable {
         let uuid: String
         let platform: SocialPlatform
@@ -197,7 +203,7 @@ final class SocialDiscoveryRemoteStore: Sendable {
         try validate(data: data, response: response)
     }
 
-    func refreshSource(sourceID: String) async throws {
+    func refreshSource(sourceID: String) async throws -> RefreshSourceResponse {
         guard isConfigured else { throw RemoteStoreError.missingConfiguration }
         var request = try makeRequest(path: "/api/discovery/sources/\(sourceID)/refresh")
         request.httpMethod = "POST"
@@ -205,6 +211,7 @@ final class SocialDiscoveryRemoteStore: Sendable {
         request.timeoutInterval = 600
         let (data, response) = try await session.data(for: request)
         try validate(data: data, response: response)
+        return try decoder.decode(RefreshSourceResponse.self, from: data)
     }
 
     func savePost(postID: String, boardID: String?) async throws {

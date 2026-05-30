@@ -1438,16 +1438,21 @@ private struct SwipeDiscoverFeed: View {
 
             if viewModel.isLoading {
                 SwipeDiscoverSkeletonGrid()
-            } else if let error = viewModel.errorMessage {
-                SwipeFileEmptyState(title: "Discovery unavailable", subtitle: error, systemImage: "exclamationmark.triangle")
-                    .frame(maxWidth: .infinity, minHeight: 360)
             } else if posts.isEmpty {
-                SwipeFileEmptyState(
-                    title: "No discovered posts yet",
-                    subtitle: "Import creator catalogs to populate the cross-platform feed.",
-                    systemImage: "chart.line.uptrend.xyaxis"
-                )
-                .frame(maxWidth: .infinity, minHeight: 360)
+                if let error = viewModel.errorMessage {
+                    SwipeFileEmptyState(title: "Discovery unavailable", subtitle: error, systemImage: "exclamationmark.triangle")
+                        .frame(maxWidth: .infinity, minHeight: 360)
+                } else {
+                    SwipeFileEmptyState(
+                        title: "No discovered posts yet",
+                        subtitle: "Import creator catalogs to populate the cross-platform feed.",
+                        systemImage: "chart.line.uptrend.xyaxis"
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 360)
+                }
+            } else if let error = viewModel.errorMessage {
+                SwipeDiscoverCreatorImportNotice(message: error, systemImage: "exclamationmark.triangle", tint: .orange)
+                SwipeDiscoverMasonryGrid(posts: posts, onSave: viewModel.save)
             } else {
                 SwipeDiscoverMasonryGrid(posts: posts, onSave: viewModel.save)
             }

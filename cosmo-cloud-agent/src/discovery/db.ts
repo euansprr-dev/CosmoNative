@@ -160,6 +160,38 @@ export async function createSource(params: {
   priority?: number;
   cadenceMinutes?: number;
 }): Promise<SocialSourceRow> {
+  if (params.creatorUuid) {
+    const { data: existing } = await supabase
+      .from('social_sources')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('kind', params.kind)
+      .eq('platform', params.platform ?? null)
+      .eq('creator_uuid', params.creatorUuid)
+      .neq('status', 'paused')
+      .maybeSingle();
+
+    if (existing) {
+      const { data: updated, error: updateError } = await supabase
+        .from('social_sources')
+        .update({
+          label: params.label,
+          query: params.query ?? (existing as SocialSourceRow).query,
+          profile_url: params.profileUrl ?? (existing as SocialSourceRow).profile_url,
+          niche_tags: params.nicheTags ?? (existing as SocialSourceRow).niche_tags ?? [],
+          status: 'active',
+          updated_at: nowISO(),
+        })
+        .eq('uuid', (existing as SocialSourceRow).uuid)
+        .eq('user_id', userId)
+        .select('*')
+        .single();
+
+      if (!updateError && updated) return updated as SocialSourceRow;
+      return existing as SocialSourceRow;
+    }
+  }
+
   const { data, error } = await supabase
     .from('social_sources')
     .insert({

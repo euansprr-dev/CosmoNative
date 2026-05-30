@@ -6,6 +6,10 @@ const tasks: cron.ScheduledTask[] = [];
 
 export function startDiscoveryScheduler(): void {
   if (tasks.length > 0) return;
+  if (!config.discoverySchedulerEnabled) {
+    console.log('🔎 Discovery scheduler disabled (set DISCOVERY_SCHEDULER_ENABLED=true to enable)');
+    return;
+  }
 
   const timezone = config.timezone;
 

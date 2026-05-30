@@ -23,7 +23,7 @@ export function apifyInstagramInputForSource(source: SocialSourceRow): Record<st
   if (cutoff) {
     return {
       username: [handle],
-      resultsLimit: Math.min(config.apifyInstagramIncrementalPostLimit, config.apifyInstagramPostLimit),
+      resultsLimit: boundedResultsLimit(config.apifyInstagramIncrementalPostLimit),
       dataDetailLevel: 'detailedData',
       onlyPostsNewerThan: cutoff,
       skipPinnedPosts: true,
@@ -32,7 +32,7 @@ export function apifyInstagramInputForSource(source: SocialSourceRow): Record<st
 
   return {
     username: [handle],
-    resultsLimit: config.apifyInstagramPostLimit,
+    resultsLimit: boundedResultsLimit(config.apifyInstagramPostLimit),
     dataDetailLevel: 'detailedData',
   };
 }
@@ -64,7 +64,8 @@ export class ApifyInstagramDiscoveryProvider implements DiscoveryProvider {
       sourceUuid: source.uuid,
       actorId: this.postActorId,
       handle,
-      resultsLimit: config.apifyInstagramPostLimit,
+      resultsLimit: input.resultsLimit,
+      onlyPostsNewerThan: input.onlyPostsNewerThan,
       tokenSource: context?.providerKeys?.apifyApiKey ? 'request' : 'environment',
     });
 
@@ -151,6 +152,14 @@ function incrementalCutoff(lastSuccessfulPostedAt: string | null): string | null
 
   const overlapMs = 72 * 60 * 60_000;
   return new Date(parsed.getTime() - overlapMs).toISOString();
+}
+
+function boundedResultsLimit(rawLimit: number): number {
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 50;
+  const max = Number.isFinite(config.apifyInstagramMaxPostLimit) && config.apifyInstagramMaxPostLimit > 0
+    ? Math.floor(config.apifyInstagramMaxPostLimit)
+    : 100;
+  return Math.min(limit, max);
 }
 
 async function waitForRun(runId: string, apiKey: string): Promise<void> {

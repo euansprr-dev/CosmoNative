@@ -1124,14 +1124,8 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
 
-        do {
-            try await remoteStore.refreshDue(limit: 25, force: true)
-            saveMessage = "Discovery refreshed"
-        } catch {
-            errorMessage = "Cloud refresh failed: \(error.localizedDescription). Showing cached results."
-        }
-
         await loadRemoteDiscovery(showLoading: false)
+        saveMessage = "Discovery reloaded"
         isLoading = false
     }
 

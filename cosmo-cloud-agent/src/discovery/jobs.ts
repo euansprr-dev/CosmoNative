@@ -1,4 +1,5 @@
 import { normalizeDiscoveredPost } from './normalize';
+import { config } from '../config';
 import {
   fetchActiveSources,
   fetchDueSources,
@@ -20,6 +21,9 @@ const providers: DiscoveryProvider[] = [
   new ManagedSocialDiscoveryProvider(),
 ];
 
+type RefreshSourceResult = { found: number; upserted: number; provider: string };
+const inFlightRefreshes = new Map<string, Promise<RefreshSourceResult>>();
+
 export function discoveryProviders(): DiscoveryProvider[] {
   return providers;
 }
@@ -33,9 +37,52 @@ function providerFor(source: SocialSourceRow, context?: DiscoveryProviderContext
 export async function refreshDiscoverySource(
   source: SocialSourceRow,
   context?: DiscoveryProviderContext
-): Promise<{ found: number; upserted: number; provider: string }> {
+): Promise<RefreshSourceResult> {
+  const existingRefresh = inFlightRefreshes.get(source.uuid);
+  if (existingRefresh) {
+    console.log('[discovery-job] refresh already in flight; joining existing run', {
+      sourceUuid: source.uuid,
+      platform: source.platform,
+      label: source.label,
+    });
+    return existingRefresh;
+  }
+
+  const refreshPromise = refreshDiscoverySourceInner(source, context);
+  inFlightRefreshes.set(source.uuid, refreshPromise);
+  try {
+    return await refreshPromise;
+  } finally {
+    inFlightRefreshes.delete(source.uuid);
+  }
+}
+
+async function refreshDiscoverySourceInner(
+  source: SocialSourceRow,
+  context?: DiscoveryProviderContext
+): Promise<RefreshSourceResult> {
   const startedAt = new Date().toISOString();
   const provider = providerFor(source, context);
+
+  const recentSkip = recentSuccessfulRefreshSkip(source);
+  if (recentSkip) {
+    console.log('[discovery-job] skipping recent successful source refresh', {
+      sourceUuid: source.uuid,
+      platform: source.platform,
+      label: source.label,
+      lastSuccessfulRunAt: source.last_successful_run_at,
+      cooldownMinutes: config.discoveryRefreshCooldownMinutes,
+    });
+    await recordDiscoveryRun({
+      sourceUuid: source.uuid,
+      provider: 'cooldown',
+      status: 'success',
+      startedAt,
+      postsFound: 0,
+      postsUpserted: 0,
+    });
+    return { found: 0, upserted: 0, provider: 'cooldown' };
+  }
 
   if (!provider) {
     const message = `No discovery provider can refresh ${source.platform ?? 'unknown'} source ${source.uuid}`;
@@ -89,12 +136,22 @@ export async function refreshDiscoverySource(
   }
 }
 
+function recentSuccessfulRefreshSkip(source: SocialSourceRow): boolean {
+  if (!source.last_successful_run_at) return false;
+  const lastRun = new Date(source.last_successful_run_at).getTime();
+  if (Number.isNaN(lastRun)) return false;
+  const cooldownMs = Math.max(1, config.discoveryRefreshCooldownMinutes) * 60_000;
+  return Date.now() - lastRun < cooldownMs;
+}
+
 export async function refreshDueDiscoverySources(
   limit = 25,
   context?: DiscoveryProviderContext,
   force = false
 ): Promise<{ sources: number; posts: number }> {
-  const sources = force ? await fetchActiveSources(limit) : await fetchDueSources(limit);
+  const effectiveForce = force && config.discoveryAllowForceRefresh;
+  const safeLimit = Math.max(1, Math.min(limit, effectiveForce ? 25 : 10));
+  const sources = effectiveForce ? await fetchActiveSources(safeLimit) : await fetchDueSources(safeLimit);
   let posts = 0;
   for (const source of sources) {
     try {

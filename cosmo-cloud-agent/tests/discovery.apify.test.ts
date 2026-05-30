@@ -45,13 +45,15 @@ assert.equal(instagramHandle(source({
   query: '@theandrewlamb',
 })), 'theandrewlamb');
 
-assert.deepEqual(apifyInstagramInputForSource(source({
+const initialInput = apifyInstagramInputForSource(source({
   profile_url: 'https://www.instagram.com/theandrewlamb/',
-})), {
+}));
+assert.deepEqual(initialInput, {
   username: ['theandrewlamb'],
-  resultsLimit: config.apifyInstagramPostLimit,
+  resultsLimit: Math.min(config.apifyInstagramPostLimit, config.apifyInstagramMaxPostLimit),
   dataDetailLevel: 'detailedData',
 });
+assert.ok((initialInput.resultsLimit as number) <= config.apifyInstagramMaxPostLimit);
 
 assert.deepEqual(apifyInstagramInputForSource(source({
   profile_url: 'https://www.instagram.com/theandrewlamb/',

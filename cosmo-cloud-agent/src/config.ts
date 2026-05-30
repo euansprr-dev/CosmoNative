@@ -67,8 +67,12 @@ export const config = {
     },
   },
   apifyApiKey: process.env.APIFY_API_KEY || '',
-  apifyInstagramPostLimit: parseInt(process.env.APIFY_INSTAGRAM_POST_LIMIT || '1000', 10),
+  apifyInstagramPostLimit: parseInt(process.env.APIFY_INSTAGRAM_POST_LIMIT || '75', 10),
+  apifyInstagramMaxPostLimit: parseInt(process.env.APIFY_INSTAGRAM_MAX_POST_LIMIT || '100', 10),
   apifyInstagramIncrementalPostLimit: parseInt(process.env.APIFY_INSTAGRAM_INCREMENTAL_POST_LIMIT || '50', 10),
+  discoverySchedulerEnabled: process.env.DISCOVERY_SCHEDULER_ENABLED === 'true',
+  discoveryAllowForceRefresh: process.env.DISCOVERY_ALLOW_FORCE_REFRESH === 'true',
+  discoveryRefreshCooldownMinutes: parseInt(process.env.DISCOVERY_REFRESH_COOLDOWN_MINUTES || '15', 10),
   xBearerToken: process.env.X_BEARER_TOKEN || '',
 
   // Exemplar Codex integration — when true, writing engine uses full Codex + walkthrough

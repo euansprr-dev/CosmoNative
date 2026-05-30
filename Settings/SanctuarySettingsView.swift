@@ -412,6 +412,24 @@ struct SanctuarySettingsView: View {
                 instructions: "1. Visit https://apify.com\n2. Sign up or log in\n3. Go to Settings > Integrations\n4. Copy your Personal API token"
             )
 
+            APIKeyCard(
+                title: "Discovery API Base URL",
+                subtitle: "Required for Swipe File Discover cloud feed",
+                placeholder: "https://cosmonative-production.up.railway.app",
+                keyIdentifier: "discovery_api_base_url",
+                isRequired: false,
+                instructions: "1. Open Railway\n2. Select the cloud agent service\n3. Go to Settings > Networking\n4. Copy the public .up.railway.app domain, including https://"
+            )
+
+            APIKeyCard(
+                title: "Discovery API Key",
+                subtitle: "Required for Swipe File Discover cloud feed",
+                placeholder: "same value as DISCOVERY_API_KEY in Railway",
+                keyIdentifier: "discovery_api_key",
+                isRequired: false,
+                instructions: "Use the exact same DISCOVERY_API_KEY value you added to Railway for the cloud agent."
+            )
+
             Spacer()
         }
     }
@@ -1133,6 +1151,8 @@ private struct APIKeyCard: View {
         case "x_twitter": return APIKeys.xTwitter
         case "youtube_channel_id": return APIKeys.youtubeChannelId
         case "apify": return APIKeys.apify
+        case "discovery_api_base_url": return APIKeys.discoveryApiBaseURL
+        case "discovery_api_key": return APIKeys.discoveryApiKey
         default: return nil
         }
     }

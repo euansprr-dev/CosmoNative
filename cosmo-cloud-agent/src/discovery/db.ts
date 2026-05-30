@@ -186,6 +186,19 @@ export async function fetchDueSources(limit = 25): Promise<SocialSourceRow[]> {
   return data as SocialSourceRow[];
 }
 
+export async function fetchActiveSources(limit = 25): Promise<SocialSourceRow[]> {
+  const { data, error } = await supabase
+    .from('social_sources')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .order('priority', { ascending: false })
+    .limit(limit);
+
+  if (error || !data) return [];
+  return data as SocialSourceRow[];
+}
+
 export async function updateSourceAfterRun(source: SocialSourceRow, status: 'active' | 'error' | 'rate_limited', errorMessage?: string): Promise<void> {
   const next = new Date(Date.now() + source.cadence_minutes * 60_000).toISOString();
   await supabase

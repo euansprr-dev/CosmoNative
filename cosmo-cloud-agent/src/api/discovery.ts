@@ -163,7 +163,8 @@ discoveryRouter.post('/sources/:uuid/refresh', async (req, res) => {
 discoveryRouter.post('/refresh-due', async (req, res) => {
   if (!requireDiscoveryAccess(req, res)) return;
   const limit = typeof req.body?.limit === 'number' ? req.body.limit : 25;
-  const result = await refreshDueDiscoverySources(limit, discoveryProviderContext(req));
+  const force = req.body?.force === true;
+  const result = await refreshDueDiscoverySources(limit, discoveryProviderContext(req), force);
   res.json(result);
 });
 

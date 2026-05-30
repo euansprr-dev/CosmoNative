@@ -1,5 +1,6 @@
 import { normalizeDiscoveredPost } from './normalize';
 import {
+  fetchActiveSources,
   fetchDueSources,
   recordDiscoveryRun,
   updateSourceAfterRun,
@@ -85,9 +86,10 @@ export async function refreshDiscoverySource(
 
 export async function refreshDueDiscoverySources(
   limit = 25,
-  context?: DiscoveryProviderContext
+  context?: DiscoveryProviderContext,
+  force = false
 ): Promise<{ sources: number; posts: number }> {
-  const sources = await fetchDueSources(limit);
+  const sources = force ? await fetchActiveSources(limit) : await fetchDueSources(limit);
   let posts = 0;
   for (const source of sources) {
     try {

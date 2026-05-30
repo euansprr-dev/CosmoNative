@@ -186,13 +186,13 @@ final class SocialDiscoveryRemoteStore: Sendable {
         return created.source.uuid
     }
 
-    func refreshDue(limit: Int = 25) async throws {
+    func refreshDue(limit: Int = 25, force: Bool = false) async throws {
         guard isConfigured else { throw RemoteStoreError.missingConfiguration }
         var request = try makeRequest(path: "/api/discovery/refresh-due")
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 600
-        request.httpBody = try JSONEncoder().encode(RefreshDueRequest(limit: limit))
+        request.httpBody = try JSONEncoder().encode(RefreshDueRequest(limit: limit, force: force))
         let (data, response) = try await session.data(for: request)
         try validate(data: data, response: response)
     }
@@ -324,6 +324,7 @@ private struct SavePostRequest: Encodable {
 
 private struct RefreshDueRequest: Encodable {
     let limit: Int
+    let force: Bool
 }
 
 private extension SocialDiscoveryQuery {
@@ -343,7 +344,7 @@ private extension SocialDiscoveryQuery {
         if !searchText.isEmpty {
             items.append(URLQueryItem(name: "q", value: searchText))
         }
-        items.append(URLQueryItem(name: "limit", value: "200"))
+        items.append(URLQueryItem(name: "limit", value: String(limit)))
         return items
     }
 }

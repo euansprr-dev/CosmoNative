@@ -887,6 +887,7 @@ struct SwipeFileDiscoverView: View {
 
     @StateObject private var viewModel = SwipeFileDiscoverViewModel()
     @State private var showingFilters = false
+    @State private var selectedCreatorID: String?
 
     var body: some View {
         ScrollView(.vertical) {
@@ -902,7 +903,20 @@ struct SwipeFileDiscoverView: View {
                 SwipeDiscoverPlatformStrip(query: $viewModel.query)
 
                 if section == .creators {
-                    SwipeDiscoverCreatorDirectory(viewModel: viewModel)
+                    if let selectedCreatorID,
+                       let creator = viewModel.creator(id: selectedCreatorID) {
+                        SwipeDiscoverCreatorProfile(
+                            creator: creator,
+                            posts: viewModel.posts(for: creator),
+                            onBack: { self.selectedCreatorID = nil },
+                            onSave: viewModel.save
+                        )
+                    } else {
+                        SwipeDiscoverCreatorDirectory(
+                            viewModel: viewModel,
+                            onSelectCreator: { selectedCreatorID = $0.id }
+                        )
+                    }
                 } else {
                     SwipeDiscoverFeed(
                         section: section,
@@ -919,6 +933,9 @@ struct SwipeFileDiscoverView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.creatorDataChanged)) { _ in
             Task { await viewModel.reload() }
+        }
+        .onChange(of: section) { _ in
+            selectedCreatorID = nil
         }
     }
 }
@@ -979,6 +996,14 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         return filtered
     }
 
+    func creator(id: String) -> SwipeDiscoverCreatorRecord? {
+        creators.first { $0.id == id }
+    }
+
+    func posts(for creator: SwipeDiscoverCreatorRecord) -> [SocialPostSnapshot] {
+        posts.filter { $0.author.platformID == creator.id || "@\($0.author.handle)" == creator.handle }
+    }
+
     func loadIfNeeded() async {
         guard !hasLoaded else { return }
         await reload()
@@ -991,21 +1016,19 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         do {
             if remoteStore.isConfigured {
                 var remoteQuery = query
+                remoteQuery.searchText = ""
                 remoteQuery.platforms = []
                 remoteQuery.minimumOutlierMultiplier = nil
-                remoteQuery.postedWindow = .lastYear
+                remoteQuery.postedWindow = .allTime
+                remoteQuery.limit = 1_000
                 let remotePosts = try await remoteStore.fetchPosts(query: remoteQuery)
                 let remoteCreators = try await remoteStore.fetchCreators()
 
-                if !remotePosts.isEmpty {
-                    posts = remotePosts
-                    creators = remoteCreatorRecords(creators: remoteCreators, posts: remotePosts)
-                    hasLoaded = true
-                    isLoading = false
-                    return
-                }
-
-                errorMessage = "Cloud discovery is connected, but the feed has no posts yet. Showing local imports."
+                posts = remotePosts
+                creators = remoteCreatorRecords(creators: remoteCreators, posts: remotePosts)
+                hasLoaded = true
+                isLoading = false
+                return
             }
 
             let loaded = try await loadLocalCatalog()
@@ -1037,7 +1060,7 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         errorMessage = nil
 
         do {
-            try await remoteStore.refreshDue(limit: 25)
+            try await remoteStore.refreshDue(limit: 25, force: true)
             saveMessage = "Discovery refreshed"
         } catch {
             errorMessage = "Cloud refresh failed: \(error.localizedDescription). Showing cached results."
@@ -1083,7 +1106,7 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
                 creatorImportMessage = "Creator added. Loading profile..."
                 hasLoaded = false
                 await reload()
-                creatorImportMessage = "Creator added. Importing their latest posts..."
+                creatorImportMessage = "Creator added. Importing posts from Apify. This can take a few minutes..."
 
                 do {
                     try await remoteStore.refreshSource(sourceID: sourceID)
@@ -1116,7 +1139,7 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
     ) -> [SwipeDiscoverCreatorRecord] {
         let postsByCreator = Dictionary(grouping: posts, by: { $0.author.platformID })
 
-        return remoteCreators.map { creator in
+        let records = remoteCreators.map { creator in
             let creatorPosts = postsByCreator[creator.uuid] ?? []
             return SwipeDiscoverCreatorRecord(
                 id: creator.uuid,
@@ -1136,6 +1159,32 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
                 topPosts: Array(creatorPosts.sorted { ($0.derived.outlierMultiplier ?? 0) > ($1.derived.outlierMultiplier ?? 0) }.prefix(3))
             )
         }
+
+        if !records.isEmpty {
+            return records
+        }
+
+        return postsByCreator.map { creatorID, creatorPosts in
+            let firstPost = creatorPosts[0]
+            return SwipeDiscoverCreatorRecord(
+                id: creatorID,
+                name: firstPost.author.displayName,
+                handle: "@\(firstPost.author.handle)",
+                platform: firstPost.platform,
+                avatarURL: firstPost.author.avatarURL,
+                followerCount: firstPost.author.followerCount,
+                niche: nil,
+                bio: nil,
+                postCount: creatorPosts.count,
+                totalViews: creatorPosts.compactMap(\.metrics.views).reduce(0, +),
+                totalLikes: creatorPosts.compactMap(\.metrics.likes).reduce(0, +),
+                totalComments: creatorPosts.compactMap(\.metrics.comments).reduce(0, +),
+                topOutlierMultiplier: creatorPosts.compactMap(\.derived.outlierMultiplier).max(),
+                latestPostDate: creatorPosts.compactMap(\.publishedAt).max(),
+                topPosts: Array(creatorPosts.sorted { ($0.derived.outlierMultiplier ?? 0) > ($1.derived.outlierMultiplier ?? 0) }.prefix(3))
+            )
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     private func loadCatalogSnapshots(from creatorAtoms: [Atom]) -> (posts: [SocialPostSnapshot], records: [SwipeDiscoverCreatorRecord]) {
@@ -1677,6 +1726,7 @@ private struct SwipeDiscoverPostCard: View {
 
 private struct SwipeDiscoverCreatorDirectory: View {
     @ObservedObject var viewModel: SwipeFileDiscoverViewModel
+    let onSelectCreator: (SwipeDiscoverCreatorRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1753,7 +1803,9 @@ private struct SwipeDiscoverCreatorDirectory: View {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(viewModel.filteredCreators) { creator in
-                        SwipeDiscoverCreatorRow(creator: creator)
+                        SwipeDiscoverCreatorRow(creator: creator) {
+                            onSelectCreator(creator)
+                        }
                     }
                 }
             }
@@ -1765,19 +1817,36 @@ private struct SwipeDiscoverCreatorImportNotice: View {
     let message: String
     let systemImage: String
     let tint: Color
+    private var isInProgress: Bool { systemImage == "arrow.triangle.2.circlepath" }
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 16)
+            if isInProgress {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                    .frame(width: 16)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 16)
+            }
 
-            Text(message)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.textSecondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if isInProgress {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .frame(maxWidth: 260)
+                        .tint(tint)
+                }
+            }
 
             Spacer(minLength: 0)
         }
@@ -1793,59 +1862,192 @@ private struct SwipeDiscoverCreatorImportNotice: View {
 
 private struct SwipeDiscoverCreatorRow: View {
     let creator: SwipeDiscoverCreatorRecord
+    let onSelect: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                AsyncImage(url: creator.avatarURL) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
-                    } else {
-                        Circle().fill(DS.accentSoft)
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    AsyncImage(url: creator.avatarURL) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Circle()
+                                .fill(DS.accentSoft)
+                                .overlay {
+                                    Text(String(creator.name.prefix(1)).uppercased())
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundStyle(DS.textSecondary)
+                                }
+                        }
                     }
-                }
-                .frame(width: 46, height: 46)
-                .clipShape(Circle())
+                    .frame(width: 46, height: 46)
+                    .clipShape(Circle())
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(creator.name)
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(DS.text)
-                    Text([creator.handle, creator.niche].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 12, weight: .medium))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(creator.name)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(DS.text)
+                        Text([creator.handle, creator.niche].compactMap { $0 }.joined(separator: " · "))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                    }
+
+                    Spacer()
+
+                    creatorMetric("Followers", creator.followerCount)
+                    creatorMetric("Posts", creator.postCount)
+                    creatorMetric("Top", creator.topOutlierMultiplier.map { Int($0.rounded()) }, suffix: "x")
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(DS.textMuted)
                 }
 
-                Spacer()
-
-                creatorMetric("Followers", creator.followerCount)
-                creatorMetric("Posts", creator.postCount)
-                creatorMetric("Top", creator.topOutlierMultiplier.map { Int($0.rounded()) }, suffix: "x")
-            }
-
-            if !creator.topPosts.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(creator.topPosts.prefix(3)) { post in
-                        Text(post.body ?? post.title ?? post.canonicalURL.absoluteString)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(DS.textSecondary)
-                            .lineLimit(3)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
-                            .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 10))
+                if !creator.topPosts.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(creator.topPosts.prefix(3)) { post in
+                            Text(post.body ?? post.title ?? post.canonicalURL.absoluteString)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(DS.textSecondary)
+                                .lineLimit(3)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
+                                .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 10))
+                        }
                     }
                 }
             }
+            .padding(14)
+            .background(DS.surface.opacity(0.72), in: .rect(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.borderSubtle, lineWidth: 0.75))
         }
-        .padding(14)
-        .background(DS.surface.opacity(0.72), in: .rect(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.borderSubtle, lineWidth: 0.75))
+        .buttonStyle(.plain)
     }
 
     private func creatorMetric(_ title: String, _ value: Int?, suffix: String = "") -> some View {
         VStack(alignment: .trailing, spacing: 2) {
             Text(value.map { formatCount($0) + suffix } ?? "-")
                 .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(DS.text)
+                .monospacedDigit()
+            Text(title)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DS.textMuted)
+                .textCase(.uppercase)
+        }
+    }
+}
+
+private struct SwipeDiscoverCreatorProfile: View {
+    let creator: SwipeDiscoverCreatorRecord
+    let posts: [SocialPostSnapshot]
+    let onBack: () -> Void
+    let onSave: (SocialPostSnapshot, String?) -> Void
+
+    @State private var sortMode: SocialDiscoverySort = .highestOutlier
+
+    private var sortedPosts: [SocialPostSnapshot] {
+        let query = SocialDiscoveryQuery(
+            minimumOutlierMultiplier: nil,
+            postedWindow: .allTime,
+            sort: sortMode,
+            limit: 1_000
+        )
+        return SocialDiscoveryStore(query: query, posts: posts).visiblePosts
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Button(action: onBack) {
+                Label("Creators", systemImage: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 14) {
+                    AsyncImage(url: creator.avatarURL) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Circle()
+                                .fill(DS.accentSoft)
+                                .overlay {
+                                    Text(String(creator.name.prefix(1)).uppercased())
+                                        .font(.system(size: 22, weight: .bold))
+                                        .foregroundStyle(DS.textSecondary)
+                                }
+                        }
+                    }
+                    .frame(width: 72, height: 72)
+                    .clipShape(Circle())
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(creator.name)
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundStyle(DS.text)
+                        Text(creator.handle)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(DS.textMuted)
+                        if let bio = creator.bio, !bio.isEmpty {
+                            Text(bio)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(DS.textSecondary)
+                                .lineLimit(3)
+                        }
+                    }
+
+                    Spacer()
+
+                    creatorMetric("Followers", creator.followerCount)
+                    creatorMetric("Posts", creator.postCount)
+                    creatorMetric("Top", creator.topOutlierMultiplier.map { Int($0.rounded()) }, suffix: "x")
+                }
+            }
+            .padding(16)
+            .background(DS.surface.opacity(0.72), in: .rect(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.borderSubtle, lineWidth: 0.75))
+
+            HStack(spacing: 8) {
+                ForEach([SocialDiscoverySort.highestOutlier, .mostViewed, .mostLiked, .newest], id: \.rawValue) { sort in
+                    Button(sort.displayName) {
+                        sortMode = sort
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(sortMode == sort ? DS.text : DS.textMuted)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(sortMode == sort ? DS.surfaceElevated : DS.surface.opacity(0.72), in: Capsule())
+                    .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.75))
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
+
+                Text("\(sortedPosts.count) posts")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.textMuted)
+                    .monospacedDigit()
+            }
+
+            if sortedPosts.isEmpty {
+                SwipeFileEmptyState(
+                    title: "No posts cached yet",
+                    subtitle: "This creator is in the graph. Their posts will appear here after the import finishes.",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+                .frame(maxWidth: .infinity, minHeight: 320)
+            } else {
+                SwipeDiscoverMasonryGrid(posts: sortedPosts, onSave: onSave)
+            }
+        }
+    }
+
+    private func creatorMetric(_ title: String, _ value: Int?, suffix: String = "") -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(value.map { formatCount($0) + suffix } ?? "-")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundStyle(DS.text)
                 .monospacedDigit()
             Text(title)

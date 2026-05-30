@@ -8,15 +8,17 @@ struct SocialDiscoveryQuery: Equatable, Sendable {
     var minimumOutlierMultiplier: Double?
     var postedWindow: SocialPostedWindow
     var sort: SocialDiscoverySort
+    var limit: Int
 
     init(
         searchText: String = "",
         platforms: Set<SocialPlatform> = [],
         languages: Set<String> = [],
         followerRange: SocialFollowerRange = .any,
-        minimumOutlierMultiplier: Double? = 10,
+        minimumOutlierMultiplier: Double? = nil,
         postedWindow: SocialPostedWindow = .lastThreeMonths,
-        sort: SocialDiscoverySort = .highestOutlier
+        sort: SocialDiscoverySort = .highestOutlier,
+        limit: Int = 1_000
     ) {
         self.searchText = searchText
         self.platforms = platforms
@@ -25,6 +27,7 @@ struct SocialDiscoveryQuery: Equatable, Sendable {
         self.minimumOutlierMultiplier = minimumOutlierMultiplier
         self.postedWindow = postedWindow
         self.sort = sort
+        self.limit = limit
     }
 }
 

@@ -29,6 +29,7 @@ export function apifyInstagramInputForSource(source: SocialSourceRow): Record<st
 export class ApifyInstagramDiscoveryProvider implements DiscoveryProvider {
   readonly id = 'apify-instagram';
   readonly platforms = ['instagram'] as const;
+  private readonly profileActorId = 'apify~instagram-profile-scraper';
   private readonly postActorId = 'apify~instagram-post-scraper';
 
   isConfigured(context?: DiscoveryProviderContext): boolean {
@@ -56,50 +57,56 @@ export class ApifyInstagramDiscoveryProvider implements DiscoveryProvider {
       tokenSource: context?.providerKeys?.apifyApiKey ? 'request' : 'environment',
     });
 
-    const runResponse = await fetch(
-      `https://api.apify.com/v2/acts/${this.postActorId}/runs?token=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      }
-    );
-
-    if (!runResponse.ok) {
-      const body = await runResponse.text();
-      throw new Error(`Apify Instagram ${runResponse.status}: ${body.slice(0, 300)}`);
-    }
-
-    const run = await runResponse.json() as ApifyRunResponse;
-    const runId = run.data?.id;
-    const datasetId = run.data?.defaultDatasetId;
-    if (!runId || !datasetId) {
-      throw new Error('Apify Instagram did not return a run ID and dataset ID.');
-    }
-
-    await waitForRun(runId, apiKey);
+    const postRun = await runActor(this.postActorId, input, apiKey);
+    await waitForRun(postRun.runId, apiKey);
 
     console.log('[discovery-apify] dataset ready', {
       sourceUuid: source.uuid,
-      runId,
-      datasetId,
+      runId: postRun.runId,
+      datasetId: postRun.datasetId,
     });
 
-    const items = await fetchDatasetItems(datasetId, apiKey);
+    const items = await fetchDatasetItems(postRun.datasetId, apiKey);
+    const profile = await this.fetchProfile(handle, apiKey, source.uuid);
+    const enrichedItems = items.map(item => enrichInstagramRecord(item, profile, handle, source));
     console.log('[discovery-apify] dataset fetched', {
       sourceUuid: source.uuid,
-      itemCount: items.length,
+      itemCount: enrichedItems.length,
+      hasProfile: Boolean(profile),
     });
 
     return {
       provider: this.id,
       source,
-      posts: items.map(item => managedSocialRecordToPost('instagram', this.id, item, source)),
+      posts: enrichedItems.map(item => managedSocialRecordToPost('instagram', this.id, item, source)),
     };
   }
 
   private apiKey(context?: DiscoveryProviderContext): string {
     return context?.providerKeys?.apifyApiKey || config.apifyApiKey;
+  }
+
+  private async fetchProfile(
+    handle: string,
+    apiKey: string,
+    sourceUuid: string
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const run = await runActor(this.profileActorId, {
+        usernames: [handle],
+        resultsLimit: 1,
+      }, apiKey);
+      await waitForRun(run.runId, apiKey);
+      const profiles = await fetchDatasetItems(run.datasetId, apiKey);
+      return profiles[0] ?? null;
+    } catch (error) {
+      console.warn('[discovery-apify] profile enrichment failed', {
+        sourceUuid,
+        handle,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
   }
 }
 
@@ -144,6 +151,35 @@ async function waitForRun(runId: string, apiKey: string): Promise<void> {
   throw new Error('Apify Instagram run timed out while waiting for posts.');
 }
 
+async function runActor(
+  actorId: string,
+  input: Record<string, unknown>,
+  apiKey: string
+): Promise<{ runId: string; datasetId: string }> {
+  const runResponse = await fetch(
+    `https://api.apify.com/v2/acts/${actorId}/runs?token=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }
+  );
+
+  if (!runResponse.ok) {
+    const body = await runResponse.text();
+    throw new Error(`Apify ${actorId} ${runResponse.status}: ${body.slice(0, 300)}`);
+  }
+
+  const run = await runResponse.json() as ApifyRunResponse;
+  const runId = run.data?.id;
+  const datasetId = run.data?.defaultDatasetId;
+  if (!runId || !datasetId) {
+    throw new Error(`Apify ${actorId} did not return a run ID and dataset ID.`);
+  }
+
+  return { runId, datasetId };
+}
+
 async function fetchDatasetItems(datasetId: string, apiKey: string): Promise<Array<Record<string, unknown>>> {
   const datasetResponse = await fetch(
     `https://api.apify.com/v2/datasets/${encodeURIComponent(datasetId)}/items?token=${encodeURIComponent(apiKey)}&format=json&clean=true`
@@ -154,4 +190,48 @@ async function fetchDatasetItems(datasetId: string, apiKey: string): Promise<Arr
   }
 
   return await datasetResponse.json() as Array<Record<string, unknown>>;
+}
+
+function stringValue(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function numberValue(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number.parseInt(value.replace(/[,_]/g, ''), 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function enrichInstagramRecord(
+  record: Record<string, unknown>,
+  profile: Record<string, unknown> | null,
+  handle: string,
+  source: SocialSourceRow
+): Record<string, unknown> {
+  if (!profile) {
+    return {
+      ownerUsername: handle,
+      ownerUrl: source.profile_url ?? `https://www.instagram.com/${handle}/`,
+      ...record,
+    };
+  }
+
+  return {
+    ownerUsername: stringValue(profile, ['username']) ?? handle,
+    ownerFullName: stringValue(profile, ['fullName', 'full_name', 'name']),
+    ownerProfilePicUrl: stringValue(profile, ['profilePicUrl', 'profilePicUrlHD', 'profile_pic_url']),
+    ownerFollowersCount: numberValue(profile, ['followersCount', 'followedByCount', 'followers', 'follower_count']),
+    ownerUrl: source.profile_url ?? `https://www.instagram.com/${handle}/`,
+    ...record,
+  };
 }

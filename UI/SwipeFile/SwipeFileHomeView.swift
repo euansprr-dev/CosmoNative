@@ -1573,24 +1573,86 @@ private struct SwipeDiscoverMasonryGrid: View {
     let posts: [SocialPostSnapshot]
     let onSave: (SocialPostSnapshot, String?) -> Void
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 230, maximum: 340), spacing: 16, alignment: .top)
-    ]
-
     var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
-            ForEach(posts) { post in
-                SwipeDiscoverPostCard(post: post, onSave: onSave)
+        GeometryReader { proxy in
+            let spacing: CGFloat = 16
+            let columnCount = Self.columnCount(for: proxy.size.width)
+            let cardWidth = Self.cardWidth(
+                containerWidth: proxy.size.width,
+                columnCount: columnCount,
+                spacing: spacing
+            )
+            let columns = distribute(posts: posts, columnCount: columnCount, cardWidth: cardWidth, spacing: spacing)
+
+            HStack(alignment: .top, spacing: spacing) {
+                ForEach(columns.indices, id: \.self) { columnIndex in
+                    LazyVStack(spacing: spacing) {
+                        ForEach(columns[columnIndex]) { post in
+                            SwipeDiscoverPostCard(
+                                post: post,
+                                cardWidth: cardWidth,
+                                onSave: onSave
+                            )
+                            .frame(width: cardWidth)
+                        }
+                    }
+                }
             }
         }
+        .frame(minHeight: estimatedGridHeight(posts: posts, width: 980))
+    }
+
+    private static func columnCount(for width: CGFloat) -> Int {
+        guard width > 0 else { return 2 }
+        let idealCardWidth: CGFloat = 330
+        let spacing: CGFloat = 16
+        return max(2, min(4, Int((width + spacing) / (idealCardWidth + spacing))))
+    }
+
+    private static func cardWidth(containerWidth: CGFloat, columnCount: Int, spacing: CGFloat) -> CGFloat {
+        let rawWidth = (containerWidth - spacing * CGFloat(columnCount - 1)) / CGFloat(columnCount)
+        return max(260, rawWidth)
+    }
+
+    private func distribute(
+        posts: [SocialPostSnapshot],
+        columnCount: Int,
+        cardWidth: CGFloat,
+        spacing: CGFloat
+    ) -> [[SocialPostSnapshot]] {
+        var columns = Array(repeating: [SocialPostSnapshot](), count: columnCount)
+        var heights = Array(repeating: CGFloat.zero, count: columnCount)
+
+        for post in posts {
+            let target = heights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
+            columns[target].append(post)
+            heights[target] += SwipeDiscoverPostCard.estimatedHeight(for: post, cardWidth: cardWidth) + spacing
+        }
+
+        return columns
+    }
+
+    private func estimatedGridHeight(posts: [SocialPostSnapshot], width: CGFloat) -> CGFloat {
+        guard !posts.isEmpty else { return 260 }
+        let spacing: CGFloat = 16
+        let columnCount = Self.columnCount(for: width)
+        let cardWidth = Self.cardWidth(containerWidth: width, columnCount: columnCount, spacing: spacing)
+        let columns = distribute(posts: posts, columnCount: columnCount, cardWidth: cardWidth, spacing: spacing)
+        return max(420, columns.map { column in
+            column.reduce(CGFloat.zero) { partial, post in
+                partial + SwipeDiscoverPostCard.estimatedHeight(for: post, cardWidth: cardWidth) + spacing
+            }
+        }.max() ?? 420)
     }
 }
 
 private struct SwipeDiscoverPostCard: View {
     let post: SocialPostSnapshot
+    let cardWidth: CGFloat
     let onSave: (SocialPostSnapshot, String?) -> Void
 
     @State private var isHovered = false
+    private static let infoSectionHeight: CGFloat = 196
 
     private var thumbnailURL: URL? {
         post.media.first(where: { $0.kind == .thumbnail || $0.kind == .image })?.url
@@ -1623,10 +1685,46 @@ private struct SwipeDiscoverPostCard: View {
     }
 
     private var mediaAspectRatio: CGFloat {
-        switch previewAspect {
+        Self.mediaAspectRatio(for: post)
+    }
+
+    private var mediaHeight: CGFloat {
+        Self.mediaHeight(for: post, cardWidth: cardWidth)
+    }
+
+    static func estimatedHeight(for post: SocialPostSnapshot, cardWidth: CGFloat) -> CGFloat {
+        mediaHeight(for: post, cardWidth: cardWidth) + infoSectionHeight
+    }
+
+    private static func mediaAspectRatio(for post: SocialPostSnapshot) -> CGFloat {
+        switch previewAspect(for: post) {
         case .wide: return 16.0 / 9.0
         case .portrait: return 1.0
         case .vertical: return 9.0 / 16.0
+        }
+    }
+
+    private static func mediaHeight(for post: SocialPostSnapshot, cardWidth: CGFloat) -> CGFloat {
+        switch previewAspect(for: post) {
+        case .wide:
+            return cardWidth * 9.0 / 16.0
+        case .portrait:
+            return cardWidth
+        case .vertical:
+            return min(cardWidth * 16.0 / 9.0, 620)
+        }
+    }
+
+    private static func previewAspect(for post: SocialPostSnapshot) -> PreviewAspect {
+        switch post.platform {
+        case .youtube:
+            return post.format == .shortVideo ? .vertical : .wide
+        case .instagram:
+            return post.format == .shortVideo ? .vertical : .portrait
+        case .tiktok:
+            return .vertical
+        default:
+            return post.format == .shortVideo ? .vertical : .wide
         }
     }
 
@@ -1638,12 +1736,15 @@ private struct SwipeDiscoverPostCard: View {
                 Text(post.body ?? post.title ?? post.canonicalURL.absoluteString)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(DS.text)
-                    .lineLimit(6)
+                    .lineLimit(4)
+                Spacer(minLength: 0)
                 metricRow
                 footerRow
             }
             .padding(14)
+            .frame(height: Self.infoSectionHeight, alignment: .topLeading)
         }
+        .frame(height: Self.estimatedHeight(for: post, cardWidth: cardWidth), alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(DS.surface.opacity(0.74), in: cardShape)
         .overlay(
@@ -1676,6 +1777,7 @@ private struct SwipeDiscoverPostCard: View {
             }
             .frame(maxWidth: .infinity)
             .aspectRatio(mediaAspectRatio, contentMode: .fill)
+            .frame(height: mediaHeight)
             .clipped()
             .overlay(alignment: .topLeading) {
                 platformBadge
@@ -1695,7 +1797,7 @@ private struct SwipeDiscoverPostCard: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
-            .aspectRatio(post.format == .text ? 4.0 / 3.0 : mediaAspectRatio, contentMode: .fit)
+            .frame(height: mediaHeight)
             .background(DS.commandChromePanelFill)
             .overlay(alignment: .topTrailing) {
                 outlierBadge

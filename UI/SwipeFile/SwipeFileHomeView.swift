@@ -961,6 +961,10 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
     private let remoteStore = SocialDiscoveryRemoteStore()
     private let localCache = SocialDiscoveryLocalCache()
 
+    init() {
+        restoreCachedDiscoveryIfAvailable()
+    }
+
     var visiblePosts: [SocialPostSnapshot] {
         SocialDiscoveryStore(query: query, posts: posts).visiblePosts
     }
@@ -1019,11 +1023,8 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         do {
             if remoteStore.isConfigured {
                 if let cached = localCache.load() {
-                    posts = cached.posts
-                    creators = remoteCreatorRecords(creators: cached.creators, posts: cached.posts)
-                    hasLoaded = true
+                    applyCachedDiscovery(cached)
                     isLoading = false
-                    Task { await loadRemoteDiscovery(showLoading: false) }
                     return
                 }
 
@@ -1049,6 +1050,18 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         }
 
         isLoading = false
+    }
+
+    private func restoreCachedDiscoveryIfAvailable() {
+        guard remoteStore.isConfigured, let cached = localCache.load() else { return }
+        applyCachedDiscovery(cached)
+        isLoading = false
+    }
+
+    private func applyCachedDiscovery(_ cached: SocialDiscoveryLocalCache.Payload) {
+        posts = cached.posts
+        creators = remoteCreatorRecords(creators: cached.creators, posts: cached.posts)
+        hasLoaded = true
     }
 
     private func loadRemoteDiscovery(showLoading: Bool) async {

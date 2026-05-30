@@ -895,7 +895,7 @@ struct SwipeFileDiscoverView: View {
                     section: section,
                     query: $viewModel.query,
                     isShowingFilters: $showingFilters,
-                    onRefresh: { Task { await viewModel.reload() } }
+                    onRefresh: { Task { await viewModel.refreshDiscovery() } }
                 )
 
                 SwipeDiscoverPillarStrip()
@@ -1024,6 +1024,25 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         isLoading = false
     }
 
+    func refreshDiscovery() async {
+        guard remoteStore.isConfigured else {
+            await reload()
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            try await remoteStore.refreshDue(limit: 25)
+            saveMessage = "Discovery refreshed"
+        } catch {
+            errorMessage = "Cloud refresh failed: \(error.localizedDescription). Showing cached results."
+        }
+
+        await reload()
+    }
+
     func save(_ post: SocialPostSnapshot, boardID: String? = nil) {
         Task {
             do {
@@ -1051,7 +1070,7 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
             do {
                 try await remoteStore.addCreator(identity: identity)
                 creatorSearchText = ""
-                saveMessage = "Creator added to discovery graph"
+                saveMessage = "Creator added and refreshed"
                 hasLoaded = false
                 await reload()
             } catch {

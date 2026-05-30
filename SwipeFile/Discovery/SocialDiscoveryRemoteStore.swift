@@ -47,6 +47,14 @@ final class SocialDiscoveryRemoteStore: Sendable {
         let creators: [SocialDiscoveryRemoteCreator]
     }
 
+    private struct AddSourceResponse: Decodable {
+        let source: SourceRow
+    }
+
+    private struct SourceRow: Decodable {
+        let uuid: String
+    }
+
     struct PostRow: Decodable {
         let uuid: String
         let platform: SocialPlatform
@@ -168,6 +176,26 @@ final class SocialDiscoveryRemoteStore: Sendable {
             profileURL: identity.profileURL?.absoluteString,
             nicheTags: nicheTags
         ))
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response)
+        let created = try decoder.decode(AddSourceResponse.self, from: data)
+        try await refreshSource(sourceID: created.source.uuid)
+    }
+
+    func refreshDue(limit: Int = 25) async throws {
+        guard isConfigured else { throw RemoteStoreError.missingConfiguration }
+        var request = try makeRequest(path: "/api/discovery/refresh-due")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(RefreshDueRequest(limit: limit))
+        let (_, response) = try await session.data(for: request)
+        try validate(response: response)
+    }
+
+    private func refreshSource(sourceID: String) async throws {
+        var request = try makeRequest(path: "/api/discovery/sources/\(sourceID)/refresh")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let (_, response) = try await session.data(for: request)
         try validate(response: response)
     }
@@ -248,6 +276,10 @@ private struct SavePostRequest: Encodable {
     enum CodingKeys: String, CodingKey {
         case boardID = "boardId"
     }
+}
+
+private struct RefreshDueRequest: Encodable {
+    let limit: Int
 }
 
 private extension SocialDiscoveryQuery {

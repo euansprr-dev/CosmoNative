@@ -1024,12 +1024,19 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
                 remoteQuery.minimumOutlierMultiplier = nil
                 remoteQuery.postedWindow = .allTime
                 remoteQuery.limit = 1_000
-                let remotePosts = try await remoteStore.fetchPosts(query: remoteQuery)
-                let remoteCreators = try await remoteStore.fetchCreators()
 
-                posts = remotePosts
-                creators = remoteCreatorRecords(creators: remoteCreators, posts: remotePosts)
+                let remoteCreators = try await remoteStore.fetchCreators()
+                creators = remoteCreatorRecords(creators: remoteCreators, posts: posts)
                 hasLoaded = true
+
+                do {
+                    let remotePosts = try await remoteStore.fetchPosts(query: remoteQuery, creators: remoteCreators)
+                    posts = remotePosts
+                    creators = remoteCreatorRecords(creators: remoteCreators, posts: remotePosts)
+                } catch {
+                    errorMessage = "Cloud posts are still loading: \(error.localizedDescription)"
+                }
+
                 isLoading = false
                 return
             }

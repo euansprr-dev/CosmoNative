@@ -160,6 +160,22 @@ final class SocialDiscoveryRemoteStore: Sendable {
         async let posts = fetchPostRows(query: query)
         let creatorRows = try await creators
         let postRows = try await posts
+        return snapshots(from: postRows, creators: creatorRows)
+    }
+
+    func fetchPosts(
+        query: SocialDiscoveryQuery,
+        creators creatorRows: [SocialDiscoveryRemoteCreator]
+    ) async throws -> [SocialPostSnapshot] {
+        guard isConfigured else { throw RemoteStoreError.missingConfiguration }
+        let postRows = try await fetchPostRows(query: query)
+        return snapshots(from: postRows, creators: creatorRows)
+    }
+
+    private func snapshots(
+        from postRows: [PostRow],
+        creators creatorRows: [SocialDiscoveryRemoteCreator]
+    ) -> [SocialPostSnapshot] {
         let creatorMap = Dictionary(uniqueKeysWithValues: creatorRows.map { ($0.uuid, $0) })
         return postRows.map { $0.snapshot(creator: $0.creatorUUID.flatMap { creatorMap[$0] }) }
     }

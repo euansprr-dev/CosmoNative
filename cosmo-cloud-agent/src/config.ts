@@ -67,6 +67,7 @@ export const config = {
     },
   },
   apifyApiKey: process.env.APIFY_API_KEY || '',
+  apifyInstagramPostLimit: parseInt(process.env.APIFY_INSTAGRAM_POST_LIMIT || '1000', 10),
   xBearerToken: process.env.X_BEARER_TOKEN || '',
 
   // Exemplar Codex integration — when true, writing engine uses full Codex + walkthrough

@@ -123,13 +123,14 @@ export function managedSocialRecordToPost(
   record: Record<string, unknown>,
   source: SocialSourceRow
 ): DiscoveredPostInput {
-  const id = stringValue(record, ['id', 'post_id', 'shortcode', 'urn', 'tweet_id', 'url']) ?? crypto.randomUUID();
+  const id = stringValue(record, ['id', 'post_id', 'shortCode', 'shortcode', 'urn', 'tweet_id', 'url']) ?? crypto.randomUUID();
   const url = stringValue(record, ['url', 'post_url', 'permalink', 'canonical_url']) ?? source.profile_url ?? source.query ?? '';
-  const authorHandle = stringValue(record, ['author_handle', 'username', 'handle', 'screen_name']) ?? source.label;
-  const authorName = stringValue(record, ['author_name', 'full_name', 'name', 'display_name']) ?? authorHandle;
-  const thumbnail = stringValue(record, ['thumbnail_url', 'thumbnail', 'image_url', 'cover_url']);
-  const videoUrl = stringValue(record, ['video_url', 'video']);
-  const imageUrl = stringValue(record, ['image_url', 'image', 'display_url']);
+  const authorHandle = stringValue(record, ['author_handle', 'ownerUsername', 'username', 'handle', 'screen_name']) ?? source.label;
+  const authorName = stringValue(record, ['author_name', 'ownerFullName', 'full_name', 'name', 'display_name']) ?? authorHandle;
+  const thumbnail = stringValue(record, ['thumbnail_url', 'thumbnailUrl', 'thumbnail', 'image_url', 'cover_url', 'displayUrl']);
+  const videoUrl = stringValue(record, ['video_url', 'videoUrl', 'video']);
+  const imageUrl = stringValue(record, ['image_url', 'image', 'display_url', 'displayUrl']);
+  const recordType = stringValue(record, ['type'])?.toLowerCase();
 
   return {
     platform,
@@ -142,14 +143,14 @@ export function managedSocialRecordToPost(
       platformCreatorId: stringValue(record, ['author_id', 'user_id', 'creator_id']),
       handle: authorHandle,
       displayName: authorName,
-      avatarUrl: stringValue(record, ['avatar_url', 'profile_image_url']),
-      profileUrl: stringValue(record, ['author_url', 'profile_url']) ?? source.profile_url ?? undefined,
-      followerCount: numberValue(record, ['followers', 'follower_count', 'followers_count']),
+      avatarUrl: stringValue(record, ['avatar_url', 'profile_image_url', 'ownerProfilePicUrl']),
+      profileUrl: stringValue(record, ['author_url', 'profile_url', 'ownerUrl']) ?? source.profile_url ?? undefined,
+      followerCount: numberValue(record, ['followers', 'follower_count', 'followers_count', 'ownerFollowersCount']),
     },
     title: stringValue(record, ['title', 'headline']),
     caption: stringValue(record, ['caption', 'text', 'description', 'body']),
     postedAt: stringValue(record, ['posted_at', 'timestamp', 'created_at', 'date']),
-    mediaType: videoUrl ? 'short_video' : imageUrl ? 'image' : 'text',
+    mediaType: videoUrl || recordType === 'video' || recordType === 'reel' ? 'short_video' : imageUrl ? 'image' : 'text',
     mediaUrls: [
       ...(thumbnail ? [{ kind: 'thumbnail' as const, url: thumbnail }] : []),
       ...(videoUrl ? [{ kind: 'video' as const, url: videoUrl }] : []),
@@ -157,11 +158,11 @@ export function managedSocialRecordToPost(
     ],
     thumbnailUrl: thumbnail ?? imageUrl,
     metrics: {
-      views: numberValue(record, ['views', 'view_count', 'play_count']),
-      likes: numberValue(record, ['likes', 'like_count', 'favorite_count']),
-      comments: numberValue(record, ['comments', 'comment_count', 'reply_count']),
+      views: numberValue(record, ['views', 'view_count', 'play_count', 'videoPlayCount', 'videoViewCount']),
+      likes: numberValue(record, ['likes', 'like_count', 'favorite_count', 'likesCount']),
+      comments: numberValue(record, ['comments', 'comment_count', 'reply_count', 'commentsCount']),
       reposts: numberValue(record, ['reposts', 'retweets', 'share_count', 'shares']),
-      shares: numberValue(record, ['shares', 'share_count']),
+      shares: numberValue(record, ['shares', 'share_count', 'sharesCount']),
     },
     rawPayload: record,
   };

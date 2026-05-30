@@ -7,7 +7,7 @@ import {
 } from './db';
 import { ApifyInstagramDiscoveryProvider } from './providers/apifyInstagram';
 import { ManagedSocialDiscoveryProvider } from './providers/managedSocial';
-import type { DiscoveryProvider } from './providers/provider';
+import type { DiscoveryProvider, DiscoveryProviderContext } from './providers/provider';
 import { SubstackDiscoveryProvider } from './providers/substack';
 import { YouTubeDiscoveryProvider } from './providers/youtube';
 import type { SocialSourceRow } from './types';
@@ -15,23 +15,26 @@ import type { SocialSourceRow } from './types';
 const providers: DiscoveryProvider[] = [
   new YouTubeDiscoveryProvider(),
   new SubstackDiscoveryProvider(),
-  new ManagedSocialDiscoveryProvider(),
   new ApifyInstagramDiscoveryProvider(),
+  new ManagedSocialDiscoveryProvider(),
 ];
 
 export function discoveryProviders(): DiscoveryProvider[] {
   return providers;
 }
 
-function providerFor(source: SocialSourceRow): DiscoveryProvider | null {
-  return providers.find(provider => provider.canRefresh(source) && provider.isConfigured()) ??
+function providerFor(source: SocialSourceRow, context?: DiscoveryProviderContext): DiscoveryProvider | null {
+  return providers.find(provider => provider.canRefresh(source) && provider.isConfigured(context)) ??
     providers.find(provider => provider.canRefresh(source)) ??
     null;
 }
 
-export async function refreshDiscoverySource(source: SocialSourceRow): Promise<{ found: number; upserted: number; provider: string }> {
+export async function refreshDiscoverySource(
+  source: SocialSourceRow,
+  context?: DiscoveryProviderContext
+): Promise<{ found: number; upserted: number; provider: string }> {
   const startedAt = new Date().toISOString();
-  const provider = providerFor(source);
+  const provider = providerFor(source, context);
 
   if (!provider) {
     const message = `No discovery provider can refresh ${source.platform ?? 'unknown'} source ${source.uuid}`;
@@ -45,11 +48,11 @@ export async function refreshDiscoverySource(source: SocialSourceRow): Promise<{
     platform: source.platform,
     kind: source.kind,
     provider: provider.id,
-    configured: provider.isConfigured(),
+    configured: provider.isConfigured(context),
   });
 
   try {
-    const result = await provider.refreshSource(source);
+    const result = await provider.refreshSource(source, context);
     let upserted = 0;
     for (const input of result.posts) {
       await upsertDiscoveredPost(normalizeDiscoveredPost(input));
@@ -80,12 +83,15 @@ export async function refreshDiscoverySource(source: SocialSourceRow): Promise<{
   }
 }
 
-export async function refreshDueDiscoverySources(limit = 25): Promise<{ sources: number; posts: number }> {
+export async function refreshDueDiscoverySources(
+  limit = 25,
+  context?: DiscoveryProviderContext
+): Promise<{ sources: number; posts: number }> {
   const sources = await fetchDueSources(limit);
   let posts = 0;
   for (const source of sources) {
     try {
-      const result = await refreshDiscoverySource(source);
+      const result = await refreshDiscoverySource(source, context);
       posts += result.upserted;
     } catch (error) {
       console.error(`Discovery refresh failed for ${source.uuid}:`, error);

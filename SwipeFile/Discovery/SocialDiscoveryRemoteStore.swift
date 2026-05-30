@@ -191,15 +191,18 @@ final class SocialDiscoveryRemoteStore: Sendable {
         var request = try makeRequest(path: "/api/discovery/refresh-due")
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 600
         request.httpBody = try JSONEncoder().encode(RefreshDueRequest(limit: limit))
         let (data, response) = try await session.data(for: request)
         try validate(data: data, response: response)
     }
 
     func refreshSource(sourceID: String) async throws {
+        guard isConfigured else { throw RemoteStoreError.missingConfiguration }
         var request = try makeRequest(path: "/api/discovery/sources/\(sourceID)/refresh")
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 600
         let (data, response) = try await session.data(for: request)
         try validate(data: data, response: response)
     }
@@ -244,6 +247,10 @@ final class SocialDiscoveryRemoteStore: Sendable {
 
         var request = URLRequest(url: url)
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        if let apifyKey = APIKeys.apify?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !apifyKey.isEmpty {
+            request.setValue(apifyKey, forHTTPHeaderField: "X-Apify-Api-Key")
+        }
         request.timeoutInterval = 30
         return request
     }

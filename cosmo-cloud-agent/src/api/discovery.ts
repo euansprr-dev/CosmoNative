@@ -12,6 +12,7 @@ import { refreshDiscoverySource, refreshDueDiscoverySources } from '../discovery
 import { creatorInputFromSourceRequest } from '../discovery/sourceCreator';
 import { supabase, userId } from '../db/client';
 import type { SocialPlatform, SocialSourceKind, SocialSourceRow } from '../discovery/types';
+import type { DiscoveryProviderContext } from '../discovery/providers/provider';
 
 export const discoveryRouter = express.Router();
 
@@ -51,6 +52,15 @@ function requireDiscoveryAccess(req: express.Request, res: express.Response): bo
   if (isDiscoveryWriteAuthorized(req.header('authorization'))) return true;
   res.status(401).json({ error: 'Unauthorized discovery request' });
   return false;
+}
+
+function discoveryProviderContext(req: express.Request): DiscoveryProviderContext {
+  const apifyApiKey = req.header('x-apify-api-key')?.trim();
+  return {
+    providerKeys: {
+      ...(apifyApiKey ? { apifyApiKey } : {}),
+    },
+  };
 }
 
 discoveryRouter.get('/feed', async (req, res) => {
@@ -146,14 +156,14 @@ discoveryRouter.post('/sources/:uuid/refresh', async (req, res) => {
     query: data.query,
   });
 
-  const result = await refreshDiscoverySource(data as SocialSourceRow);
+  const result = await refreshDiscoverySource(data as SocialSourceRow, discoveryProviderContext(req));
   res.json(result);
 });
 
 discoveryRouter.post('/refresh-due', async (req, res) => {
   if (!requireDiscoveryAccess(req, res)) return;
   const limit = typeof req.body?.limit === 'number' ? req.body.limit : 25;
-  const result = await refreshDueDiscoverySources(limit);
+  const result = await refreshDueDiscoverySources(limit, discoveryProviderContext(req));
   res.json(result);
 });
 

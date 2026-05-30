@@ -12,13 +12,19 @@ export interface DiscoveryRefreshResult {
   }>;
 }
 
+export interface DiscoveryProviderContext {
+  providerKeys?: {
+    apifyApiKey?: string;
+  };
+}
+
 export interface DiscoveryProvider {
   readonly id: string;
   readonly platforms: readonly SocialPlatform[];
 
-  isConfigured(): boolean;
+  isConfigured(context?: DiscoveryProviderContext): boolean;
   canRefresh(source: SocialSourceRow): boolean;
-  refreshSource(source: SocialSourceRow): Promise<DiscoveryRefreshResult>;
+  refreshSource(source: SocialSourceRow, context?: DiscoveryProviderContext): Promise<DiscoveryRefreshResult>;
 }
 
 export class DiscoveryProviderNotConfiguredError extends Error {

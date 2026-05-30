@@ -931,8 +931,11 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
     @Published private(set) var posts: [SocialPostSnapshot] = []
     @Published private(set) var creators: [SwipeDiscoverCreatorRecord] = []
     @Published private(set) var isLoading = false
+    @Published private(set) var isAddingCreator = false
     @Published var errorMessage: String?
     @Published var saveMessage: String?
+    @Published var creatorImportMessage: String?
+    @Published var creatorImportError: String?
 
     private var hasLoaded = false
     private let remoteStore = SocialDiscoveryRemoteStore()
@@ -1058,23 +1061,43 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         let rawInput = creatorSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawInput.isEmpty else { return }
         guard remoteStore.isConfigured else {
-            errorMessage = "Discovery API is not configured. Add DISCOVERY_API_BASE_URL and DISCOVERY_API_KEY first."
+            creatorImportError = "Discovery API is not configured. Add the Discovery API Base URL and Discovery API Key in Settings."
             return
         }
         guard let identity = SocialPlatformResolver.resolve(input: rawInput) else {
-            errorMessage = "Paste a profile URL or use platform:handle, like youtube:aliabdaal."
+            creatorImportError = "Paste a profile URL or use platform:handle, like youtube:aliabdaal."
             return
         }
+        guard !isAddingCreator else { return }
+
+        isAddingCreator = true
+        creatorImportError = nil
+        creatorImportMessage = "Adding \(identity.handle) to the discovery graph..."
 
         Task {
+            defer { isAddingCreator = false }
+
             do {
-                try await remoteStore.addCreator(identity: identity)
+                let sourceID = try await remoteStore.addCreator(identity: identity)
                 creatorSearchText = ""
-                saveMessage = "Creator added and refreshed"
+                creatorImportMessage = "Creator added. Importing their latest posts..."
+
+                do {
+                    try await remoteStore.refreshSource(sourceID: sourceID)
+                    creatorImportMessage = "Import finished. Reloading creators..."
+                } catch {
+                    creatorImportError = "Creator was added, but the import did not finish: \(error.localizedDescription)"
+                }
+
                 hasLoaded = false
                 await reload()
+                if creatorImportError == nil {
+                    creatorImportMessage = "Creator imported"
+                    saveMessage = "Creator imported"
+                }
             } catch {
-                errorMessage = "Could not add creator: \(error.localizedDescription)"
+                creatorImportError = "Could not add creator: \(error.localizedDescription)"
+                creatorImportMessage = nil
             }
         }
     }
@@ -1664,8 +1687,19 @@ private struct SwipeDiscoverCreatorDirectory: View {
                 .background(.regularMaterial, in: .rect(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.borderSubtle, lineWidth: 0.75))
 
-                Button("Add", systemImage: "plus") {
+                Button {
                     viewModel.addCreatorFromSearch()
+                } label: {
+                    HStack(spacing: 6) {
+                        if viewModel.isAddingCreator {
+                            ProgressView()
+                                .controlSize(.small)
+                                .scaleEffect(0.72)
+                        } else {
+                            Image(systemName: "plus")
+                        }
+                        Text(viewModel.isAddingCreator ? "Adding" : "Add")
+                    }
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(DS.text)
@@ -1674,7 +1708,7 @@ private struct SwipeDiscoverCreatorDirectory: View {
                 .background(.regularMaterial, in: Capsule())
                 .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.75))
                 .buttonStyle(.plain)
-                .disabled(viewModel.creatorSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(viewModel.creatorSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isAddingCreator)
 
                 Menu {
                     ForEach(SocialDiscoverySort.allCases, id: \.rawValue) { sort in
@@ -1687,6 +1721,16 @@ private struct SwipeDiscoverCreatorDirectory: View {
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
+            }
+
+            if let error = viewModel.creatorImportError {
+                SwipeDiscoverCreatorImportNotice(message: error, systemImage: "exclamationmark.triangle", tint: .orange)
+            } else if let message = viewModel.creatorImportMessage {
+                SwipeDiscoverCreatorImportNotice(
+                    message: message,
+                    systemImage: viewModel.isAddingCreator ? "arrow.triangle.2.circlepath" : "checkmark.circle",
+                    tint: viewModel.isAddingCreator ? DS.accent : .green
+                )
             }
 
             if viewModel.isLoading {
@@ -1706,6 +1750,36 @@ private struct SwipeDiscoverCreatorDirectory: View {
                 }
             }
         }
+    }
+}
+
+private struct SwipeDiscoverCreatorImportNotice: View {
+    let message: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 16)
+
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(DS.surface.opacity(0.78), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(tint.opacity(0.28), lineWidth: 0.75)
+        )
     }
 }
 

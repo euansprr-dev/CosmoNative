@@ -27,13 +27,16 @@ struct SocialDiscoveryRemoteCreator: Codable, Equatable, Identifiable, Sendable 
 final class SocialDiscoveryRemoteStore: Sendable {
     enum RemoteStoreError: LocalizedError {
         case missingConfiguration
-        case invalidResponse(Int)
+        case invalidResponse(Int, String?)
 
         var errorDescription: String? {
             switch self {
             case .missingConfiguration:
                 return "Discovery API is not configured."
-            case let .invalidResponse(status):
+            case let .invalidResponse(status, message):
+                if let message, !message.isEmpty {
+                    return "Discovery API returned HTTP \(status): \(message)"
+                }
                 return "Discovery API returned HTTP \(status)."
             }
         }
@@ -163,7 +166,8 @@ final class SocialDiscoveryRemoteStore: Sendable {
         return response.creators
     }
 
-    func addCreator(identity: SocialPlatformIdentity, nicheTags: [String] = []) async throws {
+    @discardableResult
+    func addCreator(identity: SocialPlatformIdentity, nicheTags: [String] = []) async throws -> String {
         guard isConfigured else { throw RemoteStoreError.missingConfiguration }
         var request = try makeRequest(path: "/api/discovery/sources")
         request.httpMethod = "POST"
@@ -177,9 +181,9 @@ final class SocialDiscoveryRemoteStore: Sendable {
             nicheTags: nicheTags
         ))
         let (data, response) = try await session.data(for: request)
-        try validate(response: response)
+        try validate(data: data, response: response)
         let created = try decoder.decode(AddSourceResponse.self, from: data)
-        try await refreshSource(sourceID: created.source.uuid)
+        return created.source.uuid
     }
 
     func refreshDue(limit: Int = 25) async throws {
@@ -188,16 +192,16 @@ final class SocialDiscoveryRemoteStore: Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(RefreshDueRequest(limit: limit))
-        let (_, response) = try await session.data(for: request)
-        try validate(response: response)
+        let (data, response) = try await session.data(for: request)
+        try validate(data: data, response: response)
     }
 
-    private func refreshSource(sourceID: String) async throws {
+    func refreshSource(sourceID: String) async throws {
         var request = try makeRequest(path: "/api/discovery/sources/\(sourceID)/refresh")
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let (_, response) = try await session.data(for: request)
-        try validate(response: response)
+        let (data, response) = try await session.data(for: request)
+        try validate(data: data, response: response)
     }
 
     func savePost(postID: String, boardID: String?) async throws {
@@ -206,8 +210,8 @@ final class SocialDiscoveryRemoteStore: Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(SavePostRequest(boardID: boardID))
-        let (_, response) = try await session.data(for: request)
-        try validate(response: response)
+        let (data, response) = try await session.data(for: request)
+        try validate(data: data, response: response)
     }
 
     private func fetchPostRows(query: SocialDiscoveryQuery) async throws -> [PostRow] {
@@ -222,7 +226,7 @@ final class SocialDiscoveryRemoteStore: Sendable {
         var request = try makeRequest(path: path, queryItems: queryItems)
         request.httpMethod = "GET"
         let (data, response) = try await session.data(for: request)
-        try validate(response: response)
+        try validate(data: data, response: response)
         return try decoder.decode(Response.self, from: data)
     }
 
@@ -244,11 +248,23 @@ final class SocialDiscoveryRemoteStore: Sendable {
         return request
     }
 
-    private func validate(response: URLResponse) throws {
+    private func validate(data: Data, response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else {
-            throw RemoteStoreError.invalidResponse(http.statusCode)
+            throw RemoteStoreError.invalidResponse(http.statusCode, message(from: data))
         }
+    }
+
+    private func message(from data: Data) -> String? {
+        guard !data.isEmpty else { return nil }
+
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let error = object["error"] as? String { return error }
+            if let message = object["message"] as? String { return message }
+        }
+
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

@@ -5,8 +5,10 @@ import {
   fetchCreators,
   fetchDiscoveryFeed,
   saveDiscoveredPostToSwipe,
+  upsertCreator,
 } from '../discovery/db';
 import { refreshDiscoverySource, refreshDueDiscoverySources } from '../discovery/jobs';
+import { creatorInputFromSourceRequest } from '../discovery/sourceCreator';
 import { supabase, userId } from '../db/client';
 import type { SocialPlatform, SocialSourceKind, SocialSourceRow } from '../discovery/types';
 
@@ -75,18 +77,22 @@ discoveryRouter.post('/sources', async (req, res) => {
     return;
   }
 
+  const creatorInput = creatorInputFromSourceRequest(body);
+  const creator = creatorInput ? await upsertCreator(creatorInput) : null;
+
   const source = await createSource({
     kind: body.kind ?? 'tracked_creator',
     platform: body.platform ?? null,
     label: body.label ?? body.profileUrl ?? body.query ?? 'Untitled source',
     query: body.query ?? null,
     profileUrl: body.profileUrl ?? null,
+    creatorUuid: creator?.uuid,
     nicheTags: body.nicheTags ?? [],
     priority: body.priority,
     cadenceMinutes: body.cadenceMinutes,
   });
 
-  res.status(201).json({ source });
+  res.status(201).json({ source, creator });
 });
 
 discoveryRouter.post('/sources/:uuid/refresh', async (req, res) => {

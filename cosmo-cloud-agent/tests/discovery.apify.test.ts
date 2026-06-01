@@ -45,6 +45,12 @@ assert.equal(instagramHandle(source({
   query: '@theandrewlamb',
 })), 'theandrewlamb');
 
+assert.equal(instagramHandle(source({
+  profile_url: 'https://www.instagram.com/p/ABC123/',
+  query: 'p',
+  label: 'p',
+})), '');
+
 const initialInput = apifyInstagramInputForSource(source({
   profile_url: 'https://www.instagram.com/theandrewlamb/',
 }));

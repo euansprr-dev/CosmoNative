@@ -18,7 +18,23 @@ function cleanHandle(value: string): string {
     .trim();
 }
 
-function handleFromProfileUrl(profileUrl?: string): string | null {
+const instagramReservedSegments = new Set([
+  'p',
+  'reel',
+  'reels',
+  'tv',
+  'stories',
+  'explore',
+  'accounts',
+  'direct',
+  'about',
+  'privacy',
+  'terms',
+  'developer',
+  'web',
+]);
+
+function handleFromProfileUrl(profileUrl?: string, platform?: SocialPlatform): string | null {
   if (!profileUrl) return null;
 
   try {
@@ -30,7 +46,12 @@ function handleFromProfileUrl(profileUrl?: string): string | null {
       return cleanHandle(host.replace(/\.substack\.com$/i, ''));
     }
 
-    if (firstPathSegment) return cleanHandle(firstPathSegment);
+    if (!firstPathSegment) return null;
+    if ((platform === 'instagram' || host === 'instagram.com') && instagramReservedSegments.has(firstPathSegment.toLowerCase())) {
+      return null;
+    }
+
+    return cleanHandle(firstPathSegment);
   } catch {
     return cleanHandle(profileUrl);
   }
@@ -43,8 +64,10 @@ export function creatorInputFromSourceRequest(body: SourceCreatorRequest): Disco
   if (kind !== 'tracked_creator' && kind !== 'curated_creator') return null;
   if (!body.platform) return null;
 
-  const handle = cleanHandle(body.query ?? body.label ?? handleFromProfileUrl(body.profileUrl) ?? '');
+  const profileHandle = handleFromProfileUrl(body.profileUrl, body.platform);
+  const handle = profileHandle ?? cleanHandle(body.query ?? body.label ?? '');
   if (!handle) return null;
+  if (body.platform === 'instagram' && instagramReservedSegments.has(handle.toLowerCase())) return null;
 
   return {
     platform: body.platform,

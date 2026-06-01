@@ -122,11 +122,16 @@ discoveryRouter.post('/sources', asyncRoute(async (req, res) => {
     hasQuery: Boolean(body.query),
   });
 
+  const kind = body.kind ?? 'tracked_creator';
   const creatorInput = creatorInputFromSourceRequest(body);
+  if ((kind === 'tracked_creator' || kind === 'curated_creator') && !creatorInput) {
+    res.status(400).json({ error: 'Paste a creator profile URL or platform-prefixed handle. Instagram post, Reel, Story, and Explore URLs are not creator profiles.' });
+    return;
+  }
   const creator = creatorInput ? await upsertCreator(creatorInput) : null;
 
   const source = await createSource({
-    kind: body.kind ?? 'tracked_creator',
+    kind,
     platform: body.platform ?? null,
     label: body.label ?? body.profileUrl ?? body.query ?? 'Untitled source',
     query: body.query ?? null,

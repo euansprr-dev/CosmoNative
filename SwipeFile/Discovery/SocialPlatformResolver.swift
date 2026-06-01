@@ -32,7 +32,14 @@ enum SocialPlatformResolver {
 
     private static func resolveURL(_ url: URL, host: String) -> SocialPlatformIdentity? {
         if host == "instagram.com" || host == "www.instagram.com" {
-            return identity(from: url, platform: .instagram)
+            return identity(
+                from: url,
+                platform: .instagram,
+                ignoredFirstSegments: [
+                    "p", "reel", "reels", "tv", "stories", "explore", "accounts",
+                    "direct", "about", "privacy", "terms", "developer", "web"
+                ]
+            )
         }
 
         if host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com" {

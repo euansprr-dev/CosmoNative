@@ -27,4 +27,24 @@ const keywordSource = creatorInputFromSourceRequest({
 
 assert.equal(keywordSource, null);
 
+const instagramPostUrl = creatorInputFromSourceRequest({
+  kind: 'tracked_creator',
+  platform: 'instagram',
+  label: 'p',
+  query: 'p',
+  profileUrl: 'https://www.instagram.com/p/ABC123/',
+});
+
+assert.equal(instagramPostUrl, null);
+
+const instagramReelUrl = creatorInputFromSourceRequest({
+  kind: 'tracked_creator',
+  platform: 'instagram',
+  label: 'reel',
+  query: 'reel',
+  profileUrl: 'https://www.instagram.com/reel/ABC123/',
+});
+
+assert.equal(instagramReelUrl, null);
+
 console.log('discovery.sourceCreator.test.ts passed');

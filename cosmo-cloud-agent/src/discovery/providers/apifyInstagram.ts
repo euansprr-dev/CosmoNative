@@ -4,6 +4,8 @@ import type { DiscoveryProvider, DiscoveryProviderContext, DiscoveryRefreshResul
 import { DiscoveryProviderNotConfiguredError } from './provider';
 import { managedSocialRecordToPost } from './managedSocial';
 
+const instagramReservedSegments = new Set(['p', 'reel', 'reels', 'tv', 'stories', 'explore', 'accounts', 'direct', 'about', 'privacy', 'terms', 'developer', 'web']);
+
 interface ApifyRunResponse {
   data?: {
     id?: string;
@@ -128,21 +130,25 @@ export function instagramHandle(source: SocialSourceRow): string {
     try {
       const url = new URL(value);
       const firstSegment = url.pathname.split('/').filter(Boolean)[0];
-      if (firstSegment && !['p', 'reel', 'reels', 'stories', 'explore', 'accounts'].includes(firstSegment.toLowerCase())) {
+      if (firstSegment && !instagramReservedSegments.has(firstSegment.toLowerCase())) {
         return firstSegment.replace(/^@/, '');
       }
+      const fallbackValue = source.query ?? source.label;
+      if (fallbackValue !== value) return instagramHandle({ ...source, profile_url: null, query: fallbackValue });
+      return '';
     } catch {
       // Fall through to string cleanup.
     }
   }
 
-  return value
+  const cleaned = value
     .replace(/^@/, '')
     .replace(/^https?:\/\//i, '')
     .replace(/^www\./i, '')
     .replace(/^instagram\.com\//i, '')
     .split(/[/?#]/)[0]
     .trim();
+  return instagramReservedSegments.has(cleaned.toLowerCase()) ? '' : cleaned;
 }
 
 function incrementalCutoff(lastSuccessfulPostedAt: string | null): string | null {

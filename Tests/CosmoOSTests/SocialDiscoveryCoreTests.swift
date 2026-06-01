@@ -30,6 +30,12 @@ final class SocialDiscoveryCoreTests: XCTestCase {
         XCTAssertNil(SocialPlatformResolver.resolve(input: "sahilbloom"))
     }
 
+    func testRejectsInstagramPostURLsForCreatorImport() {
+        XCTAssertNil(SocialPlatformResolver.resolve(input: "https://www.instagram.com/p/ABC123/"))
+        XCTAssertNil(SocialPlatformResolver.resolve(input: "https://www.instagram.com/reel/ABC123/"))
+        XCTAssertNil(SocialPlatformResolver.resolve(input: "https://www.instagram.com/stories/theandrewlamb/123456789/"))
+    }
+
     func testDiscoveryRemoteStoreNormalizesBareRailwayDomains() {
         XCTAssertEqual(
             SocialDiscoveryRemoteStore.normalizedDiscoveryAPIBaseURL("cosmonative-production.up.railway.app"),

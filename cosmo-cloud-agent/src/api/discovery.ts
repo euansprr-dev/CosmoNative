@@ -18,6 +18,18 @@ export const discoveryRouter = express.Router();
 
 const discoveryBuild = 'discovery-source-graph-2026-05-30T1508';
 
+function asyncRoute(
+  handler: (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<void>
+): express.RequestHandler {
+  return (req, res, next) => {
+    handler(req, res, next).catch(next);
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 discoveryRouter.use((req, res, next) => {
   const startedAt = Date.now();
   const requestId = randomUUID();
@@ -63,7 +75,7 @@ function discoveryProviderContext(req: express.Request): DiscoveryProviderContex
   };
 }
 
-discoveryRouter.get('/feed', async (req, res) => {
+discoveryRouter.get('/feed', asyncRoute(async (req, res) => {
   if (!requireDiscoveryAccess(req, res)) return;
   const posts = await fetchDiscoveryFeed({
     platforms: parsePlatforms(req.query.platforms),
@@ -74,16 +86,16 @@ discoveryRouter.get('/feed', async (req, res) => {
     limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined,
   });
   res.json({ posts });
-});
+}));
 
-discoveryRouter.get('/creators', async (req, res) => {
+discoveryRouter.get('/creators', asyncRoute(async (req, res) => {
   if (!requireDiscoveryAccess(req, res)) return;
   const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 200;
   const creators = await fetchCreators(limit);
   res.json({ creators });
-});
+}));
 
-discoveryRouter.post('/sources', async (req, res) => {
+discoveryRouter.post('/sources', asyncRoute(async (req, res) => {
   if (!requireDiscoveryAccess(req, res)) return;
   const body = req.body as {
     kind?: SocialSourceKind;
@@ -132,9 +144,9 @@ discoveryRouter.post('/sources', async (req, res) => {
   });
 
   res.status(201).json({ build: discoveryBuild, source, creator });
-});
+}));
 
-discoveryRouter.post('/sources/:uuid/refresh', async (req, res) => {
+discoveryRouter.post('/sources/:uuid/refresh', asyncRoute(async (req, res) => {
   if (!requireDiscoveryAccess(req, res)) return;
   const { data, error } = await supabase
     .from('social_sources')
@@ -158,23 +170,23 @@ discoveryRouter.post('/sources/:uuid/refresh', async (req, res) => {
 
   const result = await refreshDiscoverySource(data as SocialSourceRow, discoveryProviderContext(req));
   res.json(result);
-});
+}));
 
-discoveryRouter.post('/refresh-due', async (req, res) => {
+discoveryRouter.post('/refresh-due', asyncRoute(async (req, res) => {
   if (!requireDiscoveryAccess(req, res)) return;
   const limit = typeof req.body?.limit === 'number' ? req.body.limit : 25;
   const force = req.body?.force === true;
   const result = await refreshDueDiscoverySources(limit, discoveryProviderContext(req), force);
   res.json(result);
-});
+}));
 
-discoveryRouter.post('/posts/:uuid/save', async (req, res) => {
+discoveryRouter.post('/posts/:uuid/save', asyncRoute(async (req, res) => {
   if (!requireDiscoveryAccess(req, res)) return;
   const atomUuid = await saveDiscoveredPostToSwipe(req.params.uuid, req.body?.boardId);
   res.json({ atomUuid });
-});
+}));
 
-discoveryRouter.get('/health', async (_req, res) => {
+discoveryRouter.get('/health', asyncRoute(async (_req, res) => {
   if (!requireDiscoveryAccess(_req, res)) return;
   const [{ count: postCount }, { data: newest }, { data: runs }] = await Promise.all([
     supabase
@@ -201,5 +213,21 @@ discoveryRouter.get('/health', async (_req, res) => {
     postCount: postCount ?? 0,
     newestPost: newest?.[0] ?? null,
     recentRuns: runs ?? [],
+  });
+}));
+
+discoveryRouter.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const message = errorMessage(error);
+  console.error(`[discovery:${res.locals.discoveryRequestId ?? 'unknown'}] request failed`, {
+    method: req.method,
+    url: req.originalUrl,
+    error: message,
+  });
+
+  if (res.headersSent) return;
+  res.status(500).json({
+    error: message,
+    code: 'Discovery request failed',
+    build: discoveryBuild,
   });
 });

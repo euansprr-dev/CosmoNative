@@ -431,25 +431,39 @@ private struct SwipeFilterChip: View {
     var tint: Color = DS.accent
     var action: () -> Void
 
+    @State private var isHovered = false
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.footnote.weight(.semibold))
                 Text(title)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                    .font(DS.subheadline.weight(isSelected ? .semibold : .medium))
                     .lineLimit(1)
             }
-            .foregroundStyle(isSelected ? tint : DS.textMuted)
-            .padding(.horizontal, 11)
-            .frame(height: 30)
-            .background(
-                isSelected ? tint.opacity(DS.palette.isDark ? 0.18 : 0.12) : DS.surface.opacity(0.74),
-                in: Capsule()
-            )
-            .overlay(Capsule().stroke(isSelected ? tint.opacity(0.38) : DS.borderSubtle, lineWidth: 0.75))
+            .foregroundStyle(isSelected ? tint : (isHovered ? DS.textSecondary : DS.textMuted))
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(chipFill, in: Capsule())
+            .overlay(Capsule().strokeBorder(chipStroke, lineWidth: isSelected ? 1 : 0.5))
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(ProMotionSprings.snappy, value: isSelected)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var chipFill: Color {
+        if isSelected { return tint.opacity(DS.palette.isDark ? 0.22 : 0.14) }
+        return isHovered ? DS.glassInputFillFocused : DS.glassInputFill
+    }
+
+    private var chipStroke: Color {
+        if isSelected { return tint.opacity(0.42) }
+        return isHovered ? DS.glassBorderFocused : DS.glassBorder
     }
 }
 
@@ -461,18 +475,18 @@ private struct SwipeMenuLabel: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.footnote.weight(.semibold))
             Text(title)
-                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                .font(DS.subheadline.weight(isSelected ? .semibold : .medium))
                 .lineLimit(1)
             Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .bold))
+                .font(DS.caption2.weight(.bold))
         }
         .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
-        .padding(.horizontal, 11)
-        .frame(height: 30)
-        .background(isSelected ? DS.accentSoft : DS.surface.opacity(0.74), in: Capsule())
-        .overlay(Capsule().stroke(isSelected ? DS.accent.opacity(0.28) : DS.borderSubtle, lineWidth: 0.75))
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(isSelected ? DS.accentSoft : DS.glassInputFill, in: Capsule())
+        .overlay(Capsule().strokeBorder(isSelected ? DS.accent.opacity(0.42) : DS.glassBorder, lineWidth: isSelected ? 1 : 0.5))
     }
 }
 
@@ -864,20 +878,21 @@ private struct SwipeFileEmptyState: View {
     let systemImage: String
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             Image(systemName: systemImage)
-                .font(.system(size: 28, weight: .semibold))
+                .font(DS.pageTitle)
                 .foregroundStyle(DS.textMuted)
                 .frame(width: 58, height: 58)
-                .background(DS.surface, in: Circle())
+                .background(DS.glassInputFill, in: Circle())
+                .overlay(Circle().strokeBorder(DS.glassBorder, lineWidth: 0.5))
 
             Text(title)
-                .font(.system(size: 17, weight: .bold))
+                .font(DS.headline)
                 .foregroundStyle(DS.text)
 
             Text(subtitle)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(DS.textMuted)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
         }
@@ -888,7 +903,7 @@ struct SwipeFileDiscoverView: View {
     let section: SwipeDiscoverySectionSelection
     @ObservedObject var swipeLibraryViewModel: SwipeLibraryViewModel
 
-    @StateObject private var viewModel = SwipeFileDiscoverViewModel()
+    @State private var viewModel = SwipeFileDiscoverViewModel()
     @State private var showingFilters = false
     @State private var filterAnchor: CGRect = .zero
     @State private var detailPost: SocialPostSnapshot?
@@ -943,7 +958,7 @@ struct SwipeFileDiscoverView: View {
 
 private struct SwipeFileDiscoverContent: View {
     let section: SwipeDiscoverySectionSelection
-    @ObservedObject var viewModel: SwipeFileDiscoverViewModel
+    @Bindable var viewModel: SwipeFileDiscoverViewModel
     @Binding var showingFilters: Bool
     let onOpenPost: (SocialPostSnapshot) -> Void
 
@@ -995,18 +1010,19 @@ private struct SwipeFileDiscoverContent: View {
 }
 
 @MainActor
-private final class SwipeFileDiscoverViewModel: ObservableObject {
-    @Published var query = SocialDiscoveryQuery()
-    @Published var creatorSearchText = ""
-    @Published var creatorSortMode: SocialDiscoverySort = .highestOutlier
-    @Published private(set) var posts: [SocialPostSnapshot] = []
-    @Published private(set) var creators: [SwipeDiscoverCreatorRecord] = []
-    @Published private(set) var isLoading = false
-    @Published private(set) var isAddingCreator = false
-    @Published var errorMessage: String?
-    @Published var saveMessage: String?
-    @Published var creatorImportMessage: String?
-    @Published var creatorImportError: String?
+@Observable
+private final class SwipeFileDiscoverViewModel {
+    var query = SocialDiscoveryQuery()
+    var creatorSearchText = ""
+    var creatorSortMode: SocialDiscoverySort = .highestOutlier
+    private(set) var posts: [SocialPostSnapshot] = []
+    private(set) var creators: [SwipeDiscoverCreatorRecord] = []
+    private(set) var isLoading = false
+    private(set) var isAddingCreator = false
+    var errorMessage: String?
+    var saveMessage: String?
+    var creatorImportMessage: String?
+    var creatorImportError: String?
 
     private var hasLoaded = false
     private let remoteStore = SocialDiscoveryRemoteStore()
@@ -1513,122 +1529,142 @@ private struct SwipeDiscoverHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 18) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(section.title)
-                        .font(.system(size: 44, weight: .bold))
-                        .foregroundStyle(DS.text)
-                    Text(section.subtitle)
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
-                }
-
+                titleBlock
                 Spacer(minLength: 16)
-
-                Button {
-                    withAnimation(ProMotionSprings.bouncy) { isShowingFilters.toggle() }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(SwipeDiscoveryFilterPresentation.summary(for: query))
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
-                            .rotationEffect(.degrees(isShowingFilters ? 180 : 0))
-                    }
-                    .foregroundStyle(isShowingFilters ? DS.text : DS.textSecondary)
-                    .padding(.horizontal, 14)
-                    .frame(height: 34)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay(
-                        Capsule().stroke(
-                            isShowingFilters ? DS.borderActive : DS.borderSubtle,
-                            lineWidth: isShowingFilters ? 1 : 0.75
-                        )
-                    )
-                }
-                .buttonStyle(.plain)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: FilterAnchorKey.self,
-                            value: proxy.frame(in: .named("swipeDiscoverFilterRoot"))
-                        )
-                    }
-                )
-                .help("Filter discovery")
-
-                Button("Reload", systemImage: "arrow.clockwise", action: onRefresh)
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: 34, height: 34)
-                    .background(.regularMaterial, in: Circle())
-                    .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 0.75))
-                    .buttonStyle(.plain)
-                    .help("Reload discovery")
+                filterButton
+                reloadButton
             }
+            searchRow
+        }
+    }
 
-            HStack(spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(section.title)
+                .font(DS.pageTitle)
+                .foregroundStyle(DS.text)
+            Text(section.subtitle)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
+        }
+    }
 
-                    TextField(searchPlaceholder, text: activeSearchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(DS.text)
-                        .focused($searchFocused)
-                        .onSubmit {
-                            if section == .creators {
-                                onAddCreator()
-                            }
-                        }
-
-                    if !activeSearchText.wrappedValue.isEmpty {
-                        Button("Clear", systemImage: "xmark.circle.fill") {
-                            activeSearchText.wrappedValue = ""
-                        }
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .frame(height: 46)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(searchFocused ? DS.borderActive : DS.borderSubtle, lineWidth: 1)
+    private var filterButton: some View {
+        Button {
+            withAnimation(ProMotionSprings.bouncy) { isShowingFilters.toggle() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(DS.subheadline.weight(.semibold))
+                Text(SwipeDiscoveryFilterPresentation.summary(for: query))
+                    .font(DS.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(DS.caption2.weight(.bold))
+                    .rotationEffect(.degrees(isShowingFilters ? 180 : 0))
+            }
+            .foregroundStyle(isShowingFilters ? DS.text : DS.textSecondary)
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .dsGlassInput(isFocused: isShowingFilters, cornerRadius: 18)
+        }
+        .buttonStyle(.plain)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: FilterAnchorKey.self,
+                    value: proxy.frame(in: .named("swipeDiscoverFilterRoot"))
                 )
+            }
+        )
+        .help("Filter discovery")
+        .accessibilityLabel("Filter discovery")
+    }
 
-                if section == .creators {
-                    Button(action: onAddCreator) {
-                        HStack(spacing: 7) {
-                            if isAddingCreator {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .scaleEffect(0.72)
-                            } else {
-                                Image(systemName: "plus")
-                            }
-                            Text(isAddingCreator ? "Adding" : "Add")
-                        }
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(DS.text)
-                        .padding(.horizontal, 14)
-                        .frame(height: 46)
-                        .background(.regularMaterial, in: Capsule())
-                        .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.75))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canAddCreator)
-                }
+    private var reloadButton: some View {
+        Button(action: onRefresh) {
+            Image(systemName: "arrow.clockwise")
+                .font(DS.callout.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: 36, height: 36)
+                .dsGlassInput(cornerRadius: 18)
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("r", modifiers: .command)
+        .help("Reload discovery")
+        .accessibilityLabel("Reload discovery")
+    }
+
+    private var searchRow: some View {
+        HStack(spacing: 12) {
+            searchField
+            if section == .creators {
+                addCreatorButton
             }
         }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(DS.body.weight(.medium))
+                .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
+
+            TextField(searchPlaceholder, text: activeSearchText)
+                .textFieldStyle(.plain)
+                .font(DS.body)
+                .foregroundStyle(DS.text)
+                .focused($searchFocused)
+                .onSubmit {
+                    if section == .creators { onAddCreator() }
+                }
+
+            if !activeSearchText.wrappedValue.isEmpty {
+                Button("Clear", systemImage: "xmark.circle.fill") {
+                    activeSearchText.wrappedValue = ""
+                }
+                .labelStyle(.iconOnly)
+                .font(DS.callout.weight(.medium))
+                .foregroundStyle(DS.textMuted)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 46)
+        .dsGlassInput(isFocused: searchFocused, cornerRadius: 14)
+        .animation(ProMotionSprings.gentle, value: searchFocused)
+    }
+
+    private var addCreatorButton: some View {
+        Button(action: onAddCreator) {
+            HStack(spacing: 7) {
+                if isAddingCreator {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.72)
+                } else {
+                    Image(systemName: "plus")
+                }
+                Text(isAddingCreator ? "Adding" : "Add")
+            }
+            .font(DS.callout.weight(.semibold))
+            .foregroundStyle(canAddCreator ? DS.accent : DS.textMuted)
+            .padding(.horizontal, 16)
+            .frame(height: 46)
+            .background(Capsule().fill(canAddCreator ? DS.accentSoft : DS.glassInputFill))
+            .overlay(
+                Capsule().strokeBorder(
+                    canAddCreator ? DS.accent.opacity(0.4) : DS.glassBorder,
+                    lineWidth: canAddCreator ? 1 : 0.5
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canAddCreator)
+        .accessibilityLabel("Add creator")
     }
 }
 
@@ -1636,10 +1672,10 @@ private struct SwipeDiscoverPillarStrip: View {
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 12) {
-                DiscoverSignalCard(title: "Productivity", systemImage: "bolt", tint: Color(hex: "#34D399"))
-                DiscoverSignalCard(title: "Self-improvement", systemImage: "sparkles", tint: Color(hex: "#818CF8"))
-                DiscoverSignalCard(title: "Business", systemImage: "briefcase", tint: Color(hex: "#F59E0B"))
-                DiscoverSignalCard(title: "Psychology", systemImage: "brain.head.profile", tint: Color(hex: "#38BDF8"))
+                DiscoverSignalCard(title: "Productivity", systemImage: "bolt", tint: DS.entityResearch)
+                DiscoverSignalCard(title: "Self-improvement", systemImage: "sparkles", tint: DS.entityIdea)
+                DiscoverSignalCard(title: "Business", systemImage: "briefcase", tint: DS.entityContent)
+                DiscoverSignalCard(title: "Psychology", systemImage: "brain.head.profile", tint: DS.entityConnection)
                 DiscoverSignalCard(title: "Content creation", systemImage: "camera", tint: DS.entitySwipe)
             }
         }
@@ -1682,7 +1718,7 @@ private struct SwipeDiscoverPlatformStrip: View {
 }
 
 private struct SwipeDiscoverFeed: View {
-    @ObservedObject var viewModel: SwipeFileDiscoverViewModel
+    let viewModel: SwipeFileDiscoverViewModel
     let onOpen: (SocialPostSnapshot) -> Void
 
     private var posts: [SocialPostSnapshot] {
@@ -1691,14 +1727,18 @@ private struct SwipeDiscoverFeed: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("All Matches")
-                    .font(.system(size: 24, weight: .bold))
+            HStack(spacing: 8) {
+                Text("Matches")
+                    .font(DS.title2)
                     .foregroundStyle(DS.text)
                 Text("\(posts.count)")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(DS.textMuted)
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.textSecondary)
                     .monospacedDigit()
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(DS.glassInputFill, in: Capsule())
+                    .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 0.5))
             }
 
             if viewModel.isLoading {
@@ -1709,8 +1749,8 @@ private struct SwipeDiscoverFeed: View {
                         .frame(maxWidth: .infinity, minHeight: 360)
                 } else {
                     SwipeFileEmptyState(
-                        title: "No discovered posts yet",
-                        subtitle: "Import creator catalogs to populate the cross-platform feed.",
+                        title: "No matches yet",
+                        subtitle: "Import a creator's catalog to start the cross-platform feed.",
                         systemImage: "chart.line.uptrend.xyaxis"
                     )
                     .frame(maxWidth: .infinity, minHeight: 360)
@@ -1744,10 +1784,11 @@ private struct SwipeDiscoverMasonryGrid: View {
             HStack(alignment: .top, spacing: spacing) {
                 ForEach(columns.indices, id: \.self) { columnIndex in
                     LazyVStack(spacing: spacing) {
-                        ForEach(columns[columnIndex]) { post in
+                        ForEach(Array(columns[columnIndex].enumerated()), id: \.element.id) { index, post in
                             SwipeDiscoverPostCard(
                                 post: post,
                                 cardWidth: cardWidth,
+                                appearIndex: index,
                                 onSave: onSave,
                                 onOpen: onOpen
                             )
@@ -1807,14 +1848,24 @@ private struct SwipeDiscoverMasonryGrid: View {
 private struct SwipeDiscoverPostCard: View {
     let post: SocialPostSnapshot
     let cardWidth: CGFloat
+    var appearIndex: Int = 0
     let onSave: (SocialPostSnapshot, String?) -> Void
     let onOpen: (SocialPostSnapshot) -> Void
 
     @State private var isHovered = false
+    @State private var hasAppeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let infoSectionHeight: CGFloat = 196
 
     private var thumbnailURL: URL? {
         post.media.first(where: { $0.kind == .thumbnail || $0.kind == .image })?.url
+    }
+
+    /// Restart-safe cache key so thumbnails survive CDN URL rotation (Instagram
+    /// especially). Nil when the provider ID is absent, letting the cache hash the URL.
+    private var thumbnailStableKey: String? {
+        guard !post.providerPostID.isEmpty else { return nil }
+        return "\(post.platform.rawValue)-\(post.providerPostID)"
     }
 
     private var cardShape: RoundedRectangle {
@@ -1890,41 +1941,52 @@ private struct SwipeDiscoverPostCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             mediaHeader
-            VStack(alignment: .leading, spacing: 12) {
-                authorRow
-                Text(post.body ?? post.title ?? post.canonicalURL.absoluteString)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(4)
-                Spacer(minLength: 0)
-                metricRow
-                footerRow
-            }
-            .padding(14)
-            .frame(height: Self.infoSectionHeight, alignment: .topLeading)
+            infoSection
         }
         .frame(height: Self.estimatedHeight(for: post, cardWidth: cardWidth), alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(DS.surface.opacity(0.74), in: cardShape)
-        .overlay(
-            cardShape
-                .stroke(isHovered ? DS.accent.opacity(0.32) : DS.borderSubtle, lineWidth: 0.85)
-        )
-        .clipShape(cardShape)
+        .swipeGlassCard(isHovered: isHovered, tint: post.platform.discoveryBadgeColor)
         .contentShape(cardShape)
+        .modifier(SwipeCardShadow(isHovered: isHovered))
         .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
+        .opacity(hasAppeared || reduceMotion ? 1 : 0)
+        .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.96)
         .onHover { isHovered = $0 }
         .onTapGesture { onOpen(post) }
+        .onAppear(perform: animateEntrance)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Open post details")
     }
 
+    private var infoSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            authorRow
+            Text(post.body ?? post.title ?? post.canonicalURL.absoluteString)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+                .lineLimit(4)
+            Spacer(minLength: 0)
+            metricRow
+            footerRow
+        }
+        .padding(14)
+        .frame(height: Self.infoSectionHeight, alignment: .topLeading)
+    }
+
+    private func animateEntrance() {
+        guard !reduceMotion else { hasAppeared = true; return }
+        guard !hasAppeared else { return }
+        withAnimation(ProMotionSprings.cascade(index: min(appearIndex, 8))) {
+            hasAppeared = true
+        }
+    }
+
     @ViewBuilder
     private var mediaHeader: some View {
         if let thumbnailURL {
-            AsyncImage(url: thumbnailURL) { phase in
+            CachedAsyncImage(url: thumbnailURL, stableKey: thumbnailStableKey) { phase in
                 switch phase {
                 case .success(let image):
                     image
@@ -1934,8 +1996,6 @@ private struct SwipeDiscoverPostCard: View {
                     placeholderMedia
                 case .empty:
                     placeholderMedia.redacted(reason: .placeholder)
-                @unknown default:
-                    placeholderMedia
                 }
             }
             .frame(maxWidth: .infinity)
@@ -1954,7 +2014,7 @@ private struct SwipeDiscoverPostCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 platformBadge
                 Text(post.body ?? post.title ?? "")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(DS.headline)
                     .foregroundStyle(DS.text)
                     .lineLimit(8)
             }
@@ -1974,7 +2034,7 @@ private struct SwipeDiscoverPostCard: View {
             .fill(DS.commandChromePanelFill)
             .overlay {
                 Image(systemName: post.platform.iconName)
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(DS.pageTitle)
                     .foregroundStyle(DS.textMuted)
             }
     }
@@ -1982,11 +2042,11 @@ private struct SwipeDiscoverPostCard: View {
     private var authorRow: some View {
         HStack(spacing: 8) {
             Text(post.author.displayName)
-                .font(.system(size: 13, weight: .bold))
+                .font(DS.callout.weight(.bold))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
             Text("@\(post.author.handle)")
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.subheadline.weight(.medium))
                 .foregroundStyle(DS.textMuted)
                 .lineLimit(1)
         }
@@ -1999,7 +2059,7 @@ private struct SwipeDiscoverPostCard: View {
             metric("bubble.left", post.metrics.comments)
             metric("arrow.2.squarepath", post.metrics.shares ?? post.metrics.reposts)
         }
-        .font(.system(size: 12, weight: .semibold))
+        .font(DS.subheadline.weight(.semibold))
         .foregroundStyle(DS.textMuted)
     }
 
@@ -2007,7 +2067,7 @@ private struct SwipeDiscoverPostCard: View {
         HStack {
             if let date = post.publishedAt {
                 Text(date, style: .relative)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.subheadline.weight(.medium))
                     .foregroundStyle(DS.textMuted)
             }
 
@@ -2029,40 +2089,124 @@ private struct SwipeDiscoverPostCard: View {
                 }
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(DS.callout.weight(.bold))
                     .foregroundStyle(DS.text)
-                    .frame(width: 30, height: 30)
+                    .frame(width: 32, height: 32)
                     .background(DS.surfaceElevated, in: Circle())
-                    .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 0.75))
+                    .overlay(Circle().strokeBorder(DS.borderSubtle, lineWidth: 0.75))
+                    .contentShape(Circle())
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
             .help("Add to board")
+            .accessibilityLabel("Add to board")
         }
     }
 
     private var platformBadge: some View {
-        Label(post.platform.displayName, systemImage: post.platform.iconName)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(DS.text)
-            .padding(.horizontal, 8)
-            .frame(height: 22)
-            .background(.regularMaterial, in: Capsule())
+        Image(systemName: post.platform.iconName)
+            .font(DS.caption.weight(.bold))
+            .foregroundStyle(DS.textOnAccent)
+            .frame(width: 20, height: 20)
+            .background(post.platform.discoveryBadgeColor, in: Circle())
+            .overlay(Circle().strokeBorder(DS.textOnAccent.opacity(0.3), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.22), radius: 3, x: 0, y: 1)
+            .accessibilityLabel("\(post.platform.displayName) post")
     }
 
     private var outlierBadge: some View {
         Text(post.derived.outlierMultiplier.map { "\(Int($0.rounded()))x" } ?? "new")
-            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .font(DS.caption.weight(.bold))
             .foregroundStyle(post.derived.outlierMultiplier == nil ? DS.textMuted : DS.accent)
             .padding(.horizontal, 8)
             .frame(height: 24)
             .background(DS.surfaceElevated, in: Capsule())
+            .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 0.5))
     }
 
     private func metric(_ systemImage: String, _ value: Int?) -> some View {
         HStack(spacing: 4) {
             Image(systemName: systemImage)
             Text(value.map(formatCount) ?? "-")
+        }
+    }
+}
+
+// MARK: - Swipe Glass Card Chrome
+
+/// The reusable "Greenhouse Glass" surface for the SwipeFile tab: a warm glass fill,
+/// a low-intensity platform/entity tint wash, and a focus-aware hairline border.
+/// Motion (shadow lift, hover scale, entrance) is applied by the caller so this stays
+/// usable for static contexts (skeletons, previews) and other SwipeFile screens later.
+private struct SwipeGlassCardModifier: ViewModifier {
+    var isHovered: Bool = false
+    var tint: Color = DS.accent
+    var cornerRadius: CGFloat = 14
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return content
+            .background(tint.opacity(isHovered ? 0.10 : 0.06), in: shape)
+            .background(DS.glassCardFill, in: shape)
+            .overlay(
+                shape.strokeBorder(
+                    isHovered ? DS.glassBorderFocused : DS.glassBorder,
+                    lineWidth: isHovered ? 1 : 0.5
+                )
+            )
+            .clipShape(shape)
+    }
+}
+
+/// Resting → hover shadow lift. Applies a fixed pair of `.shadow` modifiers whose
+/// parameters interpolate on `isHovered` — never an `if/else` branch. A structural
+/// branch here would swap `content` between `_ConditionalContent` cases on every
+/// hover, destroying and rebuilding the wrapped subtree (reloading the AsyncImage
+/// and breaking hover tracking). Keeping the structure constant preserves identity
+/// and lets the lift animate via the caller's `.animation(_:value:)`.
+private struct SwipeCardShadow: ViewModifier {
+    let isHovered: Bool
+
+    func body(content: Content) -> some View {
+        let isDark = DS.palette.isDark
+        return content
+            .shadow(
+                color: .black.opacity(isHovered ? (isDark ? 0.4 : 0.06) : (isDark ? 0.3 : 0.04)),
+                radius: isHovered ? (isDark ? 8 : 16) : (isDark ? 4 : 8),
+                x: 0,
+                y: isHovered ? (isDark ? 2 : 4) : (isDark ? 1 : 2)
+            )
+            .shadow(
+                color: .black.opacity(isHovered ? (isDark ? 0.25 : 0.03) : (isDark ? 0.2 : 0.02)),
+                radius: isHovered ? (isDark ? 2 : 4) : (isDark ? 1 : 2),
+                x: 0,
+                y: isHovered ? (isDark ? 1 : 2) : (isDark ? 0 : 1)
+            )
+    }
+}
+
+extension View {
+    /// Apply the shared SwipeFile glass card chrome (fill + tint wash + hairline border + clip).
+    func swipeGlassCard(isHovered: Bool = false, tint: Color = DS.accent, cornerRadius: CGFloat = 14) -> some View {
+        modifier(SwipeGlassCardModifier(isHovered: isHovered, tint: tint, cornerRadius: cornerRadius))
+    }
+}
+
+// MARK: - Platform Badge Color
+
+private extension SocialPlatform {
+    /// Brand color for the tiny Discovery platform badge — the single sanctioned place
+    /// the SwipeFile redesign uses non-DS hex. These are external platform brand
+    /// identities that can't map to Greenhouse tokens; all other chrome uses warm DS.
+    var discoveryBadgeColor: Color {
+        switch self {
+        case .instagram: return Color(hex: "#E1306C")
+        case .youtube: return Color(hex: "#E0322B")
+        case .linkedin: return Color(hex: "#0A66C2")
+        case .facebook: return Color(hex: "#1877F2")
+        case .substack: return Color(hex: "#E06A38")
+        case .tiktok, .x, .twitter, .threads, .medium: return Color(hex: "#1C1C20")
+        case .other: return DS.textMuted
         }
     }
 }
@@ -2443,7 +2587,7 @@ private struct SwipeDiscoverPostDetail: View {
 }
 
 private struct SwipeDiscoverCreatorDirectory: View {
-    @ObservedObject var viewModel: SwipeFileDiscoverViewModel
+    let viewModel: SwipeFileDiscoverViewModel
     let onSelectCreator: (SwipeDiscoverCreatorRecord) -> Void
 
     var body: some View {
@@ -3238,15 +3382,46 @@ private struct SwipeDiscoverFilterDropdown: View {
 }
 
 private struct SwipeDiscoverSkeletonGrid: View {
+    private let heights: [CGFloat] = [300, 240, 280, 260, 320, 250, 290, 244]
+
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
-            ForEach(0..<8, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(DS.surface)
-                    .frame(height: 260)
-                    .redacted(reason: .placeholder)
+            ForEach(Array(heights.enumerated()), id: \.offset) { _, height in
+                SwipeSkeletonCard(height: height)
             }
         }
+    }
+}
+
+private struct SwipeSkeletonCard: View {
+    let height: CGFloat
+
+    @State private var shimmer = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DS.glassSectionFill)
+                .frame(height: height * 0.52)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(DS.glassSectionFill)
+                .frame(maxWidth: .infinity)
+                .frame(height: 12)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(DS.glassSectionFill)
+                .frame(width: 120, height: 12)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(height: height, alignment: .top)
+        .frame(maxWidth: .infinity)
+        .swipeGlassCard(cornerRadius: 14)
+        .dsRestingShadow()
+        .opacity(reduceMotion ? 1 : (shimmer ? 0.55 : 1))
+        .animation(reduceMotion ? nil : .easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: shimmer)
+        .onAppear { shimmer = true }
+        .accessibilityHidden(true)
     }
 }
 
@@ -3319,22 +3494,19 @@ private struct DiscoverSignalCard: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.headline)
                 .foregroundStyle(tint)
                 .frame(width: 30, height: 30)
-                .background(tint.opacity(0.12), in: Circle())
+                .background(tint.opacity(0.15), in: Circle())
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.callout.weight(.semibold))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .frame(height: 48)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 0.75)
-        )
+        .swipeGlassCard(tint: tint, cornerRadius: 14)
+        .dsRestingShadow()
     }
 }
 

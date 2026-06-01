@@ -85,6 +85,10 @@ struct SwipeStudyFocusModeView: View {
     // Carousel state
     @State private var carouselCurrentIndex: Int = 0
     @State private var isCarouselContent: Bool = false
+    /// True while we are showing a partial carousel (≥1 slide) and a background
+    /// resolver is still upgrading it toward the full slide set. Drives the quiet
+    /// "Loading more slides…" hint — never blocks display.
+    @State private var isUpgradingCarousel: Bool = false
 
     // Instagram transcript state
     @State private var instagramTranscript: String = ""
@@ -413,9 +417,11 @@ struct SwipeStudyFocusModeView: View {
             reduceMotion: reduceMotion,
             scrollMetrics: $teardownScrollMetrics
         ) {
-            sourceAndTeardownRail(atom: atom)
+            sourceStage(atom: atom)
         } transcript: {
             transcriptManuscript(atom: atom)
+        } teardown: {
+            teardownRail
         }
         .overlay(alignment: .trailing) {
             CortexThinScrollbar(metrics: teardownScrollMetrics)
@@ -458,14 +464,6 @@ struct SwipeStudyFocusModeView: View {
             .frame(maxWidth: .infinity, alignment: .center)
     }
 
-    private func sourceAndTeardownRail(atom: Atom) -> some View {
-        VStack(alignment: .leading, spacing: DS.space24) {
-            sourceStage(atom: atom)
-            rightPanel
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-    }
-
     private func transcriptManuscript(atom: Atom) -> some View {
         VStack(alignment: .leading, spacing: DS.space24) {
             swipeHero(atom: atom)
@@ -477,6 +475,11 @@ struct SwipeStudyFocusModeView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var teardownRail: some View {
+        rightPanel
+            .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private func swipeHero(atom: Atom) -> some View {
@@ -730,11 +733,11 @@ struct SwipeStudyFocusModeView: View {
                 ZStack {
                     igThumbnailView(atom: atom)
 
-                    if igIsExtractingVideo {
+                    if igIsExtractingVideo || isAutoTranscribing {
                         VStack(spacing: 8) {
                             ProgressView()
                                 .tint(DS.accent)
-                            Text("Loading carousel...")
+                            Text(isAutoTranscribing ? "Downloading carousel…" : "Loading carousel...")
                                 .font(DS.footnote)
                                 .foregroundStyle(DS.textSecondary)
                         }
@@ -1005,7 +1008,22 @@ struct SwipeStudyFocusModeView: View {
             Text("\(safeIndex + 1) / \(items.count)")
                 .font(DS.footnote)
                 .foregroundStyle(DS.textSecondary)
+
+            // Quiet "still upgrading" hint — display is never blocked on completeness,
+            // so we show the slides we have and let the background fill in the rest.
+            if isUpgradingCarousel {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(DS.textMuted)
+                    Text(carouselUpgradeHintText(loadedCount: items.count))
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textMuted)
+                }
+                .transition(.opacity)
+            }
         }
+        .animation(ProMotionSprings.gentle, value: isUpgradingCarousel)
     }
 
     @ViewBuilder
@@ -1195,6 +1213,7 @@ struct SwipeStudyFocusModeView: View {
     private func extractInstagramVideo(atom: Atom) {
         guard !igIsExtractingVideo else { return }
         igIsExtractingVideo = true
+        isUpgradingCarousel = false
 
         Task {
             let expectedUUID = atom.uuid
@@ -1231,13 +1250,25 @@ struct SwipeStudyFocusModeView: View {
                     expectedCarouselItemCount: storedIGData.expectedCarouselItemCount,
                     extractedAt: storedIGData.extractedAt ?? Date()
                 )
-                if shouldDisplayCarouselItems(items, mediaData: storedMediaData) {
-                    // Populate igMediaData so the carousel pager has items to display
-                    igMediaData = storedMediaData
-                    carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
-                } else {
-                    igMediaData = nil
+                // Always display the slides we already have — display is never gated
+                // on completeness (see shouldDisplayCarouselItems).
+                igMediaData = storedMediaData
+                carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
+
+                // If the stored carousel is already complete, everything we need is
+                // cached on disk. Skip the slow live extraction entirely and just
+                // handle transcription — this is the "load from the store, instantly"
+                // path that should hit every time a fully-processed swipe is opened.
+                if !InstagramMediaResolution.isIncompletePostMedia(
+                    mediaData: storedMediaData,
+                    sourceURL: url
+                ) {
+                    igIsExtractingVideo = false
+                    await handleCarouselTranscription(items: items, expectedUUID: expectedUUID)
+                    return
                 }
+                // Incomplete stored carousel → keep showing it while we upgrade below.
+                isUpgradingCarousel = true
             }
 
             // Fast path: if we already have the video downloaded locally, skip extraction entirely
@@ -1278,24 +1309,15 @@ struct SwipeStudyFocusModeView: View {
                     mediaData: mediaData,
                     sourceURL: url
                 ) {
-                    print("SwipeStudy: Instagram post extraction is incomplete — waiting for full carousel media")
+                    print("SwipeStudy: Instagram post extraction is incomplete — showing best available media while upgrading in background")
                     isCarouselContent = true
-                    igMediaData = nil
                     igIsExtractingVideo = false
-
-                    let currentUUID = (currentAtom ?? atom).uuid
-                    if SwipeProcessingService.shared.isProcessing(uuid: currentUUID) {
-                        pollForBackgroundCompletion()
-                    } else {
-                        SwipeProcessingService.shared.processSwipeInBackground(
-                            uuid: currentUUID,
-                            forceExtractionRetry: true
-                        )
-                        pollForBackgroundCompletion()
-                    }
+                    await showPartialAndUpgrade(liveMedia: mediaData)
                     return
                 }
 
+                // Complete extraction — adopt it fully and stop any "updating" hint.
+                isUpgradingCarousel = false
                 igMediaData = mediaData
                 if let items = mediaData.carouselItems, !items.isEmpty {
                     carouselCurrentIndex = min(carouselCurrentIndex, items.count - 1)
@@ -1308,28 +1330,7 @@ struct SwipeStudyFocusModeView: View {
                     isCarouselContent = true
                     igIsExtractingVideo = false
 
-                    let existingSlideCount = transcriptSlides.filter { !$0.text.isEmpty }.count
-                    let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
-
-                    // Check 1: No transcript at all — initial transcription needed
-                    let hasSlideContent = existingSlideCount > 0
-                    let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    let hasSavedBody = !((currentAtom ?? atom).body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
-                    let needsInitialTranscription = !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing
-
-                    // Check 2: More slides discovered than currently transcribed (incomplete carousel)
-                    let hasMoreSlides = items.count > existingSlideCount && existingSlideCount > 0
-                    let isDegraded = (currentAtom ?? atom).swipeAnalysis?.transcriptionQuality == .degraded
-                    let needsReTranscription = (hasMoreSlides || isDegraded) && !isBackgroundProcessing
-
-                    if needsInitialTranscription || needsReTranscription {
-                        guard isViewingAtom(uuid: expectedUUID) else { return }
-                        if needsReTranscription {
-                            print("SwipeStudy: Auto-re-transcribing carousel — extracted \(items.count) items but only \(existingSlideCount) transcribed")
-                        }
-                        await autoTranscribeCarousel(items: items)
-                    }
+                    await handleCarouselTranscription(items: items, expectedUUID: expectedUUID)
                     return
                 }
 
@@ -1421,36 +1422,17 @@ struct SwipeStudyFocusModeView: View {
         return lower.contains("/p/") && !lower.contains("/reel/")
     }
 
+    /// Display is governed ONLY by "is there at least one slide to show" — never by
+    /// completeness. An incomplete `/p/` carousel keeps upgrading in the background
+    /// (see `showPartialAndUpgrade` / `pollForBackgroundCompletion`) while we show the
+    /// slides we already have, with a quiet "Loading more slides…" hint. Showing one
+    /// real slide always beats a "Carousel images not loaded" dead-end.
     private func shouldDisplayCarouselItems(_ items: [CarouselItem], mediaData: InstagramMediaData) -> Bool {
-        guard !items.isEmpty else { return false }
-        return !InstagramMediaResolution.isIncompletePostMedia(
-            mediaData: mediaData,
-            sourceURL: mediaData.originalURL,
-            existingCarouselItems: items
-        )
+        return !items.isEmpty
     }
 
     private func shouldDisplayStoredCarouselItems(_ items: [CarouselItem], instagramData: InstagramData) -> Bool {
-        guard !items.isEmpty else { return false }
-        guard let urlString = (currentAtom ?? atom).url,
-              let url = URL(string: urlString) else {
-            return items.count > 1
-        }
-
-        let mediaData = InstagramMediaData(
-            originalURL: url,
-            contentType: instagramData.contentType,
-            videoURL: instagramData.extractedMediaURL,
-            thumbnailURL: (currentAtom ?? atom).thumbnailUrl.flatMap(URL.init(string:))
-                ?? (currentAtom ?? atom).richContent?.thumbnailUrl.flatMap(URL.init(string:)),
-            authorUsername: instagramData.authorUsername,
-            caption: instagramData.caption,
-            carouselItems: items,
-            expectedCarouselItemCount: instagramData.expectedCarouselItemCount,
-            extractedAt: instagramData.extractedAt ?? Date()
-        )
-
-        return shouldDisplayCarouselItems(items, mediaData: mediaData)
+        return !items.isEmpty
     }
 
     /// Determine the content type label for the metadata footer
@@ -1490,19 +1472,11 @@ struct SwipeStudyFocusModeView: View {
                         mediaData: mediaData,
                         sourceURL: url
                     ) {
-                        igMediaData = nil
-                        if SwipeProcessingService.shared.isProcessing(uuid: expectedUUID) {
-                            pollForBackgroundCompletion()
-                        } else {
-                            SwipeProcessingService.shared.processSwipeInBackground(
-                                uuid: expectedUUID,
-                                forceExtractionRetry: true
-                            )
-                            pollForBackgroundCompletion()
-                        }
+                        await showPartialAndUpgrade(liveMedia: mediaData)
                         return
                     }
 
+                    isUpgradingCarousel = false
                     igMediaData = mediaData
                     await persistInstagramMediaToAtom(mediaData, expectedAtomUUID: expectedUUID)
 
@@ -1593,6 +1567,81 @@ struct SwipeStudyFocusModeView: View {
     }
 
     /// Poll for background processing completion and reload atom when done
+    /// Decide whether a displayed carousel still needs (re-)transcription and kick it
+    /// off. No-ops when a transcript already exists; polls when the background
+    /// processor is already running so the view picks up the result when it lands.
+    private func handleCarouselTranscription(items: [CarouselItem], expectedUUID: String) async {
+        let existingSlideCount = transcriptSlides.filter { !$0.text.isEmpty }.count
+        let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
+
+        // Check 1: No transcript at all — initial transcription needed
+        let hasSlideContent = existingSlideCount > 0
+        let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSavedBody = !((currentAtom ?? atom).body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
+        let needsInitialTranscription = !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing
+
+        // Check 2: More slides discovered than currently transcribed (incomplete carousel)
+        let hasMoreSlides = items.count > existingSlideCount && existingSlideCount > 0
+        let isDegraded = (currentAtom ?? atom).swipeAnalysis?.transcriptionQuality == .degraded
+        let needsReTranscription = (hasMoreSlides || isDegraded) && !isBackgroundProcessing
+
+        if needsInitialTranscription || needsReTranscription {
+            guard isViewingAtom(uuid: expectedUUID) else { return }
+            if needsReTranscription {
+                print("SwipeStudy: Auto-re-transcribing carousel — extracted \(items.count) items but only \(existingSlideCount) transcribed")
+            }
+            await autoTranscribeCarousel(items: items)
+        } else if isBackgroundProcessing {
+            pollForBackgroundCompletion()
+        }
+    }
+
+    /// Show the best Instagram media we currently have (live `liveMedia` vs. whatever
+    /// the fast path already put on screen) and upgrade toward the full carousel in the
+    /// background. Never downgrades to a smaller live partial, and never dead-ends on a
+    /// blank "not loaded" placeholder when ≥1 slide / thumbnail / video exists.
+    private func showPartialAndUpgrade(liveMedia: InstagramMediaData) async {
+        let liveItems = liveMedia.carouselItems ?? []
+        let shownItems = igMediaData?.carouselItems ?? []
+        let shownIsDisplayable = igMediaData.map { InstagramMediaResolution.isDisplayablePostMedia(mediaData: $0) } ?? false
+        let liveIsDisplayable = InstagramMediaResolution.isDisplayablePostMedia(mediaData: liveMedia)
+
+        // Adopt the live result only when it's displayable and not a downgrade from what
+        // we already show. Persist is intentionally skipped: persistInstagramMediaToAtom
+        // refuses incomplete media, and the background processor stores the full carousel
+        // on completion — we only need the partial in memory for display right now.
+        if liveIsDisplayable && (liveItems.count >= shownItems.count || !shownIsDisplayable) {
+            igMediaData = liveMedia
+            if !liveItems.isEmpty {
+                carouselCurrentIndex = min(carouselCurrentIndex, liveItems.count - 1)
+            }
+        }
+
+        let hasDisplayable = igMediaData.map { InstagramMediaResolution.isDisplayablePostMedia(mediaData: $0) } ?? false
+        isUpgradingCarousel = hasDisplayable
+        if !hasDisplayable {
+            igMediaData = nil
+        }
+
+        let currentUUID = (currentAtom ?? atom).uuid
+        if !SwipeProcessingService.shared.isProcessing(uuid: currentUUID) {
+            SwipeProcessingService.shared.processSwipeInBackground(
+                uuid: currentUUID,
+                forceExtractionRetry: true
+            )
+        }
+        pollForBackgroundCompletion()
+    }
+
+    /// Quiet status line shown beneath the carousel while a background upgrade runs.
+    private func carouselUpgradeHintText(loadedCount: Int) -> String {
+        if let expected = igMediaData?.expectedCarouselItemCount, expected > loadedCount {
+            return "Loading more slides… (\(loadedCount) of \(expected))"
+        }
+        return "Loading more slides…"
+    }
+
     private func pollForBackgroundCompletion() {
         autoTranscriptionProgress = "Processing in background..."
         isAutoTranscribing = true
@@ -1660,6 +1709,8 @@ struct SwipeStudyFocusModeView: View {
                 }
             }
 
+            // Background processing finished — nothing left to upgrade this session.
+            isUpgradingCarousel = false
             isAutoTranscribing = false
             autoTranscriptionProgress = ""
         }
@@ -4422,7 +4473,7 @@ struct SwipeStudyFocusModeView: View {
 
 // MARK: - Atelier Shell Components
 
-private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
+private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Teardown: View>: View {
     let size: CGSize
     let panelPadding: CGFloat
     let isPaneContext: Bool
@@ -4432,6 +4483,7 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
 
     private let source: Source
     private let transcript: Transcript
+    private let teardown: Teardown
 
     init(
         size: CGSize,
@@ -4441,7 +4493,8 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
         reduceMotion: Bool,
         scrollMetrics: Binding<CortexScrollMetrics>,
         @ViewBuilder source: () -> Source,
-        @ViewBuilder transcript: () -> Transcript
+        @ViewBuilder transcript: () -> Transcript,
+        @ViewBuilder teardown: () -> Teardown
     ) {
         self.size = size
         self.panelPadding = panelPadding
@@ -4451,6 +4504,7 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
         self._scrollMetrics = scrollMetrics
         self.source = source()
         self.transcript = transcript()
+        self.teardown = teardown()
     }
 
     var body: some View {
@@ -4483,6 +4537,8 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
                 .swipeStudyStagger(index: 0, appeared: hasAppeared, reduceMotion: reduceMotion)
             transcript
                 .swipeStudyStagger(index: 1, appeared: hasAppeared, reduceMotion: reduceMotion)
+            teardown
+                .swipeStudyStagger(index: 2, appeared: hasAppeared, reduceMotion: reduceMotion)
         }
         .padding(.horizontal, panelPadding)
         .padding(.top, DS.space12)
@@ -4491,9 +4547,12 @@ private struct SwipeStudyTeardownShell<Source: View, Transcript: View>: View {
 
     private var wideTable: some View {
         HStack(alignment: .top, spacing: DS.space40) {
-            source
-                .frame(width: min(500, max(380, size.width * 0.32)), alignment: .top)
-                .swipeStudyStagger(index: 0, appeared: hasAppeared, reduceMotion: reduceMotion)
+            VStack(alignment: .leading, spacing: DS.space24) {
+                source
+                teardown
+            }
+            .frame(width: min(500, max(380, size.width * 0.32)), alignment: .top)
+            .swipeStudyStagger(index: 0, appeared: hasAppeared, reduceMotion: reduceMotion)
 
             transcript
                 .frame(maxWidth: 820, alignment: .topLeading)

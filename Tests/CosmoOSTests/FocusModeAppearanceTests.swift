@@ -127,10 +127,24 @@ final class FocusModeAppearanceTests: XCTestCase {
     func testSwipeTeardownLivesBelowSourcePreviewInsteadOfThirdColumn() throws {
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
 
-        XCTAssertTrue(swipeFocusSource.contains("sourceAndTeardownRail(atom: atom)"))
-        XCTAssertTrue(swipeFocusSource.contains("private func sourceAndTeardownRail(atom: Atom) -> some View"))
-        XCTAssertTrue(swipeFocusSource.contains("private struct SwipeStudyTeardownShell<Source: View, Transcript: View>"))
+        XCTAssertTrue(swipeFocusSource.contains("sourceStage(atom: atom)"))
+        XCTAssertTrue(swipeFocusSource.contains("teardownRail"))
+        XCTAssertTrue(swipeFocusSource.contains("private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Teardown: View>"))
         XCTAssertFalse(swipeFocusSource.contains("@ViewBuilder marginalia: () -> Marginalia"))
+    }
+
+    func testSwipeCompactLayoutPlacesTranscriptBeforeTeardown() throws {
+        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+        let compactRange = try XCTUnwrap(swipeFocusSource.range(of: "private var compactStack: some View"))
+        let wideRange = try XCTUnwrap(swipeFocusSource.range(of: "private var wideTable: some View"))
+        let compactSource = String(swipeFocusSource[compactRange.lowerBound..<wideRange.lowerBound])
+
+        let sourceRange = try XCTUnwrap(compactSource.range(of: "source"))
+        let transcriptRange = try XCTUnwrap(compactSource.range(of: "transcript"))
+        let teardownRange = try XCTUnwrap(compactSource.range(of: "teardown"))
+
+        XCTAssertLessThan(sourceRange.lowerBound, transcriptRange.lowerBound)
+        XCTAssertLessThan(transcriptRange.lowerBound, teardownRange.lowerBound)
     }
 
     func testSwipeSourcePreviewAvoidsDoubleContainerChrome() throws {

@@ -32,6 +32,10 @@ final class SocialDiscoveryStore: ObservableObject {
             return false
         }
 
+        if !matchesFormat(post) {
+            return false
+        }
+
         if !query.languages.isEmpty {
             guard let language = post.detectedLanguage?.lowercased(), query.languages.contains(language) else {
                 return false
@@ -54,6 +58,15 @@ final class SocialDiscoveryStore: ObservableObject {
         }
 
         return matchesSearchText(post)
+    }
+
+    private func matchesFormat(_ post: SocialPostSnapshot) -> Bool {
+        switch post.platform {
+        case .youtube: return query.youtubeFormat.matches(post.format)
+        case .substack: return query.substackFormat.matches(post.format)
+        case .instagram: return query.instagramFormat.matches(post.format)
+        default: return true
+        }
     }
 
     private func matchesSearchText(_ post: SocialPostSnapshot) -> Bool {

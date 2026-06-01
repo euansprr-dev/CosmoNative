@@ -11,6 +11,16 @@ final class InstagramExtractor: Sendable {
     static let shared = InstagramExtractor()
     private let fileManager = FileManager.default
 
+    /// Per-URL throttle for the paid Apify escalation in `extractBestAvailableCarouselMedia`.
+    /// Keyed by normalized URL string; records when we last spent an Apify scrape on it.
+    private var lastApifyEscalationAt: [String: Date] = [:]
+
+    /// Minimum gap between paid Apify escalations of the same URL (6 hours). The cache's
+    /// 60s incomplete-refresh cooldown is far too short for a metered API, so we gate
+    /// escalation separately — a genuinely unresolvable post (private/deleted/single-image)
+    /// must not be re-scraped on every refresh tick.
+    private static let apifyEscalationThrottle: TimeInterval = 21600
+
     private init() {}
 
     // MARK: - Main Extraction
@@ -147,6 +157,26 @@ final class InstagramExtractor: Sendable {
             print("InstagramExtractor: Best-carousel GraphQL refresh failed: \(error.localizedDescription)")
         }
 
+        // Last-resort escalation to the paid Apify scraper. Strictly gated so it can never
+        // become a routine cost: it fires only when (a) the result is STILL an incomplete
+        // /p/ carousel after the free chain + GraphQL sidecar, (b) an Apify key is
+        // configured, and (c) we haven't already scraped this exact URL within the 6h
+        // throttle window. When Apify can't help (private/deleted post, no key) we silently
+        // keep the best partial we already have — the carousel still displays what it has.
+        if let candidate = best,
+           InstagramMediaResolution.isIncompletePostMedia(mediaData: candidate, sourceURL: normalizedURL),
+           ApifyInstagramProvider.shared.isConfigured,
+           shouldEscalateToApify(for: normalizedURL) {
+            do {
+                let post = try await ApifyInstagramProvider.shared.fetchPost(url: normalizedURL)
+                let apifyMedia = mediaData(from: post, originalURL: normalizedURL, requestedType: contentType)
+                best = betterCarouselResult(current: best, candidate: apifyMedia)
+                print("InstagramExtractor: Apify escalation resolved \(apifyMedia.carouselItems?.count ?? 0) carousel item(s) for \(normalizedURL.absoluteString)")
+            } catch {
+                print("InstagramExtractor: Apify escalation failed: \(error.localizedDescription)")
+            }
+        }
+
         if let best {
             return best
         }
@@ -201,6 +231,25 @@ final class InstagramExtractor: Sendable {
     ) -> InstagramMediaData {
         guard let current else { return candidate }
         return carouselScore(candidate) >= carouselScore(current) ? candidate : current
+    }
+
+    /// Whether we may spend an Apify scrape on `url` right now. Records the attempt time
+    /// so a genuinely-unresolvable post isn't re-scraped on every cache refresh — the
+    /// cache's 60s incomplete-refresh cooldown would otherwise translate directly into
+    /// repeated metered API spend.
+    private func shouldEscalateToApify(for url: URL) -> Bool {
+        let key = url.absoluteString
+        let now = Date()
+        // Opportunistic prune so the map can't grow unbounded.
+        lastApifyEscalationAt = lastApifyEscalationAt.filter {
+            now.timeIntervalSince($0.value) < Self.apifyEscalationThrottle
+        }
+        if let last = lastApifyEscalationAt[key],
+           now.timeIntervalSince(last) < Self.apifyEscalationThrottle {
+            return false
+        }
+        lastApifyEscalationAt[key] = now
+        return true
     }
 
     private func partialScore(_ mediaData: InstagramMediaData) -> Int {

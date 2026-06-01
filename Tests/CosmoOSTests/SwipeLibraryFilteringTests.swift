@@ -16,7 +16,7 @@ final class SwipeLibraryFilteringTests: XCTestCase {
     func testDiscoverySidebarSectionsAreDistinctDestinations() {
         XCTAssertEqual(
             SwipeDiscoverySectionSelection.allCases.map(\.title),
-            ["Discover", "High-Performers", "Creators"]
+            ["Discover", "Creators"]
         )
     }
 

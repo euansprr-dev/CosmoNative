@@ -144,6 +144,24 @@ enum InstagramMediaResolution {
 
         return itemCount <= 1
     }
+
+    /// True when there is ANY media worth showing right now: at least one carousel
+    /// slide, a playable video, or a thumbnail.
+    ///
+    /// This is deliberately separate from `isIncompletePostMedia`. Completeness
+    /// governs whether the *background* resolver should keep upgrading a `/p/`
+    /// carousel toward its full slide count; it must never gate *display*. Showing
+    /// one real slide (with a quiet "updating…" hint) is always better than a
+    /// "Carousel images not loaded" dead-end while the upgrade runs.
+    static func isDisplayablePostMedia(
+        mediaData: InstagramMediaData,
+        existingCarouselItems: [CarouselItem]? = nil
+    ) -> Bool {
+        if mediaData.videoURL != nil { return true }
+        let items = existingCarouselItems ?? mediaData.carouselItems
+        if let items, !items.isEmpty { return true }
+        return mediaData.thumbnailURL != nil
+    }
 }
 
 // MARK: - Carousel Item

@@ -248,6 +248,78 @@ final class InstagramAutoTranscriberTests: XCTestCase {
         XCTAssertEqual(contentType, .voiceoverPlusText)
     }
 
+    // MARK: - Media Resolution Policy (display vs completeness)
+
+    /// Regression: the April "≥2-slide complete" rule conflated "is it complete?"
+    /// with "is there anything to show?". A single-slide /p/ carousel must stay
+    /// flagged incomplete (so the background upgrade keeps trying) yet remain
+    /// DISPLAYABLE so the teardown view never dead-ends on "Carousel images not loaded".
+    func testSingleSlidePostIsDisplayableEvenWhileIncomplete() {
+        let url = URL(string: "https://www.instagram.com/p/ABC123/")!
+        let media = InstagramMediaData(
+            originalURL: url,
+            contentType: .carousel,
+            carouselItems: [CarouselItem(index: 0, mediaType: .image, mediaURL: URL(string: "https://scontent.cdninstagram.com/slide0.jpg")!)]
+        )
+
+        XCTAssertTrue(
+            InstagramMediaResolution.isIncompletePostMedia(mediaData: media, sourceURL: url),
+            "A 1-slide /p/ carousel should still be treated as incomplete so the background resolver keeps upgrading it."
+        )
+        XCTAssertTrue(
+            InstagramMediaResolution.isDisplayablePostMedia(mediaData: media),
+            "A 1-slide /p/ carousel must be displayable — showing one real slide beats a 'not loaded' dead-end."
+        )
+    }
+
+    func testThumbnailOnlyPostIsDisplayable() {
+        let url = URL(string: "https://www.instagram.com/p/ABC123/")!
+        let media = InstagramMediaData(
+            originalURL: url,
+            contentType: .carousel,
+            thumbnailURL: URL(string: "https://scontent.cdninstagram.com/cover.jpg")!
+        )
+
+        XCTAssertTrue(InstagramMediaResolution.isDisplayablePostMedia(mediaData: media))
+    }
+
+    func testVideoPostIsDisplayable() {
+        let url = URL(string: "https://www.instagram.com/reel/XYZ789/")!
+        let media = InstagramMediaData(
+            originalURL: url,
+            contentType: .reel,
+            videoURL: URL(string: "https://scontent.cdninstagram.com/video.mp4")!
+        )
+
+        XCTAssertTrue(InstagramMediaResolution.isDisplayablePostMedia(mediaData: media))
+    }
+
+    func testEmptyExtractionIsNotDisplayable() {
+        let url = URL(string: "https://www.instagram.com/p/ABC123/")!
+        let media = InstagramMediaData(originalURL: url, contentType: .carousel)
+
+        XCTAssertFalse(
+            InstagramMediaResolution.isDisplayablePostMedia(mediaData: media),
+            "With no slides, no video, and no thumbnail there is genuinely nothing to show."
+        )
+    }
+
+    func testCompleteCarouselIsBothDisplayableAndComplete() {
+        let url = URL(string: "https://www.instagram.com/p/ABC123/")!
+        let items = (0..<3).map {
+            CarouselItem(index: $0, mediaType: .image, mediaURL: URL(string: "https://scontent.cdninstagram.com/slide\($0).jpg")!)
+        }
+        let media = InstagramMediaData(
+            originalURL: url,
+            contentType: .carousel,
+            carouselItems: items,
+            expectedCarouselItemCount: 3
+        )
+
+        XCTAssertFalse(InstagramMediaResolution.isIncompletePostMedia(mediaData: media, sourceURL: url))
+        XCTAssertTrue(InstagramMediaResolution.isDisplayablePostMedia(mediaData: media))
+    }
+
     func testDetectTranscriptionContentTypeDoesNotPromoteLyricStyleSpeechToVoiceover() {
         let transcriber = InstagramAutoTranscriber.shared
         let visualSlides = [

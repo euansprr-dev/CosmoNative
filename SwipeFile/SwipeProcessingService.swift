@@ -32,6 +32,16 @@ final class SwipeProcessingService {
     /// UUIDs currently being processed — prevents duplicate work
     private var inFlightUUIDs: Set<String> = []
 
+    /// Last time we force-retried a stale "partial"/"extraction_failed" swipe, keyed by
+    /// UUID. Throttles re-attempts so a permanently-unresolvable post (e.g. deleted upstream,
+    /// or a private account) can't be hammered on every launch / foreground / sync tick.
+    /// In-memory only: a fresh launch is allowed exactly one retry per stale swipe, which is
+    /// precisely the behavior we want — it self-heals the common "worked the next day" case.
+    private var recentExtractionAttempts: [String: Date] = [:]
+
+    /// Minimum gap between forced extraction retries of the same swipe (30 minutes).
+    private static let extractionRetryThrottle: TimeInterval = 1800
+
     private init() {}
 
     nonisolated static func isLikelyCarouselPostURL(_ url: URL) -> Bool {
@@ -81,22 +91,64 @@ final class SwipeProcessingService {
 
     // MARK: - Pending Swipe Scanner
 
-    /// Scan for cloud-captured swipes that arrived while offline and process them.
-    /// Safe to call multiple times — inFlightUUIDs prevents double-processing.
+    /// A swipe awaiting processing, tagged with whether it represents a stale prior
+    /// failure (`partial` / `extraction_failed`) that warrants a forced extraction retry,
+    /// versus a fresh item that just needs its first normal pass.
+    private struct PendingSwipeCandidate: Sendable {
+        let uuid: String
+        let needsForcedRetry: Bool
+    }
+
+    /// Scan for swipes that still need processing and route them appropriately.
+    /// Safe to call multiple times — `inFlightUUIDs` prevents double-processing and the
+    /// `recentExtractionAttempts` throttle prevents hammering unresolvable posts.
+    ///
+    /// Fresh items go through the bounded-parallelism batch path. Stale prior failures
+    /// (`partial`/`extraction_failed`) get a throttled `forceExtractionRetry` so a swipe
+    /// that failed once — e.g. a Telegram save that hit a transient Instagram rate limit —
+    /// is automatically re-attempted later instead of staying permanently stuck.
     func scanForPendingSwipes() {
         Task {
-            let pendingUUIDs = await fetchPendingSwipeUUIDs()
-            guard !pendingUUIDs.isEmpty else { return }
-            print("SwipeProcessingService: Found \(pendingUUIDs.count) pending swipes from cloud sync")
-            processBatch(uuids: pendingUUIDs)
+            let candidates = await fetchPendingSwipeCandidates()
+            guard !candidates.isEmpty else { return }
+
+            let now = Date()
+            // Drop throttle entries that have aged out so the map can't grow unbounded.
+            recentExtractionAttempts = recentExtractionAttempts.filter {
+                now.timeIntervalSince($0.value) < Self.extractionRetryThrottle
+            }
+
+            var freshUUIDs: [String] = []
+            var retryUUIDs: [String] = []
+            for candidate in candidates {
+                guard candidate.needsForcedRetry else {
+                    freshUUIDs.append(candidate.uuid)
+                    continue
+                }
+                if let last = recentExtractionAttempts[candidate.uuid],
+                   now.timeIntervalSince(last) < Self.extractionRetryThrottle {
+                    continue  // attempted within the throttle window — skip this pass
+                }
+                recentExtractionAttempts[candidate.uuid] = now
+                retryUUIDs.append(candidate.uuid)
+            }
+
+            if !freshUUIDs.isEmpty {
+                print("SwipeProcessingService: Found \(freshUUIDs.count) pending swipes from cloud sync")
+                processBatch(uuids: freshUUIDs)
+            }
+            for uuid in retryUUIDs {
+                print("SwipeProcessingService: Re-attempting stale swipe \(uuid) with forced extraction retry")
+                processSwipeInBackground(uuid: uuid, forceExtractionRetry: true)
+            }
         }
     }
 
-    private nonisolated func fetchPendingSwipeUUIDs() async -> [String] {
+    private nonisolated func fetchPendingSwipeCandidates() async -> [PendingSwipeCandidate] {
         do {
             return try await CosmoDatabase.shared.asyncRead { db in
                 let rows = try Row.fetchAll(db, sql: """
-                    SELECT uuid FROM atoms
+                    SELECT uuid, metadata FROM atoms
                     WHERE type = 'research'
                     AND is_deleted = 0
                     AND metadata LIKE '%"isSwipeFile":true%'
@@ -104,7 +156,14 @@ final class SwipeProcessingService {
                     AND metadata NOT LIKE '%"processingStatus":"error"%'
                     LIMIT 50
                     """)
-                return rows.compactMap { $0["uuid"] as? String }
+                return rows.compactMap { row in
+                    guard let uuid = row["uuid"] as? String else { return nil }
+                    let metadata = (row["metadata"] as? String) ?? ""
+                    let needsForcedRetry =
+                        metadata.contains("\"processingStatus\":\"partial\"") ||
+                        metadata.contains("\"processingStatus\":\"extraction_failed\"")
+                    return PendingSwipeCandidate(uuid: uuid, needsForcedRetry: needsForcedRetry)
+                }
             }
         } catch {
             print("SwipeProcessingService: Failed to scan pending swipes: \(error)")
@@ -293,19 +352,31 @@ final class SwipeProcessingService {
         let carouselItems = mediaData.carouselItems
             ?? atom.richContent?.instagramData?.carouselItems
 
-        if InstagramMediaResolution.isIncompletePostMedia(
+        let isIncompleteCarousel = InstagramMediaResolution.isIncompletePostMedia(
             mediaData: mediaData,
             sourceURL: url,
             existingCarouselItems: carouselItems
-        ) {
-            print("SwipeProcessingService: Incomplete carousel extraction for \(uuid), refusing partial carousel/thumbnail fallback")
-            var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
-            sa.extractionRetryCount = (sa.extractionRetryCount ?? 0) + 1
-            atom = atom.withSwipeAnalysis(sa)
-            atom.processingStatus = "extraction_failed"
-            _ = try? await AtomRepository.shared.update(atom)
-            return nil
-        } else if let items = carouselItems, !items.isEmpty {
+        )
+
+        if let items = carouselItems, !items.isEmpty {
+            // Transcribe whatever slides we have — even a partial carousel. Bricking a
+            // partial (the old behavior) meant a rate-limited Telegram save could never
+            // finish; instead we store a best-effort, degraded transcript now and keep
+            // upgrading toward the full slide set in the background (see the "partial"
+            // status set in persistAndAnalyze + the throttled re-scan in
+            // scanForPendingSwipes). Never re-run a downgrade, though:
+            let storedSlideCount = atom.swipeAnalysis?.transcriptSlides?
+                .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count ?? 0
+            if items.count < storedSlideCount {
+                print("SwipeProcessingService: Live carousel (\(items.count)) is poorer than stored (\(storedSlideCount)) for \(uuid) — keeping stored transcript")
+                let expected = mediaData.expectedCarouselItemCount
+                    ?? atom.richContent?.instagramData?.expectedCarouselItemCount
+                let stillIncomplete = expected.map { storedSlideCount < $0 } ?? false
+                atom.processingStatus = stillIncomplete ? "partial" : "complete"
+                _ = try? await AtomRepository.shared.update(atom)
+                return nil
+            }
+
             let shortcode = await InstagramExtractor.shared.extractShortcode(from: url)
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
                 items: items,
@@ -321,6 +392,15 @@ final class SwipeProcessingService {
                         print("SwipeProcessingService [\(uuid.prefix(8))]: AI \(Int(pct * 100))%")
                     }
                 default: break
+                }
+            }
+
+            if isIncompleteCarousel {
+                transcriptionResult.quality = .degraded
+                let expectedDesc = mediaData.expectedCarouselItemCount.map(String.init) ?? "more"
+                let warning = "Carousel extraction incomplete — transcribed \(items.count) of \(expectedDesc) slides. Will keep upgrading in the background."
+                if !transcriptionResult.warnings.contains(warning) {
+                    transcriptionResult.warnings.append(warning)
                 }
             }
         } else if let videoURL = mediaData.videoURL {
@@ -592,7 +672,16 @@ final class SwipeProcessingService {
         // SINGLE WRITE: Persist all accumulated changes (transcript + NLP + classification + status) at once.
         // On version conflict (common for cloud-captured swipes where sync bumps the version during
         // processing), re-fetch the latest version and re-apply analysis results.
-        atom.processingStatus = "complete"
+        //
+        // A /p/ carousel that did not resolve its full slide set is persisted as "partial",
+        // never bricked: it stays displayable (≥1 slide) AND remains eligible for a later
+        // background upgrade pass. Only fully-resolved media is marked "complete".
+        let stillIncomplete = InstagramMediaResolution.isIncompletePostMedia(
+            mediaData: mediaData,
+            sourceURL: url,
+            existingCarouselItems: carouselItems
+        )
+        atom.processingStatus = stillIncomplete ? "partial" : "complete"
         do {
             _ = try await AtomRepository.shared.update(atom)
         } catch let error as AtomRepositoryError where error.isVersionConflict {
@@ -602,7 +691,7 @@ final class SwipeProcessingService {
                 latest.body = atom.body
                 latest.title = atom.title
                 latest.hook = atom.hook
-                latest.processingStatus = "complete"
+                latest.processingStatus = stillIncomplete ? "partial" : "complete"
                 latest.setRichContent(atom.richContent ?? ResearchRichContent())
                 if let sa = atom.swipeAnalysis {
                     latest = latest.withSwipeAnalysis(sa)

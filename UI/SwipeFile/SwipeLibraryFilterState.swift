@@ -77,7 +77,6 @@ enum SwipeLibrarySectionSelection: Equatable, Hashable {
 
 enum SwipeDiscoverySectionSelection: String, CaseIterable, Identifiable, Equatable, Hashable {
     case discover
-    case highPerformers
     case creators
 
     var id: String { rawValue }
@@ -85,7 +84,6 @@ enum SwipeDiscoverySectionSelection: String, CaseIterable, Identifiable, Equatab
     var title: String {
         switch self {
         case .discover: return "Discover"
-        case .highPerformers: return "High-Performers"
         case .creators: return "Creators"
         }
     }
@@ -93,7 +91,6 @@ enum SwipeDiscoverySectionSelection: String, CaseIterable, Identifiable, Equatab
     var subtitle: String {
         switch self {
         case .discover: return "High-performing posts across platforms"
-        case .highPerformers: return "Cross-platform feed"
         case .creators: return "Profiles to study"
         }
     }
@@ -111,20 +108,40 @@ enum SwipeDiscoveryFilterPresentation {
 
     static let minimumOutlierOptions: [Double?] = [nil, 3, 5, 10, 20]
 
-    static func summary(for query: SocialDiscoveryQuery) -> String {
-        let platformSummary = query.platforms.isEmpty
-            ? "All"
-            : query.platforms
-                .sorted { $0.displayName < $1.displayName }
-                .map(\.displayName)
-                .joined(separator: ", ")
+    struct FollowerPreset: Identifiable, Equatable {
+        let label: String
+        let range: SocialFollowerRange
+        var id: String { label }
+    }
 
-        let outlierSummary: String
-        if let minimum = query.minimumOutlierMultiplier {
-            outlierSummary = "\(Int(minimum))x"
-        } else {
-            outlierSummary = "Any score"
+    static let followerPresets: [FollowerPreset] = [
+        FollowerPreset(label: "Any", range: .any),
+        FollowerPreset(label: "1K – 20K", range: .range(min: 1_000, max: 20_000)),
+        FollowerPreset(label: "20K – 100K", range: .range(min: 20_000, max: 100_000)),
+        FollowerPreset(label: "100K – 1M", range: .range(min: 100_000, max: 1_000_000)),
+        FollowerPreset(label: "1M – 8M", range: .range(min: 1_000_000, max: 8_000_000)),
+        FollowerPreset(label: "8M+", range: .range(min: 8_000_000, max: nil))
+    ]
+
+    /// Screenshot-style label for the platforms list; the enum's own `displayName`
+    /// returns just "X" for the Twitter/X case.
+    static func platformLabel(_ platform: SocialPlatform) -> String {
+        platform == .x ? "X / Twitter" : platform.displayName
+    }
+
+    static func summary(for query: SocialDiscoveryQuery) -> String {
+        let platformSummary: String
+        switch query.platforms.count {
+        case 0:
+            platformSummary = "All"
+        case 1:
+            platformSummary = query.platforms.first.map(platformLabel) ?? "All"
+        default:
+            platformSummary = "\(query.platforms.count) platforms"
         }
+
+        let outlierSummary = query.minimumOutlierMultiplier
+            .map { "\(Int($0))×" } ?? "Any score"
 
         return "\(platformSummary) · \(query.postedWindow.displayName) · \(outlierSummary)"
     }

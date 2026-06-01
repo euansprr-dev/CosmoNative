@@ -1152,7 +1152,6 @@ private struct SidebarSwipeFileContext: View {
             VStack(alignment: .leading, spacing: 4) {
                 SidebarContextLabel(title: "Discover")
                 discoveryRow(.discover, icon: "safari", tint: DS.accent)
-                discoveryRow(.highPerformers, icon: "chart.line.uptrend.xyaxis")
                 discoveryRow(.creators, icon: "person.2")
             }
 

@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 struct SwipeFileHomeView: View {
     @ObservedObject var viewModel: SwipeLibraryViewModel
@@ -887,6 +890,63 @@ struct SwipeFileDiscoverView: View {
 
     @StateObject private var viewModel = SwipeFileDiscoverViewModel()
     @State private var showingFilters = false
+    @State private var filterAnchor: CGRect = .zero
+    @State private var detailPost: SocialPostSnapshot?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            SwipeFileDiscoverContent(
+                section: section,
+                viewModel: viewModel,
+                showingFilters: $showingFilters,
+                onOpenPost: { post in
+                    withAnimation(ProMotionSprings.gentle) { detailPost = post }
+                }
+            )
+
+            if showingFilters {
+                SwipeDiscoverFilterDropdown(
+                    query: $viewModel.query,
+                    anchor: filterAnchor,
+                    onDismiss: { withAnimation(ProMotionSprings.bouncy) { showingFilters = false } }
+                )
+                .zIndex(10)
+            }
+
+            if let detailPost {
+                SwipeDiscoverPostDetailOverlay(
+                    post: detailPost,
+                    onSave: viewModel.save,
+                    onTranscript: { post in
+                        Task {
+                            await viewModel.saveAndOpenForTranscription(post)
+                            withAnimation(ProMotionSprings.gentle) { self.detailPost = nil }
+                        }
+                    },
+                    onClose: { withAnimation(ProMotionSprings.gentle) { self.detailPost = nil } }
+                )
+                .zIndex(20)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(SwipeFileBackground())
+        .coordinateSpace(name: "swipeDiscoverFilterRoot")
+        .onPreferenceChange(FilterAnchorKey.self) { filterAnchor = $0 }
+        .task {
+            await viewModel.loadIfNeeded()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.creatorDataChanged)) { _ in
+            Task { await viewModel.reload() }
+        }
+    }
+}
+
+private struct SwipeFileDiscoverContent: View {
+    let section: SwipeDiscoverySectionSelection
+    @ObservedObject var viewModel: SwipeFileDiscoverViewModel
+    @Binding var showingFilters: Bool
+    let onOpenPost: (SocialPostSnapshot) -> Void
+
     @State private var selectedCreatorID: String?
 
     var body: some View {
@@ -912,7 +972,8 @@ struct SwipeFileDiscoverView: View {
                             creator: creator,
                             posts: viewModel.posts(for: creator),
                             onBack: { self.selectedCreatorID = nil },
-                            onSave: viewModel.save
+                            onSave: viewModel.save,
+                            onOpen: onOpenPost
                         )
                     } else {
                         SwipeDiscoverCreatorDirectory(
@@ -921,23 +982,13 @@ struct SwipeFileDiscoverView: View {
                         )
                     }
                 } else {
-                    SwipeDiscoverFeed(
-                        section: section,
-                        viewModel: viewModel
-                    )
+                    SwipeDiscoverFeed(viewModel: viewModel, onOpen: onOpenPost)
                 }
             }
             .padding(36)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(SwipeFileBackground())
-        .task {
-            await viewModel.loadIfNeeded()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.creatorDataChanged)) { _ in
-            Task { await viewModel.reload() }
-        }
-        .onChange(of: section) { _ in
+        .onChange(of: section) { _, _ in
             selectedCreatorID = nil
         }
     }
@@ -967,13 +1018,6 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
 
     var visiblePosts: [SocialPostSnapshot] {
         SocialDiscoveryStore(query: query, posts: posts).visiblePosts
-    }
-
-    var highPerformingPosts: [SocialPostSnapshot] {
-        var highQuery = query
-        highQuery.minimumOutlierMultiplier = max(query.minimumOutlierMultiplier ?? 10, 10)
-        highQuery.sort = .highestOutlier
-        return SocialDiscoveryStore(query: highQuery, posts: posts).visiblePosts
     }
 
     var filteredCreators: [SwipeDiscoverCreatorRecord] {
@@ -1329,6 +1373,15 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
             return
         }
 
+        _ = try await createLocalSwipeAtom(from: post, boardID: boardID)
+        NotificationCenter.default.post(name: CosmoNotification.SwipeFile.creatorDataChanged, object: nil)
+    }
+
+    /// Creates a local Swipe File atom from a discovered post and returns it (with its row id).
+    /// Used both by the board-save flow and the Transcript launch flow, where we need the
+    /// atom's id immediately to open the swipe teardown focus mode.
+    @discardableResult
+    private func createLocalSwipeAtom(from post: SocialPostSnapshot, boardID: String?) async throws -> Atom {
         let hook = post.title ?? post.body?.components(separatedBy: .newlines).first
         var atom = Research.newSwipeFile(
             url: post.canonicalURL.absoluteString,
@@ -1341,6 +1394,19 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         atom.thumbnailUrl = post.media.first(where: { $0.kind == .thumbnail || $0.kind == .image })?.url.absoluteString
         atom.contentSource = "creator_import"
         atom.swipeBoardIDs = boardID.map { [$0] }
+
+        // Instagram swipes must enter the SAME background pipeline the clipboard/Telegram
+        // capture path uses (see CommandKInstantSwipeCapture.capture + shouldProcessInBackground):
+        // mark "pending" here and kick off processing at SAVE time, below. Previously the
+        // Discovery save path created the atom with only a thumbnail and never triggered
+        // processing — so a saved reel had no downloaded video and SwipeStudy was forced into
+        // a cold, flaky live extraction on every open (it only "worked the next day" once the
+        // launch/foreground scanner happened to process it). Starting processing at save makes
+        // the video download + transcribe in the background, ready to load from the store on open.
+        let needsBackgroundProcessing = post.platform == .instagram
+        if needsBackgroundProcessing {
+            atom.processingStatus = "pending"
+        }
 
         var analysis = SwipeAnalysis(
             analysisVersion: 1,
@@ -1356,8 +1422,32 @@ private final class SwipeFileDiscoverViewModel: ObservableObject {
         analysis.hookText = hook
         atom = atom.withSwipeAnalysis(analysis)
 
-        _ = try await AtomRepository.shared.create(atom)
-        NotificationCenter.default.post(name: CosmoNotification.SwipeFile.creatorDataChanged, object: nil)
+        let saved = try await AtomRepository.shared.create(atom)
+
+        if needsBackgroundProcessing {
+            SwipeProcessingService.shared.processSwipeInBackground(uuid: saved.uuid)
+        }
+
+        return saved
+    }
+
+    /// Transcript-button flow: save the post into "All Swipes" locally, then open the swipe
+    /// teardown focus mode. `SwipeStudyFocusModeView` auto-starts transcription on appear when
+    /// the atom has no transcript yet, so this single hop covers save + teardown + transcription.
+    func saveAndOpenForTranscription(_ post: SocialPostSnapshot) async {
+        do {
+            let atom = try await createLocalSwipeAtom(from: post, boardID: nil)
+            NotificationCenter.default.post(name: CosmoNotification.SwipeFile.creatorDataChanged, object: nil)
+            saveMessage = "Saved to All Swipes — transcribing…"
+            guard let id = atom.id else { return }
+            NotificationCenter.default.post(
+                name: .enterFocusMode,
+                object: nil,
+                userInfo: ["type": EntityType.research, "id": id]
+            )
+        } catch {
+            saveMessage = "Save failed: \(error.localizedDescription)"
+        }
     }
 
     private func sourceType(for post: SocialPostSnapshot) -> ResearchRichContent.SourceType {
@@ -1435,22 +1525,39 @@ private struct SwipeDiscoverHeader: View {
                 Spacer(minLength: 16)
 
                 Button {
-                    isShowingFilters.toggle()
+                    withAnimation(ProMotionSprings.bouncy) { isShowingFilters.toggle() }
                 } label: {
-                    Label(SwipeDiscoveryFilterPresentation.summary(for: query), systemImage: "slider.horizontal.3")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(DS.textSecondary)
-                        .padding(.horizontal, 12)
-                        .frame(height: 34)
-                        .background(.regularMaterial, in: Capsule())
-                        .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 0.75))
+                    HStack(spacing: 8) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(SwipeDiscoveryFilterPresentation.summary(for: query))
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .rotationEffect(.degrees(isShowingFilters ? 180 : 0))
+                    }
+                    .foregroundStyle(isShowingFilters ? DS.text : DS.textSecondary)
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(
+                        Capsule().stroke(
+                            isShowingFilters ? DS.borderActive : DS.borderSubtle,
+                            lineWidth: isShowingFilters ? 1 : 0.75
+                        )
+                    )
                 }
                 .buttonStyle(.plain)
-                .popover(isPresented: $isShowingFilters, arrowEdge: .top) {
-                    SwipeDiscoverFilterPanel(query: $query)
-                        .frame(width: 360)
-                        .padding(14)
-                }
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: FilterAnchorKey.self,
+                            value: proxy.frame(in: .named("swipeDiscoverFilterRoot"))
+                        )
+                    }
+                )
+                .help("Filter discovery")
 
                 Button("Reload", systemImage: "arrow.clockwise", action: onRefresh)
                     .labelStyle(.iconOnly)
@@ -1575,17 +1682,17 @@ private struct SwipeDiscoverPlatformStrip: View {
 }
 
 private struct SwipeDiscoverFeed: View {
-    let section: SwipeDiscoverySectionSelection
     @ObservedObject var viewModel: SwipeFileDiscoverViewModel
+    let onOpen: (SocialPostSnapshot) -> Void
 
     private var posts: [SocialPostSnapshot] {
-        section == .highPerformers ? viewModel.highPerformingPosts : viewModel.visiblePosts
+        viewModel.visiblePosts
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(section == .highPerformers ? "High-Performing Matches" : "All Matches")
+                Text("All Matches")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(DS.text)
                 Text("\(posts.count)")
@@ -1610,9 +1717,9 @@ private struct SwipeDiscoverFeed: View {
                 }
             } else if let error = viewModel.errorMessage {
                 SwipeDiscoverCreatorImportNotice(message: error, systemImage: "exclamationmark.triangle", tint: .orange)
-                SwipeDiscoverMasonryGrid(posts: posts, onSave: viewModel.save)
+                SwipeDiscoverMasonryGrid(posts: posts, onSave: viewModel.save, onOpen: onOpen)
             } else {
-                SwipeDiscoverMasonryGrid(posts: posts, onSave: viewModel.save)
+                SwipeDiscoverMasonryGrid(posts: posts, onSave: viewModel.save, onOpen: onOpen)
             }
         }
     }
@@ -1621,6 +1728,7 @@ private struct SwipeDiscoverFeed: View {
 private struct SwipeDiscoverMasonryGrid: View {
     let posts: [SocialPostSnapshot]
     let onSave: (SocialPostSnapshot, String?) -> Void
+    let onOpen: (SocialPostSnapshot) -> Void
 
     var body: some View {
         GeometryReader { proxy in
@@ -1640,7 +1748,8 @@ private struct SwipeDiscoverMasonryGrid: View {
                             SwipeDiscoverPostCard(
                                 post: post,
                                 cardWidth: cardWidth,
-                                onSave: onSave
+                                onSave: onSave,
+                                onOpen: onOpen
                             )
                             .frame(width: cardWidth)
                         }
@@ -1699,6 +1808,7 @@ private struct SwipeDiscoverPostCard: View {
     let post: SocialPostSnapshot
     let cardWidth: CGFloat
     let onSave: (SocialPostSnapshot, String?) -> Void
+    let onOpen: (SocialPostSnapshot) -> Void
 
     @State private var isHovered = false
     private static let infoSectionHeight: CGFloat = 196
@@ -1802,9 +1912,13 @@ private struct SwipeDiscoverPostCard: View {
         )
         .clipShape(cardShape)
         .contentShape(cardShape)
+        .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
         .onHover { isHovered = $0 }
+        .onTapGesture { onOpen(post) }
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Open post details")
     }
 
     @ViewBuilder
@@ -1949,6 +2063,381 @@ private struct SwipeDiscoverPostCard: View {
         HStack(spacing: 4) {
             Image(systemName: systemImage)
             Text(value.map(formatCount) ?? "-")
+        }
+    }
+}
+
+// MARK: - Discovery Post Detail Modal
+
+/// Dimmed scrim + centered glass panel. The scrim fades; the panel scales in, so hitting
+/// Transcript reads as the post "lifting" out of the feed and into the teardown studio.
+private struct SwipeDiscoverPostDetailOverlay: View {
+    let post: SocialPostSnapshot
+    let onSave: (SocialPostSnapshot, String?) -> Void
+    let onTranscript: (SocialPostSnapshot) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.34)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onClose)
+                .transition(.opacity)
+
+            GeometryReader { proxy in
+                SwipeDiscoverPostDetail(
+                    post: post,
+                    maxHeight: min(proxy.size.height * 0.88, 760),
+                    onSave: onSave,
+                    onTranscript: onTranscript,
+                    onClose: onClose
+                )
+                .frame(width: min(720, max(360, proxy.size.width - 80)))
+                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+            }
+            .transition(.scale(scale: 0.96).combined(with: .opacity))
+        }
+    }
+}
+
+private struct SwipeDiscoverPostDetail: View {
+    let post: SocialPostSnapshot
+    let maxHeight: CGFloat
+    let onSave: (SocialPostSnapshot, String?) -> Void
+    let onTranscript: (SocialPostSnapshot) -> Void
+    let onClose: () -> Void
+
+    @Environment(\.openURL) private var openURL
+    @State private var isLaunching = false
+    @State private var didCopy = false
+
+    private var thumbnailURL: URL? {
+        post.media.first(where: { $0.kind == .thumbnail || $0.kind == .image })?.url
+    }
+
+    private var hashtags: [String] { extractHashtags(from: post.body ?? "") }
+
+    private var outlierText: String {
+        post.derived.outlierMultiplier.map { "\(Int($0.rounded()))×" } ?? "New"
+    }
+
+    private var engagementText: String {
+        post.derived.engagementRate.map(formatEngagementRate) ?? "—"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(DS.borderSubtle)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    mediaHero
+                    authorRow
+                    metricsStrip
+                    captionSection
+                    transcriptSection
+                    if !hashtags.isEmpty { hashtagSection }
+                }
+                .padding(20)
+            }
+        }
+        .frame(maxHeight: maxHeight)
+        .cortexInspectorPanel(cornerRadius: 20)
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Label(post.platform.displayName, systemImage: post.platform.iconName)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(DS.textSecondary)
+            Spacer(minLength: 8)
+            boardMenu
+            circleButton("arrow.up.right.square", help: "Open original") {
+                openURL(post.canonicalURL)
+            }
+            circleButton("xmark", help: "Close", action: onClose)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private var boardMenu: some View {
+        Menu {
+            Button("All Swipes", systemImage: "rectangle.stack.badge.plus") { onSave(post, nil) }
+            Divider()
+            Button("Thread Hooks", systemImage: "text.alignleft") { onSave(post, "thread-hooks") }
+            Button("Reel Ideas", systemImage: "play.rectangle") { onSave(post, "reel-ideas") }
+            Button("Client Proof", systemImage: "checkmark.seal") { onSave(post, "client-proof") }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(DS.textOnAccent)
+                .frame(width: 34, height: 34)
+                .background(DS.accent, in: Circle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .help("Add to board")
+    }
+
+    private func circleButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: 34, height: 34)
+                .background(DS.surfaceElevated, in: Circle())
+                .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 0.75))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    // MARK: Media
+
+    private var mediaHero: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let thumbnailURL {
+                    AsyncImage(url: thumbnailURL) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFit()
+                        } else {
+                            mediaPlaceholder
+                        }
+                    }
+                } else {
+                    mediaPlaceholder
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 320)
+            .background(Color.black.opacity(0.92))
+            .clipShape(.rect(cornerRadius: 16))
+
+            outlierBadge.padding(12)
+        }
+    }
+
+    private var mediaPlaceholder: some View {
+        ZStack {
+            Color.black.opacity(0.92)
+            Image(systemName: post.platform.iconName)
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private var outlierBadge: some View {
+        let hasOutlier = post.derived.outlierMultiplier != nil
+        return Text(outlierText)
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .foregroundStyle(hasOutlier ? DS.textOnAccent : DS.text)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(hasOutlier ? AnyShapeStyle(DS.accent) : AnyShapeStyle(.regularMaterial), in: Capsule())
+    }
+
+    // MARK: Author
+
+    private var authorRow: some View {
+        HStack(spacing: 12) {
+            avatar
+            VStack(alignment: .leading, spacing: 2) {
+                Text(post.author.displayName)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text("@\(post.author.handle)")
+                    if let date = post.publishedAt {
+                        Text("·")
+                        Text(date, style: .relative)
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if let followers = post.author.followerCount {
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(formatCount(followers))
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(DS.text)
+                        .monospacedDigit()
+                    Text("followers")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
+        }
+    }
+
+    private var avatar: some View {
+        AsyncImage(url: post.author.avatarURL) { phase in
+            if let image = phase.image {
+                image.resizable().scaledToFill()
+            } else {
+                Circle().fill(DS.surfaceElevated)
+                    .overlay(Image(systemName: "person.fill").foregroundStyle(DS.textMuted))
+            }
+        }
+        .frame(width: 42, height: 42)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 0.75))
+    }
+
+    // MARK: Metrics
+
+    private var metricsStrip: some View {
+        HStack(spacing: 10) {
+            metricTile("Outlier", outlierText, accent: true)
+            metricTile("Views", post.metrics.views.map(formatCount) ?? "—")
+            metricTile("Likes", post.metrics.likes.map(formatCount) ?? "—")
+            metricTile("Comments", post.metrics.comments.map(formatCount) ?? "—")
+            metricTile("Eng. rate", engagementText)
+        }
+    }
+
+    private func metricTile(_ label: String, _ value: String, accent: Bool = false) -> some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(accent ? DS.accent : DS.text)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(DS.textMuted)
+                .tracking(0.5)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            accent ? DS.accentSoft : DS.surfaceElevated.opacity(0.55),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(accent ? DS.accent.opacity(0.25) : DS.borderSubtle, lineWidth: 0.75)
+        )
+    }
+
+    // MARK: Caption
+
+    private var captionSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionLabel("Caption")
+                Spacer()
+                Button(action: copyCaption) {
+                    Label(didCopy ? "Copied" : "Copy", systemImage: didCopy ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(didCopy ? DS.accent : DS.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+            Text(post.body ?? post.title ?? "No caption available.")
+                .font(.system(size: 14))
+                .foregroundStyle(DS.text)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Transcript
+
+    private var transcriptSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Transcript")
+            if case let .available(text) = post.transcriptState, !text.isEmpty {
+                Text(text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DS.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                transcriptCTA
+            }
+        }
+    }
+
+    private var transcriptCTA: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: launchTranscript) {
+                HStack(spacing: 8) {
+                    Image(systemName: isLaunching ? "checkmark.circle.fill" : "text.viewfinder")
+                    Text(isLaunching ? "Opening teardown…" : "Transcript")
+                }
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(DS.textOnAccent)
+                .frame(maxWidth: .infinity)
+                .frame(height: 46)
+                .background(DS.accent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .scaleEffect(isLaunching ? 0.97 : 1)
+            }
+            .buttonStyle(.plain)
+            .disabled(isLaunching)
+
+            Text("Transcribing adds this post to your Swipe File and opens it for teardown.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+        }
+        .animation(ProMotionSprings.bouncy, value: isLaunching)
+    }
+
+    // MARK: Hashtags
+
+    private var hashtagSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Hashtags")
+            CodexFlowLayout(spacing: 6) {
+                ForEach(hashtags, id: \.self) { tag in
+                    Text(tag)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DS.accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(DS.accentSoft, in: Capsule())
+                }
+            }
+        }
+    }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(DS.textMuted)
+            .tracking(0.8)
+    }
+
+    // MARK: Actions
+
+    private func launchTranscript() {
+        guard !isLaunching else { return }
+        withAnimation(ProMotionSprings.bouncy) { isLaunching = true }
+        Task {
+            try? await Task.sleep(nanoseconds: 280_000_000)
+            onTranscript(post)
+        }
+    }
+
+    private func copyCaption() {
+        let text = post.body ?? post.title ?? ""
+        guard !text.isEmpty else { return }
+        #if canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
+        withAnimation(ProMotionSprings.snappy) { didCopy = true }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            withAnimation(ProMotionSprings.snappy) { didCopy = false }
         }
     }
 }
@@ -2150,6 +2639,7 @@ private struct SwipeDiscoverCreatorProfile: View {
     let posts: [SocialPostSnapshot]
     let onBack: () -> Void
     let onSave: (SocialPostSnapshot, String?) -> Void
+    let onOpen: (SocialPostSnapshot) -> Void
 
     @State private var sortMode: SocialDiscoverySort = .highestOutlier
 
@@ -2246,7 +2736,7 @@ private struct SwipeDiscoverCreatorProfile: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: 320)
             } else {
-                SwipeDiscoverMasonryGrid(posts: sortedPosts, onSave: onSave)
+                SwipeDiscoverMasonryGrid(posts: sortedPosts, onSave: onSave, onOpen: onOpen)
             }
         }
     }
@@ -2265,93 +2755,485 @@ private struct SwipeDiscoverCreatorProfile: View {
     }
 }
 
-private struct SwipeDiscoverFilterPanel: View {
+// MARK: - Discovery Filter Panel
+
+private enum DiscoverPlatformStyle {
+    /// Brand-tinted SF Symbol color per platform; falls back to ink for monochrome marks.
+    static func tint(_ platform: SocialPlatform) -> Color {
+        switch platform {
+        case .youtube: return Color(hex: "#FF0000")
+        case .substack: return Color(hex: "#FF6719")
+        case .instagram: return Color(hex: "#E1306C")
+        case .linkedin: return Color(hex: "#0A66C2")
+        default: return DS.text
+        }
+    }
+}
+
+private struct FilterSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(DS.textMuted)
+            .textCase(.uppercase)
+            .tracking(0.6)
+    }
+}
+
+private struct FilterCheckbox: View {
+    let isOn: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(isOn ? DS.accent : Color.clear)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(isOn ? DS.accent : DS.glassBorder, lineWidth: 1.5)
+            )
+            .overlay(
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(DS.textOnAccent)
+                    .opacity(isOn ? 1 : 0)
+            )
+            .frame(width: 22, height: 22)
+    }
+}
+
+private struct FilterRadio: View {
+    let isOn: Bool
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(isOn ? DS.accent : DS.glassBorder, lineWidth: 1.5)
+            Circle()
+                .fill(DS.accent)
+                .frame(width: 11, height: 11)
+                .opacity(isOn ? 1 : 0)
+        }
+        .frame(width: 22, height: 22)
+    }
+}
+
+private struct FilterSegmentChip: View {
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(Capsule().fill(isSelected ? DS.surfaceElevated : Color.clear))
+                .overlay(Capsule().stroke(isSelected ? DS.border : DS.glassBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct FilterCheckRow: View {
+    let platform: SocialPlatform
+    let isOn: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                FilterCheckbox(isOn: isOn)
+                Image(systemName: platform.iconName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DiscoverPlatformStyle.tint(platform))
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                Text(SwipeDiscoveryFilterPresentation.platformLabel(platform))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(DS.text)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(hovering ? DS.glassInputFill : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in withAnimation(ProMotionSprings.hover) { self.hovering = hovering } }
+        .accessibilityLabel(SwipeDiscoveryFilterPresentation.platformLabel(platform))
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+private struct FilterRadioRow: View {
+    let title: String
+    let systemImage: String
+    let iconTint: Color
+    let isOn: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isOn ? iconTint : DS.textMuted)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.system(size: 13, weight: isOn ? .semibold : .medium))
+                    .foregroundStyle(isOn ? DS.text : DS.textSecondary)
+                Spacer(minLength: 8)
+                FilterRadio(isOn: isOn)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(hovering ? DS.glassInputFill : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in withAnimation(ProMotionSprings.hover) { self.hovering = hovering } }
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+private struct FilterFormatRow<Filter: CaseIterable & Hashable>: View {
+    let platform: SocialPlatform
+    @Binding var selection: Filter
+    let label: (Filter) -> String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 7) {
+                Image(systemName: platform.iconName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DiscoverPlatformStyle.tint(platform))
+                    .accessibilityHidden(true)
+                Text(SwipeDiscoveryFilterPresentation.platformLabel(platform))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+            }
+            CodexFlowLayout(spacing: 7) {
+                ForEach(Array(Filter.allCases), id: \.self) { option in
+                    FilterSegmentChip(label: label(option), isSelected: option == selection) {
+                        withAnimation(ProMotionSprings.snappy) { selection = option }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct FollowerBoundField: View {
+    let title: String
+    let value: Int?
+    let onCommit: (Int?) -> Void
+
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(DS.textMuted)
+                .textCase(.uppercase)
+                .tracking(0.5)
+            TextField("Any", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DS.text)
+                .focused($isFocused)
+                .onSubmit(commit)
+                .padding(.horizontal, 10)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous).fill(DS.glassInputFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(isFocused ? DS.glassBorderFocused : DS.glassBorder, lineWidth: 1)
+                )
+        }
+        .onAppear(perform: syncFromValue)
+        .onChange(of: value) { _, _ in
+            if !isFocused { syncFromValue() }
+        }
+        .onChange(of: isFocused) { _, focused in
+            if !focused { commit() }
+        }
+    }
+
+    private func syncFromValue() {
+        text = value.map(String.init) ?? ""
+    }
+
+    private func commit() {
+        onCommit(SocialFollowerRange.parseFollowerInput(text))
+    }
+}
+
+private struct FilterPlatformsSection: View {
+    @Binding var query: SocialDiscoveryQuery
+
+    private let platforms = SwipeDiscoveryFilterPresentation.primaryPlatforms
+
+    // Store semantics: an empty set means "all platforms".
+    private var resolved: Set<SocialPlatform> {
+        query.platforms.isEmpty ? Set(platforms) : query.platforms
+    }
+
+    private var selectedCount: Int { resolved.intersection(Set(platforms)).count }
+    private var allSelected: Bool { selectedCount == platforms.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                FilterSectionHeader(title: "Platforms")
+                Spacer()
+                Button("Select all") { query.platforms = [] }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(allSelected ? DS.textMuted : DS.accent)
+                    .disabled(allSelected)
+            }
+            Text("\(selectedCount) of \(platforms.count) selected")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .padding(.bottom, 2)
+            ForEach(platforms, id: \.rawValue) { platform in
+                FilterCheckRow(platform: platform, isOn: resolved.contains(platform)) {
+                    toggle(platform)
+                }
+            }
+        }
+    }
+
+    private func toggle(_ platform: SocialPlatform) {
+        var set = resolved
+        if set.contains(platform) {
+            set.remove(platform)
+        } else {
+            set.insert(platform)
+        }
+        // Collapse a full or empty selection back to "all" so the summary reads "All".
+        query.platforms = (set.isEmpty || set == Set(platforms)) ? [] : set
+    }
+}
+
+private struct FilterFormatSection: View {
     @Binding var query: SocialDiscoveryQuery
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            filterSection("Platforms") {
-                ForEach(SwipeDiscoveryFilterPresentation.primaryPlatforms, id: \.rawValue) { platform in
-                    Toggle(isOn: platformBinding(platform)) {
-                        Label(platform.displayName, systemImage: platform.iconName)
-                    }
-                }
-            }
-
-            filterSection("Posted") {
-                Picker("Posted", selection: $query.postedWindow) {
-                    ForEach(SocialPostedWindow.allCases, id: \.rawValue) { window in
-                        Text(window.displayName).tag(window)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            filterSection("Min Outlier Score") {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(SwipeDiscoveryFilterPresentation.minimumOutlierOptions.indices, id: \.self) { index in
-                        let option = SwipeDiscoveryFilterPresentation.minimumOutlierOptions[index]
-                        Button {
-                            query.minimumOutlierMultiplier = option
-                        } label: {
-                            HStack {
-                                Image(systemName: "bolt.fill")
-                                Text(option.map { "\(Int($0))x or more" } ?? "Any")
-                                Spacer()
-                                if query.minimumOutlierMultiplier == option {
-                                    Image(systemName: "checkmark.circle.fill")
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-
-            filterSection("Followers") {
-                HStack {
-                    followerButton("Any", range: .any)
-                    followerButton("1K-20K", range: .range(min: 1_000, max: 20_000))
-                    followerButton("20K-100K", range: .range(min: 20_000, max: 100_000))
-                    followerButton("100K-1M", range: .range(min: 100_000, max: 1_000_000))
-                    followerButton("1M+", range: .range(min: 1_000_000, max: nil))
-                }
-            }
-        }
-    }
-
-    private func filterSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 11, weight: .bold))
+        VStack(alignment: .leading, spacing: 14) {
+            FilterSectionHeader(title: "Format")
+            FilterFormatRow(platform: .youtube, selection: $query.youtubeFormat) { $0.label }
+            FilterFormatRow(platform: .substack, selection: $query.substackFormat) { $0.label }
+            FilterFormatRow(platform: .instagram, selection: $query.instagramFormat) { $0.label }
+            Text("Format lenses apply only to their own platform's posts.")
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(DS.textMuted)
-                .textCase(.uppercase)
-            content()
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
+}
 
-    private func platformBinding(_ platform: SocialPlatform) -> Binding<Bool> {
-        Binding {
-            query.platforms.contains(platform)
-        } set: { isOn in
-            if isOn {
-                query.platforms.insert(platform)
-            } else {
-                query.platforms.remove(platform)
+private struct FilterFollowersSection: View {
+    @Binding var query: SocialDiscoveryQuery
+
+    private let presets = SwipeDiscoveryFilterPresentation.followerPresets
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            FilterSectionHeader(title: "Followers")
+            CodexFlowLayout(spacing: 7) {
+                ForEach(presets) { preset in
+                    FilterSegmentChip(label: preset.label, isSelected: query.followerRange == preset.range) {
+                        withAnimation(ProMotionSprings.snappy) { query.followerRange = preset.range }
+                    }
+                }
+            }
+            HStack(spacing: 10) {
+                FollowerBoundField(title: "Min", value: query.followerRange.minValue) { newMin in
+                    query.followerRange = .bounded(min: newMin, max: query.followerRange.maxValue)
+                }
+                FollowerBoundField(title: "Max", value: query.followerRange.maxValue) { newMax in
+                    query.followerRange = .bounded(min: query.followerRange.minValue, max: newMax)
+                }
+            }
+            Text("Tip: type values like 20k or 1.5m.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+}
+
+private struct FilterOutlierSection: View {
+    @Binding var query: SocialDiscoveryQuery
+
+    private let options = SwipeDiscoveryFilterPresentation.minimumOutlierOptions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            FilterSectionHeader(title: "Min Outlier Score")
+                .padding(.bottom, 4)
+            ForEach(options.indices, id: \.self) { index in
+                let option = options[index]
+                FilterRadioRow(
+                    title: option.map { "\(Int($0))× or more" } ?? "Any score",
+                    systemImage: "bolt.fill",
+                    iconTint: DS.orange,
+                    isOn: query.minimumOutlierMultiplier == option
+                ) {
+                    withAnimation(ProMotionSprings.snappy) { query.minimumOutlierMultiplier = option }
+                }
             }
         }
     }
+}
 
-    private func followerButton(_ title: String, range: SocialFollowerRange) -> some View {
-        Button(title) {
-            query.followerRange = range
+private struct FilterPostedSection: View {
+    @Binding var query: SocialDiscoveryQuery
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            FilterSectionHeader(title: "Posted Within")
+                .padding(.bottom, 4)
+            ForEach(SocialPostedWindow.allCases, id: \.rawValue) { window in
+                FilterRadioRow(
+                    title: window.displayName,
+                    systemImage: "calendar",
+                    iconTint: DS.info,
+                    isOn: query.postedWindow == window
+                ) {
+                    withAnimation(ProMotionSprings.snappy) { query.postedWindow = window }
+                }
+            }
         }
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(query.followerRange == range ? DS.accent : DS.textSecondary)
-        .padding(.horizontal, 8)
-        .frame(height: 28)
-        .background(query.followerRange == range ? DS.accentSoft : DS.surface, in: Capsule())
+    }
+}
+
+private struct SwipeDiscoverFilterPanel: View {
+    @Binding var query: SocialDiscoveryQuery
+    var maxHeight: CGFloat = 580
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                FilterPlatformsSection(query: $query)
+                sectionDivider
+                FilterFormatSection(query: $query)
+                sectionDivider
+                FilterFollowersSection(query: $query)
+                sectionDivider
+                FilterOutlierSection(query: $query)
+                sectionDivider
+                FilterPostedSection(query: $query)
+                if hasActiveFilters {
+                    resetButton
+                }
+            }
+            .padding(18)
+        }
+        .scrollIndicators(.never)
+        .frame(width: 360)
+        .frame(maxHeight: maxHeight)
+    }
+
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(DS.glassBorder)
+            .frame(height: 1)
+            .opacity(0.7)
+    }
+
+    private var hasActiveFilters: Bool {
+        !query.platforms.isEmpty ||
+        !query.usesDefaultFormats ||
+        query.followerRange != .any ||
+        query.minimumOutlierMultiplier != nil ||
+        query.postedWindow != .lastThreeMonths
+    }
+
+    private var resetButton: some View {
+        Button(action: reset) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.counterclockwise")
+                Text("Reset filters")
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(DS.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(DS.glassInputFill))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DS.glassBorder, lineWidth: 1))
+        }
         .buttonStyle(.plain)
+    }
+
+    private func reset() {
+        withAnimation(ProMotionSprings.snappy) {
+            query.platforms = []
+            query.youtubeFormat = .all
+            query.substackFormat = .all
+            query.instagramFormat = .all
+            query.followerRange = .any
+            query.minimumOutlierMultiplier = nil
+            query.postedWindow = .lastThreeMonths
+        }
+    }
+}
+
+private struct FilterAnchorKey: PreferenceKey {
+    static var defaultValue: CGRect { .zero }
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
+private struct SwipeDiscoverFilterDropdown: View {
+    @Binding var query: SocialDiscoveryQuery
+    let anchor: CGRect
+    let onDismiss: () -> Void
+
+    private let panelWidth: CGFloat = 360
+
+    var body: some View {
+        GeometryReader { proxy in
+            let topInset = anchor.maxY + 8
+            let panelHeight = min(620, max(280, proxy.size.height - topInset - 24))
+            let leadingX = min(
+                max(16, anchor.maxX - panelWidth),
+                max(16, proxy.size.width - panelWidth - 16)
+            )
+
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.001)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onDismiss)
+
+                SwipeDiscoverFilterPanel(query: $query, maxHeight: panelHeight)
+                    .cortexInspectorPanel(cornerRadius: 22)
+                    .offset(x: leadingX, y: topInset)
+                    .transition(
+                        .scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity)
+                    )
+            }
+        }
     }
 }
 
@@ -2401,6 +3283,32 @@ private func formatCount(_ value: Int) -> String {
         return String(format: "%.1fK", Double(value) / 1_000)
     }
     return "\(value)"
+}
+
+/// Formats a discovery engagement rate as a percentage. The discovery API and `SwipeAnalysis`
+/// store this already multiplied by 100 (e.g. 6.4 → "6.4%"); values below 1 are treated as a
+/// raw fraction (e.g. 0.064 → "6.4%") so both provider conventions render correctly.
+private func formatEngagementRate(_ rate: Double) -> String {
+    let pct = rate < 1 ? rate * 100 : rate
+    return String(format: "%.1f%%", pct)
+}
+
+/// Extracts unique, display-ready hashtags ("#tag") from caption text, in order of appearance.
+private func extractHashtags(from text: String) -> [String] {
+    guard text.contains("#") else { return [] }
+    let tokens = text.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "\r" })
+    var result: [String] = []
+    var seen = Set<String>()
+    let trimSet = CharacterSet(charactersIn: "#.,!?:;)(\"'“”’]}[{")
+    for token in tokens where token.hasPrefix("#") && token.count > 1 {
+        let cleaned = token.trimmingCharacters(in: trimSet)
+        guard !cleaned.isEmpty else { continue }
+        let tag = "#\(cleaned)"
+        if seen.insert(tag.lowercased()).inserted {
+            result.append(tag)
+        }
+    }
+    return Array(result.prefix(30))
 }
 
 private struct DiscoverSignalCard: View {

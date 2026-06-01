@@ -24,6 +24,59 @@ function reachFor(row: Pick<SocialDiscoveredPostRow, 'view_count' | 'like_count'
   return row.view_count ?? row.like_count ?? row.comment_count ?? row.repost_count ?? null;
 }
 
+function missingSchemaColumn(error: { message?: string } | null | undefined): string | null {
+  const message = error?.message ?? '';
+  return message.match(/Could not find the '([^']+)' column/)?.[1]
+    ?? message.match(/column "([^"]+)" .*does not exist/i)?.[1]
+    ?? null;
+}
+
+async function insertSocialSourceWithSchemaFallback(row: Record<string, unknown>): Promise<SocialSourceRow> {
+  const payload = { ...row };
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const { data, error } = await supabase
+      .from('social_sources')
+      .insert(payload)
+      .select('*')
+      .single();
+
+    if (!error && data) return data as SocialSourceRow;
+
+    const column = missingSchemaColumn(error);
+    if (column && Object.prototype.hasOwnProperty.call(payload, column)) {
+      delete payload[column];
+      continue;
+    }
+
+    throw new Error(`createSource failed: ${error?.message ?? 'no data'}`);
+  }
+
+  throw new Error('createSource failed: schema fallback exhausted');
+}
+
+async function updateSocialSourceWithSchemaFallback(sourceUuid: string, updates: Record<string, unknown>): Promise<void> {
+  const payload = { ...updates };
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const { error } = await supabase
+      .from('social_sources')
+      .update(payload)
+      .eq('uuid', sourceUuid)
+      .eq('user_id', userId);
+
+    if (!error) return;
+
+    const column = missingSchemaColumn(error);
+    if (column && Object.prototype.hasOwnProperty.call(payload, column)) {
+      delete payload[column];
+      continue;
+    }
+
+    return;
+  }
+}
+
 export async function upsertCreator(input: DiscoveryCreatorInput): Promise<SocialCreatorRow> {
   const normalizedHandle = handle(input.handle);
   const { data: existing } = await supabase
@@ -192,31 +245,22 @@ export async function createSource(params: {
     }
   }
 
-  const { data, error } = await supabase
-    .from('social_sources')
-    .insert({
-      uuid: uuidv4(),
-      user_id: userId,
-      kind: params.kind,
-      platform: params.platform ?? null,
-      label: params.label,
-      query: params.query ?? null,
-      profile_url: params.profileUrl ?? null,
-      creator_uuid: params.creatorUuid ?? null,
-      niche_tags: params.nicheTags ?? [],
-      priority: params.priority ?? 50,
-      cadence_minutes: params.cadenceMinutes ?? 1440,
-      status: 'active',
-      next_run_at: nowISO(),
-      refresh_cursor: {},
-    })
-    .select('*')
-    .single();
-
-  if (error || !data) {
-    throw new Error(`createSource failed: ${error?.message ?? 'no data'}`);
-  }
-  return data as SocialSourceRow;
+  return insertSocialSourceWithSchemaFallback({
+    uuid: uuidv4(),
+    user_id: userId,
+    kind: params.kind,
+    platform: params.platform ?? null,
+    label: params.label,
+    query: params.query ?? null,
+    profile_url: params.profileUrl ?? null,
+    creator_uuid: params.creatorUuid ?? null,
+    niche_tags: params.nicheTags ?? [],
+    priority: params.priority ?? 50,
+    cadence_minutes: params.cadenceMinutes ?? 1440,
+    status: 'active',
+    next_run_at: nowISO(),
+    refresh_cursor: {},
+  });
 }
 
 export async function fetchDueSources(limit = 25): Promise<SocialSourceRow[]> {
@@ -272,11 +316,7 @@ export async function updateSourceAfterRun(
     }
   }
 
-  await supabase
-    .from('social_sources')
-    .update(updates)
-    .eq('uuid', source.uuid)
-    .eq('user_id', userId);
+  await updateSocialSourceWithSchemaFallback(source.uuid, updates);
 }
 
 export async function recordDiscoveryRun(params: {

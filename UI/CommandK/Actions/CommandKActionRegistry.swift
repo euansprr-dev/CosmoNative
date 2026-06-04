@@ -91,16 +91,50 @@ struct CommandKActionRegistry {
     }
 
     private func swipeActions(for context: CommandKActionContext) -> [CommandKContextualAction] {
+        var actions: [CommandKContextualAction] = []
+
+        if case .expandedDomain(.swipeGallery) = context.mode {
+            actions.append(
+                CommandKContextualAction(
+                    id: .openSwipeGallery,
+                    category: .primary,
+                    title: "Open Swipe Gallery",
+                    subtitle: "Open All Swipes full screen",
+                    systemImage: "rectangle.stack.fill",
+                    shortcut: nil,
+                    role: .normal,
+                    availability: .enabled,
+                    intent: .postNotification(
+                        name: CosmoNotification.Navigation.openSwipeGallery,
+                        userInfo: [:]
+                    )
+                )
+            )
+            actions.append(
+                CommandKContextualAction(
+                    id: .openAsPane,
+                    category: .object,
+                    title: "Open as Pane",
+                    subtitle: "Open All Swipes beside your workspace",
+                    systemImage: "rectangle.split.2x1",
+                    shortcut: .commandReturn,
+                    role: .normal,
+                    availability: .enabled,
+                    intent: .openSwipeGalleryAsPane
+                )
+            )
+        }
+
         guard case .swipe = context.selectionKind,
               let uuid = context.selectedAtomUUID else {
-            return []
+            return actions
         }
 
         let draftAvailability: CommandKActionAvailability = context.hasActiveContentDraft
             ? .enabled
             : .disabled(reason: "No active content draft")
 
-        return [
+        actions.append(contentsOf: [
             CommandKContextualAction(
                 id: .openSwipeStudy,
                 category: .swipe,
@@ -181,7 +215,9 @@ struct CommandKActionRegistry {
                     userInfo: ["atomUUID": uuid]
                 )
             )
-        ]
+        ])
+
+        return actions
     }
 
     private func inquiryActions(for context: CommandKActionContext) -> [CommandKContextualAction] {

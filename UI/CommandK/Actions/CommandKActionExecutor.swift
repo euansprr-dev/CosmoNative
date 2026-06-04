@@ -16,6 +16,14 @@ struct CommandKActionExecutor {
         case .openAsPane(let uuid):
             try await openAsPane(uuid: uuid)
 
+        case .openSwipeGalleryAsPane:
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: ["swipeGallery": true]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+
         case .addToCanvas(let uuid):
             NotificationCenter.default.post(
                 name: CosmoNotification.NodeGraph.addToCanvas,

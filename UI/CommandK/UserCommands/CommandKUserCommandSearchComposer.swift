@@ -90,12 +90,13 @@ struct CommandKSystemCommandComposer {
         guard normalizedQuery.count >= 2 || normalizedQuery == "ai" else { return [] }
 
         return Self.commands
-            .compactMap { command -> (row: CommandKUserCommandRow, score: Int)? in
+            .compactMap { command -> (row: CommandKUserCommandRow, score: Int, priority: Int)? in
                 guard let score = command.matchScore(for: normalizedQuery) else { return nil }
-                return (row: row(for: command), score: score)
+                return (row: row(for: command), score: score, priority: command.priority)
             }
             .sorted {
                 if $0.score != $1.score { return $0.score > $1.score }
+                if $0.priority != $1.priority { return $0.priority > $1.priority }
                 return $0.row.title.localizedCaseInsensitiveCompare($1.row.title) == .orderedAscending
             }
             .map(\.row)
@@ -110,6 +111,7 @@ struct CommandKSystemCommandComposer {
         let icon: String
         let payload: CommandKActionPayload
         let aliases: [String]
+        var priority: Int = 0
 
         func matchScore(for normalizedQuery: String) -> Int? {
             let normalizedAliases = aliases.map(CommandKSystemCommandComposer.normalized)
@@ -148,7 +150,8 @@ struct CommandKSystemCommandComposer {
             kind: .openBrowser,
             icon: "globe",
             payload: CommandKActionPayload(rawText: "browser"),
-            aliases: ["browser", "open browser", "web", "open web", "research browser", "browser pane"]
+            aliases: ["browser", "open browser", "web", "open web", "research browser", "browser pane"],
+            priority: 20
         ),
         SystemCommand(
             id: "system-command-center",
@@ -183,12 +186,24 @@ struct CommandKSystemCommandComposer {
         SystemCommand(
             id: "system-open-swipe-gallery",
             title: "Open Swipe Gallery",
-            subtitle: "Switch Command-K domain",
+            subtitle: "Open All Swipes full screen",
+            category: "Domain",
+            kind: .openSwipeGallery,
+            icon: "rectangle.stack.fill",
+            payload: CommandKActionPayload(rawText: "open swipe gallery"),
+            aliases: ["open swipe gallery", "swipe gallery", "all swipes", "full screen swipes"],
+            priority: 10
+        ),
+        SystemCommand(
+            id: "system-browse-swipes",
+            title: "Browse Swipes",
+            subtitle: "Browse swipes inside Command-K",
             category: "Domain",
             kind: .openDomain,
             icon: "bolt.fill",
             payload: CommandKActionPayload(domain: "swipeGallery", rawText: "swipes"),
-            aliases: ["swipe gallery", "swipes", "swipe file", "swipe library"]
+            aliases: ["browse swipes", "swipes", "swipe file", "swipe library"],
+            priority: 5
         ),
         SystemCommand(
             id: "system-open-ideas",

@@ -107,6 +107,42 @@ final class CommandKActionRegistryTests: XCTestCase {
         XCTAssertEqual(action?.shortcut, .commandReturn)
     }
 
+    func testSwipeGalleryDomainActionsIncludeFullScreenGalleryRoute() {
+        let context = CommandKActionContext(
+            query: "",
+            subject: .empty,
+            hydratedAtom: nil,
+            mode: .expandedDomain(.swipeGallery),
+            activeInquirySessionUUID: nil,
+            activeContentDraftUUID: nil
+        )
+
+        let action = CommandKActionRegistry().actions(for: context).first { $0.id == .openSwipeGallery }
+
+        XCTAssertEqual(action?.title, "Open Swipe Gallery")
+        XCTAssertEqual(
+            action?.intent,
+            .postNotification(name: CosmoNotification.Navigation.openSwipeGallery, userInfo: [:])
+        )
+    }
+
+    func testSwipeGalleryDomainActionsIncludeOpenAsPaneRoute() {
+        let context = CommandKActionContext(
+            query: "",
+            subject: .empty,
+            hydratedAtom: nil,
+            mode: .expandedDomain(.swipeGallery),
+            activeInquirySessionUUID: nil,
+            activeContentDraftUUID: nil
+        )
+
+        let action = CommandKActionRegistry().actions(for: context).first { $0.id == .openAsPane }
+
+        XCTAssertEqual(action?.title, "Open as Pane")
+        XCTAssertEqual(action?.availability, .enabled)
+        XCTAssertEqual(action?.intent, .openSwipeGalleryAsPane)
+    }
+
     func testRegistryDisablesInquiryAttachWhenNoActiveInquiryExists() {
         let subject = CortexDetailSubject.recent(
             RecentDisplayItem(

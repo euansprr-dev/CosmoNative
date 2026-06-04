@@ -47,6 +47,10 @@ struct CommandKActionPanel: View {
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(DS.text)
                 .focused($isSearchFocused)
+                .onKeyPress(.downArrow) { moveSelection(1); return .handled }
+                .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
+                .onKeyPress(.return) { executeSelected(); return .handled }
+                .onKeyPress(.escape) { dismiss(); return .handled }
 
             Button(action: dismiss) {
                 Image(systemName: "xmark")

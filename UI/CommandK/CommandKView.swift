@@ -21,6 +21,7 @@ public struct CommandKView: View {
     @Namespace private var cortexNamespace
     @State private var searchText = ""
     @State private var isExpandedBrowserMounted = false
+    @State private var isActionPanelPresented = false
     @State private var domainTransitionTask: Task<Void, Never>?
     @State private var searchFocusTask: Task<Void, Never>?
 
@@ -115,10 +116,22 @@ public struct CommandKView: View {
             }
         }
         .onKeyPress(.escape) { handleEscape() }
-        .onKeyPress(.downArrow) { viewModel.selectNext(); return .handled }
-        .onKeyPress(.upArrow) { viewModel.selectPrevious(); return .handled }
+        .onKeyPress(.downArrow) {
+            guard !isActionPanelPresented else { return .ignored }
+            viewModel.selectNext()
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            guard !isActionPanelPresented else { return .ignored }
+            viewModel.selectPrevious()
+            return .handled
+        }
         .onKeyPress { handleCommandReturn($0) }
-        .onKeyPress(.return) { viewModel.openSelected(); return .handled }
+        .onKeyPress(.return) {
+            guard !isActionPanelPresented else { return .ignored }
+            viewModel.openSelected()
+            return .handled
+        }
         .onKeyPress(.tab) { handleTab() }
     }
 
@@ -311,7 +324,8 @@ public struct CommandKView: View {
         case .compact, .searchResults, .expandedDomain:
             CortexMasterDetailView(
                 viewModel: viewModel,
-                isDomainHydrated: isMasterDetailDomainHydrated
+                isDomainHydrated: isMasterDetailDomainHydrated,
+                isActionPanelPresented: $isActionPanelPresented
             )
                 .frame(height: contentPanelHeight(for: geometry))
                 .frame(width: panelWidth(for: geometry))
@@ -582,6 +596,11 @@ public struct CommandKView: View {
     // MARK: - Keyboard Handlers
 
     private func handleEscape() -> KeyPress.Result {
+        if isActionPanelPresented {
+            isActionPanelPresented = false
+            return .handled
+        }
+
         switch viewModel.cortexMode {
         case .expandedDomain:
             if viewModel.isMultiSelectActive {
@@ -601,6 +620,7 @@ public struct CommandKView: View {
 
     private func handleCommandReturn(_ press: KeyPress) -> KeyPress.Result {
         guard press.key == .return, press.modifiers.contains(.command) else { return .ignored }
+        guard !isActionPanelPresented else { return .ignored }
         openSelectedAsPaneFromShortcut()
         return .handled
     }
@@ -621,6 +641,7 @@ public struct CommandKView: View {
     }
 
     private func handleTab() -> KeyPress.Result {
+        guard !isActionPanelPresented else { return .ignored }
         return .handled
     }
 

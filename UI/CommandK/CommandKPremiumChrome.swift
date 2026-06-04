@@ -240,6 +240,8 @@ struct CommandKActionVisualPreview: View {
             return "Open as floating window"
         case .openBrowser:
             return "Open as browser pane"
+        case .openSwipeGallery:
+            return "Open All Swipes full screen"
         case .captureSwipe, .captureSwipeWithIdea:
             return "Capture to Swipe File"
         case .openDomain:

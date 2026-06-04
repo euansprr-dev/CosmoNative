@@ -14,6 +14,7 @@ enum CommandKActionKind: String, Equatable {
     case navigateCommandCenter
     case navigateLastThinkspace
     case openBrowser
+    case openSwipeGallery
     case openDomain
     case openAtom
     case openThinkspace
@@ -85,7 +86,7 @@ struct CommandKAction: Identifiable, Equatable {
             components = [kind.rawValue, payload.clientName]
         case .createTask, .createContent, .createThinkspace, .askCosmo:
             components = [kind.rawValue]
-        case .navigateCommandCenter, .navigateLastThinkspace, .openCosmoPane, .openCosmoWindow:
+        case .navigateCommandCenter, .navigateLastThinkspace, .openSwipeGallery, .openCosmoPane, .openCosmoWindow:
             components = [kind.rawValue]
         case .openBrowser:
             components = [kind.rawValue]
@@ -119,7 +120,7 @@ struct CommandKAction: Identifiable, Equatable {
             return payload.destinationName != nil
         case .createIdea, .createTask, .captureResearch, .createContent, .createThinkspace:
             return payload.title?.isEmpty == false || payload.body?.isEmpty == false || payload.url != nil
-        case .navigateCommandCenter, .navigateLastThinkspace, .openBrowser, .openDomain:
+        case .navigateCommandCenter, .navigateLastThinkspace, .openBrowser, .openSwipeGallery, .openDomain:
             return true
         case .openAtom:
             return payload.atomUUID?.isEmpty == false
@@ -211,6 +212,8 @@ struct CommandKVisualIdentity: Equatable {
                 subtitle: "Research pane",
                 badge: "WEB"
             )
+        case .openSwipeGallery:
+            return CommandKVisualIdentity(style: .swipeFile, symbolName: "rectangle.stack.fill", title: "Swipe Gallery", subtitle: "All Swipes", badge: "OPEN")
         case .openDomain:
             return domain(action.payload.domain, title: action.title, symbolName: action.icon)
         case .openAtom:
@@ -518,7 +521,7 @@ enum CommandKActionParser {
         case "library", "database":
             domain = ("database", "Open Library", "tray.full.fill")
         case "swipe gallery", "swipes", "swipe library":
-            domain = ("swipeGallery", "Open Swipe Gallery", "bolt.fill")
+            domain = ("swipeGallery", "Browse Swipes", "bolt.fill")
         case "ideas":
             domain = ("ideas", "Open Ideas", "lightbulb.fill")
         case "readwise", "books":

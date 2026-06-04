@@ -1534,6 +1534,19 @@ public final class CommandKViewModel: ObservableObject {
         unfilteredResults = rankedResults
         applyFiltersToResults()
     }
+
+    func testingNextSearchRequestID() async -> CommandKSearchRequestID {
+        await searchPipeline.nextRequestID()
+    }
+
+    func testingUpdateUnifiedSearch(query: String, searchRequestID: CommandKSearchRequestID) async {
+        await updateUnifiedSearch(
+            query: query,
+            preloadSupportData: false,
+            includeThinkspaces: false,
+            searchRequestID: searchRequestID
+        )
+    }
     #endif
 
     private func setUnifiedSearchResults(
@@ -1794,11 +1807,12 @@ public final class CommandKViewModel: ObservableObject {
                 cortexMode = .compact
                 await loadRecentsForCompact()
             }
+            guard await searchPipeline.isCurrent(requestID), isSurfaceActive else { return }
             if case .expandedDomain = cortexMode {
                 setCurrentPhase(.idle)
                 return
             }
-            await showRecents()
+            await showRecents(searchRequestID: requestID)
             return
         }
 
@@ -1876,12 +1890,13 @@ public final class CommandKViewModel: ObservableObject {
             unfilteredResults = instantIndexedResults
             computeFilterCounts()
             applyFiltersToResults()
-            await performInstantUnifiedSearch(query: queryForSearch)
+            await performInstantUnifiedSearch(query: queryForSearch, searchRequestID: requestID)
             setCurrentPhase(.instant)
         } else {
             await performInstantUnifiedSearch(
                 query: queryForSearch,
-                preserveVisibleResultsWhenEmpty: true
+                preserveVisibleResultsWhenEmpty: true,
+                searchRequestID: requestID
             )
         }
 
@@ -1898,8 +1913,8 @@ public final class CommandKViewModel: ObservableObject {
             unfilteredResults = cached
             computeFilterCounts()
             applyFiltersToResults()
-            await performInstantUnifiedSearch(query: queryForSearch)
-            scheduleUnifiedSearchEnrichment(for: queryForSearch)
+            await performInstantUnifiedSearch(query: queryForSearch, searchRequestID: requestID)
+            scheduleUnifiedSearchEnrichment(for: queryForSearch, searchRequestID: requestID)
             setCurrentPhase(.instant)
             return
         }
@@ -1970,8 +1985,8 @@ public final class CommandKViewModel: ObservableObject {
                     unfilteredResults = rankedResults
                     computeFilterCounts()
                     applyFiltersToResults()
-                    await performInstantUnifiedSearch(query: queryForSearch)
-                    scheduleUnifiedSearchEnrichment(for: queryForSearch)
+                    await performInstantUnifiedSearch(query: queryForSearch, searchRequestID: requestID)
+                    scheduleUnifiedSearchEnrichment(for: queryForSearch, searchRequestID: requestID)
                     setCurrentPhase(.complete)
 
                     // Cache unfiltered results
@@ -2021,8 +2036,8 @@ public final class CommandKViewModel: ObservableObject {
                             }
                             unfilteredResults = reRankedResults.sorted()
                             applyFiltersToResults()
-                            await performInstantUnifiedSearch(query: queryForReRank)
-                            scheduleUnifiedSearchEnrichment(for: queryForReRank)
+                            await performInstantUnifiedSearch(query: queryForReRank, searchRequestID: requestID)
+                            scheduleUnifiedSearchEnrichment(for: queryForReRank, searchRequestID: requestID)
                             isAIRanked = true
                         }
                         CommandKPerformanceInstrumentation.signposter.endInterval("ai-rerank", rerankSignpost)
@@ -2035,7 +2050,7 @@ public final class CommandKViewModel: ObservableObject {
                    isSurfaceActive,
                    await searchPipeline.isCurrent(requestID) {
                     // Fallback to graph-based search if hybrid fails
-                    await fallbackToGraphSearch(query: query)
+                    await fallbackToGraphSearch(query: query, searchRequestID: requestID)
                 }
             }
         }
@@ -2047,17 +2062,35 @@ public final class CommandKViewModel: ObservableObject {
             .filter { $0.action.id != primaryActionID }
         do {
             let quicklinks = try await userCommandStore.searchQuicklinks(query)
-            return systemRows + userCommandComposer.rows(for: quicklinks)
+            let quicklinkRows = userCommandComposer.rows(for: quicklinks)
+                .filter { row in
+                    !systemRows.contains { Self.commandRowsShareNavigationTarget($0, row) }
+                }
+            return systemRows + quicklinkRows
         } catch {
             return systemRows
         }
     }
 
+    private static func commandRowsShareNavigationTarget(
+        _ lhs: CommandKUserCommandRow,
+        _ rhs: CommandKUserCommandRow
+    ) -> Bool {
+        switch (lhs.action.kind, rhs.action.kind) {
+        case (.openDomain, .openDomain):
+            return lhs.action.payload.domain == "swipeGallery" &&
+                rhs.action.payload.domain == "swipeGallery"
+        default:
+            return false
+        }
+    }
+
     /// Fallback to direct atom search if HybridSearchEngine fails
-    private func fallbackToGraphSearch(query: String) async {
+    private func fallbackToGraphSearch(query: String, searchRequestID: CommandKSearchRequestID? = nil) async {
         do {
             // Search atoms directly by title/body containing query
             let atoms = try await AtomRepository.shared.search(query: query, limit: maxResults * 2)
+            guard await isCurrentSearchRequest(searchRequestID), isSurfaceActive else { return }
 
             var rankedResults: [RankedResult] = []
             for atom in atoms {
@@ -2082,6 +2115,7 @@ public final class CommandKViewModel: ObservableObject {
             setCurrentPhase(.complete)
 
         } catch {
+            guard await isCurrentSearchRequest(searchRequestID), isSurfaceActive else { return }
             errorMessage = "Search failed: \(error.localizedDescription)"
             setCurrentPhase(.idle)
         }
@@ -2134,12 +2168,13 @@ public final class CommandKViewModel: ObservableObject {
 
 
     /// Show recent atoms when query is empty
-    private func showRecents() async {
+    private func showRecents(searchRequestID: CommandKSearchRequestID? = nil) async {
         setCurrentPhase(.searching)
         isShowingRecents = true
 
         do {
             let openedAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 24)
+            guard await isCurrentSearchRequest(searchRequestID), isSurfaceActive else { return }
             let opened = openedAtoms.map {
                 CommandKRecentComposer.OpenedAtom(
                     atom: $0.atom,
@@ -2159,6 +2194,7 @@ public final class CommandKViewModel: ObservableObject {
             setCurrentPhase(.complete)
 
         } catch {
+            guard await isCurrentSearchRequest(searchRequestID), isSurfaceActive else { return }
             errorMessage = "Failed to load recents: \(error.localizedDescription)"
             setCurrentPhase(.idle)
         }
@@ -2305,6 +2341,11 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Open the selected result in the split-pane column.
     public func openSelectedAsPane() async {
+        if let action = activeCommandAction,
+           await openCommandActionAsPaneIfSupported(action) {
+            return
+        }
+
         if let primaryAction,
            selectedNodeId == nil || selectedNodeId == primaryAction.id {
             return
@@ -2337,6 +2378,19 @@ public final class CommandKViewModel: ObservableObject {
 
         guard let uuid = selectedNodeId else { return }
         try? await CommandKActionExecutor().execute(.openAsPane(uuid: uuid))
+    }
+
+    private func openCommandActionAsPaneIfSupported(_ action: CommandKAction) async -> Bool {
+        switch action.kind {
+        case .openSwipeGallery:
+            try? await CommandKActionExecutor().execute(.openSwipeGalleryAsPane)
+            return true
+        case .openDomain where action.payload.domain == "swipeGallery":
+            try? await CommandKActionExecutor().execute(.openSwipeGalleryAsPane)
+            return true
+        default:
+            return false
+        }
     }
 
     private func openRecentItemAsPane(_ item: RecentDisplayItem) -> Bool {
@@ -2647,6 +2701,10 @@ public final class CommandKViewModel: ObservableObject {
                     "title": title
                 ]
             )
+            finishAction()
+
+        case .openSwipeGallery:
+            NotificationCenter.default.post(name: CosmoNotification.Navigation.openSwipeGallery, object: nil)
             finishAction()
 
         case .openDomain:
@@ -3064,6 +3122,10 @@ public final class CommandKViewModel: ObservableObject {
 
     private var activeSearchSelectionIDs: [String] {
         (primaryAction.map { [$0.id] } ?? []) + userCommandRows.map(\.id) + unifiedFlatResults.map(\.selectionID)
+    }
+
+    func searchSelectionIndex(for selectionID: String) -> Int {
+        activeSearchSelectionIDs.firstIndex(of: selectionID) ?? -1
     }
 
     private func updateActiveSearchSelection() {
@@ -3781,16 +3843,23 @@ public final class CommandKViewModel: ObservableObject {
         requestID == unifiedSearchRequestID
     }
 
+    private func isCurrentSearchRequest(_ requestID: CommandKSearchRequestID?) async -> Bool {
+        guard let requestID else { return true }
+        return await searchPipeline.isCurrent(requestID)
+    }
+
     /// Publish a fast unified result set from already-loaded local data.
     private func performInstantUnifiedSearch(
         query: String,
-        preserveVisibleResultsWhenEmpty: Bool = false
+        preserveVisibleResultsWhenEmpty: Bool = false,
+        searchRequestID: CommandKSearchRequestID? = nil
     ) async {
         await updateUnifiedSearch(
             query: query,
             preloadSupportData: false,
             includeThinkspaces: false,
-            preserveVisibleResultsWhenEmpty: preserveVisibleResultsWhenEmpty
+            preserveVisibleResultsWhenEmpty: preserveVisibleResultsWhenEmpty,
+            searchRequestID: searchRequestID
         )
     }
 
@@ -3799,12 +3868,13 @@ public final class CommandKViewModel: ObservableObject {
         await updateUnifiedSearch(
             query: query,
             preloadSupportData: false,
-            includeThinkspaces: true
+            includeThinkspaces: true,
+            searchRequestID: nil
         )
-        scheduleUnifiedSearchEnrichment(for: query)
+        scheduleUnifiedSearchEnrichment(for: query, searchRequestID: nil)
     }
 
-    private func scheduleUnifiedSearchEnrichment(for query: String) {
+    private func scheduleUnifiedSearchEnrichment(for query: String, searchRequestID: CommandKSearchRequestID? = nil) {
         unifiedSearchEnrichmentTask?.cancel()
         let expectedQuery = query.trimmingCharacters(in: .whitespaces)
         guard !expectedQuery.isEmpty else { return }
@@ -3814,6 +3884,7 @@ public final class CommandKViewModel: ObservableObject {
             guard let self,
                   !Task.isCancelled,
                   self.isSurfaceActive,
+                  await self.isCurrentSearchRequest(searchRequestID),
                   self.query.trimmingCharacters(in: .whitespaces) == expectedQuery else {
                 return
             }
@@ -3821,7 +3892,8 @@ public final class CommandKViewModel: ObservableObject {
             await self.updateUnifiedSearch(
                 query: query,
                 preloadSupportData: true,
-                includeThinkspaces: true
+                includeThinkspaces: true,
+                searchRequestID: searchRequestID
             )
         }
     }
@@ -3830,9 +3902,10 @@ public final class CommandKViewModel: ObservableObject {
         query: String,
         preloadSupportData: Bool,
         includeThinkspaces: Bool,
-        preserveVisibleResultsWhenEmpty: Bool = false
+        preserveVisibleResultsWhenEmpty: Bool = false,
+        searchRequestID: CommandKSearchRequestID? = nil
     ) async {
-        guard isSurfaceActive else { return }
+        guard isSurfaceActive, await isCurrentSearchRequest(searchRequestID) else { return }
         let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("unified-search")
         defer {
             CommandKPerformanceInstrumentation.signposter.endInterval("unified-search", signpost)
@@ -3861,13 +3934,16 @@ public final class CommandKViewModel: ObservableObject {
         if preloadSupportData {
             await preloadUnifiedSearchSupportData()
         }
+        guard await isCurrentSearchRequest(searchRequestID) else { return }
         if includeThinkspaces, ThinkspaceManager.shared.thinkspaces.isEmpty {
             await ThinkspaceManager.shared.loadThinkspaces()
         }
-        guard isCurrentUnifiedSearchRequest(requestID) else { return }
+        guard isCurrentUnifiedSearchRequest(requestID),
+              await isCurrentSearchRequest(searchRequestID) else { return }
 
         let browserPins = await CosmoBrowserStore.shared.allPins()
-        guard isCurrentUnifiedSearchRequest(requestID) else { return }
+        guard isCurrentUnifiedSearchRequest(requestID),
+              await isCurrentSearchRequest(searchRequestID) else { return }
 
         let output = CommandKUnifiedSearchComposer.buildOutput(
             query: trimmed,
@@ -3877,7 +3953,8 @@ public final class CommandKViewModel: ObservableObject {
             readwiseBooks: ReadwiseBookStore.shared.books,
             browserPins: browserPins
         )
-        guard isCurrentUnifiedSearchRequest(requestID) else { return }
+        guard isCurrentUnifiedSearchRequest(requestID),
+              await isCurrentSearchRequest(searchRequestID) else { return }
 
         let projectsByUUID: [String: Atom] = [:]
         let thinkspaceLibraryItems: [LibraryItem]
@@ -3919,6 +3996,8 @@ public final class CommandKViewModel: ObservableObject {
             projectsByUUID: projectsByUUID,
             thinkspacesByID: thinkspacesByID
         )
+        guard isCurrentUnifiedSearchRequest(requestID),
+              await isCurrentSearchRequest(searchRequestID) else { return }
         for item in thinkspaceLibraryItems {
             libraryItemsByID[item.uuid] = item
         }
@@ -3927,7 +4006,8 @@ public final class CommandKViewModel: ObservableObject {
             enrichUnifiedSearchResult(result, with: result.libraryLookupKey.flatMap { libraryItemsByID[$0] })
         }
         let regrouped = CommandKUnifiedSearchComposer.regroup(enrichedResults)
-        guard isCurrentUnifiedSearchRequest(requestID) else { return }
+        guard isCurrentUnifiedSearchRequest(requestID),
+              await isCurrentSearchRequest(searchRequestID) else { return }
 
         if preserveVisibleResultsWhenEmpty,
            regrouped.flatResults.isEmpty,

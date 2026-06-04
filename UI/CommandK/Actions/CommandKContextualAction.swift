@@ -7,6 +7,7 @@ enum CommandKContextualActionID: String, Codable, Hashable, CaseIterable {
     case goToObject
     case deleteObject
     case copyCosmoLink
+    case openSwipeGallery
     case openSwipeStudy
     case analyzeSwipeHook
     case attachSwipeToCurrentDraft
@@ -75,6 +76,7 @@ enum CommandKActionRole: String, Codable, Equatable {
 enum CommandKActionIntent: Equatable {
     case openAtom(uuid: String)
     case openAsPane(uuid: String)
+    case openSwipeGalleryAsPane
     case addToCanvas(uuid: String)
     case goToObject(uuid: String)
     case deleteAtom(uuid: String)

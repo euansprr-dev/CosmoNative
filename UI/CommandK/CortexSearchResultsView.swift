@@ -328,7 +328,7 @@ private struct CommandKActionPreviewRow: View {
             return DS.entityContent
         case .createThinkspace, .navigateLastThinkspace, .openThinkspace:
             return DS.entityConnection
-        case .navigateCommandCenter, .openBrowser, .openDomain, .openApp, .openAtom, .savedSearch:
+        case .navigateCommandCenter, .openBrowser, .openSwipeGallery, .openDomain, .openApp, .openAtom, .savedSearch:
             return DS.accent
         case .openCosmoPane, .openCosmoWindow, .askCosmo:
             return DS.gilt

@@ -114,7 +114,8 @@ final class CommandKSearchPipelineTests: XCTestCase {
 
         XCTAssertTrue(composer.rows(for: "co").contains { $0.action.kind == .navigateCommandCenter })
         XCTAssertTrue(composer.rows(for: "co").contains { $0.action.kind == .openCosmoPane })
-        XCTAssertTrue(composer.rows(for: "sw").contains { $0.action.kind == .openDomain && $0.action.payload.domain == "swipeGallery" })
+        XCTAssertTrue(composer.rows(for: "sw").contains { $0.title == "Open Swipe Gallery" && $0.action.kind == .openSwipeGallery })
+        XCTAssertTrue(composer.rows(for: "sw").contains { $0.title == "Browse Swipes" && $0.action.kind == .openDomain && $0.action.payload.domain == "swipeGallery" })
         XCTAssertTrue(composer.rows(for: "id").contains { $0.action.kind == .openDomain && $0.action.payload.domain == "ideas" })
     }
 
@@ -185,7 +186,7 @@ final class CommandKSearchPipelineTests: XCTestCase {
     }
 
     @MainActor
-    func testExactCommandQueryKeepsQuicklinksAndUnifiedSearchAvailable() async throws {
+    func testSwipeQueryShowsCaptureOpenAndBrowseCommandsWithoutDuplicateQuicklink() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("json")
@@ -206,8 +207,11 @@ final class CommandKSearchPipelineTests: XCTestCase {
         await viewModel.performSearch(query: "swipe")
 
         XCTAssertEqual(viewModel.primaryAction?.kind, .captureSwipe)
-        XCTAssertTrue(viewModel.userCommandRows.contains { $0.title == "Open Swipe Gallery" })
-        XCTAssertTrue(viewModel.userCommandRows.contains { $0.title == "Swipe Gallery" })
+        XCTAssertEqual(viewModel.userCommandRows.map(\.title).filter { $0.contains("Swipe") || $0.contains("Swipes") }, [
+            "Open Swipe Gallery",
+            "Browse Swipes"
+        ])
+        XCTAssertFalse(viewModel.userCommandRows.contains { $0.title == "Swipe Gallery" })
         XCTAssertTrue(viewModel.isUnifiedSearchActive)
     }
 
@@ -857,6 +861,46 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertTrue(newerIsCurrent)
     }
 
+    @MainActor
+    func testUnifiedSearchDoesNotPublishForStaleSearchRequest() async {
+        let previousBooks = ReadwiseBookStore.shared.books
+        ReadwiseBookStore.shared.books = [
+            ReadwiseLibraryBook(
+                id: 71,
+                title: "Awareness",
+                author: "Anthony De Mello",
+                category: .books,
+                coverImageUrl: nil,
+                sourceUrl: nil,
+                numHighlights: 2,
+                highlights: [],
+                bookTags: []
+            )
+        ]
+        defer { ReadwiseBookStore.shared.books = previousBooks }
+
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        let staleRequestID = await viewModel.testingNextSearchRequestID()
+        _ = await viewModel.testingNextSearchRequestID()
+
+        await viewModel.testingUpdateUnifiedSearch(
+            query: "awareness",
+            searchRequestID: staleRequestID
+        )
+
+        XCTAssertTrue(viewModel.unifiedFlatResults.isEmpty)
+        XCTAssertFalse(viewModel.isUnifiedSearchActive)
+    }
+
     func testCommandKCanRepresentContextChunkResult() {
         let source = ContextSource(
             id: "source-1",
@@ -1274,6 +1318,17 @@ final class CommandKSearchPipelineTests: XCTestCase {
         )
 
         XCTAssertFalse(source.contains(".id(subject.selectionIdentity)"))
+    }
+
+    func testCommandKViewRoutesKeyboardToActionPanelBeforeRail() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/CommandK/CommandKView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("@State private var isActionPanelPresented = false"))
+        XCTAssertTrue(source.contains("if isActionPanelPresented {\n            isActionPanelPresented = false\n            return .handled\n        }"))
+        XCTAssertTrue(source.contains("guard !isActionPanelPresented else { return .ignored }"))
     }
 
     @MainActor

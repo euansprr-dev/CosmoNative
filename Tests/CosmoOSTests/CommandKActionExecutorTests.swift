@@ -51,6 +51,47 @@ final class CommandKActionExecutorTests: XCTestCase {
         XCTAssertEqual(paneRecorder.notifications.first?.userInfo?["id"] as? Int64, 42)
         XCTAssertEqual(closeRecorder.notifications.count, 1)
     }
+
+    @MainActor
+    func testOpenSwipeGalleryAsPanePostsPanePayload() async throws {
+        let paneRecorder = NotificationRecorder(name: CosmoNotification.Navigation.openAsPane)
+        let closeRecorder = NotificationRecorder(name: CosmoNotification.NodeGraph.closeCommandK)
+        let executor = CommandKActionExecutor()
+
+        try await executor.execute(.openSwipeGalleryAsPane)
+
+        XCTAssertEqual(paneRecorder.notifications.count, 1)
+        XCTAssertEqual(paneRecorder.notifications.first?.userInfo?["swipeGallery"] as? Bool, true)
+        XCTAssertEqual(closeRecorder.notifications.count, 1)
+    }
+
+    @MainActor
+    func testOpenSelectedAsPanePostsSwipeGalleryPaneForSelectedCommand() async throws {
+        let paneRecorder = NotificationRecorder(name: CosmoNotification.Navigation.openAsPane)
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+        let action = CommandKAction(
+            kind: .openSwipeGallery,
+            title: "Open Swipe Gallery",
+            subtitle: "Open All Swipes full screen",
+            icon: "rectangle.stack.fill",
+            payload: CommandKActionPayload(rawText: "open swipe gallery")
+        )
+        viewModel.primaryAction = action
+        viewModel.selectedNodeId = action.id
+
+        await viewModel.openSelectedAsPane()
+
+        XCTAssertEqual(paneRecorder.notifications.count, 1)
+        XCTAssertEqual(paneRecorder.notifications.first?.userInfo?["swipeGallery"] as? Bool, true)
+    }
 }
 
 private final class NotificationRecorder {

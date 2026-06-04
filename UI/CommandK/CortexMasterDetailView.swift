@@ -11,10 +11,10 @@ struct CortexMasterDetailView: View {
     @StateObject private var libraryVM = LibraryViewModel()
     @StateObject private var bookStore = ReadwiseBookStore.shared
     @State private var isLoadingDomain = false
-    @State private var isActionPanelPresented = false
     @State private var actionSearchQuery = ""
     @State private var actionErrorMessage: String?
     @State private var cachedDetailSubject: CortexDetailSubject = .empty
+    @Binding var isActionPanelPresented: Bool
 
     var body: some View {
         let subject = visibleDetailSubject

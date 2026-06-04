@@ -402,7 +402,7 @@ struct CortexResultRail: View {
             }
         } else {
             if let action = viewModel.primaryAction {
-                CommandKSectionLabel(label: "COMMAND")
+                CommandKSectionLabel(label: "COMMANDS")
                 CortexRailRow(
                     title: action.title,
                     subtitle: action.subtitle ?? "Press return to run",
@@ -426,7 +426,6 @@ struct CortexResultRail: View {
             }
 
             if !viewModel.userCommandRows.isEmpty {
-                CommandKSectionLabel(label: "COMMANDS")
                 ForEach(viewModel.userCommandRows) { row in
                     CortexRailRow(
                         title: row.title,
@@ -440,12 +439,12 @@ struct CortexResultRail: View {
                         onSelect: {
                             viewModel.selectedNodeId = row.id
                             viewModel.selectedResultIndex =
-                                viewModel.userCommandRows.firstIndex { $0.id == row.id } ?? -1
+                                viewModel.searchSelectionIndex(for: row.id)
                         },
                         onOpen: {
                             viewModel.selectedNodeId = row.id
                             viewModel.selectedResultIndex =
-                                viewModel.userCommandRows.firstIndex { $0.id == row.id } ?? -1
+                                viewModel.searchSelectionIndex(for: row.id)
                             viewModel.openSelected()
                         }
                     )

@@ -21,7 +21,7 @@ struct CommandCenterMasthead: View {
             ZStack(alignment: .topTrailing) {
                 VStack(alignment: .leading, spacing: DS.space6) {
                     Text(viewModel.viewMode.label)
-                        .font(.system(size: 30, weight: .semibold, design: .serif))
+                        .font(DS.pageTitle)
                         .foregroundStyle(DS.commandCenterTitleText)
 
                     HStack(spacing: DS.space8) {
@@ -65,7 +65,7 @@ struct CommandCenterMasthead: View {
                 }
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.subheadline).fontWeight(.semibold)
                     .foregroundStyle(DS.textSecondary)
                     .frame(width: 30, height: 30)
             }
@@ -78,7 +78,7 @@ struct CommandCenterMasthead: View {
                 }
             } label: {
                 Text("Today")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.subheadline).fontWeight(.semibold)
                     .foregroundStyle(DS.text)
                     .padding(.horizontal, DS.space12)
                     .frame(height: 30)
@@ -96,7 +96,7 @@ struct CommandCenterMasthead: View {
                 }
             } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.subheadline).fontWeight(.semibold)
                     .foregroundStyle(DS.textSecondary)
                     .frame(width: 30, height: 30)
             }
@@ -110,7 +110,7 @@ struct CommandCenterMasthead: View {
             ZStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: DS.space6) {
                     Text(viewModel.viewMode.label)
-                        .font(.system(size: 30, weight: .semibold, design: .serif))
+                        .font(DS.pageTitle)
                         .foregroundStyle(DS.commandCenterTitleText)
 
                     HStack(spacing: DS.space8) {
@@ -155,7 +155,7 @@ struct CommandCenterMasthead: View {
                     }
                 } label: {
                     Text(scope.label)
-                        .font(.system(size: 12, weight: viewModel.upcomingCalendarScope == scope ? .semibold : .medium))
+                        .font(DS.subheadline).fontWeight(viewModel.upcomingCalendarScope == scope ? .semibold : .medium)
                         .foregroundStyle(viewModel.upcomingCalendarScope == scope ? DS.text : DS.textSecondary)
                         .frame(width: 56, height: 28)
                         .background(
@@ -182,7 +182,7 @@ struct CommandCenterMasthead: View {
                 }
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.subheadline).fontWeight(.semibold)
                     .foregroundStyle(DS.textSecondary)
                     .frame(width: 30, height: 30)
             }
@@ -195,7 +195,7 @@ struct CommandCenterMasthead: View {
                 }
             } label: {
                 Text("Today")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.subheadline).fontWeight(.semibold)
                     .foregroundStyle(DS.text)
                     .padding(.horizontal, DS.space12)
                     .frame(height: 30)
@@ -213,7 +213,7 @@ struct CommandCenterMasthead: View {
                 }
             } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.subheadline).fontWeight(.semibold)
                     .foregroundStyle(DS.textSecondary)
                     .frame(width: 30, height: 30)
             }

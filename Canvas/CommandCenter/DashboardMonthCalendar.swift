@@ -29,14 +29,14 @@ struct DashboardMonthCalendar: View {
     private var monthHeader: some View {
         HStack {
             Text(monthYearText)
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.headline)
                 .foregroundColor(DS.text)
 
             Spacer()
 
             Button { changeMonth(by: -1) } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundColor(DS.textSecondary)
             }
             .buttonStyle(.plain)
@@ -49,7 +49,7 @@ struct DashboardMonthCalendar: View {
                     }
                 } label: {
                     Text("Today")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(DS.caption2).fontWeight(.medium)
                         .foregroundColor(DS.accent)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -60,7 +60,7 @@ struct DashboardMonthCalendar: View {
 
             Button { changeMonth(by: 1) } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundColor(DS.textSecondary)
             }
             .buttonStyle(.plain)
@@ -73,7 +73,7 @@ struct DashboardMonthCalendar: View {
         HStack(spacing: 0) {
             ForEach(Array(weekdays.enumerated()), id: \.offset) { _, day in
                 Text(day)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textMuted)
                     .frame(width: cellSize, height: 16)
             }
@@ -112,7 +112,7 @@ struct DashboardMonthCalendar: View {
             } label: {
                 VStack(spacing: 1) {
                     Text("\(dayNumber)")
-                        .font(.system(size: 12, weight: isToday ? .bold : .regular))
+                        .font(DS.subheadline).fontWeight(isToday ? .bold : .regular)
                         .foregroundColor(dayTextColor(isSelected: isSelected, isToday: isToday))
 
                     // Task density dot

@@ -54,11 +54,11 @@ struct ZoneContentView: View {
                     .foregroundColor(zt.accentColor)
 
                 Text(zt.displayName)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DS.headline)
                     .foregroundColor(DS.text)
 
                 Text(zoneSummaryText(for: zt))
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundColor(DS.textSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -79,7 +79,7 @@ struct ZoneContentView: View {
                     .foregroundColor(zt.accentColor)
 
                 Text(zt.displayName)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.subheadline).fontWeight(.medium)
                     .foregroundColor(DS.text)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

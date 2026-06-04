@@ -31,7 +31,7 @@ struct DashboardTimeTracker: View {
                     .foregroundStyle(DS.commandCenterOrnamentText)
 
                 Text(formattedTodayTotal)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(DS.callout).fontWeight(.semibold).monospacedDigit()
                     .foregroundStyle(DS.text)
 
                 Text("today")
@@ -58,6 +58,7 @@ struct DashboardTimeTracker: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(DS.commandChromeBorder, lineWidth: 0.5)
         }
+        .dsRestingShadow()
     }
 
     @ViewBuilder
@@ -135,7 +136,7 @@ struct DashboardTimeTracker: View {
             HStack(spacing: DS.space12) {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Text(formattedElapsedTime)
-                        .font(.system(size: 24, weight: .light, design: .monospaced))
+                        .font(DS.monoTabular)
                         .foregroundStyle(DS.text)
                 }
 
@@ -160,10 +161,7 @@ struct DashboardTimeTracker: View {
         }
         .padding(DS.space12)
         .background(DS.glassCardFill, in: .rect(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DS.glassBorder, lineWidth: 0.5)
-        )
+        .commandCenterCardLift(cornerRadius: 10, restingBorder: DS.glassBorder)
     }
 
     private func commandButton(title: String, icon: String, isProminent: Bool, action: @escaping () -> Void) -> some View {

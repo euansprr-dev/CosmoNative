@@ -31,10 +31,50 @@ struct CommandCenterMaterialPanel<Content: View>: View {
         content
             .padding(contentPadding)
             .background(DS.commandChromePanelFill, in: .rect(cornerRadius: cornerRadius))
+            .commandCenterCardLift(cornerRadius: cornerRadius, restingBorder: DS.commandChromeBorder)
+    }
+}
+
+/// Resting → hover card depth for Command Center content cards.
+///
+/// Adopts the Greenhouse Glass "controls float above content" signature: at rest it is
+/// pixel-identical to a `commandChromeBorder` hairline + `dsRestingShadow()`; on hover it
+/// lifts to a `glassBorderFocused` hairline + `dsHoverShadow()` depth. Per
+/// `GREENHOUSE_GLASS.md` §7.1 every property is driven by *value* (ternaries on
+/// color/opacity/radius/lineWidth) — never by branching structure — so a hover never
+/// rebuilds the wrapped subtree, never drops child identity, never restarts inner state.
+/// It owns its own hover flag and animates with `ProMotionSprings.hover`. Purely additive
+/// depth: it changes no layout and touches no existing hover/selection/completion behavior.
+struct CommandCenterCardLift: ViewModifier {
+    var cornerRadius: CGFloat
+    var restingBorder: Color
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        let isDark = DS.palette.isDark
+        return content
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(DS.commandChromeBorder, lineWidth: 0.5)
+                    .stroke(isHovered ? DS.glassBorderFocused : restingBorder,
+                            lineWidth: isHovered ? 1 : 0.5)
             }
+            // Two-layer shadow interpolating dsRestingShadow() → dsHoverShadow().
+            .shadow(color: .black.opacity(isHovered ? (isDark ? 0.4 : 0.06) : (isDark ? 0.3 : 0.04)),
+                    radius: isHovered ? (isDark ? 8 : 16) : (isDark ? 4 : 8),
+                    x: 0, y: isHovered ? (isDark ? 2 : 4) : (isDark ? 1 : 2))
+            .shadow(color: .black.opacity(isHovered ? (isDark ? 0.25 : 0.03) : (isDark ? 0.2 : 0.02)),
+                    radius: isHovered ? (isDark ? 2 : 4) : (isDark ? 1 : 2),
+                    x: 0, y: isHovered ? (isDark ? 1 : 2) : (isDark ? 0 : 1))
+            .animation(ProMotionSprings.hover, value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+extension View {
+    /// Apply Command Center resting→hover card depth. See `CommandCenterCardLift`.
+    func commandCenterCardLift(cornerRadius: CGFloat,
+                              restingBorder: Color = DS.commandChromeBorder) -> some View {
+        modifier(CommandCenterCardLift(cornerRadius: cornerRadius, restingBorder: restingBorder))
     }
 }
 
@@ -49,12 +89,12 @@ struct CommandCenterLedgerSectionHeader: View {
     var body: some View {
         HStack(spacing: DS.space6) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.caption).fontWeight(.semibold)
                 .foregroundStyle(tint)
 
             if let count {
                 Text(count)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(tint.opacity(0.62))
                     .monospacedDigit()
             }

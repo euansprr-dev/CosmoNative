@@ -71,8 +71,8 @@ enum CommandCenterZoneType: String, Codable, CaseIterable {
         case .dashboard:     return DS.accent
         case .welcomeHub:    return DS.accent
         case .planningDock:  return DS.entityTask
-        case .goalForge:     return Color(hex: "D97706")
-        case .questBoard:    return Color(hex: "6366F1")
+        case .goalForge:     return DS.entitySwipe
+        case .questBoard:    return DS.entityIdea
         case .habitTracker:  return DS.green
         case .visionBoard:   return DS.entityConnection
         case .canvasEmbed:   return DS.entityContent

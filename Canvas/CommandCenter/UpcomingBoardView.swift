@@ -590,7 +590,7 @@ private struct UpcomingTimelineCalendarView: View {
 
             HStack(spacing: 0) {
                 Text("all-day")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
                     .frame(width: CommandCenterCalendarLayout.timeRailWidth, height: CommandCenterCalendarLayout.allDayLaneHeight, alignment: .trailing)
                     .padding(.trailing, DS.space8)
@@ -634,7 +634,7 @@ private struct UpcomingTimelineCalendarView: View {
             ForEach(0...24, id: \.self) { hour in
                 HStack(spacing: 0) {
                     Text(hourLabel(hour))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(DS.caption).monospacedDigit()
                         .foregroundStyle(DS.textMuted)
                         .frame(width: CommandCenterCalendarLayout.timeRailWidth - DS.space8, alignment: .trailing)
                         .padding(.trailing, DS.space8)
@@ -731,7 +731,7 @@ private struct UpcomingTimelineCalendarView: View {
                 let y = CommandCenterCalendarLayout.yOffset(for: context.date, dayStart: today)
                 HStack(spacing: 0) {
                     Text(nowLabel(context.date))
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(DS.caption2).fontWeight(.bold).monospacedDigit()
                         .foregroundStyle(DS.textOnAccent)
                         .padding(.horizontal, DS.space4)
                         .frame(height: 18)
@@ -816,11 +816,11 @@ private struct CalendarDayHeaderCell: View {
     var body: some View {
         VStack(spacing: DS.space2) {
             Text(weekdayText)
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.subheadline).fontWeight(.semibold)
                 .foregroundStyle(isToday ? DS.accent : DS.textSecondary)
 
             Text(dayText)
-                .font(.system(size: 16, weight: .semibold))
+                .font(DS.headline)
                 .foregroundStyle(isToday ? DS.textOnAccent : DS.text)
                 .frame(width: 28, height: 24)
                 .background(isToday ? DS.accent : Color.clear, in: Capsule())
@@ -865,7 +865,7 @@ private struct AllDayLaneCell: View {
                                 .fill(entry.accent)
                                 .frame(width: 5, height: 5)
                             Text(entry.title)
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(DS.caption2).fontWeight(.semibold)
                                 .lineLimit(1)
                         }
                         .foregroundStyle(entry.isEditableTask ? entry.accent : DS.textSecondary)
@@ -885,7 +885,7 @@ private struct AllDayLaneCell: View {
 
             if entries.count > 2 {
                 Text("+\(entries.count - 2)")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textMuted)
             }
 
@@ -1016,7 +1016,7 @@ private struct CalendarEntryBlock: View {
             VStack(alignment: .leading, spacing: density == .compact ? 0 : DS.space2) {
                 HStack(spacing: DS.space4) {
                     Text(entry.title)
-                        .font(.system(size: density == .compact ? 10 : 11, weight: .semibold))
+                        .font(density == .compact ? DS.caption2 : DS.caption).fontWeight(.semibold)
                         .foregroundStyle(entryTextColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1032,7 +1032,7 @@ private struct CalendarEntryBlock: View {
 
                 if density == .expanded, let subtitle = entry.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(DS.caption2).fontWeight(.medium)
                         .foregroundStyle(entry.accent.opacity(0.72))
                         .lineLimit(1)
                 }
@@ -1130,7 +1130,7 @@ private struct UpcomingMonthCalendarView: View {
         HStack(spacing: 0) {
             ForEach(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], id: \.self) { day in
                 Text(day)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption).fontWeight(.semibold)
                     .foregroundStyle(DS.textMuted)
                     .frame(maxWidth: .infinity, minHeight: 30)
             }
@@ -1194,7 +1194,7 @@ private struct MonthDayCell: View {
                 onOpenDay(date)
             } label: {
                 Text(dayNumber)
-                    .font(.system(size: 12, weight: isToday ? .bold : .semibold))
+                    .font(DS.subheadline).fontWeight(isToday ? .bold : .semibold)
                     .foregroundStyle(dayForeground)
                     .frame(width: 26, height: 22)
                     .background(isToday ? DS.accent : Color.clear, in: Capsule())
@@ -1208,7 +1208,7 @@ private struct MonthDayCell: View {
                     onCreateAllDay(date)
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(DS.caption2).fontWeight(.bold)
                         .foregroundStyle(DS.accent)
                         .frame(width: 22, height: 22)
                         .background(DS.accentSoft.opacity(0.8), in: Circle())
@@ -1227,7 +1227,7 @@ private struct MonthDayCell: View {
 
             if overflowCount > 0 {
                 Text("+\(overflowCount) more")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textMuted)
             }
         }
@@ -1241,7 +1241,7 @@ private struct MonthDayCell: View {
                 .clipShape(.rect(cornerRadius: 1))
 
             Text(entry.title)
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2).fontWeight(.medium)
                 .foregroundStyle(entryTextColor)
                 .lineLimit(1)
         }
@@ -1327,14 +1327,14 @@ private struct CalendarEditorPopover: View {
     private var segmentedHeader: some View {
         HStack(spacing: 0) {
             Text("Event")
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.subheadline).fontWeight(.semibold)
                 .foregroundStyle(DS.textOnAccent)
                 .frame(maxWidth: .infinity)
                 .frame(height: 30)
                 .background(DS.accent, in: Capsule())
 
             Text("Reminder")
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.subheadline).fontWeight(.semibold)
                 .foregroundStyle(DS.textSecondary)
                 .frame(maxWidth: .infinity)
                 .frame(height: 30)
@@ -1346,7 +1346,7 @@ private struct CalendarEditorPopover: View {
     private var titleField: some View {
         TextField("New Event", text: $title)
             .textFieldStyle(.plain)
-            .font(.system(size: 18, weight: .semibold))
+            .font(DS.title2)
             .foregroundStyle(DS.text)
             .focused($titleFocused)
             .padding(.horizontal, DS.space10)
@@ -1357,7 +1357,7 @@ private struct CalendarEditorPopover: View {
     private var dateField: some View {
         VStack(alignment: .leading, spacing: DS.space6) {
             Text(dateRangeText)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.callout).fontWeight(.semibold)
                 .foregroundStyle(DS.text)
 
             HStack(spacing: DS.space8) {
@@ -1376,7 +1376,7 @@ private struct CalendarEditorPopover: View {
     private var notesField: some View {
         TextField("Add Notes or URL", text: $bodyText, axis: .vertical)
             .textFieldStyle(.plain)
-            .font(.system(size: 13))
+            .font(DS.callout)
             .foregroundStyle(DS.text)
             .lineLimit(2...4)
             .padding(.horizontal, DS.space10)
@@ -1391,7 +1391,7 @@ private struct CalendarEditorPopover: View {
                     onDelete(currentDraft)
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DS.subheadline).fontWeight(.semibold)
                         .foregroundStyle(DS.red)
                         .frame(width: 30, height: 30)
                 }
@@ -1405,14 +1405,14 @@ private struct CalendarEditorPopover: View {
                 onDismiss()
             }
             .buttonStyle(.plain)
-            .font(.system(size: 12, weight: .medium))
+            .font(DS.subheadline).fontWeight(.medium)
             .foregroundStyle(DS.textSecondary)
 
             Button {
                 onSave(currentDraft)
             } label: {
                 Text("Save")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.subheadline).fontWeight(.semibold)
                     .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, DS.space12)
                     .frame(height: 30)
@@ -1425,12 +1425,12 @@ private struct CalendarEditorPopover: View {
     private func mutedField(_ text: String, trailingIcon: String? = nil) -> some View {
         HStack {
             Text(text)
-                .font(.system(size: 13, weight: .medium))
+                .font(DS.callout).fontWeight(.medium)
                 .foregroundStyle(DS.textMuted)
             Spacer()
             if let trailingIcon {
                 Image(systemName: trailingIcon)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption).fontWeight(.semibold)
                     .foregroundStyle(DS.textSecondary)
             }
         }

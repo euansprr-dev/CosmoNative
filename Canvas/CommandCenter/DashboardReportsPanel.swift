@@ -50,7 +50,7 @@ struct DashboardReportsPanel: View {
         } label: {
             VStack(spacing: 3) {
                 Text(tab.displayName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(isActive ? DS.accent : DS.inkFaded)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
@@ -74,7 +74,7 @@ struct DashboardReportsPanel: View {
                 Task { await viewModel.navigateReport(direction: -1) }
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2).fontWeight(.semibold)
                     .foregroundStyle(DS.inkFaded)
                     .frame(width: 24, height: 24)
                     .background(DS.vellum, in: Circle())
@@ -91,7 +91,7 @@ struct DashboardReportsPanel: View {
                 Task { await viewModel.navigateReport(direction: 1) }
             } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2).fontWeight(.semibold)
                     .foregroundStyle(isAtPresent ? DS.inkFaded.opacity(0.3) : DS.inkFaded)
                     .frame(width: 24, height: 24)
                     .background(DS.vellum, in: Circle())
@@ -344,7 +344,7 @@ struct DashboardReportsPanel: View {
         HStack(spacing: 8) {
             // Mini icon
             Image(systemName: entry.habitDefinition.icon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(DS.caption2).fontWeight(.semibold)
                 .foregroundStyle(accent)
                 .frame(width: 22, height: 22)
                 .background(accent.opacity(0.08), in: Circle())
@@ -352,14 +352,14 @@ struct DashboardReportsPanel: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text(entry.habitDefinition.title)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.caption)
                         .foregroundStyle(DS.text)
                         .lineLimit(1)
 
                     Spacer()
 
                     Text(rateText)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DS.caption).fontWeight(.semibold)
                         .foregroundStyle(rateColor(entry.completionRate))
                 }
 
@@ -435,7 +435,7 @@ struct DashboardReportsPanel: View {
                 .frame(height: 6)
 
                 Text("\(Int(report.overallCompletionRate * 100))%")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption).fontWeight(.semibold)
                     .foregroundStyle(DS.text)
                     .frame(width: 34, alignment: .trailing)
             }
@@ -475,11 +475,11 @@ struct DashboardReportsPanel: View {
                 .foregroundStyle(color)
 
             Text(text)
-                .font(.system(size: 10, weight: .semibold))
+                .font(DS.caption2).fontWeight(.semibold)
                 .foregroundStyle(DS.text)
 
             Text(detail)
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2).fontWeight(.medium)
                 .foregroundStyle(DS.textMuted)
                 .lineLimit(1)
         }
@@ -604,7 +604,7 @@ struct DashboardReportsPanel: View {
                 .font(.system(size: 20, weight: .light))
                 .foregroundStyle(DS.textMuted)
             Text("No data for this period")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
         }
         .frame(maxWidth: .infinity)

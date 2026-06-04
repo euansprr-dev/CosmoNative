@@ -8,7 +8,7 @@ import SwiftUI
 struct CommandCenterDashboard: View {
 
     @StateObject private var viewModel: CommandCenterDashboardViewModel
-    @StateObject private var contextProvider: CommandCenterContextProvider
+    @State private var contextProvider: CommandCenterContextProvider
     @State private var composer = CommandCenterComposerController()
     @State private var selectedTaskForDetail: TaskViewModel?
     @Environment(\.isPaneContext) private var isPaneContext
@@ -21,7 +21,7 @@ struct CommandCenterDashboard: View {
     ) {
         let dashboardViewModel = viewModel ?? CommandCenterDashboardViewModel()
         _viewModel = StateObject(wrappedValue: dashboardViewModel)
-        _contextProvider = StateObject(wrappedValue: CommandCenterContextProvider(viewModel: dashboardViewModel))
+        _contextProvider = State(initialValue: CommandCenterContextProvider(viewModel: dashboardViewModel))
         self.showsInternalSidebar = showsInternalSidebar
     }
 
@@ -141,7 +141,7 @@ struct CommandCenterDashboard: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, DS.space16)
-        .animation(.easeInOut(duration: 0.22), value: centerContentTransitionID)
+        .animation(ProMotionSprings.gentle, value: centerContentTransitionID)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("com.cosmo.commandCenter.keyboardAction"))) { notification in
             handleKeyboardAction(notification)
         }
@@ -408,7 +408,7 @@ struct CommandCenterDashboard: View {
                     Image(systemName: icon)
                         .font(DS.caption2)
                     Text(title)
-                        .font(.system(size: 12, weight: isActive ? .semibold : .medium))
+                        .font(DS.subheadline).fontWeight(isActive ? .semibold : .medium)
                 }
                 .foregroundStyle(isActive ? DS.accent : DS.commandCenterMutedText)
                 .frame(maxWidth: .infinity)
@@ -436,8 +436,9 @@ struct CommandCenterDashboard: View {
 }
 
 @MainActor
-final class CommandCenterContextProvider: ObservableObject, CosmoContextProvider {
-    private weak var viewModel: CommandCenterDashboardViewModel?
+@Observable
+final class CommandCenterContextProvider: CosmoContextProvider {
+    @ObservationIgnored private weak var viewModel: CommandCenterDashboardViewModel?
 
     init(viewModel: CommandCenterDashboardViewModel) {
         self.viewModel = viewModel

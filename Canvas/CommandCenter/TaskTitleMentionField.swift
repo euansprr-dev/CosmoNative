@@ -191,7 +191,7 @@ struct TaskTitleWithMentions: View {
 
     let title: String
     let mentions: [RichMention]
-    var font: Font = .system(size: 13)
+    var font: Font = DS.callout
     var onMentionTap: ((RichMention) -> Void)?
 
     var body: some View {

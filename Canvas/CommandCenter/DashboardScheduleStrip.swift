@@ -58,7 +58,7 @@ struct DashboardScheduleStrip: View {
     private var sectionHeader: some View {
         HStack(spacing: 6) {
             Image(systemName: "clock")
-                .font(.system(size: 10, weight: .semibold))
+                .font(DS.caption2).fontWeight(.semibold)
                 .foregroundColor(DS.textMuted)
 
             Text("TIMELINE")
@@ -68,7 +68,7 @@ struct DashboardScheduleStrip: View {
 
             if !viewModel.todaySessions.isEmpty {
                 Text("\(viewModel.todaySessions.count) sessions")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundColor(DS.textMuted)
             }
         }
@@ -114,7 +114,7 @@ struct DashboardScheduleStrip: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(event.title)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundColor(isPast ? DS.textMuted : DS.text)
                     .lineLimit(1)
 
@@ -157,7 +157,7 @@ struct DashboardScheduleStrip: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.intent.title)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textOnAccent)
                     .lineLimit(1)
 

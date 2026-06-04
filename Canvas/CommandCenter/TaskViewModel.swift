@@ -288,7 +288,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
             let mentionText = "@\(mention.titleSnapshot)"
             if let range = result.range(of: mentionText) {
                 result[range].foregroundColor = CosmoMentionColors.color(for: mention.entityType)
-                result[range].font = .system(size: 13, weight: .semibold)
+                result[range].font = DS.callout.weight(.semibold)
             }
         }
 
@@ -454,10 +454,10 @@ public enum EnergyMatch: String, CaseIterable, Sendable {
 
     public var color: Color {
         switch self {
-        case .excellent: return Color(red: 34/255, green: 197/255, blue: 94/255)  // Green
-        case .good: return Color(red: 245/255, green: 158/255, blue: 11/255)      // Amber
-        case .neutral: return Color(red: 100/255, green: 116/255, blue: 139/255)  // Slate
-        case .poor: return Color(red: 239/255, green: 68/255, blue: 68/255)       // Red
+        case .excellent: return DS.green
+        case .good: return DS.orange
+        case .neutral: return DS.textMuted
+        case .poor: return DS.red
         }
     }
 

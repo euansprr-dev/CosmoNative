@@ -265,7 +265,7 @@ struct DashboardTaskList: View {
                         TaskTitleWithMentions(
                             title: task.title,
                             mentions: task.titleMentions,
-                            font: .system(size: 13, weight: .medium)
+                            font: DS.callout.weight(.medium)
                         ) { mention in
                             NotificationCenter.default.post(
                                 name: .init("com.cosmo.navigateToAtom"),
@@ -343,12 +343,12 @@ struct DashboardTaskList: View {
     ) -> some View {
         HStack(spacing: 6) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.caption).fontWeight(.semibold)
                 .foregroundStyle(color)
 
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(DS.caption2).fontWeight(.medium)
                     .monospacedDigit()
                     .foregroundStyle(color.opacity(0.62))
             }
@@ -389,7 +389,7 @@ struct DashboardTaskList: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text(upcomingDayLabel(day))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption).fontWeight(.semibold)
                     .foregroundStyle(day.isToday ? DS.accent : DS.textSecondary)
 
                 Text("\(day.taskCount)")
@@ -771,7 +771,7 @@ struct DashboardTaskList: View {
             .taskActions(task: task, anchor: anchor)
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 10, weight: .bold))
+                .font(DS.caption2).fontWeight(.bold)
                 .foregroundStyle(composer.isShowingTaskAction(for: task.uuid) ? DS.text : DS.textMuted)
                 .frame(width: 24, height: 24)
                 .background(

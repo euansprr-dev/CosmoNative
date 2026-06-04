@@ -114,7 +114,7 @@ struct CommandCenterHabitComposer: View {
                 if let onOpenLibrary {
                     Button("Open library →", action: onOpenLibrary)
                         .buttonStyle(.plain)
-                        .font(.system(size: 13, weight: .regular, design: .serif))
+                        .font(DS.dateSerif)
                         .foregroundStyle(DS.gilt.opacity(0.8))
                 }
             }
@@ -131,7 +131,7 @@ struct CommandCenterHabitComposer: View {
 
                 TextField("Writing Habit", text: $draft.title)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 15, weight: .regular, design: .serif))
+                    .font(DS.dateSerif)
                     .foregroundStyle(DS.text)
                     .padding(.horizontal, DS.space12)
                     .padding(.vertical, DS.space10)
@@ -227,7 +227,7 @@ struct CommandCenterHabitComposer: View {
 
                 TextField("write, draft, article", text: $draft.keywordInput)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .regular, design: .serif))
+                    .font(DS.dateSerif)
                     .foregroundStyle(DS.text)
                     .padding(.horizontal, DS.space12)
                     .padding(.vertical, DS.space10)
@@ -332,7 +332,7 @@ struct CommandCenterHabitComposer: View {
                         Text(habit == nil ? "Create" : "Save")
                             .font(.system(size: 16, weight: .regular, design: .serif))
                         Image(systemName: "arrow.right")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.subheadline).fontWeight(.medium)
                     }
                     .foregroundStyle(canSave ? DS.text : DS.inkFaded)
                     .padding(.horizontal, DS.space16)
@@ -364,7 +364,7 @@ struct CommandCenterHabitComposer: View {
             draft.icon = icon
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
+                .font(DS.body).fontWeight(.medium)
                 .foregroundStyle(isSelected ? previewTint : DS.inkFaded)
                 .frame(maxWidth: .infinity)
                 .frame(height: 42)
@@ -408,7 +408,7 @@ struct CommandCenterHabitComposer: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.subheadline).fontWeight(.semibold)
                 .foregroundStyle(enabled ? DS.text : DS.inkFaded.opacity(0.5))
                 .frame(width: 36, height: 36)
                 .background(DS.vellum, in: Circle())
@@ -449,7 +449,7 @@ struct CommandCenterHabitComposer: View {
         } label: {
             HStack(spacing: DS.space6) {
                 Image(systemName: intent.iconName)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                 Text(intent.displayName)
                     .font(DS.caption)
             }
@@ -475,7 +475,7 @@ struct CommandCenterHabitComposer: View {
         Button(action: action) {
             HStack(spacing: DS.space4) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                 Text(title)
                     .font(DS.caption)
             }
@@ -554,7 +554,7 @@ struct CommandCenterHabitLibraryComposer: View {
                             Image(systemName: "plus")
                                 .font(DS.caption2)
                             Text("New habit")
-                                .font(.system(size: 15, weight: .regular, design: .serif))
+                                .font(DS.dateSerif)
                         }
                         .foregroundStyle(DS.accent)
                         .padding(.vertical, DS.space6)
@@ -583,7 +583,7 @@ struct CommandCenterHabitLibraryComposer: View {
                     .frame(width: 34, height: 34)
                     .overlay(
                         Image(systemName: habit.icon)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DS.callout).fontWeight(.medium)
                             .foregroundStyle(habit.accent)
                     )
 
@@ -620,7 +620,7 @@ struct CommandCenterHabitLibraryComposer: View {
                 .frame(width: 34, height: 34)
                 .overlay(
                     Image(systemName: item.definition.icon)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.callout).fontWeight(.medium)
                         .foregroundStyle(item.definition.accent.opacity(item.isEnabled ? 1 : 0.5))
                 )
 

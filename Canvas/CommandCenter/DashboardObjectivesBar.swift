@@ -20,10 +20,7 @@ struct DashboardObjectivesBar: View {
                 .padding(.horizontal, DS.space12)
                 .padding(.vertical, DS.space10)
                 .background(DS.commandChromePanelFill, in: .rect(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(DS.commandChromeBorder, lineWidth: 0.5)
-                )
+                .commandCenterCardLift(cornerRadius: 10)
             }
         }
     }
@@ -33,7 +30,7 @@ struct DashboardObjectivesBar: View {
     private var sectionHeader: some View {
         HStack(spacing: 6) {
             Image(systemName: "target")
-                .font(.system(size: 10, weight: .semibold))
+                .font(DS.caption2).fontWeight(.semibold)
                 .foregroundStyle(DS.commandCenterOrnamentText)
 
             Text("Objectives")
@@ -43,7 +40,7 @@ struct DashboardObjectivesBar: View {
             Spacer()
 
             Text("Q\(currentQuarter)")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .font(DS.caption).fontWeight(.semibold).monospacedDigit()
                 .foregroundStyle(DS.gilt)
                 .padding(.horizontal, DS.space6)
                 .padding(.vertical, 2)
@@ -82,14 +79,14 @@ struct DashboardObjectivesBar: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(objective.title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text("\(Int(objective.progress * 100))%")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(DS.caption2).fontWeight(.semibold).monospacedDigit()
                     .foregroundStyle(objective.paceStatus.color)
             }
 

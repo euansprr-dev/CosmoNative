@@ -35,7 +35,7 @@ struct DashboardFocusTimer: View {
     private var sectionHeader: some View {
         HStack(spacing: 6) {
             Image(systemName: "timer")
-                .font(.system(size: 10, weight: .semibold))
+                .font(DS.caption2).fontWeight(.semibold)
                 .foregroundColor(DS.textMuted)
 
             Text("FOCUS SESSION")
@@ -48,11 +48,11 @@ struct DashboardFocusTimer: View {
     private var idleView: some View {
         HStack(spacing: 10) {
             Image(systemName: "play.circle")
-                .font(.system(size: 16, weight: .light))
+                .font(DS.body).fontWeight(.light)
                 .foregroundColor(DS.textMuted)
 
             Text("Select a task and tap play to start")
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundColor(DS.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -68,7 +68,7 @@ struct DashboardFocusTimer: View {
             HStack {
                 // Task name
                 Text(session.taskTitle)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.subheadline).fontWeight(.medium)
                     .foregroundColor(DS.text)
                     .lineLimit(1)
 
@@ -105,7 +105,7 @@ struct DashboardFocusTimer: View {
                 .frame(width: 8, height: 8)
 
             Text("\(Int(sessionEngine.focusScore))%")
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2).fontWeight(.medium)
                 .foregroundColor(DS.textSecondary)
         }
     }
@@ -125,7 +125,7 @@ struct DashboardFocusTimer: View {
                     sessionEngine.pauseSession()
                 } label: {
                     Image(systemName: "pause.fill")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                         .foregroundColor(DS.text)
                         .frame(width: 32, height: 32)
                         .background(DS.surfaceElevated, in: Circle())
@@ -137,7 +137,7 @@ struct DashboardFocusTimer: View {
                     sessionEngine.resumeSession()
                 } label: {
                     Image(systemName: "play.fill")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                         .foregroundStyle(DS.textOnAccent)
                         .frame(width: 32, height: 32)
                         .background(DS.accent, in: Circle())
@@ -152,7 +152,7 @@ struct DashboardFocusTimer: View {
                 }
             } label: {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundColor(DS.red)
                     .frame(width: 32, height: 32)
                     .background(DS.red.opacity(0.1), in: Circle())

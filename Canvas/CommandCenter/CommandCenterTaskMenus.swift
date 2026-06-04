@@ -579,7 +579,7 @@ struct CommandCenterComposerShell<Content: View>: View {
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.inkFaded)
                     .frame(width: 30, height: 30)
                     .background(DS.vellumDeep, in: Circle())
@@ -970,7 +970,7 @@ struct CommandCenterIntentPickerComposer: View {
         } label: {
             HStack(spacing: DS.space10) {
                 Image(systemName: presentation.icon)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.subheadline).fontWeight(.medium)
                     .foregroundStyle(presentation.accent)
                     .frame(width: 24)
 
@@ -1071,7 +1071,7 @@ struct CommandCenterIntentComposer: View {
 
                 TextField("Writing", text: $draft.title)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 15, weight: .regular, design: .serif))
+                    .font(DS.dateSerif)
                     .foregroundStyle(DS.text)
                     .padding(.horizontal, DS.space12)
                     .padding(.vertical, DS.space10)
@@ -1087,7 +1087,7 @@ struct CommandCenterIntentComposer: View {
                             draft.icon = icon
                         } label: {
                             Image(systemName: icon)
-                                .font(.system(size: 15, weight: .medium))
+                                .font(DS.body).fontWeight(.medium)
                                 .foregroundStyle(draft.icon == icon ? Color(hex: draft.accentColor) : DS.textSecondary)
                                 .frame(width: 34, height: 34)
                                 .background(DS.vellumDeep, in: Circle())
@@ -1216,7 +1216,7 @@ struct CommandCenterIntentLibraryComposer: View {
                                     .frame(width: 34, height: 34)
                                     .overlay(
                                         Image(systemName: intent.icon)
-                                            .font(.system(size: 13, weight: .medium))
+                                            .font(DS.callout).fontWeight(.medium)
                                             .foregroundStyle(intent.accent)
                                     )
 
@@ -1248,7 +1248,7 @@ struct CommandCenterIntentLibraryComposer: View {
                         Image(systemName: "plus")
                             .font(DS.caption2)
                         Text("New intent")
-                            .font(.system(size: 15, weight: .regular, design: .serif))
+                            .font(DS.dateSerif)
                     }
                     .foregroundStyle(DS.accent)
                     .padding(.vertical, DS.space6)
@@ -1325,7 +1325,7 @@ struct CommandCenterHabitPickerSection: View {
                     .frame(width: 32, height: 32)
                     .overlay(
                         Image(systemName: icon)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.subheadline).fontWeight(.medium)
                             .foregroundStyle(tint)
                     )
 
@@ -1447,7 +1447,7 @@ struct CommandCenterScheduleSection: View {
 
             TextField("tomorrow, next monday, apr 24", text: $manualInput)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .regular, design: .serif))
+                .font(DS.dateSerif)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, DS.space12)
                 .padding(.vertical, DS.space10)
@@ -1567,7 +1567,7 @@ struct CommandCenterMonthGrid: View {
             onSelectDate(date)
         } label: {
             Text("\(Calendar.current.component(.day, from: date))")
-                .font(.system(size: 13, weight: isSelected ? .semibold : .regular, design: .monospaced))
+                .font(DS.callout).fontWeight(isSelected ? .semibold : .regular).monospacedDigit()
                 .foregroundStyle(dayColor(isSelected: isSelected, isToday: isToday, isCurrentMonth: isCurrentMonth))
                 .frame(maxWidth: .infinity)
                 .frame(height: 30)

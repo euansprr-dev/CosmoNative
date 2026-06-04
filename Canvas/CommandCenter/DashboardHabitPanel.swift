@@ -28,7 +28,7 @@ struct DashboardHabitPanel: View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "repeat")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2).fontWeight(.semibold)
                     .foregroundStyle(DS.commandCenterOrnamentText)
                 Text("Habits")
                     .font(DS.smallCaps)
@@ -41,7 +41,7 @@ struct DashboardHabitPanel: View {
                 .habitLibrary(anchor: anchor)
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.commandCenterMutedText)
                     .frame(width: 26, height: 26)
             }
@@ -51,7 +51,7 @@ struct DashboardHabitPanel: View {
                 .habitEditor(habit: nil, anchor: anchor)
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.subheadline).fontWeight(.semibold)
                     .frame(width: 26, height: 26)
                     .foregroundStyle(DS.accent)
             }
@@ -204,7 +204,7 @@ private struct DashboardHabitOrbitCard: View {
                 )
 
             Image(systemName: habit.iconName)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.callout).fontWeight(.semibold)
                 .foregroundStyle(accent)
                 .frame(width: 30, height: 30)
                 .background(accent.opacity(isComplete ? 0.14 : 0.06), in: Circle())
@@ -234,7 +234,7 @@ private struct DashboardHabitOrbitCard: View {
     private var titleRow: some View {
         HStack(spacing: 6) {
             Text(habit.title)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.subheadline).fontWeight(.medium)
                 .foregroundStyle(habit.isTodayComplete ? habit.accentColor : DS.text)
                 .lineLimit(1)
 
@@ -266,17 +266,17 @@ private struct DashboardHabitOrbitCard: View {
         HStack(spacing: 0) {
             if habit.isTodayComplete {
                 Text("Done")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(habit.accentColor)
             } else {
                 Text("\(habit.todayCount)/\(habit.targetCount) today")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textSecondary)
             }
 
             if habit.trackedMinutesToday > 0 {
                 Text("  ·  \(habit.trackedMinutesToday)m")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textMuted)
             }
 
@@ -312,7 +312,7 @@ private struct DashboardHabitOrbitCard: View {
 
         return Button(action: onRecordManual) {
             Image(systemName: isDone ? "checkmark" : "plus")
-                .font(.system(size: 10, weight: .bold))
+                .font(DS.caption2).fontWeight(.bold)
                 .foregroundStyle(isDone ? accent.opacity(0.5) : accent)
                 .frame(width: 26, height: 26)
                 .background(isDone ? accent.opacity(0.10) : DS.glassInputFill, in: Circle())

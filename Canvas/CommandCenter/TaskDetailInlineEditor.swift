@@ -44,7 +44,7 @@ struct TaskDetailInlineEditor: View {
                 text: $editTitle,
                 placeholder: "Task name",
                 textColor: DS.text,
-                font: .system(size: 14, weight: .medium)
+                font: DS.callout.weight(.medium)
             )
             .focused($titleFocused)
             .onSubmit { save() }
@@ -52,7 +52,7 @@ struct TaskDetailInlineEditor: View {
             // Priority row
             HStack(spacing: 6) {
                 Text("Priority")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundColor(DS.textMuted)
 
                 ForEach(TaskPriority.allCases, id: \.self) { p in
@@ -83,9 +83,9 @@ struct TaskDetailInlineEditor: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "calendar")
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                         Text(editDueDate.map { dueDateLabel($0) } ?? "No date")
-                            .font(.system(size: 11))
+                            .font(DS.footnote)
                     }
                     .foregroundColor(editDueDate != nil ? DS.accent : DS.textMuted)
                     .padding(.horizontal, 8)
@@ -119,11 +119,11 @@ struct TaskDetailInlineEditor: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: intentPresentation.icon)
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                             .foregroundColor(intentPresentation.accent)
 
                         Text(intentPresentation.title)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DS.caption)
                             .foregroundColor(DS.text)
 
                         Image(systemName: "chevron.down")
@@ -159,19 +159,19 @@ struct TaskDetailInlineEditor: View {
                     HStack(spacing: 5) {
                         if let selectedHabit = availableHabits.first(where: { $0.id == selectedHabitUUID }) {
                             Image(systemName: selectedHabit.icon)
-                                .font(.system(size: 10))
+                                .font(DS.caption2)
                                 .foregroundColor(selectedHabit.accent)
 
                             Text(selectedHabit.title)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(DS.caption)
                                 .foregroundColor(DS.text)
                         } else {
                             Image(systemName: "repeat")
-                                .font(.system(size: 10))
+                                .font(DS.caption2)
                                 .foregroundColor(DS.textSecondary)
 
                             Text("No habit")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(DS.caption)
                                 .foregroundColor(DS.text)
                         }
 
@@ -196,7 +196,7 @@ struct TaskDetailInlineEditor: View {
                 text: $editNotes,
                 placeholder: "Notes...",
                 textColor: DS.textSecondary,
-                font: .system(size: 12),
+                font: DS.subheadline,
                 axis: .vertical
             )
                 .lineLimit(2...4)
@@ -207,7 +207,7 @@ struct TaskDetailInlineEditor: View {
                     showDeleteConfirm = true
                 } label: {
                     Label("Delete", systemImage: "trash")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundColor(DS.red)
                 }
                 .buttonStyle(.plain)
@@ -226,7 +226,7 @@ struct TaskDetailInlineEditor: View {
                 Button("Done") {
                     save()
                 }
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundColor(DS.accent)
                 .buttonStyle(.plain)
             }
@@ -275,7 +275,7 @@ struct TaskDetailInlineEditor: View {
                     editDueDate = nil
                     showDatePicker = false
                 }
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundColor(DS.red)
                 .padding(.bottom, 8)
             }
@@ -288,7 +288,7 @@ struct TaskDetailInlineEditor: View {
             showDatePicker = false
         } label: {
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundColor(DS.accent)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)

@@ -40,6 +40,25 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         XCTAssertEqual(manager.panes.count, 1)
     }
 
+    func testSwipeGalleryPaneOpensOnceAndActivatesSplitPane() {
+        let manager = PaneManager()
+
+        XCTAssertTrue(manager.canOpenSwipeGallery())
+
+        manager.openPane(.swipeGallery)
+
+        XCTAssertTrue(manager.isActive)
+        XCTAssertEqual(manager.mainSplitRatio, 0.5)
+        XCTAssertEqual(manager.panes.count, 1)
+        XCTAssertEqual(manager.panes.first?.id, "swipeGallery")
+        XCTAssertEqual(manager.activePaneId, "swipeGallery")
+        XCTAssertFalse(manager.canOpenSwipeGallery())
+
+        manager.openPane(.swipeGallery)
+
+        XCTAssertEqual(manager.panes.count, 1)
+    }
+
     func testBrowserStateDoesNotRepublishIdenticalSnapshots() {
         let url = URL(string: "https://www.instagram.com/reel/example/")!
         let state = CosmoWebBrowserState(initialURL: url, title: "Instagram")

@@ -10,6 +10,7 @@ struct PaneContentView: View {
     let onClose: () -> Void
 
     @State private var loadedAtom: Atom?
+    @StateObject private var swipeLibraryViewModel = SwipeLibraryViewModel()
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -17,7 +18,7 @@ struct PaneContentView: View {
             contentBody
 
             // Close button (for generic panes — entity focus modes and browser panes handle their own)
-            if content.thinkspaceId != nil || content.id == "commandCenter" {
+            if content.thinkspaceId != nil || content.id == "commandCenter" || content.id == "swipeGallery" {
                 paneCloseButton
             }
         }
@@ -51,6 +52,12 @@ struct PaneContentView: View {
 
         case .commandCenter:
             CommandCenterDashboard()
+                .environment(\.isPaneContext, true)
+                .environment(\.isPaneActive, isActive)
+                .environment(\.isPaneContextOwner, isContextOwner)
+
+        case .swipeGallery:
+            SwipeFileHomeView(viewModel: swipeLibraryViewModel, section: .all)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)

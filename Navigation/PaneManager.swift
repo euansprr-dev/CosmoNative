@@ -16,6 +16,7 @@ enum PaneContent: Identifiable, Equatable {
     case entity(EntitySelection)
     case thinkspace(thinkspaceId: String)
     case commandCenter
+    case swipeGallery
     case webBrowser(url: URL, title: String?)
     case cosmoWindow
     case collaborator(target: CollaborationTarget, presetId: String?)
@@ -28,6 +29,8 @@ enum PaneContent: Identifiable, Equatable {
             return "thinkspace_\(thinkspaceId)"
         case .commandCenter:
             return "commandCenter"
+        case .swipeGallery:
+            return "swipeGallery"
         case .webBrowser(let url, _):
             return "web_\(url.absoluteString)"
         case .cosmoWindow:
@@ -41,7 +44,7 @@ enum PaneContent: Identifiable, Equatable {
     var entityId: Int64? {
         switch self {
         case .entity(let entity): return entity.id
-        case .thinkspace, .commandCenter, .webBrowser, .cosmoWindow, .collaborator: return nil
+        case .thinkspace, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator: return nil
         }
     }
 
@@ -49,14 +52,14 @@ enum PaneContent: Identifiable, Equatable {
     var entitySelection: EntitySelection? {
         switch self {
         case .entity(let entity): return entity
-        case .thinkspace, .commandCenter, .webBrowser, .cosmoWindow, .collaborator: return nil
+        case .thinkspace, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator: return nil
         }
     }
 
     /// The thinkspace ID if this is a thinkspace pane
     var thinkspaceId: String? {
         switch self {
-        case .entity, .commandCenter, .webBrowser, .cosmoWindow, .collaborator: return nil
+        case .entity, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator: return nil
         case .thinkspace(let id): return id
         }
     }
@@ -75,7 +78,7 @@ enum PaneContent: Identifiable, Equatable {
         switch self {
         case .cosmoWindow, .collaborator:
             return .minimal
-        case .entity, .thinkspace, .commandCenter, .webBrowser:
+        case .entity, .thinkspace, .commandCenter, .swipeGallery, .webBrowser:
             return .standard
         }
     }
@@ -167,6 +170,13 @@ class PaneManager: ObservableObject {
     /// Check if Command Center can be opened as a pane.
     func canOpenCommandCenter() -> Bool {
         guard !panes.contains(where: { $0.id == PaneContent.commandCenter.id }) else { return false }
+        guard panes.count < maxPanes else { return false }
+        return true
+    }
+
+    /// Check if Swipe Gallery can be opened as a pane.
+    func canOpenSwipeGallery() -> Bool {
+        guard !panes.contains(where: { $0.id == PaneContent.swipeGallery.id }) else { return false }
         guard panes.count < maxPanes else { return false }
         return true
     }

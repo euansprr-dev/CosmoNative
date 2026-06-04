@@ -558,6 +558,14 @@ struct MainView: View {
                 withAnimation(ProMotionSprings.snappy) {
                     paneManager.openPane(.commandCenter)
                 }
+            } else if notification.userInfo?["swipeGallery"] as? Bool == true {
+                withAnimation(ProMotionSprings.snappy) {
+                    if paneManager.canOpenSwipeGallery() {
+                        paneManager.openPane(.swipeGallery)
+                    } else {
+                        paneManager.activatePane(PaneContent.swipeGallery.id)
+                    }
+                }
             }
             // Dismiss Command-K if it's open
             if showCommandK || commandKBehindFocusMode {
@@ -787,6 +795,10 @@ struct MainView: View {
         // Command Center navigation (from other systems)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToCommandCenter)) { _ in
             currentDestination = .commandCenter
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openSwipeGallery)) { _ in
+            currentDestination = .swipeFile(section: .all)
+            closeCommandK()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToThinkspaceById)) { notification in
             guard let payload = CosmoNotification.Navigation.ThinkspacePayload(from: notification) else { return }

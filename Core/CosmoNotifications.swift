@@ -128,6 +128,7 @@ enum CosmoNotification {
         // Command Center
         static let navigateToCommandCenter = Notification.Name("com.cosmo.navigation.commandCenter")
         static let exitDrillIn = Notification.Name("com.cosmo.navigation.exitDrillIn")
+        static let openSwipeGallery = Notification.Name("com.cosmo.navigation.openSwipeGallery")
 
         // Dimensions
         static let navigateToDimension = Notification.Name("com.cosmo.navigation.dimension")

@@ -20,6 +20,42 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
         )
     }
 
+    func testIdeaPromotionPersistsIdeaClientIntoContentFocusStateAndMetadata() throws {
+        let source = try ideaFocusViewModelSource()
+
+        XCTAssertTrue(
+            source.contains("let inheritedClientUUID = linkedClient?.uuid ?? idea.ideaMetadata?.clientUUID"),
+            "Promotion must fall back to the idea metadata client UUID when the linked client atom is not loaded."
+        )
+        XCTAssertTrue(
+            source.contains("focusState.clientProfileUUID = inheritedClientUUID"),
+            "Promotion must set the focus state client before serializing metadata, otherwise the focus state overwrites the content metadata client with nil."
+        )
+        XCTAssertTrue(
+            source.contains("contentMeta.clientProfileUUID = inheritedClientUUID"),
+            "Promotion must persist the inherited client on the content atom metadata."
+        )
+    }
+
+    func testContextEditorDoesNotForceBlurDuringSwiftUIUpdates() throws {
+        let source = try ideaFocusViewSource()
+        guard let editorRange = source.range(of: "private struct IdeaContextTextEditor"),
+              let hookRange = source.range(of: "private struct HookLineEditor") else {
+            XCTFail("Could not locate IdeaContextTextEditor source.")
+            return
+        }
+
+        let editorSource = String(source[editorRange.lowerBound..<hookRange.lowerBound])
+        XCTAssertFalse(
+            editorSource.contains("makeFirstResponder(nil)"),
+            "The context editor must not force-resign first responder during SwiftUI updates because that blurs typing after each keystroke."
+        )
+        XCTAssertFalse(
+            editorSource.contains("requestFocusWhenReady()"),
+            "The context editor should let AppKit place focus from mouse clicks so the insertion point does not jump to the previous selection."
+        )
+    }
+
     func testIdeaFocusWritePolicyRejectsSnapshotOlderThanPersistedState() throws {
         let newerDate = Date(timeIntervalSince1970: 2_000)
         let staleDate = Date(timeIntervalSince1970: 1_000)

@@ -416,9 +416,6 @@ extension IdeaFocusModeView {
                     .font(DS.dateSerif)
                     .italic()
                     .foregroundStyle(DS.inkFaded)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .medium))
-                    .foregroundStyle(DS.focusImmersiveTextMuted.opacity(0.75))
             }
             .contentShape(Rectangle())
         } else {
@@ -495,7 +492,7 @@ extension IdeaFocusModeView {
                 .tracking(-0.5)
                 .lineLimit(1...3)
                 .focused($isTitleFocused)
-                .onChange(of: viewModel.editableTitle) { _ in
+                .onChange(of: viewModel.editableTitle) { _, _ in
                     viewModel.scheduleAutoSave()
                 }
                 .accessibilityLabel("Idea title")
@@ -554,21 +551,23 @@ extension IdeaFocusModeView {
                         .allowsHitTesting(false)
                 }
 
-                TextEditor(text: $viewModel.editableBody)
-                    .font(.system(size: 17, weight: .regular, design: .serif))
-                    .foregroundStyle(DS.text)
-                    .lineSpacing(7)
-                    .scrollContentBackground(.hidden)
-                    .scrollIndicators(.hidden)
-                    .scrollDisabled(true)
-                    .focused($isContextFocused)
-                    .frame(minHeight: 200)
-                    .onChange(of: viewModel.editableBody) { newValue in
+                IdeaContextTextEditor(
+                    text: $viewModel.editableBody,
+                    isFocused: $isContextFocused
+                ) { newValue in
+                    viewModel.scheduleAutoSave()
+                    viewModel.autoEnrich()
+                    handleMentionTrigger(newValue)
+                }
+                .frame(minHeight: 200)
+                .onChange(of: viewModel.editableBody) { _, newValue in
+                    if !isContextFocused {
                         viewModel.scheduleAutoSave()
                         viewModel.autoEnrich()
                         handleMentionTrigger(newValue)
                     }
-                    .accessibilityLabel("Idea context and direction")
+                }
+                .accessibilityLabel("Idea context and direction")
             }
             .overlay(alignment: .leading) {
                 // Focus rule — the only affordance. Slides in from -12 on focus.
@@ -1160,6 +1159,193 @@ extension IdeaFocusModeView {
         default: break
         }
         viewModel.replaceCodexOutline(outline)
+    }
+}
+
+private struct IdeaContextTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    @FocusState.Binding var isFocused: Bool
+    let onTextChange: (String) -> Void
+
+    func makeNSView(context: Context) -> IdeaContextTextView {
+        let textView = IdeaContextTextView()
+        textView.delegate = context.coordinator
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.importsGraphics = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.textContainerInset = NSSize(width: 6, height: 6)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.minSize = NSSize(width: 0, height: IdeaContextTextView.minimumHeight)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.applyManuscriptStyle()
+        textView.string = text
+        return textView
+    }
+
+    func updateNSView(_ textView: IdeaContextTextView, context: Context) {
+        context.coordinator.parent = self
+        textView.applyManuscriptStyle()
+
+        if textView.string != text {
+            let selectedRange = textView.selectedRange()
+            let textLength = (text as NSString).length
+            let selectionLocation = min(selectedRange.location, textLength)
+            textView.string = text
+            textView.setSelectedRange(NSRange(
+                location: selectionLocation,
+                length: min(selectedRange.length, max(0, textLength - selectionLocation))
+            ))
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        // Let AppKit own first-responder changes for this freeform editor.
+        // Forcing focus from SwiftUI updates can reset the insertion point or
+        // briefly resign first responder while a keystroke is being committed.
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: IdeaContextTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? nsView.frame.width
+        let measured = nsView.measuredHeight(for: width)
+        return CGSize(width: width, height: max(IdeaContextTextView.minimumHeight, measured))
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: IdeaContextTextEditor
+
+        init(parent: IdeaContextTextEditor) {
+            self.parent = parent
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            parent.isFocused = true
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            parent.isFocused = false
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? IdeaContextTextView else { return }
+            parent.isFocused = true
+            parent.text = textView.string
+            parent.onTextChange(textView.string)
+            textView.invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+private final class IdeaContextTextView: NSTextView {
+    static let minimumHeight: CGFloat = 200
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: max(Self.minimumHeight, measuredHeight(for: bounds.width))
+        )
+    }
+
+    func applyManuscriptStyle() {
+        let font = Self.manuscriptFont
+        let color = NSColor(DS.text)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 7
+
+        self.font = font
+        self.textColor = color
+        self.defaultParagraphStyle = paragraphStyle
+        self.typingAttributes = [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        guard let textStorage else { return }
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.addAttributes([
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle
+        ], range: fullRange)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown,
+              let character = event.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isCommandOnly = flags == .command
+        let isControlOnly = flags == .control
+
+        if character == "c", isCommandOnly || isControlOnly {
+            copy(nil)
+            return true
+        }
+
+        if isCommandOnly {
+            switch character {
+            case "x":
+                cut(nil)
+                return true
+            case "v":
+                paste(nil)
+                return true
+            case "a":
+                selectAll(nil)
+                return true
+            default:
+                break
+            }
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+
+    func measuredHeight(for width: CGFloat) -> CGFloat {
+        guard width > 0 else { return Self.minimumHeight }
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 7
+
+        let storage = NSTextStorage(string: string.isEmpty ? " " : string)
+        let container = NSTextContainer(size: NSSize(
+            width: max(0, width - textContainerInset.width * 2),
+            height: .greatestFiniteMagnitude
+        ))
+        let manager = NSLayoutManager()
+        container.lineFragmentPadding = 0
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+        storage.addAttributes([
+            .font: Self.manuscriptFont,
+            .paragraphStyle: paragraphStyle
+        ], range: NSRange(location: 0, length: storage.length))
+        manager.ensureLayout(for: container)
+        return ceil(manager.usedRect(for: container).height + textContainerInset.height * 2)
+    }
+
+    private static var manuscriptFont: NSFont {
+        let base = NSFont.systemFont(ofSize: 17, weight: .regular)
+        guard let descriptor = base.fontDescriptor.withDesign(.serif),
+              let font = NSFont(descriptor: descriptor, size: 17) else {
+            return base
+        }
+        return font
     }
 }
 

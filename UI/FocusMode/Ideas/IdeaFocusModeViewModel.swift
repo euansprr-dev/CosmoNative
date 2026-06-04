@@ -487,6 +487,8 @@ class IdeaFocusModeViewModel: ObservableObject {
             }()
             let nowISO = ISO8601DateFormatter().string(from: Date())
 
+            let inheritedClientUUID = linkedClient?.uuid ?? idea.ideaMetadata?.clientUUID
+
             // Build ContentFocusModeState with description = the original idea text
             var focusState = ContentFocusModeState(atomUUID: contentAtom.uuid)
             // Expand mentioned atoms into the core idea text for writing context
@@ -500,6 +502,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             focusState.contentDescription = enrichedBody
             focusState.coreIdea = enrichedBody
             focusState.hooks = inheritedHooks
+            focusState.clientProfileUUID = inheritedClientUUID
 
             if let codexOutline,
                let draftTemplate = CodexOutlineDraftTemplate.make(from: codexOutline) {
@@ -536,7 +539,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             contentMeta.inheritedMentionedAtomUUIDs = mentionedUUIDs.isEmpty ? nil : mentionedUUIDs
             contentMeta.inheritedFramework = inheritedFramework
             contentMeta.inheritedHooks = inheritedHooks.isEmpty ? nil : inheritedHooks
-            contentMeta.clientProfileUUID = linkedClient?.uuid
+            contentMeta.clientProfileUUID = inheritedClientUUID
             contentMeta.blueprintSwipeUUID = selectedBlueprintUUID
             contentMeta.activatedAt = nowISO
             contentMeta.phaseEnteredAt = nowISO
@@ -575,6 +578,9 @@ class IdeaFocusModeViewModel: ObservableObject {
             let focusFields = focusState.toAtomFields(existingMetadata: contentMeta.toJSON())
 
             var updatedContent = contentAtom.addingLink(.contentToIdea(idea.uuid))
+            if let inheritedClientUUID {
+                updatedContent = updatedContent.addingLink(.contentToClient(inheritedClientUUID))
+            }
             updatedContent.metadata = focusFields.metadata
             updatedContent.body = focusFields.body
             updatedContent.updatedAt = nowISO

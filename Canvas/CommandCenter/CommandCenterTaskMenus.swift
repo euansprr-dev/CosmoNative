@@ -1896,6 +1896,21 @@ func composerSectionLabel(_ text: String) -> some View {
     }
 }
 
+/// Greenhouse Glass variant of `composerSectionLabel` — neutral sans small-caps + a hairline
+/// `glassBorder` rule. Used by composers presented with `.glass` chrome (schedule, habits).
+func glassComposerSectionLabel(_ text: String) -> some View {
+    HStack(spacing: DS.space8) {
+        Text(text.uppercased())
+            .font(DS.smallCaps)
+            .foregroundStyle(DS.textSecondary)
+            .tracking(1.4)
+        Rectangle()
+            .fill(DS.glassBorder)
+            .frame(height: 0.5)
+            .opacity(0.7)
+    }
+}
+
 private func metaGlyph(text: String, icon: String, color: Color) -> some View {
     HStack(spacing: DS.space4) {
         Image(systemName: icon)

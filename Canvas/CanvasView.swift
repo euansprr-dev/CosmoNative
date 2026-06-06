@@ -25,6 +25,100 @@ enum CanvasKeyboardShortcutPolicy {
     }
 }
 
+enum CanvasImageDropController {
+    static let supportedTypes: [UTType] = [
+        .fileURL,
+        .image,
+        .png,
+        .jpeg,
+        .tiff,
+        .heic
+    ]
+
+    static func accepts(_ types: [UTType]) -> Bool {
+        types.contains { type in
+            type == .fileURL || type.conforms(to: .image)
+        }
+    }
+
+    static func imageTitle(originalFilename: String?) -> String {
+        guard let originalFilename, !originalFilename.isEmpty else { return "Image" }
+        return URL(fileURLWithPath: originalFilename).deletingPathExtension().lastPathComponent
+    }
+
+    static func firstImage(from providers: [NSItemProvider]) async -> (data: Data, originalFilename: String?)? {
+        for provider in providers {
+            if let fileImage = await imageFromFileURL(provider) {
+                return fileImage
+            }
+            if let directImage = await imageData(provider) {
+                return directImage
+            }
+        }
+        return nil
+    }
+
+    private static func imageFromFileURL(_ provider: NSItemProvider) async -> (data: Data, originalFilename: String?)? {
+        guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { return nil }
+
+        let item = await loadItem(provider, typeIdentifier: UTType.fileURL.identifier)
+        let url: URL?
+        if let loadedURL = item as? URL {
+            url = loadedURL
+        } else if let loadedURL = item as? NSURL {
+            url = loadedURL as URL
+        } else if let data = item as? Data {
+            url = URL(dataRepresentation: data, relativeTo: nil)
+        } else {
+            url = nil
+        }
+
+        guard let url,
+              let contentType = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
+              contentType.conforms(to: .image),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+
+        return (data, url.lastPathComponent)
+    }
+
+    private static func imageData(_ provider: NSItemProvider) async -> (data: Data, originalFilename: String?)? {
+        let typeIdentifiers = provider.registeredTypeIdentifiers
+            .compactMap(UTType.init)
+            .filter { $0.conforms(to: .image) }
+
+        for type in typeIdentifiers {
+            if let data = await loadData(provider, typeIdentifier: type.identifier) {
+                return (data, provider.suggestedName)
+            }
+        }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier),
+           let data = await loadData(provider, typeIdentifier: UTType.image.identifier) {
+            return (data, provider.suggestedName)
+        }
+
+        return nil
+    }
+
+    private static func loadItem(_ provider: NSItemProvider, typeIdentifier: String) async -> NSSecureCoding? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: typeIdentifier, options: nil) { item, _ in
+                continuation.resume(returning: item)
+            }
+        }
+    }
+
+    private static func loadData(_ provider: NSItemProvider, typeIdentifier: String) async -> Data? {
+        await withCheckedContinuation { continuation in
+            provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
+                continuation.resume(returning: data)
+            }
+        }
+    }
+}
+
 struct CanvasView: View {
     /// The thinkspace ID this canvas displays — passed directly to avoid race conditions
     let thinkspaceId: String?
@@ -288,11 +382,14 @@ struct CanvasView: View {
                         }
                 }
             }
-            // Accept blocks dragged out of cluster grid/list/board views
-            .onDrop(of: [.text], delegate: ClusterToCanvasDropDelegate(
+            // Accept blocks dragged out of cluster grid/list/board views and images from Finder/desktop/apps.
+            .onDrop(of: CanvasDropDelegate.supportedTypes, delegate: CanvasDropDelegate(
                 screenToCanvas: { [self] screenPos in screenToCanvasPosition(screenPos) },
-                onDrop: { [self] blockUUID, canvasPosition in
+                onClusterDrop: { [self] blockUUID, canvasPosition in
                     handleClusterToCanvasDrop(blockUUID: blockUUID, canvasPosition: canvasPosition)
+                },
+                onImageDrop: { [self] providers, canvasPosition in
+                    handleCanvasImageDrop(providers: providers, canvasPosition: canvasPosition)
                 }
             ))
             .overlay(alignment: .bottomTrailing) {
@@ -4132,7 +4229,7 @@ struct CanvasView: View {
 
         // Try image data (screenshots, copied images)
         if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) {
-            await handleImagePaste(data: imageData, originalFilename: nil)
+            await createImageBlock(data: imageData, originalFilename: nil)
             return
         }
 
@@ -4142,7 +4239,7 @@ struct CanvasView: View {
            let uti = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType,
            uti.conforms(to: .image),
            let data = try? Data(contentsOf: fileURL) {
-            await handleImagePaste(data: data, originalFilename: fileURL.lastPathComponent)
+            await createImageBlock(data: data, originalFilename: fileURL.lastPathComponent)
             return
         }
 
@@ -4261,8 +4358,23 @@ struct CanvasView: View {
         }
     }
 
-    /// Handles pasting image data from clipboard — saves to disk, creates atom + block
-    private func handleImagePaste(data: Data, originalFilename: String?) async {
+    /// Handles dropping image data onto the canvas — saves to disk, creates atom + block at the drop point.
+    private func handleCanvasImageDrop(providers: [NSItemProvider], canvasPosition: CGPoint) {
+        Task {
+            guard let image = await CanvasImageDropController.firstImage(from: providers) else {
+                print("⚠️ [CanvasView] Image drop did not contain readable image data")
+                return
+            }
+            await createImageBlock(
+                data: image.data,
+                originalFilename: image.originalFilename,
+                position: canvasPosition
+            )
+        }
+    }
+
+    /// Saves image data to disk, creates an image atom, then places its canvas block.
+    private func createImageBlock(data: Data, originalFilename: String?, position explicitPosition: CGPoint? = nil) async {
         do {
             let result = try ImageStore.save(data, originalFilename: originalFilename)
             let imageMeta = ImageMetadata(
@@ -4276,7 +4388,7 @@ struct CanvasView: View {
             let metadataString = metadataJson.flatMap { String(data: $0, encoding: .utf8) }
             let atomToInsert = Atom.new(
                 type: .image,
-                title: originalFilename ?? "Image",
+                title: CanvasImageDropController.imageTitle(originalFilename: originalFilename),
                 body: result.path,
                 metadata: metadataString
             )
@@ -4285,17 +4397,18 @@ struct CanvasView: View {
                 try inserted.insert(db)
                 return inserted
             }
-            let position = CGPoint(
+            let position = explicitPosition ?? CGPoint(
                 x: canvasSize.width / 2 - canvasOffset.width,
                 y: canvasSize.height / 2 - canvasOffset.height
             )
             let block = CanvasBlock.fromAtom(atom, position: position)
             await spatialEngine.addBlock(block, persist: true)
             selectedBlockId = block.id
+            rebuildMediaContentCache()
 
-            print("📋 Pasted image → canvas block (uuid: \(atom.uuid))")
+            print("📋 Added image → canvas block (uuid: \(atom.uuid))")
         } catch {
-            print("⚠️ [CanvasView] Failed to paste image: \(error)")
+            print("⚠️ [CanvasView] Failed to add image: \(error)")
         }
     }
 
@@ -5492,32 +5605,44 @@ private struct ActiveClusterResizeSession {
     let memberGeometries: [String: CanvasBlockGeometry]
 }
 
-// MARK: - Cluster-to-Canvas Drop Delegate
+// MARK: - Canvas Drop Delegate
 
-/// Accepts blocks dragged from cluster grid/list/board views onto the canvas background.
-/// Removes the block from its source cluster and places it as a free-floating canvas block.
-private struct ClusterToCanvasDropDelegate: DropDelegate {
+/// Accepts internal cluster block drops and external image drops onto the canvas background.
+private struct CanvasDropDelegate: DropDelegate {
+    static let supportedTypes: [UTType] = [.text] + CanvasImageDropController.supportedTypes
+
     let screenToCanvas: (CGPoint) -> CGPoint
-    let onDrop: (String, CGPoint) -> Void
+    let onClusterDrop: (String, CGPoint) -> Void
+    let onImageDrop: ([NSItemProvider], CGPoint) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        // Only accept drops that originated from a cluster view
-        ClusterViewDragSession.sourceClusterId != nil && info.hasItemsConforming(to: [.text])
+        if ClusterViewDragSession.sourceClusterId != nil && info.hasItemsConforming(to: [.text]) {
+            return true
+        }
+
+        return info.hasItemsConforming(to: CanvasImageDropController.supportedTypes)
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard ClusterViewDragSession.sourceClusterId != nil else { return false }
-
         let canvasPosition = screenToCanvas(info.location)
 
-        for provider in info.itemProviders(for: [.text]) {
-            _ = provider.loadObject(ofClass: NSString.self) { item, _ in
-                guard let blockUUID = item as? String else { return }
-                DispatchQueue.main.async {
-                    onDrop(blockUUID, canvasPosition)
+        if ClusterViewDragSession.sourceClusterId != nil {
+            for provider in info.itemProviders(for: [.text]) {
+                _ = provider.loadObject(ofClass: NSString.self) { item, _ in
+                    guard let blockUUID = item as? String else { return }
+                    DispatchQueue.main.async {
+                        onClusterDrop(blockUUID, canvasPosition)
+                    }
                 }
             }
+            return true
         }
+
+        let imageProviders = info.itemProviders(for: CanvasImageDropController.supportedTypes)
+        guard !imageProviders.isEmpty else {
+            return false
+        }
+        onImageDrop(imageProviders, canvasPosition)
         return true
     }
 }

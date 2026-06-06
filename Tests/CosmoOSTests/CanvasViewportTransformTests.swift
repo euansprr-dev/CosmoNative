@@ -171,6 +171,24 @@ final class CanvasKeyboardShortcutPolicyTests: XCTestCase {
     }
 }
 
+final class CanvasImageDropControllerTests: XCTestCase {
+    func testAcceptsFinderFileURLAndImageTypes() {
+        XCTAssertTrue(CanvasImageDropController.accepts([.fileURL]))
+        XCTAssertTrue(CanvasImageDropController.accepts([.png]))
+        XCTAssertTrue(CanvasImageDropController.accepts([.jpeg]))
+    }
+
+    func testRejectsNonImageNonFileTypes() {
+        XCTAssertFalse(CanvasImageDropController.accepts([.plainText]))
+        XCTAssertFalse(CanvasImageDropController.accepts([.url]))
+    }
+
+    func testImageTitleStripsFilenameExtension() {
+        XCTAssertEqual(CanvasImageDropController.imageTitle(originalFilename: "desktop-shot.png"), "desktop-shot")
+        XCTAssertEqual(CanvasImageDropController.imageTitle(originalFilename: nil), "Image")
+    }
+}
+
 final class CanvasVisibilityIndexTests: XCTestCase {
     func testVisibilityIndexUsesPreloadRectForNearViewportBlocks() {
         let transform = CanvasViewportTransform(

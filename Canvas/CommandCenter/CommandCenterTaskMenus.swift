@@ -30,14 +30,6 @@ enum CommandCenterTaskDateTarget: Equatable {
         case .deadline: return "Deadline"
         }
     }
-
-    var helperText: String {
-        switch self {
-        case .dueDate: return "Choose when this task should land."
-        case .whenDate: return "Place this task into a working day."
-        case .deadline: return "Set the hard edge for this task."
-        }
-    }
 }
 
 enum CommandCenterScheduleSelection: Equatable {
@@ -162,8 +154,7 @@ struct CommandCenterComposerHost: View {
         case let .batchSchedule(title, taskUUIDs, _):
             CommandCenterScheduleComposer(
                 title: title.uppercased(),
-                subtitle: "\(taskUUIDs.count) tasks",
-                helperText: "Move this set in one stroke.",
+                subtitle: taskUUIDs.count == 1 ? "1 task" : "\(taskUUIDs.count) tasks",
                 currentDate: nil,
                 includeNilActions: true,
                 showSomedayAction: true,
@@ -199,7 +190,6 @@ struct CommandCenterComposerHost: View {
             CommandCenterScheduleComposer(
                 title: target.title.uppercased(),
                 subtitle: task.title,
-                helperText: target.helperText,
                 currentDate: currentDate,
                 includeNilActions: true,
                 showSomedayAction: target == .dueDate,
@@ -485,7 +475,7 @@ private struct CommandCenterComposerMetrics {
             height = min(viewport.height - 48, 380)
         case .taskDate, .batchSchedule:
             width = 360
-            height = min(viewport.height - 48, 500)
+            height = min(viewport.height - 48, 590)
         }
 
         maxHeight = height
@@ -527,36 +517,50 @@ struct CommandCenterGlobalFrameReader: View {
     }
 }
 
+/// Chrome treatment for a Command Center composer popover.
+/// `.codex` is the warm vellum + gilt-bracket identity (default, used by the intent/habit/
+/// action composers). `.glass` adopts the Greenhouse Glass language of the Discover filter
+/// dropdown — a translucent `CosmoGlassPanel` floating over the canvas.
+enum CommandCenterComposerChrome {
+    case codex
+    case glass
+}
+
 struct CommandCenterComposerShell<Content: View>: View {
     let title: String
     let subtitle: String?
+    var chrome: CommandCenterComposerChrome = .codex
     let onClose: () -> Void
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            AkashicSectionDivider()
-                .padding(.top, 2)
+            divider
             ScrollView(.vertical, showsIndicators: false) {
                 content()
                     .padding(.horizontal, DS.space20)
                     .padding(.vertical, DS.space18)
             }
         }
-        .background(DS.vellum, in: .rect(cornerRadius: 20))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(DS.sepiaBorder, lineWidth: 0.5)
-        )
-        .overlay(alignment: .topLeading) {
-            GiltCornerBracket()
-                .stroke(DS.gilt, lineWidth: 0.8)
-                .frame(width: 13, height: 13)
-                .padding(10)
-        }
-        .shadow(color: .black.opacity(0.08), radius: 24, y: 16)
+        .modifier(CommandCenterComposerChromeModifier(chrome: chrome))
         .onExitCommand(perform: onClose)
+    }
+
+    @ViewBuilder
+    private var divider: some View {
+        switch chrome {
+        case .codex:
+            AkashicSectionDivider()
+                .padding(.top, 2)
+        case .glass:
+            Rectangle()
+                .fill(DS.glassBorder)
+                .frame(height: 1)
+                .opacity(0.7)
+                .padding(.horizontal, DS.space20)
+                .padding(.top, 2)
+        }
     }
 
     private var header: some View {
@@ -564,12 +568,12 @@ struct CommandCenterComposerShell<Content: View>: View {
             VStack(alignment: .leading, spacing: DS.space6) {
                 Text(title)
                     .font(DS.smallCaps)
-                    .foregroundStyle(DS.giltMuted)
+                    .foregroundStyle(chrome == .glass ? DS.textSecondary : DS.giltMuted)
                     .tracking(1.8)
 
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 16, weight: .regular, design: .serif))
+                        .font(subtitleFont)
                         .foregroundStyle(DS.text)
                         .lineLimit(2)
                 }
@@ -580,10 +584,10 @@ struct CommandCenterComposerShell<Content: View>: View {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(DS.caption)
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(chrome == .glass ? DS.textSecondary : DS.inkFaded)
                     .frame(width: 30, height: 30)
-                    .background(DS.vellumDeep, in: Circle())
-                    .overlay(Circle().stroke(DS.sepiaBorder, lineWidth: 0.5))
+                    .background(chrome == .glass ? DS.glassInputFill : DS.vellumDeep, in: Circle())
+                    .overlay(Circle().stroke(chrome == .glass ? DS.glassBorder : DS.sepiaBorder, lineWidth: 0.5))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close composer")
@@ -592,12 +596,53 @@ struct CommandCenterComposerShell<Content: View>: View {
         .padding(.top, DS.space18)
         .padding(.bottom, DS.space16)
     }
+
+    private var subtitleFont: Font {
+        switch chrome {
+        case .codex: return .system(size: 16, weight: .regular, design: .serif)
+        case .glass: return DS.headline
+        }
+    }
+}
+
+/// Applies the container chrome for a composer shell. `chrome` is a fixed per-presentation
+/// config (never animated), so branching structure here is safe — no subtree rebuild churn.
+private struct CommandCenterComposerChromeModifier: ViewModifier {
+    let chrome: CommandCenterComposerChrome
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch chrome {
+        case .codex:
+            content
+                .background(DS.vellum, in: .rect(cornerRadius: 20))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                )
+                .overlay(alignment: .topLeading) {
+                    GiltCornerBracket()
+                        .stroke(DS.gilt, lineWidth: 0.8)
+                        .frame(width: 13, height: 13)
+                        .padding(10)
+                }
+                .shadow(color: .black.opacity(0.08), radius: 24, y: 16)
+        case .glass:
+            CosmoGlassPanel(
+                sceneMaterial: .neutral,
+                role: .globalSidebar,
+                cornerRadius: 20
+            ) {
+                content
+            }
+            .dsFloatingShadow()
+        }
+    }
 }
 
 struct CommandCenterScheduleComposer: View {
     let title: String
     let subtitle: String?
-    let helperText: String
     let currentDate: Date?
     var includeNilActions: Bool = true
     var showSomedayAction: Bool = false
@@ -605,19 +650,13 @@ struct CommandCenterScheduleComposer: View {
     let onClose: () -> Void
 
     var body: some View {
-        CommandCenterComposerShell(title: title, subtitle: subtitle, onClose: onClose) {
-            VStack(alignment: .leading, spacing: DS.space18) {
-                Text(helperText)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.inkFaded)
-
-                CommandCenterScheduleSection(
-                    currentDate: currentDate,
-                    includeNilActions: includeNilActions,
-                    showSomedayAction: showSomedayAction,
-                    onSelect: onSelect
-                )
-            }
+        CommandCenterComposerShell(title: title, subtitle: subtitle, chrome: .glass, onClose: onClose) {
+            CommandCenterScheduleSection(
+                currentDate: currentDate,
+                includeNilActions: includeNilActions,
+                showSomedayAction: showSomedayAction,
+                onSelect: onSelect
+            )
         }
     }
 }
@@ -1406,55 +1445,65 @@ struct CommandCenterScheduleSection: View {
 
     private var quickActions: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            composerSectionLabel("Quick")
+            glassSectionLabel("Quick")
 
-            HStack(spacing: DS.space8) {
-                quickActionChip(title: "Today", systemImage: "sun.max", tint: DS.green, selection: .date(Date()))
-                quickActionChip(
-                    title: "Tomorrow",
-                    systemImage: "sunrise",
-                    tint: DS.orange,
-                    selection: .date(Calendar.current.date(byAdding: .day, value: 1, to: Date()))
-                )
-                quickActionChip(
-                    title: "Weekend",
-                    systemImage: "sparkles",
-                    tint: DS.accent,
-                    selection: .date(CommandCenterScheduleUtilities.nextWeekendDate())
-                )
-                quickActionChip(
-                    title: "+1 Week",
-                    systemImage: "arrow.right",
-                    tint: DS.textSecondary,
-                    selection: .date(CommandCenterScheduleUtilities.nextWeekStart())
-                )
-            }
-
-            if includeNilActions {
-                HStack(spacing: DS.space8) {
-                    if showSomedayAction {
-                        quickActionChip(title: "Someday", systemImage: "archivebox", tint: DS.giltMuted, selection: .someday)
+            CodexFlowLayout(spacing: DS.space8) {
+                ForEach(quickChipModels) { model in
+                    CommandCenterScheduleQuickChip(model: model) {
+                        onSelect(model.selection)
                     }
-                    quickActionChip(title: "No Date", systemImage: "slash.circle", tint: DS.textMuted, selection: .date(nil))
                 }
             }
         }
     }
 
+    private var quickChipModels: [CommandCenterQuickChipModel] {
+        var models: [CommandCenterQuickChipModel] = [
+            CommandCenterQuickChipModel(title: "Today", systemImage: "sun.max", tint: DS.green, selection: .date(Date())),
+            CommandCenterQuickChipModel(
+                title: "Tomorrow",
+                systemImage: "sunrise",
+                tint: DS.orange,
+                selection: .date(Calendar.current.date(byAdding: .day, value: 1, to: Date()))
+            ),
+            CommandCenterQuickChipModel(
+                title: "Weekend",
+                systemImage: "sparkles",
+                tint: DS.accent,
+                selection: .date(CommandCenterScheduleUtilities.nextWeekendDate())
+            ),
+            CommandCenterQuickChipModel(
+                title: "+1 Week",
+                systemImage: "arrow.right",
+                tint: DS.textSecondary,
+                selection: .date(CommandCenterScheduleUtilities.nextWeekStart())
+            )
+        ]
+
+        if includeNilActions {
+            if showSomedayAction {
+                models.append(CommandCenterQuickChipModel(title: "Someday", systemImage: "archivebox", tint: DS.giltMuted, selection: .someday))
+            }
+            models.append(CommandCenterQuickChipModel(title: "No Date", systemImage: "slash.circle", tint: DS.textMuted, selection: .date(nil)))
+        }
+
+        return models
+    }
+
     private var naturalLanguageField: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            composerSectionLabel("When")
+            glassSectionLabel("When")
 
             TextField("tomorrow, next monday, apr 24", text: $manualInput)
                 .textFieldStyle(.plain)
-                .font(DS.dateSerif)
+                .font(DS.callout)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, DS.space12)
                 .padding(.vertical, DS.space10)
-                .background(DS.vellumDeep, in: .rect(cornerRadius: 12))
+                .background(DS.glassInputFill, in: .rect(cornerRadius: 10))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(DS.glassBorder, lineWidth: 0.5)
                 )
                 .onSubmit {
                     guard let parsed = CommandCenterScheduleUtilities.parseDateInput(manualInput) else { return }
@@ -1474,31 +1523,62 @@ struct CommandCenterScheduleSection: View {
         }
     }
 
-    private func quickActionChip(
-        title: String,
-        systemImage: String,
-        tint: Color,
-        selection: CommandCenterScheduleSelection
-    ) -> some View {
-        Button {
-            onSelect(selection)
-        } label: {
-            HStack(spacing: DS.space4) {
-                Image(systemName: systemImage)
-                    .font(DS.caption2)
-                Text(title)
-                    .font(DS.caption)
+    private func glassSectionLabel(_ text: String) -> some View {
+        HStack(spacing: DS.space8) {
+            Text(text.uppercased())
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.textSecondary)
+                .tracking(1.4)
+            Rectangle()
+                .fill(DS.glassBorder)
+                .frame(height: 0.5)
+                .opacity(0.7)
+        }
+    }
+}
+
+/// A quick-reschedule pill in the Greenhouse Glass language — glass capsule, sans label,
+/// tint-colored glyph for at-a-glance identity, and a tint hover ring (mirrors the Discover
+/// `SwipeFilterChip`). `.lineLimit(1)` + `.fixedSize` guarantee the label never wraps mid-word.
+private struct CommandCenterQuickChipModel: Identifiable {
+    var id: String { title }
+    let title: String
+    let systemImage: String
+    let tint: Color
+    let selection: CommandCenterScheduleSelection
+}
+
+private struct CommandCenterScheduleQuickChip: View {
+    let model: CommandCenterQuickChipModel
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: model.systemImage)
+                    .font(DS.footnote.weight(.semibold))
+                    .foregroundStyle(model.tint)
+                Text(model.title)
+                    .font(DS.subheadline.weight(.medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
             }
-            .foregroundStyle(tint)
-            .padding(.horizontal, DS.space10)
-            .padding(.vertical, DS.space8)
-            .background(tint.opacity(0.08), in: Capsule())
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, DS.space12)
+            .frame(height: 32)
+            .background(isHovered ? DS.glassInputFillFocused : DS.glassInputFill, in: Capsule())
             .overlay(
                 Capsule()
-                    .stroke(tint.opacity(0.16), lineWidth: 1)
+                    .strokeBorder(isHovered ? model.tint.opacity(0.42) : DS.glassBorder, lineWidth: isHovered ? 1 : 0.5)
             )
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .accessibilityLabel(model.title)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -1523,7 +1603,7 @@ struct CommandCenterMonthGrid: View {
                 .buttonStyle(.plain)
 
                 Text(displayedMonth.formatted(.dateTime.month(.wide).year()))
-                    .font(.system(size: 17, weight: .regular, design: .serif))
+                    .font(DS.headline)
                     .foregroundStyle(DS.text)
 
                 Spacer()
@@ -1543,7 +1623,7 @@ struct CommandCenterMonthGrid: View {
                 ForEach(CommandCenterScheduleUtilities.weekdaySymbols, id: \.self) { symbol in
                     Text(symbol)
                         .font(DS.smallCaps)
-                        .foregroundStyle(DS.giltMuted)
+                        .foregroundStyle(DS.textSecondary)
                         .frame(maxWidth: .infinity)
                 }
 
@@ -1644,7 +1724,10 @@ struct CommandCenterScheduleUtilities {
             cells.append(DayCell(date: date, isCurrentMonth: true))
         }
 
-        while cells.count % 7 != 0 {
+        // Always fill a constant 6-week (42-cell) grid so the calendar — and therefore the
+        // composer — keeps a stable height across months (matches Apple's graphical date
+        // picker). Trailing empty cells render as invisible spacers, never a scroll.
+        while cells.count < 42 {
             cells.append(DayCell(date: nil, isCurrentMonth: false))
         }
 
@@ -1828,7 +1911,6 @@ private func metaGlyph(text: String, icon: String, color: Color) -> some View {
     CommandCenterScheduleComposer(
         title: "SCHEDULE",
         subtitle: "Refine command center menus",
-        helperText: "Choose when this task should land.",
         currentDate: Date(),
         showSomedayAction: true,
         onSelect: { _ in },

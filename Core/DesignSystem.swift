@@ -1073,6 +1073,42 @@ extension View {
             .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: cornerRadius))
     }
 
+    /// Greenhouse glass card — warm glass fill + a content-adaptive tint wash ("lensing")
+    /// + a specular hairline that thickens on hover. The workhorse surface from
+    /// GREENHOUSE_GLASS §5.1. Apply motion (`scaleEffect`, `cardShadow`) at the *call site*
+    /// so this stays usable for static skeletons and previews.
+    func glassCard(isHovered: Bool = false, tint: Color = DS.accent, cornerRadius: CGFloat = 14) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
+            .background(tint.opacity(isHovered ? 0.10 : 0.06), in: shape)   // lensing wash
+            .background(DS.glassCardFill, in: shape)                        // warm glass
+            .overlay(
+                shape.strokeBorder(
+                    isHovered ? DS.glassBorderFocused : DS.glassBorder,
+                    lineWidth: isHovered ? 1 : 0.5
+                )
+            )
+            .clipShape(shape)
+    }
+
+    /// Resting → hover card shadow as ONE constant-structure modifier. Never branch structure
+    /// on animated state inside a modifier (GREENHOUSE_GLASS §7.1) — values interpolate here,
+    /// so the lift animates for free without rebuilding the wrapped subtree.
+    func cardShadow(isHovered: Bool = false) -> some View {
+        let isDark = DS.palette.isDark
+        return self
+            .shadow(
+                color: .black.opacity(isHovered ? (isDark ? 0.4 : 0.06) : (isDark ? 0.3 : 0.04)),
+                radius: isHovered ? (isDark ? 8 : 16) : (isDark ? 4 : 8),
+                x: 0, y: isHovered ? (isDark ? 2 : 4) : (isDark ? 1 : 2)
+            )
+            .shadow(
+                color: .black.opacity(isHovered ? (isDark ? 0.25 : 0.03) : (isDark ? 0.2 : 0.02)),
+                radius: isHovered ? (isDark ? 2 : 4) : (isDark ? 1 : 2),
+                x: 0, y: isHovered ? (isDark ? 1 : 2) : (isDark ? 0 : 1)
+            )
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // LEGACY COMPATIBILITY — Redirect removed dark-mode modifiers
     // These no-op or redirect to light-mode equivalents so callers

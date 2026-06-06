@@ -171,6 +171,7 @@ struct MainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
+    @ObservedObject private var inlineAssistantStore = CosmoInlineAssistantStore.shared
 
     // Deep work session engine (singleton — survives navigation changes)
     @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
@@ -226,6 +227,19 @@ struct MainView: View {
                 }
             }
             .zIndex(40)
+
+            // Bottom assistant composer: answers open the side pane, actions stay as diff proposals.
+            VStack {
+                Spacer()
+                CosmoInlineAssistantReviewOverlay(store: inlineAssistantStore)
+                    .padding(.bottom, 8)
+
+                CosmoInlineAssistantBar(store: inlineAssistantStore) {
+                    openInlineAssistantPane()
+                }
+                .padding(.bottom, 24)
+            }
+            .zIndex(45)
 
             // Focus mode is now rendered inside SplitPaneContainer above (z-index 195 when active)
 
@@ -480,6 +494,11 @@ struct MainView: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
         .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showSettings)
+        .onChange(of: inlineAssistantStore.isPaneRequested) { _, isRequested in
+            guard isRequested else { return }
+            openInlineAssistantPane()
+            inlineAssistantStore.dismissPaneRequest()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             presentCommandK()
         }
@@ -595,6 +614,12 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openCollaboratorPane)) { notification in
             guard let payload = CosmoNotification.Navigation.CollaboratorPanePayload(from: notification) else { return }
             handleOpenCollaboratorPane(atomUUID: payload.atomUUID, presetId: payload.presetId)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openInlineAssistant)) { _ in
+            openInlineAssistantPane()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openInlineAssistantPane)) { _ in
+            openInlineAssistantPane()
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
             if let newValue {
@@ -1620,6 +1645,12 @@ struct MainView: View {
             } catch {
                 print("MainView: handleOpenCollaboratorPane failed: \(error)")
             }
+        }
+    }
+
+    private func openInlineAssistantPane() {
+        withAnimation(ProMotionSprings.snappy) {
+            paneManager.openOrActivateInlineAssistant()
         }
     }
 

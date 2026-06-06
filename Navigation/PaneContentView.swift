@@ -84,6 +84,12 @@ struct PaneContentView: View {
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)
+
+        case .inlineAssistant:
+            CosmoInlineAssistantPaneView(store: CosmoInlineAssistantStore.shared, onClose: onClose)
+                .environment(\.isPaneContext, true)
+                .environment(\.isPaneActive, isActive)
+                .environment(\.isPaneContextOwner, isContextOwner)
         }
     }
 

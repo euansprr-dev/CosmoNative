@@ -406,7 +406,10 @@ struct NoteFocusModeView: View {
                 titleRef: { [self] in self.titlePlainText },
                 contentRef: { [self] in self.plainContent },
                 tagsRef: { [self] in self.tags },
-                selectedTextRef: { [self] in self.selectedText }
+                selectedTextRef: { [self] in self.selectedText },
+                applyBodyEdit: { [self] operation in
+                    try await self.applyInlineAssistantBodyEdit(operation)
+                }
             )
             if !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
@@ -426,7 +429,10 @@ struct NoteFocusModeView: View {
                     titleRef: { [self] in self.titlePlainText },
                     contentRef: { [self] in self.plainContent },
                     tagsRef: { [self] in self.tags },
-                    selectedTextRef: { [self] in self.selectedText }
+                    selectedTextRef: { [self] in self.selectedText },
+                    applyBodyEdit: { [self] operation in
+                        try await self.applyInlineAssistantBodyEdit(operation)
+                    }
                 )
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
@@ -1080,7 +1086,10 @@ struct NoteFocusModeView: View {
             titleRef: { [self] in self.titlePlainText },
             contentRef: { [self] in self.plainContent },
             tagsRef: { [self] in self.tags },
-            selectedTextRef: { [self] in self.selectedText }
+            selectedTextRef: { [self] in self.selectedText },
+            applyBodyEdit: { [self] operation in
+                try await self.applyInlineAssistantBodyEdit(operation)
+            }
         )
         CosmoWindowViewModel.shared.updateContext(provider: provider)
         CosmoWindowPanelController.shared.show()
@@ -1590,6 +1599,46 @@ struct NoteFocusModeView: View {
                 // Cancelled
             }
         }
+    }
+
+    private func applyInlineAssistantBodyEdit(
+        _ operation: CosmoAssistantProposalOperation
+    ) async throws -> CosmoEditableOperationResult {
+        guard operation.targetID == NoteContextProvider.targetID(for: atom.uuid) else {
+            return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Target changed")
+        }
+
+        switch operation.kind {
+        case .textReplacement, .structuredFieldReplacement:
+            guard let original = operation.originalText,
+                  let proposed = operation.proposedText,
+                  let range = plainContent.range(of: original)
+            else {
+                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Original text not found")
+            }
+
+            plainContent.replaceSubrange(range, with: proposed)
+            bodyDocument = RichDocument.migrateLegacy(plainContent)
+
+        case .textInsertion:
+            guard let proposed = operation.proposedText else {
+                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing inserted text")
+            }
+
+            let prefix = plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
+            plainContent += prefix + proposed
+            bodyDocument = RichDocument.migrateLegacy(plainContent)
+
+        case .canvasPlan:
+            return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider")
+        }
+
+        hasLocalBodyEdits = true
+        updateBodyHeadingOutline(from: bodyDocument)
+        updateTextAnalysisImmediately(for: plainContent)
+        triggerAutoSave()
+
+        return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
     }
 
     /// Debounced save with UI feedback (used during editing)
@@ -2327,28 +2376,39 @@ fileprivate struct GraphOverlayNode: Equatable {
 // MARK: - Cosmo Context Provider
 
 @MainActor
-class NoteContextProvider: CosmoContextProvider {
+class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
     private let atom: Atom
     private let titleRef: () -> String
     private let contentRef: () -> String
     private let tagsRef: () -> [String]
     private let selectedTextRef: () -> String
+    private let applyBodyEdit: ((CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult)?
 
     init(
         atom: Atom,
         titleRef: @escaping () -> String,
         contentRef: @escaping () -> String,
         tagsRef: @escaping () -> [String],
-        selectedTextRef: @escaping () -> String = { "" }
+        selectedTextRef: @escaping () -> String = { "" },
+        applyBodyEdit: ((CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult)? = nil
     ) {
         self.atom = atom
         self.titleRef = titleRef
         self.contentRef = contentRef
         self.tagsRef = tagsRef
         self.selectedTextRef = selectedTextRef
+        self.applyBodyEdit = applyBodyEdit
     }
 
     var contextType: CosmoContextType { .noteFocusMode }
+
+    var surfaceID: String {
+        "note:\(atom.uuid)"
+    }
+
+    static func targetID(for atomUUID: String) -> String {
+        "note:\(atomUUID):body"
+    }
 
     private var resolvedTitle: String {
         let liveTitle = titleRef().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2379,6 +2439,32 @@ class NoteContextProvider: CosmoContextProvider {
             ],
             selectedText: selectedTextRef()
         )
+    }
+
+    func editableSnapshot() -> CosmoEditableSourceSnapshot {
+        let content = contentRef()
+        return CosmoEditableSourceSnapshot(
+            surfaceID: surfaceID,
+            targetID: Self.targetID(for: atom.uuid),
+            kind: .text,
+            title: resolvedTitle.isEmpty ? "Untitled note" : resolvedTitle,
+            text: content,
+            sourceHash: CosmoEditableSurfaceHasher.hash(content),
+            anchors: [
+                .init(id: "body", label: "Body", utf16Start: 0, utf16Length: content.utf16.count)
+            ]
+        )
+    }
+
+    func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
+        guard let applyBodyEdit else {
+            return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Note editor is unavailable")
+        }
+        return try await applyBodyEdit(operation)
+    }
+
+    func reject(operation: CosmoAssistantProposalOperation) async -> CosmoEditableOperationResult {
+        CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Rejected")
     }
 
     var availableActions: [CosmoWindowAction] {

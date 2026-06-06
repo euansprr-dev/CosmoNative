@@ -1073,6 +1073,55 @@ class AgentToolRegistry {
         ]
     }
 
+    // MARK: - Workspace Editing Tools
+
+    private var workspaceEditingTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "propose_workspace_edit",
+                description: "Stage reviewed edits for the active Cosmo surface. Use this for document edits, number replacements, hook changes, outline changes, and structured field changes. This tool never applies changes; it only creates a user-reviewed proposal.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "prompt": ["type": "string", "description": "The user's original instruction"] as [String: Any],
+                        "surfaceID": ["type": "string", "description": "Editable surface id from active context"] as [String: Any],
+                        "title": ["type": "string", "description": "Short proposal title"] as [String: Any],
+                        "summary": ["type": "string", "description": "One sentence describing the proposed changes"] as [String: Any],
+                        "operations": [
+                            "type": "array",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "kind": ["type": "string", "enum": ["textReplacement", "textInsertion", "structuredFieldReplacement", "canvasPlan"]] as [String: Any],
+                                    "targetID": ["type": "string"] as [String: Any],
+                                    "anchorID": ["type": "string"] as [String: Any],
+                                    "originalText": ["type": "string"] as [String: Any],
+                                    "proposedText": ["type": "string"] as [String: Any],
+                                    "sourceHash": ["type": "string"] as [String: Any],
+                                    "rationale": ["type": "string"] as [String: Any]
+                                ] as [String: Any],
+                                "required": ["kind", "targetID", "sourceHash", "rationale"]
+                            ] as [String: Any]
+                        ] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["prompt", "surfaceID", "title", "summary", "operations"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "answer_in_assistant_pane",
+                description: "Send a conversational answer to the assistant pane. Use this for questions, explanations, analysis, or any request that does not need reviewed edits.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "Short answer title"] as [String: Any],
+                        "answer": ["type": "string", "description": "Assistant response body"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["answer"]
+                ]
+            )
+        ]
+    }
+
     // MARK: - Client Profile Tools
 
     private var clientProfileTools: [LLMToolDefinition] {
@@ -1246,6 +1295,8 @@ class AgentToolRegistry {
 
         for bundle in bundles {
             switch bundle {
+            case .workspaceEditing:
+                tools += workspaceEditingTools
             case .webResearch:
                 tools += webSearchTools
             case .contentSearch:
@@ -1278,7 +1329,7 @@ class AgentToolRegistry {
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = deduplicated(contextTools + ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools)
+        allTools = deduplicated(contextTools + ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools + workspaceEditingTools)
     }
 
     private func deduplicated(_ tools: [LLMToolDefinition]) -> [LLMToolDefinition] {

@@ -20,6 +20,7 @@ enum PaneContent: Identifiable, Equatable {
     case webBrowser(url: URL, title: String?)
     case cosmoWindow
     case collaborator(target: CollaborationTarget, presetId: String?)
+    case inlineAssistant
 
     var id: String {
         switch self {
@@ -37,6 +38,8 @@ enum PaneContent: Identifiable, Equatable {
             return "cosmoWindow"
         case .collaborator:
             return "collaborator"
+        case .inlineAssistant:
+            return "inlineAssistant"
         }
     }
 
@@ -44,7 +47,7 @@ enum PaneContent: Identifiable, Equatable {
     var entityId: Int64? {
         switch self {
         case .entity(let entity): return entity.id
-        case .thinkspace, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator: return nil
+        case .thinkspace, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator, .inlineAssistant: return nil
         }
     }
 
@@ -52,14 +55,14 @@ enum PaneContent: Identifiable, Equatable {
     var entitySelection: EntitySelection? {
         switch self {
         case .entity(let entity): return entity
-        case .thinkspace, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator: return nil
+        case .thinkspace, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator, .inlineAssistant: return nil
         }
     }
 
     /// The thinkspace ID if this is a thinkspace pane
     var thinkspaceId: String? {
         switch self {
-        case .entity, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator: return nil
+        case .entity, .commandCenter, .swipeGallery, .webBrowser, .cosmoWindow, .collaborator, .inlineAssistant: return nil
         case .thinkspace(let id): return id
         }
     }
@@ -76,7 +79,7 @@ enum PaneContent: Identifiable, Equatable {
 
     var chromeStyle: PaneChromeStyle {
         switch self {
-        case .cosmoWindow, .collaborator:
+        case .cosmoWindow, .collaborator, .inlineAssistant:
             return .minimal
         case .entity, .thinkspace, .commandCenter, .swipeGallery, .webBrowser:
             return .standard
@@ -336,6 +339,27 @@ class PaneManager: ObservableObject {
         panes.append(cosmoWindow)
         redistributeSizes()
         activePaneId = cosmoWindow.id
+
+        if isFirst {
+            withAnimation(ProMotionSprings.snappy) {
+                mainSplitRatio = 0.5
+            }
+        }
+    }
+
+    func openOrActivateInlineAssistant() {
+        let assistant = PaneContent.inlineAssistant
+
+        if panes.contains(where: { $0.id == assistant.id }) {
+            activePaneId = assistant.id
+            return
+        }
+
+        guard panes.count < maxPanes else { return }
+        let isFirst = panes.isEmpty
+        panes.append(assistant)
+        redistributeSizes()
+        activePaneId = assistant.id
 
         if isFirst {
             withAnimation(ProMotionSprings.snappy) {

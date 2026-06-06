@@ -726,9 +726,62 @@ final class CanvasClusterEngineTests: XCTestCase {
     func testCommandKPrimaryTabsExcludeInquiry() {
         XCTAssertFalse(CommandKTab.allCases.contains(.inquiry))
     }
+
+    // MARK: - ThinkspaceLibrarySnapshot (Library mode)
+
+    func testThinkspaceLibrarySnapshotPartitionsClusteredAndLooseBlocks() {
+        let a = makeBlock(uuid: "a", type: .note, position: .zero, size: CGSize(width: 100, height: 100))
+        let b = makeBlock(uuid: "b", type: .idea, position: .zero, size: CGSize(width: 100, height: 100))
+        let c = makeBlock(uuid: "c", type: .content, position: .zero, size: CGSize(width: 100, height: 100))
+        let cluster = makeCluster(
+            id: UUID(),
+            blockUUIDs: ["a"],
+            rect: CGRect(x: 0, y: 0, width: 300, height: 200),
+            viewMode: .canvas
+        )
+
+        let snapshot = ThinkspaceLibrarySnapshot.make(blocks: [a, b, c], clusters: [cluster], inventory: [])
+
+        XCTAssertEqual(snapshot.folders.count, 1)
+        XCTAssertEqual(snapshot.folders.first?.items.map(\.entityUuid), ["a"])
+        XCTAssertEqual(Set(snapshot.looseItems.map(\.entityUuid)), ["b", "c"])
+        // A clustered item must never also appear in the loose tray.
+        XCTAssertFalse(snapshot.looseItems.contains { $0.entityUuid == "a" })
+        // On-canvas blocks are flagged so the tile reads "On canvas".
+        XCTAssertTrue(snapshot.folders.first?.items.first?.isOnCanvas ?? false)
+    }
+
+    func testThinkspaceLibrarySnapshotFolderReflectsMembershipChange() {
+        let blocks = [
+            makeBlock(uuid: "a", type: .note, position: .zero, size: CGSize(width: 100, height: 100)),
+            makeBlock(uuid: "b", type: .idea, position: .zero, size: CGSize(width: 100, height: 100)),
+            makeBlock(uuid: "c", type: .content, position: .zero, size: CGSize(width: 100, height: 100)),
+        ]
+        let clusterId = UUID()
+        let rect = CGRect(x: 0, y: 0, width: 300, height: 200)
+
+        let before = ThinkspaceLibrarySnapshot.make(
+            blocks: blocks,
+            clusters: [makeCluster(id: clusterId, blockUUIDs: [], rect: rect, viewMode: .canvas)],
+            inventory: []
+        )
+        XCTAssertTrue(before.folders.first?.items.isEmpty ?? false)
+        XCTAssertEqual(Set(before.looseItems.map(\.entityUuid)), ["a", "b", "c"])
+
+        // Filing "a" and "b" into the folder (what drag-to-file persists via the cluster
+        // engine) must move them out of the loose tray and into the folder.
+        let after = ThinkspaceLibrarySnapshot.make(
+            blocks: blocks,
+            clusters: [makeCluster(id: clusterId, blockUUIDs: ["a", "b"], rect: rect, viewMode: .canvas)],
+            inventory: []
+        )
+        XCTAssertEqual(Set(after.folders.first?.items.map(\.entityUuid) ?? []), ["a", "b"])
+        XCTAssertEqual(after.looseItems.map(\.entityUuid), ["c"])
+    }
 }
 
 private extension CanvasClusterEngineTests {
+
     func assertEqualCGFloat(
         _ expression1: @autoclosure () throws -> CGFloat?,
         _ expression2: @autoclosure () throws -> CGFloat,

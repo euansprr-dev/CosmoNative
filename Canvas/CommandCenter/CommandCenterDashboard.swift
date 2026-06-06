@@ -135,7 +135,7 @@ struct CommandCenterDashboard: View {
             Spacer(minLength: 0)
 
             // Objectives bar (pinned at bottom)
-            if viewModel.viewMode != .upcoming {
+            if viewModel.viewMode != .today && viewModel.viewMode != .upcoming {
                 DashboardObjectivesBar(viewModel: viewModel)
             }
         }

@@ -73,6 +73,8 @@ class AgentToolExecutor {
     /// The Cosmo window owns review/apply/cancel so tools never directly mutate canvas state.
     var onCanvasPlan: ((PendingCanvasPlan) -> Void)?
     var onNoteStructurePlan: ((PendingNoteStructurePlan) -> Void)?
+    var onWorkspaceEditProposal: ((CosmoAssistantProposal) -> Void)?
+    var onAssistantPaneAnswer: ((_ title: String?, _ answer: String) -> Void)?
 
     private init() {}
 
@@ -133,6 +135,8 @@ class AgentToolExecutor {
         case "inspect_current_thinkspace": return try await inspectCurrentThinkspace(arguments)
         case "propose_canvas_plan": return try await proposeCanvasPlan(arguments)
         case "propose_note_structure_plan": return try await proposeNoteStructurePlan(arguments)
+        case "propose_workspace_edit": return try await proposeWorkspaceEdit(arguments)
+        case "answer_in_assistant_pane": return try await answerInAssistantPane(arguments)
         // Calendar / Schedule Blocks
         case "get_calendar_blocks": return try await getCalendarBlocks(arguments)
         case "create_block": return try await createBlock(arguments)
@@ -1830,6 +1834,52 @@ class AgentToolExecutor {
             "operationCount": operations.count,
             "message": "Canvas plan is ready for user review. Do not say it has been applied until the user clicks Apply."
         ] as [String: Any])
+    }
+
+    private func proposeWorkspaceEdit(_ args: [String: Any]) async throws -> String {
+        guard let prompt = trimmedString(args["prompt"]),
+              let surfaceID = trimmedString(args["surfaceID"]),
+              let title = trimmedString(args["title"]),
+              let summary = trimmedString(args["summary"]),
+              let rawOperations = args["operations"] as? [[String: Any]] else {
+            return jsonError("Missing required workspace edit proposal fields")
+        }
+
+        let operations = rawOperations.map { raw in
+            CosmoAssistantProposalOperation(
+                kind: CosmoAssistantProposalOperationKind(rawValue: raw["kind"] as? String ?? "") ?? .textReplacement,
+                targetID: raw["targetID"] as? String ?? "",
+                anchorID: raw["anchorID"] as? String,
+                originalText: raw["originalText"] as? String,
+                proposedText: raw["proposedText"] as? String,
+                sourceHash: raw["sourceHash"] as? String ?? "",
+                rationale: raw["rationale"] as? String ?? "Proposed by Cosmo."
+            )
+        }
+
+        let proposal = CosmoAssistantProposal(
+            prompt: prompt,
+            surfaceID: surfaceID,
+            title: title,
+            summary: summary,
+            operations: operations
+        )
+        onWorkspaceEditProposal?(proposal)
+
+        return jsonEncode([
+            "success": true,
+            "proposalId": proposal.id.uuidString,
+            "operationCount": operations.count,
+            "message": "Workspace edit proposal is ready for review. Do not say it has been applied until the user accepts changes."
+        ] as [String: Any])
+    }
+
+    private func answerInAssistantPane(_ args: [String: Any]) async throws -> String {
+        guard let answer = trimmedString(args["answer"]) else {
+            return jsonError("Missing required parameter: answer")
+        }
+        onAssistantPaneAnswer?(trimmedString(args["title"]), answer)
+        return jsonEncode(["success": true, "message": "Answer sent to assistant pane"])
     }
 
     private func proposeNoteStructurePlan(_ args: [String: Any]) async throws -> String {

@@ -19,6 +19,7 @@ enum CollaboratorContextSource: String, Codable, Sendable, CaseIterable {
 }
 
 enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
+    case workspaceEditing
     case webResearch
     case contentSearch
     case clientProfiles
@@ -35,6 +36,7 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .workspaceEditing: return "Workspace Editing"
         case .webResearch: return "Web Research"
         case .contentSearch: return "Content Search"
         case .clientProfiles: return "Client Profiles"
@@ -51,6 +53,7 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .workspaceEditing: return "text.badge.checkmark"
         case .webResearch: return "globe"
         case .contentSearch: return "doc.text.magnifyingglass"
         case .clientProfiles: return "person.crop.rectangle.stack"
@@ -67,6 +70,8 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
 
     var accessDescription: String {
         switch self {
+        case .workspaceEditing:
+            return "Lets the agent stage reviewed edits for the active document, focus mode, structured fields, or canvas without directly applying changes."
         case .webResearch:
             return "Lets the agent search the web for current information, sources, stats, market examples, and facts outside your local Cosmo database."
         case .contentSearch:

@@ -411,19 +411,25 @@ struct CanvasView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: mode.icon)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DS.footnote.weight(.semibold))
                             Text(mode.title)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(DS.footnote.weight(.semibold))
                         }
-                        .foregroundStyle(thinkspaceMode == mode ? DS.text : DS.textSecondary)
-                        .padding(.horizontal, 8)
+                        .foregroundStyle(thinkspaceMode == mode ? DS.accent : DS.textSecondary)
+                        .padding(.horizontal, 10)
                         .frame(height: modeSwitcherButtonHeight)
                         .background(
                             Capsule()
-                                .fill(thinkspaceMode == mode ? DS.accent.opacity(0.12) : Color.clear)
+                                .fill(thinkspaceMode == mode ? DS.accentSoft : Color.clear)
+                        )
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(thinkspaceMode == mode ? DS.accent.opacity(0.4) : Color.clear, lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("\(mode.title) mode")
+                    .accessibilityAddTraits(thinkspaceMode == mode ? [.isButton, .isSelected] : .isButton)
                     .transition(modeSwitcherItemTransition)
                 }
             } else {
@@ -433,11 +439,12 @@ struct CanvasView: View {
                     }
                 } label: {
                     Image(systemName: thinkspaceMode.icon)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DS.footnote.weight(.semibold))
                         .foregroundStyle(DS.textSecondary)
                         .frame(width: modeSwitcherButtonHeight, height: modeSwitcherButtonHeight)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Switch view, currently \(thinkspaceMode.title)")
                 .transition(modeSwitcherItemTransition)
             }
         }
@@ -445,13 +452,10 @@ struct CanvasView: View {
         .padding(.vertical, 4)
         .frame(minWidth: modeSwitcherCollapsedWidth)
         .frame(height: bottomControlHeight)
-        .background(DS.surfaceElevated, in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(DS.borderActive, lineWidth: 1)
-        )
+        .background(DS.glassInputFill, in: Capsule())
+        .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 1))
         .clipShape(Capsule())
-        .shadow(color: DS.accent.opacity(0.1), radius: 8, y: 2)
+        .dsFloatingShadow()
         .onHover { hovering in
             withAnimation(modeSwitcherAnimation) {
                 isModeSwitcherExpanded = hovering
@@ -468,7 +472,7 @@ struct CanvasView: View {
                 HStack(spacing: 8) {
                     // Zoom level display
                     Text("\(Int(effectiveScale * 100))%")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(DS.subheadline.weight(.medium).monospacedDigit())
                         .foregroundStyle(DS.textSecondary)
 
                     // Reset zoom button
@@ -478,24 +482,24 @@ struct CanvasView: View {
                         }
                     } label: {
                         Image(systemName: "1.magnifyingglass")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DS.footnote.weight(.semibold))
                             .foregroundStyle(DS.textSecondary)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Reset zoom to 100 percent")
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
                 .frame(height: bottomControlHeight)
-                .background(DS.surfaceElevated, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(DS.borderActive, lineWidth: 1)
-                )
-                .shadow(color: DS.accent.opacity(0.1), radius: 8, y: 2)
+                .background(DS.glassInputFill, in: Capsule())
+                .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 1))
+                .clipShape(Capsule())
+                .dsFloatingShadow()
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
-        .animation(.spring(response: 0.3), value: effectiveScale != 1.0)
+        .animation(ProMotionSprings.gentle, value: effectiveScale != 1.0)
     }
 
     private var selectedInspectableBlock: CanvasBlock? {
@@ -790,11 +794,32 @@ struct CanvasView: View {
             snapshot: thinkspaceLibrarySnapshot,
             onOpenItem: { item in
                 openLibraryItem(item)
+            },
+            onFileIntoFolder: { itemUUID, clusterID in
+                fileLibraryItemIntoFolder(itemUUID: itemUUID, clusterID: clusterID)
             }
         )
         .onAppear {
             refreshLibraryInventory()
         }
+    }
+
+    /// File an on-canvas library item into a cluster ("folder") via drag-and-drop.
+    /// Reuses the same atomic membership mutation the canvas drop uses, so the change
+    /// persists; the computed `thinkspaceLibrarySnapshot` then refreshes the grid.
+    private func fileLibraryItemIntoFolder(itemUUID: String, clusterID: UUID) {
+        guard let block = spatialEngine.blocks.first(where: { $0.entityUuid == itemUUID }) else { return }
+        guard let cluster = clusterEngine.userClusters.first(where: { $0.id == clusterID }),
+              !cluster.blockUUIDs.contains(itemUUID) else { return }
+
+        clusterEngine.updateMembership(
+            blockUUID: itemUUID,
+            targetClusterId: clusterID,
+            blockPosition: block.position,
+            ejectInset: -40,
+            blocks: spatialEngine.blocks
+        )
+        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
     }
 
     private func selectThinkspaceMode(_ mode: ThinkspaceCanvasMode) {
@@ -4856,6 +4881,7 @@ struct ThinkspaceLibrarySnapshot: Equatable {
         let folders = sortedClusters.map { cluster in
             let items = cluster.blockUUIDs
                 .compactMap { itemsByUUID[$0] }
+                .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             return ThinkspaceLibraryFolder(
                 id: cluster.id,
                 title: cluster.name,
@@ -4879,6 +4905,7 @@ private struct ThinkspaceLibraryModeView: View {
     let thinkspaceName: String
     let snapshot: ThinkspaceLibrarySnapshot
     let onOpenItem: (ThinkspaceLibraryItem) -> Void
+    let onFileIntoFolder: (String, UUID) -> Void
 
     @State private var selectedFolderID: UUID?
     @State private var searchText = ""
@@ -4887,6 +4914,7 @@ private struct ThinkspaceLibraryModeView: View {
         ZStack {
             DS.canvas
                 .ignoresSafeArea()
+                .filmGrain()
 
             libraryContent
                 .padding(.horizontal, 44)
@@ -4940,6 +4968,7 @@ private struct ThinkspaceLibraryModeView: View {
                 .padding(.top, 4)
                 .padding(.bottom, 92)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
+                .animation(ProMotionSprings.gentle, value: snapshot)
             }
             .overlay {
                 if shouldShowEmptyState {
@@ -4950,18 +4979,24 @@ private struct ThinkspaceLibraryModeView: View {
     }
 
     private var rootFolderTiles: some View {
-        ForEach(visibleFolders) { folder in
-            ThinkspaceLibraryFolderTile(folder: folder) {
-                selectedFolderID = folder.id
-            }
+        ForEach(Array(visibleFolders.enumerated()), id: \.element.id) { index, folder in
+            ThinkspaceLibraryFolderTile(
+                folder: folder,
+                appearIndex: index,
+                onOpen: { selectedFolderID = folder.id },
+                onFileItem: { itemUUID in onFileIntoFolder(itemUUID, folder.id) }
+            )
         }
     }
 
     private var documentTiles: some View {
-        ForEach(currentVisibleItems) { item in
-            ThinkspaceLibraryDocumentTile(item: item) {
-                onOpenItem(item)
-            }
+        let base = visibleFolders.count
+        return ForEach(Array(currentVisibleItems.enumerated()), id: \.element.id) { index, item in
+            ThinkspaceLibraryDocumentTile(
+                item: item,
+                appearIndex: base + index,
+                onOpen: { onOpenItem(item) }
+            )
         }
     }
 
@@ -5031,76 +5066,88 @@ private struct ThinkspaceLibraryHeader: View {
     let selectedFolder: ThinkspaceLibraryFolder?
     let onBack: () -> Void
 
+    @FocusState private var searchFocused: Bool
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             breadcrumb
             HStack(alignment: .firstTextBaseline) {
                 titleBlock
-                Spacer()
+                Spacer(minLength: 24)
                 searchField
             }
         }
     }
 
+    @ViewBuilder
     private var breadcrumb: some View {
-        Group {
-            if let selectedFolder {
-                Button(action: onBack) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Library")
-                        Text("/")
-                            .foregroundStyle(DS.textMuted)
-                        Text(selectedFolder.title)
-                            .foregroundStyle(DS.text)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.textSecondary)
+        if let selectedFolder {
+            Button(action: onBack) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(DS.caption.weight(.semibold))
+                    Text("Library")
+                    Text("/")
+                        .foregroundStyle(DS.textMuted)
+                    Text(selectedFolder.title)
+                        .foregroundStyle(DS.text)
                 }
-                .buttonStyle(.plain)
+                .font(DS.subheadline.weight(.medium))
+                .foregroundStyle(DS.textSecondary)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to Library")
         }
     }
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.system(size: 26, weight: .semibold))
+                .font(DS.pageTitle)
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
             Text(subtitle)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.textMuted)
+                .monospacedDigit()
         }
     }
 
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(DS.textMuted)
+                .font(DS.callout.weight(.medium))
+                .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
             TextField("Search anything...", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 260)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .focused($searchFocused)
+                .frame(width: 240)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 34)
-        .background(DS.surfaceElevated.opacity(0.72), in: Capsule())
-        .overlay(Capsule().stroke(DS.border.opacity(0.42), lineWidth: 1))
+        .padding(.horizontal, 14)
+        .frame(height: 36)
+        .dsGlassInput(isFocused: searchFocused, cornerRadius: 18)
+        .animation(ProMotionSprings.gentle, value: searchFocused)
     }
 }
 
 private struct ThinkspaceLibraryFolderTile: View {
     let folder: ThinkspaceLibraryFolder
+    var appearIndex: Int = 0
     let onOpen: () -> Void
+    let onFileItem: (String) -> Void
 
     @State private var isHovered = false
+    @State private var isDropTarget = false
+    @State private var hasAppeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var isActive: Bool { isHovered || isDropTarget }
 
     var body: some View {
         Button(action: onOpen) {
-            VStack(spacing: 10) {
+            VStack(spacing: 12) {
                 previewWell
                 label
             }
@@ -5108,28 +5155,34 @@ private struct ThinkspaceLibraryFolderTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.gentle) {
-                isHovered = hovering
-            }
+        .dropDestination(for: String.self) { items, _ in
+            guard let uuid = items.first else { return false }
+            onFileItem(uuid)
+            return true
+        } isTargeted: { targeting in
+            withAnimation(ProMotionSprings.bouncy) { isDropTarget = targeting }
         }
-        .accessibilityLabel("\(folder.title), \(folder.items.count) items")
+        .scaleEffect(isDropTarget ? 1.03 : (isHovered ? 1.01 : 1))
+        .animation(ProMotionSprings.hover, value: isActive)
+        .opacity(hasAppeared || reduceMotion ? 1 : 0)
+        .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.96)
+        .onHover { hovering in isHovered = hovering }
+        .onAppear(perform: animateEntrance)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(folder.title), \(folder.items.count) items. Drop an item here to file it.")
     }
 
     private var previewWell: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(DS.surfaceCard.opacity(isHovered ? 0.94 : 0.72))
-            ThinkspaceLibraryFolderGlyph(color: folder.color)
-                .frame(width: 92, height: 70)
-        }
-        .frame(width: 156, height: 132)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(isHovered ? folder.color.opacity(0.34) : DS.border.opacity(0.3), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(isHovered ? 0.08 : 0.035), radius: isHovered ? 14 : 6, y: isHovered ? 8 : 3)
-        .scaleEffect(isHovered ? 1.015 : 1)
+        ThinkspaceLibraryFolderGlyph(color: folder.color, itemCount: folder.items.count)
+            .frame(width: 92, height: 66)
+            .frame(width: 156, height: 132)
+            .glassCard(isHovered: isActive, tint: folder.color, cornerRadius: 18)
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(folder.color.opacity(isDropTarget ? 0.55 : 0), lineWidth: 2)
+            )
+            .cardShadow(isHovered: isActive)
     }
 
     private var label: some View {
@@ -5137,31 +5190,63 @@ private struct ThinkspaceLibraryFolderTile: View {
             HStack(spacing: 5) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(folder.color.opacity(0.82))
-                    .frame(width: 12, height: 9)
+                    .frame(width: 11, height: 9)
                 Text(folder.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DS.headline)
                     .foregroundStyle(DS.text)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
             Text("\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
+                .monospacedDigit()
                 .lineLimit(1)
         }
         .frame(width: 156, height: 44, alignment: .top)
+    }
+
+    private func animateEntrance() {
+        guard !reduceMotion, !hasAppeared else { hasAppeared = true; return }
+        withAnimation(ProMotionSprings.cascade(index: min(appearIndex, 8))) { hasAppeared = true }
     }
 }
 
 private struct ThinkspaceLibraryDocumentTile: View {
     let item: ThinkspaceLibraryItem
+    var appearIndex: Int = 0
     let onOpen: () -> Void
 
     @State private var isHovered = false
+    @State private var hasAppeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        draggableTile
+            .scaleEffect(isHovered ? 1.01 : 1)
+            .animation(ProMotionSprings.hover, value: isHovered)
+            .opacity(hasAppeared || reduceMotion ? 1 : 0)
+            .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.96)
+            .onHover { hovering in isHovered = hovering }
+            .onAppear(perform: animateEntrance)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("\(item.title), \(item.isOnCanvas ? "on canvas" : "stored")")
+    }
+
+    // On-canvas items can be dragged into a folder; stored items aren't draggable.
+    @ViewBuilder
+    private var draggableTile: some View {
+        if item.block != nil {
+            tileButton.draggable(item.entityUuid) { dragPreview }
+        } else {
+            tileButton
+        }
+    }
+
+    private var tileButton: some View {
         Button(action: onOpen) {
-            VStack(spacing: 10) {
+            VStack(spacing: 12) {
                 previewWell
                 label
             }
@@ -5169,28 +5254,33 @@ private struct ThinkspaceLibraryDocumentTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.gentle) {
-                isHovered = hovering
-            }
-        }
-        .accessibilityLabel(item.title)
     }
 
     private var previewWell: some View {
         ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(DS.surfaceCard.opacity(isHovered ? 0.98 : 0.78))
             previewContent
             typeBadge
         }
         .frame(width: 116, height: 132)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(isHovered ? item.entityType.color.opacity(0.3) : DS.border.opacity(0.28), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(isHovered ? 0.08 : 0.035), radius: isHovered ? 14 : 6, y: isHovered ? 8 : 3)
-        .scaleEffect(isHovered ? 1.015 : 1)
+        .glassCard(isHovered: isHovered, tint: item.entityType.color, cornerRadius: 18)
+        .cardShadow(isHovered: isHovered)
+    }
+
+    private var dragPreview: some View {
+        HStack(spacing: 8) {
+            Image(systemName: item.entityType.icon)
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(item.entityType.color)
+            Text(item.title)
+                .font(DS.caption)
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: 220)
+        .glassCard(isHovered: true, tint: item.entityType.color, cornerRadius: 12)
+        .cardShadow(isHovered: true)
     }
 
     @ViewBuilder
@@ -5208,23 +5298,24 @@ private struct ThinkspaceLibraryDocumentTile: View {
 
     private var typeBadge: some View {
         Image(systemName: item.entityType.icon)
-            .font(.system(size: 10, weight: .semibold))
+            .font(DS.caption.weight(.bold))
             .foregroundStyle(item.entityType.color)
             .frame(width: 22, height: 22)
-            .background(Circle().fill(DS.surfaceElevated.opacity(0.92)))
-            .overlay(Circle().stroke(DS.border.opacity(0.32), lineWidth: 1))
+            .background(DS.glassCardFill, in: Circle())
+            .overlay(Circle().strokeBorder(DS.glassBorder, lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
             .padding(7)
     }
 
     private var label: some View {
         VStack(spacing: 4) {
             Text(item.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.headline)
                 .foregroundStyle(DS.text)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
             Text(item.isOnCanvas ? "On canvas" : "Stored")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
                 .lineLimit(1)
         }
@@ -5238,45 +5329,77 @@ private struct ThinkspaceLibraryDocumentTile: View {
     private var thumbnailPath: String? {
         item.block?.metadata["thumbnail"] ?? item.block?.metadata["imagePath"]
     }
+
+    private func animateEntrance() {
+        guard !reduceMotion, !hasAppeared else { hasAppeared = true; return }
+        withAnimation(ProMotionSprings.cascade(index: min(appearIndex, 8))) { hasAppeared = true }
+    }
 }
 
 private struct ThinkspaceLibraryFolderGlyph: View {
     let color: Color
+    var itemCount: Int = 0
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            tab
-            bodyShape
-            highlight
+        ZStack {
+            backTab
+            if itemCount > 0 { peekingDocs }
+            folderBody
+        }
+        .frame(width: 92, height: 66)
+        .shadow(color: color.opacity(0.30), radius: 8, y: 6)
+    }
+
+    // The folder's back tab, peeking up-left behind the front face.
+    private var backTab: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(
+                LinearGradient(colors: [color.opacity(0.95), color.opacity(0.80)],
+                               startPoint: .top, endPoint: .bottom)
+            )
+            .frame(width: 44, height: 20)
+            .offset(x: -22, y: -16)
+    }
+
+    // Pale "document" edges peeking above the lip when the folder holds items (Finder cue).
+    private var peekingDocs: some View {
+        ZStack {
+            doc(fill: DS.surfaceCard, dx: 5, dy: -9, angle: 3)
+            doc(fill: DS.surfaceElevated, dx: -5, dy: -11, angle: -3)
         }
     }
 
-    private var tab: some View {
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(color.opacity(0.72))
-            .frame(width: 45, height: 17)
-            .offset(x: -24, y: -37)
-    }
-
-    private var bodyShape: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(color.opacity(0.88))
-            .frame(width: 92, height: 56)
+    private func doc(fill: Color, dx: CGFloat, dy: CGFloat, angle: Double) -> some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .fill(fill)
             .overlay(
-                LinearGradient(
-                    colors: [Color.white.opacity(0.24), Color.clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .clipShape(.rect(cornerRadius: 8))
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
             )
+            .frame(width: 66, height: 44)
+            .rotationEffect(.degrees(angle))
+            .offset(x: dx, y: dy)
     }
 
-    private var highlight: some View {
-        RoundedRectangle(cornerRadius: 3, style: .continuous)
-            .fill(Color.white.opacity(0.34))
-            .frame(width: 72, height: 4)
-            .offset(y: -45)
+    // Front face: vertical gradient + a bright specular lip + a glassy inner edge.
+    private var folderBody: some View {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(
+                LinearGradient(colors: [color.opacity(0.97), color.opacity(0.82)],
+                               startPoint: .top, endPoint: .bottom)
+            )
+            .frame(width: 88, height: 52)
+            .overlay(alignment: .top) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Color.white.opacity(0.45))
+                    .frame(width: 66, height: 3)
+                    .padding(.top, 5)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+            )
+            .offset(y: 7)
     }
 }
 
@@ -5286,15 +5409,17 @@ private struct ThinkspaceLibraryEmptyState: View {
     let message: String
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             Image(systemName: icon)
-                .font(.system(size: 34, weight: .medium))
+                .font(DS.title1)
                 .foregroundStyle(DS.textMuted)
+                .frame(width: 68, height: 68)
+                .dsGlassSection(cornerRadius: 20)
             Text(title)
-                .font(.system(size: 15, weight: .semibold))
+                .font(DS.headline)
                 .foregroundStyle(DS.text)
             Text(message)
-                .font(.system(size: 13, weight: .medium))
+                .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)

@@ -440,6 +440,9 @@ final class CosmoWindowViewModel: ObservableObject {
         let oldType = activeContext.type
 
         contextProvider = provider
+        if let editableProvider = provider as? any CosmoEditableSurfaceProvider {
+            CosmoEditableSurfaceRegistry.shared.register(editableProvider)
+        }
 
         activeContext = CosmoActiveContext(
             type: newType,

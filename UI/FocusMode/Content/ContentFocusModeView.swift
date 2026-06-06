@@ -404,7 +404,15 @@ struct ContentFocusModeView: View {
             // for the right marginalia sections.
             Task { await loadInheritedContext() }
             // Register context provider for global Cosmo window
-            let provider = ContentContextProvider(atom: atom, stateRef: { [viewModel] in viewModel.state }, phaseRef: { [viewModel] in viewModel.displayPhase })
+            let provider = ContentContextProvider(
+                atom: atom,
+                stateRef: { [viewModel] in viewModel.state },
+                phaseRef: { [viewModel] in viewModel.displayPhase },
+                draftTextRef: { [self] in self.localDraftContent },
+                applyDraftEdit: { [self] operation in
+                    try await self.applyInlineAssistantDraftEdit(operation)
+                }
+            )
             if !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
@@ -414,7 +422,15 @@ struct ContentFocusModeView: View {
         }
         .onChange(of: isPaneContextOwner) { _, isOwner in
             if isOwner {
-                let provider = ContentContextProvider(atom: atom, stateRef: { [viewModel] in viewModel.state }, phaseRef: { [viewModel] in viewModel.displayPhase })
+                let provider = ContentContextProvider(
+                    atom: atom,
+                    stateRef: { [viewModel] in viewModel.state },
+                    phaseRef: { [viewModel] in viewModel.displayPhase },
+                    draftTextRef: { [self] in self.localDraftContent },
+                    applyDraftEdit: { [self] operation in
+                        try await self.applyInlineAssistantDraftEdit(operation)
+                    }
+                )
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
@@ -2464,11 +2480,53 @@ struct ContentFocusModeView: View {
         dismissInlineAI()
     }
 
+    private func applyInlineAssistantDraftEdit(
+        _ operation: CosmoAssistantProposalOperation
+    ) async throws -> CosmoEditableOperationResult {
+        guard operation.targetID == ContentContextProvider.targetID(for: atom.uuid) else {
+            return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Target changed")
+        }
+
+        switch operation.kind {
+        case .textReplacement, .structuredFieldReplacement:
+            guard let original = operation.originalText,
+                  let proposed = operation.proposedText,
+                  localDraftContent.contains(original)
+            else {
+                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Original text not found")
+            }
+
+            draftDocument = draftDocumentByReplacingSelection(with: proposed, originalText: original)
+            localDraftContent = draftDocument.plainText
+
+        case .textInsertion:
+            guard let proposed = operation.proposedText else {
+                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing inserted text")
+            }
+
+            let prefix = localDraftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
+            localDraftContent += prefix + proposed
+            draftDocument = RichDocument.migrateLegacy(localDraftContent)
+
+        case .canvasPlan:
+            return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider")
+        }
+
+        viewModel.state.draftContent = localDraftContent
+        viewModel.state.richDraftDocument = draftDocument
+        updateDraftHeadingOutline(from: draftDocument)
+        triggerAutoSave()
+
+        return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
+    }
+
     private func draftDocumentByReplacingSelection(with replacement: String, originalText: String) -> RichDocument {
         let currentPlainText = localDraftContent as NSString
         var replacementRange = selectionInfo.range
 
         if replacementRange.location == NSNotFound || replacementRange.location + replacementRange.length > currentPlainText.length {
+            replacementRange = currentPlainText.range(of: originalText)
+        } else if currentPlainText.substring(with: replacementRange) != originalText {
             replacementRange = currentPlainText.range(of: originalText)
         }
 
@@ -3894,18 +3952,36 @@ struct ContentFocusModeView_Previews: PreviewProvider {
 // MARK: - Cosmo Context Provider
 
 @MainActor
-class ContentContextProvider: CosmoContextProvider {
+class ContentContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
     private let atom: Atom
     private let stateRef: () -> ContentFocusModeState
     private let phaseRef: () -> ContentPhase
+    private let draftTextRef: (() -> String)?
+    private let applyDraftEdit: ((CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult)?
 
-    init(atom: Atom, stateRef: @escaping () -> ContentFocusModeState, phaseRef: @escaping () -> ContentPhase) {
+    init(
+        atom: Atom,
+        stateRef: @escaping () -> ContentFocusModeState,
+        phaseRef: @escaping () -> ContentPhase,
+        draftTextRef: (() -> String)? = nil,
+        applyDraftEdit: ((CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult)? = nil
+    ) {
         self.atom = atom
         self.stateRef = stateRef
         self.phaseRef = phaseRef
+        self.draftTextRef = draftTextRef
+        self.applyDraftEdit = applyDraftEdit
     }
 
     var contextType: CosmoContextType { .contentFocusMode }
+
+    var surfaceID: String {
+        "content:\(atom.uuid)"
+    }
+
+    static func targetID(for atomUUID: String) -> String {
+        "content:\(atomUUID):draft"
+    }
 
     var contextSummary: String {
         let phase = phaseRef()
@@ -3915,6 +3991,7 @@ class ContentContextProvider: CosmoContextProvider {
     var contextData: CosmoContextData {
         let state = stateRef()
         let phase = phaseRef()
+        let draftText = currentDraftText(state: state)
         var viewData: [String: String] = [
             "phase": phase.displayName,
             "step": state.currentStep.rawValue,
@@ -3927,9 +4004,9 @@ class ContentContextProvider: CosmoContextProvider {
         if !state.hooks.isEmpty {
             viewData["hooks"] = state.hooks.prefix(3).joined(separator: " | ")
         }
-        if !state.draftContent.isEmpty {
-            viewData["draftWordCount"] = "\(state.draftContent.split(separator: " ").count)"
-            viewData["draftExcerpt"] = String(state.draftContent.prefix(500))
+        if !draftText.isEmpty {
+            viewData["draftWordCount"] = "\(draftText.split(separator: " ").count)"
+            viewData["draftExcerpt"] = String(draftText.prefix(500))
         }
 
         return CosmoContextData(
@@ -3939,6 +4016,37 @@ class ContentContextProvider: CosmoContextProvider {
             activeClientUUID: state.clientProfileUUID,
             viewSpecificData: viewData
         )
+    }
+
+    func editableSnapshot() -> CosmoEditableSourceSnapshot {
+        let state = stateRef()
+        let draftText = currentDraftText(state: state)
+        return CosmoEditableSourceSnapshot(
+            surfaceID: surfaceID,
+            targetID: Self.targetID(for: atom.uuid),
+            kind: .text,
+            title: atom.title ?? "Untitled content",
+            text: draftText,
+            sourceHash: CosmoEditableSurfaceHasher.hash(draftText),
+            anchors: [
+                .init(id: "draft", label: "Draft", utf16Start: 0, utf16Length: draftText.utf16.count)
+            ]
+        )
+    }
+
+    func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
+        guard let applyDraftEdit else {
+            return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Content editor is unavailable")
+        }
+        return try await applyDraftEdit(operation)
+    }
+
+    func reject(operation: CosmoAssistantProposalOperation) async -> CosmoEditableOperationResult {
+        CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Rejected")
+    }
+
+    private func currentDraftText(state: ContentFocusModeState) -> String {
+        draftTextRef?() ?? state.draftContent
     }
 
     var availableActions: [CosmoWindowAction] {

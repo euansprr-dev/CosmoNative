@@ -73,8 +73,9 @@ class AgentToolExecutor {
     /// The Cosmo window owns review/apply/cancel so tools never directly mutate canvas state.
     var onCanvasPlan: ((PendingCanvasPlan) -> Void)?
     var onNoteStructurePlan: ((PendingNoteStructurePlan) -> Void)?
-    var onWorkspaceEditProposal: ((CosmoAssistantProposal) -> Void)?
-    var onAssistantPaneAnswer: ((_ title: String?, _ answer: String) -> Void)?
+    var onWorkspaceEditProposal: (@MainActor (CosmoAssistantProposal) -> Void)?
+    var onAssistantPaneAnswer: (@MainActor (_ title: String?, _ answer: String) -> Void)?
+    var inlineSkillStore: CosmoInlineSkillStore = .userDefaults()
 
     private init() {}
 
@@ -137,6 +138,7 @@ class AgentToolExecutor {
         case "propose_note_structure_plan": return try await proposeNoteStructurePlan(arguments)
         case "propose_workspace_edit": return try await proposeWorkspaceEdit(arguments)
         case "answer_in_assistant_pane": return try await answerInAssistantPane(arguments)
+        case "create_inline_skill": return try await createInlineSkill(arguments)
         // Calendar / Schedule Blocks
         case "get_calendar_blocks": return try await getCalendarBlocks(arguments)
         case "create_block": return try await createBlock(arguments)
@@ -1838,12 +1840,28 @@ class AgentToolExecutor {
     }
 
     private func proposeWorkspaceEdit(_ args: [String: Any]) async throws -> String {
+        let buildResult = workspaceEditProposal(arguments: args)
+        guard let proposal = buildResult.proposal else {
+            return jsonError(buildResult.error ?? "Missing required workspace edit proposal fields")
+        }
+
+        onWorkspaceEditProposal?(proposal)
+
+        return jsonEncode([
+            "success": true,
+            "proposalId": proposal.id.uuidString,
+            "operationCount": proposal.operations.count,
+            "message": "Workspace edit proposal is ready for review. Do not say it has been applied until the user accepts changes."
+        ] as [String: Any])
+    }
+
+    func workspaceEditProposal(arguments args: [String: Any]) -> (proposal: CosmoAssistantProposal?, error: String?) {
         guard let prompt = trimmedString(args["prompt"]),
               let surfaceID = trimmedString(args["surfaceID"]),
               let title = trimmedString(args["title"]),
               let summary = trimmedString(args["summary"]),
               let rawOperations = args["operations"] as? [[String: Any]] else {
-            return jsonError("Missing required workspace edit proposal fields")
+            return (nil, "Missing required workspace edit proposal fields")
         }
 
         let operations = rawOperations.map { raw in
@@ -1863,7 +1881,7 @@ class AgentToolExecutor {
         }
 
         if operations.contains(where: { CosmoInlineAssistantEditScopeGuard.shouldReject(operation: $0, prompt: prompt) }) {
-            return jsonError(CosmoInlineAssistantEditScopeGuard.rejectionMessage)
+            return (nil, CosmoInlineAssistantEditScopeGuard.rejectionMessage)
         }
 
         let proposal = CosmoAssistantProposal(
@@ -1873,14 +1891,7 @@ class AgentToolExecutor {
             summary: summary,
             operations: operations
         )
-        onWorkspaceEditProposal?(proposal)
-
-        return jsonEncode([
-            "success": true,
-            "proposalId": proposal.id.uuidString,
-            "operationCount": operations.count,
-            "message": "Workspace edit proposal is ready for review. Do not say it has been applied until the user accepts changes."
-        ] as [String: Any])
+        return (proposal, nil)
     }
 
     private func answerInAssistantPane(_ args: [String: Any]) async throws -> String {
@@ -1889,6 +1900,55 @@ class AgentToolExecutor {
         }
         onAssistantPaneAnswer?(trimmedString(args["title"]), answer)
         return jsonEncode(["success": true, "message": "Answer sent to assistant pane"])
+    }
+
+    private func createInlineSkill(_ args: [String: Any]) async throws -> String {
+        guard let name = trimmedString(args["name"]) else {
+            return jsonError("Missing required parameter: name")
+        }
+        guard let summary = trimmedString(args["summary"]) else {
+            return jsonError("Missing required parameter: summary")
+        }
+        guard let route = parseInlineRoute(args["route"]) else {
+            return jsonError("Missing or invalid required parameter: route")
+        }
+        guard let instructions = stringArray(args["instructions"]), !instructions.isEmpty else {
+            return jsonError("Missing required parameter: instructions")
+        }
+        guard let outputContract = trimmedString(args["outputContract"]) else {
+            return jsonError("Missing required parameter: outputContract")
+        }
+        guard let panePolicy = parsePanePolicy(args["panePolicy"]) else {
+            return jsonError("Missing or invalid required parameter: panePolicy")
+        }
+
+        let id = trimmedString(args["id"]) ?? Self.inlineSkillID(from: name)
+        let skill = CosmoInlineSkillDefinition.custom(
+            id: id,
+            name: name,
+            icon: trimmedString(args["icon"]) ?? "sparkle",
+            summary: summary,
+            triggerPhrases: stringArray(args["triggerPhrases"]) ?? [],
+            route: route,
+            preferredModelTier: parseModelTier(args["preferredModelTier"]),
+            requiredContext: parseContextSet(args["requiredContext"]) ?? [.activeSurface],
+            toolBundles: parseToolBundleSet(args["toolBundles"]) ?? [.workspaceEditing, .writing],
+            instructions: instructions,
+            outputContract: outputContract,
+            tokenBudget: intValue(args["tokenBudget"]) ?? 1400,
+            requiresReviewedDiff: boolValue(args["requiresReviewedDiff"]) ?? (route == .action),
+            panePolicy: panePolicy
+        )
+        inlineSkillStore.save(skill)
+
+        return jsonEncode([
+            "success": true,
+            "skillId": skill.id,
+            "name": skill.name,
+            "route": skill.route.rawValue,
+            "preferredModelTier": skill.preferredModelTier?.rawValue ?? "auto",
+            "message": "Created inline skill '\(skill.name)'. It is now available from the slash skill menu as /\(skill.name)."
+        ] as [String: Any])
     }
 
     private func proposeNoteStructurePlan(_ args: [String: Any]) async throws -> String {
@@ -3178,6 +3238,102 @@ class AgentToolExecutor {
         guard let string = value as? String else { return nil }
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func stringArray(_ value: Any?) -> [String]? {
+        if let strings = value as? [String] {
+            return strings
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+        if let values = value as? [Any] {
+            return values.compactMap { item in
+                guard let string = item as? String else { return nil }
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+        }
+        return nil
+    }
+
+    private func boolValue(_ value: Any?) -> Bool? {
+        if let bool = value as? Bool { return bool }
+        if let number = value as? NSNumber { return number.boolValue }
+        if let string = trimmedString(value)?.lowercased() {
+            if ["true", "yes", "1"].contains(string) { return true }
+            if ["false", "no", "0"].contains(string) { return false }
+        }
+        return nil
+    }
+
+    private func parseInlineRoute(_ value: Any?) -> CosmoInlineAssistantRoute? {
+        trimmedString(value)
+            .flatMap { CosmoInlineAssistantRoute(rawValue: Self.normalizedEnumToken($0)) }
+    }
+
+    private func parsePanePolicy(_ value: Any?) -> CosmoInlineSkillPanePolicy? {
+        guard let raw = trimmedString(value) else { return nil }
+        return [
+            CosmoInlineSkillPanePolicy.neverForAction,
+            .openForAnswer,
+            .openForResearchBackedAction,
+            .alwaysOpenWithResult
+        ].first { Self.normalizedEnumToken($0.rawValue) == Self.normalizedEnumToken(raw) }
+    }
+
+    private func parseModelTier(_ value: Any?) -> AgentModelTier? {
+        guard let raw = trimmedString(value) else { return nil }
+        let normalized = Self.normalizedEnumToken(raw)
+        if let tier = AgentModelTier(rawValue: normalized) {
+            return tier
+        }
+        switch normalized {
+        case "haiku", "fast":
+            return .sensor
+        case "sonnet", "balanced":
+            return .strategist
+        default:
+            return nil
+        }
+    }
+
+    private func parseContextSet(_ value: Any?) -> Set<CosmoInlineAssistantSkillContext>? {
+        guard let rawValues = stringArray(value) else { return nil }
+        return Set(rawValues.compactMap { raw in
+            CosmoInlineAssistantSkillContext.allCases.first {
+                Self.normalizedEnumToken($0.rawValue) == Self.normalizedEnumToken(raw)
+            }
+        })
+    }
+
+    private func parseToolBundleSet(_ value: Any?) -> Set<AgentToolBundle>? {
+        guard let rawValues = stringArray(value) else { return nil }
+        return Set(rawValues.compactMap { raw in
+            AgentToolBundle.allCases.first {
+                Self.normalizedEnumToken($0.rawValue) == Self.normalizedEnumToken(raw)
+            }
+        })
+    }
+
+    private static func inlineSkillID(from name: String) -> String {
+        let parts = name
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        guard let first = parts.first?.lowercased() else {
+            return UUID().uuidString
+        }
+        let rest = parts.dropFirst().map { part in
+            part.prefix(1).uppercased() + part.dropFirst().lowercased()
+        }
+        return ([first] + rest).joined()
+    }
+
+    private static func normalizedEnumToken(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .lowercased()
     }
 
     private func uuidValue(_ value: Any?) -> UUID? {

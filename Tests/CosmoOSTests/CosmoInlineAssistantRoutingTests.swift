@@ -150,6 +150,26 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(store.paneMessages.last?.content, "I updated the document.")
     }
 
+    func testEditOnlyActionClosesExistingPaneAndKeepsInlineReviewPrimary() async {
+        let bridge = CosmoInlineAssistantAgentBridge { prompt, _, store in
+            store.receive(proposal: CosmoAssistantProposal(
+                prompt: prompt,
+                surfaceID: "content:abc",
+                title: "Slide edits",
+                summary: "Converted slides in place.",
+                operations: []
+            ))
+        }
+        let store = CosmoInlineAssistantStore(agentBridge: bridge)
+        store.requestPane()
+        store.composerText = "Starting from slide five, convert the steps into first person."
+
+        await store.submit()
+
+        XCTAssertFalse(store.isPaneRequested)
+        XCTAssertEqual(store.paneMessages.map(\.role), [.user, .assistant])
+    }
+
     func testProfileBackedSlideExpansionStaysDiffFirstWithoutOpeningPane() async {
         let prompt = "Add as many slides as you need to put the full step by step process for Ben (check his profile & best performing posts), make sure to include as much detail in each, and basically make a 1:1 to the best performing breakdowns in the exact same voice and structure."
         let plan = CosmoInlineAssistantSkillRuntime.plan(for: prompt, surfaceKind: .text)

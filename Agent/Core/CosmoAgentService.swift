@@ -1866,6 +1866,7 @@ class CosmoAgentService: ObservableObject {
         case "get_calendar_blocks": return "Checking calendar"
         case "save_lessons": return "Saving lessons"
         case "get_lessons": return "Loading lessons"
+        case "create_inline_skill": return "Creating inline skill"
         default:
             return toolName.replacingOccurrences(of: "_", with: " ").capitalized
         }

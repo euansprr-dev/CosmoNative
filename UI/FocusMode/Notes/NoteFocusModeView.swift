@@ -1654,38 +1654,12 @@ struct NoteFocusModeView: View {
         }
 
         switch operation.kind {
-        case .textReplacement, .structuredFieldReplacement:
-            guard let proposed = operation.proposedText else {
-                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing proposed text")
-            }
-            let original = operation.originalText ?? ""
-            if original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                // No original to replace — treat as additive content appended to the note.
-                let prefix = plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
-                plainContent += prefix + proposed
-                bodyDocument = RichDocument.migrateLegacy(plainContent)
-            } else if let range = CosmoInlineDiffLocator.range(of: original, in: plainContent) {
-                plainContent.replaceSubrange(range, with: proposed)
-                bodyDocument = RichDocument.migrateLegacy(plainContent)
-            } else {
+        case .textReplacement, .structuredFieldReplacement, .textInsertion:
+            guard let placement = CosmoInlineTextEditResolver.placement(for: operation, in: plainContent) else {
                 return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Original text not found")
             }
-
-        case .textInsertion:
-            guard let proposed = operation.proposedText else {
-                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing inserted text")
-            }
-            if let anchor = operation.originalText,
-               !anchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               let anchorRange = CosmoInlineDiffLocator.range(of: anchor, in: plainContent) {
-                // Insert immediately after the anchor so new content lands in place.
-                plainContent.replaceSubrange(anchorRange.upperBound..<anchorRange.upperBound, with: "\n" + proposed)
-                bodyDocument = RichDocument.migrateLegacy(plainContent)
-            } else {
-                let prefix = plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
-                plainContent += prefix + proposed
-                bodyDocument = RichDocument.migrateLegacy(plainContent)
-            }
+            plainContent.replaceSubrange(placement.range, with: placement.replacementText)
+            bodyDocument = RichDocument.migrateLegacy(plainContent)
 
         case .canvasPlan:
             return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider")

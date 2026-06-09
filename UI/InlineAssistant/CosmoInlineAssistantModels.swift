@@ -1723,21 +1723,7 @@ struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendab
     }
 
     private func canApplyByMatchingOriginalText(in sourceText: String) -> Bool {
-        let anchor = originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        switch kind {
-        case .textReplacement, .structuredFieldReplacement:
-            // No original to match means additive content — always applicable (appended).
-            guard !anchor.isEmpty else { return true }
-            // Whitespace/punctuation-tolerant match — the model's echo of the original
-            // rarely byte-matches the live document, but the edit is still valid.
-            return CosmoInlineDiffLocator.matches(originalText ?? "", in: sourceText)
-        case .textInsertion:
-            // Insertions append when unanchored, or locate their anchor when provided.
-            guard !anchor.isEmpty else { return true }
-            return CosmoInlineDiffLocator.matches(originalText ?? "", in: sourceText)
-        case .canvasPlan:
-            return false
-        }
+        CosmoInlineTextEditResolver.placement(for: self, in: sourceText) != nil
     }
 
     var isRevertable: Bool {
@@ -1877,6 +1863,7 @@ enum CosmoInlineAssistantInstructionPrompt {
     If a Resolved Inline Skill Context section is present, treat those facts as already loaded from Cosmo. Use them directly. Call lookup_client_facts only for a specific missing client detail. Do not call get_client_profile when the compact profile block has the needed facts.
     Keep using source/profile/search tools until the user request is actually answered or a reviewed edit proposal is staged. Do not silently stop after reading context.
     For any user-visible workspace edit, call propose_workspace_edit. Never mutate the workspace directly.
+    If the user confirms a finalized inline skill spec or asks to "make", "create", "save", or "add" a skill, call create_inline_skill with the skill definition. Do not say skill creation is outside your tool access.
     For substantive answers, explanations, analysis, or non-edit results, call answer_in_assistant_pane with the full response.
     """
 

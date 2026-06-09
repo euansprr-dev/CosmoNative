@@ -170,4 +170,47 @@ final class CosmoInlineAssistantModelsTests: XCTestCase {
         }
         XCTAssertTrue(trailing.contains("SLIDE 8"))
     }
+
+    func testSlideHeaderFallbackKeepsStaleHeaderReplacementReviewableInline() {
+        let source = """
+        SLIDE 4
+        Here is the setup.
+        --
+        SLIDE 5
+        --
+        SLIDE 6
+        --
+        """
+        let operation = CosmoAssistantProposalOperation(
+            kind: .textReplacement,
+            targetID: "t",
+            anchorID: "slide-5",
+            originalText: "SLIDE 6\n--",
+            proposedText: "SLIDE 5\nFirst, I found an owner-listed home on Zillow.",
+            sourceHash: "stale",
+            rationale: "Convert step 1 to first person."
+        )
+
+        let segments = CosmoInlineDiffReviewBuilder.segments(sourceText: source, operations: [operation])
+
+        let changes = segments.compactMap { segment -> CosmoInlineDiffChange? in
+            if case let .change(change) = segment { return change }
+            return nil
+        }
+        XCTAssertEqual(changes.count, 1)
+        XCTAssertFalse(changes[0].isConflicted)
+        XCTAssertEqual(changes[0].addedLines, [
+            "SLIDE 5",
+            "First, I found an owner-listed home on Zillow."
+        ])
+        let rendered = segments.map { segment -> String in
+            switch segment {
+            case let .unchanged(_, text):
+                return text
+            case let .change(change):
+                return change.addedLines.joined(separator: "\n")
+            }
+        }.joined()
+        XCTAssertTrue(rendered.contains("SLIDE 6\n--"))
+    }
 }

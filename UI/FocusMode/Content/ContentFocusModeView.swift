@@ -2524,39 +2524,16 @@ struct ContentFocusModeView: View {
         }
 
         switch operation.kind {
-        case .textReplacement, .structuredFieldReplacement:
-            guard let proposed = operation.proposedText else {
-                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing proposed text")
-            }
-            let original = operation.originalText ?? ""
-            if original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                // No original to replace — treat as additive content appended to the draft.
-                let prefix = localDraftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
-                localDraftContent += prefix + proposed
-                draftDocument = RichDocument.migrateLegacy(localDraftContent)
-            } else if let range = CosmoInlineDiffLocator.range(of: original, in: localDraftContent) {
-                draftDocument = draftDocumentByReplacing(range: range, in: localDraftContent, with: proposed)
-                localDraftContent = draftDocument.plainText
-            } else {
+        case .textReplacement, .structuredFieldReplacement, .textInsertion:
+            guard let placement = CosmoInlineTextEditResolver.placement(for: operation, in: localDraftContent) else {
                 return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Original text not found")
             }
-
-        case .textInsertion:
-            guard let proposed = operation.proposedText else {
-                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing inserted text")
-            }
-            if let anchor = operation.originalText,
-               !anchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               let anchorRange = CosmoInlineDiffLocator.range(of: anchor, in: localDraftContent) {
-                // Insert immediately after the anchor so new content lands in place.
-                let insertionPoint = anchorRange.upperBound
-                draftDocument = draftDocumentByReplacing(range: insertionPoint..<insertionPoint, in: localDraftContent, with: "\n" + proposed)
-                localDraftContent = draftDocument.plainText
-            } else {
-                let prefix = localDraftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
-                localDraftContent += prefix + proposed
-                draftDocument = RichDocument.migrateLegacy(localDraftContent)
-            }
+            draftDocument = draftDocumentByReplacing(
+                range: placement.range,
+                in: localDraftContent,
+                with: placement.replacementText
+            )
+            localDraftContent = draftDocument.plainText
 
         case .canvasPlan:
             return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider")

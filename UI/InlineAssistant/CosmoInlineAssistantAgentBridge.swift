@@ -24,14 +24,10 @@ struct CosmoInlineAssistantAgentBridge {
         let perfStart = Date()
         let executor = AgentToolExecutor.shared
         executor.onWorkspaceEditProposal = { proposal in
-            Task { @MainActor in
-                store.receive(proposal: proposal)
-            }
+            store.receive(proposal: proposal)
         }
         executor.onAssistantPaneAnswer = { title, answer in
-            Task { @MainActor in
-                store.receivePaneAnswer(title: title, answer: answer, route: route)
-            }
+            store.receivePaneAnswer(title: title, answer: answer, route: route)
         }
 
         let paneAnswerCount = store.paneMessages.filter {

@@ -330,8 +330,10 @@ final class CosmoInlineAssistantStore: ObservableObject {
             persistActiveSession()
         }
 
-        if route == .answer {
+        if route == .answer || activeSubmissionShouldOpenPaneForAnswer {
             isPaneRequested = true
+        } else {
+            isPaneRequested = false
         }
 
         paneMessages.append(.init(role: .user, content: prompt))

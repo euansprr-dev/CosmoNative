@@ -115,6 +115,8 @@ enum AgentResponseMode: String, Codable, Sendable {
             Answer through the inline assistant pane or stage reviewed workspace edits through the inline assistant diff tools. Keep the same profile, retrieval, swipe, strategy, memory, and writing tools available as the normal Command A agent path.
 
             Do not create a new content atom, start a writing session, or open a background workflow unless the user explicitly asks to save/create/open content. For questions, critique, voice variations, outlines, or strategic feedback, use the tools needed to gather context, then call answer_in_assistant_pane with the final user-visible response.
+
+            If the user confirms a finalized inline assistant skill spec or asks you to make/create/save/add a skill, call create_inline_skill with the skill definition. Do not tell the user skill creation requires a platform team when that tool is available.
             """
         case .inlineMentionDraftReference:
             return """

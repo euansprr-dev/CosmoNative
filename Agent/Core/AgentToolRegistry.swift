@@ -1118,6 +1118,30 @@ class AgentToolRegistry {
                     ] as [String: Any],
                     "required": ["answer"]
                 ]
+            ),
+            LLMToolDefinition(
+                name: "create_inline_skill",
+                description: "Create or update a custom inline assistant slash-menu skill from a finalized skill-builder spec. Use this when the user confirms a skill spec with language like 'yes make the skill', 'create it', 'save this skill', or 'add it to the slash menu'. This persists a CosmoInlineSkillDefinition so it appears in the inline assistant slash menu. After this succeeds, call answer_in_assistant_pane briefly telling the user the skill was created and how to invoke it.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "id": ["type": "string", "description": "Stable camelCase skill id, e.g. voiceRemixInline. Omit only if the tool should derive one from name."] as [String: Any],
+                        "name": ["type": "string", "description": "User-facing skill name shown in the slash menu."] as [String: Any],
+                        "icon": ["type": "string", "description": "SF Symbol name for the skill row icon."] as [String: Any],
+                        "summary": ["type": "string", "description": "One short sentence explaining what this skill does."] as [String: Any],
+                        "triggerPhrases": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Natural phrases that should route to this skill."] as [String: Any],
+                        "route": ["type": "string", "enum": ["action", "answer"], "description": "action for reviewed edits, answer for pane responses."] as [String: Any],
+                        "preferredModelTier": ["type": "string", "enum": ["sensor", "strategist"], "description": "Preferred model tier for this skill. Use strategist for voice/strategy/research-heavy work, sensor for precise/simple edits."] as [String: Any],
+                        "requiredContext": ["type": "array", "items": ["type": "string", "enum": CosmoInlineAssistantSkillContext.allCases.map(\.rawValue)] as [String: Any], "description": "Context blocks the skill should pre-resolve."] as [String: Any],
+                        "toolBundles": ["type": "array", "items": ["type": "string", "enum": AgentToolBundle.allCases.map(\.rawValue)] as [String: Any], "description": "Tool bundles this skill may use."] as [String: Any],
+                        "instructions": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Concrete runtime instructions for the skill."] as [String: Any],
+                        "outputContract": ["type": "string", "description": "Expected result shape, e.g. reviewed_diff, pane_variations_card, source_backed_reviewed_diff."] as [String: Any],
+                        "tokenBudget": ["type": "integer", "description": "Approximate token budget for this skill layer."] as [String: Any],
+                        "requiresReviewedDiff": ["type": "boolean", "description": "Whether visible workspace changes must be staged as reviewed diffs."] as [String: Any],
+                        "panePolicy": ["type": "string", "enum": ["neverForAction", "openForAnswer", "openForResearchBackedAction", "alwaysOpenWithResult"], "description": "When the assistant pane should open for this skill."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["name", "summary", "route", "instructions", "outputContract", "requiresReviewedDiff", "panePolicy"]
+                ]
             )
         ]
     }

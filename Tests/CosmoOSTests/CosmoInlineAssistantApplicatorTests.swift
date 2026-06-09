@@ -134,6 +134,39 @@ final class CosmoInlineAssistantApplicatorTests: XCTestCase {
         XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
     }
 
+    func testAcceptAppliesSlideFallbackWhenModelOriginalHeaderIsStale() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: """
+        SLIDE 4
+        Here is the setup.
+        --
+        SLIDE 5
+        --
+        SLIDE 6
+        --
+        """)
+        registry.register(surface)
+
+        let operation = CosmoAssistantProposalOperation(
+            kind: .textReplacement,
+            targetID: surface.targetID,
+            anchorID: "slide-5",
+            originalText: "SLIDE 6\n--",
+            proposedText: "SLIDE 5\nFirst, I found an owner-listed home on Zillow.",
+            sourceHash: "stale",
+            rationale: "Convert step 1 to first person."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: surface.surfaceID))
+
+        await store.accept(operationID: operation.id, registry: registry)
+
+        XCTAssertTrue(surface.text.contains("SLIDE 5\nFirst, I found an owner-listed home on Zillow."))
+        XCTAssertTrue(surface.text.contains("SLIDE 6\n--"))
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
+        XCTAssertNil(store.errorText)
+    }
+
     func testRejectMarksOperationRejected() async {
         let registry = CosmoEditableSurfaceRegistry()
         let surface = ApplyingEditableSurface(text: "Rent: $4,556/mo")
@@ -255,14 +288,11 @@ private final class ApplyingEditableSurface: CosmoEditableSurfaceProvider {
     }
 
     func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
-        guard let original = operation.originalText,
-              let proposed = operation.proposedText,
-              let range = text.range(of: original)
-        else {
+        guard let placement = CosmoInlineTextEditResolver.placement(for: operation, in: text) else {
             return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Original text missing")
         }
 
-        text.replaceSubrange(range, with: proposed)
+        text.replaceSubrange(placement.range, with: placement.replacementText)
         return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
     }
 

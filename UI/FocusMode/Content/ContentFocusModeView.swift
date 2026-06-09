@@ -62,7 +62,7 @@ enum ContentFocusWritePolicy {
         }
 
         if let modifiedString = dict["lastModified"] as? String,
-           let date = ISO8601DateFormatter().date(from: modifiedString) {
+           let date = ISO8601.date(from: modifiedString) {
             return date.timeIntervalSince1970
         }
 
@@ -88,6 +88,9 @@ struct ContentFocusModeView: View {
     @State private var editableTitle: String
     @State private var titleDocument: RichDocument = .empty
     @State private var draftDocument: RichDocument = .empty
+    /// Non-nil while the inline assistant has staged reviewable changes for this draft —
+    /// drives the in-document diff that temporarily replaces the editor.
+    @State private var draftReviewProposal: CosmoAssistantProposal?
     @State private var draftHeadingOutline: [RichHeadingOutlineEntry] = []
     @State private var draftNavigationTargetID: UUID?
     @StateObject private var writingEngine = UnifiedWritingEngine()
@@ -143,6 +146,7 @@ struct ContentFocusModeView: View {
 
     // Debounced polish analysis
     @State private var polishDebounceTask: Task<Void, Never>?
+    @State private var polishAnalysisRequestID = UUID()
 
     // AI Draft generation state
     @State private var isGeneratingDraft = false
@@ -434,6 +438,15 @@ struct ContentFocusModeView: View {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
+        .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
+            draftReviewProposal = proposals.last { proposal in
+                proposal.hasReviewableOperations && proposal.matches(
+                    surfaceID: inlineAssistantContentSurfaceID,
+                    targetID: inlineAssistantContentTargetID,
+                    activeAtomUUID: atom.uuid
+                )
+            }
+        }
         .task {
             // Initialize engine with persisted conversation (only when legacy AI Collaborator is active)
             guard !cosmoWindowEnabled else { return }
@@ -448,26 +461,8 @@ struct ContentFocusModeView: View {
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             ContentFocusWritingAIScope.shared.deactivate(atomUUID: atom.uuid)
             typingActivityTask?.cancel()
-            // Snapshot current state — CosmoDocumentEditor's flushPendingSync may not have
-            // propagated yet (child onDisappear order is not guaranteed). Save immediately
-            // with what we have, then the deferred onDocumentChange from flushPendingSync
-            // will trigger another save via triggerAutoSave if the text was stale.
-            if draftDocument.plainText != localDraftContent && !localDraftContent.isEmpty {
-                print("[FOCUS-CONTENT] onDisappear — rebuilding stale draftDocument from localDraftContent (docLen=\(draftDocument.plainText.count) vs localLen=\(localDraftContent.count))")
-                draftDocument = RichDocument.migrateLegacy(localDraftContent)
-                updateDraftHeadingOutline(from: draftDocument)
-            }
-            // Sync local draft to viewModel state before closing
-            viewModel.state.draftContent = localDraftContent
-            viewModel.state.richDraftDocument = draftDocument
-            // Sync engine conversation to state before saving (only when legacy AI Collaborator is active)
-            if !cosmoWindowEnabled {
-                viewModel.state.conversationHistory = writingEngine.messages
-                viewModel.state.conversationSummary = writingEngine.conversationSummary
-            }
-            // Extract lessons from user edits to AI-generated draft before closing
-            extractLessonsIfEdited()
-            viewModel.saveOnClose()
+            polishDebounceTask?.cancel()
+            persistCurrentEditorSnapshot(reason: "onDisappear")
         }
         .onReceive(NotificationCenter.default.publisher(for: .unifiedEngineDraftUpdate)) { notification in
             let targetUUID = notification.userInfo?["contentUUID"] as? String
@@ -483,10 +478,13 @@ struct ContentFocusModeView: View {
             openWritingAI()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
-            // Flush View-local state to ViewModel before the ViewModel's termination
-            // handler calls writeToAtomSync() — onDisappear doesn't fire on app quit
-            viewModel.state.draftContent = localDraftContent
-            viewModel.state.richDraftDocument = draftDocument
+            // onDisappear does not reliably fire on app quit. Copy the live editor
+            // snapshot and synchronously write it here so notification ordering cannot
+            // leave the ViewModel's termination handler saving stale draft content.
+            typingActivityTask?.cancel()
+            polishDebounceTask?.cancel()
+            persistCurrentEditorSnapshot(reason: "termination")
+            AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
         }
         .onChange(of: viewModel.state.draftContent) { _, newValue in
             // Sync external draft updates (AI engine, tool executor) back to local state.
@@ -814,7 +812,28 @@ struct ContentFocusModeView: View {
                 aiDraftButton
             }
 
-            // Main draft editor — machinery preserved exactly
+            // Main draft editor — replaced by an in-document diff while a reviewed
+            // assistant proposal is pending, then restored once changes are resolved.
+            if let review = draftReviewProposal {
+                CosmoInlineDiffReviewView(
+                    store: CosmoInlineAssistantStore.shared,
+                    proposal: review,
+                    sourceText: localDraftContent,
+                    bodyFont: .system(size: 17),
+                    textColor: focusText,
+                    onAcceptOperation: { operationID in
+                        Task { await acceptInlineAssistantDraftReview(operationID: operationID) }
+                    },
+                    onRejectOperation: { operationID in
+                        Task { await rejectInlineAssistantDraftReview(operationID: operationID) }
+                    }
+                )
+                .frame(
+                    minHeight: max(400, height - manuscriptEditorHeightOffset),
+                    alignment: .top
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
             CosmoDocumentEditor(
                 document: $draftDocument,
                 fontSize: 17,
@@ -844,6 +863,9 @@ struct ContentFocusModeView: View {
                     focusBandRange(for: selectionRange, mode: focusBandMode, in: plainText)
                 },
                 navigationTargetID: draftNavigationTargetID,
+                onPlainTextChange: { plainText in
+                    handleDraftPlainTextChange(plainText)
+                },
                 onDocumentChange: { document, plainText in
                     let changed = plainText != localDraftContent
                     print("[FOCUS-CONTENT] onDocumentChange(draft) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
@@ -869,6 +891,7 @@ struct ContentFocusModeView: View {
                                     value: proxy.frame(in: .named("editorOverlay")))
                 }
             )
+            }
 
             scriptoriumCTA
                 .padding(.top, DS.space24)
@@ -1078,14 +1101,8 @@ struct ContentFocusModeView: View {
     }
 
     private var formattedCreatedDate: String {
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let date = iso.date(from: atom.createdAt)
-            ?? ISO8601DateFormatter().date(from: atom.createdAt)
-            ?? Date()
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM d"
-        return formatter.string(from: date).lowercased()
+        let date = ISO8601.date(from: atom.createdAt) ?? Date()
+        return CosmoDateFormatters.monthDay.string(from: date).lowercased()
     }
 
     // MARK: - Step ledger (i ─── ii)
@@ -1937,24 +1954,43 @@ struct ContentFocusModeView: View {
     // MARK: - Polish Analysis
 
     private func updatePolishAnalysis() {
+        schedulePolishAnalysis(debounce: false)
+    }
+
+    private func debouncedPolishUpdate() {
+        schedulePolishAnalysis(debounce: true)
+    }
+
+    private func schedulePolishAnalysis(debounce: Bool) {
+        polishDebounceTask?.cancel()
+
         let text = localDraftContent
+        let requestID = UUID()
+        polishAnalysisRequestID = requestID
+
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             polishAnalysis = nil
             return
         }
-        polishAnalysis = WritingAnalyzer.shared.analyze(text: text)
-    }
 
-    private func debouncedPolishUpdate() {
-        polishDebounceTask?.cancel()
         polishDebounceTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else { return }
-            guard viewModel.state.currentStep.enablesPolishHighlights else {
-                polishAnalysis = nil
-                return
+            if debounce {
+                try? await Task.sleep(nanoseconds: 500_000_000)
             }
-            updatePolishAnalysis()
+            guard !Task.isCancelled else { return }
+
+            let nextAnalysis = await Task.detached(priority: .utility) {
+                WritingAnalyzer.shared.analyze(text: text)
+            }.value
+
+            await MainActor.run {
+                guard polishAnalysisRequestID == requestID,
+                      viewModel.state.currentStep.enablesPolishHighlights,
+                      !Task.isCancelled else {
+                    return
+                }
+                polishAnalysis = nextAnalysis
+            }
         }
     }
 
@@ -2489,24 +2525,38 @@ struct ContentFocusModeView: View {
 
         switch operation.kind {
         case .textReplacement, .structuredFieldReplacement:
-            guard let original = operation.originalText,
-                  let proposed = operation.proposedText,
-                  localDraftContent.contains(original)
-            else {
+            guard let proposed = operation.proposedText else {
+                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing proposed text")
+            }
+            let original = operation.originalText ?? ""
+            if original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // No original to replace — treat as additive content appended to the draft.
+                let prefix = localDraftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
+                localDraftContent += prefix + proposed
+                draftDocument = RichDocument.migrateLegacy(localDraftContent)
+            } else if let range = CosmoInlineDiffLocator.range(of: original, in: localDraftContent) {
+                draftDocument = draftDocumentByReplacing(range: range, in: localDraftContent, with: proposed)
+                localDraftContent = draftDocument.plainText
+            } else {
                 return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Original text not found")
             }
-
-            draftDocument = draftDocumentByReplacingSelection(with: proposed, originalText: original)
-            localDraftContent = draftDocument.plainText
 
         case .textInsertion:
             guard let proposed = operation.proposedText else {
                 return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing inserted text")
             }
-
-            let prefix = localDraftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
-            localDraftContent += prefix + proposed
-            draftDocument = RichDocument.migrateLegacy(localDraftContent)
+            if let anchor = operation.originalText,
+               !anchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let anchorRange = CosmoInlineDiffLocator.range(of: anchor, in: localDraftContent) {
+                // Insert immediately after the anchor so new content lands in place.
+                let insertionPoint = anchorRange.upperBound
+                draftDocument = draftDocumentByReplacing(range: insertionPoint..<insertionPoint, in: localDraftContent, with: "\n" + proposed)
+                localDraftContent = draftDocument.plainText
+            } else {
+                let prefix = localDraftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
+                localDraftContent += prefix + proposed
+                draftDocument = RichDocument.migrateLegacy(localDraftContent)
+            }
 
         case .canvasPlan:
             return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider")
@@ -2518,6 +2568,47 @@ struct ContentFocusModeView: View {
         triggerAutoSave()
 
         return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
+    }
+
+    private func acceptInlineAssistantDraftReview(operationID: UUID) async {
+        await CosmoInlineAssistantStore.shared.accept(
+            operationID: operationID,
+            provider: inlineAssistantContentProvider()
+        )
+        refreshInlineAssistantDraftReview()
+    }
+
+    private func rejectInlineAssistantDraftReview(operationID: UUID) async {
+        await CosmoInlineAssistantStore.shared.reject(operationID: operationID)
+        refreshInlineAssistantDraftReview()
+    }
+
+    private func refreshInlineAssistantDraftReview() {
+        draftReviewProposal = CosmoInlineAssistantStore.shared.pendingProposal(
+            forSurfaceID: inlineAssistantContentSurfaceID,
+            targetID: inlineAssistantContentTargetID,
+            activeAtomUUID: atom.uuid
+        )
+    }
+
+    private var inlineAssistantContentSurfaceID: String {
+        "content:\(atom.uuid)"
+    }
+
+    private var inlineAssistantContentTargetID: String {
+        ContentContextProvider.targetID(for: atom.uuid)
+    }
+
+    private func inlineAssistantContentProvider() -> ContentContextProvider {
+        ContentContextProvider(
+            atom: atom,
+            stateRef: { [viewModel] in viewModel.state },
+            phaseRef: { [viewModel] in viewModel.displayPhase },
+            draftTextRef: { [self] in self.localDraftContent },
+            applyDraftEdit: { [self] operation in
+                try await self.applyInlineAssistantDraftEdit(operation)
+            }
+        )
     }
 
     private func draftDocumentByReplacingSelection(with replacement: String, originalText: String) -> RichDocument {
@@ -2545,6 +2636,39 @@ struct ContentFocusModeView: View {
 
         attributed.replaceCharacters(
             in: replacementRange,
+            with: NSAttributedString(
+                string: replacement,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 16),
+                    .foregroundColor: NSColor(focusText)
+                ]
+            )
+        )
+        return RichDocumentSerializer.document(from: attributed)
+    }
+
+    /// Replaces a located range (from `CosmoInlineDiffLocator`) in the rich draft while
+    /// preserving surrounding formatting. Used by reviewed inline-assistant edits, which
+    /// are anchored by text content rather than the live editor selection.
+    private func draftDocumentByReplacing(
+        range: Range<String.Index>,
+        in plainText: String,
+        with replacement: String
+    ) -> RichDocument {
+        let nsRange = NSRange(range, in: plainText)
+        let attributed = NSMutableAttributedString(
+            attributedString: RichDocumentSerializer.attributedString(from: draftDocument, fontSize: 16, darkMode: DS.usesImmersiveFocusAppearance)
+        )
+        let attributedPlainText = attributed.string as NSString
+
+        guard nsRange.location != NSNotFound,
+              nsRange.location + nsRange.length <= attributedPlainText.length else {
+            let updated = (plainText as NSString).replacingCharacters(in: nsRange, with: replacement)
+            return RichDocument.migrateLegacy(updated)
+        }
+
+        attributed.replaceCharacters(
+            in: nsRange,
             with: NSAttributedString(
                 string: replacement,
                 attributes: [
@@ -2646,6 +2770,43 @@ struct ContentFocusModeView: View {
     }
 
     // MARK: - Auto-save
+
+    private func handleDraftPlainTextChange(_ plainText: String) {
+        guard plainText != localDraftContent else { return }
+        print("[FOCUS-CONTENT] onPlainTextChange(draft) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
+        localDraftContent = plainText
+        draftEditedLocally = true
+        markTypingActive()
+        updateFocusBand()
+        scheduleTypewriterScroll()
+        triggerAutoSave()
+        if isPolishModeActive { debouncedPolishUpdate() }
+    }
+
+    private func persistCurrentEditorSnapshot(reason: String) {
+        autoSaveTask?.cancel()
+
+        // Snapshot current state. CosmoDocumentEditor sends plain text on every
+        // keystroke, while rich-document serialization is debounced; if they
+        // diverge at close/quit time, plain text is authoritative for data safety.
+        if draftDocument.plainText != localDraftContent {
+            print("[FOCUS-CONTENT] \(reason) — rebuilding stale draftDocument from localDraftContent (docLen=\(draftDocument.plainText.count) vs localLen=\(localDraftContent.count))")
+            draftDocument = RichDocument.migrateLegacy(localDraftContent)
+            updateDraftHeadingOutline(from: draftDocument)
+        }
+
+        viewModel.state.draftContent = localDraftContent
+        viewModel.state.richDraftDocument = draftDocument
+        viewModel.state.lastModified = Date()
+
+        if !cosmoWindowEnabled {
+            viewModel.state.conversationHistory = writingEngine.messages
+            viewModel.state.conversationSummary = writingEngine.conversationSummary
+        }
+
+        extractLessonsIfEdited()
+        viewModel.saveOnClose()
+    }
 
     private func triggerAutoSave() {
         print("[FOCUS-CONTENT] triggerAutoSave() — \(autoSaveDelay)s debounce starting uuid=\(atom.uuid) localDraftLen=\(localDraftContent.count)")
@@ -3124,7 +3285,7 @@ class ContentFocusModeViewModel: ObservableObject {
                         arguments: [
                             fields.body,
                             fields.metadata,
-                            ISO8601DateFormatter().string(from: Date()),
+                            ISO8601.string(from: Date()),
                             atomUUID
                         ]
                     )
@@ -3182,7 +3343,7 @@ class ContentFocusModeViewModel: ObservableObject {
                     arguments: [
                         fields.body,
                         fields.metadata,
-                        ISO8601DateFormatter().string(from: Date()),
+                        ISO8601.string(from: Date()),
                         atomUUID
                     ]
                 )
@@ -3261,7 +3422,7 @@ class ContentFocusModeViewModel: ObservableObject {
                         """,
                         arguments: [
                             metadataStr,
-                            ISO8601DateFormatter().string(from: Date()),
+                            ISO8601.string(from: Date()),
                             atomUUID
                         ]
                     )
@@ -3292,7 +3453,7 @@ class ContentFocusModeViewModel: ObservableObject {
     var phaseEnteredAt: Date? {
         if let metadata = atom.metadataValue(as: ContentAtomMetadata.self),
            let dateStr = metadata.phaseEnteredAt {
-            return ISO8601DateFormatter().date(from: dateStr)
+            return ISO8601.date(from: dateStr)
         }
         return nil
     }
@@ -3500,7 +3661,7 @@ class ContentFocusModeViewModel: ObservableObject {
                     UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1
                     WHERE uuid = ?
                     """,
-                    arguments: [RichDocumentPersistence.nilIfEmpty(trimmed), fields.metadata, ISO8601DateFormatter().string(from: Date()), uuid]
+                    arguments: [RichDocumentPersistence.nilIfEmpty(trimmed), fields.metadata, ISO8601.string(from: Date()), uuid]
                 )
             }
             if pendingTitleDocument == titleDocument {
@@ -3533,7 +3694,7 @@ class ContentFocusModeViewModel: ObservableObject {
                     UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1
                     WHERE uuid = ?
                     """,
-                    arguments: [RichDocumentPersistence.nilIfEmpty(trimmed), fields.metadata, ISO8601DateFormatter().string(from: Date()), uuid]
+                    arguments: [RichDocumentPersistence.nilIfEmpty(trimmed), fields.metadata, ISO8601.string(from: Date()), uuid]
                 )
             }
             pendingTitleDocument = nil

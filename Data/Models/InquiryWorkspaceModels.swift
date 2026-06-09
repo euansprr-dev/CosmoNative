@@ -96,7 +96,7 @@ struct LiveUnderstandingDraft: Codable, Sendable, Equatable {
     var contextSignature: String   // stable hash of (activeQuestionUUID + claim/evidence/source counts)
     var modelTier: String?
 
-    init(text: String, generatedAt: String = ISO8601DateFormatter().string(from: Date()), contextSignature: String, modelTier: String? = nil) {
+    init(text: String, generatedAt: String = ISO8601.string(from: Date()), contextSignature: String, modelTier: String? = nil) {
         self.text = text
         self.generatedAt = generatedAt
         self.contextSignature = contextSignature
@@ -387,7 +387,7 @@ struct InquiryOperationalTask: Codable, Sendable, Identifiable, Hashable {
         sourceTabId: String? = nil,
         relationshipType: InquiryRelationshipType,
         originExtractUUID: String? = nil,
-        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        createdAt: String = ISO8601.string(from: Date()),
         status: Status = .open
     ) {
         self.id = id
@@ -666,7 +666,7 @@ struct InquirySourceCandidate: Codable, Sendable, Identifiable, Hashable {
         branchNodeId: String? = nil,
         importedSourceUUID: String? = nil,
         importStatus: InquirySourceImportStatus = .candidate,
-        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        generatedAt: String = ISO8601.string(from: Date()),
         researchIntent: InquiryResearchIntent? = nil,
         sourceLane: InquirySourceLane? = nil
     ) {
@@ -714,7 +714,7 @@ struct InquiryRecommendationBatch: Codable, Sendable, Identifiable, Hashable {
         branchNodeId: String,
         query: String,
         searchMode: InquirySourceSearchMode = .quick,
-        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        generatedAt: String = ISO8601.string(from: Date()),
         providerStatuses: [InquiryProviderStatus] = [],
         scoutSteps: [String] = [],
         candidates: [InquirySourceCandidate] = [],
@@ -758,7 +758,7 @@ struct InquiryRecommendationBatch: Codable, Sendable, Identifiable, Hashable {
         branchNodeId = try container.decode(String.self, forKey: .branchNodeId)
         query = try container.decode(String.self, forKey: .query)
         searchMode = try container.decodeIfPresent(InquirySourceSearchMode.self, forKey: .searchMode) ?? .quick
-        generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt) ?? ISO8601DateFormatter().string(from: Date())
+        generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt) ?? ISO8601.string(from: Date())
         providerStatuses = try container.decodeIfPresent([InquiryProviderStatus].self, forKey: .providerStatuses) ?? []
         scoutSteps = try container.decodeIfPresent([String].self, forKey: .scoutSteps) ?? []
         candidates = try container.decodeIfPresent([InquirySourceCandidate].self, forKey: .candidates) ?? []
@@ -801,7 +801,7 @@ struct InquiryRouteReceipt: Codable, Sendable, Identifiable, Hashable {
         sourceUUID: String? = nil,
         extractUUID: String? = nil,
         candidateId: String? = nil,
-        createdAt: String = ISO8601DateFormatter().string(from: Date())
+        createdAt: String = ISO8601.string(from: Date())
     ) {
         self.id = id
         self.kind = kind
@@ -1082,7 +1082,7 @@ struct OutputAngle: Codable, Sendable, Identifiable {
         format: String? = nil,
         rationale: String? = nil,
         sourceExtractUUIDs: [String] = [],
-        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        generatedAt: String = ISO8601.string(from: Date()),
         promotedIdeaUUID: String? = nil
     ) {
         self.id = id
@@ -1131,7 +1131,7 @@ struct InquirySessionMetadata: Codable, Sendable {
         parentObjectType: String? = nil,
         mainQuestionUUID: String? = nil,
         status: InquirySessionStatus = .active,
-        lastActiveAt: String = ISO8601DateFormatter().string(from: Date()),
+        lastActiveAt: String = ISO8601.string(from: Date()),
         layoutMode: InquiryLayoutMode = .research,
         crystallizedAt: String? = nil
     ) {
@@ -1215,7 +1215,7 @@ struct ResearchTreeNode: Codable, Sendable, Identifiable {
         atomUUID: String? = nil,
         parentNodeId: String? = nil,
         childNodeIds: [String] = [],
-        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        createdAt: String = ISO8601.string(from: Date()),
         branchOrder: Int = 0,
         meta: Meta = Meta()
     ) {
@@ -1503,7 +1503,7 @@ struct InquiryRoutingCard: Codable, Sendable, Identifiable {
         placement: InquiryPlacementDecision? = nil,
         alternatePlacements: [InquiryPlacementDecision] = [],
         linkedClaimExtractUUID: String? = nil,
-        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        createdAt: String = ISO8601.string(from: Date()),
         status: Status = .pending
     ) {
         self.id = id
@@ -1563,8 +1563,8 @@ struct InquirySourceRef: Codable, Sendable, Identifiable {
         status: InquirySourceStatus = .viewed,
         primaryQuestionUUID: String? = nil,
         primaryNodeId: String? = nil,
-        openedAt: String = ISO8601DateFormatter().string(from: Date()),
-        lastOpenedAt: String = ISO8601DateFormatter().string(from: Date()),
+        openedAt: String = ISO8601.string(from: Date()),
+        lastOpenedAt: String = ISO8601.string(from: Date()),
         extractCount: Int = 0,
         noteCount: Int = 0
     ) {
@@ -1617,7 +1617,7 @@ struct InquiryActivityEvent: Codable, Sendable, Identifiable {
         sourceUUID: String? = nil,
         extractUUID: String? = nil,
         routingCardId: String? = nil,
-        createdAt: String = ISO8601DateFormatter().string(from: Date())
+        createdAt: String = ISO8601.string(from: Date())
     ) {
         self.id = id
         self.kind = kind
@@ -1667,7 +1667,7 @@ struct SourceTab: Codable, Sendable, Identifiable {
         attachedQuestionUUID: String? = nil,
         attachedNodeId: String? = nil,
         scrollPosition: Double = 0,
-        lastReadAt: String = ISO8601DateFormatter().string(from: Date()),
+        lastReadAt: String = ISO8601.string(from: Date()),
         pinned: Bool = false,
         highlightCount: Int = 0
     ) {
@@ -1713,7 +1713,7 @@ struct SessionCapture: Codable, Sendable, Identifiable {
     init(
         id: String = UUID().uuidString,
         body: String,
-        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        createdAt: String = ISO8601.string(from: Date()),
         source: Source = .type,
         suggestedKind: ExtractKind? = nil,
         suggestedKindConfidence: Double? = nil,
@@ -1751,7 +1751,7 @@ struct AIInteractionRef: Codable, Sendable, Identifiable {
         sourceTabId: String? = nil,
         prompt: String,
         response: String,
-        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        createdAt: String = ISO8601.string(from: Date()),
         modelTier: String? = nil
     ) {
         self.id = id
@@ -1772,7 +1772,7 @@ struct MapFormingState: Codable, Sendable {
         var mentionCount: Int
         var existingLexiconUUID: String?
         var firstSeenAt: String
-        init(id: String = UUID().uuidString, label: String, mentionCount: Int = 1, existingLexiconUUID: String? = nil, firstSeenAt: String = ISO8601DateFormatter().string(from: Date())) {
+        init(id: String = UUID().uuidString, label: String, mentionCount: Int = 1, existingLexiconUUID: String? = nil, firstSeenAt: String = ISO8601.string(from: Date())) {
             self.id = id; self.label = label; self.mentionCount = mentionCount; self.existingLexiconUUID = existingLexiconUUID; self.firstSeenAt = firstSeenAt
         }
     }
@@ -1781,7 +1781,7 @@ struct MapFormingState: Codable, Sendable {
         var description: String
         var sourceQuestionUUID: String?
         var detectedAt: String
-        init(id: String = UUID().uuidString, description: String, sourceQuestionUUID: String? = nil, detectedAt: String = ISO8601DateFormatter().string(from: Date())) {
+        init(id: String = UUID().uuidString, description: String, sourceQuestionUUID: String? = nil, detectedAt: String = ISO8601.string(from: Date())) {
             self.id = id; self.description = description; self.sourceQuestionUUID = sourceQuestionUUID; self.detectedAt = detectedAt
         }
     }
@@ -1791,7 +1791,7 @@ struct MapFormingState: Codable, Sendable {
         var leftExtractUUID: String?
         var rightExtractUUID: String?
         var detectedAt: String
-        init(id: String = UUID().uuidString, description: String, leftExtractUUID: String? = nil, rightExtractUUID: String? = nil, detectedAt: String = ISO8601DateFormatter().string(from: Date())) {
+        init(id: String = UUID().uuidString, description: String, leftExtractUUID: String? = nil, rightExtractUUID: String? = nil, detectedAt: String = ISO8601.string(from: Date())) {
             self.id = id; self.description = description; self.leftExtractUUID = leftExtractUUID; self.rightExtractUUID = rightExtractUUID; self.detectedAt = detectedAt
         }
     }
@@ -1801,7 +1801,7 @@ struct MapFormingState: Codable, Sendable {
         var rationale: String?
         var fromNodeId: String?
         var detectedAt: String
-        init(id: String = UUID().uuidString, proposedQuestion: String, rationale: String? = nil, fromNodeId: String? = nil, detectedAt: String = ISO8601DateFormatter().string(from: Date())) {
+        init(id: String = UUID().uuidString, proposedQuestion: String, rationale: String? = nil, fromNodeId: String? = nil, detectedAt: String = ISO8601.string(from: Date())) {
             self.id = id; self.proposedQuestion = proposedQuestion; self.rationale = rationale; self.fromNodeId = fromNodeId; self.detectedAt = detectedAt
         }
     }
@@ -1819,7 +1819,7 @@ struct MapFormingState: Codable, Sendable {
         contradictions: [ContradictionAlert] = [],
         branchSuggestions: [BranchSuggestion] = [],
         possibleConnectionUUIDs: [String] = [],
-        lastUpdated: String = ISO8601DateFormatter().string(from: Date())
+        lastUpdated: String = ISO8601.string(from: Date())
     ) {
         self.concepts = concepts
         self.openLoops = openLoops
@@ -2119,7 +2119,7 @@ struct CanvasProjectionRollbackSnapshot: Codable, Sendable {
     var summary: String
 
     init(
-        capturedAt: String = ISO8601DateFormatter().string(from: Date()),
+        capturedAt: String = ISO8601.string(from: Date()),
         canvasBlockUUIDs: [String] = [],
         clusterUUIDs: [String] = [],
         atomUUIDs: [String] = [],
@@ -2153,7 +2153,7 @@ struct CanvasProjection: Codable, Sendable, Identifiable {
         sessionUUID: String,
         deepDiveProfileUUID: String,
         thinkspaceUUID: String,
-        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        generatedAt: String = ISO8601.string(from: Date()),
         status: CanvasProjectionStatus = .pendingReview,
         summary: String,
         operations: [CanvasOperation] = [],
@@ -2467,7 +2467,7 @@ struct CrystallizationOutput: Codable, Sendable {
         canvasProjection: CanvasProjection? = nil,
         promotionSuggestions: [PromotionSuggestion] = [],
         rejected: [RejectedItem] = [],
-        generatedAt: String = ISO8601DateFormatter().string(from: Date())
+        generatedAt: String = ISO8601.string(from: Date())
     ) {
         self.summary = summary
         self.lexiconCandidates = lexiconCandidates
@@ -2707,7 +2707,7 @@ struct ExtractMetadata: Codable, Sendable {
         userNote: String? = nil,
         suggestedDestinationUUID: String? = nil,
         status: ExtractStatus = .committed,
-        committedAt: String? = ISO8601DateFormatter().string(from: Date()),
+        committedAt: String? = ISO8601.string(from: Date()),
         promotedToUUID: String? = nil,
         originType: String? = nil,
         citation: String? = nil
@@ -2756,8 +2756,8 @@ struct LexiconMetadata: Codable, Sendable {
         aliases: [String] = [],
         maturity: LexiconMaturity = .mention,
         mentionCount: Int = 1,
-        firstSeenAt: String = ISO8601DateFormatter().string(from: Date()),
-        lastSeenAt: String = ISO8601DateFormatter().string(from: Date()),
+        firstSeenAt: String = ISO8601.string(from: Date()),
+        lastSeenAt: String = ISO8601.string(from: Date()),
         promotedToUUID: String? = nil
     ) {
         self.parentDeepDiveUUID = parentDeepDiveUUID

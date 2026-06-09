@@ -1079,7 +1079,7 @@ class AgentToolRegistry {
         [
             LLMToolDefinition(
                 name: "propose_workspace_edit",
-                description: "Stage reviewed edits for the active Cosmo surface. Use this for document edits, number replacements, hook changes, outline changes, and structured field changes. This tool never applies changes; it only creates a user-reviewed proposal.",
+                description: "Stage reviewed edits for the active Cosmo surface (document edits, number/fact replacements, hook changes, outline changes, filling in sections). Put ALL changes for the request in ONE call — pass multiple items in the operations array rather than calling this tool several times. EDIT IN PLACE: for each change, set `originalText` to the ENTIRE line/sentence that contains the target, copied VERBATIM from the current surface text, and `proposedText` to that SAME line with ONLY the requested change applied — preserve every other word of the user's copy unless they explicitly ask to rewrite/rework wording. Anchoring on the whole line is what lets the edit locate and land in place; a bare fragment (like just a number) often fails to match and gets dumped at the bottom flagged as outdated. Use `textInsertion` only to add brand-new content, with `originalText` set to the existing text the new content should follow. When inserting outline points under existing slide headers, anchor to the existing `SLIDE N` line but do NOT include another `SLIDE N` in proposedText; insert only the body copy for that slide. Never regenerate the whole document as one giant operation, and never send a `textReplacement` without `originalText`. This tool never applies changes; it only creates a user-reviewed proposal.",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
@@ -1092,15 +1092,15 @@ class AgentToolRegistry {
                             "items": [
                                 "type": "object",
                                 "properties": [
-                                    "kind": ["type": "string", "enum": ["textReplacement", "textInsertion", "structuredFieldReplacement", "canvasPlan"]] as [String: Any],
+                                    "kind": ["type": "string", "enum": ["textReplacement", "textInsertion", "structuredFieldReplacement", "canvasPlan"], "description": "textReplacement: replace originalText with proposedText in place. textInsertion: insert proposedText immediately after the originalText anchor. structuredFieldReplacement: replace a structured field. Prefer textReplacement for any change to existing content."] as [String: Any],
                                     "targetID": ["type": "string"] as [String: Any],
                                     "anchorID": ["type": "string"] as [String: Any],
-                                    "originalText": ["type": "string"] as [String: Any],
-                                    "proposedText": ["type": "string"] as [String: Any],
+                                    "originalText": ["type": "string", "description": "For textReplacement: the EXACT existing text to replace, copied verbatim (with punctuation) from the surface text. For textInsertion: the EXACT existing text to insert immediately after (the anchor). Required whenever you touch existing content — omit only to append brand-new content at the very end."] as [String: Any],
+                                    "proposedText": ["type": "string", "description": "The new text this operation produces."] as [String: Any],
                                     "sourceHash": ["type": "string"] as [String: Any],
                                     "rationale": ["type": "string"] as [String: Any]
                                 ] as [String: Any],
-                                "required": ["kind", "targetID", "sourceHash", "rationale"]
+                                "required": ["kind", "targetID", "sourceHash", "rationale", "proposedText"]
                             ] as [String: Any]
                         ] as [String: Any]
                     ] as [String: Any],
@@ -1146,6 +1146,29 @@ class AgentToolRegistry {
                     "required": ["client_name"]
                 ]
             ),
+        ]
+    }
+
+    private var clientFactLookupTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "lookup_client_facts",
+                description: "Look up a few relevant snippets from a client's compact profile, documents, and top-performing transcripts without loading the full profile. Use this only when pre-resolved inline client facts are missing a specific detail.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "client_name": [
+                            "type": "string",
+                            "description": "The client name to fuzzy-match, e.g. 'Josh' or 'Ben'."
+                        ] as [String: Any],
+                        "query": [
+                            "type": "string",
+                            "description": "The specific fact to find, e.g. 'first San Diego duplex mortgage revenue DSCR'."
+                        ] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["client_name", "query"]
+                ]
+            )
         ]
     }
 
@@ -1287,7 +1310,15 @@ class AgentToolRegistry {
     ) -> [LLMToolDefinition] {
         let base = toolsForIntent(intent, source: source)
         let bundled = tools(forBundles: Set(profileBundles).union(forcedBundles), source: source)
-        return deduplicated(base + bundled)
+        let tools = deduplicated(base + bundled)
+        guard forcedBundles.contains(.clientFactLookup),
+              !forcedBundles.contains(.clientProfiles),
+              !profileBundles.contains(.clientProfiles) else {
+            return tools
+        }
+        return tools.filter { tool in
+            tool.name != "get_client_profile" && tool.name != "list_client_profiles"
+        }
     }
 
     func tools(forBundles bundles: Set<AgentToolBundle>, source: MessageSource = .inApp) -> [LLMToolDefinition] {
@@ -1303,6 +1334,8 @@ class AgentToolRegistry {
                 tools += ideaTools + contentTools + captureTools
             case .clientProfiles:
                 tools += clientTools + clientProfileTools
+            case .clientFactLookup:
+                tools += clientFactLookupTools
             case .clientMemory:
                 tools += clientMemoryTools
             case .swipes:
@@ -1329,7 +1362,7 @@ class AgentToolRegistry {
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = deduplicated(contextTools + ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools + workspaceEditingTools)
+        allTools = deduplicated(contextTools + ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + clientFactLookupTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools + workspaceEditingTools)
     }
 
     private func deduplicated(_ tools: [LLMToolDefinition]) -> [LLMToolDefinition] {

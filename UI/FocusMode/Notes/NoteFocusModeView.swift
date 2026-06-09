@@ -203,7 +203,7 @@ struct NoteFocusInitialDocuments: Equatable {
         )
         let titlePlainText = RichDocumentPersistence.titlePlainText(from: titleDocument)
         let plainContent = bodyDocument.plainText
-        let createdAt = ISO8601DateFormatter().date(from: atom.createdAt) ?? Date()
+        let createdAt = ISO8601.date(from: atom.createdAt) ?? Date()
 
         return NoteFocusInitialDocuments(
             titleDocument: titleDocument,
@@ -243,6 +243,9 @@ struct NoteFocusModeView: View {
 
     @State private var titleDocument: RichDocument = .empty
     @State private var bodyDocument: RichDocument = .empty
+    /// Non-nil while the inline assistant has staged reviewable changes for this note —
+    /// drives the in-document diff that temporarily replaces the body editor.
+    @State private var bodyReviewProposal: CosmoAssistantProposal?
     @State private var titlePlainText: String = ""
     @State private var plainContent: String = ""
     @State private var selectedText: String = ""
@@ -435,6 +438,12 @@ struct NoteFocusModeView: View {
                     }
                 )
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
+        }
+        .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
+            let surfaceID = "note:\(atom.uuid)"
+            bodyReviewProposal = proposals.last { proposal in
+                proposal.surfaceID == surfaceID && proposal.hasReviewableOperations
             }
         }
         .onDisappear {
@@ -704,51 +713,48 @@ struct NoteFocusModeView: View {
                     }
                 }
 
-                BlockListView(
-                    document: $bodyDocument,
-                    fontSize: 17,
-                    placeholder: "Start writing…",
-                    darkMode: DS.usesImmersiveFocusAppearance,
-                    overrideTextColor: NSColor(focusText),
-                    allowSlashCommands: true,
-                    allowMentions: true,
-                    allowSelectionMenu: true,
-                    allowImages: true,
-                    typewriterMode: typewriterMode,
-                    scrollsInternally: false,
-                    editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
-                    navigationTargetID: bodyNavigationTargetID,
-                    onSelectionChanged: { snapshot in
-                        selectedText = snapshot.text
-                        refreshCosmoContextIfActive()
-                    },
-                    onDocumentChange: { document, plainText in
-                        let changed = NoteAutosaveChangePolicy.shouldAutosaveDocumentChange(
-                            isInitialLoad: isInitialLoad,
-                            previousDocument: bodyDocument,
-                            nextDocument: document,
-                            previousPlainText: plainContent,
-                            nextPlainText: plainText
-                        )
-                        NoteFocusLog.debug("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
-                        bodyDocument = document
-                        plainContent = plainText
-                        updateBodyHeadingOutline(from: document)
-                        refreshCosmoContextIfActive()
-                        scheduleTextAnalysis(for: plainText)
-                        if changed {
-                            hasLocalBodyEdits = true
-                            triggerAutoSave()
-                        }
-                    }
-                )
-                .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
-                .frame(
-                    minHeight: max(400, scrollViewportHeight - 200),
-                    alignment: .topLeading
-                )
-                .padding(.top, isEmptyNote ? DS.space32 : DS.space24)
-                .padding(.bottom, DS.space48)
+                if let review = bodyReviewProposal {
+                    CosmoInlineDiffReviewView(
+                        store: CosmoInlineAssistantStore.shared,
+                        proposal: review,
+                        sourceText: plainContent,
+                        bodyFont: .system(size: 17),
+                        textColor: focusText
+                    )
+                    .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
+                    .frame(minHeight: max(400, scrollViewportHeight - 200), alignment: .topLeading)
+                    .padding(.top, isEmptyNote ? DS.space32 : DS.space24)
+                    .padding(.bottom, DS.space48)
+                } else {
+                    CosmoDocumentEditor(
+                        document: $bodyDocument,
+                        fontSize: 17,
+                        placeholder: "Start writing…",
+                        darkMode: DS.usesImmersiveFocusAppearance,
+                        overrideTextColor: NSColor(focusText),
+                        allowSlashCommands: true,
+                        allowMentions: true,
+                        allowSelectionMenu: true,
+                        allowImages: true,
+                        typewriterMode: typewriterMode,
+                        scrollsInternally: false,
+                        onSelectionChanged: { snapshot in
+                            selectedText = snapshot.text
+                            refreshCosmoContextIfActive()
+                        },
+                        editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
+                        navigationTargetID: bodyNavigationTargetID,
+                        onPlainTextChange: handleBodyPlainTextChange,
+                        onDocumentChange: handleBodyDocumentChange
+                    )
+                    .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
+                    .frame(
+                        minHeight: max(400, scrollViewportHeight - 200),
+                        alignment: .topLeading
+                    )
+                    .padding(.top, isEmptyNote ? DS.space32 : DS.space24)
+                    .padding(.bottom, DS.space48)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, DS.space40)
@@ -1097,6 +1103,45 @@ struct NoteFocusModeView: View {
 
     private func refreshCosmoContextIfActive() {
         CosmoWindowViewModel.shared.refreshContextIfCurrentAtomMatches(atomUUID: atom.uuid)
+    }
+
+    private func handleBodyPlainTextChange(_ plainText: String) {
+        let changed = NoteAutosaveChangePolicy.shouldAutosaveTextChange(
+            isInitialLoad: isInitialLoad,
+            didChange: plainText != plainContent
+        )
+        guard changed || plainText != plainContent else { return }
+
+        NoteFocusLog.debug("[FOCUS-NOTE] onPlainTextChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
+        plainContent = plainText
+        refreshCosmoContextIfActive()
+        scheduleTextAnalysis(for: plainText)
+
+        if changed {
+            hasLocalBodyEdits = true
+            triggerAutoSave()
+        }
+    }
+
+    private func handleBodyDocumentChange(_ document: RichDocument, plainText: String) {
+        let changed = NoteAutosaveChangePolicy.shouldAutosaveDocumentChange(
+            isInitialLoad: isInitialLoad,
+            previousDocument: bodyDocument,
+            nextDocument: document,
+            previousPlainText: plainContent,
+            nextPlainText: plainText
+        )
+        NoteFocusLog.debug("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
+        bodyDocument = document
+        plainContent = plainText
+        updateBodyHeadingOutline(from: document)
+        refreshCosmoContextIfActive()
+        scheduleTextAnalysis(for: plainText)
+
+        if changed {
+            hasLocalBodyEdits = true
+            triggerAutoSave()
+        }
     }
 
     // MARK: - Text Analysis
@@ -1550,7 +1595,7 @@ struct NoteFocusModeView: View {
                     }
 
                     tags = fetchedAtom.tagsList
-                    if let date = ISO8601DateFormatter().date(from: fetchedAtom.createdAt) {
+                    if let date = ISO8601.date(from: fetchedAtom.createdAt) {
                         createdAt = date
                     }
 
@@ -1610,24 +1655,37 @@ struct NoteFocusModeView: View {
 
         switch operation.kind {
         case .textReplacement, .structuredFieldReplacement:
-            guard let original = operation.originalText,
-                  let proposed = operation.proposedText,
-                  let range = plainContent.range(of: original)
-            else {
+            guard let proposed = operation.proposedText else {
+                return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing proposed text")
+            }
+            let original = operation.originalText ?? ""
+            if original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // No original to replace — treat as additive content appended to the note.
+                let prefix = plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
+                plainContent += prefix + proposed
+                bodyDocument = RichDocument.migrateLegacy(plainContent)
+            } else if let range = CosmoInlineDiffLocator.range(of: original, in: plainContent) {
+                plainContent.replaceSubrange(range, with: proposed)
+                bodyDocument = RichDocument.migrateLegacy(plainContent)
+            } else {
                 return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Original text not found")
             }
-
-            plainContent.replaceSubrange(range, with: proposed)
-            bodyDocument = RichDocument.migrateLegacy(plainContent)
 
         case .textInsertion:
             guard let proposed = operation.proposedText else {
                 return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Missing inserted text")
             }
-
-            let prefix = plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
-            plainContent += prefix + proposed
-            bodyDocument = RichDocument.migrateLegacy(plainContent)
+            if let anchor = operation.originalText,
+               !anchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let anchorRange = CosmoInlineDiffLocator.range(of: anchor, in: plainContent) {
+                // Insert immediately after the anchor so new content lands in place.
+                plainContent.replaceSubrange(anchorRange.upperBound..<anchorRange.upperBound, with: "\n" + proposed)
+                bodyDocument = RichDocument.migrateLegacy(plainContent)
+            } else {
+                let prefix = plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
+                plainContent += prefix + proposed
+                bodyDocument = RichDocument.migrateLegacy(plainContent)
+            }
 
         case .canvasPlan:
             return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider")
@@ -1724,7 +1782,7 @@ struct NoteFocusModeView: View {
                         snapshot.atomTitle,
                         snapshot.bodyPlainText,
                         metadataString ?? snapshot.metadata,
-                        ISO8601DateFormatter().string(from: Date()),
+                        ISO8601.string(from: Date()),
                         uuid
                     ]
                 )
@@ -1818,7 +1876,7 @@ struct NoteFocusModeView: View {
                                 snapshot.atomTitle ?? RichDocumentPersistence.nilIfEmpty(titleCopy),
                                 snapshot.bodyPlainText,
                                 metadataString ?? snapshot.metadata,
-                                ISO8601DateFormatter().string(from: Date()),
+                                ISO8601.string(from: Date()),
                                 uuid
                             ]
                         )
@@ -1882,7 +1940,7 @@ struct NoteFocusModeView: View {
                                 snapshot.atomTitle,
                                 snapshot.bodyPlainText,
                                 metadataString ?? snapshot.metadata,
-                                ISO8601DateFormatter().string(from: Date()),
+                                ISO8601.string(from: Date()),
                                 uuid
                             ]
                         )

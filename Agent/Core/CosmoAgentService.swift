@@ -314,6 +314,7 @@ class CosmoAgentService: ObservableObject {
         responseMode: AgentResponseMode = .automatic,
         profileToolBundles: [AgentToolBundle] = [],
         forcedToolBundles: Set<AgentToolBundle> = [],
+        lightweightContext: Bool = false,
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         activeSessionCount += 1
@@ -353,6 +354,7 @@ class CosmoAgentService: ObservableObject {
         let classification = classifyIntent(text)
 
         // 3. Load or create conversation
+        let perfLoadStart = Date()
         var conversation: AgentConversation
         if let convId = conversationId,
            let existing = await ConversationMemoryService.shared.loadConversation(id: convId) {
@@ -362,6 +364,7 @@ class CosmoAgentService: ObservableObject {
         } else {
             conversation = AgentConversation(source: source)
         }
+        print("[AGENT-PERF] loadConversation=\(Int(Date().timeIntervalSince(perfLoadStart) * 1000))ms msgs=\(conversation.messages.count)")
 
         // 4. Topic-based session boundary detection for Telegram (WP8)
         // When the user starts a new content piece in an existing long conversation,
@@ -394,6 +397,7 @@ class CosmoAgentService: ObservableObject {
             responseMode: responseMode,
             profileToolBundles: profileToolBundles,
             forcedToolBundles: forcedToolBundles,
+            lightweightContext: lightweightContext,
             onToolActivity: onToolActivity
         )
     }
@@ -410,6 +414,7 @@ class CosmoAgentService: ObservableObject {
         responseMode: AgentResponseMode = .automatic,
         profileToolBundles: [AgentToolBundle] = [],
         forcedToolBundles: Set<AgentToolBundle> = [],
+        lightweightContext: Bool = false,
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         // --- Feedback classification for previous generation (scoped per conversation) ---
@@ -462,15 +467,19 @@ class CosmoAgentService: ObservableObject {
         }
         .joined(separator: "\n\n")
 
-        // Assemble system prompt with intent-aware context (cached/dynamic split)
+        // Assemble system prompt with intent-aware context (cached/dynamic split).
+        // Inline edits pass lightweightContext to skip the heavy GRDB/retrieval layers.
+        let perfAsmStart = Date()
         let systemPrompt = await contextAssembler.assembleSystemPrompt(
             conversation: conversation,
             preferences: preferences,
             tools: tools,
             intent: intent,
             activeItemsContext: activeItemsContext[conversation.id],
-            systemPromptOverride: effectiveSystemPromptOverride.isEmpty ? nil : effectiveSystemPromptOverride
+            systemPromptOverride: effectiveSystemPromptOverride.isEmpty ? nil : effectiveSystemPromptOverride,
+            lightweightContext: lightweightContext
         )
+        print("[AGENT-PERF] assembleSystemPrompt=\(Int(Date().timeIntervalSince(perfAsmStart) * 1000))ms lightweight=\(lightweightContext) cached=\(systemPrompt.cached.count)c dynamic=\(systemPrompt.dynamic.count)c (~\((systemPrompt.cached.count + systemPrompt.dynamic.count) / 4) tok) tools=\(tools.count) intent=\(intent) tier=\(tierOverride.map { "\($0)" } ?? "default")")
 
         // Build message array for LLM (no system message — passed separately for caching)
         var llmMessages: [AgentMessage] = []
@@ -480,7 +489,9 @@ class CosmoAgentService: ObservableObject {
         // truncate tool results to prevent heavy writing context from overwhelming Haiku.
         let lightweightIntents: Set<AgentIntent> = [.capture, .correct, .meta]
         let rawWindow: [AgentMessage]
-        if lightweightIntents.contains(intent) {
+        if lightweightIntents.contains(intent) || lightweightContext {
+            // Inline edits are largely independent — keep the history window tight so the
+            // accumulating per-surface conversation doesn't re-bloat every call.
             rawWindow = buildLightweightWindow(conversation.messages)
         } else {
             rawWindow = buildTokenAwareWindow(conversation.messages)
@@ -625,6 +636,7 @@ class CosmoAgentService: ObservableObject {
             iterations += 1
 
             do {
+                let perfIterStart = Date()
                 let response = try await provider.complete(
                     messages: llmMessages,
                     tools: activeTools.isEmpty ? nil : activeTools,
@@ -632,6 +644,8 @@ class CosmoAgentService: ObservableObject {
                     tier: modelTier,
                     systemPrompt: activeSystemPrompt
                 )
+                let perfIterMs = Int(Date().timeIntervalSince(perfIterStart) * 1000)
+                print("[AGENT-PERF] iter \(iterations) llm=\(perfIterMs)ms model=\(modelTier.modelId) (selected=\(selectedModel)) tier=\(modelTier) msgs=\(llmMessages.count) tools=\(activeTools.count) tokens≈\(conversation.estimatedTokenCount) → toolCalls=\(response.toolCalls.count)")
 
                 if response.toolCalls.isEmpty {
                     let trimmedContent = response.content?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -665,6 +679,7 @@ class CosmoAgentService: ObservableObject {
                     onToolActivity?(.started(name: toolCall.name, displayLabel: displayLabel, args: flatArgs))
 
                     let result: String
+                    let perfToolStart = Date()
                     do {
                         result = try await toolExecutor.execute(
                             toolName: toolCall.name,
@@ -673,6 +688,7 @@ class CosmoAgentService: ObservableObject {
                     } catch {
                         result = "{\"error\": \"\(error.localizedDescription)\"}"
                     }
+                    print("[AGENT-PERF] tool \(toolCall.name)=\(Int(Date().timeIntervalSince(perfToolStart) * 1000))ms")
 
                     // Emit tool activity completed event
                     let preview = extractResultSummary(result, toolName: toolCall.name)
@@ -720,6 +736,18 @@ class CosmoAgentService: ObservableObject {
                     conversation.append(toolMsg)
                 }
 
+                // Inline assistant: a staged proposal (or pane answer) IS the deliverable —
+                // both are delivered via executor callbacks. Skip the extra text-only turn
+                // the loop would otherwise spend (~10s on a large profile context) just to
+                // write a closing sentence the inline UI never shows.
+                if conversation.id.hasPrefix("cosmo-inline-assistant"),
+                   response.toolCalls.contains(where: {
+                       $0.name == "propose_workspace_edit" || $0.name == "answer_in_assistant_pane"
+                   }) {
+                    finalResponse = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    break
+                }
+
             } catch {
                 if !didRetryWithoutTools,
                    responseMode.shouldRetryWithoutTools(after: error, tools: activeTools) {
@@ -744,6 +772,8 @@ class CosmoAgentService: ObservableObject {
             contextTrace.failoverOccurred = true
             contextTrace.actualModel = failover.lastUsedModel
         }
+
+        print("[AGENT-PERF] loop done: iterations=\(iterations) toolCalls=\(contextTrace.toolCalls.count) failover=\(contextTrace.failoverOccurred) actualModel=\(contextTrace.actualModel ?? selectedModel)")
 
         // Emit all-done event for live activity UI
         onToolActivity?(.allDone(totalCalls: contextTrace.toolCalls.count))
@@ -932,6 +962,7 @@ class CosmoAgentService: ObservableObject {
                 let generationTools: Set<String> = ["generate_draft", "generate_outline", "generate_hooks", "write_draft"]
                 for toolCall in response.toolCalls {
                     let result: String
+                    let perfToolStart = Date()
                     do {
                         result = try await toolExecutor.execute(
                             toolName: toolCall.name,
@@ -940,6 +971,7 @@ class CosmoAgentService: ObservableObject {
                     } catch {
                         result = "{\"error\": \"\(error.localizedDescription)\"}"
                     }
+                    print("[AGENT-PERF] tool \(toolCall.name)=\(Int(Date().timeIntervalSince(perfToolStart) * 1000))ms")
 
                     if let data = result.data(using: .utf8),
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

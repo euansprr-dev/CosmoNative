@@ -25,9 +25,49 @@ final class CosmoInlineAssistantApplicatorTests: XCTestCase {
         XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
     }
 
+    func testAcceptAppliesThroughExplicitProviderWithoutRegistryLookup() async {
+        let surface = ApplyingEditableSurface(text: "Rent: $4,556/mo")
+        let operation = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Rent: $4,556/mo",
+            proposedText: "Rent: $5,000/mo",
+            sourceHash: CosmoEditableSurfaceHasher.hash("Rent: $4,556/mo"),
+            rationale: "Update the example rent."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: surface.surfaceID))
+
+        await store.accept(operationID: operation.id, provider: surface)
+
+        XCTAssertEqual(surface.text, "Rent: $5,000/mo")
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
+        XCTAssertNil(store.errorText)
+    }
+
+    func testAcceptThroughExplicitProviderAllowsLooseProposalSurfaceWhenTargetMatches() async {
+        let surface = ApplyingEditableSurface(text: "Mortgage: $X/mo")
+        let operation = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Mortgage: $X/mo",
+            proposedText: "Mortgage: $5,300/mo",
+            sourceHash: CosmoEditableSurfaceHasher.hash("Mortgage: $X/mo"),
+            rationale: "Fill the mortgage placeholder."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: "test-surface-loose-label"))
+
+        await store.accept(operationID: operation.id, provider: surface)
+
+        XCTAssertEqual(surface.text, "Mortgage: $5,300/mo")
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
+        XCTAssertNil(store.errorText)
+    }
+
     func testAcceptMarksConflictWhenSourceHashChanged() async {
         let registry = CosmoEditableSurfaceRegistry()
-        let surface = ApplyingEditableSurface(text: "Rent: $4,556/mo")
+        let surface = ApplyingEditableSurface(text: "Rent: $4,700/mo")
         registry.register(surface)
 
         let operation = CosmoAssistantProposalOperation.textReplacement(
@@ -43,8 +83,55 @@ final class CosmoInlineAssistantApplicatorTests: XCTestCase {
 
         await store.accept(operationID: operation.id, registry: registry)
 
-        XCTAssertEqual(surface.text, "Rent: $4,556/mo")
+        XCTAssertEqual(surface.text, "Rent: $4,700/mo")
         XCTAssertEqual(store.proposals.first?.operations.first?.status, .conflicted)
+    }
+
+    func testAcceptAppliesStaleHashWhenExactOriginalTextStillExists() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: "Rent: $4,556/mo\nExpenses: $1,800/mo")
+        registry.register(surface)
+
+        let operation = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Expenses: $1,800/mo",
+            proposedText: "Expenses: $2,100/mo",
+            sourceHash: CosmoEditableSurfaceHasher.hash("Expenses: $1,800/mo"),
+            rationale: "Update expenses."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: surface.surfaceID))
+
+        await store.accept(operationID: operation.id, registry: registry)
+
+        XCTAssertEqual(surface.text, "Rent: $4,556/mo\nExpenses: $2,100/mo")
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
+        XCTAssertNil(store.errorText)
+    }
+
+    func testAcceptCanRetryConflictedOperationWhenOriginalTextStillExists() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: "Rent: $4,556/mo\nExpenses: $1,800/mo")
+        registry.register(surface)
+
+        let operation = CosmoAssistantProposalOperation(
+            kind: .textReplacement,
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Expenses: $1,800/mo",
+            proposedText: "Expenses: $2,100/mo",
+            sourceHash: "stale-operation-hash",
+            rationale: "Update expenses.",
+            status: .conflicted
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: surface.surfaceID))
+
+        await store.accept(operationID: operation.id, registry: registry)
+
+        XCTAssertEqual(surface.text, "Rent: $4,556/mo\nExpenses: $2,100/mo")
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
     }
 
     func testRejectMarksOperationRejected() async {
@@ -67,6 +154,68 @@ final class CosmoInlineAssistantApplicatorTests: XCTestCase {
 
         XCTAssertEqual(surface.text, "Rent: $4,556/mo")
         XCTAssertEqual(store.proposals.first?.operations.first?.status, .rejected)
+    }
+
+    func testRevertAcceptedOperationAppliesInverseThroughRegisteredSurface() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: "Rent: $4,556/mo")
+        registry.register(surface)
+
+        let operation = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Rent: $4,556/mo",
+            proposedText: "Rent: $5,000/mo",
+            sourceHash: CosmoEditableSurfaceHasher.hash("Rent: $4,556/mo"),
+            rationale: "Update the example rent."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: surface.surfaceID))
+
+        await store.accept(operationID: operation.id, registry: registry)
+        await store.revert(operationID: operation.id, registry: registry)
+
+        XCTAssertEqual(surface.text, "Rent: $4,556/mo")
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .reverted)
+    }
+
+    func testRevertAllOnlyRevertsAppliedOperations() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: "Rent: $4,556/mo\nExpenses: $1,800/mo")
+        registry.register(surface)
+
+        let rent = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Rent: $4,556/mo",
+            proposedText: "Rent: $5,000/mo",
+            sourceHash: CosmoEditableSurfaceHasher.hash("Rent: $4,556/mo\nExpenses: $1,800/mo"),
+            rationale: "Update rent."
+        )
+        let expenses = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Expenses: $1,800/mo",
+            proposedText: "Expenses: $2,100/mo",
+            sourceHash: CosmoEditableSurfaceHasher.hash("Rent: $5,000/mo\nExpenses: $1,800/mo"),
+            rationale: "Update expenses."
+        )
+        let proposal = CosmoAssistantProposal(
+            prompt: "Update slide 4",
+            surfaceID: surface.surfaceID,
+            title: "Slide 4 numbers",
+            summary: "Update the rent and expenses.",
+            operations: [rent, expenses]
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal)
+
+        await store.accept(operationID: rent.id, registry: registry)
+        await store.accept(operationID: expenses.id, registry: registry)
+        await store.revertAll(proposalID: proposal.id, registry: registry)
+
+        XCTAssertEqual(surface.text, "Rent: $4,556/mo\nExpenses: $1,800/mo")
+        XCTAssertEqual(store.proposals.first?.operations.map(\.status), [.reverted, .reverted])
     }
 
     private func proposal(

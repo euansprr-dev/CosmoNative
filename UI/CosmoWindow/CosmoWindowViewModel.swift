@@ -442,6 +442,7 @@ final class CosmoWindowViewModel: ObservableObject {
         contextProvider = provider
         if let editableProvider = provider as? any CosmoEditableSurfaceProvider {
             CosmoEditableSurfaceRegistry.shared.register(editableProvider)
+            CosmoInlineAssistantStore.shared.activateSession(surfaceID: editableProvider.surfaceID)
         }
 
         activeContext = CosmoActiveContext(
@@ -1326,6 +1327,187 @@ final class CosmoWindowViewModel: ObservableObject {
         pendingContextTraceSections = retrievalTraceSections + toolTraceSections
 
         return response
+    }
+
+    func prepareInlineAssistantAgentRequest(
+        prompt: String,
+        route: CosmoInlineAssistantRoute,
+        snapshot: CosmoEditableSourceSnapshot?,
+        inlineContextAtoms: [Atom] = [],
+        selectedSkillID: String? = nil
+    ) async -> CosmoInlineAssistantPreparedAgentRequest {
+        let inlineRequestContextAtoms = Self.uniqueAtoms(mentionedAtoms + inlineContextAtoms)
+        let hasMentionedAtoms = !mentionedAtoms.isEmpty
+        let hasInlineContextAtoms = !inlineRequestContextAtoms.isEmpty
+        let activeProfile = selectedAgentProfile
+        let writingModeAgentSelected = Self.allowsWritingModeAgentRoute(
+            selectedAgentProfileID: activeProfile?.id
+        )
+        let workingContextCache = CosmoInlineAssistantWorkingContextCache.shared
+        let previousWorkingContextFrame = workingContextCache.currentFrame(
+            conversationID: conversationId,
+            snapshot: snapshot,
+            activeAtomUUID: activeContext.data.currentAtomUUID
+        )
+        let skillPlan = CosmoInlineAssistantSkillRuntime.plan(
+            for: prompt,
+            surfaceKind: snapshot?.kind,
+            previousSkillID: previousWorkingContextFrame?.skillID,
+            selectedSkillID: selectedSkillID
+        )
+        let responseMode: AgentResponseMode = route == .action ? .automatic : .inlineAssistant
+        let workingContextFrame = workingContextCache.updateFrame(
+            conversationID: conversationId,
+            prompt: prompt,
+            route: route,
+            snapshot: snapshot,
+            activeAtomUUID: activeContext.data.currentAtomUUID,
+            activeClientUUID: activeContext.data.activeClientUUID,
+            contextAtoms: inlineRequestContextAtoms,
+            skillPlan: skillPlan
+        )
+        let resolvedSkillContext = await CosmoInlineSkillContextResolver.resolve(
+            skillPlan: skillPlan,
+            snapshot: snapshot,
+            prompt: prompt,
+            activeClientUUID: activeContext.data.activeClientUUID,
+            inlineContextAtoms: inlineRequestContextAtoms
+        )
+
+        await ensurePinnedContextForCurrentTurn()
+
+        var enrichedText: String
+        let contextBlock = buildContextBlock()
+        if !contextBlock.isEmpty {
+            enrichedText = """
+            \(prompt)
+
+            <active_cosmo_context>
+            \(contextBlock)
+            </active_cosmo_context>
+            """
+        } else {
+            enrichedText = prompt
+        }
+
+        if hasInlineContextAtoms {
+            enrichedText = MentionContextHelper.expandMentionsInline(
+                text: enrichedText,
+                atoms: inlineRequestContextAtoms
+            )
+        }
+
+        if hasMentionedAtoms {
+            clearMentions()
+        }
+
+        var forcedBundles = forcedToolBundles(for: prompt)
+        if !writingModeAgentSelected {
+            forcedBundles.remove(.writing)
+        }
+        forcedBundles.formUnion(CosmoInlineAssistantToolBundlePolicy.bundles(
+            for: prompt,
+            route: route,
+            surfaceKind: snapshot?.kind
+        ))
+        forcedBundles.formUnion(skillPlan.toolBundles)
+        forcedBundles = CosmoInlineAssistantToolBundlePolicy.reducedBundlesForInlineRequest(
+            forcedBundles,
+            route: route,
+            resolvedContexts: resolvedSkillContext.satisfiedContexts
+        )
+
+        let rawProfileToolBundles = activeProfile?.toolBundles.filter { bundle in
+            writingModeAgentSelected || bundle != .writing
+        } ?? []
+        let reducedProfileToolBundles = CosmoInlineAssistantToolBundlePolicy.reducedBundlesForInlineRequest(
+            Set(rawProfileToolBundles),
+            route: route,
+            resolvedContexts: resolvedSkillContext.satisfiedContexts
+        )
+        let profileToolBundles = reducedProfileToolBundles == Set(rawProfileToolBundles)
+            ? rawProfileToolBundles
+            : reducedProfileToolBundles.sorted { $0.rawValue < $1.rawValue }
+        let retrievalRequest = Self.contextRetrievalRequest(
+            text: prompt,
+            conversationId: conversationId,
+            pinnedSourceIDs: pinnedContextSourceIDs,
+            activeAtomUUID: activeContext.data.currentAtomUUID,
+            activeClientUUID: activeContext.data.activeClientUUID
+        )
+        // Surgical edits fetch what they need via tools (e.g. get_client_profile), so skip
+        // the embeddings-backed pre-retrieval for action edits — it's redundant there and was
+        // the bulk of `prepare` latency (worse when the local embeddings daemon is cold).
+        let retrievalResults = route == .action
+            ? []
+            : ((try? await CosmoRetrievalService.shared.retrieve(retrievalRequest)) ?? [])
+        let coreMemory = (try? await CosmoMemoryService.shared.coreMemory()) ?? []
+        let workingMemory = (try? await CosmoMemoryService.shared.workingMemory(conversationID: conversationId)) ?? []
+        let contextPack = ContextPackAssembler.assemble(
+            request: retrievalRequest,
+            retrievalResults: retrievalResults,
+            coreMemory: coreMemory,
+            workingMemory: workingMemory,
+            recallMemory: []
+        )
+        let hasContextPackContent = !contextPack.retrievedResults.isEmpty || !coreMemory.isEmpty || !workingMemory.isEmpty
+        let runtimePrompt = runtimePromptLayer(
+            collaboratorPrompt: collaboratorPreset?.runtimePrompt,
+            agentProfile: activeProfile,
+            forcedBundles: forcedBundles
+        )
+        let inlinePrompt = CosmoInlineAssistantInstructionPrompt.make(
+            route: route,
+            snapshot: snapshot,
+            skillPlan: skillPlan,
+            workingContextFrame: workingContextFrame
+        )
+        let systemPromptOverride = [
+            hasContextPackContent ? contextPack.promptBlock : nil,
+            runtimePrompt,
+            resolvedSkillContext.isEmpty ? nil : resolvedSkillContext.promptBlock,
+            inlinePrompt
+        ]
+        .compactMap { $0 }
+        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        .joined(separator: "\n\n")
+
+        return CosmoInlineAssistantPreparedAgentRequest(
+            prompt: enrichedText,
+            // Dedicated, surface-scoped conversation so the inline assistant doesn't drag
+            // in (or grow) the large shared Cosmo-window chat history on every edit.
+            conversationID: CosmoInlineAssistantSessionScope.conversationID(for: snapshot?.surfaceID),
+            // Surgical edits run on the fast sensor tier (Haiku) by default — the heavy
+            // global model is overkill for in-place edits and is far slower on cold calls.
+            tierOverride: modelOverride ?? skillPlan.preferredModelTier ?? activeProfile?.preferredModelTier ?? .sensor,
+            systemPromptOverride: systemPromptOverride.isEmpty ? nil : systemPromptOverride,
+            responseMode: responseMode,
+            profileToolBundles: profileToolBundles,
+            forcedToolBundles: forcedBundles,
+            contextAtomUUIDs: Array(linkedAtomUUIDs.union(inlineRequestContextAtoms.map(\.uuid))),
+            contextSourceIDs: pinnedContextSourceIDs,
+            activeClientUUID: activeContext.data.activeClientUUID
+        )
+    }
+
+    func finishInlineAssistantAgentRequest(
+        contextAtomUUIDs: [String],
+        contextSourceIDs: [String]
+    ) {
+        mergePinnedContextSourceIDs(contextSourceIDs)
+        linkedAtomUUIDs.formUnion(contextAtomUUIDs)
+    }
+
+    private static func uniqueAtoms(_ atoms: [Atom]) -> [Atom] {
+        var seen: Set<String> = []
+        var unique: [Atom] = []
+
+        for atom in atoms where !seen.contains(atom.uuid) {
+            seen.insert(atom.uuid)
+            unique.append(atom)
+        }
+
+        return unique
     }
 
     private func mergePinnedContextSourceIDs(_ sourceIDs: [String]) {

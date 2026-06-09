@@ -182,6 +182,14 @@ struct MainView: View {
     // Activation loading overlay (shown during idea→content navigation)
     @State private var showActivationLoading = false
     @State private var activationLoadingMessage = ""
+    @State private var focusModeNavigationTask: Task<Void, Never>?
+    @State private var focusModeNavigationRequestID = UUID()
+    @State private var thinkspaceSwitchTask: Task<Void, Never>?
+    @State private var thinkspaceSwitchRequestID = UUID()
+    @State private var creatorProfileLoadTask: Task<Void, Never>?
+    @State private var creatorProfileLoadRequestID = UUID()
+    @State private var commandKNavigationTask: Task<Void, Never>?
+    @State private var commandKNavigationRequestID = UUID()
 
     // Creator database overlay
     @State private var showCreatorDatabase = false
@@ -228,18 +236,20 @@ struct MainView: View {
             }
             .zIndex(40)
 
-            // Bottom assistant composer: answers open the side pane, actions stay as diff proposals.
-            VStack {
-                Spacer()
-                CosmoInlineAssistantReviewOverlay(store: inlineAssistantStore)
-                    .padding(.bottom, 8)
+            if CosmoInlineAssistantBarVisibilityPolicy.shouldShow(isInlinePaneOpen: isInlineAssistantPaneOpen) {
+                // Bottom assistant composer: answers open the side pane, actions stay as diff proposals.
+                VStack {
+                    Spacer()
+                    CosmoInlineAssistantReviewOverlay(store: inlineAssistantStore)
+                        .padding(.bottom, 8)
 
-                CosmoInlineAssistantBar(store: inlineAssistantStore) {
-                    openInlineAssistantPane()
+                    CosmoInlineAssistantBar(store: inlineAssistantStore) {
+                        openInlineAssistantPane()
+                    }
+                    .padding(.bottom, 24)
                 }
-                .padding(.bottom, 24)
+                .zIndex(45)
             }
-            .zIndex(45)
 
             // Focus mode is now rendered inside SplitPaneContainer above (z-index 195 when active)
 
@@ -662,9 +672,7 @@ struct MainView: View {
             case .commandCenter:
                 break // Full-screen dashboard, no thinkspace switch needed
             case .thinkspace(let id):
-                if let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == id }) {
-                    Task { await thinkspaceManager.switchTo(ts) }
-                }
+                switchToThinkspaceForDestination(id: id)
             case .inbox:
                 break
             case .codex:
@@ -774,10 +782,15 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .switchToThinkspace)) { notification in
             // Switch to the selected Thinkspace from Command-K
             if let id = notification.userInfo?["id"] as? Int64 {
-                Task {
+                thinkspaceSwitchTask?.cancel()
+                let requestID = UUID()
+                thinkspaceSwitchRequestID = requestID
+                thinkspaceSwitchTask = Task { @MainActor in
                     if let atom = try? await AtomRepository.shared.fetch(id: id),
                        let thinkspace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == atom.uuid }) {
+                        guard thinkspaceSwitchRequestID == requestID, !Task.isCancelled else { return }
                         await ThinkspaceManager.shared.switchTo(thinkspace)
+                        guard thinkspaceSwitchRequestID == requestID, !Task.isCancelled else { return }
                         lastThinkspaceId = atom.uuid
                         currentDestination = .thinkspace(id: atom.uuid)
                     }
@@ -791,8 +804,12 @@ struct MainView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openCreatorProfile"))) { notification in
             guard let creatorUUID = notification.userInfo?["creatorUUID"] as? String else { return }
-            Task { @MainActor in
+            creatorProfileLoadTask?.cancel()
+            let requestID = UUID()
+            creatorProfileLoadRequestID = requestID
+            creatorProfileLoadTask = Task { @MainActor in
                 if let atom = try? await AtomRepository.shared.fetch(uuid: creatorUUID) {
+                    guard creatorProfileLoadRequestID == requestID, !Task.isCancelled else { return }
                     creatorProfileAtom = atom
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                         showCreatorProfile = true
@@ -811,6 +828,10 @@ struct MainView: View {
         .onDisappear {
             removeRightClickMonitor()
             removeGlobalKeyMonitor()
+            focusModeNavigationTask?.cancel()
+            thinkspaceSwitchTask?.cancel()
+            creatorProfileLoadTask?.cancel()
+            commandKNavigationTask?.cancel()
         }
         // Voice navigation handler
         .onReceive(NotificationCenter.default.publisher(for: .voiceNavigationRequested)) { notification in
@@ -964,18 +985,14 @@ struct MainView: View {
                     isContentPushAnimating: isSidebarContentPushAnimating
                 ) else { return }
 
-                let visibleSignals = signals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
-                let cappedSignals = Array(
-                    visibleSignals
-                        .sorted {
-                            let lhsDistance = max(0, $0.rect.minX - sidebarReservedWidth)
-                            let rhsDistance = max(0, $1.rect.minX - sidebarReservedWidth)
-                            if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
-                            return $0.intensity > $1.intensity
-                        }
-                        .prefix(8)
+                let cappedSignals = MainSidebarSceneSignalPolicy.routeSignals(
+                    from: signals,
+                    sidebarReservedWidth: sidebarReservedWidth
                 )
-                if routeSceneSignals != cappedSignals {
+                if MainSidebarSceneSignalPolicy.shouldUpdateRouteSignals(
+                    current: routeSceneSignals,
+                    next: cappedSignals
+                ) {
                     routeSceneSignals = cappedSignals
                 }
             }
@@ -1102,15 +1119,39 @@ struct MainView: View {
         )
     }
 
-    private func updateSidebarInteractionWidth(reservedWidth: CGFloat? = nil) {
-        if let reservedWidth {
-            sidebarReservedWidth = reservedWidth
+    private func switchToThinkspaceForDestination(id: String) {
+        guard thinkspaceManager.currentThinkspace?.id != id else { return }
+        guard let thinkspace = thinkspaceManager.thinkspaces.first(where: { $0.id == id }) else { return }
+
+        thinkspaceSwitchTask?.cancel()
+        let requestID = UUID()
+        thinkspaceSwitchRequestID = requestID
+        thinkspaceSwitchTask = Task { @MainActor in
+            guard thinkspaceSwitchRequestID == requestID, !Task.isCancelled else { return }
+            await thinkspaceManager.switchTo(thinkspace)
+            guard thinkspaceSwitchRequestID == requestID, !Task.isCancelled else { return }
         }
-        sidebarInteractionWidth = isSidebarVisible ? sidebarReservedWidth : 0
-        crossDragManager.sidebarWidth = sidebarInteractionWidth
+    }
+
+    private func updateSidebarInteractionWidth(reservedWidth: CGFloat? = nil) {
+        let nextReservedWidth = reservedWidth ?? sidebarReservedWidth
+        let nextInteractionWidth = isSidebarVisible ? nextReservedWidth : 0
+
+        if sidebarReservedWidth != nextReservedWidth {
+            sidebarReservedWidth = nextReservedWidth
+        }
+
+        if sidebarInteractionWidth != nextInteractionWidth {
+            sidebarInteractionWidth = nextInteractionWidth
+        }
+
+        if crossDragManager.sidebarWidth != nextInteractionWidth {
+            crossDragManager.sidebarWidth = nextInteractionWidth
+        }
+
         rightClickRoutingState.updateSidebar(
             isHidden: !isSidebarVisible,
-            interactionWidth: sidebarInteractionWidth
+            interactionWidth: nextInteractionWidth
         )
     }
 
@@ -1293,7 +1334,7 @@ struct MainView: View {
         case .thinkspace:
             return mergedSidebarSceneMaterial(
                 base: canvasSceneMaterial.dampened(0.82),
-                extraSignals: routeSceneSignals.filter { $0.source == .canvasBlock || $0.source == .canvasCluster }
+                extraSignals: MainSidebarSceneSignalPolicy.canvasSignals(from: routeSceneSignals)
             )
         case .commandCenter, .inbox, .discover, .swipeFile:
             return sidebarRouteSceneMaterial
@@ -1522,13 +1563,25 @@ struct MainView: View {
         asPane: Bool = false,
         restoreCommandKOnFocusClose: Bool = true
     ) {
+        focusModeNavigationTask?.cancel()
+        let requestID = UUID()
+        focusModeNavigationRequestID = requestID
+
         if asPane {
-            Task { @MainActor in
+            if showActivationLoading {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    showActivationLoading = false
+                }
+            }
+
+            focusModeNavigationTask = Task { @MainActor in
                 do {
                     guard let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                        guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
                         print("MainView: handleOpenBlockInFocusMode — atom not found: \(atomUUID)")
                         return
                     }
+                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
 
                     let entityType = mapAtomTypeToEntityType(atom.type)
                     guard let entityId = atom.id else {
@@ -1536,11 +1589,15 @@ struct MainView: View {
                         return
                     }
                     guard paneManager.canOpen(entityId: entityId, appState: appState) else { return }
+                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
 
                     withAnimation(ProMotionSprings.snappy) {
                         paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))
                     }
+                } catch is CancellationError {
+                    return
                 } catch {
+                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
                     print("MainView: handleOpenBlockInFocusMode pane failed: \(error)")
                 }
             }
@@ -1560,14 +1617,16 @@ struct MainView: View {
         )
         closeCommandK(clearViewModel: false)
 
-        Task { @MainActor in
+        focusModeNavigationTask = Task { @MainActor in
             do {
                 if let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) {
+                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
                     let entityType = mapAtomTypeToEntityType(atom.type)
                     let entityId = atom.id ?? 0
 
                     // Brief delay for the loading overlay to be visible
-                    try? await Task.sleep(for: .milliseconds(300))
+                    try await Task.sleep(for: .milliseconds(300))
+                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
 
                     // Dismiss current focus mode if one is open, then navigate
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -1575,19 +1634,24 @@ struct MainView: View {
                     }
 
                     // Small delay to allow the previous focus mode to close
-                    try? await Task.sleep(for: .milliseconds(200))
+                    try await Task.sleep(for: .milliseconds(200))
+                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
 
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         appState.focusedEntity = EntitySelection(id: entityId, type: entityType)
                         showActivationLoading = false
                     }
                 } else {
+                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
                     print("MainView: handleOpenBlockInFocusMode — atom not found: \(atomUUID)")
                     withAnimation(.easeOut(duration: 0.2)) {
                         showActivationLoading = false
                     }
                 }
+            } catch is CancellationError {
+                return
             } catch {
+                guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
                 print("MainView: handleOpenBlockInFocusMode failed: \(error)")
                 withAnimation(.easeOut(duration: 0.2)) {
                     showActivationLoading = false
@@ -1652,6 +1716,10 @@ struct MainView: View {
         withAnimation(ProMotionSprings.snappy) {
             paneManager.openOrActivateInlineAssistant()
         }
+    }
+
+    private var isInlineAssistantPaneOpen: Bool {
+        paneManager.panes.contains { $0.id == PaneContent.inlineAssistant.id }
     }
 
     // MARK: - Navigation Helpers
@@ -2213,27 +2281,37 @@ struct MainView: View {
     /// Handles opening an atom from Command-K by UUID
     /// Fetches the atom type and routes to the appropriate view
     private func handleOpenAtomFromCommandK(atomUUID: String) {
+        commandKNavigationTask?.cancel()
+        let requestID = UUID()
+        commandKNavigationRequestID = requestID
+
         // Hide Command-K behind focus mode (keep alive for state preservation)
         preserveCommandKBehindFocusMode()
 
         // Fetch atom and open in appropriate mode
-        Task { @MainActor in
+        commandKNavigationTask = Task { @MainActor in
             do {
                 // Look up atom by UUID to get its type and ID
                 if let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) {
+                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
+
                     // Map AtomType to EntityType for navigation
                     let entityType = mapAtomTypeToEntityType(atom.type)
 
                     // Always open in focus mode — works from any view
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        NotificationCenter.default.post(
-                            name: .enterFocusMode,
-                            object: nil,
-                            userInfo: ["type": entityType, "id": atom.id ?? 0, "commandKTab": "library"]
-                        )
-                    }
+                    try await Task.sleep(for: .milliseconds(150))
+                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
+
+                    NotificationCenter.default.post(
+                        name: .enterFocusMode,
+                        object: nil,
+                        userInfo: ["type": entityType, "id": atom.id ?? 0, "commandKTab": "library"]
+                    )
                 }
+            } catch is CancellationError {
+                return
             } catch {
+                guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
                 print("⚠️ Failed to open atom from Command-K: \(error)")
             }
         }
@@ -2242,28 +2320,48 @@ struct MainView: View {
     /// Routes Command-K "Go to Object" to the atom's spatial home.
     /// Placed atoms open on their primary thinkspace canvas; unplaced atoms open in Inbox.
     private func handleGoToObjectFromCommandK(atomUUID: String) {
+        commandKNavigationTask?.cancel()
+        let requestID = UUID()
+        commandKNavigationRequestID = requestID
+
         preserveCommandKBehindFocusMode()
 
-        Task { @MainActor in
+        commandKNavigationTask = Task { @MainActor in
             let memberships = (try? await AtomRepository.shared.fetchThinkspaceMembership(for: atomUUID)) ?? []
+            guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
+
             if let targetThinkspaceId = memberships.first {
                 currentDestination = .thinkspace(id: targetThinkspaceId)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                do {
+                    try await Task.sleep(for: .milliseconds(350))
+                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
+
                     NotificationCenter.default.post(
                         name: CosmoNotification.Navigation.openEntityOnCanvas,
                         object: nil,
                         userInfo: ["atomUUID": atomUUID]
                     )
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
                 }
             } else {
                 inboxRoute = .global
                 currentDestination = .inbox
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                do {
+                    try await Task.sleep(for: .milliseconds(250))
+                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
+
                     NotificationCenter.default.post(
                         name: CosmoNotification.Inbox.focusDatabaseItem,
                         object: nil,
                         userInfo: ["uuid": atomUUID]
                     )
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
                 }
             }
         }

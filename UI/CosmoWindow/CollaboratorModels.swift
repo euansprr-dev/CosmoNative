@@ -23,6 +23,7 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
     case webResearch
     case contentSearch
     case clientProfiles
+    case clientFactLookup
     case clientMemory
     case swipes
     case writing
@@ -40,6 +41,7 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
         case .webResearch: return "Web Research"
         case .contentSearch: return "Content Search"
         case .clientProfiles: return "Client Profiles"
+        case .clientFactLookup: return "Client Fact Lookup"
         case .clientMemory: return "Client Memory"
         case .swipes: return "Swipes"
         case .writing: return "Writing"
@@ -57,6 +59,7 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
         case .webResearch: return "globe"
         case .contentSearch: return "doc.text.magnifyingglass"
         case .clientProfiles: return "person.crop.rectangle.stack"
+        case .clientFactLookup: return "person.text.rectangle"
         case .clientMemory: return "person.badge.clock"
         case .swipes: return "rectangle.stack"
         case .writing: return "pencil.and.scribble"
@@ -78,6 +81,8 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
             return "Lets the agent search, read, create, and update Cosmo ideas, content, captures, and thinkspaces."
         case .clientProfiles:
             return "Lets the agent list and read client profiles, voice notes, brand angles, audience models, and client-tagged work."
+        case .clientFactLookup:
+            return "Lets the agent look up a few relevant client facts without loading the full client profile."
         case .clientMemory:
             return "Lets the agent read and update persistent client-specific memory such as preferences, voice quirks, forbidden patterns, and learned rules."
         case .swipes:

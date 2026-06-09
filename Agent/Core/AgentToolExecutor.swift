@@ -180,6 +180,7 @@ class AgentToolExecutor {
         // Client Profiles
         case "list_client_profiles": return try await listClientProfiles(arguments)
         case "get_client_profile": return try await getClientProfile(arguments)
+        case "lookup_client_facts": return try await lookupClientFacts(arguments)
         // Client Memory
         case "update_client_memory": return try await updateClientMemory(arguments)
         case "list_client_memory": return try await listClientMemory(arguments)
@@ -518,7 +519,7 @@ class AgentToolExecutor {
             "phase": "ideation",
             "sourceIdeaUUID": uuid,
             "wordCount": 0,
-            "activatedAt": ISO8601DateFormatter().string(from: Date())
+            "activatedAt": ISO8601.string(from: Date())
         ]
         if let clientUUID = clientUUID { contentMeta["clientProfileUUID"] = clientUUID }
         if let platform = platform { contentMeta["platform"] = platform }
@@ -1217,7 +1218,7 @@ class AgentToolExecutor {
         // Mark as swipe file
         item.isSwipeFile = true
         item.contentSource = SwipeContentSource.clipboard.rawValue
-        item.updatedAt = ISO8601DateFormatter().string(from: Date())
+        item.updatedAt = ISO8601.string(from: Date())
 
         // Save to GRDB
         do {
@@ -1527,7 +1528,7 @@ class AgentToolExecutor {
             sourceType: sourceType
         )
         item.body = body
-        item.updatedAt = ISO8601DateFormatter().string(from: Date())
+        item.updatedAt = ISO8601.string(from: Date())
 
         // Save to GRDB
         do {
@@ -1674,7 +1675,7 @@ class AgentToolExecutor {
         if let swipeUUIDs = swipeUUIDs, !swipeUUIDs.isEmpty { metaDict["inheritedSwipeUUIDs"] = swipeUUIDs }
         if let framework = framework { metaDict["inheritedFramework"] = framework }
         if let hooks = hooks, !hooks.isEmpty { metaDict["inheritedHooks"] = hooks }
-        metaDict["activatedAt"] = ISO8601DateFormatter().string(from: Date())
+        metaDict["activatedAt"] = ISO8601.string(from: Date())
 
         let metaJSON: String?
         if let data = try? JSONSerialization.data(withJSONObject: metaDict),
@@ -1846,7 +1847,7 @@ class AgentToolExecutor {
         }
 
         let operations = rawOperations.map { raw in
-            CosmoAssistantProposalOperation(
+            let operation = CosmoAssistantProposalOperation(
                 kind: CosmoAssistantProposalOperationKind(rawValue: raw["kind"] as? String ?? "") ?? .textReplacement,
                 targetID: raw["targetID"] as? String ?? "",
                 anchorID: raw["anchorID"] as? String,
@@ -1855,6 +1856,14 @@ class AgentToolExecutor {
                 sourceHash: raw["sourceHash"] as? String ?? "",
                 rationale: raw["rationale"] as? String ?? "Proposed by Cosmo."
             )
+            return CosmoInlineAssistantOutlineBodyInsertionNormalizer.normalized(
+                operation: operation,
+                prompt: prompt
+            )
+        }
+
+        if operations.contains(where: { CosmoInlineAssistantEditScopeGuard.shouldReject(operation: $0, prompt: prompt) }) {
+            return jsonError(CosmoInlineAssistantEditScopeGuard.rejectionMessage)
         }
 
         let proposal = CosmoAssistantProposal(
@@ -2011,7 +2020,7 @@ class AgentToolExecutor {
         let calendar = Calendar.current
 
         let targetDate: Date
-        if let dateStr = dateStr, let parsed = ISO8601DateFormatter().date(from: dateStr) {
+        if let dateStr = dateStr, let parsed = ISO8601.date(from: dateStr) {
             targetDate = parsed
         } else if let dateStr = dateStr {
             // Try simple date format
@@ -2028,11 +2037,11 @@ class AgentToolExecutor {
         let dayBlocks = blocks.filter { atom in
             let meta = atom.metadataValue(as: ScheduleBlockMetadata.self)
             if let startStr = meta?.startTime,
-               let startDate = ISO8601DateFormatter().date(from: startStr) {
+               let startDate = ISO8601.date(from: startStr) {
                 return calendar.isDate(startDate, inSameDayAs: dayStart)
             }
             // Fallback to createdAt
-            if let date = ISO8601DateFormatter().date(from: atom.createdAt) {
+            if let date = ISO8601.date(from: atom.createdAt) {
                 return calendar.isDate(date, inSameDayAs: dayStart)
             }
             return false
@@ -2052,7 +2061,7 @@ class AgentToolExecutor {
         }
 
         return jsonEncode([
-            "date": ISO8601DateFormatter().string(from: dayStart),
+            "date": ISO8601.string(from: dayStart),
             "blocks": items,
             "count": items.count
         ] as [String: Any])
@@ -2172,7 +2181,7 @@ class AgentToolExecutor {
         guard let updated = try await atomRepo.update(uuid: uuid, updates: { atom in
             var metaDict = (atom.metadataDict ?? [:])
             metaDict["isCompleted"] = true
-            metaDict["completedAt"] = ISO8601DateFormatter().string(from: Date())
+            metaDict["completedAt"] = ISO8601.string(from: Date())
             metaDict["status"] = "completed"
             if let data = try? JSONSerialization.data(withJSONObject: metaDict),
                let json = String(data: data, encoding: .utf8) {
@@ -2273,7 +2282,7 @@ class AgentToolExecutor {
 
         // Group snapshots by day, check consecutive
         let dailySnapshots = snapshots.compactMap { atom -> Date? in
-            ISO8601DateFormatter().date(from: atom.createdAt)
+            ISO8601.date(from: atom.createdAt)
         }.map { calendar.startOfDay(for: $0) }
 
         let uniqueDays = Set(dailySnapshots).sorted(by: >)
@@ -2395,7 +2404,7 @@ class AgentToolExecutor {
             "key": field,
             "value": value,
             "source": "agent_memory",
-            "updatedAt": ISO8601DateFormatter().string(from: Date())
+            "updatedAt": ISO8601.string(from: Date())
         ]
         let metadataJSON = (try? JSONSerialization.data(withJSONObject: metaDict)).flatMap { String(data: $0, encoding: .utf8) }
 
@@ -3502,6 +3511,44 @@ class AgentToolExecutor {
         return jsonEncode(result)
     }
 
+    private func lookupClientFacts(_ args: [String: Any]) async throws -> String {
+        guard let clientName = trimmedString(args["client_name"]) else {
+            return jsonError("Missing required parameter: client_name")
+        }
+        guard let query = trimmedString(args["query"]) else {
+            return jsonError("Missing required parameter: query")
+        }
+
+        guard let clientAtom = try await atomRepo.fuzzyFindClient(query: clientName) else {
+            return jsonError("No client profile found matching '\(clientName)'")
+        }
+
+        guard let meta = clientAtom.metadataValue(as: ClientProfileMetadata.self) else {
+            return jsonError("Client profile '\(clientName)' has no metadata")
+        }
+
+        await rememberContextAtom(clientAtom)
+
+        let snippets = CosmoClientFactLookup.snippets(
+            meta: meta,
+            query: query,
+            maxSnippets: 3,
+            maxSnippetLength: 600
+        )
+
+        return jsonEncode([
+            "success": true,
+            "clientUUID": clientAtom.uuid,
+            "clientName": meta.clientName,
+            "query": query,
+            "snippets": snippets,
+            "count": snippets.count,
+            "message": snippets.isEmpty
+                ? "No matching client facts found for this query. Do not invent the missing detail."
+                : "Returned the most relevant compact client fact snippets."
+        ] as [String: Any])
+    }
+
     // MARK: - Intelligence Tools
 
     private func getCreatorProfile(_ args: [String: Any]) async throws -> String {
@@ -3672,7 +3719,7 @@ class AgentToolExecutor {
             .flatMap { String(data: $0, encoding: .utf8) }
 
         let structuredDict: [String: Any] = [
-            "savedAt": ISO8601DateFormatter().string(from: Date()),
+            "savedAt": ISO8601.string(from: Date()),
             "tags": tags,
             "clientName": clientName ?? ""
         ]

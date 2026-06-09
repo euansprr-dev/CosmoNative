@@ -93,10 +93,11 @@ enum AgentIntent: String, Codable, Sendable {
 enum AgentResponseMode: String, Codable, Sendable {
     case automatic
     case directChat
+    case inlineAssistant
     case inlineMentionDraftReference
 
     var shouldAnswerInline: Bool {
-        self == .directChat || self == .inlineMentionDraftReference
+        self == .directChat || self == .inlineAssistant || self == .inlineMentionDraftReference
     }
 
     var promptOverride: String? {
@@ -107,6 +108,13 @@ enum AgentResponseMode: String, Codable, Sendable {
             return """
             ## Direct Chat Mode
             Answer directly in chat through the normal agent path. Do not start a writing session, create a content atom, or use writing-engine generation/revision tools. If the user asks for writing, drafting, or editing while Writing Mode is not selected as the active agent, produce the response inline.
+            """
+        case .inlineAssistant:
+            return """
+            ## Inline Assistant Mode
+            Answer through the inline assistant pane or stage reviewed workspace edits through the inline assistant diff tools. Keep the same profile, retrieval, swipe, strategy, memory, and writing tools available as the normal Command A agent path.
+
+            Do not create a new content atom, start a writing session, or open a background workflow unless the user explicitly asks to save/create/open content. For questions, critique, voice variations, outlines, or strategic feedback, use the tools needed to gather context, then call answer_in_assistant_pane with the final user-visible response.
             """
         case .inlineMentionDraftReference:
             return """
@@ -120,7 +128,7 @@ enum AgentResponseMode: String, Codable, Sendable {
 
     func filteredTools(_ tools: [LLMToolDefinition]) -> [LLMToolDefinition] {
         switch self {
-        case .automatic:
+        case .automatic, .inlineAssistant:
             return tools
         case .directChat:
             return tools.filter { !Self.writingEngineToolNames.contains($0.name) }

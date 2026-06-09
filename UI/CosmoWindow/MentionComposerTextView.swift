@@ -14,6 +14,9 @@ struct MentionComposerTextView: NSViewRepresentable {
     let placeholder: String
     var isFocused: Binding<Bool>
     var isMentionOverlayVisible: Bool = false
+    /// When true, completed mentions render as atomic capsule pills (icon + title) and
+    /// `text` is projected back to plain `"@<title>"` tokens. Opt-in per composer.
+    var usesPillMentions: Bool = false
     var onSubmit: () -> Void
     var onTextChange: () -> Void
     var onDismissMentionOverlayFromBackspace: () -> Void = {}
@@ -67,9 +70,25 @@ struct MentionComposerTextView: NSViewRepresentable {
         textView.onDismissMentionOverlayFromBackspace = onDismissMentionOverlayFromBackspace
         context.coordinator.parent = self
 
-        // Sync text if it changed externally (e.g., mention insertion, clear on send)
-        if textView.string != text {
-            let oldLength = (textView.string as NSString).length
+        // Sync text if it changed externally (e.g., mention insertion, clear on send).
+        // In pill mode the text view holds attachments, so compare against the plain
+        // projection and rebuild pills + map the plain selection back to text-view offsets.
+        let currentPlain = context.coordinator.currentPlainText(textView)
+        let textChanged = currentPlain != text
+
+        if usesPillMentions {
+            if textChanged {
+                textView.string = text
+                context.coordinator.applyMentionPills(textView)
+            }
+            if let storage = textView.textStorage {
+                let attributed = ComposerMentionSerializer.attributedRange(forPlainRange: selection, in: storage)
+                if textChanged || !MentionComposerTextSelectionPolicy.rangesEqual(textView.selectedRange(), attributed) {
+                    textView.setSelectedRange(attributed)
+                }
+            }
+        } else if textChanged {
+            let oldLength = (currentPlain as NSString).length
             let selectionWasAtOldEnd = selection.location == oldLength && selection.length == 0
             textView.string = text
 
@@ -80,15 +99,14 @@ struct MentionComposerTextView: NSViewRepresentable {
                 newSelection = MentionComposerTextSelectionPolicy.clamped(selection, in: text)
             }
             textView.setSelectedRange(newSelection)
+            context.coordinator.applyMentionHighlighting(textView)
         } else {
             let clampedSelection = MentionComposerTextSelectionPolicy.clamped(selection, in: text)
             if !MentionComposerTextSelectionPolicy.rangesEqual(textView.selectedRange(), clampedSelection) {
                 textView.setSelectedRange(clampedSelection)
             }
+            context.coordinator.applyMentionHighlighting(textView)
         }
-
-        // Apply mention highlighting
-        context.coordinator.applyMentionHighlighting(textView)
 
         // Recalculate intrinsic height
         context.coordinator.updateIntrinsicHeight(textView)
@@ -126,16 +144,26 @@ struct MentionComposerTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.selection = textView.selectedRange()
-            parent.text = textView.string
+            if parent.usesPillMentions, let storage = textView.textStorage {
+                parent.selection = ComposerMentionSerializer.plainRange(forAttributedRange: textView.selectedRange(), in: storage)
+                parent.text = ComposerMentionSerializer.plainString(from: storage)
+            } else {
+                parent.selection = textView.selectedRange()
+                parent.text = textView.string
+                applyMentionHighlighting(textView)
+            }
             parent.onTextChange()
-            applyMentionHighlighting(textView)
             updateIntrinsicHeight(textView)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            let selectedRange = textView.selectedRange()
+            let selectedRange: NSRange
+            if parent.usesPillMentions, let storage = textView.textStorage {
+                selectedRange = ComposerMentionSerializer.plainRange(forAttributedRange: textView.selectedRange(), in: storage)
+            } else {
+                selectedRange = textView.selectedRange()
+            }
             if !MentionComposerTextSelectionPolicy.rangesEqual(parent.selection, selectedRange) {
                 parent.selection = selectedRange
             }
@@ -206,6 +234,65 @@ struct MentionComposerTextView: NSViewRepresentable {
             if selectedRange.location <= (content as NSString).length {
                 textView.setSelectedRange(selectedRange)
             }
+        }
+
+        /// Plain-text projection of the composer (pills become their `"@<title>"` token).
+        func currentPlainText(_ textView: NSTextView) -> String {
+            if parent.usesPillMentions, let storage = textView.textStorage {
+                return ComposerMentionSerializer.plainString(from: storage)
+            }
+            return textView.string
+        }
+
+        /// Replaces completed mention tokens with atomic capsule pills, preserving the
+        /// caret in plain space across the length change.
+        func applyMentionPills(_ textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+
+            let plainCaret = ComposerMentionSerializer.plainOffset(
+                forAttributedOffset: textView.selectedRange().location,
+                in: storage
+            )
+
+            storage.beginEditing()
+
+            let fullRange = NSRange(location: 0, length: storage.length)
+            storage.addAttribute(.foregroundColor, value: NSColor(DS.text), range: fullRange)
+            storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 14, weight: .regular), range: fullRange)
+            storage.removeAttribute(.backgroundColor, range: fullRange)
+
+            for atom in parent.mentionedAtoms {
+                let token = "@\(atom.title ?? "Untitled")"
+                guard token.count > 1 else { continue }
+
+                // Collect matches against the live string, then substitute back-to-front
+                // so earlier ranges stay valid as the text shortens.
+                var matches: [NSRange] = []
+                var searchStart = 0
+                while searchStart < storage.length {
+                    let searchRange = NSRange(location: searchStart, length: storage.length - searchStart)
+                    let found = (storage.string as NSString).range(of: token, options: [], range: searchRange)
+                    guard found.location != NSNotFound else { break }
+                    matches.append(found)
+                    searchStart = found.location + found.length
+                }
+
+                for range in matches.reversed() {
+                    let pill = CosmoMentionPillAttachment(atom: atom, token: token)
+                    storage.replaceCharacters(in: range, with: NSAttributedString(attachment: pill))
+                }
+            }
+
+            storage.endEditing()
+
+            // Keep new typing as normal text rather than inheriting attachment attributes.
+            textView.typingAttributes = [
+                .foregroundColor: NSColor(DS.text),
+                .font: NSFont.systemFont(ofSize: 14, weight: .regular)
+            ]
+
+            let restored = ComposerMentionSerializer.attributedOffset(forPlainOffset: plainCaret, in: storage)
+            textView.setSelectedRange(NSRange(location: min(restored, storage.length), length: 0))
         }
     }
 }
@@ -454,5 +541,183 @@ final class ComposerNSTextView: NSTextView {
             )
             placeholder.draw(in: rect)
         }
+    }
+}
+
+// MARK: - Mention pills
+
+/// A single, atomic mention rendered as a capsule (type icon + title) inside the
+/// composer's text storage. It stores `token` — the plain-text projection (`"@<title>"`)
+/// — so the composer can serialize back to a clean string for the agent and the parser.
+final class CosmoMentionPillAttachment: NSTextAttachment {
+    let token: String
+    let title: String
+    let tint: NSColor
+
+    init(atom: Atom, token: String) {
+        self.token = token
+        self.title = atom.title ?? "Untitled"
+        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .note
+        self.tint = CosmoMentionColors.nsColor(for: entityType)
+        super.init(data: nil, ofType: nil)
+        self.attachmentCell = CosmoMentionPillCell(
+            title: title,
+            iconName: atom.type.iconName,
+            tint: tint
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("CosmoMentionPillAttachment is not archivable")
+    }
+}
+
+/// Draws the capsule: tinted rounded background, type SF Symbol, and the title.
+/// Property names are prefixed to avoid colliding with `NSCell`'s `title`/`font`.
+final class CosmoMentionPillCell: NSTextAttachmentCell {
+    private let pillTitle: String
+    private let pillIcon: NSImage?
+    private let pillTint: NSColor
+    private let pillFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+
+    private let hPad: CGFloat = 8
+    private let iconSize: CGFloat = 12
+    private let gap: CGFloat = 5
+    private let vPad: CGFloat = 2
+    private let maxTitleChars = 32
+
+    init(title: String, iconName: String, tint: NSColor) {
+        self.pillTitle = title
+        self.pillTint = tint
+        let config = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .semibold)
+        self.pillIcon = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+        super.init()
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("CosmoMentionPillCell is not archivable")
+    }
+
+    private var displayTitle: String {
+        guard pillTitle.count > maxTitleChars else { return pillTitle }
+        return String(pillTitle.prefix(maxTitleChars - 1)) + "…"
+    }
+
+    private var titleAttributes: [NSAttributedString.Key: Any] {
+        [.font: pillFont, .foregroundColor: pillTint]
+    }
+
+    private func titleSize() -> NSSize {
+        (displayTitle as NSString).size(withAttributes: titleAttributes)
+    }
+
+    override func cellSize() -> NSSize {
+        let titleWidth = ceil(titleSize().width)
+        let width = hPad + iconSize + gap + titleWidth + hPad
+        let height = ceil(pillFont.ascender - pillFont.descender) + vPad * 2
+        return NSSize(width: width, height: height)
+    }
+
+    override func cellBaselineOffset() -> NSPoint {
+        // Drop the capsule so the title baseline lines up with the surrounding text.
+        NSPoint(x: 0, y: pillFont.descender - vPad)
+    }
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        let rect = cellFrame.insetBy(dx: 0.5, dy: 0.5)
+        let radius = rect.height / 2
+        let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+        pillTint.withAlphaComponent(0.12).setFill()
+        path.fill()
+
+        let midY = rect.midY
+        var cursorX = rect.minX + hPad
+
+        if let pillIcon {
+            let tinted = Self.tinted(pillIcon, with: pillTint)
+            let iconRect = NSRect(x: cursorX, y: midY - iconSize / 2, width: iconSize, height: iconSize)
+            tinted.draw(in: iconRect)
+            cursorX += iconSize + gap
+        }
+
+        let size = titleSize()
+        let textRect = NSRect(x: cursorX, y: midY - size.height / 2, width: size.width, height: size.height)
+        (displayTitle as NSString).draw(in: textRect, withAttributes: titleAttributes)
+    }
+
+    private static func tinted(_ image: NSImage, with color: NSColor) -> NSImage {
+        let result = NSImage(size: image.size)
+        result.lockFocus()
+        color.set()
+        let rect = NSRect(origin: .zero, size: image.size)
+        image.draw(in: rect)
+        rect.fill(using: .sourceAtop)
+        result.unlockFocus()
+        result.isTemplate = false
+        return result
+    }
+}
+
+/// Projects between the composer's attributed storage (which contains pill attachments)
+/// and the plain `"@<title>"` token string the agent and mention parser operate on.
+enum ComposerMentionSerializer {
+    static func plainString(from storage: NSTextStorage) -> String {
+        let nsString = storage.string as NSString
+        var result = ""
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if let pill = value as? CosmoMentionPillAttachment {
+                result += pill.token
+            } else {
+                result += nsString.substring(with: range)
+            }
+        }
+        return result
+    }
+
+    /// Attributed (text-view) offset → plain projection offset.
+    static func plainOffset(forAttributedOffset attributedOffset: Int, in storage: NSTextStorage) -> Int {
+        let clamped = max(0, min(attributedOffset, storage.length))
+        var plain = 0
+        var index = 0
+        while index < clamped {
+            if let pill = storage.attribute(.attachment, at: index, effectiveRange: nil) as? CosmoMentionPillAttachment {
+                plain += (pill.token as NSString).length
+            } else {
+                plain += 1
+            }
+            index += 1
+        }
+        return plain
+    }
+
+    /// Plain projection offset → attributed (text-view) offset.
+    static func attributedOffset(forPlainOffset plainOffset: Int, in storage: NSTextStorage) -> Int {
+        var plain = 0
+        var index = 0
+        while index < storage.length {
+            if plain >= plainOffset { return index }
+            if let pill = storage.attribute(.attachment, at: index, effectiveRange: nil) as? CosmoMentionPillAttachment {
+                plain += (pill.token as NSString).length
+            } else {
+                plain += 1
+            }
+            index += 1
+        }
+        return storage.length
+    }
+
+    static func attributedRange(forPlainRange plainRange: NSRange, in storage: NSTextStorage) -> NSRange {
+        let start = attributedOffset(forPlainOffset: plainRange.location, in: storage)
+        let end = attributedOffset(forPlainOffset: plainRange.location + plainRange.length, in: storage)
+        return NSRange(location: start, length: max(0, end - start))
+    }
+
+    static func plainRange(forAttributedRange attributedRange: NSRange, in storage: NSTextStorage) -> NSRange {
+        let start = plainOffset(forAttributedOffset: attributedRange.location, in: storage)
+        let end = plainOffset(forAttributedOffset: attributedRange.location + attributedRange.length, in: storage)
+        return NSRange(location: start, length: max(0, end - start))
     }
 }

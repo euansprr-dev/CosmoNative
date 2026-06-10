@@ -71,7 +71,26 @@ final class SwipeLibraryFilteringTests: XCTestCase {
         XCTAssertEqual(shelves.map(\.id), [.recentlyAdded, .highPerforming, .hooksToTry])
     }
 
+    func testVisibleItemsIdentityChangesOnlyWhenVisibleIDsChange() {
+        let first = makeItem(atomUUID: "a", title: "A")
+        let second = makeItem(atomUUID: "b", title: "B")
+        let sameIDsWithDifferentTitles = [
+            makeItem(atomUUID: "a", title: "A updated"),
+            makeItem(atomUUID: "b", title: "B updated")
+        ]
+
+        XCTAssertEqual(
+            SwipeLibraryVisibleItemsIdentity(items: [first, second]),
+            SwipeLibraryVisibleItemsIdentity(items: sameIDsWithDifferentTitles)
+        )
+        XCTAssertNotEqual(
+            SwipeLibraryVisibleItemsIdentity(items: [first, second]),
+            SwipeLibraryVisibleItemsIdentity(items: [second, first])
+        )
+    }
+
     private func makeItem(
+        atomUUID: String = UUID().uuidString,
         title: String,
         hookScore: Double? = nil,
         hookType: SwipeHookType? = nil,
@@ -81,7 +100,7 @@ final class SwipeLibraryFilteringTests: XCTestCase {
         createdAt: String = "2026-05-01T00:00:00Z"
     ) -> SwipeGalleryItem {
         SwipeGalleryItem(
-            atomUUID: UUID().uuidString,
+            atomUUID: atomUUID,
             title: title,
             hookText: title,
             hookScore: hookScore,

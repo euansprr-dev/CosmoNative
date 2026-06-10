@@ -280,7 +280,7 @@ class FocusBlocksEngine: ObservableObject {
     }
 
     private func saveFocusBlocksMetadata(_ json: String) async throws {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         switch documentType {
         case .idea:

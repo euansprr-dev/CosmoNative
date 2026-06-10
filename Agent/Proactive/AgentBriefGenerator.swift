@@ -155,7 +155,7 @@ class AgentBriefGenerator {
         let today = calendar.startOfDay(for: Date())
 
         let publishDates = published.compactMap { atom -> Date? in
-            ISO8601DateFormatter().date(from: atom.updatedAt)
+            ISO8601.date(from: atom.updatedAt)
         }.map { calendar.startOfDay(for: $0) }
 
         let uniqueDays = Set(publishDates).sorted(by: >)

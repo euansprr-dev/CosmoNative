@@ -83,7 +83,7 @@ final class InquiryWorkspaceViewModel {
         }
         if metadata.status != .active {
             metadata.status = .active
-            metadata.lastActiveAt = ISO8601DateFormatter().string(from: Date())
+            metadata.lastActiveAt = ISO8601.string(from: Date())
             scheduleSave()
         }
         await refreshSourceRecommendationsIfNeeded()
@@ -1100,7 +1100,7 @@ final class InquiryWorkspaceViewModel {
         structured.sourceTabs.append(tab)
         if let idx = structured.sourceRefs.firstIndex(where: { $0.sourceUUID == ref.sourceUUID }) {
             structured.sourceRefs[idx].tabId = tab.id
-            structured.sourceRefs[idx].lastOpenedAt = ISO8601DateFormatter().string(from: Date())
+            structured.sourceRefs[idx].lastOpenedAt = ISO8601.string(from: Date())
         }
         activeSourceTabId = tab.id
         scheduleSave()
@@ -1158,7 +1158,7 @@ final class InquiryWorkspaceViewModel {
     }
 
     private func upsertSourceRef(for source: Atom, tab: SourceTab, url: String, title: String) {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         let domain = URL(string: url)?.host
         if let idx = structured.sourceRefs.firstIndex(where: { $0.sourceUUID == source.uuid }) {
             structured.sourceRefs[idx].tabId = tab.id
@@ -1187,7 +1187,7 @@ final class InquiryWorkspaceViewModel {
     }
 
     private func upsertInternalSourceRef(for source: Atom, tab: SourceTab, title: String) {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         if let idx = structured.sourceRefs.firstIndex(where: { $0.sourceUUID == source.uuid }) {
             structured.sourceRefs[idx].tabId = tab.id
             structured.sourceRefs[idx].title = source.title ?? title
@@ -1931,7 +1931,7 @@ final class InquiryWorkspaceViewModel {
 
     private func persistNow() async {
         do {
-            metadata.lastActiveAt = ISO8601DateFormatter().string(from: Date())
+            metadata.lastActiveAt = ISO8601.string(from: Date())
             session = try await InquiryRepository.shared.saveSession(session, metadata: metadata, structured: structured)
             metadata = session.inquirySessionMetadata ?? metadata
             structured = session.inquirySessionStructured ?? structured

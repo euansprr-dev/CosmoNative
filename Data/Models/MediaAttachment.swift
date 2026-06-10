@@ -89,7 +89,7 @@ struct MediaAttachment: Identifiable, Codable, Equatable, FetchableRecord, Persi
         fileSize: Int64? = nil,
         metadata: String? = nil
     ) -> MediaAttachment {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         return MediaAttachment(
             id: nil,
             uuid: UUID().uuidString,

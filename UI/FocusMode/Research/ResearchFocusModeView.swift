@@ -870,7 +870,7 @@ class ResearchFocusModeViewModel: ObservableObject {
             state.contentType = ResearchSource.detectContentType(from: url)
 
             // Parse publishedAt string to Date if available
-            let publishedDate: Date? = richContent?.publishedAt.flatMap { ISO8601DateFormatter().date(from: $0) }
+            let publishedDate: Date? = richContent?.publishedAt.flatMap { ISO8601.date(from: $0) }
 
             state.source = ResearchSource(
                 url: url,
@@ -1294,7 +1294,7 @@ class ResearchFocusModeViewModel: ObservableObject {
                let newStructuredString = String(data: newStructuredData, encoding: .utf8) {
                 var updatedAtom = atom
                 updatedAtom.structured = newStructuredString
-                updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                updatedAtom.updatedAt = ISO8601.string(from: Date())
                 updatedAtom.localVersion += 1
 
                 do {

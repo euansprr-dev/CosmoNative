@@ -193,7 +193,7 @@ public struct WeightCalculator: Sendable {
     }
 
     private static func date(fromTimestamp dateString: String) -> Date? {
-        if let date = ISO8601DateFormatter().date(from: dateString) {
+        if let date = ISO8601.date(from: dateString) {
             return date
         }
 

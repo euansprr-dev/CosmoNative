@@ -127,7 +127,7 @@ class InboxRepository: ObservableObject {
             item.rationale = rationale
             item.placementPlanSummary = placementPlanSummary
             item.status = .classified
-            item.classifiedAt = ISO8601DateFormatter().string(from: Date())
+            item.classifiedAt = ISO8601.string(from: Date())
             try item.update(db)
         }
     }
@@ -138,7 +138,7 @@ class InboxRepository: ObservableObject {
         try await database.asyncWrite { db in
             guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
             item.status = .actioned
-            item.actionedAt = ISO8601DateFormatter().string(from: Date())
+            item.actionedAt = ISO8601.string(from: Date())
             try item.update(db)
         }
     }
@@ -147,7 +147,7 @@ class InboxRepository: ObservableObject {
         try await database.asyncWrite { db in
             guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
             item.status = .dismissed
-            item.actionedAt = ISO8601DateFormatter().string(from: Date())
+            item.actionedAt = ISO8601.string(from: Date())
             try item.update(db)
         }
     }
@@ -217,7 +217,7 @@ class InboxRepository: ObservableObject {
     func countTriagedThisWeek() async throws -> Int {
         let calendar = Calendar.current
         let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())) ?? Date()
-        let weekStartStr = ISO8601DateFormatter().string(from: weekStart)
+        let weekStartStr = ISO8601.string(from: weekStart)
         return try await database.asyncRead { db in
             try InboxItem
                 .filter(Column("status") == InboxItemStatus.actioned.rawValue)
@@ -229,7 +229,7 @@ class InboxRepository: ObservableObject {
     /// Delete old actioned/dismissed items (housekeeping)
     func pruneOldItems(olderThanDays days: Int = 30) async throws {
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
-        let cutoffStr = ISO8601DateFormatter().string(from: cutoff)
+        let cutoffStr = ISO8601.string(from: cutoff)
         try await database.asyncWrite { db in
             try InboxItem
                 .filter(Column("status") == InboxItemStatus.actioned.rawValue ||

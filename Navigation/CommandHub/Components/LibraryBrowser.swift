@@ -19,6 +19,8 @@ struct LibraryBrowser: View {
     @State private var isLoading = true
     @State private var selectedEntityId: UUID?
     @State private var appearedEntities: Set<UUID> = []
+    @State private var loadTask: Task<Void, Never>?
+    @State private var latestLoadID = UUID()
 
     private let columns = [
         GridItem(.adaptive(minimum: 170, maximum: 200), spacing: 12)
@@ -138,6 +140,9 @@ struct LibraryBrowser: View {
         .onReceive(NotificationCenter.default.publisher(for: .researchCreated)) { _ in
             loadEntities()
         }
+        .onDisappear {
+            loadTask?.cancel()
+        }
     }
 
     // MARK: - Capture Card
@@ -156,9 +161,15 @@ struct LibraryBrowser: View {
 
     // MARK: - Load Entities
     private func loadEntities() {
+        let loadID = UUID()
+        let selectedFilter = selectedFilter
+        let query = query
+
+        latestLoadID = loadID
+        loadTask?.cancel()
         isLoading = true
 
-        Task {
+        loadTask = Task {
             let database = CosmoDatabase.shared
             var loadedEntities: [LibraryEntity] = []
 
@@ -188,7 +199,7 @@ struct LibraryBrowser: View {
                         title: idea.title ?? "Untitled Idea",
                         preview: String(idea.content.prefix(100)),
                         metadata: ["tags": idea.tags ?? ""],
-                        updatedAt: ISO8601DateFormatter().date(from: idea.updatedAt)
+                        updatedAt: ISO8601.date(from: idea.updatedAt)
                     )
                 }
             }
@@ -218,7 +229,7 @@ struct LibraryBrowser: View {
                             "wordCount": "\(wordCount)",
                             "status": item.status
                         ],
-                        updatedAt: ISO8601DateFormatter().date(from: item.updatedAt)
+                        updatedAt: ISO8601.date(from: item.updatedAt)
                     )
                 }
             }
@@ -250,7 +261,7 @@ struct LibraryBrowser: View {
                             "transcriptStatus": item.richContent?.transcriptStatus ?? "",
                             "uuid": item.uuid
                         ],
-                        updatedAt: ISO8601DateFormatter().date(from: item.updatedAt)
+                        updatedAt: ISO8601.date(from: item.updatedAt)
                     )
                 }
             }
@@ -273,7 +284,7 @@ struct LibraryBrowser: View {
                         title: item.title ?? "Untitled",
                         preview: item.mentalModelOrNew.coreIdea ?? "",
                         metadata: ["linkCount": "3"], // TODO: Calculate actual link count
-                        updatedAt: ISO8601DateFormatter().date(from: item.updatedAt)
+                        updatedAt: ISO8601.date(from: item.updatedAt)
                     )
                 }
             }
@@ -300,7 +311,7 @@ struct LibraryBrowser: View {
                             "status": task.status,
                             "dueDate": task.dueDate ?? ""
                         ],
-                        updatedAt: ISO8601DateFormatter().date(from: task.updatedAt)
+                        updatedAt: ISO8601.date(from: task.updatedAt)
                     )
                 }
             }
@@ -336,7 +347,7 @@ struct LibraryBrowser: View {
                             "thumbnailUrl": item.thumbnailUrl ?? "",
                             "url": item.url ?? ""
                         ],
-                        updatedAt: ISO8601DateFormatter().date(from: item.createdAt)
+                        updatedAt: ISO8601.date(from: item.createdAt)
                     )
                 }
             }
@@ -350,6 +361,7 @@ struct LibraryBrowser: View {
                     entities: loadedEntities,
                     contextVector: contextVector
                 )
+                guard !Task.isCancelled else { return }
             } else {
                 // Home Page: Sort by recency
                 loadedEntities.sort { ($0.updatedAt ?? Date.distantPast) > ($1.updatedAt ?? Date.distantPast) }
@@ -364,6 +376,7 @@ struct LibraryBrowser: View {
             }
 
             await MainActor.run {
+                guard latestLoadID == loadID else { return }
                 entities = loadedEntities
                 isLoading = false
             }

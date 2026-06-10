@@ -177,7 +177,7 @@ final class SupabaseClient {
     func softDelete(table: String, uuid: String) async throws {
         try await update(table: table, uuid: uuid, data: [
             "is_deleted": true,
-            "updated_at": ISO8601DateFormatter().string(from: Date())
+            "updated_at": ISO8601.string(from: Date())
         ])
     }
 
@@ -229,7 +229,7 @@ final class SupabaseClient {
         var queryItems = [URLQueryItem(name: "is_deleted", value: "eq.false")]
 
         if let since = since {
-            let sinceStr = ISO8601DateFormatter().string(from: since)
+            let sinceStr = ISO8601.string(from: since)
             queryItems.append(URLQueryItem(name: "updated_at", value: "gt.\(sinceStr)"))
         }
 

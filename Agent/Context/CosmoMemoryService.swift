@@ -31,6 +31,10 @@ actor CosmoMemoryService {
         workingByConversationID[conversationID] ?? []
     }
 
+    func clearWorkingMemory(conversationID: String) {
+        workingByConversationID.removeValue(forKey: conversationID)
+    }
+
     func addArchivalMemory(_ value: String) async throws {
         archival.append(value)
     }

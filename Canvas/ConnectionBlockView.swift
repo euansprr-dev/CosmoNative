@@ -604,7 +604,7 @@ struct ConnectionBlockView: View {
             try? await CosmoDatabase.shared.asyncWrite { db in
                 try db.execute(
                     sql: "UPDATE atoms SET structured = ?, body = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
-                    arguments: [json, flattenedBodyText, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                    arguments: [json, flattenedBodyText, ISO8601.string(from: Date()), atomUUID]
                 )
             }
             print("[BLOCK-CONN] saveChanges() async DB write DONE — uuid=\(atomUUID)")
@@ -651,7 +651,7 @@ struct ConnectionBlockView: View {
                 )
                 try db.execute(
                     sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
-                    arguments: [fields.title ?? newTitle, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                    arguments: [fields.title ?? newTitle, fields.metadata, ISO8601.string(from: Date()), atomUUID]
                 )
             }
             // Sync: queue for Supabase push
@@ -738,7 +738,7 @@ struct ConnectionBlockView: View {
     // MARK: - Helpers
 
     private func formatTimestamp(_ timestamp: String) -> String {
-        if let date = ISO8601DateFormatter().date(from: timestamp) {
+        if let date = ISO8601.date(from: timestamp) {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .abbreviated
             return formatter.localizedString(for: date, relativeTo: Date())

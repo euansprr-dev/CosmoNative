@@ -4,7 +4,7 @@ import XCTest
 @MainActor
 final class CommandKIdeaLifecycleTests: XCTestCase {
     private var isoNow: String {
-        ISO8601DateFormatter().string(from: Date())
+        ISO8601.string(from: Date())
     }
 
     func testLedgerLayoutKeepsPreviewCollapsedUntilColumnExpanded() {

@@ -182,7 +182,7 @@ class IntelligentAlertEngine {
 
             // Check recent performance atoms (last 7 days)
             let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-            let sevenDaysAgoStr = ISO8601DateFormatter().string(from: sevenDaysAgo)
+            let sevenDaysAgoStr = ISO8601.string(from: sevenDaysAgo)
 
             let recentPerf = performanceAtoms.filter { $0.createdAt >= sevenDaysAgoStr }
 
@@ -285,7 +285,7 @@ class IntelligentAlertEngine {
             let contentAtoms = try await atomRepo.fetchAll(type: .content)
 
             let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-            let sevenDaysAgoStr = ISO8601DateFormatter().string(from: sevenDaysAgo)
+            let sevenDaysAgoStr = ISO8601.string(from: sevenDaysAgo)
 
             // Find draft-phase content older than 7 days
             let staleDrafts = contentAtoms.filter { atom in
@@ -327,7 +327,7 @@ class IntelligentAlertEngine {
 
             // Get swipes from last 7 days
             let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-            let sevenDaysAgoStr = ISO8601DateFormatter().string(from: sevenDaysAgo)
+            let sevenDaysAgoStr = ISO8601.string(from: sevenDaysAgo)
 
             let recentSwipes = researchAtoms.filter { atom in
                 atom.isSwipeFileAtom && atom.createdAt >= sevenDaysAgoStr

@@ -253,8 +253,8 @@ final class DataMigrationService {
             "structured": structured,
             "metadata": metadata,
             "links": links,
-            "created_at": row["created_at"] as? String ?? ISO8601DateFormatter().string(from: Date()),
-            "updated_at": row["updated_at"] as? String ?? ISO8601DateFormatter().string(from: Date()),
+            "created_at": row["created_at"] as? String ?? ISO8601.string(from: Date()),
+            "updated_at": row["updated_at"] as? String ?? ISO8601.string(from: Date()),
             "is_deleted": false,
             "user_id": userId,
             "_version": row["_local_version"] as? Int ?? 1,
@@ -277,8 +277,8 @@ final class DataMigrationService {
         ]
 
         payload["link_type"] = (row["link_type"] as? String) ?? NSNull()
-        payload["created_at"] = row["created_at"] as? String ?? ISO8601DateFormatter().string(from: Date())
-        payload["updated_at"] = row["updated_at"] as? String ?? ISO8601DateFormatter().string(from: Date())
+        payload["created_at"] = row["created_at"] as? String ?? ISO8601.string(from: Date())
+        payload["updated_at"] = row["updated_at"] as? String ?? ISO8601.string(from: Date())
 
         return payload
     }
@@ -309,8 +309,8 @@ final class DataMigrationService {
             "note_content": (row["note_content"] as? String) ?? NSNull(),
             "is_deleted": false,
             "user_id": userId,
-            "created_at": row["created_at"] as? String ?? ISO8601DateFormatter().string(from: Date()),
-            "updated_at": row["updated_at"] as? String ?? ISO8601DateFormatter().string(from: Date()),
+            "created_at": row["created_at"] as? String ?? ISO8601.string(from: Date()),
+            "updated_at": row["updated_at"] as? String ?? ISO8601.string(from: Date()),
         ] as [String: Any]
     }
 

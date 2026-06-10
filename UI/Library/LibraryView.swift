@@ -1229,7 +1229,7 @@ final class LibraryViewModel: ObservableObject {
                 try await CosmoDatabase.shared.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE atoms SET is_deleted = 0, updated_at = ? WHERE uuid = ?",
-                        arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                        arguments: [ISO8601.string(from: Date()), uuid]
                     )
                 }
                 // Reload to pick up restored item
@@ -1259,7 +1259,7 @@ final class LibraryViewModel: ObservableObject {
         do {
             let userTypes: [AtomType] = [.content, .research, .connection, .thinkspace]
             let typeStrings = userTypes.map { $0.rawValue }
-            let thirtyDaysAgo = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-30 * 86400))
+            let thirtyDaysAgo = ISO8601.string(from: Date().addingTimeInterval(-30 * 86400))
 
             let atoms = try await CosmoDatabase.shared.asyncRead { db in
                 try Atom

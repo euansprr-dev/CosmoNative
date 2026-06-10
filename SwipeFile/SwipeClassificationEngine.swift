@@ -166,7 +166,7 @@ final class SwipeClassificationEngine: ObservableObject {
 
         // Bump version
         merged.analysisVersion = max(merged.analysisVersion, SwipeClassificationEngine.currentSchemaVersion + 1)
-        merged.analyzedAt = ISO8601DateFormatter().string(from: Date())
+        merged.analyzedAt = ISO8601.string(from: Date())
         merged.isFullyAnalyzed = true
 
         return merged
@@ -434,7 +434,7 @@ final class SwipeClassificationEngine: ObservableObject {
             fingerprint: fingerprint,
             hookScoreReason: response.hookScoreReason,
             analysisVersion: SwipeClassificationEngine.currentSchemaVersion + 1,
-            analyzedAt: ISO8601DateFormatter().string(from: Date()),
+            analyzedAt: ISO8601.string(from: Date()),
             isFullyAnalyzed: true,
             primaryNarrative: primaryNarrative,
             secondaryNarrative: secondaryNarrative,

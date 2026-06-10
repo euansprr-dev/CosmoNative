@@ -778,14 +778,14 @@ class CosmoCore: ObservableObject {
                     msgs.append(CosmoMessage(
                         role: .user,
                         content: entry.content,
-                        timestamp: ISO8601DateFormatter().date(from: entry.createdAt) ?? Date()
+                        timestamp: ISO8601.date(from: entry.createdAt) ?? Date()
                     ))
 
                     if let response = entry.aiResponse {
                         msgs.append(CosmoMessage(
                             role: .assistant,
                             content: response,
-                            timestamp: ISO8601DateFormatter().date(from: entry.createdAt) ?? Date()
+                            timestamp: ISO8601.date(from: entry.createdAt) ?? Date()
                         ))
                     }
 
@@ -810,8 +810,8 @@ class CosmoCore: ObservableObject {
             linkedIdeas: nil,
             linkedContent: nil,
             errorMessage: nil,
-            createdAt: ISO8601DateFormatter().string(from: message.timestamp),
-            updatedAt: ISO8601DateFormatter().string(from: message.timestamp),
+            createdAt: ISO8601.string(from: message.timestamp),
+            updatedAt: ISO8601.string(from: message.timestamp),
             syncedAt: nil,
             isDeleted: false,
             localVersion: 1,

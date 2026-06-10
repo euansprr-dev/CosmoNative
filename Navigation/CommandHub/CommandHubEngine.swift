@@ -21,7 +21,7 @@ class CommandHubEngine: ObservableObject {
     private let localLLM = LocalLLM.shared
     private let editingContext = EditingContextTracker.shared
     private var searchTask: Task<Void, Never>?
-    private var debounceTimer: Timer?
+    private var searchRequestID = UUID()
     private var contextSimilarityCache: [String: Float] = [:]
 
     // Search tier tracking
@@ -147,9 +147,9 @@ class CommandHubEngine: ObservableObject {
 
     // MARK: - 3-Tier Search
     func search(_ query: String) {
-        // Cancel previous search
         searchTask?.cancel()
-        debounceTimer?.invalidate()
+        let requestID = UUID()
+        searchRequestID = requestID
 
         guard !query.isEmpty else {
             results = []
@@ -164,10 +164,10 @@ class CommandHubEngine: ObservableObject {
         performInstantSearch(query)
 
         // Tier 2: Semantic search with slight debounce - < 15ms
-        debounceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                await self?.performSemanticSearch(query)
-            }
+        searchTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled, let self else { return }
+            await self.performSemanticSearch(query, requestID: requestID)
         }
     }
 
@@ -207,7 +207,8 @@ class CommandHubEngine: ObservableObject {
     }
 
     // MARK: - Tier 2: Semantic Search (Vector Similarity)
-    private func performSemanticSearch(_ query: String) async {
+    private func performSemanticSearch(_ query: String, requestID: UUID) async {
+        guard self.searchRequestID == requestID, !Task.isCancelled else { return }
         searchTier = .semantic
 
         var semanticResults: [PaletteResult] = []
@@ -223,6 +224,7 @@ class CommandHubEngine: ObservableObject {
         let (ideas, content, tasks, research, connections, thinkspaces) = await (
             ideasTask, contentTask, tasksTask, researchTask, connectionsTask, thinkspacesTask
         )
+        guard self.searchRequestID == requestID, !Task.isCancelled else { return }
 
         semanticResults.append(contentsOf: ideas)
         semanticResults.append(contentsOf: content)
@@ -239,6 +241,7 @@ class CommandHubEngine: ObservableObject {
             isContextAwareMode = true
             contextSimilarityCache.removeAll() // Invalidate cache for new search
             semanticResults = await applyContextAwareRanking(to: semanticResults, contextVector: contextVector)
+            guard self.searchRequestID == requestID, !Task.isCancelled else { return }
         } else {
             // Home Page: Sort by text-based relevance score
             isContextAwareMode = false
@@ -262,12 +265,13 @@ class CommandHubEngine: ObservableObject {
 
         // Tier 3: LLM for complex queries (if needed)
         if semanticResults.isEmpty && query.split(separator: " ").count >= 3 {
-            await performLLMSearch(query)
+            await performLLMSearch(query, requestID: requestID)
         }
     }
 
     // MARK: - Tier 3: LLM Search (Natural Language Understanding)
-    private func performLLMSearch(_ query: String) async {
+    private func performLLMSearch(_ query: String, requestID: UUID) async {
+        guard self.searchRequestID == requestID, !Task.isCancelled else { return }
         searchTier = .llm
 
         // Use LocalLLM to understand intent
@@ -283,6 +287,7 @@ class CommandHubEngine: ObservableObject {
         """
 
         let response = await localLLM.generate(prompt: prompt, maxTokens: 100)
+        guard self.searchRequestID == requestID, !Task.isCancelled else { return }
 
         // Parse LLM response and refine search
         // This is a simplified implementation - in production, parse the JSON

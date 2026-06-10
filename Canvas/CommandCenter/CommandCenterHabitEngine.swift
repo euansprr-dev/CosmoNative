@@ -688,7 +688,7 @@ final class CommandCenterHabitEngine: ObservableObject {
         }
 
         func createdOnDay(_ atom: Atom, day: Date) -> Bool {
-            guard let date = ISO8601DateFormatter().date(from: atom.createdAt) else { return false }
+            guard let date = ISO8601.date(from: atom.createdAt) else { return false }
             return calendar.isDate(date, inSameDayAs: day)
         }
 
@@ -1050,7 +1050,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             }
 
         func createdOnDay(_ atom: Atom, day: Date) -> Bool {
-            guard let date = ISO8601DateFormatter().date(from: atom.createdAt) else { return false }
+            guard let date = ISO8601.date(from: atom.createdAt) else { return false }
             return calendar.isDate(date, inSameDayAs: day)
         }
 

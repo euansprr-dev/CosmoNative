@@ -70,7 +70,7 @@ extension SpatialEngine {
                     Int(block.size.width),
                     Int(block.size.height),
                     block.zIndex,
-                    ISO8601DateFormatter().string(from: Date()),
+                    ISO8601.string(from: Date()),
                     block.id
                 ]
             )
@@ -415,7 +415,7 @@ final class NoteRepairService {
                     linkedAtom.uuid,
                     displayTitle,
                     body,
-                    ISO8601DateFormatter().string(from: Date()),
+                    ISO8601.string(from: Date()),
                     block.id
                 ]
             )

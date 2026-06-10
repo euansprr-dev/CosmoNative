@@ -580,7 +580,7 @@ private struct CaptureLaneItemCard: View {
     }
 
     private var relativeDate: String {
-        guard let date = ISO8601DateFormatter().date(from: item.createdAt) else { return item.createdAt }
+        guard let date = ISO8601.date(from: item.createdAt) else { return item.createdAt }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
 

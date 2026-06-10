@@ -177,7 +177,7 @@ public final class ContentPipelineService: ObservableObject {
 
         var updatedAtom = contentAtom
         updatedAtom.metadata = mergedMetadataJSON(metadata, existing: contentAtom.metadata)
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         let atomToUpdate = updatedAtom
 
         try await database.write { db in
@@ -683,7 +683,7 @@ public final class ContentPipelineService: ObservableObject {
 
         var updatedAtom = atom
         updatedAtom.metadata = mergedMetadataJSON(metadata, existing: atom.metadata)
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         let atomToUpdate = updatedAtom
 
         try await database.write { db in
@@ -744,7 +744,7 @@ public final class ContentPipelineService: ObservableObject {
                 meta.draftingNote = nil
             }
             contentAtom.metadata = meta.toJSON()
-            contentAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            contentAtom.updatedAt = ISO8601.string(from: Date())
             let atomToUpdate = contentAtom
             do {
                 try await database.write { db in
@@ -793,7 +793,7 @@ public final class ContentPipelineService: ObservableObject {
             meta.inheritedSwipeUUIDs = draftPackage.swipeReferences.map(\.swipeUUID)
             meta.draftingNote = nil
             contentAtom.metadata = meta.toJSON()
-            contentAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            contentAtom.updatedAt = ISO8601.string(from: Date())
 
             let atomToUpdate = contentAtom
             do {
@@ -814,7 +814,7 @@ public final class ContentPipelineService: ObservableObject {
             if let linksData = try? JSONEncoder().encode(linkedAtom.linksList),
                let linksString = String(data: linksData, encoding: .utf8) {
                 linkedAtom.links = linksString
-                linkedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                linkedAtom.updatedAt = ISO8601.string(from: Date())
                 let finalAtom = linkedAtom
                 do {
                     try await database.write { db in

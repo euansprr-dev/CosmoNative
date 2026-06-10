@@ -16,6 +16,8 @@ struct ContentPolishView: View {
     let onBack: () -> Void
 
     @State private var analysis: WritingAnalysis?
+    @State private var analysisTask: Task<Void, Never>?
+    @State private var analysisRequestID = UUID()
     @StateObject private var scorecardEngine = ContentScorecardEngine()
     @StateObject private var redTeamEngine = RedTeamEngine()
 
@@ -63,12 +65,15 @@ struct ContentPolishView: View {
         }
         .background(DS.bg)
         .onAppear {
-            runAnalysis()
+            scheduleAnalysis(debounce: false)
             autoTriggerScorecard()
             autoTriggerRedTeam()
         }
         .onChange(of: state.draftContent) { _, _ in
-            runAnalysis()
+            scheduleAnalysis()
+        }
+        .onDisappear {
+            analysisTask?.cancel()
         }
     }
 
@@ -679,13 +684,33 @@ struct ContentPolishView: View {
 
     // MARK: - Actions
 
-    private func runAnalysis() {
+    private func scheduleAnalysis(debounce: Bool = true) {
+        analysisTask?.cancel()
+
         let text = state.draftContent
+        let requestID = UUID()
+        analysisRequestID = requestID
+
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             analysis = nil
             return
         }
-        analysis = WritingAnalyzer.shared.analyze(text: text)
+
+        analysisTask = Task {
+            if debounce {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+            }
+            guard !Task.isCancelled else { return }
+
+            let nextAnalysis = await Task.detached(priority: .utility) {
+                WritingAnalyzer.shared.analyze(text: text)
+            }.value
+
+            await MainActor.run {
+                guard analysisRequestID == requestID, !Task.isCancelled else { return }
+                analysis = nextAnalysis
+            }
+        }
     }
 
     /// Auto-trigger scorecard evaluation when entering Polish phase
@@ -813,4 +838,3 @@ struct PolishAnnotatedTextView: NSViewRepresentable {
         return attributed
     }
 }
-

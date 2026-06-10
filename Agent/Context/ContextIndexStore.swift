@@ -739,12 +739,12 @@ actor ContextIndexStore {
     }
 
     private static func dateString(_ date: Date) -> String {
-        ISO8601DateFormatter().string(from: date)
+        ISO8601.string(from: date)
     }
 
     private static func date(from value: String?) -> Date {
         guard let value else { return Date() }
-        return ISO8601DateFormatter().date(from: value) ?? Date()
+        return ISO8601.date(from: value) ?? Date()
     }
 
     private static func ftsQuery(for query: String) -> String {

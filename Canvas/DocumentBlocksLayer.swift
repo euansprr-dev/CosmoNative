@@ -316,8 +316,8 @@ struct DocumentBlocksLayer: View {
                 noteContent: nil,
                 zIndex: spatialEngine.blocks.count + 10,
                 isPinned: false,
-                createdAt: ISO8601DateFormatter().string(from: Date()),
-                updatedAt: ISO8601DateFormatter().string(from: Date()),
+                createdAt: ISO8601.string(from: Date()),
+                updatedAt: ISO8601.string(from: Date()),
                 syncedAt: nil,
                 isDeleted: false,
                 localVersion: 1,
@@ -386,7 +386,7 @@ struct DocumentBlocksLayer: View {
             try await database.asyncWrite { db in
                 try db.execute(
                     sql: "UPDATE canvas_blocks SET position_x = ?, position_y = ?, updated_at = ? WHERE id = ?",
-                    arguments: [Int(position.x), Int(position.y), ISO8601DateFormatter().string(from: Date()), blockId]
+                    arguments: [Int(position.x), Int(position.y), ISO8601.string(from: Date()), blockId]
                 )
             }
         } catch {
@@ -525,7 +525,7 @@ struct DocumentBlocksLayer: View {
                 try await database.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE canvas_blocks SET is_pinned = ?, updated_at = ? WHERE id = ?",
-                        arguments: [newPinState, ISO8601DateFormatter().string(from: Date()), payload.blockId]
+                        arguments: [newPinState, ISO8601.string(from: Date()), payload.blockId]
                     )
                 }
                 print("📌 Block \(payload.blockId) pin state: \(newPinState ? "pinned" : "unpinned")")

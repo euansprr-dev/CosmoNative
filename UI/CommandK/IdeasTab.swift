@@ -788,7 +788,7 @@ private struct IdeaBoardView: View {
                 atom = atom.removingLinks(ofType: .ideaToClient)
                 if var oldClient = try? await AtomRepository.shared.fetch(uuid: oldUUID) {
                     oldClient = oldClient.removingLink(ofType: .clientToIdea, toUUID: ideaUUID)
-                    oldClient.updatedAt = ISO8601DateFormatter().string(from: Date())
+                    oldClient.updatedAt = ISO8601.string(from: Date())
                     oldClient.localVersion += 1
                     _ = try? await AtomRepository.shared.update(oldClient)
                 }
@@ -804,13 +804,13 @@ private struct IdeaBoardView: View {
                 atom = atom.addingLink(.ideaToClient(newUUID))
                 if var newClient = try? await AtomRepository.shared.fetch(uuid: newUUID) {
                     newClient = newClient.addingLink(.clientToIdea(ideaUUID))
-                    newClient.updatedAt = ISO8601DateFormatter().string(from: Date())
+                    newClient.updatedAt = ISO8601.string(from: Date())
                     newClient.localVersion += 1
                     _ = try? await AtomRepository.shared.update(newClient)
                 }
             }
 
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            atom.updatedAt = ISO8601.string(from: Date())
             atom.localVersion += 1
             _ = try? await AtomRepository.shared.update(atom)
 
@@ -1010,7 +1010,7 @@ struct IdeaBoardCard: View {
             _ = try? await AtomRepository.shared.update(uuid: item.atomUUID) { atom in
                 atom = atom.withUpdatedIdeaMetadata { meta in
                     meta.ideaStatus = newStatus
-                    meta.statusChangedAt = ISO8601DateFormatter().string(from: Date())
+                    meta.statusChangedAt = ISO8601.string(from: Date())
                 }
             }
         }

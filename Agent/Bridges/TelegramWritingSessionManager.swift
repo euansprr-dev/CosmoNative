@@ -100,7 +100,7 @@ class TelegramWritingSessionManager {
         )
         contentMeta.platform = parsed.platform
         contentMeta.clientProfileUUID = clientUUID
-        contentMeta.activatedAt = ISO8601DateFormatter().string(from: Date())
+        contentMeta.activatedAt = ISO8601.string(from: Date())
 
         let title = parsed.topic ?? "Telegram Writing Session"
 

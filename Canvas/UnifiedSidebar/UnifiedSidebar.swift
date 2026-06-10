@@ -38,6 +38,34 @@ enum MainSidebarSceneSignalPolicy {
     static func shouldAcceptRouteSceneSignals(isContentPushAnimating: Bool) -> Bool {
         !isContentPushAnimating
     }
+
+    static func routeSignals(
+        from signals: [CosmoGlassSceneSignal],
+        sidebarReservedWidth: CGFloat
+    ) -> [CosmoGlassSceneSignal] {
+        let visibleSignals = signals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
+        return Array(
+            visibleSignals
+                .sorted {
+                    let lhsDistance = max(0, $0.rect.minX - sidebarReservedWidth)
+                    let rhsDistance = max(0, $1.rect.minX - sidebarReservedWidth)
+                    if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+                    return $0.intensity > $1.intensity
+                }
+                .prefix(8)
+        )
+    }
+
+    static func shouldUpdateRouteSignals(
+        current: [CosmoGlassSceneSignal],
+        next: [CosmoGlassSceneSignal]
+    ) -> Bool {
+        current.map(\.visualKey) != next.map(\.visualKey)
+    }
+
+    static func canvasSignals(from signals: [CosmoGlassSceneSignal]) -> [CosmoGlassSceneSignal] {
+        signals.filter { $0.source == .canvasBlock || $0.source == .canvasCluster }
+    }
 }
 
 enum MainSidebarHoverRevealPolicy {

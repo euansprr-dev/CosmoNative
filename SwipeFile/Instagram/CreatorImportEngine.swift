@@ -343,7 +343,7 @@ final class CreatorImportEngine {
 
                 // Compute catalog age
                 if let fetchedAt = meta.catalogFetchedAt,
-                   let date = ISO8601DateFormatter().date(from: fetchedAt) {
+                   let date = ISO8601.date(from: fetchedAt) {
                     catalogAge = formatCatalogAge(from: date)
                 }
             }
@@ -384,7 +384,7 @@ final class CreatorImportEngine {
             _ = try await repository.update(uuid: uuid) { atom in
                 guard var meta = atom.metadataValue(as: CreatorMetadata.self) else { return }
                 meta.catalogPostCount = posts.count
-                meta.catalogFetchedAt = ISO8601DateFormatter().string(from: Date())
+                meta.catalogFetchedAt = ISO8601.string(from: Date())
                 if let encoded = try? JSONEncoder().encode(meta),
                    let jsonStr = String(data: encoded, encoding: .utf8) {
                     atom.metadata = jsonStr
@@ -543,7 +543,7 @@ final class CreatorImportEngine {
         meta.bio = profile.biography
         meta.thumbnailUrl = profile.profilePicUrl
         meta.profileUrl = "https://www.instagram.com/\(profile.username)/"
-        meta.lastImportedAt = ISO8601DateFormatter().string(from: Date())
+        meta.lastImportedAt = ISO8601.string(from: Date())
 
         var updated = creator
         if let encoded = try? JSONEncoder().encode(meta),

@@ -105,6 +105,54 @@ enum CosmoDateFormatters {
         formatter.dateFormat = "MMMM yyyy"
         return formatter
     }()
+
+    /// Month + day for focus-mode metadata
+    /// Format: "January 15"
+    static let monthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d"
+        return formatter
+    }()
+
+    /// Compact month + day for dashboard ranges
+    /// Format: "Jan 15"
+    static let abbreviatedMonthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+
+    /// Abbreviated weekday + compact month/day for dashboard day labels
+    /// Format: "Mon, Jan 15"
+    static let abbreviatedWeekdayMonthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE, MMM d"
+        return formatter
+    }()
+
+    /// Abbreviated weekday + full month/day for dashboard headers
+    /// Format: "Mon, January 15"
+    static let abbreviatedWeekdayFullMonthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE, MMMM d"
+        return formatter
+    }()
+
+    /// Year suffix for dashboard week labels
+    /// Format: ", 2026"
+    static let commaYearSuffix: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = ", yyyy"
+        return formatter
+    }()
+
+    /// Compact month/day/year for metadata tables
+    /// Format: "Jan 15, 2024"
+    static let monthDayYear: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter
+    }()
 }
 
 // MARK: - Convenience Extensions
@@ -157,21 +205,21 @@ extension String {
 
 /// Drop-in replacement for `ISO8601DateFormatter().string(from: date)`
 /// Use: `ISO8601.string(from: Date())` instead of `ISO8601DateFormatter().string(from: Date())`
-enum ISO8601 {
+public enum ISO8601 {
     /// Convert Date to ISO 8601 string
-    static func string(from date: Date) -> String {
+    public static func string(from date: Date) -> String {
         CosmoDateFormatters.iso8601.string(from: date)
     }
 
     /// Parse ISO 8601 string to Date (tries standard, then fractional seconds)
-    static func date(from string: String) -> Date? {
+    public static func date(from string: String) -> Date? {
         CosmoDateFormatters.iso8601.date(from: string)
             ?? CosmoDateFormatters.iso8601WithFractionalSeconds.date(from: string)
     }
 
     /// Parse any ISO 8601 variant and re-emit in canonical format ("2024-01-15T14:30:00Z").
     /// Returns the original string if parsing fails.
-    static func normalize(_ string: String) -> String {
+    public static func normalize(_ string: String) -> String {
         if let date = date(from: string) {
             return CosmoDateFormatters.iso8601.string(from: date)
         }

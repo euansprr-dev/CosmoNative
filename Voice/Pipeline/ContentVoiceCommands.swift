@@ -210,7 +210,7 @@ extension PatternMatcher {
                     return [
                         "platform": VoiceAnyCodable(platform),
                         "mediaType": VoiceAnyCodable(contentType),
-                        "publishedAt": VoiceAnyCodable(ISO8601DateFormatter().string(from: Date())),
+                        "publishedAt": VoiceAnyCodable(ISO8601.string(from: Date())),
                         "source": VoiceAnyCodable("voice")
                     ]
                 }

@@ -1524,6 +1524,13 @@ struct SwipeStudyFocusModeView: View {
 
     // MARK: - Auto-Transcription
 
+    @MainActor
+    private func publishAutoTranscriptionProgress(_ message: String, expectedUUID: String) {
+        guard isViewingAtom(uuid: expectedUUID) else { return }
+        guard autoTranscriptionProgress != message else { return }
+        autoTranscriptionProgress = message
+    }
+
     private func autoTranscribe(videoURL: URL, duration: TimeInterval) async {
         let expectedUUID = (currentAtom ?? atom).uuid
         isAutoTranscribing = true
@@ -1533,19 +1540,24 @@ struct SwipeStudyFocusModeView: View {
             videoURL: videoURL,
             duration: duration
         ) { [self] progress in
+            let message: String
             switch progress {
             case .extractingFrames(let pct):
-                self.autoTranscriptionProgress = "Extracting frames... \(Int(pct * 100))%"
+                message = "Extracting frames... \(Int(pct * 100))%"
             case .recognizingText(let pct):
-                self.autoTranscriptionProgress = "Reading text... \(Int(pct * 100))%"
+                message = "Reading text... \(Int(pct * 100))%"
             case .recognizingSpeech(let pct):
-                self.autoTranscriptionProgress = "Recognizing speech... \(Int(pct * 100))%"
+                message = "Recognizing speech... \(Int(pct * 100))%"
             case .analyzingWithAI(let pct):
-                self.autoTranscriptionProgress = "AI analyzing frames... \(Int(pct * 100))%"
+                message = "AI analyzing frames... \(Int(pct * 100))%"
             case .mergingResults:
-                self.autoTranscriptionProgress = "Merging results..."
+                message = "Merging results..."
             case .complete:
-                self.autoTranscriptionProgress = "Complete"
+                message = "Complete"
+            }
+
+            Task { @MainActor in
+                publishAutoTranscriptionProgress(message, expectedUUID: expectedUUID)
             }
         }
 
@@ -1727,15 +1739,22 @@ struct SwipeStudyFocusModeView: View {
             items: items,
             shortcode: shortcode
         ) { [self] progress in
+            let message: String?
             switch progress {
             case .recognizingText(let pct):
-                self.autoTranscriptionProgress = "Reading slide text... \(Int(pct * 100))%"
+                message = "Reading slide text... \(Int(pct * 100))%"
             case .analyzingWithAI(let pct):
-                self.autoTranscriptionProgress = "AI analyzing slides... \(Int(pct * 100))%"
+                message = "AI analyzing slides... \(Int(pct * 100))%"
             case .complete:
-                self.autoTranscriptionProgress = "Complete"
+                message = "Complete"
             default:
-                break
+                message = nil
+            }
+
+            if let message {
+                Task { @MainActor in
+                    publishAutoTranscriptionProgress(message, expectedUUID: expectedUUID)
+                }
             }
         }
 
@@ -4684,6 +4703,14 @@ private struct ShimmerEffect: ViewModifier {
 
 // MARK: - Taxonomy Section
 
+private struct CreatorSearchResult: Identifiable, Equatable, Sendable {
+    let name: String
+    let uuid: String
+    let handle: String
+
+    var id: String { uuid }
+}
+
 /// Editable taxonomy classification panel for the swipe study right panel
 private struct TaxonomySection: View {
     @Binding var analysis: SwipeAnalysis?
@@ -4698,7 +4725,10 @@ private struct TaxonomySection: View {
     var onLinkCreator: ((String, String) -> Void)? = nil
 
     @State private var creatorSearchText = ""
-    @State private var creatorSearchResults: [(name: String, uuid: String)] = []
+    @State private var creatorSearchResults: [CreatorSearchResult] = []
+    @State private var creatorSearchCache: [CreatorSearchResult] = []
+    @State private var creatorSearchTask: Task<Void, Never>?
+    @State private var creatorSearchRequestID = UUID()
     @State private var showCreatorSearch = false
     @State private var linkedCreatorName: String?
 
@@ -4723,6 +4753,9 @@ private struct TaxonomySection: View {
                 nicheRow
                 creatorRow
             }
+        }
+        .onDisappear {
+            creatorSearchTask?.cancel()
         }
     }
 
@@ -5080,7 +5113,7 @@ private struct TaxonomySection: View {
     private var creatorUnlinkedView: some View {
         Button {
             showCreatorSearch = true
-            loadAllCreators()
+            loadAllCreators(refresh: true)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "plus.circle")
@@ -5111,8 +5144,7 @@ private struct TaxonomySection: View {
                     .onChange(of: creatorSearchText) { _ in filterCreators() }
                 Button {
                     showCreatorSearch = false
-                    creatorSearchText = ""
-                    creatorSearchResults = []
+                    resetCreatorSearchState()
                 } label: {
                     Image(systemName: "xmark")
                         .font(DS.caption2)
@@ -5131,7 +5163,7 @@ private struct TaxonomySection: View {
             // Results dropdown
             if !creatorSearchResults.isEmpty {
                 VStack(spacing: 0) {
-                    ForEach(creatorSearchResults.prefix(5), id: \.uuid) { creator in
+                    ForEach(creatorSearchResults.prefix(5)) { creator in
                         creatorResultRow(creator)
                     }
 
@@ -5161,7 +5193,7 @@ private struct TaxonomySection: View {
     }
 
     @ViewBuilder
-    private func creatorResultRow(_ creator: (name: String, uuid: String)) -> some View {
+    private func creatorResultRow(_ creator: CreatorSearchResult) -> some View {
         Button {
             selectCreator(name: creator.name, uuid: creator.uuid)
         } label: {
@@ -5213,38 +5245,64 @@ private struct TaxonomySection: View {
         }
     }
 
-    private func loadAllCreators() {
-        Task {
-            let creators = try? await AtomRepository.shared.fetchCreators()
-            let results = (creators ?? []).compactMap { atom -> (name: String, uuid: String)? in
-                guard let name = atom.title, !name.isEmpty else { return nil }
-                return (name: name, uuid: atom.uuid)
+    private func loadAllCreators(refresh: Bool = true) {
+        scheduleCreatorSearch(debounce: false, refresh: refresh)
+    }
+
+    private func filterCreators() {
+        scheduleCreatorSearch(refresh: creatorSearchCache.isEmpty)
+    }
+
+    private func scheduleCreatorSearch(debounce: Bool = true, refresh: Bool = false) {
+        creatorSearchTask?.cancel()
+
+        let requestID = UUID()
+        let query = creatorSearchText
+        let cachedItems = creatorSearchCache
+        creatorSearchRequestID = requestID
+
+        creatorSearchTask = Task {
+            if debounce {
+                try? await Task.sleep(nanoseconds: 120_000_000)
             }
+            guard !Task.isCancelled else { return }
+
+            let needsFetch = refresh || cachedItems.isEmpty
+            let items: [CreatorSearchResult]
+            if needsFetch {
+                let creators = try? await AtomRepository.shared.fetchCreators()
+                items = (creators ?? []).compactMap(Self.makeCreatorSearchResult)
+            } else {
+                items = cachedItems
+            }
+
+            let results = Self.filterCreatorSearchItems(items, query: query)
             await MainActor.run {
+                guard creatorSearchRequestID == requestID, !Task.isCancelled else { return }
+                if needsFetch {
+                    creatorSearchCache = items
+                }
                 creatorSearchResults = results
             }
         }
     }
 
-    private func filterCreators() {
-        if creatorSearchText.isEmpty {
-            loadAllCreators()
-            return
-        }
-        let q = creatorSearchText.lowercased()
-        Task {
-            let creators = try? await AtomRepository.shared.fetchCreators()
-            let results = (creators ?? []).compactMap { atom -> (name: String, uuid: String)? in
-                guard let name = atom.title, !name.isEmpty else { return nil }
-                let handle = atom.metadataValue(as: CreatorMetadata.self)?.handle ?? ""
-                if name.lowercased().contains(q) || handle.lowercased().contains(q) {
-                    return (name: name, uuid: atom.uuid)
-                }
-                return nil
-            }
-            await MainActor.run {
-                creatorSearchResults = results
-            }
+    private static func makeCreatorSearchResult(from atom: Atom) -> CreatorSearchResult? {
+        guard let name = atom.title, !name.isEmpty else { return nil }
+        let handle = atom.metadataValue(as: CreatorMetadata.self)?.handle ?? ""
+        return CreatorSearchResult(name: name, uuid: atom.uuid, handle: handle)
+    }
+
+    private static func filterCreatorSearchItems(
+        _ items: [CreatorSearchResult],
+        query: String
+    ) -> [CreatorSearchResult] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedQuery.isEmpty else { return items }
+
+        return items.filter { creator in
+            creator.name.lowercased().contains(normalizedQuery)
+                || creator.handle.lowercased().contains(normalizedQuery)
         }
     }
 
@@ -5252,10 +5310,16 @@ private struct TaxonomySection: View {
         analysis?.creatorUUID = uuid
         linkedCreatorName = name
         showCreatorSearch = false
-        creatorSearchText = ""
-        creatorSearchResults = []
+        resetCreatorSearchState()
         onSaveTaxonomyChange()
         onLinkCreator?(uuid, name)
+    }
+
+    private func resetCreatorSearchState() {
+        creatorSearchTask?.cancel()
+        creatorSearchText = ""
+        creatorSearchResults = []
+        creatorSearchCache = []
     }
 
     private func createAndLinkCreator(name: String) {
@@ -5272,8 +5336,8 @@ private struct TaxonomySection: View {
                 body: nil,
                 structured: nil,
                 metadata: metaString,
-                createdAt: ISO8601DateFormatter().string(from: Date()),
-                updatedAt: ISO8601DateFormatter().string(from: Date()),
+                createdAt: ISO8601.string(from: Date()),
+                updatedAt: ISO8601.string(from: Date()),
                 isDeleted: false,
                 localVersion: 0,
                 serverVersion: 0,
@@ -5362,8 +5426,8 @@ private struct TaxonomySection: View {
         structured: nil,
         metadata: nil,
         links: nil,
-        createdAt: ISO8601DateFormatter().string(from: Date()),
-        updatedAt: ISO8601DateFormatter().string(from: Date()),
+        createdAt: ISO8601.string(from: Date()),
+        updatedAt: ISO8601.string(from: Date()),
         isDeleted: false,
         localVersion: 0,
         serverVersion: 0,

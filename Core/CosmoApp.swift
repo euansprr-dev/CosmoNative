@@ -685,16 +685,24 @@ struct CosmoCommands: Commands {
         // Otherwise, Paste posts a notification so the canvas can handle image/URL paste.
         CommandGroup(replacing: .pasteboard) {
             Button("Cut") {
-                NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+                if !FocusModeTextClipboardTarget.send(.cut, in: NSApp.keyWindow) {
+                    NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+                }
             }
             .keyboardShortcut("x", modifiers: [.command])
 
             Button("Copy") {
-                NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                if !FocusModeTextClipboardTarget.send(.copy, in: NSApp.keyWindow) {
+                    NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                }
             }
             .keyboardShortcut("c", modifiers: [.command])
 
             Button("Paste") {
+                if FocusModeTextClipboardTarget.send(.paste, in: NSApp.keyWindow) {
+                    return
+                }
+
                 if let window = NSApp.keyWindow,
                    let firstResponder = window.firstResponder,
                    firstResponder is NSTextView {
@@ -706,7 +714,9 @@ struct CosmoCommands: Commands {
             .keyboardShortcut("v", modifiers: [.command])
 
             Button("Select All") {
-                NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                if !FocusModeTextClipboardTarget.send(.selectAll, in: NSApp.keyWindow) {
+                    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                }
             }
             .keyboardShortcut("a", modifiers: [.command])
         }

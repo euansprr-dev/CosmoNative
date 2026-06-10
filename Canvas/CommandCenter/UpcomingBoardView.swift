@@ -66,10 +66,17 @@ struct CommandCenterCalendarEntry: Identifiable {
     let source: CommandCenterCalendarEntrySource
     let task: TaskViewModel?
     let event: CalendarEvent?
+    var isCompletedTask: Bool = false
+    var isMissedOccurrence: Bool = false
 
+    /// A recurring series occurrence (history or live) — projected, not a freely-editable atom.
+    var isRecurringOccurrence: Bool { task?.isOccurrence == true }
+
+    /// Editable = a plain, live task atom. Recurring occurrences and completed/missed history
+    /// entries are display-only on the calendar (editing them would mutate the series template).
     var isEditableTask: Bool {
-        if case .task = source { return true }
-        return false
+        guard case .task = source else { return false }
+        return !isRecurringOccurrence && !isCompletedTask && !isMissedOccurrence
     }
 }
 
@@ -375,19 +382,25 @@ struct UpcomingBoardView: View {
             ?? date.addingTimeInterval(86_400)
         let habit = viewModel.resolvedHabit(for: task)
         let intent = viewModel.resolvedIntentPresentation(for: task)
-        let accent = habit?.accent ?? (intent.isUnassigned ? DS.info : intent.accent)
+        let baseAccent = habit?.accent ?? (intent.isUnassigned ? DS.info : intent.accent)
+        let isCompleted = task.isCompleted || task.occurrenceStatus == .completed
+        let isMissed = task.occurrenceStatus == .missed
 
         return CommandCenterCalendarEntry(
-            id: "task-\(task.uuid)",
+            // Occurrence-unique id (task.id == "<template>#<day>" for occurrences) so repeats
+            // across days never collide on a single template uuid.
+            id: "task-\(task.id)",
             title: task.title,
             subtitle: isAllDay ? nil : timeRangeText(start, end),
             start: start,
             end: end,
             isAllDay: isAllDay,
-            accent: accent,
+            accent: isMissed ? DS.textMuted : baseAccent,
             source: .task(task.uuid),
             task: task,
-            event: nil
+            event: nil,
+            isCompletedTask: isCompleted,
+            isMissedOccurrence: isMissed
         )
     }
 
@@ -423,7 +436,7 @@ struct UpcomingBoardView: View {
     }
 
     private func openEditor(_ entry: CommandCenterCalendarEntry, frame: CGRect) {
-        guard let task = entry.task else { return }
+        guard let task = entry.task, !entry.isRecurringOccurrence else { return }
         let anchor = CGPoint(
             x: min(frame.maxX + 190, frame.maxX + 210),
             y: max(160, frame.midY)
@@ -490,7 +503,7 @@ struct UpcomingBoardView: View {
     }
 
     private func moveEntry(_ entry: CommandCenterCalendarEntry, dayDelta: Int, minuteDelta: Int) {
-        guard case let .task(uuid) = entry.source, !entry.isAllDay else { return }
+        guard case let .task(uuid) = entry.source, !entry.isAllDay, !entry.isRecurringOccurrence else { return }
         let calendar = Calendar.current
         let movedStart = calendar.date(byAdding: .day, value: dayDelta, to: entry.start) ?? entry.start
         let movedEnd = calendar.date(byAdding: .day, value: dayDelta, to: entry.end) ?? entry.end
@@ -503,7 +516,7 @@ struct UpcomingBoardView: View {
     }
 
     private func resizeEntry(_ entry: CommandCenterCalendarEntry, edge: CalendarResizeEdge, minuteDelta: Int) {
-        guard case let .task(uuid) = entry.source, !entry.isAllDay else { return }
+        guard case let .task(uuid) = entry.source, !entry.isAllDay, !entry.isRecurringOccurrence else { return }
         let calendar = Calendar.current
         let minimumEnd = calendar.date(byAdding: .minute, value: 15, to: entry.start) ?? entry.end
         let minimumStart = calendar.date(byAdding: .minute, value: -15, to: entry.end) ?? entry.start
@@ -866,9 +879,11 @@ private struct AllDayLaneCell: View {
                                 .frame(width: 5, height: 5)
                             Text(entry.title)
                                 .font(DS.caption2).fontWeight(.semibold)
+                                .strikethrough(entry.isCompletedTask, color: DS.textMuted)
                                 .lineLimit(1)
                         }
-                        .foregroundStyle(entry.isEditableTask ? entry.accent : DS.textSecondary)
+                        .foregroundStyle(entry.isCompletedTask || entry.isMissedOccurrence ? DS.textMuted : (entry.isEditableTask ? entry.accent : DS.textSecondary))
+                        .opacity(entry.isCompletedTask ? 0.7 : (entry.isMissedOccurrence ? 0.6 : 1))
                         .padding(.horizontal, DS.space6)
                         .frame(height: 20)
                         .background(DS.glassCardFill, in: Capsule())
@@ -1015,15 +1030,27 @@ private struct CalendarEntryBlock: View {
 
             VStack(alignment: .leading, spacing: density == .compact ? 0 : DS.space2) {
                 HStack(spacing: DS.space4) {
+                    if entry.isCompletedTask {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(DS.caption2)
+                            .foregroundStyle(entry.accent.opacity(0.7))
+                            .accessibilityLabel("Completed")
+                    }
+
                     Text(entry.title)
                         .font(density == .compact ? DS.caption2 : DS.caption).fontWeight(.semibold)
+                        .strikethrough(entry.isCompletedTask, color: DS.textMuted)
                         .foregroundStyle(entryTextColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
 
                     Spacer(minLength: 0)
 
-                    if density == .expanded, entry.event?.isExternal == true {
+                    if density == .expanded, entry.isMissedOccurrence {
+                        Text("missed")
+                            .font(DS.caption2).fontWeight(.medium)
+                            .foregroundStyle(DS.textMuted)
+                    } else if density == .expanded, entry.event?.isExternal == true {
                         Image(systemName: "calendar")
                             .font(.system(size: 8, weight: .medium))
                             .foregroundStyle(entry.accent.opacity(0.85))
@@ -1053,7 +1080,7 @@ private struct CalendarEntryBlock: View {
                 .stroke(borderColor, lineWidth: isSelected ? 1 : 0.5)
         )
         .shadow(color: .black.opacity(isSelected ? 0.12 : 0.04), radius: isSelected ? 5 : 1, x: 0, y: isSelected ? 3 : 1)
-        .opacity(entry.source == .draft ? 0.78 : 1)
+        .opacity(historyOpacity)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .accessibilityElement(children: .combine)
     }
@@ -1070,7 +1097,15 @@ private struct CalendarEntryBlock: View {
     }
 
     private var entryTextColor: Color {
-        entry.event?.isExternal == true ? DS.textSecondary : DS.text
+        if entry.isCompletedTask || entry.isMissedOccurrence { return DS.textMuted }
+        return entry.event?.isExternal == true ? DS.textSecondary : DS.text
+    }
+
+    private var historyOpacity: Double {
+        if entry.source == .draft { return 0.78 }
+        if entry.isCompletedTask { return 0.6 }
+        if entry.isMissedOccurrence { return 0.5 }
+        return 1
     }
 }
 

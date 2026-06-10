@@ -428,7 +428,7 @@ class SemanticSearchEngine: ObservableObject {
                     chunk.text = text
                     chunk.textHash = String(textHash)
                     chunk.vector = vectorData
-                    chunk.updatedAt = ISO8601DateFormatter().string(from: Date())
+                    chunk.updatedAt = ISO8601.string(from: Date())
                     try chunk.update(db)
                 } else {
                     // Insert
@@ -443,8 +443,8 @@ class SemanticSearchEngine: ObservableObject {
                         text: text,
                         textHash: String(textHash),
                         vector: vectorData,
-                        createdAt: ISO8601DateFormatter().string(from: Date()),
-                        updatedAt: ISO8601DateFormatter().string(from: Date())
+                        createdAt: ISO8601.string(from: Date()),
+                        updatedAt: ISO8601.string(from: Date())
                     )
                     try chunk.insert(db)
                 }

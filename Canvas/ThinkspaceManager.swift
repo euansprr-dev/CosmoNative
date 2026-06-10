@@ -121,7 +121,7 @@ struct Thinkspace: Identifiable, Equatable {
             self.deepDiveProfileUUID = metadata.deepDiveProfileUUID
         } else {
             self.name = atom.title ?? "Untitled"
-            self.lastOpened = ISO8601DateFormatter().date(from: atom.updatedAt) ?? Date()
+            self.lastOpened = ISO8601.date(from: atom.updatedAt) ?? Date()
             self.blockCount = 0
             self.zoomLevel = 1.0
             self.panOffset = .zero
@@ -479,9 +479,7 @@ class ThinkspaceManager: ObservableObject {
             }
         }
 
-        // Update last opened time
-        await updateLastOpened(resolvedThinkspace)
-
+        guard !Task.isCancelled else { return }
         currentThinkspace = resolvedThinkspace
 
         // Save as last opened
@@ -495,6 +493,9 @@ class ThinkspaceManager: ObservableObject {
         )
 
         print("🔄 Switched to Thinkspace: \(resolvedThinkspace.name)")
+
+        // Persist recency after publishing the visible route so navigation does not wait on storage.
+        await updateLastOpened(resolvedThinkspace)
     }
 
     /// Switch to default/global canvas (no Thinkspace)
@@ -530,7 +531,7 @@ class ThinkspaceManager: ObservableObject {
                 }
             }
 
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            atom.updatedAt = ISO8601.string(from: Date())
 
             try await repository.update(atom)
             try? await InquiryRepository.shared.handleThinkspaceDeleted(thinkspace.id)
@@ -591,7 +592,7 @@ class ThinkspaceManager: ObservableObject {
             }
 
             atom.isDeleted = false
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            atom.updatedAt = ISO8601.string(from: Date())
 
             try await repository.update(atom)
             await loadThinkspaces()
@@ -726,7 +727,7 @@ class ThinkspaceManager: ObservableObject {
                 }
             }
 
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            atom.updatedAt = ISO8601.string(from: Date())
             try await repository.update(atom)
             await loadThinkspaces()
 
@@ -753,7 +754,7 @@ class ThinkspaceManager: ObservableObject {
                 }
             }
 
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            atom.updatedAt = ISO8601.string(from: Date())
             try await repository.update(atom)
             await loadThinkspaces()
 
@@ -806,7 +807,7 @@ class ThinkspaceManager: ObservableObject {
                 }
             }
 
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            atom.updatedAt = ISO8601.string(from: Date())
             try await repository.update(atom)
             await loadThinkspaces()
 
@@ -955,7 +956,7 @@ class ThinkspaceManager: ObservableObject {
                 }
             }
 
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            atom.updatedAt = ISO8601.string(from: Date())
 
             try await repository.update(atom)
         } catch {

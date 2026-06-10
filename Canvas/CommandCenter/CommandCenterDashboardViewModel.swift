@@ -47,7 +47,7 @@ class PlannerumViewModel: ObservableObject {
             _ = try await AtomRepository.shared.update(uuid: taskId) { atom in
                 var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
                 metadata.isCompleted = true
-                metadata.completedAt = ISO8601DateFormatter().string(from: Date())
+                metadata.completedAt = ISO8601.string(from: Date())
                 atom = atom.withMetadata(metadata)
             }
             await loadTodayTasks()
@@ -434,20 +434,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
         let dates = upcomingVisibleDates
         guard let first = dates.first, let last = dates.last else { return "" }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-
         switch upcomingCalendarScope {
         case .day:
-            let dayFormatter = DateFormatter()
-            dayFormatter.dateFormat = "EEE, MMM d"
-            return dayFormatter.string(from: upcomingAnchorDate)
+            return CosmoDateFormatters.abbreviatedWeekdayMonthDay.string(from: upcomingAnchorDate)
         case .week:
-            return "\(formatter.string(from: first)) - \(formatter.string(from: last))"
+            return "\(CosmoDateFormatters.abbreviatedMonthDay.string(from: first)) - \(CosmoDateFormatters.abbreviatedMonthDay.string(from: last))"
         case .month:
-            let monthFormatter = DateFormatter()
-            monthFormatter.dateFormat = "MMMM yyyy"
-            return monthFormatter.string(from: upcomingAnchorDate)
+            return CosmoDateFormatters.monthYear.string(from: upcomingAnchorDate)
         }
     }
 
@@ -562,6 +555,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
         setupBindings()
         Task {
+            await RecurringSeriesEngine.shared.runCleanSlateMigrationIfNeeded()
             await refreshAll()
         }
     }
@@ -569,8 +563,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Bindings
 
     private func setupBindings() {
-        TaskRecurrenceEngine.shared.scheduleMidnightRefresh()
-
         // React to date changes
         $selectedDate
             .removeDuplicates { Calendar.current.isDate($0, inSameDayAs: $1) }
@@ -815,17 +807,48 @@ class CommandCenterDashboardViewModel: ObservableObject {
         var activeTasks: [TaskViewModel] = []
 
         do {
-            try? await TaskRecurrenceEngine.shared.generateTodayInstances()
-            try? await generateInstancesForSelectedDayIfNeeded()
-
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            let calendar = Calendar.current
+            let today = Date()
+            let selectedDay = calendar.startOfDay(for: selectedDate)
+            let dayEnd = calendar.date(byAdding: .day, value: 1, to: selectedDay) ?? selectedDay
+            let isToday = calendar.isDateInToday(selectedDate)
 
-            activeTasks = atoms.compactMap { atom -> TaskViewModel? in
+            // 1) Plain (non-recurring) incomplete tasks. Recurring templates AND any stale
+            //    materialized instances are excluded here — recurrence is projected below.
+            let plain = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 if vm.isCompleted { return nil }
-                if vm.isRecurring && vm.recurrenceParentUUID == nil { return nil }
+                if vm.isRecurring { return nil }
                 return vm
             }
+
+            // 2) Recurring series → virtual occurrences for the selected-day frame.
+            //    Today shows the single live occurrence per series (collapse-and-jump); a
+            //    navigated day shows that day's occurrence(s).
+            var occurrences: [TaskViewModel] = []
+            for atom in atoms {
+                guard let snapshot = RecurringSeriesEngine.makeSnapshot(from: atom, calendar: calendar),
+                      let templateVM = TaskViewModel.from(atom: atom) else { continue }
+
+                if isToday {
+                    if let live = RecurringSeriesEngine.liveOccurrence(for: snapshot, asOf: today, calendar: calendar) {
+                        occurrences.append(templateVM.makingOccurrence(live))
+                    }
+                } else {
+                    let projected = RecurringSeriesEngine.occurrences(
+                        for: snapshot,
+                        in: DateInterval(start: selectedDay, end: dayEnd),
+                        asOf: today,
+                        calendar: calendar
+                    )
+                    for occ in projected where occ.status != .completed && occ.status != .missed {
+                        occurrences.append(templateVM.makingOccurrence(occ))
+                    }
+                }
+            }
+
+            activeTasks = plain + occurrences
         } catch {
             print("❌ Dashboard: Failed to load today tasks for date: \(error)")
         }
@@ -844,44 +867,53 @@ class CommandCenterDashboardViewModel: ObservableObject {
         await loadCompletedTasks()
     }
 
-    private func generateInstancesForSelectedDayIfNeeded() async throws {
-        let calendar = Calendar.current
-        let todayStart = calendar.startOfDay(for: Date())
-        let selectedDayStart = calendar.startOfDay(for: selectedDate)
-        guard selectedDayStart >= todayStart else { return }
-        let selectedDayEnd = calendar.date(byAdding: .day, value: 1, to: selectedDayStart) ?? selectedDayStart
-        try await TaskRecurrenceEngine.shared.generateInstances(in: DateInterval(start: selectedDayStart, end: selectedDayEnd))
-    }
-
     // MARK: - Upcoming Tasks
 
     func loadUpcomingTasks() async {
         do {
-            try? await TaskRecurrenceEngine.shared.generateInstances(in: upcomingVisibleInterval)
-
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
             let calendar = Calendar.current
+            let today = Date()
             let visibleDates = upcomingVisibleDates
+            let interval = upcomingVisibleInterval
+
+            // Recurring series → virtual occurrences across the whole visible window, every
+            // status. Completed renders done, missed renders dim — Upcoming doubles as history.
+            var occurrenceVMs: [TaskViewModel] = []
+            for atom in atoms {
+                guard let snapshot = RecurringSeriesEngine.makeSnapshot(from: atom, calendar: calendar),
+                      let templateVM = TaskViewModel.from(atom: atom) else { continue }
+                for occ in RecurringSeriesEngine.occurrences(for: snapshot, in: interval, asOf: today, calendar: calendar) {
+                    occurrenceVMs.append(templateVM.makingOccurrence(occ))
+                }
+            }
+
+            // Plain (non-recurring) tasks, INCLUDING completed so finished work stays visible
+            // on its scheduled day instead of vanishing.
+            let plainVMs = atoms.compactMap { atom -> TaskViewModel? in
+                guard let vm = TaskViewModel.from(atom: atom) else { return nil }
+                if vm.isRecurring { return nil }
+                return vm
+            }
 
             var dayGroups: [UpcomingDayViewModel] = []
-
             for dayStart in visibleDates {
                 let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
 
-                let dayTasks = atoms.compactMap { atom -> TaskViewModel? in
-                    guard let vm = TaskViewModel.from(atom: atom) else { return nil }
-                    if vm.isCompleted { return nil }
-                    if vm.isRecurring && vm.recurrenceParentUUID == nil { return nil }
-
-                    guard let calendarDisplayDate = vm.calendarDisplayDate else { return nil }
-                    return calendarDisplayDate >= dayStart && calendarDisplayDate < dayEnd ? vm : nil
+                let dayOccurrences = occurrenceVMs.filter { vm in
+                    guard let occDay = vm.occurrenceDay else { return false }
+                    return occDay >= dayStart && occDay < dayEnd
                 }
-                .sorted {
-                    let lhsStart = $0.calendarDisplayDate
-                    let rhsStart = $1.calendarDisplayDate
-                    if lhsStart != rhsStart {
-                        return (lhsStart ?? .distantFuture) < (rhsStart ?? .distantFuture)
-                    }
+
+                let dayPlain = plainVMs.filter { vm in
+                    guard let display = vm.calendarDisplayDate else { return false }
+                    return display >= dayStart && display < dayEnd
+                }
+
+                let dayTasks = (dayOccurrences + dayPlain).sorted {
+                    let lhs = $0.calendarDisplayDate ?? .distantFuture
+                    let rhs = $1.calendarDisplayDate ?? .distantFuture
+                    if lhs != rhs { return lhs < rhs }
                     if $0.priority.sortOrder != $1.priority.sortOrder {
                         return $0.priority.sortOrder < $1.priority.sortOrder
                     }
@@ -892,7 +924,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
 
             assignIfChanged(\.overdueTasks, to: [])
-
             assignIfChanged(\.upcomingDayGroups, to: dayGroups)
             await loadUpcomingCalendarEvents()
         } catch {
@@ -1105,7 +1136,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
         }
 
         Task {
-            try? await TaskRecurrenceEngine.shared.generateTodayInstances()
             await refreshDateSensitiveCollectionsAfterDayChange()
         }
     }
@@ -1191,10 +1221,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 guard !vm.isCompleted else { return nil }
                 // Anytime owns unscheduled work: explicit anytime, no scheduling bucket, or a day-only plan without a calendar time.
-                let meta = atom.metadataValue(as: TaskMetadata.self)
-                let state = meta?.schedulingState
+                let state = vm.schedulingState
                 if state == "someday" { return nil }
-                if meta?.recurrence != nil, meta?.recurrenceParentUUID == nil { return nil }
+                if vm.isRecurring && vm.recurrenceParentUUID == nil { return nil }
                 if state == "anytime" || !vm.hasCalendarTime {
                     return vm
                 }
@@ -1221,8 +1250,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             let nextSomedayTasks = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 guard !vm.isCompleted else { return nil }
-                let meta = atom.metadataValue(as: TaskMetadata.self)
-                guard meta?.schedulingState == "someday" else { return nil }
+                guard vm.schedulingState == "someday" else { return nil }
                 return vm
             }
             .sorted { ($0.manualSortOrder ?? Int.max) < ($1.manualSortOrder ?? Int.max) }
@@ -1269,13 +1297,12 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func loadAreas() async {
         do {
-            let nextAreas = try await AtomRepository.shared.fetchAll(type: .area)
+            let areasWithSortOrder = try await AtomRepository.shared.fetchAll(type: .area)
                 .filter { !$0.isDeleted }
-                .sorted {
-                    let a = $0.metadataValue(as: AreaMetadata.self)?.sortOrder ?? Int.max
-                    let b = $1.metadataValue(as: AreaMetadata.self)?.sortOrder ?? Int.max
-                    return a < b
+                .map { area in
+                    (area: area, sortOrder: area.metadataValue(as: AreaMetadata.self)?.sortOrder ?? Int.max)
                 }
+            let nextAreas = areasWithSortOrder.sorted { $0.sortOrder < $1.sortOrder }.map(\.area)
             assignIfChanged(\.areas, to: nextAreas)
         } catch {
             print("❌ Dashboard: Failed to load areas: \(error)")
@@ -1565,6 +1592,22 @@ class CommandCenterDashboardViewModel: ObservableObject {
         )
     }
 
+    /// Both-axes attribution: bucket tracked time by **habit** when the work belongs to one,
+    /// falling back to the intent, then "Unassigned". Keeps the time strip + reports grouped the
+    /// way work is actually organized (the habits panel) rather than landing in "Unassigned".
+    private func attributionSummary(habitUUID: String?, intentUUID: String?, legacyIntentRaw: String?, minutes: Int = 0) -> IntentSummary {
+        if let habitUUID, let habit = habitDefinition(for: habitUUID) {
+            return IntentSummary(
+                id: "habit:\(habit.id)",
+                title: habit.title,
+                icon: habit.icon,
+                accentColorHex: habit.accentColor,
+                minutes: minutes
+            )
+        }
+        return intentSummary(intentUUID: intentUUID, legacyIntentRaw: legacyIntentRaw, minutes: minutes)
+    }
+
     func habitDefinition(for id: String?) -> HabitDefinition? {
         habitEngine.definition(for: id)
     }
@@ -1662,10 +1705,59 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Task Actions
 
     func toggleTaskCompletion(_ task: TaskViewModel) async {
-        if task.isCompleted {
+        if task.isOccurrence {
+            if task.occurrenceStatus == .completed {
+                _ = await uncompleteTask(task)
+            } else {
+                _ = await completeTask(task)
+            }
+        } else if task.isCompleted {
             _ = await uncompleteTask(uuid: task.uuid)
         } else {
             _ = await completeTask(uuid: task.uuid)
+        }
+    }
+
+    /// Completion entry point that understands recurring occurrences. Prefer this over the
+    /// uuid-only variants on any surface that can show recurring tasks (Today, Upcoming).
+    @discardableResult
+    func completeTask(_ task: TaskViewModel) async -> Bool {
+        guard let occurrenceDay = task.occurrenceDay else {
+            return await completeTask(uuid: task.uuid)
+        }
+        do {
+            try await RecurringSeriesEngine.shared.complete(
+                templateUUID: task.uuid,
+                occurrenceDay: occurrenceDay,
+                trackedMinutes: nil
+            )
+            await habitEngine.recordTaskCompletion(taskUUID: task.uuid)
+            await refreshTaskCollectionsAfterMutation()
+            await loadHabits()
+            return true
+        } catch {
+            print("❌ Dashboard: Failed to complete recurring occurrence: \(error)")
+            return false
+        }
+    }
+
+    @discardableResult
+    func uncompleteTask(_ task: TaskViewModel) async -> Bool {
+        guard let occurrenceDay = task.occurrenceDay else {
+            return await uncompleteTask(uuid: task.uuid)
+        }
+        do {
+            try await RecurringSeriesEngine.shared.uncomplete(
+                templateUUID: task.uuid,
+                occurrenceDay: occurrenceDay
+            )
+            await habitEngine.reverseTaskCompletion(taskUUID: task.uuid)
+            await refreshTaskCollectionsAfterMutation()
+            await loadHabits()
+            return true
+        } catch {
+            print("❌ Dashboard: Failed to uncomplete recurring occurrence: \(error)")
+            return false
         }
     }
 
@@ -2576,7 +2668,12 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func startFocusSession(for task: TaskViewModel) {
         let habit = resolvedHabit(for: task)
-        let intentPresentation = resolvedIntentPresentation(for: task)
+        var intentPresentation = resolvedIntentPresentation(for: task)
+        // Both-axes attribution: when the task carries no explicit intent, inherit the habit's
+        // default intent so behavior routing + dimension XP never fall back to "Unassigned".
+        if intentPresentation.isUnassigned, let habitIntentUUID = habit?.defaultIntentUUID {
+            intentPresentation = resolvedIntentPresentation(intentUUID: habitIntentUUID, legacyIntentRaw: nil)
+        }
         sessionEngine.startSession(
             taskUUID: task.uuid,
             taskTitle: task.title,
@@ -2672,7 +2769,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
                 totalMinutes += minutes
 
-                let summary = intentSummary(intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent, minutes: 0)
+                let summary = attributionSummary(habitUUID: metadata.habitUUID, intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent, minutes: 0)
                 var updated = intentMinutes[summary.id] ?? summary
                 updated.minutes += minutes
                 intentMinutes[summary.id] = updated
@@ -2760,7 +2857,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         bucket.minutes += minutes
                         if let score = metadata.focusScore { bucket.focusScores.append(Double(score)) }
                         bucket.sessions += 1
-                        let summary = intentSummary(intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
+                        let summary = attributionSummary(habitUUID: metadata.habitUUID, intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
                         var updated = bucket.intents[summary.id] ?? summary
                         updated.minutes += minutes
                         bucket.intents[summary.id] = updated
@@ -2886,7 +2983,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         bucket.minutes += minutes
                         if let score = metadata.focusScore { bucket.focusScores.append(Double(score)) }
                         bucket.sessions += 1
-                        let summary = intentSummary(intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
+                        let summary = attributionSummary(habitUUID: metadata.habitUUID, intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
                         var updated = bucket.intents[summary.id] ?? summary
                         updated.minutes += minutes
                         bucket.intents[summary.id] = updated
@@ -3023,30 +3120,25 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     var reportDateLabel: String {
         let calendar = Calendar.current
-        let formatter = DateFormatter()
 
         switch selectedReportTab {
         case .week:
             let today = calendar.startOfDay(for: Date())
             let weekStart = calendar.date(byAdding: .day, value: reportWeekOffset * 7 - 6, to: today)!
             let weekEnd = calendar.date(byAdding: .day, value: reportWeekOffset * 7, to: today)!
-            formatter.dateFormat = "MMM d"
-            let start = formatter.string(from: weekStart)
-            let end = formatter.string(from: weekEnd)
-            formatter.dateFormat = ", yyyy"
-            let year = formatter.string(from: weekEnd)
+            let start = CosmoDateFormatters.abbreviatedMonthDay.string(from: weekStart)
+            let end = CosmoDateFormatters.abbreviatedMonthDay.string(from: weekEnd)
+            let year = CosmoDateFormatters.commaYearSuffix.string(from: weekEnd)
             return "\(start) – \(end)\(year)"
         case .month:
             guard let targetMonth = calendar.date(byAdding: .month, value: reportMonthOffset, to: Date()) else { return "" }
-            formatter.dateFormat = "MMMM yyyy"
-            return formatter.string(from: targetMonth)
+            return CosmoDateFormatters.monthYear.string(from: targetMonth)
         case .habits:
             if reportWeekOffset == 0 { return "This Week" }
             let today = calendar.startOfDay(for: Date())
             let weekStart = calendar.date(byAdding: .day, value: reportWeekOffset * 7 - 6, to: today)!
             let weekEnd = calendar.date(byAdding: .day, value: reportWeekOffset * 7, to: today)!
-            formatter.dateFormat = "MMM d"
-            return "\(formatter.string(from: weekStart)) – \(formatter.string(from: weekEnd))"
+            return "\(CosmoDateFormatters.abbreviatedMonthDay.string(from: weekStart)) – \(CosmoDateFormatters.abbreviatedMonthDay.string(from: weekEnd))"
         }
     }
 
@@ -3093,9 +3185,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     var dateText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE, MMMM d"
-        return formatter.string(from: selectedDate)
+        CosmoDateFormatters.abbreviatedWeekdayFullMonthDay.string(from: selectedDate)
     }
 
     var isViewingToday: Bool {

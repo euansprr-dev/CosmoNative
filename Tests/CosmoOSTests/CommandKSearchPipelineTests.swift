@@ -910,7 +910,7 @@ final class CommandKSearchPipelineTests: XCTestCase {
             bodyHash: "body-hash",
             metadataHash: "meta-hash",
             pinState: .pinned,
-            updatedAt: ISO8601DateFormatter().date(from: "2026-05-06T10:00:00Z") ?? Date()
+            updatedAt: ISO8601.date(from: "2026-05-06T10:00:00Z") ?? Date()
         )
         let chunk = ContextChunk(
             id: "chunk-1",
@@ -1094,7 +1094,7 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let openedAtom = Atom.new(type: .idea, title: "Opened idea")
         let capturedAtom = Atom.new(type: .research, title: "Fresh capture")
         let oldOpenedAt = "2001-05-01T10:00:00Z"
-        let freshUpdatedAt = ISO8601DateFormatter().string(from: Date())
+        let freshUpdatedAt = ISO8601.string(from: Date())
 
         let items = CommandKRecentComposer.compose(
             opened: [
@@ -1426,7 +1426,7 @@ final class CommandKSearchPipelineTests: XCTestCase {
             structuralWeight: 0.5,
             recencyWeight: 0.5,
             usageWeight: 0.5,
-            updatedAt: ISO8601DateFormatter().string(from: Date()),
+            updatedAt: ISO8601.string(from: Date()),
             accessCount: 0
         )
 
@@ -1445,6 +1445,291 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedNodeId, action.id)
         XCTAssertEqual(viewModel.selectedResultIndex, 0)
         XCTAssertTrue(selectionEvents.isEmpty)
+    }
+
+    @MainActor
+    func testIdenticalRankedResultPassDoesNotRepublishVisibleResults() {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        let result = RankedResult(
+            atomUUID: "stable-result",
+            atomType: .idea,
+            title: "Stable result",
+            snippet: "Same visible result should not republish",
+            semanticWeight: 0.5,
+            structuralWeight: 0.5,
+            recencyWeight: 0.5,
+            usageWeight: 0.5,
+            updatedAt: "2026-01-01T00:00:00Z",
+            accessCount: 0
+        )
+
+        var resultPublishCount = 0
+        let cancellable = viewModel.$results
+            .dropFirst()
+            .sink { _ in resultPublishCount += 1 }
+        defer { cancellable.cancel() }
+
+        viewModel.testingApplyUnfilteredResults([result])
+        XCTAssertEqual(resultPublishCount, 1)
+
+        viewModel.testingApplyUnfilteredResults([result])
+        XCTAssertEqual(resultPublishCount, 1)
+        XCTAssertEqual(viewModel.results.map(\.atomUUID), ["stable-result"])
+    }
+
+    func testCommandCenterLibraryBrowserUsesSharedISODateParserForLoadedEntities() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CommandHub/Components/LibraryBrowser.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertFalse(source.contains("ISO8601DateFormatter().date(from:"))
+    }
+
+    func testCommandCenterLibraryBrowserCancelsStaleEntityLoads() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CommandHub/Components/LibraryBrowser.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("@State private var loadTask: Task<Void, Never>?"))
+        XCTAssertTrue(source.contains("loadTask?.cancel()"))
+        XCTAssertTrue(source.contains("latestLoadID"))
+        XCTAssertTrue(source.contains("guard latestLoadID == loadID"))
+        XCTAssertTrue(source.contains(".onDisappear"))
+    }
+
+    func testInboxOverrideSearchCancelsStaleQueriesBeforePublishing() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/Inbox/InboxViewModel.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("overrideSearchTask?.cancel()"))
+        XCTAssertTrue(source.contains("overrideSearchRequestID"))
+        XCTAssertTrue(source.contains("try? await Task.sleep"))
+        XCTAssertTrue(source.contains("guard self.overrideSearchRequestID == requestID"))
+    }
+
+    func testTaskLinkedAtomPickerDebouncesSearchRequests() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CommandCenter/TaskLinkedAtomPicker.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("@State private var searchTask: Task<Void, Never>?"))
+        XCTAssertTrue(source.contains("searchTask?.cancel()"))
+        XCTAssertTrue(source.contains("try? await Task.sleep"))
+        XCTAssertTrue(source.contains("guard searchRequestID == requestID"))
+    }
+
+    func testCommandHubSemanticSearchCancelsStaleQueriesBeforePublishing() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CommandHub/CommandHubEngine.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("private var searchRequestID"))
+        XCTAssertTrue(source.contains("searchTask = Task"))
+        XCTAssertTrue(source.contains("try? await Task.sleep"))
+        XCTAssertTrue(source.contains("guard self.searchRequestID == requestID"))
+        XCTAssertFalse(source.contains("Timer.scheduledTimer"))
+    }
+
+    func testCanvasDatabasePickerGuardsStaleSearchPublishes() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CanvasDatabasePicker.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("@State private var searchRequestID = UUID()"))
+        XCTAssertTrue(source.contains("searchTask?.cancel()"))
+        XCTAssertTrue(source.contains("let requestID = UUID()"))
+        XCTAssertTrue(source.contains("let query = searchQuery"))
+        XCTAssertTrue(source.contains("guard searchRequestID == requestID"))
+    }
+
+    func testCortexInformationTableUsesCachedDateFormatters() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/CommandK/CortexInformationTable.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertFalse(source.contains("ISO8601DateFormatter()"))
+        XCTAssertFalse(source.contains("DateFormatter()"))
+    }
+
+    func testCommandCenterDashboardUsesCachedDisplayDateFormatters() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CommandCenter/CommandCenterDashboardViewModel.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("CosmoDateFormatters.abbreviatedMonthDay"))
+        XCTAssertTrue(source.contains("CosmoDateFormatters.abbreviatedWeekdayMonthDay"))
+        XCTAssertTrue(source.contains("CosmoDateFormatters.abbreviatedWeekdayFullMonthDay"))
+        XCTAssertTrue(source.contains("CosmoDateFormatters.commaYearSuffix"))
+        XCTAssertFalse(source.contains("DateFormatter()"))
+    }
+
+    func testCommandCenterTaskBucketLoadsReuseTaskViewModelMetadata() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CommandCenter/CommandCenterDashboardViewModel.swift"),
+            encoding: .utf8
+        )
+        let anytimeBody = try XCTUnwrap(
+            source.slice(from: "func loadAnytimeTasks() async", to: "// MARK: - Someday Tasks")
+        )
+        let somedayBody = try XCTUnwrap(
+            source.slice(from: "func loadSomedayTasks() async", to: "// MARK: - Project Tasks")
+        )
+
+        XCTAssertTrue(anytimeBody.contains("let state = vm.schedulingState"))
+        XCTAssertTrue(anytimeBody.contains("if vm.isRecurring && vm.recurrenceParentUUID == nil"))
+        XCTAssertFalse(anytimeBody.contains("metadataValue(as: TaskMetadata.self)"))
+        XCTAssertTrue(somedayBody.contains("vm.schedulingState == \"someday\""))
+        XCTAssertFalse(somedayBody.contains("metadataValue(as: TaskMetadata.self)"))
+    }
+
+    func testCommandCenterAreaLoadingDecodesSortMetadataOncePerArea() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CommandCenter/CommandCenterDashboardViewModel.swift"),
+            encoding: .utf8
+        )
+        let loadAreasBody = try XCTUnwrap(
+            source.slice(from: "func loadAreas() async", to: "func loadProjects() async")
+        )
+
+        XCTAssertTrue(loadAreasBody.contains("let areasWithSortOrder"))
+        XCTAssertTrue(loadAreasBody.contains("metadataValue(as: AreaMetadata.self)?.sortOrder"))
+        XCTAssertTrue(loadAreasBody.contains("areasWithSortOrder.sorted"))
+        XCTAssertFalse(loadAreasBody.contains(".sorted {\n                    let a = $0.metadataValue(as: AreaMetadata.self)?.sortOrder"))
+    }
+
+    func testContentPolishAnalysisDebouncesAndCancelsDraftChanges() throws {
+        let polishSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentPolishView.swift"),
+            encoding: .utf8
+        )
+        let analyzerSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("AI/WritingAnalyzer.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(polishSource.contains("@State private var analysisTask: Task<Void, Never>?"))
+        XCTAssertTrue(polishSource.contains("@State private var analysisRequestID = UUID()"))
+        XCTAssertTrue(polishSource.contains("analysisTask?.cancel()"))
+        XCTAssertTrue(polishSource.contains("try? await Task.sleep"))
+        XCTAssertTrue(polishSource.contains("Task.detached(priority: .utility)"))
+        XCTAssertTrue(polishSource.contains("guard analysisRequestID == requestID"))
+        XCTAssertTrue(polishSource.contains(".onDisappear"))
+        XCTAssertTrue(analyzerSource.contains("struct WritingAnalysis: Sendable"))
+        XCTAssertTrue(analyzerSource.contains("final class WritingAnalyzer: @unchecked Sendable"))
+    }
+
+    func testBrainstormContextSidebarSearchCancelsStaleRequestsBeforePublishing() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/BrainstormContextSidebar.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("@State private var searchRequestID = UUID()"))
+        XCTAssertTrue(source.contains("searchTask?.cancel()"))
+        XCTAssertTrue(source.contains("let requestID = UUID()"))
+        XCTAssertTrue(source.contains("await performTieredSearch(requestID: requestID)"))
+        XCTAssertTrue(source.contains("guard searchRequestID == requestID"))
+        XCTAssertTrue(source.contains(".onDisappear"))
+    }
+
+    func testBrainstormContextSidebarDetailLoadsCancelStaleRequests() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/BrainstormContextSidebar.swift"),
+            encoding: .utf8
+        )
+        let openDetailBody = try XCTUnwrap(
+            source.slice(from: "private func openDetail(atomUUID: String)", to: "private func debounceSearch()")
+        )
+
+        XCTAssertTrue(source.contains("@State private var detailLoadTask: Task<Void, Never>?"))
+        XCTAssertTrue(source.contains("@State private var detailRequestID = UUID()"))
+        XCTAssertTrue(openDetailBody.contains("detailLoadTask?.cancel()"))
+        XCTAssertTrue(openDetailBody.contains("let requestID = UUID()"))
+        XCTAssertTrue(openDetailBody.contains("guard detailRequestID == requestID"))
+        XCTAssertTrue(source.contains("detailLoadTask = nil"))
+    }
+
+    func testSwipeStudyCreatorSearchDebouncesAndCachesCreatorFetches() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("@State private var creatorSearchTask: Task<Void, Never>?"))
+        XCTAssertTrue(source.contains("@State private var creatorSearchRequestID = UUID()"))
+        XCTAssertTrue(source.contains("@State private var creatorSearchCache: [CreatorSearchResult] = []"))
+        XCTAssertTrue(source.contains("creatorSearchTask?.cancel()"))
+        XCTAssertTrue(source.contains("try? await Task.sleep"))
+        XCTAssertTrue(source.contains("let cachedItems = creatorSearchCache"))
+        XCTAssertTrue(source.contains("guard creatorSearchRequestID == requestID"))
+        XCTAssertEqual(source.components(separatedBy: "fetchCreators()").count - 1, 1)
+    }
+
+    func testContentFocusPolishHighlightsRunOffMainWithStaleGuard() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("@State private var polishAnalysisRequestID = UUID()"))
+        XCTAssertTrue(source.contains("polishDebounceTask?.cancel()"))
+        XCTAssertTrue(source.contains("let requestID = UUID()"))
+        XCTAssertTrue(source.contains("Task.detached(priority: .utility)"))
+        XCTAssertTrue(source.contains("WritingAnalyzer.shared.analyze(text: text)"))
+        XCTAssertTrue(source.contains("guard polishAnalysisRequestID == requestID"))
+        XCTAssertTrue(source.contains("viewModel.state.currentStep.enablesPolishHighlights"))
+    }
+
+    func testCreatorListFiltersUseCachedMetadataIndex() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/CreatorListView.swift"),
+            encoding: .utf8
+        )
+        let recomputeBody = try XCTUnwrap(
+            source.slice(from: "private func recomputeFilteredCreators()", to: "// MARK: - Creator Grid")
+        )
+
+        XCTAssertTrue(source.contains("struct CreatorListIndexItem"))
+        XCTAssertTrue(source.contains("@State private var creatorIndex: [CreatorListIndexItem] = []"))
+        XCTAssertTrue(source.contains("CreatorListFiltering.buildIndex"))
+        XCTAssertTrue(source.contains("CreatorListFiltering.filteredCreators"))
+        XCTAssertTrue(source.contains("let filteredIDs = CreatorListFiltering.filteredIDs"))
+        XCTAssertFalse(recomputeBody.contains("metadataValue(as: CreatorMetadata.self)"))
+    }
+
+    func testCreatorProfileSwipeFiltersUseCachedAnalysisIndex() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/CreatorProfileView.swift"),
+            encoding: .utf8
+        )
+        let recomputeBody = try XCTUnwrap(
+            source.slice(from: "private func recomputeFilteredSwipes()", to: "// MARK: - Swipe Card")
+        )
+
+        XCTAssertTrue(source.contains("struct CreatorSwipeIndexItem"))
+        XCTAssertTrue(source.contains("@State private var swipeIndex: [CreatorSwipeIndexItem] = []"))
+        XCTAssertTrue(source.contains("CreatorProfileSwipeFiltering.buildIndex"))
+        XCTAssertTrue(source.contains("CreatorProfileSwipeFiltering.filteredIDs"))
+        XCTAssertTrue(source.contains("CreatorProfileSwipeFiltering.filteredSwipes"))
+        XCTAssertFalse(recomputeBody.contains("swipeAnalysis"))
     }
 
     @MainActor
@@ -1627,5 +1912,18 @@ final class CommandKSearchPipelineTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+}
+
+private extension String {
+    func slice(from startMarker: String, to endMarker: String) -> String? {
+        guard
+            let startRange = range(of: startMarker),
+            let endRange = range(of: endMarker, range: startRange.upperBound..<endIndex)
+        else {
+            return nil
+        }
+
+        return String(self[startRange.lowerBound..<endRange.lowerBound])
     }
 }

@@ -105,7 +105,7 @@ enum RecurrenceEndCondition: Codable, Equatable {
             self = .afterOccurrences(count)
         case "onDate":
             let dateString = try container.decode(String.self, forKey: .value)
-            if let date = ISO8601DateFormatter().date(from: dateString) {
+            if let date = ISO8601.date(from: dateString) {
                 self = .onDate(date)
             } else {
                 self = .never
@@ -126,7 +126,7 @@ enum RecurrenceEndCondition: Codable, Equatable {
             try container.encode(count, forKey: .value)
         case .onDate(let date):
             try container.encode("onDate", forKey: .type)
-            try container.encode(ISO8601DateFormatter().string(from: date), forKey: .value)
+            try container.encode(ISO8601.string(from: date), forKey: .value)
         }
     }
 

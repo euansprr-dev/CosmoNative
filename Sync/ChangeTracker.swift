@@ -100,7 +100,7 @@ class ChangeTracker: ObservableObject {
                 try? await CosmoDatabase.shared.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND status = 'pending'",
-                        arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                        arguments: [ISO8601.string(from: Date()), uuid]
                     )
                 }
             } catch {
@@ -182,7 +182,7 @@ class ChangeTracker: ObservableObject {
                 try? await CosmoDatabase.shared.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND status = 'pending'",
-                        arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                        arguments: [ISO8601.string(from: Date()), uuid]
                     )
                     try db.execute(
                         sql: "UPDATE \(table) SET _server_version = _local_version, _local_pending = 0 WHERE uuid = ?",

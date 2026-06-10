@@ -110,7 +110,7 @@ final class ConnectionStore: ObservableObject {
         
         // Instant UI update
         var updatedConnection = connection
-        updatedConnection.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedConnection.updatedAt = ISO8601.string(from: Date())
         connections[id] = updatedConnection
         
         // Debounced background save

@@ -113,6 +113,19 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     public let createdAt: Date
     public let updatedAt: Date
 
+    // MARK: - Virtual Recurrence Occurrence
+
+    /// When this VM represents a *computed* occurrence of a recurring series, the occurrence
+    /// day (startOfDay). nil for plain tasks. Note: `uuid` stays the series template's uuid so
+    /// atom-level actions (time-tracking, navigation, edits) keep working; `id` is occurrence-unique.
+    public let occurrenceDay: Date?
+
+    /// Display status of the occurrence (overdue/active/upcoming/completed/missed). nil for plain tasks.
+    public let occurrenceStatus: TaskOccurrenceStatus?
+
+    /// Whether this VM is a computed recurring occurrence (vs a stored atom).
+    public var isOccurrence: Bool { occurrenceDay != nil }
+
     // MARK: - Computed Properties
 
     /// Whether the task is due today
@@ -340,7 +353,9 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         linkedAtoms: [TaskLinkedAtom] = [],
         titleMentions: [RichMention] = [],
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        occurrenceDay: Date? = nil,
+        occurrenceStatus: TaskOccurrenceStatus? = nil
     ) {
         self.id = id
         self.uuid = uuid
@@ -385,6 +400,8 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         self.titleMentions = titleMentions
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.occurrenceDay = occurrenceDay
+        self.occurrenceStatus = occurrenceStatus
     }
 }
 
@@ -612,6 +629,65 @@ extension TaskViewModel {
             titleMentions: parsedTitleMentions,
             createdAt: PlannerumFormatters.iso8601.date(from: atom.createdAt) ?? Date(),
             updatedAt: PlannerumFormatters.iso8601.date(from: atom.updatedAt) ?? Date()
+        )
+    }
+}
+
+// MARK: - TaskViewModel + Virtual Occurrence
+
+extension TaskViewModel {
+
+    /// Project this *series template* VM onto a computed occurrence. Dates are shifted onto the
+    /// occurrence day/time and the occurrence identity/status is stamped. `uuid` stays the
+    /// template's; `id` becomes occurrence-unique so SwiftUI tracks each occurrence separately.
+    func makingOccurrence(_ occ: RecurringSeriesEngine.VirtualOccurrence) -> TaskViewModel {
+        let completed = occ.status == .completed
+        return TaskViewModel(
+            id: occ.id,
+            uuid: uuid,
+            title: occ.title,
+            body: body,
+            projectUuid: projectUuid,
+            projectName: projectName,
+            projectColor: projectColor,
+            dueDate: occ.start ?? occ.day,
+            scheduledDate: occ.day,
+            scheduledTime: occ.start,
+            estimatedMinutes: estimatedMinutes,
+            priority: priority,
+            isCompleted: completed,
+            completedAt: completed ? occ.day : nil,
+            intent: intent,
+            intentUUID: intentUUID,
+            habitUUID: habitUUID,
+            habitAssignmentSource: habitAssignmentSource,
+            linkedIdeaUUID: linkedIdeaUUID,
+            linkedContentUUID: linkedContentUUID,
+            linkedAtomUUID: linkedAtomUUID,
+            totalFocusMinutes: totalFocusMinutes,
+            sessionCount: sessionCount,
+            recurrenceParentUUID: nil,
+            isRecurring: true,
+            scheduledStart: occ.start,
+            scheduledEnd: occ.end,
+            manualSortOrder: manualSortOrder,
+            taskType: taskType,
+            energyLevel: energyLevel,
+            cognitiveLoad: cognitiveLoad,
+            recommendationScore: recommendationScore,
+            recommendationReason: recommendationReason,
+            whenDate: occ.day,
+            deadline: nil,
+            timeOfDay: timeOfDay,
+            schedulingState: schedulingState,
+            headingUUID: headingUUID,
+            checklist: checklist,
+            linkedAtoms: linkedAtoms,
+            titleMentions: titleMentions,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            occurrenceDay: occ.day,
+            occurrenceStatus: occ.status
         )
     }
 }

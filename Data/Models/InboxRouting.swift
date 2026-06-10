@@ -124,7 +124,7 @@ struct InboxRecommendationBundle: Codable, Equatable, Sendable {
     init(
         bundleId: String = UUID().uuidString,
         title: String,
-        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        createdAt: String = ISO8601.string(from: Date()),
         recommendations: [InboxRecommendation]
     ) {
         self.bundleId = bundleId

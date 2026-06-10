@@ -262,7 +262,7 @@ struct ConnectionEditorView: View {
     }
 
     private func timeAgo(from dateString: String) -> String {
-        guard let date = ISO8601DateFormatter().date(from: dateString) else { return "" }
+        guard let date = ISO8601.date(from: dateString) else { return "" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
         return formatter.localizedString(for: date, relativeTo: Date())

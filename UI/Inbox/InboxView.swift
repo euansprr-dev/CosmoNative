@@ -202,7 +202,7 @@ struct InboxView: View {
             }
             .padding(.bottom, viewModel.isMultiSelectActive ? 80 : DS.space16)
         }
-        .animation(ProMotionSprings.gentle, value: viewModel.groupedItems.map(\.id))
+        .animation(ProMotionSprings.gentle, value: viewModel.groupedItemsIdentity)
     }
 
     @ViewBuilder
@@ -467,8 +467,7 @@ struct InboxView: View {
     // MARK: - Helpers
 
     private func relativeTime(from dateStr: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: dateStr) else { return "" }
+        guard let date = ISO8601.date(from: dateStr) else { return "" }
         let interval = Date().timeIntervalSince(date)
         if interval < 3600 { return "\(Int(interval / 60))m ago" }
         if interval < 86400 { return "\(Int(interval / 3600))h ago" }

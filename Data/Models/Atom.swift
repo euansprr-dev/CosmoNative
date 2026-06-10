@@ -1280,7 +1280,7 @@ extension Atom {
         metadata: String? = nil,
         links: [AtomLink]? = nil
     ) -> Atom {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         let linksJson: String?
         if let links = links, !links.isEmpty {
             linksJson = try? String(data: JSONEncoder().encode(links), encoding: .utf8)
@@ -1519,7 +1519,7 @@ struct FocusFloatingBlock: Codable, Sendable, Identifiable, Equatable {
         height: Double = 140,
         zIndex: Int = 0,
         displayState: String = "standard",
-        addedAt: String = ISO8601DateFormatter().string(from: Date())
+        addedAt: String = ISO8601.string(from: Date())
     ) {
         self.id = id
         self.linkedAtomUUID = linkedAtomUUID
@@ -2411,6 +2411,60 @@ struct TaskMetadata: Codable, Sendable {
 
     /// JSON array of RichMention — @ mentions embedded in the task title
     var titleMentions: String?
+
+    // MARK: - Recurring Series Log (virtual-occurrence model)
+
+    /// Completed occurrences of this recurring series. **Template-only** (the series owner).
+    /// The source of recurring history: each entry pins an occurrence day to when it was
+    /// actually checked off. Day keys are "yyyy-MM-dd".
+    var completedOccurrences: [TaskOccurrenceCompletion]?
+
+    /// Occurrence day-keys ("yyyy-MM-dd") explicitly skipped, or backfilled as "missed"
+    /// when an overdue occurrence is collapsed on completion. **Template-only**.
+    var skippedOccurrences: [String]?
+
+    /// Per-day overrides for individual occurrences (rare per-day edits), keyed by
+    /// day-key ("yyyy-MM-dd"). **Template-only**.
+    var occurrenceOverrides: [String: TaskOccurrenceOverride]?
+}
+
+// MARK: - Recurring Series Log Entries
+
+/// A completed occurrence of a recurring series, stored on the series template's
+/// `completedOccurrences`. `day` is the occurrence day-key ("yyyy-MM-dd"); `completedAt`
+/// is the wall-clock time the user actually checked it off (may differ from `day` when an
+/// overdue occurrence is collapsed). `trackedMinutes` carries focus time for that occurrence.
+public struct TaskOccurrenceCompletion: Codable, Equatable, Sendable {
+    public var day: String
+    public var completedAt: String
+    public var trackedMinutes: Int?
+
+    public init(day: String, completedAt: String, trackedMinutes: Int? = nil) {
+        self.day = day
+        self.completedAt = completedAt
+        self.trackedMinutes = trackedMinutes
+    }
+}
+
+/// A per-occurrence override on a recurring series (rare per-day edits), keyed by day-key
+/// in `occurrenceOverrides`. Lets a single occurrence diverge from the template without
+/// materializing a separate atom.
+public struct TaskOccurrenceOverride: Codable, Equatable, Sendable {
+    /// Custom title for this one occurrence.
+    public var title: String?
+    /// ISO8601 start that shifts this occurrence's time-of-day.
+    public var startTime: String?
+    /// Day-key this occurrence was moved to (reschedule a single occurrence).
+    public var rescheduledTo: String?
+    /// This single occurrence was removed from the series (skip without "missed" semantics).
+    public var isCanceled: Bool?
+
+    public init(title: String? = nil, startTime: String? = nil, rescheduledTo: String? = nil, isCanceled: Bool? = nil) {
+        self.title = title
+        self.startTime = startTime
+        self.rescheduledTo = rescheduledTo
+        self.isCanceled = isCanceled
+    }
 }
 
 // MARK: - Task Linked Atom

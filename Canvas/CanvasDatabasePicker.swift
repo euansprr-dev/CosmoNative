@@ -16,6 +16,7 @@ struct CanvasDatabasePicker: View {
     @State private var appearedRows: Set<String> = []
     @State private var menuAppeared = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var searchRequestID = UUID()
     @State private var hoveredIndex: Int?
     @FocusState private var isSearchFocused: Bool
 
@@ -284,13 +285,17 @@ struct CanvasDatabasePicker: View {
 
     private func loadResults() {
         searchTask?.cancel()
+        let requestID = UUID()
+        let query = searchQuery
+        searchRequestID = requestID
         isLoading = true
         selectedIndex = 0
 
         searchTask = Task {
-            let searchResults = await provider.search(query: searchQuery, limit: 20)
+            let searchResults = await provider.search(query: query, limit: 20)
             guard !Task.isCancelled else { return }
             await MainActor.run {
+                guard searchRequestID == requestID else { return }
                 results = searchResults
                 isLoading = false
             }

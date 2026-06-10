@@ -274,11 +274,11 @@ class KnowledgeLinker {
         if let data = try? JSONEncoder().encode(items),
            let json = String(data: data, encoding: .utf8) {
             model.linkedKnowledge = json
-            model.linkedKnowledgeUpdatedAt = ISO8601DateFormatter().string(from: Date())
+            model.linkedKnowledgeUpdatedAt = ISO8601.string(from: Date())
         }
 
         connection.setMentalModel(model)
-        connection.updatedAt = ISO8601DateFormatter().string(from: Date())
+        connection.updatedAt = ISO8601.string(from: Date())
 
         // Capture as immutable for Sendable closure
         let connectionToSave = connection

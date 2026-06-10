@@ -152,7 +152,7 @@ final class RealtimeSyncService {
             try? await database.asyncWrite { db in
                 try db.execute(
                     sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                    arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                    arguments: [ISO8601.string(from: Date()), uuid]
                 )
             }
             lastEventTime = Date()

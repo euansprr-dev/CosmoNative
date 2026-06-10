@@ -1,5 +1,13 @@
 import Foundation
 
+struct SwipeLibraryVisibleItemsIdentity: Equatable {
+    private let ids: [String]
+
+    init(items: [SwipeGalleryItem]) {
+        self.ids = items.map(\.id)
+    }
+}
+
 enum SwipeLibraryFiltering {
     static func filteredItems(
         from items: [SwipeGalleryItem],
@@ -23,6 +31,7 @@ enum SwipeLibraryFiltering {
 
         var recent = items
         sortItems(&recent, by: .recent)
+        let createdAtByID = createdAtLookup(for: items)
 
         let highPerforming = items
             .filter { ($0.hookScore ?? 0) >= 7.5 || ($0.viewsCount ?? 0) >= 50_000 || ($0.likesCount ?? 0) >= 1_000 }
@@ -30,7 +39,7 @@ enum SwipeLibraryFiltering {
                 let lhsScore = performanceScore(lhs)
                 let rhsScore = performanceScore(rhs)
                 if lhsScore != rhsScore { return lhsScore > rhsScore }
-                return isNewer(lhs, than: rhs)
+                return isNewer(lhs, than: rhs, createdAtByID: createdAtByID)
             }
 
         var hooksToTry = items
@@ -39,7 +48,7 @@ enum SwipeLibraryFiltering {
                 let lhsScore = lhs.hookScore ?? 0
                 let rhsScore = rhs.hookScore ?? 0
                 if lhsScore != rhsScore { return lhsScore > rhsScore }
-                return isNewer(lhs, than: rhs)
+                return isNewer(lhs, than: rhs, createdAtByID: createdAtByID)
             }
         if hooksToTry.isEmpty {
             hooksToTry = highPerforming
@@ -199,21 +208,19 @@ enum SwipeLibraryFiltering {
     }
 
     static func sortItems(_ items: inout [SwipeGalleryItem], by sortMode: SwipeSortMode) {
-        let indexed = items.enumerated().map { (index: $0.offset, item: $0.element) }
-        let sorted: [(index: Int, item: SwipeGalleryItem)]
+        let indexed = items.enumerated().map {
+            SwipeSortRecord(index: $0.offset, item: $0.element, createdAt: date(from: $0.element.createdAt))
+        }
+        let sorted: [SwipeSortRecord]
         switch sortMode {
         case .recent:
             sorted = indexed.sorted { lhs, rhs in
-                let lhsDate = date(from: lhs.item.createdAt)
-                let rhsDate = date(from: rhs.item.createdAt)
-                if lhsDate != rhsDate { return lhsDate > rhsDate }
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
                 return lhs.index < rhs.index
             }
         case .oldest:
             sorted = indexed.sorted { lhs, rhs in
-                let lhsDate = date(from: lhs.item.createdAt)
-                let rhsDate = date(from: rhs.item.createdAt)
-                if lhsDate != rhsDate { return lhsDate < rhsDate }
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
                 return lhs.index < rhs.index
             }
         case .alphabetical:
@@ -227,9 +234,7 @@ enum SwipeLibraryFiltering {
                 let lhsCreator = lhs.item.creatorName ?? lhs.item.author ?? ""
                 let rhsCreator = rhs.item.creatorName ?? rhs.item.author ?? ""
                 if lhsCreator == rhsCreator {
-                    let lhsDate = date(from: lhs.item.createdAt)
-                    let rhsDate = date(from: rhs.item.createdAt)
-                    if lhsDate != rhsDate { return lhsDate > rhsDate }
+                    if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
                     return lhs.index < rhs.index
                 }
                 return lhsCreator.localizedCaseInsensitiveCompare(rhsCreator) == .orderedAscending
@@ -246,14 +251,33 @@ enum SwipeLibraryFiltering {
         return hookScore + views + likes + comments
     }
 
-    private static func isNewer(_ lhs: SwipeGalleryItem, than rhs: SwipeGalleryItem) -> Bool {
-        let lhsDate = date(from: lhs.createdAt)
-        let rhsDate = date(from: rhs.createdAt)
+    private static func isNewer(
+        _ lhs: SwipeGalleryItem,
+        than rhs: SwipeGalleryItem,
+        createdAtByID: [String: Date]
+    ) -> Bool {
+        let lhsDate = createdAtByID[lhs.id] ?? .distantPast
+        let rhsDate = createdAtByID[rhs.id] ?? .distantPast
         if lhsDate != rhsDate { return lhsDate > rhsDate }
         return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
     }
 
-    private static func date(from string: String) -> Date {
-        ISO8601DateFormatter().date(from: string) ?? .distantPast
+    private static func createdAtLookup(for items: [SwipeGalleryItem]) -> [String: Date] {
+        var lookup: [String: Date] = [:]
+        lookup.reserveCapacity(items.count)
+        for item in items where lookup[item.id] == nil {
+            lookup[item.id] = date(from: item.createdAt)
+        }
+        return lookup
     }
+
+    private static func date(from string: String) -> Date {
+        ISO8601.date(from: string) ?? .distantPast
+    }
+}
+
+private struct SwipeSortRecord {
+    let index: Int
+    let item: SwipeGalleryItem
+    let createdAt: Date
 }

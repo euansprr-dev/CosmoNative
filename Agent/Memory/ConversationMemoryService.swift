@@ -51,7 +51,7 @@ class ConversationMemoryService {
         let metadataJSON = (try? JSONSerialization.data(withJSONObject: metaDict)).flatMap { String(data: $0, encoding: .utf8) }
 
         var structuredDict: [String: Any] = [
-            "createdAt": ISO8601DateFormatter().string(from: conv.createdAt)
+            "createdAt": ISO8601.string(from: conv.createdAt)
         ]
         if let summary = conv.summary {
             structuredDict["summary"] = summary
@@ -508,7 +508,7 @@ class ConversationMemoryService {
            let structuredDict = try? JSONSerialization.jsonObject(with: structuredData) as? [String: Any] {
             summary = structuredDict["summary"] as? String
             if let dateStr = structuredDict["createdAt"] as? String {
-                createdAt = ISO8601DateFormatter().date(from: dateStr) ?? Date()
+                createdAt = ISO8601.date(from: dateStr) ?? Date()
             }
         }
 

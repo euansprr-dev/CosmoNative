@@ -894,7 +894,7 @@ final class ConnectionLibraryViewModel: ObservableObject {
             try? await CosmoDatabase.shared.asyncWrite { db in
                 try db.execute(
                     sql: "UPDATE atoms SET metadata = ?, updated_at = ? WHERE uuid = ?",
-                    arguments: [atom.metadata, ISO8601DateFormatter().string(from: Date()), item.uuid]
+                    arguments: [atom.metadata, ISO8601.string(from: Date()), item.uuid]
                 )
             }
 

@@ -505,7 +505,7 @@ class AutomationDispatcher: ObservableObject {
     private func updateRuleStats(_ rule: AutomationRule) async {
         do {
             guard let db = CosmoDatabase.shared.dbQueue else { return }
-            let now = ISO8601DateFormatter().string(from: Date())
+            let now = ISO8601.string(from: Date())
 
             try await db.write { db in
                 try db.execute(
@@ -625,7 +625,7 @@ extension AutomationDispatcher {
         try await db.write { db in
             if var rule = try AutomationRule.filter(AutomationRule.Columns.uuid == uuid).fetchOne(db) {
                 rule.isEnabled.toggle()
-                rule.updatedAt = ISO8601DateFormatter().string(from: Date())
+                rule.updatedAt = ISO8601.string(from: Date())
                 try rule.update(db)
             }
         }

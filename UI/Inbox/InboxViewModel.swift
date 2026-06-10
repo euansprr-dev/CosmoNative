@@ -6,6 +6,24 @@
 import SwiftUI
 import Combine
 
+struct InboxSectionIdentity: Equatable {
+    private let ids: [String]
+
+    init(sections: [InboxSection]) {
+        ids = sections.flatMap { section in
+            [section.id] + section.items.map(\.uuid)
+        }
+    }
+}
+
+struct InboxSoftClusterIdentity: Equatable {
+    private let ids: [String]
+
+    init(clusters: [InboxSoftCluster]) {
+        ids = clusters.map(\.id)
+    }
+}
+
 @Observable
 @MainActor
 final class InboxViewModel {
@@ -14,6 +32,7 @@ final class InboxViewModel {
 
     var items: [InboxItem] = []
     var groupedItems: [InboxSection] = []
+    var groupedItemsIdentity = InboxSectionIdentity(sections: [])
     var stats: InboxStats = .empty
 
     // MARK: - Filtering & Sorting
@@ -44,6 +63,7 @@ final class InboxViewModel {
     var itemInsights: [String: String] = [:]
     var itemGroups: [InboxItemGroup] = []
     var softClusters: [InboxSoftCluster] = []
+    var softClustersIdentity = InboxSoftClusterIdentity(clusters: [])
     var unplacedDatabaseItems: [InboxDatabaseCandidate] = []
     var selectedSpatialItem: InboxSpatialSelection?
     var collapsedSoftClusterIds: Set<String> = []
@@ -81,6 +101,8 @@ final class InboxViewModel {
     private var intelligenceTask: Task<Void, Never>?
     private var databaseItemsTask: Task<Void, Never>?
     private var undoToastTask: Task<Void, Never>?
+    private var overrideSearchTask: Task<Void, Never>?
+    private var overrideSearchRequestID = UUID()
     private var pendingDatabaseFocusUuid: String?
 
     // Whether the Inbox surface is currently visible. Drives whether expensive
@@ -126,7 +148,6 @@ final class InboxViewModel {
                 self.items = newItems
                 self.stats = InboxStats(items: newItems)
                 self.regroupItems()
-                self.rebuildSoftClusters()
                 self.runIntelligence()
                 self.loadUnplacedDatabaseItems()
             }
@@ -146,9 +167,8 @@ final class InboxViewModel {
         return hasher.finalize()
     }
 
-    private func softClusterInputHash() -> Int {
+    private func softClusterInputHash(filtered: [InboxItem]) -> Int {
         var hasher = Hasher()
-        let filtered = filteredAndSorted
         for item in filtered {
             hasher.combine(item.uuid)
             hasher.combine(item.classification?.rawValue ?? "")
@@ -168,7 +188,6 @@ final class InboxViewModel {
         let filtered = filteredAndSorted
         let calendar = Calendar.current
         let now = Date()
-        let formatter = ISO8601DateFormatter()
 
         var today: [InboxItem] = []
         var yesterday: [InboxItem] = []
@@ -176,7 +195,7 @@ final class InboxViewModel {
         var older: [InboxItem] = []
 
         for item in filtered {
-            guard let date = formatter.date(from: item.createdAt) else {
+            guard let date = ISO8601.date(from: item.createdAt) else {
                 older.append(item)
                 continue
             }
@@ -186,13 +205,18 @@ final class InboxViewModel {
             else { older.append(item) }
         }
 
-        groupedItems = [
+        let nextGroupedItems = [
             today.isEmpty ? nil : InboxSection(id: "today", title: "Today", items: today),
             yesterday.isEmpty ? nil : InboxSection(id: "yesterday", title: "Yesterday", items: yesterday),
             thisWeek.isEmpty ? nil : InboxSection(id: "thisWeek", title: "This Week", items: thisWeek),
             older.isEmpty ? nil : InboxSection(id: "older", title: "Older", items: older),
         ].compactMap { $0 }
-        rebuildSoftClusters()
+        let nextIdentity = InboxSectionIdentity(sections: nextGroupedItems)
+        if groupedItemsIdentity != nextIdentity {
+            groupedItemsIdentity = nextIdentity
+        }
+        groupedItems = nextGroupedItems
+        rebuildSoftClusters(filtered: filtered)
     }
 
     private var filteredAndSorted: [InboxItem] {
@@ -394,6 +418,8 @@ final class InboxViewModel {
     // MARK: - Override Sheet
 
     func showOverride(for item: InboxItem) {
+        overrideSearchTask?.cancel()
+        overrideSearchRequestID = UUID()
         overrideItem = item
         overrideSearchResults = []
         showOverrideSheet = true
@@ -438,17 +464,37 @@ final class InboxViewModel {
         }
     }
 
-    func searchAtoms(query: String) async {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+    func scheduleOverrideSearch(query: String) {
+        overrideSearchTask?.cancel()
+
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestID = UUID()
+        overrideSearchRequestID = requestID
+
+        guard !trimmedQuery.isEmpty else {
             overrideSearchResults = []
             return
         }
+
+        overrideSearchTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled, let self else { return }
+            await self.searchAtoms(query: trimmedQuery, requestID: requestID)
+        }
+    }
+
+    private func searchAtoms(query: String, requestID: UUID) async {
         do {
-            overrideSearchResults = try await HybridSearchEngine.shared.search(
+            let results = try await HybridSearchEngine.shared.search(
                 query: query,
                 limit: 8
             )
+            guard self.overrideSearchRequestID == requestID, !Task.isCancelled else { return }
+            overrideSearchResults = results
+        } catch is CancellationError {
+            return
         } catch {
+            guard self.overrideSearchRequestID == requestID else { return }
             overrideSearchResults = []
         }
     }
@@ -684,14 +730,15 @@ final class InboxViewModel {
         }
     }
 
-    private func rebuildSoftClusters() {
+    private func rebuildSoftClusters(filtered providedFiltered: [InboxItem]? = nil) {
+        let filtered = providedFiltered ?? filteredAndSorted
+
         // Identical input → identical output. Short-circuit so SwiftUI doesn't
         // re-diff a 5-cluster array on every Combine emission.
-        let inputHash = softClusterInputHash()
+        let inputHash = softClusterInputHash(filtered: filtered)
         if inputHash == lastSoftClusterInputHash, !softClusters.isEmpty { return }
         lastSoftClusterInputHash = inputHash
 
-        let filtered = filteredAndSorted
         var clusters: [InboxSoftCluster] = []
 
         let mergeGroups = Dictionary(grouping: filtered.filter { $0.classification == .merge }) {
@@ -766,10 +813,15 @@ final class InboxViewModel {
             ))
         }
 
-        softClusters = clusters.sorted { lhs, rhs in
+        let nextClusters = clusters.sorted { lhs, rhs in
             if lhs.kind.sortRank != rhs.kind.sortRank { return lhs.kind.sortRank < rhs.kind.sortRank }
             return lhs.subtitle < rhs.subtitle
         }
+        let nextIdentity = InboxSoftClusterIdentity(clusters: nextClusters)
+        if softClustersIdentity != nextIdentity {
+            softClustersIdentity = nextIdentity
+        }
+        softClusters = nextClusters
     }
 
     private func loadUnplacedDatabaseItems(force: Bool = false) {
@@ -797,7 +849,6 @@ final class InboxViewModel {
                     return true
                 }
                 let memberships = try await self.atomRepo.fetchThinkspaceMembership(for: activeAtoms.map(\.uuid))
-                let formatter = ISO8601DateFormatter()
                 let candidates = activeAtoms
                     .filter { (memberships[$0.uuid] ?? []).isEmpty }
                     .sorted { $0.updatedAt > $1.updatedAt }
@@ -807,7 +858,7 @@ final class InboxViewModel {
                             atom: atom,
                             title: atom.title ?? "Untitled",
                             preview: Self.previewText(for: atom),
-                            relativeDate: Self.relativeDate(from: formatter.date(from: atom.updatedAt) ?? Date())
+                            relativeDate: Self.relativeDate(from: ISO8601.date(from: atom.updatedAt) ?? Date())
                         )
                     }
 

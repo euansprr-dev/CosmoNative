@@ -639,7 +639,7 @@ final class InquiryCrystallizationEngine {
                     structured.currentUnderstanding.oneSentenceModel = update.after
                 }
                 let logged = ModelUpdate(
-                    date: ISO8601DateFormatter().string(from: Date()),
+                    date: ISO8601.string(from: Date()),
                     kind: update.kind,
                     before: update.before,
                     after: update.after,
@@ -648,7 +648,7 @@ final class InquiryCrystallizationEngine {
                     acceptedBy: .user
                 )
                 structured.currentUnderstanding.recentUpdates.append(logged)
-                structured.currentUnderstanding.lastUpdated = ISO8601DateFormatter().string(from: Date())
+                structured.currentUnderstanding.lastUpdated = ISO8601.string(from: Date())
                 summary.modelUpdatesApplied += 1
             }
             ddCopy = ddCopy.withStructured(structured)

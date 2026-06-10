@@ -701,7 +701,7 @@ extension ContentFocusModeState {
 
         // Decode last modified
         if let modifiedStr = dict["lastModified"] as? String,
-           let date = ISO8601DateFormatter().date(from: modifiedStr) {
+           let date = ISO8601.date(from: modifiedStr) {
             state.lastModified = date
         }
 
@@ -763,7 +763,7 @@ extension ContentFocusModeState {
         metadataDict["polishSystemPrompt"] = polishSystemPrompt.isEmpty ? nil : polishSystemPrompt
         metadataDict["isContextPanelVisible"] = isContextPanelVisible
         metadataDict["isAISuggestedOutline"] = isAISuggestedOutline
-        metadataDict["lastModified"] = ISO8601DateFormatter().string(from: lastModified)
+        metadataDict["lastModified"] = ISO8601.string(from: lastModified)
         metadataDict["lastModifiedUnix"] = lastModified.timeIntervalSince1970
 
         // Encode outline as JSON array
@@ -822,13 +822,10 @@ extension ContentFocusModeState {
            existing.plainText == draftContent {
             // Rich document is in sync with plain text — use it (preserves formatting)
             richDraftDocument = existing
-        } else if !draftContent.isEmpty {
-            // Plain text is newer — rebuild rich document from it
-            richDraftDocument = RichDocument.migrateLegacy(draftContent)
-        } else if let existing = self.richDraftDocument {
-            richDraftDocument = existing
         } else {
-            richDraftDocument = .empty
+            // Plain text is newer — rebuild rich document from it, including the
+            // empty-string case when the user intentionally deleted all content.
+            richDraftDocument = RichDocument.migrateLegacy(draftContent)
         }
         let fields = RichDocumentPersistence.writeAtomDocuments(
             existingMetadata: metadataString,

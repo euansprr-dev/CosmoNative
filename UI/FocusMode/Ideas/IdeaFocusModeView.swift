@@ -62,6 +62,7 @@ struct IdeaFocusModeView: View {
     @State private var showBlueprintSheet: Bool = false
     @State private var showResearchSheet: Bool = false
     @State private var showFrameworkSheet: Bool = false
+    @State private var atelierScrollMetrics = CortexScrollMetrics()
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
     @FocusState private var focusedHookEditor: HookEditorFocus?
@@ -104,8 +105,16 @@ struct IdeaFocusModeView: View {
                     .padding(.horizontal, DS.space24)
                     .padding(.top, DS.space4)
                     .padding(.bottom, DS.space20)
+                    .background(
+                        CortexScrollViewIntrospector { metrics in
+                            if metrics != atelierScrollMetrics {
+                                atelierScrollMetrics = metrics
+                            }
+                        }
+                    )
                 }
                 .scrollIndicators(.hidden)
+                .cortexThinScrollbar(metrics: atelierScrollMetrics)
             }
 
             overlayPresentations
@@ -523,15 +532,10 @@ extension IdeaFocusModeView {
     }
 
     private var formattedCreatedDate: String {
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = iso.date(from: viewModel.idea.createdAt)
-            ?? ISO8601DateFormatter().date(from: viewModel.idea.createdAt) else {
+        guard let date = ISO8601.date(from: viewModel.idea.createdAt) else {
             return "undated"
         }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM d"
-        return formatter.string(from: date).lowercased()
+        return CosmoDateFormatters.monthDay.string(from: date).lowercased()
     }
 
     // MARK: Context editor — chromeless manuscript
@@ -559,7 +563,7 @@ extension IdeaFocusModeView {
                     viewModel.autoEnrich()
                     handleMentionTrigger(newValue)
                 }
-                .frame(minHeight: 200)
+                .frame(maxWidth: .infinity, minHeight: IdeaContextTextView.minimumHeight, alignment: .topLeading)
                 .onChange(of: viewModel.editableBody) { _, newValue in
                     if !isContextFocused {
                         viewModel.scheduleAutoSave()
@@ -1231,6 +1235,9 @@ private struct IdeaContextTextEditor: NSViewRepresentable {
         }
 
         func textDidBeginEditing(_ notification: Notification) {
+            if let textView = notification.object as? NSTextView {
+                FocusModeTextClipboardTarget.activate(textView)
+            }
             parent.isFocused = true
         }
 
@@ -1240,6 +1247,7 @@ private struct IdeaContextTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? IdeaContextTextView else { return }
+            FocusModeTextClipboardTarget.activate(textView)
             parent.isFocused = true
             parent.text = textView.string
             parent.onTextChange(textView.string)
@@ -1250,6 +1258,10 @@ private struct IdeaContextTextEditor: NSViewRepresentable {
 
 private final class IdeaContextTextView: NSTextView {
     static let minimumHeight: CGFloat = 200
+
+    override var textContainerOrigin: NSPoint {
+        NSPoint(x: textContainerInset.width, y: textContainerInset.height)
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(
@@ -1283,37 +1295,17 @@ private final class IdeaContextTextView: NSTextView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard event.type == .keyDown,
-              let character = event.charactersIgnoringModifiers?.lowercased() else {
-            return super.performKeyEquivalent(with: event)
-        }
-
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let isCommandOnly = flags == .command
-        let isControlOnly = flags == .control
-
-        if character == "c", isCommandOnly || isControlOnly {
-            copy(nil)
+        if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
             return true
         }
 
-        if isCommandOnly {
-            switch character {
-            case "x":
-                cut(nil)
-                return true
-            case "v":
-                paste(nil)
-                return true
-            case "a":
-                selectAll(nil)
-                return true
-            default:
-                break
-            }
-        }
-
         return super.performKeyEquivalent(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        FocusModeTextClipboardTarget.activate(self)
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
@@ -1430,11 +1422,15 @@ private struct HookLineEditor: NSViewRepresentable {
         }
 
         func textDidBeginEditing(_ notification: Notification) {
+            if let textView = notification.object as? NSTextView {
+                FocusModeTextClipboardTarget.activate(textView)
+            }
             parent.focusedEditor = parent.editorID
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? HookLineTextView else { return }
+            FocusModeTextClipboardTarget.activate(textView)
             parent.focusedEditor = parent.editorID
             parent.text = textView.string
             textView.invalidateIntrinsicContentSize()
@@ -1474,6 +1470,7 @@ private final class HookLineTextView: NSTextView {
         guard window.firstResponder !== self else { return }
 
         window.makeFirstResponder(self)
+        FocusModeTextClipboardTarget.activate(self)
         setSelectedRange(NSRange(location: string.count, length: 0))
     }
 
@@ -1492,6 +1489,20 @@ private final class HookLineTextView: NSTextView {
         }
 
         super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        FocusModeTextClipboardTarget.activate(self)
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 
     override func doCommand(by selector: Selector) {
@@ -1611,11 +1622,15 @@ private struct OutlineSlideNoteEditor: NSViewRepresentable {
         }
 
         func textDidBeginEditing(_ notification: Notification) {
+            if let textView = notification.object as? NSTextView {
+                FocusModeTextClipboardTarget.activate(textView)
+            }
             parent.focusedSlideID = parent.slideID
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? OutlineSlideNoteTextView else { return }
+            FocusModeTextClipboardTarget.activate(textView)
             parent.text = textView.string
             textView.invalidateIntrinsicContentSize()
         }
@@ -1692,6 +1707,7 @@ final class OutlineSlideNoteTextView: NSTextView {
         guard shouldFocusWhenAttached, let window else { return }
         guard window.firstResponder !== self else {
             shouldFocusWhenAttached = false
+            FocusModeTextClipboardTarget.activate(self)
             setSelectedRange(NSRange(location: string.count, length: 0))
             return
         }
@@ -1709,6 +1725,7 @@ final class OutlineSlideNoteTextView: NSTextView {
         }
 
         shouldFocusWhenAttached = false
+        FocusModeTextClipboardTarget.activate(self)
         setSelectedRange(NSRange(location: string.count, length: 0))
     }
 
@@ -1737,6 +1754,20 @@ final class OutlineSlideNoteTextView: NSTextView {
         }
 
         super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        FocusModeTextClipboardTarget.activate(self)
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 
     override func doCommand(by selector: Selector) {

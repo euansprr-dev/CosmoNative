@@ -112,7 +112,7 @@ struct AutomationRule: Codable, FetchableRecord, PersistableRecord, Identifiable
         isBuiltIn: Bool = false
     ) -> AutomationRule {
         let uuid = UUID().uuidString
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         let encoder = JSONEncoder()
 
         let triggerJSON = (try? String(data: encoder.encode(triggerConfig), encoding: .utf8)) ?? "{}"

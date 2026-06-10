@@ -371,7 +371,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
     static func cosmoAIBlock(position: CGPoint, query: String? = nil, mode: String? = nil) -> CanvasBlock {
         var metadata: [String: String] = [
             "mode": mode ?? "idle",
-            "created": ISO8601DateFormatter().string(from: Date())
+            "created": ISO8601.string(from: Date())
         ]
 
         // Add query to metadata for auto-execution
@@ -403,7 +403,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             subtitle: nil,
             metadata: [
                 "content": content,
-                "created": ISO8601DateFormatter().string(from: Date())
+                "created": ISO8601.string(from: Date())
             ]
         )
     }
@@ -420,7 +420,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             subtitle: nil,
             metadata: [
                 "content": content,
-                "created": ISO8601DateFormatter().string(from: Date())
+                "created": ISO8601.string(from: Date())
             ]
         )
     }
@@ -436,7 +436,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             title: "Scheduler",
             subtitle: "Plan & Today Mode",
             metadata: [
-                "created": ISO8601DateFormatter().string(from: Date())
+                "created": ISO8601.string(from: Date())
             ]
         )
     }
@@ -455,7 +455,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             subtitle: "This could revolutionize how users interact with the app...",
             metadata: [
                 "tags": "innovation, product, ux",
-                "updated": ISO8601DateFormatter().string(from: Date())
+                "updated": ISO8601.string(from: Date())
             ]
         )
     }
@@ -473,7 +473,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             metadata: [
                 "status": "draft",
                 "currentStep": "brainstorm",
-                "updated": ISO8601DateFormatter().string(from: Date())
+                "updated": ISO8601.string(from: Date())
             ]
         )
     }
@@ -491,7 +491,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             metadata: [
                 "status": "pending",
                 "priority": "high",
-                "updated": ISO8601DateFormatter().string(from: Date())
+                "updated": ISO8601.string(from: Date())
             ]
         )
     }
@@ -508,7 +508,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             subtitle: "Core concepts linking visual hierarchy, spacing, and typography...",
             metadata: [
                 "type": "connection",
-                "updated": ISO8601DateFormatter().string(from: Date())
+                "updated": ISO8601.string(from: Date())
             ]
         )
     }
@@ -518,7 +518,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         var metadata: [String: String] = [
             "type": "article",
             "url": "https://example.com/article",
-            "updated": ISO8601DateFormatter().string(from: Date())
+            "updated": ISO8601.string(from: Date())
         ]
         if isSwipeFile {
             metadata["isSwipeFile"] = "true"

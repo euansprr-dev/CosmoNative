@@ -45,7 +45,8 @@ class AgentContextAssembler {
         tools: [LLMToolDefinition],
         intent: AgentIntent? = nil,
         activeItemsContext: String? = nil,
-        systemPromptOverride: String? = nil
+        systemPromptOverride: String? = nil,
+        lightweightContext: Bool = false
     ) async -> SystemPrompt {
         // Increase token budget for strategy/query intents that need swipe library + pipeline data
         if let intent = intent, intent == .strategy || intent == .query {
@@ -98,6 +99,10 @@ class AgentContextAssembler {
 
         let convId = conversation?.id ?? ""
 
+        // Inline edits inject their own compact "Resolved Inline Skill Context", so skip the
+        // heavy GRDB/retrieval layers (client intelligence, swipes, taste, recent analyses) —
+        // they are redundant here and are the bulk of cold-call latency.
+        if !lightweightContext {
         // Resolve active client UUID for cache keying (prevents cross-client contamination)
         var activeClientUUID: String? = nil
         if let conv = conversation, !conv.linkedAtomUUIDs.isEmpty {
@@ -190,6 +195,7 @@ class AgentContextAssembler {
                 usedTokens += estimateTokens(combinedGrdbContext)
             }
         }
+        } // end if !lightweightContext
 
         // Layer 3.75: Active items context (numbered list resolution) — always fresh
         if let itemsCtx = activeItemsContext, !itemsCtx.isEmpty {
@@ -1170,10 +1176,10 @@ class AgentContextAssembler {
             return blocks.filter { atom in
                 let meta = atom.metadataValue(as: ScheduleBlockMetadata.self)
                 if let startStr = meta?.startTime,
-                   let startDate = ISO8601DateFormatter().date(from: startStr) {
+                   let startDate = ISO8601.date(from: startStr) {
                     return calendar.isDate(startDate, inSameDayAs: todayStart)
                 }
-                if let date = ISO8601DateFormatter().date(from: atom.createdAt) {
+                if let date = ISO8601.date(from: atom.createdAt) {
                     return calendar.isDate(date, inSameDayAs: todayStart)
                 }
                 return false
@@ -1320,14 +1326,14 @@ class AgentContextAssembler {
         formatter.dateFormat = "HH:mm"
 
         let startStr: String
-        if let s = start, let d = ISO8601DateFormatter().date(from: s) {
+        if let s = start, let d = ISO8601.date(from: s) {
             startStr = formatter.string(from: d)
         } else {
             startStr = "??"
         }
 
         let endStr: String
-        if let e = end, let d = ISO8601DateFormatter().date(from: e) {
+        if let e = end, let d = ISO8601.date(from: e) {
             endStr = formatter.string(from: d)
         } else {
             endStr = "??"

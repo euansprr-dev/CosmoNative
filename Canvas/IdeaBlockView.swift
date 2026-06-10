@@ -293,15 +293,11 @@ struct IdeaMetadataView: View {
     }
 
     private func formatDate(_ dateString: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: dateString) else {
+        guard let date = ISO8601.date(from: dateString) else {
             return dateString
         }
 
-        let displayFormatter = DateFormatter()
-        displayFormatter.dateStyle = .medium
-        displayFormatter.timeStyle = .none
-        return displayFormatter.string(from: date)
+        return CosmoDateFormatters.shortDate.string(from: date)
     }
 }
 
@@ -436,14 +432,11 @@ struct IdeaFooter: View {
     }
 
     private func timeAgo(from dateString: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: dateString) else {
+        guard let date = ISO8601.date(from: dateString) else {
             return ""
         }
 
-        let relativeFormatter = RelativeDateTimeFormatter()
-        relativeFormatter.unitsStyle = .abbreviated
-        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+        return CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date())
     }
 
     private func copyContent() {

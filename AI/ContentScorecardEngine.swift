@@ -599,7 +599,7 @@ class ContentScorecardEngine: ObservableObject {
             "lessonType": "score_prediction",
             "contentUUID": contentUUID.uuidString,
             "overallScore": overallScore,
-            "timestamp": ISO8601DateFormatter().string(from: Date())
+            "timestamp": ISO8601.string(from: Date())
         ]
 
         do {
@@ -607,7 +607,7 @@ class ContentScorecardEngine: ObservableObject {
                 "contentUUID": contentUUID.uuidString,
                 "overallScore": overallScore,
                 "dimensions": dimensionScores,
-                "timestamp": ISO8601DateFormatter().string(from: Date())
+                "timestamp": ISO8601.string(from: Date())
             ]
             let structuredData = try JSONSerialization.data(withJSONObject: structuredDict)
             let structuredStr = String(data: structuredData, encoding: .utf8)

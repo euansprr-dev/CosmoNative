@@ -298,7 +298,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             // Persist insight to atom's structured JSON
             var updatedAtom = idea.withIdeaInsight(result)
             updatedAtom = updatedAtom.withUpdatedIdeaMetadata { meta in
-                meta.lastAnalyzedAt = ISO8601DateFormatter().string(from: Date())
+                meta.lastAnalyzedAt = ISO8601.string(from: Date())
                 meta.insightScore = calculateInsightScore(result)
                 meta.matchingSwipeCount = result.matchingSwipes?.count
                 if let topFramework = result.frameworkRecommendations?.first {
@@ -308,13 +308,13 @@ class IdeaFocusModeViewModel: ObservableObject {
                     meta.suggestedHookType = topHook.hookType?.rawValue
                 }
             }
-            updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            updatedAtom.updatedAt = ISO8601.string(from: Date())
             updatedAtom.localVersion += 1
 
             idea = try await AtomRepository.shared.update(updatedAtom)
 
             // Update session state
-            sessionState.lastAnalyzedAt = ISO8601DateFormatter().string(from: Date())
+            sessionState.lastAnalyzedAt = ISO8601.string(from: Date())
             sessionState.save()
 
         } catch {
@@ -413,7 +413,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             insight = currentInsight
 
             var updatedAtom = idea.withIdeaInsight(currentInsight)
-            updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            updatedAtom.updatedAt = ISO8601.string(from: Date())
             updatedAtom.localVersion += 1
 
             do {
@@ -440,9 +440,9 @@ class IdeaFocusModeViewModel: ObservableObject {
                 insight = result
                 var analysisAtom = idea.withIdeaInsight(result)
                 analysisAtom = analysisAtom.withUpdatedIdeaMetadata { meta in
-                    meta.lastAnalyzedAt = ISO8601DateFormatter().string(from: Date())
+                    meta.lastAnalyzedAt = ISO8601.string(from: Date())
                 }
-                analysisAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                analysisAtom.updatedAt = ISO8601.string(from: Date())
                 analysisAtom.localVersion += 1
                 idea = try await AtomRepository.shared.update(analysisAtom)
             }
@@ -485,7 +485,7 @@ class IdeaFocusModeViewModel: ObservableObject {
                 }
                 return insight?.hookSuggestions?.map(\.hookText) ?? []
             }()
-            let nowISO = ISO8601DateFormatter().string(from: Date())
+            let nowISO = ISO8601.string(from: Date())
 
             let inheritedClientUUID = linkedClient?.uuid ?? idea.ideaMetadata?.clientUUID
 
@@ -763,7 +763,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             ids.append(swipeUUID)
             meta.linkedSwipeIds = ids
         }
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         updatedAtom.localVersion += 1
         do {
             idea = try await AtomRepository.shared.update(updatedAtom)
@@ -780,7 +780,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             meta.linkedSwipeIds = meta.linkedSwipeIds?.filter { $0 != swipeUUID }
             if meta.linkedSwipeIds?.isEmpty == true { meta.linkedSwipeIds = nil }
         }
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         updatedAtom.localVersion += 1
         do {
             idea = try await AtomRepository.shared.update(updatedAtom)
@@ -813,7 +813,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             ids.append(connectionUUID)
             meta.linkedConnectionIds = ids
         }
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         updatedAtom.localVersion += 1
         do {
             idea = try await AtomRepository.shared.update(updatedAtom)
@@ -829,7 +829,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             meta.linkedConnectionIds = meta.linkedConnectionIds?.filter { $0 != connectionUUID }
             if meta.linkedConnectionIds?.isEmpty == true { meta.linkedConnectionIds = nil }
         }
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         updatedAtom.localVersion += 1
         do {
             idea = try await AtomRepository.shared.update(updatedAtom)
@@ -1004,7 +1004,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             updatedAtom = updatedAtom.addingLink(.ideaToClient(client.uuid))
 
             var updatedClient = client.addingLink(.clientToIdea(idea.uuid))
-            updatedClient.updatedAt = ISO8601DateFormatter().string(from: Date())
+            updatedClient.updatedAt = ISO8601.string(from: Date())
             updatedClient.localVersion += 1
             do {
                 _ = try await AtomRepository.shared.update(updatedClient)
@@ -1016,7 +1016,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             updatedAtom = updatedAtom.removingLinks(ofType: .ideaToClient)
         }
 
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         updatedAtom.localVersion += 1
 
         do {
@@ -1034,7 +1034,7 @@ class IdeaFocusModeViewModel: ObservableObject {
 
         let updatedAtom = idea.withUpdatedIdeaMetadata { meta in
             meta.ideaStatus = status
-            meta.statusChangedAt = ISO8601DateFormatter().string(from: Date())
+            meta.statusChangedAt = ISO8601.string(from: Date())
         }
         // Note: AtomRepository.update() handles updatedAt and localVersion internally
 
@@ -1233,7 +1233,7 @@ class IdeaFocusModeViewModel: ObservableObject {
                 snapshot.title,
                 snapshot.body,
                 snapshot.metadataJSON(merging: existingMetadata),
-                ISO8601DateFormatter().string(from: Date()),
+                ISO8601.string(from: Date()),
                 snapshot.uuid
             ]
         )

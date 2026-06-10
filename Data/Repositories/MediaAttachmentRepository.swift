@@ -50,7 +50,7 @@ final class MediaAttachmentRepository {
             attachment.localStoragePath = localStoragePath
             attachment.thumbnailPath = thumbnailPath ?? attachment.thumbnailPath
             attachment.processingStatus = status
-            attachment.updatedAt = ISO8601DateFormatter().string(from: Date())
+            attachment.updatedAt = ISO8601.string(from: Date())
             try attachment.update(db)
         }
     }
@@ -62,7 +62,7 @@ final class MediaAttachmentRepository {
                 .fetchOne(db) else { return }
             attachment.extractedText = text
             attachment.processingStatus = status
-            attachment.updatedAt = ISO8601DateFormatter().string(from: Date())
+            attachment.updatedAt = ISO8601.string(from: Date())
             try attachment.update(db)
         }
     }
@@ -74,7 +74,7 @@ final class MediaAttachmentRepository {
                 .fetchOne(db) else { return }
             attachment.transcriptText = transcript
             attachment.processingStatus = status
-            attachment.updatedAt = ISO8601DateFormatter().string(from: Date())
+            attachment.updatedAt = ISO8601.string(from: Date())
             try attachment.update(db)
         }
     }

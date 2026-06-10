@@ -1068,7 +1068,7 @@ struct ResearchMetadataBar: View {
     }
     
     private func formatDate(_ dateString: String) -> String {
-        guard let date = ISO8601DateFormatter().date(from: dateString) else {
+        guard let date = ISO8601.date(from: dateString) else {
             return dateString
         }
         let formatter = DateFormatter()

@@ -358,7 +358,7 @@ class AtomRepository: ObservableObject {
     func create(_ atom: Atom) async throws -> Atom {
         print("[PERSIST] create() called — uuid=\(atom.uuid) type=\(atom.type.rawValue) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0)")
         var preparedAtom = atom
-        preparedAtom.createdAt = ISO8601DateFormatter().string(from: Date())
+        preparedAtom.createdAt = ISO8601.string(from: Date())
         preparedAtom.updatedAt = preparedAtom.createdAt
 
         // Capture prepared atom for Sendable closure
@@ -414,7 +414,7 @@ class AtomRepository: ObservableObject {
     func update(_ atom: Atom) async throws -> Atom {
         print("[PERSIST] update() called — uuid=\(atom.uuid) expectedVersion=\(atom.localVersion) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"")
         var updatedAtom = atom
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         updatedAtom.localVersion += 1
 
         let atomToUpdate = updatedAtom
@@ -488,7 +488,7 @@ class AtomRepository: ObservableObject {
             if atom.isDeleted {
                 merged.isDeleted = true
             }
-            merged.updatedAt = ISO8601DateFormatter().string(from: Date())
+            merged.updatedAt = ISO8601.string(from: Date())
             merged.localVersion += 1
 
             let retryVersion = fresh.localVersion
@@ -562,7 +562,7 @@ class AtomRepository: ObservableObject {
     func updateSync(_ atom: Atom) throws -> Atom {
         print("[PERSIST] updateSync() called — uuid=\(atom.uuid) version=\(atom.localVersion) bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"")
         var updatedAtom = atom
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.updatedAt = ISO8601.string(from: Date())
         updatedAtom.localVersion += 1
 
         let atomToUpdate = updatedAtom
@@ -599,7 +599,7 @@ class AtomRepository: ObservableObject {
             return atom
         }
 
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         // Build SET clause — column names are trusted internal strings
         var setClauses: [String] = []
@@ -678,7 +678,7 @@ class AtomRepository: ObservableObject {
                 SET is_deleted = 1, updated_at = ?, _local_version = _local_version + 1
                 WHERE uuid = ?
                 """,
-                arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                arguments: [ISO8601.string(from: Date()), uuid]
             )
 
             // Also soft-delete any canvas blocks referencing this atom
@@ -755,7 +755,7 @@ class AtomRepository: ObservableObject {
                 SET is_deleted = 0, updated_at = ?, _local_version = _local_version + 1
                 WHERE uuid = ?
                 """,
-                arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                arguments: [ISO8601.string(from: Date()), uuid]
             )
         }
 
@@ -774,7 +774,7 @@ class AtomRepository: ObservableObject {
 
     /// Create multiple atoms in a single transaction
     func createBatch(_ atoms: [Atom]) async throws -> [Atom] {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         let preparedAtoms = atoms.map { atom -> Atom in
             var a = atom
             a.createdAt = now
@@ -803,7 +803,7 @@ class AtomRepository: ObservableObject {
 
     /// Update multiple atoms in a single transaction
     func updateBatch(_ atoms: [Atom]) async throws {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         try await database.asyncWrite { db in
             for var atom in atoms {
@@ -821,7 +821,7 @@ class AtomRepository: ObservableObject {
 
     /// Soft delete multiple atoms
     func deleteBatch(uuids: [String]) async throws {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         try await database.asyncWrite { db in
             for uuid in uuids {
@@ -1029,7 +1029,7 @@ extension AtomRepository {
            let metadataString = String(data: metadataJson, encoding: .utf8) {
             updatedProject.metadata = metadataString
         }
-        updatedProject.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedProject.updatedAt = ISO8601.string(from: Date())
 
         try await update(updatedProject)
 
@@ -1088,7 +1088,7 @@ extension AtomRepository {
            let metadataString = String(data: metadataJson, encoding: .utf8) {
             thinkspaceAtom.metadata = metadataString
         }
-        thinkspaceAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        thinkspaceAtom.updatedAt = ISO8601.string(from: Date())
 
         try await update(thinkspaceAtom)
 

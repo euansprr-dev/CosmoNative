@@ -30,6 +30,80 @@ private enum CatalogViewMode: String, CaseIterable {
     case saved = "Saved"
 }
 
+private struct CreatorSwipeIndexItem: Identifiable, Equatable, Sendable {
+    let atomUUID: String
+    let primaryNarrative: NarrativeStyle?
+    let contentFormat: ContentFormat?
+    let frameworkType: SwipeFrameworkType?
+    let hookScore: Double?
+    let createdAt: String
+    let likesCount: Int
+    let viewsCount: Int
+    let commentsCount: Int
+
+    var id: String { atomUUID }
+}
+
+private enum CreatorProfileSwipeFiltering {
+    static func buildIndex(from swipes: [Atom]) -> [CreatorSwipeIndexItem] {
+        swipes.map { swipe in
+            let analysis = swipe.swipeAnalysis
+            return CreatorSwipeIndexItem(
+                atomUUID: swipe.uuid,
+                primaryNarrative: analysis?.primaryNarrative,
+                contentFormat: analysis?.swipeContentFormat,
+                frameworkType: analysis?.frameworkType,
+                hookScore: analysis?.hookScore,
+                createdAt: swipe.createdAt,
+                likesCount: analysis?.likesCount ?? 0,
+                viewsCount: analysis?.viewsCount ?? 0,
+                commentsCount: analysis?.commentsCount ?? 0
+            )
+        }
+    }
+
+    static func filteredIDs(
+        from index: [CreatorSwipeIndexItem],
+        narrativeFilter: NarrativeStyle?,
+        formatFilter: ContentFormat?,
+        sortOption: SwipeSortOption
+    ) -> [String] {
+        var items = index
+
+        if let narrativeFilter {
+            items = items.filter { $0.primaryNarrative == narrativeFilter }
+        }
+
+        if let formatFilter {
+            items = items.filter { $0.contentFormat == formatFilter }
+        }
+
+        switch sortOption {
+        case .recent:
+            items.sort { $0.createdAt > $1.createdAt }
+        case .mostLikes:
+            items.sort { $0.likesCount > $1.likesCount }
+        case .mostViews:
+            items.sort { $0.viewsCount > $1.viewsCount }
+        case .mostComments:
+            items.sort { $0.commentsCount > $1.commentsCount }
+        }
+
+        return items.map(\.atomUUID)
+    }
+
+    static func filteredSwipes(from swipes: [Atom], filteredIDs: [String]) -> [Atom] {
+        var swipesByUUID: [String: Atom] = [:]
+        swipesByUUID.reserveCapacity(swipes.count)
+
+        for swipe in swipes {
+            swipesByUUID[swipe.uuid] = swipe
+        }
+
+        return filteredIDs.compactMap { swipesByUUID[$0] }
+    }
+}
+
 // MARK: - CreatorProfileView
 
 struct CreatorProfileView: View {
@@ -74,6 +148,7 @@ struct CreatorProfileView: View {
     @State private var cachedTopNarrative: NarrativeStyle?
     @State private var cachedTopFramework: SwipeFrameworkType?
     @State private var cachedFilteredSwipes: [Atom] = []
+    @State private var swipeIndex: [CreatorSwipeIndexItem] = []
 
     private let gold = DS.entitySwipe
 
@@ -445,14 +520,14 @@ struct CreatorProfileView: View {
     // MARK: - Cached Stats (recomputed when swipes change)
 
     private func recomputeStats() {
-        let scores = swipes.compactMap { $0.swipeAnalysis?.hookScore }
+        let scores = swipeIndex.compactMap(\.hookScore)
         cachedAvgScore = scores.isEmpty ? meta.averageHookScore : scores.reduce(0, +) / Double(scores.count)
 
-        let narratives = swipes.compactMap { $0.swipeAnalysis?.primaryNarrative }
+        let narratives = swipeIndex.compactMap(\.primaryNarrative)
         let nCounts = Dictionary(narratives.map { ($0, 1) }, uniquingKeysWith: +)
         cachedTopNarrative = nCounts.max(by: { $0.value < $1.value })?.key
 
-        let frameworks = swipes.compactMap { $0.swipeAnalysis?.frameworkType }
+        let frameworks = swipeIndex.compactMap(\.frameworkType)
         let fCounts = Dictionary(frameworks.map { ($0, 1) }, uniquingKeysWith: +)
         cachedTopFramework = fCounts.max(by: { $0.value < $1.value })?.key
     }
@@ -903,24 +978,16 @@ struct CreatorProfileView: View {
     }
 
     private func recomputeFilteredSwipes() {
-        var items = swipes
-        if let nf = narrativeFilter {
-            items = items.filter { $0.swipeAnalysis?.primaryNarrative == nf }
-        }
-        if let ff = formatFilter {
-            items = items.filter { $0.swipeAnalysis?.swipeContentFormat == ff }
-        }
-        switch swipeSortOption {
-        case .recent:
-            items.sort { $0.createdAt > $1.createdAt }
-        case .mostLikes:
-            items.sort { ($0.swipeAnalysis?.likesCount ?? 0) > ($1.swipeAnalysis?.likesCount ?? 0) }
-        case .mostViews:
-            items.sort { ($0.swipeAnalysis?.viewsCount ?? 0) > ($1.swipeAnalysis?.viewsCount ?? 0) }
-        case .mostComments:
-            items.sort { ($0.swipeAnalysis?.commentsCount ?? 0) > ($1.swipeAnalysis?.commentsCount ?? 0) }
-        }
-        cachedFilteredSwipes = items
+        let filteredIDs = CreatorProfileSwipeFiltering.filteredIDs(
+            from: swipeIndex,
+            narrativeFilter: narrativeFilter,
+            formatFilter: formatFilter,
+            sortOption: swipeSortOption
+        )
+        cachedFilteredSwipes = CreatorProfileSwipeFiltering.filteredSwipes(
+            from: swipes,
+            filteredIDs: filteredIDs
+        )
     }
 
     // MARK: - Swipe Card (Canonical)
@@ -1090,6 +1157,7 @@ struct CreatorProfileView: View {
             isLoadingSwipes = true
             let all = try? await AtomRepository.shared.fetchSwipesByTaxonomy(creatorUUID: creator.uuid)
             swipes = all ?? []
+            swipeIndex = CreatorProfileSwipeFiltering.buildIndex(from: swipes)
             recomputeStats()
             recomputeFilteredSwipes()
             isLoadingSwipes = false
@@ -1165,17 +1233,17 @@ struct CreatorProfileView: View {
     }
 
     private func recalculateCreatorStats() async {
-        let scores = swipes.compactMap { $0.swipeAnalysis?.hookScore }
+        let scores = swipeIndex.compactMap(\.hookScore)
         let avgScore = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
 
         let narrativeCounts = Dictionary(
-            swipes.compactMap { $0.swipeAnalysis?.primaryNarrative }.map { ($0.rawValue, 1) },
+            swipeIndex.compactMap(\.primaryNarrative).map { ($0.rawValue, 1) },
             uniquingKeysWith: +
         )
         let topNarratives = narrativeCounts.sorted { $0.value > $1.value }.prefix(3).map(\.key)
 
         let formatCounts = Dictionary(
-            swipes.compactMap { $0.swipeAnalysis?.swipeContentFormat }.map { ($0.rawValue, 1) },
+            swipeIndex.compactMap(\.contentFormat).map { ($0.rawValue, 1) },
             uniquingKeysWith: +
         )
         let topFormats = formatCounts.sorted { $0.value > $1.value }.prefix(3).map(\.key)

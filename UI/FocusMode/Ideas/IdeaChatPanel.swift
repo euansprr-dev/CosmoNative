@@ -210,7 +210,7 @@ struct IdeaChatPanel: View {
             id: UUID(),
             role: "user",
             content: text,
-            timestamp: ISO8601DateFormatter().string(from: Date()),
+            timestamp: ISO8601.string(from: Date()),
             actionCards: nil
         )
         messages.append(userMessage)
@@ -230,7 +230,7 @@ struct IdeaChatPanel: View {
                     id: UUID(),
                     role: "assistant",
                     content: "Something went wrong: \(error.localizedDescription)",
-                    timestamp: ISO8601DateFormatter().string(from: Date()),
+                    timestamp: ISO8601.string(from: Date()),
                     actionCards: nil
                 )
                 messages.append(errorMessage)

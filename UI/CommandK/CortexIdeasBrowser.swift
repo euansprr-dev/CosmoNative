@@ -1059,8 +1059,7 @@ struct IdeaMaterialLedgerRow: View {
     }
 
     private var relativeTime: String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: item.updatedAt) else { return "" }
+        guard let date = ISO8601.date(from: item.updatedAt) else { return "" }
         let interval = Date().timeIntervalSince(date)
         if interval < 3600 { return "\(max(1, Int(interval / 60)))m" }
         if interval < 86400 { return "\(Int(interval / 3600))h" }

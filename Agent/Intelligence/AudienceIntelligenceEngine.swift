@@ -83,7 +83,7 @@ class AudienceIntelligenceEngine {
         let recentContent = contentWithPerf.filter { item in
             guard let dateStr = item.atom.metadataDict?["activatedAt"] as? String ??
                     Optional(item.atom.createdAt),
-                  let date = ISO8601DateFormatter().date(from: dateStr) else {
+                  let date = ISO8601.date(from: dateStr) else {
                 return false
             }
             return date > Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()

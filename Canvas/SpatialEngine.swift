@@ -159,9 +159,10 @@ class SpatialEngine: ObservableObject {
                 return true
             }
 
-            // Guard: don't apply results if thinkspace changed while loading
-            guard thinkspaceId == currentThinkspaceId else {
+            // Guard: don't apply results if the switch was cancelled or superseded.
+            guard !Task.isCancelled, thinkspaceId == currentThinkspaceId else {
                 isLoading = false
+                CanvasPerformanceInstrumentation.signposter.endInterval("thinkspace-load-blocks", signpost)
                 return
             }
             self.blocks = deduped

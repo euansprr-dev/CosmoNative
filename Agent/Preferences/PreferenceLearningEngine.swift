@@ -138,7 +138,7 @@ class PreferenceLearningEngine {
             scope: scope,
             confidence: dict["confidence"] as? Double ?? 0.5,
             source: dict["source"] as? String ?? "unknown",
-            learnedAt: ISO8601DateFormatter().date(from: atom.createdAt) ?? Date(),
+            learnedAt: ISO8601.date(from: atom.createdAt) ?? Date(),
             scopeQualifier: dict["scopeQualifier"] as? String
         )
     }

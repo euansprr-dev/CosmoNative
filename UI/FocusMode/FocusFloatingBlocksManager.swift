@@ -200,7 +200,7 @@ class FocusFloatingBlocksManager: ObservableObject {
                 ),
                 annotationCount: 0,
                 linkedCount: atom.linksList.count,
-                updatedAt: ISO8601DateFormatter().date(from: atom.updatedAt) ?? Date()
+                updatedAt: ISO8601.date(from: atom.updatedAt) ?? Date()
             )
 
             await MainActor.run {

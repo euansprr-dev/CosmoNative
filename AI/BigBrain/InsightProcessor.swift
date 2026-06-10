@@ -222,7 +222,7 @@ public struct InsightProcessor {
                 "action": insight.action,
                 "confidence": insight.confidence,
                 "supportingData": insight.supportingData,
-                "generatedAt": ISO8601DateFormatter().string(from: Date())
+                "generatedAt": ISO8601.string(from: Date())
             ]
         ]
     }
@@ -242,7 +242,7 @@ public struct InsightProcessor {
             "metadata": [
                 "source": "claude_synthesis",
                 "format": idea.format,
-                "generatedAt": ISO8601DateFormatter().string(from: Date())
+                "generatedAt": ISO8601.string(from: Date())
             ]
         ]
 
@@ -282,7 +282,7 @@ public struct InsightProcessor {
                 "timeframe": timeframe,
                 "themeCount": synthesis.themes.count,
                 "actionCount": synthesis.suggestedActions.count,
-                "generatedAt": ISO8601DateFormatter().string(from: Date())
+                "generatedAt": ISO8601.string(from: Date())
             ]
         ]
     }

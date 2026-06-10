@@ -59,7 +59,7 @@ struct InboxSpatialCanvasView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                     .animation(
                         ProMotionSprings.cardEntrance.delay(0.03 * Double(min(index, 4))),
-                        value: viewModel.softClusters.map(\.id)
+                        value: viewModel.softClustersIdentity
                     )
             }
         }

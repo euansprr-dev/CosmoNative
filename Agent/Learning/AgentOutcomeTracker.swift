@@ -118,7 +118,7 @@ class AgentOutcomeTracker {
 
             let metadataDict: [String: Any] = [
                 "category": event.category.rawValue,
-                "timestamp": ISO8601DateFormatter().string(from: event.timestamp),
+                "timestamp": ISO8601.string(from: event.timestamp),
                 "hasSelection": event.selected != nil
             ]
             let metadataData = try JSONSerialization.data(withJSONObject: metadataDict)

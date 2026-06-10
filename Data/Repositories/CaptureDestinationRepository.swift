@@ -66,14 +66,14 @@ final class CaptureDestinationRepository: ObservableObject {
     func update(_ destination: CaptureDestination) async throws {
         try await database.asyncWrite { db in
             var mutable = destination
-            mutable.updatedAt = ISO8601DateFormatter().string(from: Date())
+            mutable.updatedAt = ISO8601.string(from: Date())
             try mutable.update(db)
         }
     }
 
     func archive(uuid: String) async throws {
         try await database.asyncWrite { db in
-            let now = ISO8601DateFormatter().string(from: Date())
+            let now = ISO8601.string(from: Date())
             try db.execute(
                 sql: """
                     UPDATE capture_destinations
@@ -87,7 +87,7 @@ final class CaptureDestinationRepository: ObservableObject {
 
     func markUsed(uuid: String) async {
         try? await database.asyncWrite { db in
-            let now = ISO8601DateFormatter().string(from: Date())
+            let now = ISO8601.string(from: Date())
             try db.execute(
                 sql: """
                     UPDATE capture_destinations

@@ -481,7 +481,7 @@ final class SwipeFileEngine: ObservableObject {
             if mutableItem.contentSource == nil || mutableItem.contentSource?.isEmpty == true {
                 mutableItem.contentSource = SwipeContentSource.clipboard.rawValue
             }
-            mutableItem.updatedAt = ISO8601DateFormatter().string(from: Date())
+            mutableItem.updatedAt = ISO8601.string(from: Date())
 
             // Capture by value for async context
             let itemToSave = mutableItem
@@ -739,7 +739,7 @@ final class SwipeFileEngine: ObservableObject {
         try await database.asyncWrite { db in
             try db.execute(
                 sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                arguments: [ISO8601DateFormatter().string(from: Date()), atomUUID]
+                arguments: [ISO8601.string(from: Date()), atomUUID]
             )
         }
 

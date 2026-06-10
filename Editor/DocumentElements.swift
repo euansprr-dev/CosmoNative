@@ -615,7 +615,7 @@ final class DocumentElementStore: ObservableObject {
         do {
             try ensureParentDirectoryExists()
             if fileManager.fileExists(atPath: fileURL.path) {
-                let timestamp = ISO8601DateFormatter().string(from: Date())
+                let timestamp = ISO8601.string(from: Date())
                     .replacingOccurrences(of: ":", with: "-")
                 let recoveryURL = fileURL
                     .deletingLastPathComponent()

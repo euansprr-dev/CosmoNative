@@ -646,7 +646,7 @@ class CanvasClusterEngine: ObservableObject {
                     return  // No-op for types without status
                 }
 
-                atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                atom.updatedAt = ISO8601.string(from: Date())
                 try await repo.update(atom)
             } catch {
                 print("CanvasClusterEngine: updateBlockColumnValue failed: \(error)")
@@ -1010,7 +1010,7 @@ class CanvasClusterEngine: ObservableObject {
                    let str = String(data: json, encoding: .utf8) {
                     atom.metadata = str
                 }
-                atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                atom.updatedAt = ISO8601.string(from: Date())
                 try await repo.update(atom)
             } catch {
                 print("CanvasClusterEngine: Failed to persist clusters: \(error)")
@@ -1165,7 +1165,7 @@ class CanvasClusterEngine: ObservableObject {
                     return
                 }
 
-                atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                atom.updatedAt = ISO8601.string(from: Date())
                 try await repo.update(atom)
             } catch {
                 print("CanvasClusterEngine: persistAtomColumnValue failed: \(error)")
@@ -1222,7 +1222,7 @@ class CanvasClusterEngine: ObservableObject {
             )
             guard let idx = userClusters.firstIndex(where: { $0.id == id }) else { return }
             userClusters[idx].synthesis = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            userClusters[idx].synthesisUpdatedAt = ISO8601DateFormatter().string(from: Date())
+            userClusters[idx].synthesisUpdatedAt = ISO8601.string(from: Date())
             persistUserClusters(thinkspaceId: userClusters[idx].thinkspaceId)
         } catch {
             print("CanvasClusterEngine: Synthesis failed: \(error)")

@@ -50,6 +50,90 @@ enum FocusModeEditorBlur {
     }
 }
 
+enum FocusModeTextClipboardAction {
+    case cut
+    case copy
+    case paste
+    case selectAll
+}
+
+@MainActor
+enum FocusModeTextClipboardTarget {
+    private final class WeakTextView {
+        weak var value: NSTextView?
+    }
+
+    private static let activeTextView = WeakTextView()
+
+    static func activate(_ textView: NSTextView) {
+        guard textView.isEditable || textView.isSelectable else { return }
+        activeTextView.value = textView
+    }
+
+    static func performKeyEquivalent(_ event: NSEvent, fallback textView: NSTextView) -> Bool {
+        guard let action = action(for: event) else { return false }
+        if send(action, in: textView.window) {
+            return true
+        }
+        perform(action, on: textView)
+        return true
+    }
+
+    static func send(_ action: FocusModeTextClipboardAction, in window: NSWindow?) -> Bool {
+        guard let textView = activeTextView(in: window) else {
+            return false
+        }
+        perform(action, on: textView)
+        return true
+    }
+
+    private static func activeTextView(in window: NSWindow?) -> NSTextView? {
+        guard let textView = activeTextView.value,
+              textView.window === window,
+              textView.isEditable || textView.isSelectable else {
+            return nil
+        }
+        return textView
+    }
+
+    private static func action(for event: NSEvent) -> FocusModeTextClipboardAction? {
+        guard event.type == .keyDown,
+              let character = event.charactersIgnoringModifiers?.lowercased() else {
+            return nil
+        }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isCommandOnly = flags == .command
+        let isControlOnly = flags == .control
+
+        if character == "c", isCommandOnly || isControlOnly {
+            return .copy
+        }
+
+        guard isCommandOnly else { return nil }
+
+        switch character {
+        case "x": return .cut
+        case "v": return .paste
+        case "a": return .selectAll
+        default: return nil
+        }
+    }
+
+    private static func perform(_ action: FocusModeTextClipboardAction, on textView: NSTextView) {
+        switch action {
+        case .cut:
+            textView.cut(nil)
+        case .copy:
+            textView.copy(nil)
+        case .paste:
+            textView.paste(nil)
+        case .selectAll:
+            textView.selectAll(nil)
+        }
+    }
+}
+
 private extension NSView {
     var isEditableTextInputSurface: Bool {
         if isEditableTextInputOrDescendant {

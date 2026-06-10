@@ -49,11 +49,29 @@ struct InboxStats: Equatable {
     }
 
     init(items: [InboxItem]) {
+        var mergeCount = 0
+        var placeCount = 0
+        var newCount = 0
+        var pendingCount = 0
+
+        for item in items {
+            switch item.classification {
+            case .merge:
+                mergeCount += 1
+            case .place:
+                placeCount += 1
+            case .new:
+                newCount += 1
+            case nil:
+                pendingCount += 1
+            }
+        }
+
         self.total = items.count
-        self.mergeCount = items.filter { $0.classification == .merge }.count
-        self.placeCount = items.filter { $0.classification == .place }.count
-        self.newCount = items.filter { $0.classification == .new }.count
-        self.pendingCount = items.filter { $0.classification == nil }.count
+        self.mergeCount = mergeCount
+        self.placeCount = placeCount
+        self.newCount = newCount
+        self.pendingCount = pendingCount
     }
 }
 
@@ -138,8 +156,7 @@ extension InboxItem {
     }
 
     private static func daysSinceCreation(_ dateStr: String) -> Int {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: dateStr) else { return 0 }
+        guard let date = ISO8601.date(from: dateStr) else { return 0 }
         return max(0, Int(Date().timeIntervalSince(date) / 86400))
     }
 }

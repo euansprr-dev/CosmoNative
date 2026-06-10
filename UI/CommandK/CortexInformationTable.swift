@@ -50,17 +50,10 @@ struct CortexInformationTable: View {
 /// writes for createdAt/updatedAt). Returns nil for empty/unparseable input.
 func cortexFormatISO(_ raw: String?) -> String? {
     guard let raw, !raw.isEmpty else { return nil }
-    let withFractional = ISO8601DateFormatter()
-    withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let date = withFractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
-    guard let date else { return nil }
-    let out = DateFormatter()
-    out.dateFormat = "MMM d, yyyy"
-    return out.string(from: date)
+    guard let date = ISO8601.date(from: raw) else { return nil }
+    return CosmoDateFormatters.monthDayYear.string(from: date)
 }
 
 func cortexFormatDate(_ date: Date) -> String {
-    let out = DateFormatter()
-    out.dateFormat = "MMM d, yyyy"
-    return out.string(from: date)
+    CosmoDateFormatters.monthDayYear.string(from: date)
 }

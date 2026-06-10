@@ -110,7 +110,7 @@ final class CapturedItemRepository: ObservableObject {
             item.parentInquirySessionId = parentInquirySessionId
             item.parentQuestionId = parentQuestionId
             item.parentProjectId = parentProjectId
-            item.updatedAt = ISO8601DateFormatter().string(from: Date())
+            item.updatedAt = ISO8601.string(from: Date())
             try item.update(db)
         }
     }
@@ -122,7 +122,7 @@ final class CapturedItemRepository: ObservableObject {
                 .fetchOne(db) else { return }
             let merged = Array(NSOrderedSet(array: item.mediaAttachmentIds + mediaIds)) as? [String] ?? item.mediaAttachmentIds + mediaIds
             item.mediaAttachmentIdsJSON = encodeCapturedItemArray(merged)
-            item.updatedAt = ISO8601DateFormatter().string(from: Date())
+            item.updatedAt = ISO8601.string(from: Date())
             try item.update(db)
         }
     }

@@ -80,7 +80,7 @@ final class SwipeAnalyzer: ObservableObject {
             persuasionTechniques: persuasionTechniques.isEmpty ? nil : persuasionTechniques,
             persuasionStack: persuasionStack.isEmpty ? nil : persuasionStack,
             analysisVersion: 1,
-            analyzedAt: ISO8601DateFormatter().string(from: Date()),
+            analyzedAt: ISO8601.string(from: Date()),
             isFullyAnalyzed: true
         )
     }

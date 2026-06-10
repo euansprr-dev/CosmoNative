@@ -443,7 +443,8 @@ struct CanvasView: View {
                     blocks: spatialEngine.blocks,
                     zoomLevel: canvasScale,
                     panOffset: canvasOffset,
-                    thinkspaceId: thinkspaceId
+                    thinkspaceId: thinkspaceId,
+                    userClusters: clusterEngine.userClusters
                 )
             }
             .onChange(of: canvasOffset) { _, _ in
@@ -1114,6 +1115,60 @@ struct CanvasView: View {
         mediaContentBlockIds = ids
     }
 
+    @discardableResult
+    private func applyCachedThinkspaceSnapshot(for thinkspaceId: String?) -> Bool {
+        guard let cached = ThinkspaceCanvasSnapshotCache.shared.entry(for: thinkspaceId) else {
+            return false
+        }
+
+        spatialEngine.blocks = cached.blocks
+        clusterEngine.clusters = []
+        clusterEngine.userClusters = cached.userClusters
+        clusterEngine.selectedClusterId = nil
+        canvasScale = cached.zoomLevel
+        canvasOffset = cached.panOffset
+        mediaContentBlockIds = cached.mediaContentBlockIds
+        return true
+    }
+
+    private func prepareEmptyThinkspaceSwitchState(for thinkspaceId: String?) {
+        spatialEngine.blocks = []
+        clusterEngine.clusters = []
+        clusterEngine.userClusters = []
+        clusterEngine.selectedClusterId = nil
+        drawingState.drawings = []
+        applyPersistedThinkspaceViewport(for: thinkspaceId)
+    }
+
+    private func applyPersistedThinkspaceViewport(for thinkspaceId: String?) {
+        if let tsId = thinkspaceId,
+           let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == tsId }) {
+            canvasScale = CGFloat(ts.zoomLevel)
+            canvasOffset = ts.panOffset
+        } else {
+            canvasScale = 1.0
+            canvasOffset = .zero
+        }
+    }
+
+    private func refreshLibraryInventoryForThinkspaceSwitch() {
+        libraryInventory = []
+        if thinkspaceMode == .library {
+            refreshLibraryInventory()
+        }
+    }
+
+    private func animateThinkspaceContentIn() {
+        canvasContentScale = 0.97
+        canvasContentBlur = 6
+
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.worldEnter) {
+            canvasContentOpacity = 1.0
+            canvasContentScale = 1.0
+            canvasContentBlur = 0
+        }
+    }
+
     private var panGestureBackground: some View {
         Color.clear
             .contentShape(Rectangle())
@@ -1410,12 +1465,7 @@ struct CanvasView: View {
 
                 // Load persisted blocks from database for this ThinkSpace
                 Task { @MainActor in
-                    if let cached = ThinkspaceCanvasSnapshotCache.shared.entry(for: thinkspaceId) {
-                        spatialEngine.blocks = cached.blocks
-                        canvasScale = cached.zoomLevel
-                        canvasOffset = cached.panOffset
-                        mediaContentBlockIds = cached.mediaContentBlockIds
-                    }
+                    applyCachedThinkspaceSnapshot(for: thinkspaceId)
 
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
                     CosmoWindowViewModel.shared.refreshContext()
@@ -1431,17 +1481,17 @@ struct CanvasView: View {
                         canvasOffset = ts.panOffset
                     }
 
-                    ThinkspaceCanvasSnapshotCache.shared.store(
-                        blocks: spatialEngine.blocks,
-                        zoomLevel: canvasScale,
-                        panOffset: canvasOffset,
-                        thinkspaceId: thinkspaceId
-                    )
-
                     // Load user-created clusters
                     await clusterEngine.loadUserClusters(
                         thinkspaceId: thinkspaceId,
                         blocks: spatialEngine.blocks
+                    )
+                    ThinkspaceCanvasSnapshotCache.shared.store(
+                        blocks: spatialEngine.blocks,
+                        zoomLevel: canvasScale,
+                        panOffset: canvasOffset,
+                        thinkspaceId: thinkspaceId,
+                        userClusters: clusterEngine.userClusters
                     )
                     refreshLibraryInventory()
                     scheduleSceneTintPublish(delay: .milliseconds(80))
@@ -2037,41 +2087,32 @@ struct CanvasView: View {
                     canvasContentBlur = 6
                 }
 
-                // 2. After exit animation completes → clear, load, enter
+                // 2. After exit animation completes → warm snapshot first, authoritative load second
                 thinkspaceSwitchTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(reduceMotion ? 100 : 180))
                     guard !Task.isCancelled else { return }
 
-                    // Clear old content (now invisible — no flash)
-                    spatialEngine.blocks = []
-                    clusterEngine.clusters = []
-                    clusterEngine.userClusters = []
-                    drawingState.drawings = []
-
-                    // Set new viewport (invisible, safe to change)
-                    if let tsId = newId,
-                       let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == tsId }) {
-                        canvasScale = CGFloat(ts.zoomLevel)
-                        canvasOffset = ts.panOffset
+                    let cachedThinkspaceSnapshotApplied = applyCachedThinkspaceSnapshot(for: newId)
+                    if cachedThinkspaceSnapshotApplied {
+                        drawingState.drawings = []
+                        drawingState.loadDrawings(thinkspaceId: newId)
+                        CosmoUndoManager.shared.clearHistory()
+                        CosmoWindowViewModel.shared.refreshContext()
+                        refreshLibraryInventoryForThinkspaceSwitch()
+                        scheduleSceneTintPublish(delay: .milliseconds(80))
+                        animateThinkspaceContentIn()
                     } else {
-                        canvasScale = 1.0
-                        canvasOffset = .zero
-                    }
-
-                    // Load new content
-                    if let cached = ThinkspaceCanvasSnapshotCache.shared.entry(for: newId) {
-                        spatialEngine.blocks = cached.blocks
-                        canvasScale = cached.zoomLevel
-                        canvasOffset = cached.panOffset
-                        mediaContentBlockIds = cached.mediaContentBlockIds
+                        prepareEmptyThinkspaceSwitchState(for: newId)
                     }
 
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: newId)
                     CosmoWindowViewModel.shared.refreshContext()
                     guard !Task.isCancelled else { return }
 
-                    drawingState.loadDrawings(thinkspaceId: newId)
-                    CosmoUndoManager.shared.clearHistory()
+                    if !cachedThinkspaceSnapshotApplied {
+                        drawingState.loadDrawings(thinkspaceId: newId)
+                        CosmoUndoManager.shared.clearHistory()
+                    }
 
                     await clusterEngine.loadUserClusters(
                         thinkspaceId: newId,
@@ -2080,27 +2121,19 @@ struct CanvasView: View {
                     guard !Task.isCancelled else { return }
 
                     rebuildMediaContentCache()
-                    libraryInventory = []
-                    if thinkspaceMode == .library {
-                        refreshLibraryInventory()
-                    }
+                    refreshLibraryInventoryForThinkspaceSwitch()
                     ThinkspaceCanvasSnapshotCache.shared.store(
                         blocks: spatialEngine.blocks,
                         zoomLevel: canvasScale,
                         panOffset: canvasOffset,
-                        thinkspaceId: newId
+                        thinkspaceId: newId,
+                        userClusters: clusterEngine.userClusters
                     )
                     scheduleSceneTintPublish(delay: .milliseconds(80))
 
-                    // Set entry starting position (small/far — behind the background)
-                    canvasContentScale = 0.97
-                    canvasContentBlur = 6
-
-                    // 3. Animate new content IN (emerging from background)
-                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.worldEnter) {
-                        canvasContentOpacity = 1.0
-                        canvasContentScale = 1.0
-                        canvasContentBlur = 0
+                    if !cachedThinkspaceSnapshotApplied {
+                        // 3. Animate new content IN (emerging from background)
+                        animateThinkspaceContentIn()
                     }
                 }
             }
@@ -2210,7 +2243,7 @@ struct CanvasView: View {
             themes: result.themes,
             openQuestions: result.openQuestions,
             evidenceSpans: result.evidenceSpans,
-            synthesizedAt: ISO8601DateFormatter().string(from: Date())
+            synthesizedAt: ISO8601.string(from: Date())
         )
 
         let metadataJSON: String
@@ -2553,7 +2586,7 @@ struct CanvasView: View {
             entityUuid: UUID().uuidString,
             title: "Research",
             subtitle: nil,
-            metadata: ["created": ISO8601DateFormatter().string(from: Date())]
+            metadata: ["created": ISO8601.string(from: Date())]
         )
 
         Task {
@@ -2699,7 +2732,8 @@ struct CanvasView: View {
                 blocks: spatialEngine.blocks,
                 zoomLevel: canvasScale,
                 panOffset: canvasOffset,
-                thinkspaceId: thinkspaceId
+                thinkspaceId: thinkspaceId,
+                userClusters: clusterEngine.userClusters
             )
         }
     }
@@ -2808,7 +2842,7 @@ struct CanvasView: View {
                     try await CosmoDatabase.shared.asyncWrite { db in
                         try db.execute(
                             sql: "UPDATE atoms SET body = ?, updated_at = ?, _local_version = _local_version + 1 WHERE id = ?",
-                            arguments: [content, ISO8601DateFormatter().string(from: Date()), block.entityId]
+                            arguments: [content, ISO8601.string(from: Date()), block.entityId]
                         )
                     }
                 }
@@ -2830,7 +2864,7 @@ struct CanvasView: View {
                 try await CosmoDatabase.shared.asyncWrite { db in
                     if var idea = try Idea.fetchOne(db, key: block.entityId) {
                         idea.content = content
-                        idea.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        idea.updatedAt = ISO8601.string(from: Date())
                         try idea.save(db)
                     }
                 }
@@ -2937,7 +2971,7 @@ struct CanvasView: View {
                 entityUuid: UUID().uuidString,
                 title: "New \(entityType)",
                 subtitle: nil,
-                metadata: ["created": ISO8601DateFormatter().string(from: Date())]
+                metadata: ["created": ISO8601.string(from: Date())]
             )
         }
 
@@ -3136,7 +3170,8 @@ struct CanvasView: View {
             blocks: spatialEngine.blocks,
             zoomLevel: canvasScale,
             panOffset: canvasOffset,
-            thinkspaceId: thinkspaceId
+            thinkspaceId: thinkspaceId,
+            userClusters: clusterEngine.userClusters
         )
 
         // Check cluster zone membership after drag
@@ -3842,7 +3877,7 @@ struct CanvasView: View {
             entityUuid: entityUUID,
             title: title,
             subtitle: content.isEmpty ? "Created by voice" : String(content.prefix(100)),
-            metadata: ["created": ISO8601DateFormatter().string(from: Date())]
+            metadata: ["created": ISO8601.string(from: Date())]
         )
 
         // Add to canvas with spring animation
@@ -3922,7 +3957,7 @@ struct CanvasView: View {
                     entityUuid: UUID().uuidString,
                     title: "New Idea",
                     subtitle: "Tap to edit...",
-                    metadata: ["created": ISO8601DateFormatter().string(from: Date())]
+                    metadata: ["created": ISO8601.string(from: Date())]
                 )
                 await spatialEngine.addBlock(fallbackBlock, persist: false)
             }
@@ -3975,7 +4010,7 @@ struct CanvasView: View {
                     entityUuid: UUID().uuidString,
                     title: prefillTitle ?? "New Task",
                     subtitle: nil,
-                    metadata: ["status": "todo", "created": ISO8601DateFormatter().string(from: Date())]
+                    metadata: ["status": "todo", "created": ISO8601.string(from: Date())]
                 )
                 await spatialEngine.addBlock(fallbackBlock, persist: false)
             }
@@ -4010,7 +4045,7 @@ struct CanvasView: View {
                     entityUuid: UUID().uuidString,
                     title: prefillTitle ?? "New Research",
                     subtitle: "Start researching...",
-                    metadata: ["created": ISO8601DateFormatter().string(from: Date())]
+                    metadata: ["created": ISO8601.string(from: Date())]
                 )
                 await spatialEngine.addBlock(fallbackBlock, persist: false)
             }
@@ -4046,7 +4081,7 @@ struct CanvasView: View {
                     entityUuid: savedConnection.uuid,
                     title: "New Connection",
                     subtitle: "Define your mental model...",
-                    metadata: ["created": ISO8601DateFormatter().string(from: Date())]
+                    metadata: ["created": ISO8601.string(from: Date())]
                 )
 
                 await spatialEngine.addBlock(block, persist: true)
@@ -4066,7 +4101,7 @@ struct CanvasView: View {
                     entityUuid: UUID().uuidString,
                     title: "New Connection",
                     subtitle: "Define your mental model...",
-                    metadata: ["created": ISO8601DateFormatter().string(from: Date())]
+                    metadata: ["created": ISO8601.string(from: Date())]
                 )
 
                 await spatialEngine.addBlock(fallbackBlock, persist: false)
@@ -4116,10 +4151,8 @@ struct CanvasView: View {
         // Path 1: Direct type + id (from code paths that have both)
         if let entityType = userInfo["type"] as? EntityType,
            let entityId = userInfo["id"] as? Int64 {
-            Task {
-                // Try to fetch atom for rich metadata
-                let atom = try? await AtomRepository.shared.fetch(id: entityId)
-                await openOrCreateBlock(entityType: entityType, entityId: entityId, atom: atom)
+            Task { @MainActor in
+                await openOrCreateBlock(entityType: entityType, entityId: entityId)
             }
             return
         }
@@ -4179,6 +4212,13 @@ struct CanvasView: View {
             return
         }
 
+        let resolvedAtom: Atom?
+        if let atom {
+            resolvedAtom = atom
+        } else {
+            resolvedAtom = try? await AtomRepository.shared.fetch(id: entityId)
+        }
+
         // Calculate center position for new block
         let position = CGPoint(
             x: canvasSize.width / 2 - canvasOffset.width,
@@ -4187,7 +4227,7 @@ struct CanvasView: View {
 
         // Create block — use CanvasBlock.fromAtom when atom is available for rich metadata + proper sizing
         let block: CanvasBlock
-        if let atom = atom {
+        if let atom = resolvedAtom {
             block = CanvasBlock.fromAtom(atom, position: position)
         } else {
             // Fallback: no atom available, create with basic metadata
@@ -4522,7 +4562,7 @@ struct CanvasView: View {
             if let data = try? JSONEncoder().encode(links),
                let json = String(data: data, encoding: .utf8) {
                 sourceAtom.links = json
-                sourceAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                sourceAtom.updatedAt = ISO8601.string(from: Date())
                 sourceAtom.localVersion += 1
                 try? await AtomRepository.shared.update(sourceAtom)
             }
@@ -4536,7 +4576,7 @@ struct CanvasView: View {
             if let data = try? JSONEncoder().encode(links),
                let json = String(data: data, encoding: .utf8) {
                 targetAtom.links = json
-                targetAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                targetAtom.updatedAt = ISO8601.string(from: Date())
                 targetAtom.localVersion += 1
                 try? await AtomRepository.shared.update(targetAtom)
             }

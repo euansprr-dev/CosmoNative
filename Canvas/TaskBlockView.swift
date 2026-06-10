@@ -183,7 +183,7 @@ struct TaskBlockView: View {
 
         let newStatus = isCompleted ? "pending" : "done"
         let taskUUID = currentTask.uuid
-        let updatedAt = ISO8601DateFormatter().string(from: Date())
+        let updatedAt = ISO8601.string(from: Date())
 
         Task {
             do {
@@ -336,7 +336,7 @@ struct DueDateBadge: View {
     let dateString: String
 
     private var date: Date? {
-        ISO8601DateFormatter().date(from: dateString)
+        ISO8601.date(from: dateString)
     }
 
     private var isOverdue: Bool {
@@ -379,10 +379,7 @@ struct DueDateBadge: View {
             return "Due today"
         }
 
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return "Due \(formatter.string(from: date))"
+        return "Due \(CosmoDateFormatters.shortDate.string(from: date))"
     }
 }
 
@@ -481,13 +478,11 @@ struct TimeDetail: View {
     }
 
     private func formatTime(_ dateString: String) -> String {
-        guard let date = ISO8601DateFormatter().date(from: dateString) else {
+        guard let date = ISO8601.date(from: dateString) else {
             return dateString
         }
 
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return CosmoDateFormatters.timeOnly.string(from: date)
     }
 }
 
@@ -523,14 +518,11 @@ struct TaskMetadataView: View {
     }
 
     private func formatDate(_ dateString: String) -> String {
-        guard let date = ISO8601DateFormatter().date(from: dateString) else {
+        guard let date = ISO8601.date(from: dateString) else {
             return dateString
         }
 
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return CosmoDateFormatters.shortDateTime.string(from: date)
     }
 }
 
@@ -575,13 +567,11 @@ struct TaskFooter: View {
     }
 
     private func timeAgo(from dateString: String) -> String {
-        guard let date = ISO8601DateFormatter().date(from: dateString) else {
+        guard let date = ISO8601.date(from: dateString) else {
             return ""
         }
 
-        let relativeFormatter = RelativeDateTimeFormatter()
-        relativeFormatter.unitsStyle = .abbreviated
-        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+        return CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date())
     }
 }
 

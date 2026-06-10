@@ -1794,7 +1794,7 @@ class ConnectionFocusModeViewModel: ObservableObject {
                     )
                     try db.execute(
                         sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
-                        arguments: [fields.title, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                        arguments: [fields.title, fields.metadata, ISO8601.string(from: Date()), atomUUID]
                     )
                 }
                 print("[FOCUS-CONN-VM] updateTitleDocument() DB write DONE — uuid=\(atomUUID)")
@@ -1824,7 +1824,7 @@ class ConnectionFocusModeViewModel: ObservableObject {
                 )
                 try db.execute(
                     sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
-                    arguments: [fields.title, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                    arguments: [fields.title, fields.metadata, ISO8601.string(from: Date()), atomUUID]
                 )
             }
             // Sync: queue for Supabase push

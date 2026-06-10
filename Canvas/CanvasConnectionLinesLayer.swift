@@ -44,6 +44,12 @@ struct CanvasConnectionGeometryInvalidationKey: Equatable {
     let blockDataRevision: Int
 }
 
+struct CanvasConnectionPulsePolicy {
+    static func shouldRun(isActive: Bool, visibleEdgeCount: Int) -> Bool {
+        isActive && visibleEdgeCount > 0
+    }
+}
+
 /// Renders knowledge pulse lines between related blocks on the canvas.
 /// Queries the graph for edges where both source and target are visible, then
 /// draws animated bezier connections. Supports tap-to-select and delete.
@@ -176,7 +182,7 @@ struct CanvasConnectionLinesLayer: View {
         }
         .onAppear {
             fetchEdges()
-            if isActive { startPulseTimer() }
+            updatePulseTimer()
             // Delayed recompute to catch rendered size cache updates
             // (GeometryReader reports actual sizes after first layout pass)
             Task { @MainActor in
@@ -191,12 +197,7 @@ struct CanvasConnectionLinesLayer: View {
             pulseTimer = nil
         }
         .onChange(of: isActive) { _, active in
-            if active {
-                startPulseTimer()
-            } else {
-                pulseTimer?.invalidate()
-                pulseTimer = nil
-            }
+            updatePulseTimer()
         }
     }
 
@@ -232,7 +233,17 @@ struct CanvasConnectionLinesLayer: View {
     // MARK: - Pulse Timer
 
     /// 15fps timer for subtle energy flow animation — replaces 120fps TimelineView
+    private func updatePulseTimer() {
+        if CanvasConnectionPulsePolicy.shouldRun(isActive: isActive, visibleEdgeCount: cachedVisibleEdges.count) {
+            startPulseTimer()
+        } else {
+            pulseTimer?.invalidate()
+            pulseTimer = nil
+        }
+    }
+
     private func startPulseTimer() {
+        guard pulseTimer == nil else { return }
         pulseTimer?.invalidate()
         pulseTimer = Timer.scheduledTimer(withTimeInterval: Constants.pulseFrameRate, repeats: true) { _ in
             Task { @MainActor in
@@ -273,6 +284,7 @@ struct CanvasConnectionLinesLayer: View {
         }
         cachedCanvasEndpoints = endpoints
         cachedCanvasPaths = paths
+        updatePulseTimer()
         CanvasPerformanceInstrumentation.signposter.endInterval("connection-recompute", signpost)
     }
 

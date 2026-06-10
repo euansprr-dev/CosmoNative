@@ -662,7 +662,7 @@ final class IdeaInsightEngine: ObservableObject {
             suggestedEmotionalArc: suggestedArc,
             suggestedPersuasionTechniques: persuasionSet.isEmpty ? nil : Array(persuasionSet),
             insightVersion: 1,
-            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            generatedAt: ISO8601.string(from: Date()),
             isFullyAnalyzed: true
         )
 
@@ -672,7 +672,7 @@ final class IdeaInsightEngine: ObservableObject {
             updated = updated.withUpdatedIdeaMetadata { meta in
                 meta.insightScore = computeInsightScore(insight: insight)
                 meta.matchingSwipeCount = matchingSwipes.count
-                meta.lastAnalyzedAt = ISO8601DateFormatter().string(from: Date())
+                meta.lastAnalyzedAt = ISO8601.string(from: Date())
                 if let hookType = quick.suggestedHookType {
                     meta.suggestedHookType = hookType.rawValue
                 }

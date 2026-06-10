@@ -13,6 +13,8 @@ struct TaskLinkedAtomPicker: View {
     @State private var searchQuery = ""
     @State private var searchResults: [MentionSearchResult] = []
     @State private var showSearch = false
+    @State private var searchTask: Task<Void, Never>?
+    @State private var searchRequestID = UUID()
     @FocusState private var isSearchFocused: Bool
 
     private let maxLinkedAtoms = 3
@@ -38,7 +40,9 @@ struct TaskLinkedAtomPicker: View {
                             showSearch.toggle()
                             if showSearch {
                                 isSearchFocused = true
-                                Task { await loadRecent() }
+                                scheduleSearch(query: "", debounce: false)
+                            } else {
+                                searchTask?.cancel()
                             }
                         }
                     } label: {
@@ -150,8 +154,8 @@ struct TaskLinkedAtomPicker: View {
                     .font(DS.footnote)
                     .foregroundStyle(DS.text)
                     .focused($isSearchFocused)
-                    .onChange(of: searchQuery) {
-                        Task { await performSearch() }
+                    .onChange(of: searchQuery) { _, query in
+                        scheduleSearch(query: query)
                     }
             }
             .padding(.horizontal, 8)
@@ -171,6 +175,9 @@ struct TaskLinkedAtomPicker: View {
                 .scrollIndicators(.hidden)
                 .frame(maxHeight: 150)
             }
+        }
+        .onDisappear {
+            searchTask?.cancel()
         }
     }
 
@@ -267,17 +274,23 @@ struct TaskLinkedAtomPicker: View {
         onUpdate()
     }
 
-    private func performSearch() async {
-        let results = await MentionSearchProvider.shared.search(query: searchQuery, limit: 8)
-        await MainActor.run {
-            searchResults = results
-        }
-    }
+    private func scheduleSearch(query: String, debounce: Bool = true) {
+        searchTask?.cancel()
 
-    private func loadRecent() async {
-        let results = await MentionSearchProvider.shared.search(query: "", limit: 8)
-        await MainActor.run {
-            searchResults = results
+        let requestID = UUID()
+        searchRequestID = requestID
+
+        searchTask = Task {
+            if debounce {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+            }
+            guard !Task.isCancelled else { return }
+
+            let results = await MentionSearchProvider.shared.search(query: query, limit: 8)
+            await MainActor.run {
+                guard searchRequestID == requestID, !Task.isCancelled else { return }
+                searchResults = results
+            }
         }
     }
 }

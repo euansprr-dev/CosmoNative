@@ -56,6 +56,45 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
         )
     }
 
+    func testContextTextEditorPinsTextContainerOriginToTopInset() throws {
+        let source = try ideaFocusViewSource()
+        guard let textViewRange = source.range(of: "private final class IdeaContextTextView"),
+              let hookRange = source.range(of: "private struct HookLineEditor") else {
+            XCTFail("Could not locate IdeaContextTextView source.")
+            return
+        }
+
+        let textViewSource = String(source[textViewRange.lowerBound..<hookRange.lowerBound])
+        XCTAssertTrue(
+            textViewSource.contains("override var textContainerOrigin: NSPoint"),
+            "The context editor must pin NSTextView's text container to the top when the editor is taller than its content."
+        )
+        XCTAssertTrue(
+            textViewSource.contains("NSPoint(x: textContainerInset.width, y: textContainerInset.height)"),
+            "The pinned text-container origin should start at the configured top/leading inset."
+        )
+    }
+
+    func testContextEditorFrameTopAlignsRepresentableInsideFullWidthFocusMode() throws {
+        let source = try ideaFocusViewSource()
+
+        XCTAssertTrue(
+            source.contains(".frame(maxWidth: .infinity, minHeight: IdeaContextTextView.minimumHeight, alignment: .topLeading)"),
+            "The context NSTextView representable must be top-aligned in its SwiftUI frame so full-width focus mode does not place short context text at the bottom."
+        )
+    }
+
+    func testFocusModeTextViewsShareClipboardKeyEquivalentHandling() throws {
+        let source = try ideaFocusViewSource()
+        for className in ["IdeaContextTextView", "HookLineTextView", "OutlineSlideNoteTextView"] {
+            let classSource = try sourceBlock(named: className, in: source)
+            XCTAssertTrue(
+                classSource.contains("FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self)"),
+                "\(className) must handle Cmd-C/X/V/A through the shared focus-mode clipboard key equivalent path."
+            )
+        }
+    }
+
     func testIdeaFocusWritePolicyRejectsSnapshotOlderThanPersistedState() throws {
         let newerDate = Date(timeIntervalSince1970: 2_000)
         let staleDate = Date(timeIntervalSince1970: 1_000)
@@ -83,6 +122,25 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
             contentsOf: repositoryRoot().appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeViewModel.swift"),
             encoding: .utf8
         )
+    }
+
+    private func sourceBlock(named className: String, in source: String) throws -> String {
+        let marker = "class \(className)"
+        guard let classRange = source.range(of: marker) else {
+            XCTFail("Could not locate \(className) source.")
+            return ""
+        }
+
+        let remainder = source[classRange.lowerBound...]
+        guard let nextTypeRange = remainder.range(
+            of: #"\n(?:private\s+)?(?:final\s+)?(?:class|struct|enum)\s+"#,
+            options: .regularExpression,
+            range: remainder.index(after: classRange.lowerBound)..<remainder.endIndex
+        ) else {
+            return String(remainder)
+        }
+
+        return String(source[classRange.lowerBound..<nextTypeRange.lowerBound])
     }
 
     private func repositoryRoot() -> URL {

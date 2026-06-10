@@ -113,7 +113,7 @@ extension GraphNode {
     /// - Parameter atom: The source Atom to create a node for
     /// - Returns: A new GraphNode with sensible defaults
     public static func from(atom: Atom) -> GraphNode {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         return GraphNode(
             id: nil,
@@ -142,7 +142,7 @@ extension GraphNode {
         atomType: AtomType,
         atomUpdatedAt: String? = nil
     ) -> GraphNode {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         return GraphNode(
             id: nil,
@@ -211,7 +211,7 @@ extension GraphNode {
         var copy = self
         copy.positionX = x
         copy.positionY = y
-        copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.updatedAt = ISO8601.string(from: Date())
         return copy
     }
 
@@ -220,7 +220,7 @@ extension GraphNode {
         var copy = self
         copy.inDegree = inDegree
         copy.outDegree = outDegree
-        copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.updatedAt = ISO8601.string(from: Date())
         return copy
     }
 
@@ -228,7 +228,7 @@ extension GraphNode {
     public func incrementingInDegree() -> GraphNode {
         var copy = self
         copy.inDegree += 1
-        copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.updatedAt = ISO8601.string(from: Date())
         return copy
     }
 
@@ -236,7 +236,7 @@ extension GraphNode {
     public func decrementingInDegree() -> GraphNode {
         var copy = self
         copy.inDegree = max(0, copy.inDegree - 1)
-        copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.updatedAt = ISO8601.string(from: Date())
         return copy
     }
 
@@ -244,7 +244,7 @@ extension GraphNode {
     public func incrementingOutDegree() -> GraphNode {
         var copy = self
         copy.outDegree += 1
-        copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.updatedAt = ISO8601.string(from: Date())
         return copy
     }
 
@@ -252,7 +252,7 @@ extension GraphNode {
     public func decrementingOutDegree() -> GraphNode {
         var copy = self
         copy.outDegree = max(0, copy.outDegree - 1)
-        copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.updatedAt = ISO8601.string(from: Date())
         return copy
     }
 
@@ -260,7 +260,7 @@ extension GraphNode {
     public func withPageRank(_ pageRank: Double) -> GraphNode {
         var copy = self
         copy.pageRank = max(0.0, min(1.0, pageRank))
-        copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.updatedAt = ISO8601.string(from: Date())
         return copy
     }
 
@@ -268,7 +268,7 @@ extension GraphNode {
     public func withEmbedding() -> GraphNode {
         var copy = self
         copy.hasEmbedding = true
-        copy.embeddingUpdatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.embeddingUpdatedAt = ISO8601.string(from: Date())
         copy.updatedAt = copy.embeddingUpdatedAt!
         return copy
     }
@@ -277,7 +277,7 @@ extension GraphNode {
     public func recordingAccess() -> GraphNode {
         var copy = self
         copy.accessCount += 1
-        copy.lastAccessedAt = ISO8601DateFormatter().string(from: Date())
+        copy.lastAccessedAt = ISO8601.string(from: Date())
         copy.updatedAt = copy.lastAccessedAt!
         return copy
     }
@@ -288,7 +288,7 @@ extension GraphNode {
         copy.atomType = atom.type.rawValue
         copy.atomCategory = atom.type.category.rawValue
         copy.atomUpdatedAt = atom.updatedAt
-        copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+        copy.updatedAt = ISO8601.string(from: Date())
         return copy
     }
 }

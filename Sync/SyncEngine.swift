@@ -187,7 +187,7 @@ class SyncEngine: ObservableObject {
                 try await database.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE id = ?",
-                        arguments: [ISO8601DateFormatter().string(from: Date()), item.id]
+                        arguments: [ISO8601.string(from: Date()), item.id]
                     )
                 }
 
@@ -508,14 +508,14 @@ class SyncEngine: ObservableObject {
         }
 
         if let dateStr = result?["value"] as? String {
-            return ISO8601DateFormatter().date(from: dateStr)
+            return ISO8601.date(from: dateStr)
         }
 
         return nil
     }
 
     private func updateLastPullTime(for table: String) async {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         try? await database.asyncWrite { db in
             try db.execute(

@@ -25,9 +25,14 @@ struct PaneContentView: View {
         .background(backgroundFill)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .overlay(borderOverlay)
-        .task {
-            guard case .entity(let entity) = content else { return }
+        .task(id: content.entitySelection) {
+            guard case .entity(let entity) = content else {
+                loadedAtom = nil
+                return
+            }
+            loadedAtom = nil
             if let atom = try? await AtomRepository.shared.fetch(id: entity.id) {
+                guard !Task.isCancelled else { return }
                 loadedAtom = atom
             }
         }

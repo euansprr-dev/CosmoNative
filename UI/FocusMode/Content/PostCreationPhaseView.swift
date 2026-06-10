@@ -620,7 +620,7 @@ struct PostCreationPhaseView: View {
     }
 
     private var archivedCreationDate: Date {
-        if let date = ISO8601DateFormatter().date(from: atom.createdAt) {
+        if let date = ISO8601.date(from: atom.createdAt) {
             return date
         }
         return Date()

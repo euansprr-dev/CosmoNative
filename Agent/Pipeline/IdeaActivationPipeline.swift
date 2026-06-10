@@ -131,7 +131,7 @@ class IdeaActivationPipeline {
                 inheritedSwipeUUIDs: swipeUUIDs.isEmpty ? nil : swipeUUIDs,
                 inheritedFramework: frameworkName,
                 inheritedHooks: hookSuggestions.isEmpty ? nil : Array(hookSuggestions.prefix(5)),
-                activatedAt: ISO8601DateFormatter().string(from: Date())
+                activatedAt: ISO8601.string(from: Date())
             )
             let contentMetaJSON = encodeJSON(contentMeta)
 

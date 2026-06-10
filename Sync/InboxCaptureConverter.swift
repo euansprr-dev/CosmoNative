@@ -69,7 +69,7 @@ enum InboxCaptureConverter {
             try? await CosmoDatabase.shared.asyncWrite { db in
                 try db.execute(
                     sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                    arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                    arguments: [ISO8601.string(from: Date()), uuid]
                 )
             }
             return
@@ -93,7 +93,7 @@ enum InboxCaptureConverter {
                     try? await CosmoDatabase.shared.asyncWrite { db in
                         try db.execute(
                             sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                            arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                            arguments: [ISO8601.string(from: Date()), uuid]
                         )
                     }
 
@@ -308,7 +308,7 @@ enum InboxCaptureConverter {
         try? await CosmoDatabase.shared.asyncWrite { db in
             try db.execute(
                 sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                arguments: [ISO8601.string(from: Date()), uuid]
             )
         }
     }

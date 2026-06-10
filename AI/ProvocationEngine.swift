@@ -239,7 +239,7 @@ class ProvocationEngine: ObservableObject {
             return []
         }
 
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         return items.compactMap { item -> Provocation? in
             guard let typeStr = item["type"] as? String,

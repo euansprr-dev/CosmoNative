@@ -198,6 +198,14 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertTrue(swipeFocusSource.contains("CortexThinScrollbar(metrics: teardownScrollMetrics)"))
     }
 
+    func testIdeaFocusModeUsesContentFocusSizedCustomScrollbar() throws {
+        let ideaFocusSource = try source("UI/FocusMode/Ideas/IdeaFocusModeView.swift")
+
+        XCTAssertTrue(ideaFocusSource.contains("@State private var atelierScrollMetrics = CortexScrollMetrics()"))
+        XCTAssertTrue(ideaFocusSource.contains("CortexScrollViewIntrospector"))
+        XCTAssertTrue(ideaFocusSource.contains(".cortexThinScrollbar(metrics: atelierScrollMetrics)"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         try String(contentsOf: packageRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }

@@ -51,8 +51,8 @@ public final class DimensionMetricsCalculator {
         try await dbQueue.read { db in
             let recentDate = Date().addingTimeInterval(-Double(recentWindow) * 86400)
             let baselineDate = Date().addingTimeInterval(-Double(baselineWindow) * 86400)
-            let recentDateStr = ISO8601DateFormatter().string(from: recentDate)
-            let baselineDateStr = ISO8601DateFormatter().string(from: baselineDate)
+            let recentDateStr = ISO8601.string(from: recentDate)
+            let baselineDateStr = ISO8601.string(from: baselineDate)
 
             // Recent word count (from writing sessions)
             let recentWords = try Int.fetchOne(db, sql: """
@@ -147,8 +147,8 @@ public final class DimensionMetricsCalculator {
         try await dbQueue.read { db in
             let recentDate = Date().addingTimeInterval(-Double(recentWindow) * 86400)
             let baselineDate = Date().addingTimeInterval(-Double(baselineWindow) * 86400)
-            let recentDateStr = ISO8601DateFormatter().string(from: recentDate)
-            let baselineDateStr = ISO8601DateFormatter().string(from: baselineDate)
+            let recentDateStr = ISO8601.string(from: recentDate)
+            let baselineDateStr = ISO8601.string(from: baselineDate)
 
             // Recent impressions
             let recentImpressions = try Int.fetchOne(db, sql: """
@@ -237,8 +237,8 @@ public final class DimensionMetricsCalculator {
         try await dbQueue.read { db in
             let recentDate = Date().addingTimeInterval(-Double(recentWindow) * 86400)
             let baselineDate = Date().addingTimeInterval(-Double(baselineWindow) * 86400)
-            let recentDateStr = ISO8601DateFormatter().string(from: recentDate)
-            let baselineDateStr = ISO8601DateFormatter().string(from: baselineDate)
+            let recentDateStr = ISO8601.string(from: recentDate)
+            let baselineDateStr = ISO8601.string(from: baselineDate)
 
             // Recent HRV average
             let recentHRV = try Double.fetchOne(db, sql: """
@@ -320,8 +320,8 @@ public final class DimensionMetricsCalculator {
         try await dbQueue.read { db in
             let recentDate = Date().addingTimeInterval(-Double(recentWindow) * 86400)
             let baselineDate = Date().addingTimeInterval(-Double(baselineWindow) * 86400)
-            let recentDateStr = ISO8601DateFormatter().string(from: recentDate)
-            let baselineDateStr = ISO8601DateFormatter().string(from: baselineDate)
+            let recentDateStr = ISO8601.string(from: recentDate)
+            let baselineDateStr = ISO8601.string(from: baselineDate)
 
             // Recent deep work blocks
             let recentBlocks = try Int.fetchOne(db, sql: """
@@ -398,8 +398,8 @@ public final class DimensionMetricsCalculator {
         try await dbQueue.read { db in
             let recentDate = Date().addingTimeInterval(-Double(recentWindow) * 86400)
             let baselineDate = Date().addingTimeInterval(-Double(baselineWindow) * 86400)
-            let recentDateStr = ISO8601DateFormatter().string(from: recentDate)
-            let baselineDateStr = ISO8601DateFormatter().string(from: baselineDate)
+            let recentDateStr = ISO8601.string(from: recentDate)
+            let baselineDateStr = ISO8601.string(from: baselineDate)
 
             // Recent connections created
             let recentConnections = try Int.fetchOne(db, sql: """
@@ -480,8 +480,8 @@ public final class DimensionMetricsCalculator {
         try await dbQueue.read { db in
             let recentDate = Date().addingTimeInterval(-Double(recentWindow) * 86400)
             let baselineDate = Date().addingTimeInterval(-Double(baselineWindow) * 86400)
-            let recentDateStr = ISO8601DateFormatter().string(from: recentDate)
-            let baselineDateStr = ISO8601DateFormatter().string(from: baselineDate)
+            let recentDateStr = ISO8601.string(from: recentDate)
+            let baselineDateStr = ISO8601.string(from: baselineDate)
 
             // Recent journal entries
             let recentJournals = try Int.fetchOne(db, sql: """

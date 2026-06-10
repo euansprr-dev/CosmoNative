@@ -445,6 +445,7 @@ final class ThinkspaceCanvasSnapshotCache {
     struct Entry {
         let thinkspaceId: String?
         let blocks: [CanvasBlock]
+        let userClusters: [CanvasCluster]
         let zoomLevel: CGFloat
         let panOffset: CGSize
         let mediaContentBlockIds: Set<String>
@@ -460,15 +461,22 @@ final class ThinkspaceCanvasSnapshotCache {
         entries[key(for: thinkspaceId)]
     }
 
-    func store(blocks: [CanvasBlock], zoomLevel: CGFloat, panOffset: CGSize, thinkspaceId: String?) {
+    func store(
+        blocks: [CanvasBlock],
+        zoomLevel: CGFloat,
+        panOffset: CGSize,
+        thinkspaceId: String?,
+        userClusters: [CanvasCluster] = []
+    ) {
         let entry = Entry(
             thinkspaceId: thinkspaceId,
             blocks: blocks,
+            userClusters: userClusters,
             zoomLevel: zoomLevel,
             panOffset: panOffset,
             mediaContentBlockIds: CanvasRenderDataSnapshot.build(
                 blocks: blocks,
-                userClusters: []
+                userClusters: userClusters
             ).mediaContentBlockIds,
             storedAt: Date()
         )

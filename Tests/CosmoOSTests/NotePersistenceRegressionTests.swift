@@ -177,6 +177,40 @@ final class NotePersistenceRegressionTests: XCTestCase {
         XCTAssertGreaterThan(titleInset.height, 0)
     }
 
+    func testNoteBodyEditorsUseOneContinuousTextSurfaceForSelection() throws {
+        let noteFocusSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("UI/FocusMode/Notes/NoteFocusModeView.swift"),
+            encoding: .utf8
+        )
+        let noteBlockSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Canvas/NoteBlockView.swift"),
+            encoding: .utf8
+        )
+
+        let focusBodyRange = try XCTUnwrap(noteFocusSource.range(of: "private var centerColumn"))
+        let focusRailRange = try XCTUnwrap(
+            noteFocusSource.range(
+                of: "private var outlineRail",
+                range: focusBodyRange.lowerBound..<noteFocusSource.endIndex
+            )
+        )
+        let focusBodySource = String(noteFocusSource[focusBodyRange.lowerBound..<focusRailRange.lowerBound])
+
+        let blockBodyRange = try XCTUnwrap(noteBlockSource.range(of: "private var bodyView"))
+        let blockFooterRange = try XCTUnwrap(
+            noteBlockSource.range(
+                of: "private var noteFooter",
+                range: blockBodyRange.lowerBound..<noteBlockSource.endIndex
+            )
+        )
+        let blockBodySource = String(noteBlockSource[blockBodyRange.lowerBound..<blockFooterRange.lowerBound])
+
+        XCTAssertTrue(focusBodySource.contains("CosmoDocumentEditor("))
+        XCTAssertFalse(focusBodySource.contains("BlockListView("))
+        XCTAssertTrue(blockBodySource.contains("CosmoDocumentEditor("))
+        XCTAssertFalse(blockBodySource.contains("BlockListView("))
+    }
+
     func testCosmoTextViewDoesNotOverrideSetFrameSizeForTextContainerInsetWorkaround() throws {
         let source = try String(
             contentsOf: packageRoot.appendingPathComponent("Editor/TextKitCoordinator.swift"),

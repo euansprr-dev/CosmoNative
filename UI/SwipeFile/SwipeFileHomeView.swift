@@ -94,7 +94,7 @@ struct SwipeFileHomeView: View {
             }
             .background(SwipeFileBackground())
             .animation(motion, value: viewModel.displayMode)
-            .animation(motion, value: viewModel.visibleItems.map(\.id))
+            .animation(motion, value: viewModel.visibleItemsIdentity)
             .task(id: section) {
                 await viewModel.loadIfNeeded(section: section)
             }

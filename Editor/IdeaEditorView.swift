@@ -306,7 +306,7 @@ struct IdeaEditorView: View {
                         plainContent = idea.content
                         attributedContent = parseMarkdown(idea.content)
                         tags = idea.tagsList
-                        if let date = ISO8601DateFormatter().date(from: idea.createdAt) {
+                        if let date = ISO8601.date(from: idea.createdAt) {
                             createdAt = date
                         }
                     }
@@ -360,14 +360,14 @@ struct IdeaEditorView: View {
                                 titleCopy.isEmpty ? nil : titleCopy,
                                 contentCopy,
                                 tagsJSON,
-                                ISO8601DateFormatter().string(from: Date()),
+                                ISO8601.string(from: Date()),
                                 id
                             ]
                         )
                     }
                 } else {
                     // Create new idea using AtomRepository
-                    let now = ISO8601DateFormatter().string(from: Date())
+                    let now = ISO8601.string(from: Date())
                     try await database.asyncWrite { db in
                         try db.execute(
                             sql: """

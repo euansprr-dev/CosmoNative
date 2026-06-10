@@ -183,7 +183,7 @@ extension GraphEdge {
         to targetUUID: String,
         linkType: AtomLinkType
     ) -> GraphEdge {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         return GraphEdge(
             id: nil,
@@ -209,7 +209,7 @@ extension GraphEdge {
         to targetUUID: String,
         similarity: Float
     ) -> GraphEdge {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         let semanticWeight = Double(similarity)
 
         return GraphEdge(
@@ -236,7 +236,7 @@ extension GraphEdge {
         to targetUUID: String,
         context: String // e.g., project UUID or dimension name
     ) -> GraphEdge {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         return GraphEdge(
             id: nil,
@@ -263,7 +263,7 @@ extension GraphEdge {
         viaUUID: String,
         inferredWeight: Double
     ) -> GraphEdge {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         let transitiveWeight = inferredWeight * 0.4 // Reduce weight for inferred edges
 
         return GraphEdge(
@@ -368,7 +368,7 @@ extension GraphEdge {
         usage: Double? = nil
     ) -> GraphEdge {
         var copy = self
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
 
         if let structural = structural { copy.structuralWeight = structural }
         if let semantic = semantic { copy.semanticWeight = semantic }

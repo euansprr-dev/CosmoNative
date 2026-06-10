@@ -193,7 +193,7 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     /// Mark as studied now
     public func markingStudied() -> SwipeAnalysis {
         var copy = self
-        copy.studiedAt = ISO8601DateFormatter().string(from: Date())
+        copy.studiedAt = ISO8601.string(from: Date())
         return copy
     }
 
@@ -469,7 +469,7 @@ public struct SwipeClientAdaptation: Codable, Sendable, Equatable {
         whyRelevant: String,
         suggestedFramework: String? = nil,
         suggestedFormat: String? = nil,
-        generatedAt: String = ISO8601DateFormatter().string(from: Date())
+        generatedAt: String = ISO8601.string(from: Date())
     ) {
         self.clientUUID = clientUUID
         self.clientName = clientName
@@ -1114,7 +1114,7 @@ public struct TranscriptComment: Codable, Identifiable, Sendable, Equatable {
         self.startIndex = startIndex
         self.endIndex = endIndex
         self.text = text
-        self.createdAt = createdAt ?? ISO8601DateFormatter().string(from: Date())
+        self.createdAt = createdAt ?? ISO8601.string(from: Date())
     }
 }
 

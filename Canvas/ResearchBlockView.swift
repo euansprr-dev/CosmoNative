@@ -709,7 +709,7 @@ struct ResearchBlockView: View {
     // MARK: - Helpers
 
     private func formatTimestamp(_ timestamp: String) -> String {
-        if let date = ISO8601DateFormatter().date(from: timestamp) {
+        if let date = ISO8601.date(from: timestamp) {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .abbreviated
             return formatter.localizedString(for: date, relativeTo: Date())

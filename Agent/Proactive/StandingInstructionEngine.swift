@@ -169,7 +169,7 @@ class StandingInstructionEngine {
 
         let calendar = Calendar.current
         let now = Date()
-        let todayStr = ISO8601DateFormatter().string(from: calendar.startOfDay(for: now))
+        let todayStr = ISO8601.string(from: calendar.startOfDay(for: now))
         let isoFormatter = ISO8601DateFormatter()
 
         for atom in instructions {
@@ -262,12 +262,12 @@ class StandingInstructionEngine {
         // Update lastExecutedAt and append to execution history
         _ = try? await atomRepo.update(uuid: atom.uuid, updates: { mutableAtom in
             var metaDict = mutableAtom.metadataDict ?? [:]
-            metaDict["lastExecutedAt"] = ISO8601DateFormatter().string(from: now)
+            metaDict["lastExecutedAt"] = ISO8601.string(from: now)
 
             // Append execution history entry (capped at 10)
             var history = metaDict["executionHistory"] as? [[String: Any]] ?? []
             let entry: [String: Any] = [
-                "timestamp": ISO8601DateFormatter().string(from: now),
+                "timestamp": ISO8601.string(from: now),
                 "resultPreview": String(response.prefix(200))
             ]
             history.append(entry)

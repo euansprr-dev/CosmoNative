@@ -190,7 +190,7 @@ extension PatternMatcher {
                 },
                 metadataExtractor: { _ in
                     [
-                        "startedAt": VoiceAnyCodable(ISO8601DateFormatter().string(from: Date())),
+                        "startedAt": VoiceAnyCodable(ISO8601.string(from: Date())),
                         "source": VoiceAnyCodable("voice")
                     ]
                 }
@@ -217,7 +217,7 @@ extension PatternMatcher {
 
                     return [
                         "workoutType": VoiceAnyCodable(workoutType),
-                        "completedAt": VoiceAnyCodable(ISO8601DateFormatter().string(from: Date())),
+                        "completedAt": VoiceAnyCodable(ISO8601.string(from: Date())),
                         "source": VoiceAnyCodable("voice")
                     ]
                 }
@@ -251,7 +251,7 @@ extension PatternMatcher {
 
                     var metadata: [String: VoiceAnyCodable] = [
                         "workoutType": VoiceAnyCodable(activity),
-                        "completedAt": VoiceAnyCodable(ISO8601DateFormatter().string(from: Date())),
+                        "completedAt": VoiceAnyCodable(ISO8601.string(from: Date())),
                         "source": VoiceAnyCodable("voice")
                     ]
 
@@ -299,7 +299,7 @@ extension PatternMatcher {
                     var metadata: [String: VoiceAnyCodable] = [
                         "workoutType": VoiceAnyCodable("strength"),
                         "exercise": VoiceAnyCodable(exercise),
-                        "completedAt": VoiceAnyCodable(ISO8601DateFormatter().string(from: Date())),
+                        "completedAt": VoiceAnyCodable(ISO8601.string(from: Date())),
                         "source": VoiceAnyCodable("voice")
                     ]
 

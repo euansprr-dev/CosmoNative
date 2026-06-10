@@ -466,7 +466,7 @@ public actor ToolExecutor {
         var metadata: [String: Any] = [
             "workoutType": workoutType,
             "source": "voice",
-            "completedAt": ISO8601DateFormatter().string(from: Date())
+            "completedAt": ISO8601.string(from: Date())
         ]
 
         if let duration = call.int("duration_minutes") {

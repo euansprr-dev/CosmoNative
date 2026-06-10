@@ -65,7 +65,7 @@ struct CapturedItem: Identifiable, Codable, Equatable, FetchableRecord, Persista
         sender: String? = nil,
         metadata: String? = nil
     ) -> CapturedItem {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         return CapturedItem(
             id: nil,
             uuid: UUID().uuidString,

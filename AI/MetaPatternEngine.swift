@@ -663,7 +663,7 @@ class MetaPatternEngine {
                 "platform": report.platform,
                 "format": report.format,
                 "niche": report.niche,
-                "lastUpdated": ISO8601DateFormatter().string(from: Date())
+                "lastUpdated": ISO8601.string(from: Date())
             ]
             let metadataData = try JSONSerialization.data(withJSONObject: metadataDict)
             let metadataStr = String(data: metadataData, encoding: .utf8)

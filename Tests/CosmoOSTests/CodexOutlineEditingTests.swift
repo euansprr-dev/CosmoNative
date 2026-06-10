@@ -64,6 +64,25 @@ final class CodexOutlineEditingTests: XCTestCase {
         XCTAssertEqual(requestedDirection, .previous)
     }
 
+    @MainActor
+    func testOutlineSlideEditorHandlesPasteboardKeyEquivalents() throws {
+        let textView = OutlineSlideNoteTextView()
+        textView.string = "copy me"
+        textView.setSelectedRange(NSRange(location: 0, length: textView.string.count))
+        NSPasteboard.general.clearContents()
+
+        XCTAssertTrue(textView.performKeyEquivalent(with: commandKeyEvent("c")))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "copy me")
+
+        textView.string = ""
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("pasted text", forType: .string)
+
+        XCTAssertTrue(textView.performKeyEquivalent(with: commandKeyEvent("v")))
+        XCTAssertEqual(textView.string, "pasted text")
+    }
+
     func testInsertSlideAfterFocusedSlideRenumbersAndReturnsInsertedID() {
         let firstID = UUID()
         let secondID = UUID()
@@ -186,6 +205,21 @@ final class CodexOutlineEditingTests: XCTestCase {
             charactersIgnoringModifiers: "",
             isARepeat: false,
             keyCode: keyCode
+        )!
+    }
+
+    private func commandKeyEvent(_ character: String) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: character,
+            charactersIgnoringModifiers: character,
+            isARepeat: false,
+            keyCode: 0
         )!
     }
 }

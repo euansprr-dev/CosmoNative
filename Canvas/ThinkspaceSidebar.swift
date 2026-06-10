@@ -761,7 +761,7 @@ struct ThinkspaceSidebar: View {
             do {
                 var updated = project
                 updated.title = trimmed
-                updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+                updated.updatedAt = ISO8601.string(from: Date())
                 try await repository.update(updated)
                 await loadProjects()
             } catch {
@@ -892,7 +892,7 @@ struct ThinkspaceSidebar: View {
             var metadata = project.metadataValue(as: ProjectMetadata.self) ?? ProjectMetadata()
             metadata.color = colorHex
             var updated = project.withMetadata(metadata)
-            updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+            updated.updatedAt = ISO8601.string(from: Date())
             try await repository.update(updated)
             await loadProjects()
         } catch {

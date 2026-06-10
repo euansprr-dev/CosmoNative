@@ -709,14 +709,14 @@ struct CanvasSelectionInspector: View {
                 title: candidate.title ?? "Untitled"
             )
         )
-        updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updated.updatedAt = ISO8601.string(from: Date())
         persist(updated, clearQuery: true)
     }
 
     private func removeReference(_ reference: OutlineReferenceItem) {
         guard let atom, !isSaving else { return }
         var updated = atom.removingOutlineReference(id: reference.id)
-        updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updated.updatedAt = ISO8601.string(from: Date())
         persist(updated, clearQuery: false)
     }
 

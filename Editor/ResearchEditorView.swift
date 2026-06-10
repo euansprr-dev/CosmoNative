@@ -538,7 +538,7 @@ struct ResearchEditorView: View {
                         research.title = currentTitle
                         research.summary = currentSummary.isEmpty ? nil : currentSummary
                         research.findings = currentFindings.isEmpty ? nil : currentFindings
-                        research.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        research.updatedAt = ISO8601.string(from: Date())
                         research.localVersion += 1
 
                         // Update personal notes in rich content

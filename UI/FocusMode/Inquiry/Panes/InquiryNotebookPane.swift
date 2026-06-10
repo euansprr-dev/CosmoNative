@@ -300,7 +300,7 @@ struct InquiryNotebookPane: View {
         } else if let citation, !citation.isEmpty {
             parts.append(citation)
         }
-        if let date = ISO8601DateFormatter().date(from: committedAt) {
+        if let date = ISO8601.date(from: committedAt) {
             parts.append(date.formatted(date: .abbreviated, time: .omitted))
         }
         return parts.joined(separator: " · ")

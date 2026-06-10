@@ -193,7 +193,7 @@ final class InquiryRepository {
             }
 
             copy = copy.withMetadata(metadata)
-            copy.updatedAt = ISO8601DateFormatter().string(from: Date())
+            copy.updatedAt = ISO8601.string(from: Date())
 
             if metadata.primaryThinkspaceUUID == nil && remainingParents.isEmpty {
                 copy.isDeleted = true
@@ -357,7 +357,7 @@ final class InquiryRepository {
             parentObjectType: anchorObjectType,
             mainQuestionUUID: rootQuestionAtom?.uuid,
             status: .active,
-            lastActiveAt: ISO8601DateFormatter().string(from: Date()),
+            lastActiveAt: ISO8601.string(from: Date()),
             layoutMode: .research
         )
         var tree = ResearchTreeDocument.bootstrap(rootQuestionAtomUUID: rootQuestionAtom?.uuid)
@@ -391,7 +391,7 @@ final class InquiryRepository {
         // 4. Touch Deep Dive: link it to the new session, update lastInquiryAt
         var deepDiveCopy = deepDive
         var ddMeta = deepDiveCopy.deepDiveMetadata ?? DeepDiveMetadata()
-        ddMeta.lastInquiryAt = ISO8601DateFormatter().string(from: Date())
+        ddMeta.lastInquiryAt = ISO8601.string(from: Date())
         if (ddMeta.maturity ?? .spark) == .spark {
             ddMeta.maturity = .exploring
         }
@@ -423,7 +423,7 @@ final class InquiryRepository {
     func pauseSession(_ atom: Atom) async throws -> Atom {
         guard var meta = atom.inquirySessionMetadata else { return atom }
         meta.status = .paused
-        meta.lastActiveAt = ISO8601DateFormatter().string(from: Date())
+        meta.lastActiveAt = ISO8601.string(from: Date())
         let copy = atom.withMetadata(meta)
         return try await atoms.update(copy)
     }
@@ -434,7 +434,7 @@ final class InquiryRepository {
         guard var meta = atom.inquirySessionMetadata,
               var structured = atom.inquirySessionStructured else { return atom }
         meta.status = .crystallized
-        meta.crystallizedAt = ISO8601DateFormatter().string(from: Date())
+        meta.crystallizedAt = ISO8601.string(from: Date())
         structured.crystallizationResult = output
         var copy = atom.withMetadata(meta).withStructured(structured)
         copy.body = summary

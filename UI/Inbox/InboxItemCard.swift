@@ -457,8 +457,7 @@ struct InboxItemCard: View {
     // MARK: - Helpers
 
     private var relativeTime: String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: item.createdAt) else { return "" }
+        guard let date = ISO8601.date(from: item.createdAt) else { return "" }
         let interval = Date().timeIntervalSince(date)
         if interval < 60 { return "just now" }
         if interval < 3600 { return "\(Int(interval / 60))m ago" }

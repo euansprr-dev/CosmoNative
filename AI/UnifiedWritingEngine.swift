@@ -1947,7 +1947,7 @@ final class UnifiedWritingEngine: ObservableObject {
                            let metaStr = String(data: metaData, encoding: .utf8) {
                             atom.metadata = metaStr
                         }
-                        atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        atom.updatedAt = ISO8601.string(from: Date())
                         try atom.update(db)
                     }
                 }
@@ -2007,7 +2007,7 @@ final class UnifiedWritingEngine: ObservableObject {
                            let metaStr = String(data: metaData, encoding: .utf8) {
                             atom.metadata = metaStr
                         }
-                        atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        atom.updatedAt = ISO8601.string(from: Date())
                         try atom.update(db)
                     }
                 }
@@ -2030,7 +2030,7 @@ final class UnifiedWritingEngine: ObservableObject {
                 try await database.asyncWrite { db in
                     if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
                         atom.title = title
-                        atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        atom.updatedAt = ISO8601.string(from: Date())
                         try atom.update(db)
                     }
                 }
@@ -2071,7 +2071,7 @@ final class UnifiedWritingEngine: ObservableObject {
                            let metaStr = String(data: metaData, encoding: .utf8) {
                             atom.metadata = metaStr
                         }
-                        atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        atom.updatedAt = ISO8601.string(from: Date())
                         try atom.update(db)
                     }
                 }
@@ -2136,7 +2136,7 @@ final class UnifiedWritingEngine: ObservableObject {
                             key: RichDocumentMetadataKeys.contentDraftDocument
                         )
 
-                        atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        atom.updatedAt = ISO8601.string(from: Date())
                         try atom.update(db)
                     }
                 }
@@ -4064,7 +4064,7 @@ final class UnifiedWritingEngine: ObservableObject {
                 "id": msg.id.uuidString,
                 "role": msg.role.rawValue,
                 "content": String(content.prefix(2000)),
-                "timestamp": ISO8601DateFormatter().string(from: msg.timestamp)
+                "timestamp": ISO8601.string(from: msg.timestamp)
             ]
         }
 
@@ -4086,7 +4086,7 @@ final class UnifiedWritingEngine: ObservableObject {
                 if let data = try? JSONSerialization.data(withJSONObject: structuredDict),
                    let str = String(data: data, encoding: .utf8) {
                     atom.structured = str
-                    atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                    atom.updatedAt = ISO8601.string(from: Date())
                     try atom.update(db)
                 }
             }

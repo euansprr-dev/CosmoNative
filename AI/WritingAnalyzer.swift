@@ -10,7 +10,7 @@ import NaturalLanguage
 
 /// Complete analysis of a piece of writing, including readability scores,
 /// sentence complexity, passive voice detection, and adverb density.
-struct WritingAnalysis {
+struct WritingAnalysis: Sendable {
     /// Flesch-Kincaid readability score (0-100, higher = easier to read)
     let fleschKincaidScore: Double
     /// Gunning Fog grade level
@@ -45,7 +45,7 @@ struct WritingAnalysis {
 }
 
 /// Readability classification for UI display
-enum ReadabilityRating {
+enum ReadabilityRating: Sendable {
     case good       // 60-100: Easy to read
     case moderate   // 30-59: Somewhat difficult
     case difficult  // 0-29: Very difficult
@@ -63,7 +63,7 @@ enum ReadabilityRating {
 
 /// Singleton analyzer that performs pure algorithmic text analysis
 /// using Apple's NaturalLanguage framework. No AI calls, runs instantly.
-final class WritingAnalyzer {
+final class WritingAnalyzer: @unchecked Sendable {
     static let shared = WritingAnalyzer()
 
     // Common auxiliary verbs that signal passive voice

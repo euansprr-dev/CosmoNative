@@ -213,7 +213,7 @@ struct ContentEditorView: View {
                         plainBody = newBody
                         attributedBody = makeAttributedBody(from: newBody)
                         status = content.status
-                        if let date = ISO8601DateFormatter().date(from: content.createdAt) {
+                        if let date = ISO8601.date(from: content.createdAt) {
                             createdAt = date
                         }
                     }
@@ -286,7 +286,7 @@ struct ContentEditorView: View {
                         arguments: [
                             currentTitle,
                             currentBody,
-                            ISO8601DateFormatter().string(from: Date()),
+                            ISO8601.string(from: Date()),
                             currentContentId
                         ]
                     )

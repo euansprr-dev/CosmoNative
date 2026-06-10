@@ -93,12 +93,18 @@ struct DashboardTimeTracker: View {
             intentUUID: session.intentUUID,
             legacyIntentRaw: session.intent.rawValue
         )
+        // Habit is the primary attribution axis; intent (when distinct) is the muted secondary.
+        let habit = session.habitUUID.flatMap { viewModel.habitDefinition(for: $0) }
+        let categoryIcon = habit?.icon ?? intentPresentation.icon
+        let categoryAccent = habit?.accent ?? intentPresentation.accent
+        let categoryTitle = habit?.title ?? intentPresentation.title
+        let secondaryTitle: String? = (habit != nil && !intentPresentation.isUnassigned) ? intentPresentation.title : nil
 
         VStack(alignment: .leading, spacing: DS.space10) {
             HStack(spacing: DS.space8) {
-                Image(systemName: intentPresentation.icon)
+                Image(systemName: categoryIcon)
                     .font(DS.caption)
-                    .foregroundStyle(intentPresentation.accent)
+                    .foregroundStyle(categoryAccent)
                     .frame(width: 18)
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -108,12 +114,12 @@ struct DashboardTimeTracker: View {
                         .lineLimit(1)
 
                     HStack(spacing: DS.space6) {
-                        Text(intentPresentation.title)
+                        Text(categoryTitle)
                             .font(DS.caption2)
-                            .foregroundStyle(intentPresentation.accent)
+                            .foregroundStyle(categoryAccent)
 
-                        if let habitTitle = session.habitTitleSnapshot {
-                            Text(habitTitle)
+                        if let secondaryTitle {
+                            Text(secondaryTitle)
                                 .font(DS.caption2)
                                 .foregroundStyle(DS.textMuted)
                         }

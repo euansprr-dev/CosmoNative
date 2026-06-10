@@ -328,7 +328,7 @@ class QuestEngine: ObservableObject {
             do {
                 let blocks = try await atomRepository.fetchAll(type: .deepWorkBlock)
                 let todayBlocks = blocks.filter { atom in
-                    guard let date = ISO8601DateFormatter().date(from: atom.createdAt) else { return false }
+                    guard let date = ISO8601.date(from: atom.createdAt) else { return false }
                     return calendar.isDate(date, inSameDayAs: todayStart)
                 }
 
@@ -360,7 +360,7 @@ class QuestEngine: ObservableObject {
             do {
                 let entries = try await atomRepository.fetchAll(type: .journalEntry)
                 let todayEntries = entries.filter { atom in
-                    guard let date = ISO8601DateFormatter().date(from: atom.createdAt) else { return false }
+                    guard let date = ISO8601.date(from: atom.createdAt) else { return false }
                     return calendar.isDate(date, inSameDayAs: todayStart)
                 }
 
@@ -398,12 +398,12 @@ class QuestEngine: ObservableObject {
 
                     // Check completedAt date
                     if let completedAtStr = meta.completedAt,
-                       let completedDate = ISO8601DateFormatter().date(from: completedAtStr) {
+                       let completedDate = ISO8601.date(from: completedAtStr) {
                         return calendar.isDate(completedDate, inSameDayAs: todayStart)
                     }
 
                     // Fall back to updatedAt if completedAt not set
-                    if let date = ISO8601DateFormatter().date(from: atom.updatedAt) {
+                    if let date = ISO8601.date(from: atom.updatedAt) {
                         return calendar.isDate(date, inSameDayAs: todayStart)
                     }
 
@@ -422,7 +422,7 @@ class QuestEngine: ObservableObject {
             do {
                 let phases = try await atomRepository.fetchAll(type: .contentPhase)
                 let todayPhases = phases.filter { atom in
-                    guard let date = ISO8601DateFormatter().date(from: atom.createdAt) else { return false }
+                    guard let date = ISO8601.date(from: atom.createdAt) else { return false }
                     return calendar.isDate(date, inSameDayAs: todayStart)
                 }
 
@@ -439,7 +439,7 @@ class QuestEngine: ObservableObject {
                 // Check workout atoms
                 let workouts = try await atomRepository.fetchAll(type: .workout)
                 let todayWorkouts = workouts.filter { atom in
-                    guard let date = ISO8601DateFormatter().date(from: atom.createdAt) else { return false }
+                    guard let date = ISO8601.date(from: atom.createdAt) else { return false }
                     return calendar.isDate(date, inSameDayAs: todayStart)
                 }
 
@@ -450,7 +450,7 @@ class QuestEngine: ObservableObject {
                 // Also check workoutSession atoms
                 let sessions = try await atomRepository.fetchAll(type: .workoutSession)
                 let todaySessions = sessions.filter { atom in
-                    guard let date = ISO8601DateFormatter().date(from: atom.createdAt) else { return false }
+                    guard let date = ISO8601.date(from: atom.createdAt) else { return false }
                     return calendar.isDate(date, inSameDayAs: todayStart)
                 }
 
@@ -508,7 +508,7 @@ class QuestEngine: ObservableObject {
             "questTitle": quest.title,
             "xpReward": quest.xpReward,
             "type": "questCompletion",
-            "completedAt": ISO8601DateFormatter().string(from: Date())
+            "completedAt": ISO8601.string(from: Date())
         ]
 
         guard let metadataString = try? String(
@@ -558,9 +558,9 @@ class QuestEngine: ObservableObject {
                 // Use completedAt from metadata, or fall back to atom createdAt
                 let dateString: String
                 if let completedAt = dict["completedAt"] as? String,
-                   let date = ISO8601DateFormatter().date(from: completedAt) {
+                   let date = ISO8601.date(from: completedAt) {
                     dateString = dateFormatter.string(from: date)
-                } else if let date = ISO8601DateFormatter().date(from: record.createdAt) {
+                } else if let date = ISO8601.date(from: record.createdAt) {
                     dateString = dateFormatter.string(from: date)
                 } else {
                     continue

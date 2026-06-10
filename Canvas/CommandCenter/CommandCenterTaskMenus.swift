@@ -380,9 +380,9 @@ struct CommandCenterComposerHost: View {
     private func toggleTaskCompletion(_ task: TaskViewModel) {
         Task {
             if task.isCompleted {
-                _ = await viewModel.uncompleteTask(uuid: task.uuid)
+                _ = await viewModel.uncompleteTask(task)
             } else {
-                let completed = await viewModel.completeTask(uuid: task.uuid)
+                let completed = await viewModel.completeTask(task)
                 if completed {
                     viewModel.notifyCompletedTaskArrival()
                 }

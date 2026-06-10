@@ -209,7 +209,7 @@ struct DeepDiveOverviewView: View {
         let maturity = atom.deepDiveMetadata?.maturity ?? .spark
         parts.append(maturity.displayName)
         if let updatedString = atom.deepDiveMetadata?.lastInquiryAt ?? Optional(atom.updatedAt),
-           let date = ISO8601DateFormatter().date(from: updatedString) {
+           let date = ISO8601.date(from: updatedString) {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .abbreviated
             parts.append("Updated \(formatter.localizedString(for: date, relativeTo: Date()))")

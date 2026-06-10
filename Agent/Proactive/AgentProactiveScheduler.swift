@@ -562,7 +562,7 @@ class AgentProactiveScheduler: ObservableObject {
         let entry: [String: Any] = [
             "type": type,
             "success": success,
-            "timestamp": ISO8601DateFormatter().string(from: Date())
+            "timestamp": ISO8601.string(from: Date())
         ]
         log.append(entry)
         // Keep only last 50 entries

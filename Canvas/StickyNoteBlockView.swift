@@ -455,7 +455,7 @@ struct StickyNoteBlockView: View {
                             arguments: [
                                 noteText,
                                 fields.metadata,
-                                ISO8601DateFormatter().string(from: Date()),
+                                ISO8601.string(from: Date()),
                                 uuid
                             ]
                         )
@@ -517,7 +517,7 @@ struct StickyNoteBlockView: View {
                         arguments: [
                             noteText,
                             fields.metadata,
-                            ISO8601DateFormatter().string(from: Date()),
+                            ISO8601.string(from: Date()),
                             uuid
                         ]
                     )

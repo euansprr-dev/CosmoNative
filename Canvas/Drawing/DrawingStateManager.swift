@@ -98,6 +98,7 @@ final class DrawingStateManager: ObservableObject {
                             .fetchAll(db)
                     }
                 }
+                guard self.currentThinkspaceId == thinkspaceId else { return }
                 self.drawings = records.map { CanvasDrawing(from: $0) }
                 self.clearSelection()
                 self.editingTextId = nil
@@ -220,7 +221,7 @@ final class DrawingStateManager: ObservableObject {
                 try await database.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE canvas_drawings SET is_deleted = 1, updated_at = ? WHERE id = ?",
-                        arguments: [ISO8601DateFormatter().string(from: Date()), id]
+                        arguments: [ISO8601.string(from: Date()), id]
                     )
                 }
             } catch {
@@ -242,7 +243,7 @@ final class DrawingStateManager: ObservableObject {
                 try await database.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE canvas_drawings SET is_deleted = 0, updated_at = ? WHERE id = ?",
-                        arguments: [ISO8601DateFormatter().string(from: Date()), drawing.id]
+                        arguments: [ISO8601.string(from: Date()), drawing.id]
                     )
                 }
             } catch {

@@ -58,7 +58,7 @@ final class IdeaChatAgent {
             id: UUID(),
             role: "assistant",
             content: trimmed,
-            timestamp: ISO8601DateFormatter().string(from: Date()),
+            timestamp: ISO8601.string(from: Date()),
             actionCards: nil
         )
     }

@@ -134,7 +134,7 @@ actor MentionSearchProvider {
             }
         }
 
-        if let updated = ISO8601DateFormatter().date(from: atom.updatedAt) {
+        if let updated = ISO8601.date(from: atom.updatedAt) {
             score += max(0, 10 - Date().timeIntervalSince(updated) / 86_400.0)
         }
 

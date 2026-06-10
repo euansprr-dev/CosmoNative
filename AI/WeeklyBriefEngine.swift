@@ -326,7 +326,7 @@ class WeeklyBriefEngine: ObservableObject {
               let structured = String(data: encoded, encoding: .utf8) else { return }
         let meta: [String: Any] = [
             "briefType": "weeklyBrief",
-            "weekOf": ISO8601DateFormatter().string(from: brief.weekOf),
+            "weekOf": ISO8601.string(from: brief.weekOf),
             "overallIndex": brief.overallIndex
         ]
         guard let md = try? JSONSerialization.data(withJSONObject: meta),

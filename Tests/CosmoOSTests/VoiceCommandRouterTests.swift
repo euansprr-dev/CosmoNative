@@ -227,7 +227,7 @@ final class CommandKSearchTests: XCTestCase {
     }
 
     private var isoNow: String {
-        ISO8601DateFormatter().string(from: Date())
+        ISO8601.string(from: Date())
     }
 
     private func makeSwipe(title: String, hookText: String) -> SwipeGalleryItem {

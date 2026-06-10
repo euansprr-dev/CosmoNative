@@ -198,12 +198,12 @@ private struct TemplateDateField: View {
         Binding(
             get: {
                 if let str = value?.stringValue,
-                   let parsed = ISO8601DateFormatter().date(from: str) {
+                   let parsed = ISO8601.date(from: str) {
                     return parsed
                 }
                 return Date()
             },
-            set: { value = .string(ISO8601DateFormatter().string(from: $0)) }
+            set: { value = .string(ISO8601.string(from: $0)) }
         )
     }
 

@@ -33,7 +33,10 @@ struct BrainstormContextSidebar: View {
     @State private var discoveryResults: [RelatedAtomRef] = []
     @State private var isSearching = false
     @State private var detailAtom: Atom?
+    @State private var detailLoadTask: Task<Void, Never>?
+    @State private var detailRequestID = UUID()
     @State private var searchTask: Task<Void, Never>?
+    @State private var searchRequestID = UUID()
     @State private var hoveredItemID: UUID?
 
     private let sidebarWidth: CGFloat = 300
@@ -58,6 +61,12 @@ struct BrainstormContextSidebar: View {
         .transition(.move(edge: .trailing).combined(with: .opacity))
         .onAppear { runDiscoverySearch() }
         .onChange(of: state.contentDescription) { _, _ in debounceSearch() }
+        .onDisappear {
+            searchTask?.cancel()
+            searchTask = nil
+            detailLoadTask?.cancel()
+            detailLoadTask = nil
+        }
     }
 
     // MARK: - Background
@@ -623,21 +632,29 @@ struct BrainstormContextSidebar: View {
     // MARK: - Search Logic
 
     private func openDetail(atomUUID: String) {
+        detailLoadTask?.cancel()
+        let requestID = UUID()
+        detailRequestID = requestID
+
         withAnimation(ProMotionSprings.snappy) {
             sidebarMode = .detail(atomUUID)
             detailAtom = nil
         }
-        Task {
+        detailLoadTask = Task {
             do {
                 let fetched = try await AtomRepository.shared.fetch(uuid: atomUUID)
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
+                    guard detailRequestID == requestID else { return }
                     withAnimation(ProMotionSprings.snappy) {
                         detailAtom = fetched
                     }
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 print("BrainstormContextSidebar: Failed to load detail: \(error)")
                 await MainActor.run {
+                    guard detailRequestID == requestID else { return }
                     withAnimation(ProMotionSprings.snappy) {
                         sidebarMode = .discovery
                     }
@@ -648,28 +665,39 @@ struct BrainstormContextSidebar: View {
 
     private func debounceSearch() {
         searchTask?.cancel()
+        let requestID = UUID()
+        searchRequestID = requestID
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s debounce
             guard !Task.isCancelled else { return }
-            await performTieredSearch()
+            await performTieredSearch(requestID: requestID)
         }
     }
 
     private func runDiscoverySearch() {
         searchTask?.cancel()
+        let requestID = UUID()
+        searchRequestID = requestID
         searchTask = Task {
-            await performTieredSearch()
+            await performTieredSearch(requestID: requestID)
         }
     }
 
-    private func performTieredSearch() async {
+    private func performTieredSearch(requestID: UUID) async {
         let query = state.contentDescription.isEmpty ? (atom.title ?? "") : state.contentDescription
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            await MainActor.run { discoveryResults = [] }
+            await MainActor.run {
+                guard searchRequestID == requestID else { return }
+                discoveryResults = []
+                isSearching = false
+            }
             return
         }
 
-        await MainActor.run { isSearching = true }
+        await MainActor.run {
+            guard searchRequestID == requestID else { return }
+            isSearching = true
+        }
 
         var allRefs: [RelatedAtomRef] = []
         var seenUUIDs: Set<String> = [atom.uuid]
@@ -762,6 +790,7 @@ struct BrainstormContextSidebar: View {
         guard !Task.isCancelled else { return }
 
         await MainActor.run {
+            guard searchRequestID == requestID else { return }
             discoveryResults = allRefs
             isSearching = false
         }

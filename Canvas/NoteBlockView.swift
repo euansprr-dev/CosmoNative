@@ -214,7 +214,7 @@ struct NoteBlockView: View {
     private var bodyView: some View {
         if isEditingBody {
             ScrollView(.vertical, showsIndicators: false) {
-                BlockListView(
+                CosmoDocumentEditor(
                     document: $noteBodyDocument,
                     fontSize: bodyFontSize,
                     placeholder: "Press / for commands...",
@@ -223,10 +223,9 @@ struct NoteBlockView: View {
                     allowSelectionMenu: true,
                     allowImages: true,
                     scrollsInternally: false,
-                    autoFocusFirstTextRegion: true,
-                    onDocumentChange: { document, plainText in
-                        applyBodyDocumentChange(document, plainText: plainText)
-                    }
+                    onPlainTextChange: applyBodyPlainTextChange,
+                    onDocumentChange: applyBodyDocumentChange,
+                    autoFocus: true
                 )
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
@@ -504,6 +503,16 @@ struct NoteBlockView: View {
         noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
     }
 
+    private func applyBodyPlainTextChange(_ plainText: String) {
+        let changed = plainText != noteText
+        noteText = plainText
+        noteWordCount = Self.wordCount(in: plainText)
+
+        if changed {
+            markLocalEditAndScheduleSave()
+        }
+    }
+
     private func applyBodyDocumentChange(_ document: RichDocument, plainText: String) {
         let changed = plainText != noteText || document != noteBodyDocument
         noteBodyDocument = document
@@ -634,7 +643,7 @@ struct NoteBlockView: View {
                             bodyDocument: bodyDoc,
                             plainBodyText: bodyText
                         )
-                        let now = ISO8601DateFormatter().string(from: Date())
+                        let now = ISO8601.string(from: Date())
 
                         if atomExists != nil {
                             // Atom exists — update it
@@ -791,7 +800,7 @@ struct NoteBlockView: View {
                     bodyDocument: noteBodyDocument,
                     plainBodyText: noteText
                 )
-                let now = ISO8601DateFormatter().string(from: Date())
+                let now = ISO8601.string(from: Date())
 
                 if atomExists != nil {
                     try db.execute(
@@ -1024,7 +1033,7 @@ struct NoteBlockView: View {
     }
 
     private func formatTimestamp(_ timestamp: String) -> String {
-        if let date = ISO8601DateFormatter().date(from: timestamp) {
+        if let date = ISO8601.date(from: timestamp) {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .abbreviated
             return formatter.localizedString(for: date, relativeTo: Date())

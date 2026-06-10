@@ -379,7 +379,7 @@ public final class ProactiveNotificationService: ObservableObject {
             body: body,
             sound: .subtle,
             userInfo: [
-                "summaryDate": ISO8601DateFormatter().string(from: summary.summaryDate)
+                "summaryDate": ISO8601.string(from: summary.summaryDate)
             ],
             actions: [
                 .init(id: "view_summary", title: "View Summary"),

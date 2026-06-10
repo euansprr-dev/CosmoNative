@@ -59,6 +59,15 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         XCTAssertEqual(manager.panes.count, 1)
     }
 
+    func testSplitPaneContainerDoesNotImplicitlyAnimateEveryResizeFrame() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/SplitPaneContainer.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertFalse(source.contains(".animation(ProMotionSprings.snappy, value: paneManager.mainSplitRatio)"))
+    }
+
     func testBrowserStateDoesNotRepublishIdenticalSnapshots() {
         let url = URL(string: "https://www.instagram.com/reel/example/")!
         let state = CosmoWebBrowserState(initialURL: url, title: "Instagram")
@@ -278,5 +287,12 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         }
         XCTFail("Expected \(count) pins, found \(latest.count)", file: file, line: line)
         return latest
+    }
+
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 }

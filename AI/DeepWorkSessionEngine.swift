@@ -247,8 +247,8 @@ class DeepWorkSessionEngine: ObservableObject {
         // Create session metadata
         let sessionMetadata = DeepWorkSessionMetadata(
             taskUUID: session.taskUUID,
-            startedAt: ISO8601DateFormatter().string(from: session.startedAt),
-            endedAt: ISO8601DateFormatter().string(from: Date()),
+            startedAt: ISO8601.string(from: session.startedAt),
+            endedAt: ISO8601.string(from: Date()),
             plannedMinutes: session.plannedMinutes,
             actualMinutes: actualMinutes,
             focusScore: focusScore,
@@ -420,7 +420,7 @@ class DeepWorkSessionEngine: ObservableObject {
     // MARK: - Session Data
 
     private func findOutputAtoms(since startDate: Date) async -> [String] {
-        let startISO = ISO8601DateFormatter().string(from: startDate)
+        let startISO = ISO8601.string(from: startDate)
         do {
             // Fetch all user-facing atoms created after session start
             let userTypes: [AtomType] = [.idea, .task, .research, .content, .connection]

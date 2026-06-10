@@ -71,7 +71,7 @@ struct FocusBlockInspectorOverlay: ViewModifier {
                             var duplicate = atom
                             duplicate.uuid = UUID().uuidString
                             duplicate.id = nil
-                            duplicate.createdAt = ISO8601DateFormatter().string(from: Date())
+                            duplicate.createdAt = ISO8601.string(from: Date())
                             duplicate.updatedAt = duplicate.createdAt
                             if let created = try? await AtomRepository.shared.create(duplicate) {
                                 let position = CGPoint(

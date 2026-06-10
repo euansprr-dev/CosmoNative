@@ -94,8 +94,8 @@ class ResearchProcessor: ObservableObject {
         }
 
         research.setRichContent(rich)
-        research.updatedAt = ISO8601DateFormatter().string(from: Date())
-        research.createdAt = ISO8601DateFormatter().string(from: Date())
+        research.updatedAt = ISO8601.string(from: Date())
+        research.createdAt = ISO8601.string(from: Date())
 
         // Capture as immutable for Sendable closure
         let researchToInsert = research
@@ -189,7 +189,7 @@ class ResearchProcessor: ObservableObject {
             research.thumbnailUrl = data.thumbnailURL?.absoluteString
             research.body = data.transcript.jsonString
             research.processingStatus = "complete"
-            research.updatedAt = ISO8601DateFormatter().string(from: Date())
+            research.updatedAt = ISO8601.string(from: Date())
             research.localVersion += 1
 
             var richContent = research.richContent ?? ResearchRichContent()
@@ -265,7 +265,7 @@ class ResearchProcessor: ObservableObject {
             research.researchType = ResearchRichContent.SourceType.loom.rawValue
             research.thumbnailUrl = capturedThumbnailUrl ?? URLClassifier.loomThumbnailURL(videoId: videoId)?.absoluteString
             research.processingStatus = "complete"
-            research.updatedAt = ISO8601DateFormatter().string(from: Date())
+            research.updatedAt = ISO8601.string(from: Date())
             research.localVersion += 1
 
             var richContent = research.richContent ?? ResearchRichContent()
@@ -310,7 +310,7 @@ class ResearchProcessor: ObservableObject {
             research.researchType = ResearchRichContent.SourceType.website.rawValue
             research.summary = data.summary
             research.processingStatus = "complete"
-            research.updatedAt = ISO8601DateFormatter().string(from: Date())
+            research.updatedAt = ISO8601.string(from: Date())
             research.localVersion += 1
 
             var richContent = research.richContent ?? ResearchRichContent()
@@ -348,7 +348,7 @@ class ResearchProcessor: ObservableObject {
             research.url = url.absoluteString
             research.researchType = ResearchRichContent.SourceType.twitter.rawValue
             research.processingStatus = "complete"
-            research.updatedAt = ISO8601DateFormatter().string(from: Date())
+            research.updatedAt = ISO8601.string(from: Date())
             research.localVersion += 1
 
             var richContent = research.richContent ?? ResearchRichContent()
@@ -397,7 +397,7 @@ class ResearchProcessor: ObservableObject {
             research.url = url.absoluteString
             research.researchType = ResearchRichContent.SourceType.pdf.rawValue
             research.processingStatus = "complete"
-            research.updatedAt = ISO8601DateFormatter().string(from: Date())
+            research.updatedAt = ISO8601.string(from: Date())
             research.localVersion += 1
 
             var richContent = research.richContent ?? ResearchRichContent()
@@ -508,7 +508,7 @@ class ResearchProcessor: ObservableObject {
             rich.transcriptStatus = capturedTranscriptStatus.rawValue
             updated.setRichContent(rich)
 
-            updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+            updated.updatedAt = ISO8601.string(from: Date())
             updated.localVersion += 1
 
             try updated.update(db)

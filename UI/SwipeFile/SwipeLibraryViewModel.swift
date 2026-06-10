@@ -5,6 +5,7 @@ import SwiftUI
 final class SwipeLibraryViewModel: ObservableObject {
     @Published private(set) var allItems: [SwipeGalleryItem] = []
     @Published private(set) var visibleItems: [SwipeGalleryItem] = []
+    @Published private(set) var visibleItemsIdentity = SwipeLibraryVisibleItemsIdentity(items: [])
     @Published private(set) var shelves: [SwipeLibraryShelf] = []
     @Published private(set) var summary = SwipeLibraryFacetSummary(
         totalCount: 0,
@@ -196,6 +197,10 @@ final class SwipeLibraryViewModel: ObservableObject {
             query: query,
             sortMode: sortMode
         )
+        let nextIdentity = SwipeLibraryVisibleItemsIdentity(items: items)
+        if visibleItemsIdentity != nextIdentity {
+            visibleItemsIdentity = nextIdentity
+        }
         visibleItems = items
         shelves = SwipeLibraryFiltering.shelves(from: items)
         summary = SwipeLibraryFiltering.facetSummary(allItems: allItems, filteredItems: items)

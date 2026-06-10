@@ -21,7 +21,6 @@ struct SplitPaneContainer<MainContent: View>: View {
     var body: some View {
         GeometryReader { geo in
             splitLayout(geo: geo)
-                .animation(ProMotionSprings.snappy, value: paneManager.mainSplitRatio)
         }
     }
 

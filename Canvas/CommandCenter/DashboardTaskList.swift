@@ -864,7 +864,7 @@ struct DashboardTaskList: View {
         guard completionStates[task.uuid] == nil else { return }
 
         if task.isCompleted {
-            Task { _ = await viewModel.uncompleteTask(uuid: task.uuid) }
+            Task { _ = await viewModel.uncompleteTask(task) }
             return
         }
 
@@ -901,7 +901,7 @@ struct DashboardTaskList: View {
             }
 
             try? await Task.sleep(nanoseconds: timings.fadeDuration.nanoseconds)
-            let completed = await viewModel.completeTask(uuid: task.uuid)
+            let completed = await viewModel.completeTask(task)
             completionStates.removeValue(forKey: task.uuid)
 
             if completed {

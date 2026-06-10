@@ -139,7 +139,7 @@ struct CosmoGlassSceneMaterial {
     }
 }
 
-private extension CosmoGlassSceneSignal {
+extension CosmoGlassSceneSignal {
     var visualKey: String {
         [
             id,

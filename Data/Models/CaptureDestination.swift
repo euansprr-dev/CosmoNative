@@ -162,7 +162,7 @@ struct CaptureDestination: Identifiable, Codable, Equatable, FetchableRecord, Pe
     ) -> CaptureDestination {
         let inferredType = type ?? inferType(from: name)
         let normalizedAliases = aliases ?? defaultAliases(for: name)
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         return CaptureDestination(
             id: nil,
             uuid: UUID().uuidString,

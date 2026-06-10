@@ -304,6 +304,17 @@ final class CanvasRenderSnapshotTests: XCTestCase {
         XCTAssertEqual(key.blockDataRevision, 42)
     }
 
+    func testConnectionPulseTimerRunsOnlyWhenVisibleEdgesExist() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CanvasConnectionLinesLayer.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("CanvasConnectionPulsePolicy.shouldRun"))
+        XCTAssertTrue(source.contains("visibleEdgeCount > 0"))
+        XCTAssertTrue(source.contains("updatePulseTimer()"))
+    }
+
     func testRenderDataSnapshotReusesDataAcrossViewportFiltering() {
         let visibleAtOrigin = CanvasBlock(
             id: "origin",
@@ -517,5 +528,17 @@ final class CanvasRenderSnapshotTests: XCTestCase {
 
         XCTAssertTrue(snapshot.clusterConsumedBlockUUIDs.isEmpty)
         XCTAssertEqual(snapshot.renderableBlocks.map { $0.id }, [block.id])
+    }
+
+    private var repositoryRoot: URL {
+        var url = URL(fileURLWithPath: #filePath)
+        while url.pathComponents.count > 1 {
+            let candidate = url.deletingLastPathComponent()
+            if FileManager.default.fileExists(atPath: candidate.appendingPathComponent("CosmoOS.xcodeproj").path) {
+                return candidate
+            }
+            url = candidate
+        }
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     }
 }

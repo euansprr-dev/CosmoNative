@@ -183,7 +183,7 @@ class TemplateEngine: ObservableObject {
         // 8. Update template instance count
         var updatedMeta = templateMeta
         updatedMeta.instanceCount += 1
-        updatedMeta.lastInstantiatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedMeta.lastInstantiatedAt = ISO8601.string(from: Date())
         try? await updateTemplate(templateUUID, metadata: updatedMeta)
 
         // 9. Place on canvas if position given
@@ -345,7 +345,7 @@ class TemplateEngine: ObservableObject {
             let triggerConfigJson = try String(data: JSONEncoder().encode(trigger.triggerConfig), encoding: .utf8) ?? "{}"
             let conditionsJson = try String(data: JSONEncoder().encode(trigger.conditions), encoding: .utf8) ?? "[]"
             let actionsJson = try String(data: JSONEncoder().encode([action]), encoding: .utf8) ?? "[]"
-            let now = ISO8601DateFormatter().string(from: Date())
+            let now = ISO8601.string(from: Date())
 
             let rule = AutomationRule(
                 uuid: UUID().uuidString,
@@ -430,7 +430,7 @@ class TemplateEngine: ObservableObject {
         case "date.today":
             return .string(DateFormatter.shortDate.string(from: Date()))
         case "date.now":
-            return .string(ISO8601DateFormatter().string(from: Date()))
+            return .string(ISO8601.string(from: Date()))
         case "atom.title":
             return triggeringAtom?.title.map { .string($0) }
         case "atom.uuid":

@@ -1208,7 +1208,7 @@ final class SwipeAdaptationEngine {
 
         guard let result = try? JSONDecoder().decode(SingleSwipeResult.self, from: data) else { return [] }
 
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         return result.adaptations.compactMap { adapt in
             let idx = adapt.clientIndex - 1  // 1-indexed in prompt
             guard idx >= 0, idx < clients.count else { return nil }

@@ -754,7 +754,7 @@ struct InstagramTranscriptView: View {
 
             // d) Mark analysis complete
             var analysis = nlpResult
-            analysis.analyzedAt = ISO8601DateFormatter().string(from: Date())
+            analysis.analyzedAt = ISO8601.string(from: Date())
             analysis.transcriptSlides = existingSlides
             analysis.rawTranscriptSlides = existingRawSlides
             analysis.transcriptSpeechSegments = existingSpeechSegments

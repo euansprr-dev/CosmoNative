@@ -103,7 +103,7 @@ final class DeepDiveOverviewViewModel {
         let trimmed = understandingDraftOneSentence.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed != structured.currentUnderstanding.oneSentenceModel {
             structured.currentUnderstanding.oneSentenceModel = trimmed
-            structured.currentUnderstanding.lastUpdated = ISO8601DateFormatter().string(from: Date())
+            structured.currentUnderstanding.lastUpdated = ISO8601.string(from: Date())
             do {
                 let updated = try await InquiryRepository.shared.saveDeepDive(atom, metadata: nil, structured: structured)
                 atom = updated
@@ -132,7 +132,7 @@ final class DeepDiveOverviewViewModel {
         guard let idx = sessions.firstIndex(where: { $0.uuid == sessionUUID }),
               var meta = sessions[idx].inquirySessionMetadata else { return }
         meta.status = .archived
-        meta.lastActiveAt = ISO8601DateFormatter().string(from: Date())
+        meta.lastActiveAt = ISO8601.string(from: Date())
         var copy = sessions[idx].withMetadata(meta)
         do {
             copy = try await AtomRepository.shared.update(copy)

@@ -18,6 +18,88 @@ enum CreatorSortMode: String, CaseIterable {
     }
 }
 
+struct CreatorListIndexItem: Identifiable, Equatable, Sendable {
+    let atomUUID: String
+    let title: String
+    let normalizedTitle: String
+    let normalizedHandle: String
+    let platform: String?
+    let niche: String?
+    let swipeCount: Int
+    let averageHookScore: Double
+
+    var id: String { atomUUID }
+}
+
+enum CreatorListFiltering {
+    static func buildIndex(from creators: [Atom]) -> [CreatorListIndexItem] {
+        creators.map { atom in
+            let metadata = atom.metadataValue(as: CreatorMetadata.self)
+            let title = atom.title ?? ""
+            let handle = metadata?.handle ?? ""
+
+            return CreatorListIndexItem(
+                atomUUID: atom.uuid,
+                title: title,
+                normalizedTitle: title.lowercased(),
+                normalizedHandle: handle.lowercased(),
+                platform: metadata?.platform,
+                niche: metadata?.niche,
+                swipeCount: metadata?.swipeCount ?? 0,
+                averageHookScore: metadata?.averageHookScore ?? 0
+            )
+        }
+    }
+
+    static func filteredIDs(
+        from index: [CreatorListIndexItem],
+        query: String,
+        sortMode: CreatorSortMode,
+        platformFilter: String?,
+        nicheFilter: String?
+    ) -> [String] {
+        let normalizedQuery = query.lowercased()
+        var items = index
+
+        if !normalizedQuery.isEmpty {
+            items = items.filter { item in
+                item.normalizedTitle.contains(normalizedQuery)
+                    || item.normalizedHandle.contains(normalizedQuery)
+            }
+        }
+
+        if let platformFilter {
+            items = items.filter { $0.platform == platformFilter }
+        }
+
+        if let nicheFilter {
+            items = items.filter { $0.niche == nicheFilter }
+        }
+
+        switch sortMode {
+        case .name:
+            items.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        case .swipeCount:
+            items.sort { $0.swipeCount > $1.swipeCount }
+        case .hookScore:
+            items.sort { $0.averageHookScore > $1.averageHookScore }
+        }
+
+        return items.map(\.atomUUID)
+    }
+
+    static func filteredCreators(from creators: [Atom], filteredIDs: [String]) -> [Atom] {
+        var creatorsByUUID: [String: Atom] = [:]
+        creatorsByUUID.reserveCapacity(creators.count)
+
+        for creator in creators {
+            creatorsByUUID[creator.uuid] = creator
+        }
+
+        return filteredIDs.compactMap { creatorsByUUID[$0] }
+    }
+}
+
 // MARK: - CreatorListView
 
 struct CreatorListView: View {
@@ -35,6 +117,7 @@ struct CreatorListView: View {
     @State private var hasAppeared = false
     @State private var showingImport = false
     @State private var cachedFilteredCreators: [Atom] = []
+    @State private var creatorIndex: [CreatorListIndexItem] = []
     @State private var allPlatforms: [String] = []
     @State private var allNiches: [String] = []
 
@@ -337,50 +420,24 @@ struct CreatorListView: View {
 
     /// Recompute both filter chips and filtered list when creators change
     private func recomputeDerivedState() {
-        allPlatforms = Array(Set(creators.compactMap { $0.metadataValue(as: CreatorMetadata.self)?.platform })).sorted()
-        allNiches = Array(Set(creators.compactMap { $0.metadataValue(as: CreatorMetadata.self)?.niche })).sorted()
+        creatorIndex = CreatorListFiltering.buildIndex(from: creators)
+        allPlatforms = Array(Set(creatorIndex.compactMap(\.platform))).sorted()
+        allNiches = Array(Set(creatorIndex.compactMap(\.niche))).sorted()
         recomputeFilteredCreators()
     }
 
     private func recomputeFilteredCreators() {
-        var items = creators
-
-        // Search filter
-        if !searchText.isEmpty {
-            let q = searchText.lowercased()
-            items = items.filter { atom in
-                (atom.title?.lowercased().contains(q) ?? false) ||
-                (atom.metadataValue(as: CreatorMetadata.self)?.handle?.lowercased().contains(q) ?? false)
-            }
-        }
-
-        // Platform filter
-        if let pf = platformFilter {
-            items = items.filter { atom in
-                atom.metadataValue(as: CreatorMetadata.self)?.platform == pf
-            }
-        }
-
-        // Niche filter
-        if let nf = nicheFilter {
-            items = items.filter { atom in
-                atom.metadataValue(as: CreatorMetadata.self)?.niche == nf
-            }
-        }
-
-        // Sort — pre-extract metadata to avoid N*log(N) JSON deserialization
-        switch sortMode {
-        case .name:
-            items.sort { ($0.title ?? "").localizedCaseInsensitiveCompare($1.title ?? "") == .orderedAscending }
-        case .swipeCount:
-            let metaCache = Dictionary(uniqueKeysWithValues: items.map { ($0.uuid, $0.metadataValue(as: CreatorMetadata.self)) })
-            items.sort { (metaCache[$0.uuid]??.swipeCount ?? 0) > (metaCache[$1.uuid]??.swipeCount ?? 0) }
-        case .hookScore:
-            let metaCache = Dictionary(uniqueKeysWithValues: items.map { ($0.uuid, $0.metadataValue(as: CreatorMetadata.self)) })
-            items.sort { (metaCache[$0.uuid]??.averageHookScore ?? 0) > (metaCache[$1.uuid]??.averageHookScore ?? 0) }
-        }
-
-        cachedFilteredCreators = items
+        let filteredIDs = CreatorListFiltering.filteredIDs(
+            from: creatorIndex,
+            query: searchText,
+            sortMode: sortMode,
+            platformFilter: platformFilter,
+            nicheFilter: nicheFilter
+        )
+        cachedFilteredCreators = CreatorListFiltering.filteredCreators(
+            from: creators,
+            filteredIDs: filteredIDs
+        )
     }
 
     // MARK: - Creator Grid

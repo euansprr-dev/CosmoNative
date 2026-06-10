@@ -299,8 +299,8 @@ final class QuickCaptureProcessor: ObservableObject {
 
     private func saveResearch(_ research: Research) async throws -> Research {
         var mutableResearch = research
-        mutableResearch.updatedAt = ISO8601DateFormatter().string(from: Date())
-        mutableResearch.createdAt = ISO8601DateFormatter().string(from: Date())
+        mutableResearch.updatedAt = ISO8601.string(from: Date())
+        mutableResearch.createdAt = ISO8601.string(from: Date())
 
         let researchToSave = mutableResearch
         let uuid = research.uuid

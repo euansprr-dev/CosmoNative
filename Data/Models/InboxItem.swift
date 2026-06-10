@@ -87,7 +87,7 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
             placementPlanSummary: nil,
             status: .pending,
             isRead: false,
-            createdAt: ISO8601DateFormatter().string(from: Date()),
+            createdAt: ISO8601.string(from: Date()),
             classifiedAt: nil,
             actionedAt: nil,
             metadata: metadata

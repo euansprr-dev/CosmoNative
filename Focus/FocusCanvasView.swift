@@ -402,8 +402,8 @@ struct FocusCanvasView: View {
                     noteContent: nil,
                     zIndex: 0,
                     isPinned: false,
-                    createdAt: ISO8601DateFormatter().string(from: Date()),
-                    updatedAt: ISO8601DateFormatter().string(from: Date()),
+                    createdAt: ISO8601.string(from: Date()),
+                    updatedAt: ISO8601.string(from: Date()),
                     syncedAt: nil,
                     isDeleted: false,
                     localVersion: 1,
@@ -439,7 +439,7 @@ struct FocusCanvasView: View {
                 // Build metadata JSON for AI block state
                 var metadata: [String: String] = [
                     "mode": mode ?? "idle",
-                    "created": ISO8601DateFormatter().string(from: Date())
+                    "created": ISO8601.string(from: Date())
                 ]
                 if let query = query, !query.isEmpty {
                     metadata["query"] = query
@@ -469,8 +469,8 @@ struct FocusCanvasView: View {
                     noteContent: metadataString,  // Store metadata in noteContent field
                     zIndex: 10,
                     isPinned: false,
-                    createdAt: ISO8601DateFormatter().string(from: Date()),
-                    updatedAt: ISO8601DateFormatter().string(from: Date()),
+                    createdAt: ISO8601.string(from: Date()),
+                    updatedAt: ISO8601.string(from: Date()),
                     syncedAt: nil,
                     isDeleted: false,
                     localVersion: 1,
@@ -733,8 +733,8 @@ struct FocusCanvasView: View {
             noteContent: nil,
             zIndex: 0,
             isPinned: false,
-            createdAt: ISO8601DateFormatter().string(from: Date()),
-            updatedAt: ISO8601DateFormatter().string(from: Date()),
+            createdAt: ISO8601.string(from: Date()),
+            updatedAt: ISO8601.string(from: Date()),
             syncedAt: nil,
             isDeleted: false,
             localVersion: 1,
@@ -826,8 +826,8 @@ struct FocusCanvasView: View {
                 noteContent: type == .note ? (content ?? "") : nil,
                 zIndex: 10,
                 isPinned: false,
-                createdAt: ISO8601DateFormatter().string(from: Date()),
-                updatedAt: ISO8601DateFormatter().string(from: Date()),
+                createdAt: ISO8601.string(from: Date()),
+                updatedAt: ISO8601.string(from: Date()),
                 syncedAt: nil,
                 isDeleted: false,
                 localVersion: 1,

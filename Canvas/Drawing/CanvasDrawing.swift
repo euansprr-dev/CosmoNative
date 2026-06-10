@@ -172,8 +172,8 @@ struct CanvasDrawing: Identifiable, Codable {
             opacity: opacity,
             zIndex: zIndex,
             isDeleted: false,
-            createdAt: ISO8601DateFormatter().string(from: Date()),
-            updatedAt: ISO8601DateFormatter().string(from: Date())
+            createdAt: ISO8601.string(from: Date()),
+            updatedAt: ISO8601.string(from: Date())
         )
     }
 

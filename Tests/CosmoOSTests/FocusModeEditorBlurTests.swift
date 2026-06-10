@@ -55,6 +55,68 @@ final class FocusModeEditorBlurTests: XCTestCase {
             )
         )
     }
+
+    func testFocusModeClipboardRoutesKeyEquivalentToActiveTextViewWhenFirstResponderIsStale() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let staleFirstResponder = NSTextView(frame: NSRect(x: 0, y: 0, width: 160, height: 100))
+        let activeTextView = NSTextView(frame: NSRect(x: 180, y: 0, width: 160, height: 100))
+        contentView.addSubview(staleFirstResponder)
+        contentView.addSubview(activeTextView)
+        window.contentView = contentView
+
+        staleFirstResponder.string = ""
+        activeTextView.string = ""
+        activeTextView.setSelectedRange(NSRange(location: 0, length: 0))
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("outline paste", forType: .string)
+
+        FocusModeTextClipboardTarget.activate(activeTextView)
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.performKeyEquivalent(commandKeyEvent("v"), fallback: staleFirstResponder))
+        XCTAssertEqual(staleFirstResponder.string, "")
+        XCTAssertEqual(activeTextView.string, "outline paste")
+    }
+
+    func testFocusModeClipboardSendActionUsesActiveTextView() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let activeTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 220, height: 100))
+        window.contentView = activeTextView
+        activeTextView.string = ""
+        activeTextView.setSelectedRange(NSRange(location: 0, length: 0))
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("menu paste", forType: .string)
+
+        FocusModeTextClipboardTarget.activate(activeTextView)
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.send(.paste, in: window))
+        XCTAssertEqual(activeTextView.string, "menu paste")
+    }
+
+    private func commandKeyEvent(_ character: String) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: character,
+            charactersIgnoringModifiers: character,
+            isARepeat: false,
+            keyCode: 0
+        )!
+    }
 }
 
 @MainActor

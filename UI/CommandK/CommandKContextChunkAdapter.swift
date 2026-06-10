@@ -2,7 +2,7 @@ import Foundation
 
 enum CommandKContextChunkAdapter {
     static func rankedResult(from result: ContextRetrievalResult) -> RankedResult {
-        let updatedAt = ISO8601DateFormatter().string(from: result.source.updatedAt)
+        let updatedAt = ISO8601.string(from: result.source.updatedAt)
         return RankedResult(
             atomUUID: result.source.atomUUID ?? result.chunk.id,
             atomType: atomType(for: result.source.kind),

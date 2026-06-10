@@ -967,7 +967,7 @@ struct ResearchSidebarView: View {
         if let linksData = try? JSONEncoder().encode(links),
            let linksString = String(data: linksData, encoding: .utf8) {
             updatedAtom.links = linksString
-            updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            updatedAtom.updatedAt = ISO8601.string(from: Date())
             updatedAtom.localVersion += 1
             try? await AtomRepository.shared.update(updatedAtom)
         }
@@ -983,7 +983,7 @@ struct ResearchSidebarView: View {
         if let linksData = try? JSONEncoder().encode(links),
            let linksString = String(data: linksData, encoding: .utf8) {
             updatedAtom.links = linksString
-            updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            updatedAtom.updatedAt = ISO8601.string(from: Date())
             updatedAtom.localVersion += 1
             try? await AtomRepository.shared.update(updatedAtom)
         }

@@ -497,7 +497,7 @@ enum CommandKRecentComposer {
     }
 
     private static func date(fromTimestamp timestamp: String) -> Date? {
-        if let date = ISO8601DateFormatter().date(from: timestamp) {
+        if let date = ISO8601.date(from: timestamp) {
             return date
         }
 
@@ -1078,7 +1078,7 @@ struct CommandKInstantSwipeCapture {
         var atom = baseAtom(for: trimmed, classification: classification, hook: hook)
         atom.processingStatus = classification.sourceType == .rawNote ? "complete" : "pending"
         atom.isSwipeFile = true
-        atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        atom.updatedAt = ISO8601.string(from: Date())
         return atom
     }
 
@@ -1569,6 +1569,44 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
+    private func setResults(_ nextResults: [RankedResult]) {
+        if rankedResultSignature(results) != rankedResultSignature(nextResults) {
+            results = nextResults
+        }
+    }
+
+    private func setGroupedResults(_ nextGroups: [(type: AtomType, results: [RankedResult])]) {
+        if rankedGroupSignature(groupedResults) != rankedGroupSignature(nextGroups) {
+            groupedResults = nextGroups
+        }
+    }
+
+    private func setFlatNavigableResults(_ nextResults: [RankedResult]) {
+        if rankedResultSignature(flatNavigableResults) != rankedResultSignature(nextResults) {
+            flatNavigableResults = nextResults
+        }
+    }
+
+    private func rankedGroupSignature(_ groups: [(type: AtomType, results: [RankedResult])]) -> [String] {
+        groups.flatMap { group in
+            [group.type.rawValue] + rankedResultSignature(group.results)
+        }
+    }
+
+    private func rankedResultSignature(_ results: [RankedResult]) -> [String] {
+        results.map { result in
+            [
+                result.atomUUID,
+                result.atomType.rawValue,
+                result.title,
+                result.snippet ?? "",
+                String(result.relevance),
+                result.updatedAt,
+                String(result.accessCount)
+            ].joined(separator: "\u{1F}")
+        }
+    }
+
     private func unifiedGroupSignature(_ groups: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])]) -> [String] {
         groups.flatMap { group in
             [group.source.rawValue] + unifiedResultSignature(group.results)
@@ -1960,7 +1998,7 @@ public final class CommandKViewModel: ObservableObject {
                         structuralWeight: result.bm25Score / 25.0,  // Normalize
                         recencyWeight: 0.5,  // Default
                         usageWeight: 0.5,    // Default
-                        updatedAt: ISO8601DateFormatter().string(from: Date()),
+                        updatedAt: ISO8601.string(from: Date()),
                         accessCount: 0
                     ))
                 }
@@ -2127,18 +2165,22 @@ public final class CommandKViewModel: ObservableObject {
         for result in unfilteredResults {
             counts[result.atomType, default: 0] += 1
         }
-        filterCounts = counts
+        if filterCounts != counts {
+            filterCounts = counts
+        }
     }
 
     /// Apply current filters to unfiltered results
     private func applyFiltersToResults() {
+        let nextResults: [RankedResult]
         if selectedTypeFilters.isEmpty {
-            results = Array(unfilteredResults.prefix(maxResults))
+            nextResults = Array(unfilteredResults.prefix(maxResults))
         } else {
-            results = Array(unfilteredResults
+            nextResults = Array(unfilteredResults
                 .filter { selectedTypeFilters.contains($0.atomType) }
                 .prefix(maxResults))
         }
+        setResults(nextResults)
         buildGroupedResults()
     }
 
@@ -2220,10 +2262,11 @@ public final class CommandKViewModel: ObservableObject {
             return lhsBest > rhsBest
         }
 
-        groupedResults = sorted.map { (type: $0.key, results: $0.value) }
+        let nextGroupedResults = sorted.map { (type: $0.key, results: $0.value) }
+        setGroupedResults(nextGroupedResults)
 
         // Build flat navigable list (for keyboard navigation across groups)
-        flatNavigableResults = sorted.flatMap { $0.value }
+        setFlatNavigableResults(sorted.flatMap { $0.value })
     }
 
     /// Quick-create an atom from search query
@@ -3022,7 +3065,7 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     private static func date(fromTimestamp timestamp: String) -> Date? {
-        if let date = ISO8601DateFormatter().date(from: timestamp) {
+        if let date = ISO8601.date(from: timestamp) {
             return date
         }
 
@@ -3754,7 +3797,7 @@ public final class CommandKViewModel: ObservableObject {
         if let clientUUID,
            var client = try? await AtomRepository.shared.fetch(uuid: clientUUID) {
             client = client.addingLink(.clientToIdea(created.uuid))
-            client.updatedAt = ISO8601DateFormatter().string(from: Date())
+            client.updatedAt = ISO8601.string(from: Date())
             client.localVersion += 1
             _ = try? await AtomRepository.shared.update(client)
         }

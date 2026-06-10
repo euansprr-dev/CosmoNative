@@ -444,7 +444,7 @@ public final class NodeGraphEngine: ObservableObject {
 
     /// Record an access event for a node (for usage-based ranking)
     public func recordAccess(atomUUID: String, type: AccessType = .view) async throws {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = ISO8601.string(from: Date())
         try await database.asyncWrite { db in
             try db.execute(
                 sql: """

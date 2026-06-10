@@ -115,7 +115,7 @@ struct InboxOverrideSheet: View {
                     .font(.system(size: 13))
                     .foregroundStyle(DS.text)
                     .onChange(of: searchQuery) { _, query in
-                        Task { await viewModel.searchAtoms(query: query) }
+                        viewModel.scheduleOverrideSearch(query: query)
                     }
             }
             .padding(10)

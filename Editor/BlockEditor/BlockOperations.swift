@@ -112,6 +112,9 @@ enum BlockOperations {
             throw BlockOperationError.unsupportedBlockKind(current.kind)
         }
 
+        // Caret lands at the seam — end of the previous block's original text,
+        // start of the merged-in text (Notion behavior).
+        let seamOffset = previous.plainInlineText.utf16.count
         let mergedText = previous.plainInlineText + current.plainInlineText
         previous.inlines = [.text(mergedText)]
         try replaceBlock(previous, in: &document, at: previousPath)
@@ -120,7 +123,7 @@ enum BlockOperations {
         return BlockOperationResult(
             document: document,
             focusPath: previousPath,
-            caretUTF16Offset: mergedText.utf16.count
+            caretUTF16Offset: seamOffset
         )
     }
 
@@ -409,6 +412,130 @@ enum BlockOperations {
         } else {
             try mutateBlock(in: &blocks[first].children, indices: Array(indices.dropFirst()), mutation: mutation)
         }
+    }
+}
+
+// MARK: - Multi-Block Operations (block selection)
+
+extension BlockOperations {
+    /// Deletes the given root-level blocks. Guarantees the document keeps at
+    /// least one editable paragraph so the surface never goes dead.
+    static func deleteBlocks(withIDs ids: Set<UUID>, in document: RichDocument) -> BlockOperationResult? {
+        let removedIndices = document.blocks.enumerated()
+            .filter { ids.contains($0.element.id) }
+            .map(\.offset)
+        guard let firstRemovedIndex = removedIndices.min() else { return nil }
+
+        var updated = document
+        updated.blocks.removeAll { ids.contains($0.id) }
+        if updated.blocks.isEmpty {
+            updated.blocks = [.paragraph("")]
+        }
+        let focusIndex = min(max(0, firstRemovedIndex - 1), updated.blocks.count - 1)
+        return BlockOperationResult(
+            document: updated,
+            focusPath: .root(index: focusIndex),
+            intent: .end
+        )
+    }
+
+    /// Duplicates the given root-level blocks (in document order), inserting
+    /// the copies directly after the last selected block. Returns the fresh
+    /// copies' ids so selection can move onto them.
+    static func duplicateBlocks(
+        withIDs ids: Set<UUID>,
+        in document: RichDocument
+    ) -> (result: BlockOperationResult, duplicatedIDs: [UUID])? {
+        let selected = document.blocks.enumerated().filter { ids.contains($0.element.id) }
+        guard let lastIndex = selected.map(\.offset).max() else { return nil }
+
+        let copies = selected.map { $0.element.withRegeneratedIDs() }
+        var updated = document
+        updated.blocks.insert(contentsOf: copies, at: lastIndex + 1)
+        return (
+            BlockOperationResult(document: updated, focusPath: .root(index: lastIndex + copies.count)),
+            copies.map(\.id)
+        )
+    }
+
+    /// Transforms every selected root-level text block to the given kind.
+    /// Non-text blocks (dividers, images, elements) are left untouched.
+    static func transformBlocks(
+        withIDs ids: Set<UUID>,
+        in document: RichDocument,
+        to kind: RichBlockKind
+    ) -> BlockOperationResult? {
+        guard kind.isTextEditableBlock else { return nil }
+        var updated = document
+        var changed = false
+        for index in updated.blocks.indices where ids.contains(updated.blocks[index].id) {
+            guard updated.blocks[index].kind.isTextEditableBlock else { continue }
+            updated.blocks[index].kind = kind
+            updated.blocks[index].checked = kind == .checklist ? (updated.blocks[index].checked ?? false) : nil
+            if kind.headingLevelInt != nil, updated.blocks[index].heading == nil {
+                updated.blocks[index].heading = RichHeadingMetadata()
+            }
+            if kind.headingLevelInt == nil {
+                updated.blocks[index].heading = nil
+            }
+            changed = true
+        }
+        guard changed else { return nil }
+        return BlockOperationResult(document: updated)
+    }
+
+    /// Plaintext of the given root-level blocks in document order — copy/cut.
+    static func plainText(ofBlocksWithIDs ids: Set<UUID>, in document: RichDocument) -> String {
+        document.blocks
+            .filter { ids.contains($0.id) }
+            .map(\.plainInlineText)
+            .joined(separator: "\n")
+    }
+}
+
+extension RichBlockKind {
+    /// Drops the prefix the serializer renders at the head of the text view
+    /// ("• ", "1. ", "☐ ", "│ ") so live editor text maps back to block
+    /// content. Plain kinds return the text untouched.
+    func strippedRenderPrefix(from text: String) -> String {
+        switch self {
+        case .bulletList:
+            return text.hasPrefix("• ") ? String(text.dropFirst(2)) : text
+        case .quote:
+            return text.hasPrefix("│ ") ? String(text.dropFirst(2)) : text
+        case .checklist:
+            if text.hasPrefix("☐ ") || text.hasPrefix("☑ ") {
+                return String(text.dropFirst(2))
+            }
+            return text
+        case .numberedList:
+            guard let dotRange = text.range(of: ". "),
+                  !text[..<dotRange.lowerBound].isEmpty,
+                  text[..<dotRange.lowerBound].allSatisfy(\.isNumber) else {
+                return text
+            }
+            return String(text[dotRange.upperBound...])
+        default:
+            return text
+        }
+    }
+}
+
+extension RichBlock {
+    /// Deep copy with fresh identities for the block, its inlines, its element
+    /// instance, and all children — required when duplicating, since ids drive
+    /// focus, selection, and element identity.
+    func withRegeneratedIDs() -> RichBlock {
+        var copy = self
+        copy.id = UUID()
+        copy.inlines = inlines.map { inline in
+            var next = inline
+            next.id = UUID()
+            return next
+        }
+        copy.element?.id = UUID()
+        copy.children = children.map { $0.withRegeneratedIDs() }
+        return copy
     }
 }
 

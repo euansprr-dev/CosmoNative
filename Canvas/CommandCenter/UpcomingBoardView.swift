@@ -1354,7 +1354,7 @@ private struct CalendarEditorPopover: View {
             actionRow
         }
         .padding(DS.space12)
-        .cosmoGlassPanel(sceneMaterial: .neutral, role: .floatingAssistant, cornerRadius: 18)
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 18)
         .onAppear { titleFocused = true }
         .onExitCommand(perform: onDismiss)
     }

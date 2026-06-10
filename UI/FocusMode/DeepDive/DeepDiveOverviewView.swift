@@ -18,6 +18,7 @@ struct DeepDiveOverviewView: View {
     @State private var renamingSessionUUID: String?
     @State private var sessionRenameDraft = ""
     @State private var deletingSessionUUID: String?
+    @State private var lexiconPopoverUUID: String?
 
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
@@ -189,13 +190,16 @@ struct DeepDiveOverviewView: View {
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            Text(atom.title ?? "Untitled Deep Dive")
+            Text(viewModel.atom.title ?? "Untitled Deep Dive")
                 .font(.system(size: 34, weight: .semibold, design: .serif))
                 .foregroundStyle(CosmoColors.textPrimary)
             Text(metadataRowText)
                 .font(CosmoTypography.caption)
                 .foregroundStyle(CosmoColors.textSecondary)
-            if let about = atom.body, !about.isEmpty {
+            // Only a short, human-written "about" line earns hero space —
+            // long bodies were legacy session appends, now migrated into history.
+            if let about = viewModel.atom.body?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !about.isEmpty, about.count < 280 {
                 Text(about)
                     .font(CosmoTypography.body)
                     .foregroundStyle(CosmoColors.textSecondary)
@@ -206,9 +210,9 @@ struct DeepDiveOverviewView: View {
 
     private var metadataRowText: String {
         var parts: [String] = []
-        let maturity = atom.deepDiveMetadata?.maturity ?? .spark
+        let maturity = viewModel.atom.deepDiveMetadata?.maturity ?? .spark
         parts.append(maturity.displayName)
-        if let updatedString = atom.deepDiveMetadata?.lastInquiryAt ?? Optional(atom.updatedAt),
+        if let updatedString = viewModel.atom.deepDiveMetadata?.lastInquiryAt ?? Optional(viewModel.atom.updatedAt),
            let date = ISO8601.date(from: updatedString) {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .abbreviated
@@ -250,6 +254,13 @@ struct DeepDiveOverviewView: View {
             } else {
                 CurrentUnderstandingDisplayView(understanding: viewModel.understanding)
             }
+
+            if !viewModel.understandingRevisions.isEmpty || !viewModel.understanding.recentUpdates.isEmpty {
+                UnderstandingHistoryList(
+                    revisions: viewModel.understandingRevisions,
+                    updates: viewModel.understanding.recentUpdates.reversed()
+                )
+            }
         }
     }
 
@@ -290,11 +301,12 @@ struct DeepDiveOverviewView: View {
 
     @ViewBuilder
     private var questionsBlock: some View {
-        sectionContainer(title: "QUESTIONS (\(viewModel.questions.count))") {
-            ForEach(viewModel.questions.prefix(8), id: \.uuid) { q in
+        let deduped = viewModel.dedupedQuestions
+        sectionContainer(title: "QUESTIONS (\(deduped.count))") {
+            ForEach(deduped.prefix(8), id: \.uuid) { q in
                 questionRow(q)
             }
-            if viewModel.questions.isEmpty {
+            if deduped.isEmpty {
                 Text("No questions yet — start an inquiry to spark some.")
                     .font(CosmoTypography.caption)
                     .foregroundStyle(CosmoColors.textTertiary)
@@ -304,19 +316,37 @@ struct DeepDiveOverviewView: View {
 
     private func questionRow(_ q: Atom) -> some View {
         let status = q.questionMetadata?.status ?? .open
-        return HStack(spacing: DS.space8) {
-            Circle()
-                .fill(statusColor(status))
-                .frame(width: 7, height: 7)
-            Text(q.title ?? "Untitled question")
-                .font(CosmoTypography.body)
-                .foregroundStyle(CosmoColors.textPrimary)
-                .lineLimit(1)
-            Spacer()
-            Text(status.displayName.lowercased())
-                .font(CosmoTypography.caption)
-                .foregroundStyle(CosmoColors.textTertiary)
+        let counts = viewModel.questionCounts(q)
+        return Button {
+            launchInquiry(mainQuestionTitle: q.title, rootQuestionUUID: q.uuid)
+        } label: {
+            HStack(spacing: DS.space8) {
+                Circle()
+                    .fill(statusColor(status))
+                    .frame(width: 7, height: 7)
+                Text(q.title ?? "Untitled question")
+                    .font(CosmoTypography.body)
+                    .foregroundStyle(CosmoColors.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+                if counts.extracts > 0 {
+                    Text("\(counts.extracts) notes")
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                }
+                Text(status.displayName.lowercased())
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                Image(systemName: "chevron.right")
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.vertical, DS.space4)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open inquiry for \(q.title ?? "question")")
     }
 
     @ViewBuilder
@@ -335,26 +365,96 @@ struct DeepDiveOverviewView: View {
     private var lexiconBlock: some View {
         sectionContainer(title: "LEXICON (\(viewModel.lexicon.count))") {
             FlowLayout(spacing: DS.space8) {
-                ForEach(viewModel.lexicon, id: \.uuid) { entry in
-                    Text(entry.title ?? "·")
-                        .font(CosmoTypography.label)
-                        .foregroundStyle(CosmoColors.textPrimary)
-                        .padding(.horizontal, DS.space10)
-                        .padding(.vertical, 4)
-                        .background(DS.accentSoft, in: Capsule())
+                ForEach(viewModel.conceptEntries, id: \.lexicon.uuid) { entry in
+                    lexiconChip(entry.lexicon, connection: entry.connection)
                 }
             }
         }
     }
 
+    private func lexiconChip(_ entry: Atom, connection: Atom?) -> some View {
+        Button {
+            if let connection {
+                openConceptPage(connection)
+            } else {
+                lexiconPopoverUUID = entry.uuid
+            }
+        } label: {
+            HStack(spacing: DS.space4) {
+                Text(entry.title ?? "·")
+                    .font(CosmoTypography.label)
+                    .foregroundStyle(CosmoColors.textPrimary)
+                if connection != nil {
+                    Image(systemName: "arrow.up.right")
+                        .font(CosmoTypography.labelSmall)
+                        .foregroundStyle(DS.accent)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, 4)
+            .background(connection != nil ? DS.accentSoft : DS.surface, in: Capsule())
+            .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: connection == nil ? 1 : 0))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(connection != nil ? "Open concept page \(entry.title ?? "")" : "Show definition of \(entry.title ?? "")")
+        .popover(isPresented: lexiconPopoverBinding(entry.uuid)) {
+            lexiconDefinitionPopover(entry)
+        }
+    }
+
+    private func lexiconDefinitionPopover(_ entry: Atom) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text(entry.title ?? "Term")
+                .font(CosmoTypography.titleSmall)
+                .foregroundStyle(CosmoColors.textPrimary)
+            Text((entry.body?.isEmpty == false ? entry.body! : "No definition captured yet."))
+                .font(CosmoTypography.body)
+                .foregroundStyle(CosmoColors.textSecondary)
+        }
+        .padding(DS.space16)
+        .frame(width: 320, alignment: .leading)
+    }
+
+    private func lexiconPopoverBinding(_ uuid: String) -> Binding<Bool> {
+        Binding(
+            get: { lexiconPopoverUUID == uuid },
+            set: { if !$0 { lexiconPopoverUUID = nil } }
+        )
+    }
+
+    private func openConceptPage(_ connection: Atom) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": connection.uuid]
+        )
+    }
+
     @ViewBuilder
     private var connectionsBlock: some View {
-        sectionContainer(title: "CONNECTIONS (\(viewModel.connections.count))") {
+        sectionContainer(title: "CONCEPTS (\(viewModel.connections.count))") {
             ForEach(viewModel.connections.prefix(6), id: \.uuid) { c in
-                Text("· \(c.title ?? "Untitled connection")")
-                    .font(CosmoTypography.body)
-                    .foregroundStyle(CosmoColors.textPrimary)
-                    .lineLimit(1)
+                Button {
+                    openConceptPage(c)
+                } label: {
+                    HStack(spacing: DS.space8) {
+                        Text("· \(c.title ?? "Untitled concept")")
+                            .font(CosmoTypography.body)
+                            .foregroundStyle(CosmoColors.textPrimary)
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(CosmoTypography.caption)
+                            .foregroundStyle(CosmoColors.textTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.vertical, DS.space4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open concept page \(c.title ?? "")")
             }
         }
     }
@@ -480,23 +580,57 @@ struct DeepDiveOverviewView: View {
         }
     }
 
-    // MARK: - Map Tab (placeholder)
+    // MARK: - Map Tab
 
+    @ViewBuilder
     private var mapTab: some View {
+        let root = MindMapBuilder.buildDeepDive(
+            deepDive: viewModel.atom,
+            questions: viewModel.questions,
+            connections: viewModel.connections,
+            extracts: viewModel.extracts
+        )
+        if root.children.isEmpty {
+            mapEmptyState
+        } else {
+            InquiryMindMapView(root: root) { node in
+                handleMapSelection(node)
+            }
+            .filmGrain()
+        }
+    }
+
+    private var mapEmptyState: some View {
         VStack(spacing: DS.space12) {
             Image(systemName: "circle.hexagongrid.circle")
                 .font(.system(size: 36))
                 .foregroundStyle(DS.accent.opacity(0.5))
-            Text("Map view")
+                .accessibilityHidden(true)
+            Text("The map grows with your questions")
                 .font(CosmoTypography.titleSmall)
                 .foregroundStyle(CosmoColors.textPrimary)
-            Text("Spatial map of concepts, sources, and connections forms after sessions crystallize.")
+            Text("Start an inquiry — each question becomes a branch, and crystallized concepts become leaves.")
                 .font(CosmoTypography.body)
                 .foregroundStyle(CosmoColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func handleMapSelection(_ node: MindMapNode) {
+        switch node.kind {
+        case .question, .subQuestion:
+            guard let uuid = node.atomUUID,
+                  let question = viewModel.questions.first(where: { $0.uuid == uuid }) else { return }
+            launchInquiry(mainQuestionTitle: question.title, rootQuestionUUID: question.uuid)
+        case .concept:
+            guard let uuid = node.atomUUID,
+                  let connection = viewModel.connections.first(where: { $0.uuid == uuid }) else { return }
+            openConceptPage(connection)
+        case .root:
+            break
+        }
     }
 
     // MARK: - Helpers
@@ -796,7 +930,19 @@ private struct CurrentUnderstandingDisplayView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            if !understanding.oneSentenceModel.isEmpty {
+            if let narrative = understanding.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !narrative.isEmpty {
+                Text(narrative)
+                    .font(.system(size: 18, weight: .regular, design: .serif))
+                    .foregroundStyle(CosmoColors.textPrimary)
+                    .lineSpacing(4)
+                if !understanding.oneSentenceModel.isEmpty {
+                    Text(understanding.oneSentenceModel)
+                        .font(CosmoTypography.body)
+                        .foregroundStyle(CosmoColors.textSecondary)
+                        .italic()
+                }
+            } else if !understanding.oneSentenceModel.isEmpty {
                 Text(understanding.oneSentenceModel)
                     .font(.system(size: 18, weight: .regular, design: .serif))
                     .foregroundStyle(CosmoColors.textPrimary)
@@ -859,6 +1005,93 @@ private struct CurrentUnderstandingEditorView: View {
                 .background(DS.accent, in: Capsule())
             }
         }
+    }
+}
+
+// MARK: - Understanding History
+
+private struct UnderstandingHistoryList: View {
+    let revisions: [UnderstandingNarrativeRevision]
+    let updates: [ModelUpdate]
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: DS.space12) {
+                ForEach(updates, id: \.id) { update in
+                    updateRow(update)
+                }
+                ForEach(revisions, id: \.id) { revision in
+                    revisionRow(revision)
+                }
+            }
+            .padding(.top, DS.space8)
+        } label: {
+            Text("History (\(revisions.count + updates.count))")
+                .font(CosmoTypography.label)
+                .foregroundStyle(CosmoColors.textSecondary)
+        }
+        .tint(CosmoColors.textTertiary)
+    }
+
+    private func revisionRow(_ revision: UnderstandingNarrativeRevision) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            HStack(spacing: DS.space8) {
+                historyBadge(revision.kind?.rawValue ?? "revision")
+                Text(relativeDate(revision.date))
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textTertiary)
+            }
+            Text(revision.text)
+                .font(CosmoTypography.bodySmall)
+                .foregroundStyle(CosmoColors.textSecondary)
+                .lineLimit(4)
+        }
+        .padding(DS.space10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+    }
+
+    private func updateRow(_ update: ModelUpdate) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            HStack(spacing: DS.space8) {
+                historyBadge(update.kind.rawValue)
+                Text(relativeDate(update.date))
+                    .font(CosmoTypography.caption)
+                    .foregroundStyle(CosmoColors.textTertiary)
+            }
+            if !update.before.isEmpty {
+                Text(update.before)
+                    .font(CosmoTypography.bodySmall)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                    .strikethrough()
+                    .lineLimit(2)
+            }
+            Text(update.after)
+                .font(CosmoTypography.bodySmall)
+                .foregroundStyle(CosmoColors.textSecondary)
+                .lineLimit(3)
+        }
+        .padding(DS.space10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+    }
+
+    private func historyBadge(_ label: String) -> some View {
+        Text(label.capitalized)
+            .font(CosmoTypography.labelSmall)
+            .foregroundStyle(DS.accent)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, 2)
+            .background(DS.accentSoft, in: Capsule())
+    }
+
+    private func relativeDate(_ iso: String) -> String {
+        guard let date = ISO8601.date(from: iso) else { return iso }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

@@ -4,6 +4,18 @@
 
 import SwiftUI
 
+// MARK: - Metrics
+
+enum ThinkspaceSidebarMetrics {
+    static let width: CGFloat = 280
+    static let cornerRadius: CGFloat = 16
+    static let contentPadding: CGFloat = 12
+    static let headerHorizontalPadding: CGFloat = 16
+    static let headerVerticalPadding: CGFloat = 12
+    static let rowHorizontalPadding: CGFloat = 10
+    static let rowVerticalPadding: CGFloat = 8
+}
+
 // MARK: - Thinkspace Sidebar
 
 struct ThinkspaceSidebar: View {
@@ -51,7 +63,6 @@ struct ThinkspaceSidebar: View {
     @State private var isLoading: Bool = false
     @State private var loadError: String?
 
-    private let sidebarWidth: CGFloat = 280
     private let repository = AtomRepository.shared
 
     // Project color palette (matches ProjectCreationModal)
@@ -131,17 +142,15 @@ struct ThinkspaceSidebar: View {
                                 RecentlyDeletedSection()
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
+                        .padding(.horizontal, ThinkspaceSidebarMetrics.contentPadding)
+                        .padding(.vertical, ThinkspaceSidebarMetrics.contentPadding)
                     }
                 }
-                .frame(width: sidebarWidth)
-                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(DS.border, lineWidth: 1)
+                .frame(width: ThinkspaceSidebarMetrics.width)
+                .cosmoGlassPanel(
+                    role: .floatingAssistant,
+                    cornerRadius: ThinkspaceSidebarMetrics.cornerRadius
                 )
-                .dsFloatingShadow()
                 .padding(.bottom, 16)
                 .transition(.move(edge: .leading).combined(with: .opacity))
                 .onHover { handleHover($0) }
@@ -195,7 +204,7 @@ struct ThinkspaceSidebar: View {
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(isLocked ? DS.text : DS.textMuted)
+                    .foregroundStyle(isLocked ? DS.text : DS.textMuted)
                     .padding(6)
                     .background(
                         isLocked ? DS.glassCardFill : Color.clear,
@@ -223,15 +232,15 @@ struct ThinkspaceSidebar: View {
                     Text("New")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(DS.accent.opacity(0.15), in: Capsule())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, ThinkspaceSidebarMetrics.headerHorizontalPadding)
+        .padding(.vertical, ThinkspaceSidebarMetrics.headerVerticalPadding)
     }
 
     // MARK: - Loading View
@@ -244,7 +253,7 @@ struct ThinkspaceSidebar: View {
 
             Text("Loading...")
                 .font(.system(size: 12))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
         }
         .frame(maxWidth: .infinity, minHeight: 100)
         .accessibilityLabel("Loading ThinkSpaces")
@@ -256,15 +265,15 @@ struct ThinkspaceSidebar: View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 24))
-                .foregroundColor(Color.orange.opacity(0.8))
+                .foregroundStyle(DS.orange.opacity(0.8))
 
             Text("Failed to load")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Text(error)
                 .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
 
             Button {
@@ -276,7 +285,7 @@ struct ThinkspaceSidebar: View {
                     Text("Retry")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(DS.accent.opacity(0.15), in: Capsule())
@@ -379,7 +388,7 @@ struct ThinkspaceSidebar: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .frame(width: 24, height: 24)
                             .background(DS.glassCardFill, in: Circle())
                     }
@@ -452,17 +461,17 @@ struct ThinkspaceSidebar: View {
         VStack(spacing: 8) {
             Image(systemName: "rectangle.3.group")
                 .font(.system(size: 20))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Text(selectedProjectFilter != nil
                  ? "No ThinkSpaces in this project"
                  : "No ThinkSpaces yet")
                 .font(.system(size: 12))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Text("Tap + New to create one")
                 .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -478,13 +487,13 @@ struct ThinkspaceSidebar: View {
                 .overlay(
                     Image(systemName: "rectangle.3.group")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.accent)
+                        .foregroundStyle(DS.accent)
                 )
 
             TextField("ThinkSpace name", text: $newName)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .focused($isNameFieldFocused)
                 .onSubmit { createThinkspace() }
 
@@ -495,7 +504,7 @@ struct ThinkspaceSidebar: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .buttonStyle(.plain)
         }
@@ -522,7 +531,7 @@ struct ThinkspaceSidebar: View {
             TextField("Name", text: $newProjectName)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .focused($isProjectNameFieldFocused)
                 .frame(width: 80)
                 .onSubmit { createNewProject() }
@@ -535,7 +544,7 @@ struct ThinkspaceSidebar: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .buttonStyle(.plain)
         }
@@ -552,7 +561,7 @@ struct ThinkspaceSidebar: View {
             TextField("Name", text: $renameProjectText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .focused($isProjectRenameFieldFocused)
                 .frame(width: 80)
                 .onSubmit { submitProjectRename(project) }
@@ -560,7 +569,7 @@ struct ThinkspaceSidebar: View {
             Button { submitProjectRename(project) } label: {
                 Image(systemName: "checkmark")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(color)
+                    .foregroundStyle(color)
             }
             .buttonStyle(.plain)
         }
@@ -946,7 +955,7 @@ struct ProjectFilterChip: View {
 
                 Text(label)
                     .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                    .foregroundColor(isSelected ? color : DS.textSecondary)
+                    .foregroundStyle(isSelected ? color : DS.textSecondary)
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
@@ -1047,7 +1056,7 @@ struct ThinkspaceRow: View {
             Button(action: onToggleExpand) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 12, height: 12)
             }
             .buttonStyle(.plain)
@@ -1061,12 +1070,12 @@ struct ThinkspaceRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(thinkspace.name)
                     .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Text("\(thinkspace.blockCount) blocks · \(thinkspace.lastOpenedFormatted)")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .allowsHitTesting(false)
 
@@ -1076,7 +1085,7 @@ struct ThinkspaceRow: View {
             if let name = projectName {
                 Text(name)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(projectColor)
+                    .foregroundStyle(projectColor)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(projectColor.opacity(0.12), in: Capsule())
@@ -1109,20 +1118,20 @@ struct ThinkspaceRow: View {
                 .overlay(
                     Image(systemName: "pencil")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.accent)
+                        .foregroundStyle(DS.accent)
                 )
 
             TextField("Name", text: $renameText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .focused($isRenameFieldFocused)
                 .onSubmit { submitRename() }
 
             Button { submitRename() } label: {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
             }
             .buttonStyle(.plain)
 
@@ -1132,7 +1141,7 @@ struct ThinkspaceRow: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .buttonStyle(.plain)
         }
@@ -1166,7 +1175,7 @@ struct ThinkspaceRow: View {
 
                     Text("Loading...")
                         .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .padding(.vertical, 6)
             } else if childDocs.isEmpty {
@@ -1178,7 +1187,7 @@ struct ThinkspaceRow: View {
 
                     Text("No blocks")
                         .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .padding(.vertical, 6)
             } else {
@@ -1345,13 +1354,13 @@ struct ChildDocRow: View {
                     .overlay(
                         Image(systemName: doc.entityType.icon)
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(doc.entityType.color)
+                            .foregroundStyle(doc.entityType.color)
                     )
 
                 // Title
                 Text(doc.title)
                     .font(.system(size: 11, weight: .regular))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Spacer()
@@ -1360,7 +1369,7 @@ struct ChildDocRow: View {
                 if isHovered {
                     Text(doc.entityType.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .transition(.opacity)
                 }
             }
@@ -1415,7 +1424,7 @@ struct RecentlyDeletedSection: View {
                 HStack(spacing: 6) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 10)
 
                     AnimatedTrashIcon(isExpanded: isExpanded)
@@ -1426,7 +1435,7 @@ struct RecentlyDeletedSection: View {
                     if !deletedItems.isEmpty {
                         Text("\(deletedItems.count)")
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(DS.glassCardFill, in: Capsule())
@@ -1440,7 +1449,7 @@ struct RecentlyDeletedSection: View {
                         } label: {
                             Text("Empty")
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(Color(hex: "FF5F57").opacity(0.8))
+                                .foregroundStyle(Color(hex: "FF5F57").opacity(0.8))
                         }
                         .buttonStyle(.plain)
                         .transition(.opacity)
@@ -1456,11 +1465,11 @@ struct RecentlyDeletedSection: View {
                     VStack(spacing: 8) {
                         Image(systemName: "trash.slash")
                             .font(.system(size: 16))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
 
                         Text("Trash is empty")
                             .font(.system(size: 11))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -1560,7 +1569,7 @@ struct AnimatedTrashIcon: View {
         ZStack {
             Image(systemName: "trash")
                 .font(.system(size: 12))
-                .foregroundColor(isHovered ? Color(hex: "FF5F57") : DS.textMuted)
+                .foregroundStyle(isHovered ? Color(hex: "FF5F57") : DS.textMuted)
 
             if isHovered || isExpanded {
                 RoundedRectangle(cornerRadius: 1)
@@ -1593,12 +1602,12 @@ struct AnimatedTrashButton: View {
             ZStack {
                 Image(systemName: "trash")
                     .font(.system(size: 10))
-                    .foregroundColor(isHovered ? Color(hex: "FF5F57") : DS.textMuted)
+                    .foregroundStyle(isHovered ? Color(hex: "FF5F57") : DS.textMuted)
                     .opacity(isHovered ? 0 : 1)
 
                 Image(systemName: "trash")
                     .font(.system(size: 10))
-                    .foregroundColor(Color(hex: "FF5F57"))
+                    .foregroundStyle(Color(hex: "FF5F57"))
                     .opacity(isHovered ? 1 : 0)
                     .overlay(alignment: .top) {
                         Rectangle()
@@ -1632,19 +1641,19 @@ struct DeletedItemRow: View {
         HStack(spacing: 8) {
             Image(systemName: item.type == .project ? "folder" : "rectangle.3.group")
                 .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
                     .strikethrough(true, color: DS.textMuted)
 
                 Text(item.daysRemaining)
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .allowsHitTesting(false)
 
@@ -1657,7 +1666,7 @@ struct DeletedItemRow: View {
                     } label: {
                         Image(systemName: "arrow.uturn.backward")
                             .font(.system(size: 10))
-                            .foregroundColor(DS.accent)
+                            .foregroundStyle(DS.accent)
                     }
                     .buttonStyle(.plain)
                     .help("Restore")

@@ -629,7 +629,6 @@ private struct CommandCenterComposerChromeModifier: ViewModifier {
                 .shadow(color: .black.opacity(0.08), radius: 24, y: 16)
         case .glass:
             CosmoGlassPanel(
-                sceneMaterial: .neutral,
                 role: .globalSidebar,
                 cornerRadius: 20
             ) {

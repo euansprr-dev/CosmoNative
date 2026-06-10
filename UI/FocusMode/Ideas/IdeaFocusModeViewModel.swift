@@ -105,77 +105,78 @@ private struct IdeaFocusSaveSnapshot: Sendable {
 /// Drives the Idea Focus Mode workspace -- manages editable fields, analysis pipeline,
 /// framework selection, blueprint generation, and content promotion.
 @MainActor
-class IdeaFocusModeViewModel: ObservableObject {
+@Observable
+final class IdeaFocusModeViewModel {
     // MARK: - Published State (Editable Fields)
 
-    @Published var idea: Atom
-    @Published var editableTitle: String
-    @Published var editableBody: String
-    @Published var editableHooks: [String]
-    @Published var editableDescription: String
-    @Published var selectedStatus: IdeaStatus
-    @Published var selectedFormat: ContentFormat?
-    @Published var selectedPlatform: IdeaPlatform?
-    @Published var tags: [String]
-    @Published var selectedHookIndex: Int?
+    var idea: Atom
+    var editableTitle: String
+    var editableBody: String
+    var editableHooks: [String]
+    var editableDescription: String
+    var selectedStatus: IdeaStatus
+    var selectedFormat: ContentFormat?
+    var selectedPlatform: IdeaPlatform?
+    var tags: [String]
+    var selectedHookIndex: Int?
 
     // MARK: - Published State (Intelligence)
 
-    @Published var insight: IdeaInsight?
-    @Published var isAnalyzing: Bool = false
-    @Published var analysisStage: String = ""
-    @Published var blueprint: ContentBlueprint?
-    @Published var linkedClient: Atom?
-    @Published var clientProfiles: [Atom] = []
+    var insight: IdeaInsight?
+    var isAnalyzing: Bool = false
+    var analysisStage: String = ""
+    var blueprint: ContentBlueprint?
+    var linkedClient: Atom?
+    var clientProfiles: [Atom] = []
 
     // MARK: - Published State (Linked Context)
 
-    @Published var linkedSwipes: [Atom] = []
-    @Published var linkedConnections: [Atom] = []
-    @Published var suggestedConnections: [Atom] = []
-    @Published var generatedHooks: [HookSuggestion] = []
-    @Published var isGeneratingHooks: Bool = false
+    var linkedSwipes: [Atom] = []
+    var linkedConnections: [Atom] = []
+    var suggestedConnections: [Atom] = []
+    var generatedHooks: [HookSuggestion] = []
+    var isGeneratingHooks: Bool = false
 
     // MARK: - Published State (Codex Integration)
 
-    @Published var editableContext: String = ""
-    @Published var selectedBlueprintUUID: String? = nil
-    @Published var selectedBlueprint: Atom? = nil
-    @Published var supportingSwipes: [Atom] = []
-    @Published var selectedContentType: String? = nil
-    @Published var codexOutline: CodexOutlineModel? = nil
-    @Published var selectedArcType: String? = nil
-    @Published var editableCreativeDirection: String = ""
-    @Published var researchResults: [IdeaResearchResult] = []
-    @Published var chatHistory: [IdeaChatMessage] = []
-    @Published var arcRecommendations: [ArcRecommendation] = []
-    @Published var blueprintDisplayMode: BlueprintDisplayMode = .text
+    var editableContext: String = ""
+    var selectedBlueprintUUID: String? = nil
+    var selectedBlueprint: Atom? = nil
+    var supportingSwipes: [Atom] = []
+    var selectedContentType: String? = nil
+    var codexOutline: CodexOutlineModel? = nil
+    var selectedArcType: String? = nil
+    var editableCreativeDirection: String = ""
+    var researchResults: [IdeaResearchResult] = []
+    var chatHistory: [IdeaChatMessage] = []
+    var arcRecommendations: [ArcRecommendation] = []
+    var blueprintDisplayMode: BlueprintDisplayMode = .text
 
     // MARK: - Overlay State
 
-    @Published var showLinkSwipesOverlay: Bool = false
-    @Published var showLinkConnectionsOverlay: Bool = false
+    var showLinkSwipesOverlay: Bool = false
+    var showLinkConnectionsOverlay: Bool = false
 
     // MARK: - Mention State
 
-    @Published var mentionedAtoms: [Atom] = []
-    @Published var showMentionOverlay: Bool = false
-    @Published var mentionSearchText: String = ""
+    var mentionedAtoms: [Atom] = []
+    var showMentionOverlay: Bool = false
+    var mentionSearchText: String = ""
 
     // MARK: - Session State
 
-    @Published var sessionState: IdeaFocusModeState
+    var sessionState: IdeaFocusModeState
 
     // MARK: - Private
 
-    private var autoSaveTask: Task<Void, Never>?
-    private var autoEnrichTask: Task<Void, Never>?
-    private var hookGenerationTask: Task<Void, Never>?
-    private var terminationCancellable: AnyCancellable?
+    @ObservationIgnored private var autoSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var autoEnrichTask: Task<Void, Never>?
+    @ObservationIgnored private var hookGenerationTask: Task<Void, Never>?
+    @ObservationIgnored private var terminationCancellable: AnyCancellable?
     private let autoSaveDelay: TimeInterval = 1.5
     private let autoEnrichDelay: TimeInterval = 1.5
-    private var saveSequence: UInt64 = 0
-    private var lastModified: Date = Date()
+    @ObservationIgnored private var saveSequence: UInt64 = 0
+    @ObservationIgnored private var lastModified: Date = Date()
 
     // MARK: - Initialization
 
@@ -1058,6 +1059,81 @@ class IdeaFocusModeViewModel: ObservableObject {
         } catch {
             print("IdeaFocusMode: save failed: \(error)")
         }
+    }
+
+    // MARK: - Inline Assistant Edits
+
+    /// Apply a reviewed inline-assistant operation to this idea. Body edits locate
+    /// through the shared diff resolver (same locate-or-conflict guarantees as
+    /// notes/content); hook edits route by `hook-N` anchor or by matching text.
+    func applyInlineAssistantEdit(
+        _ operation: CosmoAssistantProposalOperation
+    ) async throws -> CosmoEditableOperationResult {
+        guard operation.kind != .canvasPlan else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider"
+            )
+        }
+
+        if Self.isHookOperation(operation) {
+            return await applyInlineHookEdit(operation)
+        }
+
+        guard let placement = CosmoInlineTextEditResolver.placement(for: operation, in: editableBody) else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Original text not found"
+            )
+        }
+        editableBody.replaceSubrange(placement.range, with: placement.replacementText)
+        await save()
+        return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
+    }
+
+    private static func isHookOperation(_ operation: CosmoAssistantProposalOperation) -> Bool {
+        operation.anchorID?.hasPrefix("hook") == true
+    }
+
+    private func applyInlineHookEdit(
+        _ operation: CosmoAssistantProposalOperation
+    ) async -> CosmoEditableOperationResult {
+        guard let proposed = operation.proposedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !proposed.isEmpty else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Hook edit has no proposed text"
+            )
+        }
+
+        let original = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        // New hook: insertion, or an anchor with no original text to replace.
+        if operation.kind == .textInsertion || original.isEmpty {
+            editableHooks.append(proposed)
+            await save()
+            return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Hook added")
+        }
+
+        // Replacement: prefer the indexed anchor when it still matches; otherwise
+        // fall back to locating the hook by its text. Mismatch on both = conflict.
+        let anchorIndex = operation.anchorID
+            .flatMap { $0.split(separator: "-").last }
+            .flatMap { Int($0) }
+
+        if let anchorIndex,
+           editableHooks.indices.contains(anchorIndex),
+           editableHooks[anchorIndex].trimmingCharacters(in: .whitespacesAndNewlines) == original {
+            editableHooks[anchorIndex] = proposed
+        } else if let matchIndex = editableHooks.firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines) == original
+        }) {
+            editableHooks[matchIndex] = proposed
+        } else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "That hook changed since this was drafted"
+            )
+        }
+
+        await save()
+        return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Hook updated")
     }
 
     /// Schedule a debounced auto-save (call after each keystroke in text fields).

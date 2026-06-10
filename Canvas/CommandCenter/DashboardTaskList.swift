@@ -548,12 +548,6 @@ struct DashboardTaskList: View {
                 size: 18
             )
             .contentShape(Circle())
-            .cosmoGlassSceneSignal(
-                id: "command-task-check-\(task.uuid)",
-                source: .commandTask,
-                color: task.isCompleted || completionState != nil ? DS.green : task.priority.color,
-                intensity: task.isCompleted || completionState != nil ? 0.62 : 0.30
-            )
         }
         .buttonStyle(.plain)
     }

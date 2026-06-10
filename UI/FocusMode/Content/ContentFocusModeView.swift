@@ -83,8 +83,6 @@ struct ContentFocusModeView: View {
     @StateObject private var viewModel: ContentFocusModeViewModel
     @State private var showAICollaborator = false
     @State private var showSettings = false
-    @State private var sidebarVisible = false
-    @State private var sidebarLocked = false
     @State private var editableTitle: String
     @State private var titleDocument: RichDocument = .empty
     @State private var draftDocument: RichDocument = .empty
@@ -124,8 +122,6 @@ struct ContentFocusModeView: View {
     @State private var focusBandRange: NSRange?
     @State private var manuscriptScrollView: NSScrollView?
     @State private var manuscriptScrollMetrics = ManuscriptScrollMetrics()
-    @State private var leftMarginScrollMetrics = ManuscriptScrollMetrics()
-    @State private var rightMarginScrollMetrics = ManuscriptScrollMetrics()
     @State private var isActivelyTyping = false
     @State private var typingActivityTask: Task<Void, Never>?
 
@@ -156,6 +152,9 @@ struct ContentFocusModeView: View {
     @State private var zenMode: Bool = false
     @State private var hasAppeared: Bool = false
     @State private var isContinuation: Bool = false
+    @Namespace private var ledgerNamespace
+    @FocusState private var focusedOutlineItemID: UUID?
+    @State private var brandExpanded = false
 
     // Inherited context for the right marginalia (source / swipes / framework / brand / hooks)
     @State private var sourceIdeaAtom: Atom?
@@ -310,7 +309,7 @@ struct ContentFocusModeView: View {
     }
 
     private var manuscriptEditorHeightOffset: CGFloat {
-        zenMode ? 96 : 200
+        zenMode ? 96 : 140
     }
 
     // MARK: - Initialization
@@ -354,17 +353,17 @@ struct ContentFocusModeView: View {
                 VStack {
                     Spacer()
                     Text("+\(xp) · \(viewModel.state.currentStep.label.lowercased()) complete")
-                        .font(.system(size: 14, weight: .regular, design: .serif))
+                        .font(DS.dateSerif)
                         .italic()
                         .foregroundStyle(DS.gilt)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                         .padding(.bottom, 120)
                 }
-                .animation(.easeOut(duration: 0.6), value: viewModel.xpAwarded)
+                .animation(ProMotionSprings.cardEntrance, value: viewModel.xpAwarded)
                 .zIndex(200)
             }
         }
-        .animation(.easeOut(duration: 0.4), value: viewModel.xpAwarded)
+        .animation(ProMotionSprings.gentle, value: viewModel.xpAwarded)
         .animation(ProMotionSprings.snappy, value: zenMode)
         .animation(ProMotionSprings.snappy, value: isPolishModeActive)
         .focusImmersiveEntryTransition()
@@ -556,27 +555,6 @@ struct ContentFocusModeView: View {
                 await loadInheritedContext()
             }
         }
-        .overlay(alignment: .topLeading) {
-            FocusSidebarTrigger(isVisible: $sidebarVisible)
-                .frame(maxHeight: .infinity)
-        }
-        .overlay(alignment: .topLeading) {
-            UniversalFocusSidebar(
-                title: "Content",
-                icon: "doc.text.fill",
-                accentColor: DS.entityContent,
-                isVisible: $sidebarVisible,
-                isLocked: $sidebarLocked
-            ) {
-                ContentOutlineSidebarContent(
-                    state: $viewModel.state,
-                    atom: atom,
-                    writingEngine: writingEngine
-                )
-            }
-            .padding(.leading, 8)
-            .padding(.top, 56)
-        }
     }
 
     /// Toggle AI Collaborator — called from Cmd+J shortcut via keyboardShortcut
@@ -629,29 +607,21 @@ struct ContentFocusModeView: View {
         isContinuation ? 0 : delay
     }
 
+    /// Clearance the scroll surfaces reserve at rest so content starts below the
+    /// floating toolbar — but slides *under* the glass once scrolling.
+    private var scriptoriumToolbarClearance: CGFloat { 64 }
+
     private var scriptoriumBody: some View {
-        VStack(spacing: 0) {
-            // Whisper-thin nav — zen ornament stays visible so you can always exit zen mode
-            scriptoriumHeader
-                .atelierStaggerIn(delay: continuationStagger(0.05), appeared: hasAppeared)
-
-            if !zenMode {
-                // Page-wide title hero + step ledger — centered to the whole window,
-                // not just the manuscript column. This is what makes the page feel
-                // like a single composition rather than a left-heavy layout.
-                VStack(spacing: DS.space20) {
-                    scriptoriumTitleHero
-                        .atelierStaggerIn(delay: continuationStagger(0.12), appeared: hasAppeared)
-                    scriptoriumStepLedger
-                        .atelierStaggerIn(delay: continuationStagger(0.20), appeared: hasAppeared)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, DS.space12)
-                .padding(.bottom, DS.space24)
-                .background(FocusModeEditorBlurTapLayer())
-                .transition(.opacity.combined(with: .offset(y: -12)))
+        // The toolbar is an overlay, not a layout row: the manuscript and margins
+        // extend the full height and refract through the glass as they scroll.
+        scriptoriumScrollStage
+            .overlay(alignment: .top) {
+                scriptoriumHeader
+                    .atelierStaggerIn(delay: continuationStagger(0.05), appeared: hasAppeared)
             }
+    }
 
+    private var scriptoriumScrollStage: some View {
             GeometryReader { geo in
                 let showMarginaliaRails = ContentFocusLayoutPolicy.showsMarginaliaRails(
                     isPaneContext: isPaneContext,
@@ -669,8 +639,7 @@ struct ContentFocusModeView: View {
                         HStack(alignment: .top, spacing: showMarginaliaRails ? DS.space24 : 0) {
                             if showMarginaliaRails {
                                 scriptoriumMarginScroll(width: 260,
-                                    height: max(0, geo.size.height - DS.space4),
-                                    metrics: $leftMarginScrollMetrics
+                                    height: max(0, geo.size.height - DS.space4)
                                 ) {
                                     scriptoriumLeftMargin
                                 }
@@ -690,17 +659,20 @@ struct ContentFocusModeView: View {
                                     })
                             }
                             .scrollIndicators(.hidden)
+                            .scrollEdgeEffectStyle(.soft, for: .vertical)
+                            // Rest below the floating toolbar, scroll under its glass.
+                            .contentMargins(.top, scriptoriumToolbarClearance, for: .scrollContent)
                             .overlay(alignment: .trailing) {
                                 PremiumManuscriptScrollbar(metrics: manuscriptScrollMetrics)
                                     .padding(.trailing, DS.space4)
-                                    .padding(.vertical, DS.space8)
+                                    .padding(.top, scriptoriumToolbarClearance + DS.space8)
+                                    .padding(.bottom, DS.space8)
                             }
                             .frame(height: max(0, geo.size.height - DS.space4), alignment: .top)
 
                             if showMarginaliaRails {
                                 scriptoriumMarginScroll(width: 220,
-                                    height: max(0, geo.size.height - DS.space4),
-                                    metrics: $rightMarginScrollMetrics
+                                    height: max(0, geo.size.height - DS.space4)
                                 ) {
                                     scriptoriumRightMargin
                                 }
@@ -750,59 +722,43 @@ struct ContentFocusModeView: View {
                     updateLayoutMode(for: newSize.width)
                 }
             }
-        }
         .background(inlineAIKeyboardShortcuts)
     }
 
     // MARK: - Scriptorium manuscript (title hero + step ledger + rich editor)
 
+    /// Margins scroll silently — the manuscript's scrollbar is the only one on
+    /// the page; margin overflow fades at the edges instead of growing chrome.
+    /// Like the manuscript, they rest below the toolbar and slide under its glass.
     private func scriptoriumMarginScroll<Content: View>(
         width: CGFloat,
         height: CGFloat,
-        metrics: Binding<ManuscriptScrollMetrics>,
         @ViewBuilder content: () -> Content
     ) -> some View {
         ScrollView {
             content()
                 .frame(width: width, alignment: .leading)
-                .padding(.top, DS.space12)
                 .padding(.bottom, DS.space20)
-                .background(ScrollViewIntrospector { _ in
-                    // Marginalia scroll views only need metrics; the manuscript keeps responder ownership.
-                } onMetricsChange: { newMetrics in
-                    metrics.wrappedValue = newMetrics
-                })
         }
         .scrollIndicators(.hidden)
-        .overlay(alignment: .trailing) {
-            PremiumManuscriptScrollbar(metrics: metrics.wrappedValue)
-                .padding(.trailing, DS.space4)
-                .padding(.vertical, DS.space8)
-        }
+        .scrollEdgeEffectStyle(.soft, for: .vertical)
+        .contentMargins(.top, scriptoriumToolbarClearance, for: .scrollContent)
         .frame(width: width, height: height, alignment: .top)
     }
 
     private func scriptoriumManuscript(height: CGFloat, availableWidth: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: DS.space20) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             if !zenMode {
                 manuscriptTitleEditor
                     .transition(.opacity.combined(with: .offset(y: -16)))
             }
 
-            // Metadata line
-            HStack(spacing: DS.space8) {
-                Text(formattedCreatedDate)
-                Text("·")
-                if !viewModel.state.contentDescription.isEmpty {
-                    Text(viewModel.state.contentDescription)
-                        .lineLimit(1)
-                } else {
-                    Text("no description")
-                }
-            }
-            .font(DS.dateSerif)
-            .italic()
-            .foregroundStyle(focusTextMuted)
+            // Date ornament — the core idea lives in the left margin, so the meta
+            // row no longer echoes the title text.
+            Text(formattedCreatedDate)
+                .font(DS.dateSerif)
+                .italic()
+                .foregroundStyle(focusTextMuted)
 
             Rectangle()
                 .fill(DS.sepiaSubtle)
@@ -904,70 +860,92 @@ struct ContentFocusModeView: View {
 
     private var scriptoriumHeader: some View {
         ZStack {
-            HStack(spacing: DS.space12) {
-                if !isPaneContext {
-                    Button(action: toggleSidebar) {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(sidebarLocked || sidebarVisible ? focusText : focusTextMuted)
-                            .frame(width: 28, height: 28)
-                            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(DS.glassBorder, lineWidth: 0.5)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(sidebarLocked || sidebarVisible ? "Hide sidebar" : "Show sidebar")
-                    .opacity(zenMode ? 0 : 1)
-                    .allowsHitTesting(!zenMode)
-                }
-                if !isPaneContext {
-                    Button(action: onClose) {
-                        HStack(spacing: DS.space6) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 11, weight: .medium))
-                            Text("back")
-                                .font(DS.dateSerif)
-                                .italic()
-                        }
-                        .foregroundStyle(focusTextMuted)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Go back")
-                    .opacity(zenMode ? 0 : 1)
-                    .allowsHitTesting(!zenMode)
-                }
-                Spacer()
-                writingSurfaceControls
-                // Zen ornament is always visible — it's the only way to exit zen mode
-                ZenOrnament(isOn: $zenMode)
-                if isPaneContext {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(focusTextMuted)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.leading, DS.space8)
-                    .accessibilityLabel("Close pane")
-                    .opacity(zenMode ? 0 : 1)
-                    .allowsHitTesting(!zenMode)
-                }
-            }
-
             if zenMode {
+                // Zen: the glass toolbar dematerializes — only the ornament (the
+                // sole exit) and the fixed title remain over the paper.
+                HStack {
+                    Spacer()
+                    ZenOrnament(isOn: $zenMode)
+                }
                 scriptoriumFixedTitleHeader
                     .padding(.horizontal, isPaneContext ? 72 : 180)
                     .transition(.opacity.combined(with: .offset(y: 14)))
+            } else {
+                scriptoriumToolbar
+                    .transition(.opacity)
             }
         }
-        .padding(.horizontal, DS.space20)
+        .padding(.horizontal, DS.space16)
         .padding(.vertical, DS.space12)
         .background(FocusModeEditorBlurTapLayer())
+    }
+
+    private var scriptoriumToolbar: some View {
+        HStack(spacing: DS.space12) {
+            if !isPaneContext {
+                Button(action: onClose) {
+                    HStack(spacing: DS.space6) {
+                        Image(systemName: "chevron.left")
+                            .font(DS.buttonText)
+                        Text("Back")
+                            .font(DS.callout)
+                    }
+                    .foregroundStyle(focusTextSecondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Go back")
+                .help("Back (Esc)")
+            }
+            Spacer(minLength: DS.space8)
+            toolbarCenterSlot
+            Spacer(minLength: DS.space8)
+            writingSurfaceControls
+            ZenOrnament(isOn: $zenMode)
+            if isPaneContext {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(DS.caption)
+                        .foregroundStyle(focusTextMuted)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, DS.space8)
+                .accessibilityLabel("Close pane")
+                .help("Close")
+            }
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space6)
+        .background(FocusModeEditorBlurTapLayer())
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
+        .opacity(isActivelyTyping ? 0.25 : 1)
+        .animation(ProMotionSprings.gentle, value: isActivelyTyping)
+        .onHover { hovering in
+            if hovering { wakeChrome() }
+        }
+    }
+
+    /// Center of the command row: the step ledger during draft/polish, a quiet
+    /// phase label in the post-creation phases.
+    @ViewBuilder
+    private var toolbarCenterSlot: some View {
+        if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
+            toolbarLedger
+        } else {
+            Text(viewModel.displayPhase.rawValue.uppercased())
+                .font(DS.smallCaps)
+                .tracking(2.2)
+                .foregroundStyle(DS.giltMuted)
+        }
+    }
+
+    private func wakeChrome() {
+        typingActivityTask?.cancel()
+        withAnimation(ProMotionSprings.gentle) {
+            isActivelyTyping = false
+        }
     }
 
     private var writingSurfaceControls: some View {
@@ -976,12 +954,12 @@ struct ContentFocusModeView: View {
                 openWritingAI()
             } label: {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption.weight(.semibold))
                     .foregroundStyle(showWritingAICard ? DS.gilt : focusTextMuted)
                     .frame(width: 28, height: 28)
-                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(showWritingAICard ? DS.gilt.opacity(0.35) : DS.glassBorder, lineWidth: 0.5)
                     )
             }
@@ -999,11 +977,11 @@ struct ContentFocusModeView: View {
                 }
             } label: {
                 Image(systemName: "textformat.size")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption.weight(.semibold))
                     .foregroundStyle(focusTextMuted)
                     .frame(width: 28, height: 28)
-                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.glassBorder, lineWidth: 0.5))
+                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DS.glassBorder, lineWidth: 0.5))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -1026,30 +1004,17 @@ struct ContentFocusModeView: View {
                     Label(typewriterMode || zenMode ? "Typewriter on" : "Typewriter off", systemImage: typewriterMode || zenMode ? "checkmark" : "arrow.down.to.line.compact")
                 }
             } label: {
-                Image(systemName: focusBandMode == .off ? "scope" : "scope")
-                    .font(.system(size: 11, weight: .semibold))
+                Image(systemName: "scope")
+                    .font(DS.caption.weight(.semibold))
                     .foregroundStyle(focusBandMode == .off ? focusTextMuted : DS.gilt)
                     .frame(width: 28, height: 28)
-                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.glassBorder, lineWidth: 0.5))
+                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DS.glassBorder, lineWidth: 0.5))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Focus band")
-        }
-        .opacity(zenMode ? 0.82 : 1)
-    }
-
-    private func toggleSidebar() {
-        withAnimation(ProMotionSprings.snappy) {
-            if sidebarLocked || sidebarVisible {
-                sidebarLocked = false
-                sidebarVisible = false
-            } else {
-                sidebarVisible = true
-                sidebarLocked = true
-            }
         }
     }
 
@@ -1068,7 +1033,7 @@ struct ContentFocusModeView: View {
     private var scriptoriumFixedTitleHeader: some View {
         TextField("untitled content", text: $editableTitle, axis: .vertical)
             .textFieldStyle(.plain)
-            .font(.system(size: 15, weight: .semibold, design: .serif))
+            .font(DS.compactTitleSerif)
             .foregroundStyle(focusText)
             .lineLimit(1)
             .truncationMode(.tail)
@@ -1080,26 +1045,6 @@ struct ContentFocusModeView: View {
             .accessibilityLabel("Content title")
     }
 
-    // MARK: - Title hero (smallCaps status ornament)
-
-    private var scriptoriumTitleHero: some View {
-        Text(statusOrnamentLabel)
-            .font(DS.smallCaps)
-            .tracking(2.2)
-            .foregroundStyle(DS.giltMuted)
-            .frame(maxWidth: .infinity)
-    }
-
-    private var statusOrnamentLabel: String {
-        let status: String
-        if let step = ContentFocusModeState.stepForPhase(viewModel.displayPhase) {
-            status = step.rawValue.uppercased()
-        } else {
-            status = viewModel.displayPhase.rawValue.uppercased()
-        }
-        return "· · · CONTENT · \(status) · · ·"
-    }
-
     private var formattedCreatedDate: String {
         let date = ISO8601.date(from: atom.createdAt) ?? Date()
         return CosmoDateFormatters.monthDay.string(from: date).lowercased()
@@ -1107,47 +1052,56 @@ struct ContentFocusModeView: View {
 
     // MARK: - Step ledger (i ─── ii)
 
-    private var scriptoriumStepLedger: some View {
+    private var toolbarLedger: some View {
         let currentStep = viewModel.state.currentStep
-        return HStack(spacing: 0) {
-            Spacer()
-            stepLedgerNumeral("i", label: "draft", isCurrent: currentStep == .draft, isCompleted: currentStep == .polish) {
-                viewModel.goToStep(.draft)
+        return HStack(spacing: DS.space8) {
+            toolbarLedgerStep("i", label: "draft", shortcut: "1", isCurrent: currentStep == .draft, isCompleted: currentStep == .polish) {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.goToStep(.draft)
+                }
             }
             Rectangle()
                 .fill(currentStep == .polish ? DS.gilt.opacity(0.5) : DS.sepiaSubtle)
-                .frame(width: 48, height: 0.5)
-                .padding(.horizontal, DS.space8)
-            stepLedgerNumeral("ii", label: "polish", isCurrent: currentStep == .polish, isCompleted: false) {
-                viewModel.goToStep(.polish)
+                .frame(width: 24, height: 0.5)
+            toolbarLedgerStep("ii", label: "polish", shortcut: "2", isCurrent: currentStep == .polish, isCompleted: false) {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.goToStep(.polish)
+                }
                 updatePolishAnalysis()
             }
-            Spacer()
         }
     }
 
-    private func stepLedgerNumeral(_ numeral: String, label: String, isCurrent: Bool, isCompleted: Bool, action: @escaping () -> Void) -> some View {
+    private func toolbarLedgerStep(_ numeral: String, label: String, shortcut: KeyEquivalent, isCurrent: Bool, isCompleted: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 2) {
-                Text(numeral)
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
-                    .foregroundStyle(isCurrent ? DS.gilt : (isCompleted ? DS.gilt.opacity(0.6) : DS.giltMuted))
-                Text(label)
-                    .font(DS.smallCaps)
-                    .tracking(1.6)
-                    .foregroundStyle(isCurrent ? focusText : focusTextMuted)
+            HStack(spacing: DS.space4) {
                 if isCurrent {
+                    // The gilt diamond travels between steps via matchedGeometryEffect.
                     Rectangle()
                         .fill(DS.gilt)
                         .frame(width: 3, height: 3)
                         .rotationEffect(.degrees(45))
-                        .padding(.top, 1)
+                        .matchedGeometryEffect(id: "ledger-diamond", in: ledgerNamespace)
+                }
+                Text(numeral)
+                    .font(DS.caption.weight(.bold).monospaced())
+                    .foregroundStyle(isCurrent ? DS.gilt : (isCompleted ? DS.gilt.opacity(0.6) : DS.giltMuted))
+                if layoutMode != .compact {
+                    Text(label)
+                        .font(DS.smallCaps)
+                        .tracking(1.2)
+                        .foregroundStyle(isCurrent ? focusText : focusTextMuted)
                 }
             }
+            .padding(.horizontal, DS.space6)
+            .padding(.vertical, DS.space4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .keyboardShortcut(shortcut, modifiers: .command)
+        .help("\(label.capitalized) (⌘\(shortcut.character))")
         .accessibilityLabel(label)
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 
     // MARK: - Left marginalia (hooks + outline + core idea  /  score swaps in polish)
@@ -1221,7 +1175,7 @@ struct ContentFocusModeView: View {
                 ForEach(Array(viewModel.state.outline.enumerated()), id: \.element.id) { idx, item in
                     HStack(alignment: .top, spacing: DS.space8) {
                         Text(romanNumeral(for: idx + 1))
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .font(DS.footnote.monospaced())
                             .foregroundStyle(DS.giltMuted)
                             .frame(width: 24, alignment: .leading)
                             .padding(.top, 2)
@@ -1230,6 +1184,10 @@ struct ContentFocusModeView: View {
                             .font(DS.callout)
                             .foregroundStyle(focusText)
                             .lineSpacing(2)
+                            // Quiet glance by default; the full text opens while editing.
+                            .lineLimit(focusedOutlineItemID == item.id ? nil : 2)
+                            .focused($focusedOutlineItemID, equals: item.id)
+                            .animation(ProMotionSprings.gentle, value: focusedOutlineItemID)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1242,7 +1200,7 @@ struct ContentFocusModeView: View {
             MarginaliaLabel("CORE IDEA")
             TextField("Core idea", text: marginaliaCoreIdeaBinding, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .regular, design: .serif))
+                .font(DS.dateSerif)
                 .italic()
                 .foregroundStyle(focusText)
                 .lineSpacing(3)
@@ -1319,35 +1277,14 @@ struct ContentFocusModeView: View {
         }
     }
 
+    /// Marginalia are typographic columns on the paper — no boxes; grouping is
+    /// done by spacing and the smallCaps labels alone (Things law).
     private func scriptoriumMarginaliaContainer<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
         content()
-            .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space12)
+            .padding(.horizontal, DS.space4)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .fill(scriptoriumMarginaliaContainerFill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .stroke(scriptoriumMarginaliaContainerBorder, lineWidth: 0.5)
-            )
-    }
-
-    private var scriptoriumMarginaliaContainerFill: Color {
-        if DS.usesImmersiveFocusAppearance {
-            return DS.focusImmersiveSurface.opacity(0.34)
-        }
-        return DS.vellumDeep.opacity(0.58)
-    }
-
-    private var scriptoriumMarginaliaContainerBorder: Color {
-        if DS.usesImmersiveFocusAppearance {
-            return DS.focusImmersiveBorder.opacity(0.62)
-        }
-        return DS.sepiaSubtle.opacity(0.86)
     }
 
     private var cosmoWritingMarginaliaSection: some View {
@@ -1358,7 +1295,7 @@ struct ContentFocusModeView: View {
             } label: {
                 HStack(spacing: DS.space6) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DS.caption.weight(.semibold))
                     Text("open assistant →")
                         .font(DS.dateSerif)
                         .italic()
@@ -1402,15 +1339,15 @@ struct ContentFocusModeView: View {
                             .frame(maxHeight: .infinity)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(idea.title ?? "untitled idea")
-                                .font(.system(size: 14, weight: .regular, design: .serif))
+                                .font(DS.dateSerif)
                                 .foregroundStyle(focusText)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .lineLimit(3)
                             if let body = idea.body, !body.isEmpty {
                                 Text(body)
                                     .font(DS.dateSerif)
                                     .italic()
                                     .foregroundStyle(focusTextMuted)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                    .lineLimit(3)
                             }
                         }
                     }
@@ -1420,6 +1357,7 @@ struct ContentFocusModeView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open source idea")
+            .help("Open source idea")
         }
     }
 
@@ -1527,7 +1465,7 @@ struct ContentFocusModeView: View {
 
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
                     .foregroundStyle(focusTextMuted)
                     .frame(width: 18, height: 18)
             }
@@ -1559,9 +1497,9 @@ struct ContentFocusModeView: View {
         VStack(alignment: .leading, spacing: DS.space8) {
             MarginaliaLabel("FRAMEWORK")
             Text(framework)
-                .font(.system(size: 14, weight: .regular, design: .serif))
+                .font(DS.dateSerif)
                 .foregroundStyle(focusText)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(3)
         }
     }
 
@@ -1569,10 +1507,33 @@ struct ContentFocusModeView: View {
     private var brandMarginaliaSection: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             MarginaliaLabel("BRAND")
-            brandPickerMenu
-            if let profile = clientProfileAtom,
+            HStack(spacing: DS.space6) {
+                brandPickerMenu
+                // The profile details are a disclosure, not a dump — Cosmo reads
+                // the full profile on demand, so the margin only needs the name.
+                if clientProfileAtom?.metadataValue(as: ClientProfileMetadata.self) != nil {
+                    Button {
+                        withAnimation(ProMotionSprings.snappy) {
+                            brandExpanded.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(DS.microIcon)
+                            .foregroundStyle(focusTextMuted)
+                            .rotationEffect(.degrees(brandExpanded ? 180 : 0))
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(brandExpanded ? "Hide brand notes" : "Show brand notes")
+                    .accessibilityLabel(brandExpanded ? "Hide brand notes" : "Show brand notes")
+                }
+            }
+            if brandExpanded,
+               let profile = clientProfileAtom,
                let meta = profile.metadataValue(as: ClientProfileMetadata.self) {
                 brandVoiceBullets(meta)
+                    .transition(.opacity.combined(with: .offset(y: -4)))
             }
         }
     }
@@ -1605,11 +1566,11 @@ struct ContentFocusModeView: View {
         } label: {
             HStack(spacing: DS.space6) {
                 Text(brandMenuTitle)
-                    .font(.system(size: 14, weight: .regular, design: .serif))
+                    .font(DS.dateSerif)
                     .foregroundStyle(focusText)
                     .fixedSize(horizontal: false, vertical: true)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(DS.microIcon)
                     .foregroundStyle(DS.gilt.opacity(0.7))
             }
             .contentShape(Rectangle())
@@ -1635,14 +1596,14 @@ struct ContentFocusModeView: View {
                 ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
                     HStack(alignment: .top, spacing: DS.space6) {
                         Text("·")
-                            .font(.system(size: 11))
+                            .font(DS.footnote)
                             .foregroundStyle(DS.gilt.opacity(0.6))
                             .padding(.top, 2)
                         Text(bullet)
                             .font(DS.dateSerif)
                             .italic()
                             .foregroundStyle(focusText)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(2)
                     }
                 }
             }
@@ -1682,7 +1643,7 @@ struct ContentFocusModeView: View {
             ForEach(Array(viewModel.state.hooks.enumerated()), id: \.offset) { idx, _ in
                 HStack(alignment: .top, spacing: DS.space8) {
                     Text(romanNumeral(for: idx + 1) + ".")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(DS.caption2.monospaced())
                         .foregroundStyle(DS.giltMuted)
                         .frame(width: 22, alignment: .leading)
                         .padding(.top, 2)
@@ -1736,20 +1697,20 @@ struct ContentFocusModeView: View {
         let words = counterValues.words
         let chars = counterValues.chars
         let isSelection = !selectedText.isEmpty
-        return VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .center, spacing: 2) {
             HStack(spacing: DS.space8) {
                 Text("\(words)")
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .font(DS.footnote.monospaced())
                     .foregroundStyle(focusTextMuted)
                 Text(words == 1 ? "word" : "words")
                     .font(DS.dateSerif)
                     .italic()
                     .foregroundStyle(focusTextMuted.opacity(0.7))
                 Text("·")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.sepiaSubtle)
                 Text("\(chars)")
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .font(DS.footnote.monospaced())
                     .foregroundStyle(focusTextMuted)
                 Text(chars == 1 ? "char" : "chars")
                     .font(DS.dateSerif)
@@ -1763,8 +1724,8 @@ struct ContentFocusModeView: View {
                     .transition(.opacity)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .padding(.leading, DS.space20)
+        // Centered under the manuscript (iA-style) — clear of both margins.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .padding(.bottom, DS.space20)
         .opacity(localDraftContent.isEmpty ? 0 : 1)
         .allowsHitTesting(false)
@@ -2067,15 +2028,7 @@ struct ContentFocusModeView: View {
             }
         }
         .frame(width: 320)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .fill(focusSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusMedium)
-                        .stroke(DS.borderActive, lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.5), radius: 16, y: 8)
-        )
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: DS.radiusMedium)
     }
 
     @ViewBuilder
@@ -3769,15 +3722,15 @@ struct ContentSwipeAttachmentEditor: View {
     private var header: some View {
         HStack(spacing: 10) {
             Image(systemName: "doc.on.doc.fill")
-                .font(.system(size: 14))
+                .font(DS.navTitle.weight(.regular))
                 .foregroundStyle(DS.entitySwipe)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Swipe References")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(DS.headline)
                     .foregroundStyle(DS.focusImmersiveText)
                 Text("Choose supporting swipes and the primary blueprint.")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.focusImmersiveTextMuted)
             }
 
@@ -3787,7 +3740,7 @@ struct ContentSwipeAttachmentEditor: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.buttonText.weight(.semibold))
                     .foregroundStyle(DS.focusImmersiveTextSecondary)
                     .padding(8)
                     .background(DS.focusImmersiveBorder, in: Circle())
@@ -3801,12 +3754,12 @@ struct ContentSwipeAttachmentEditor: View {
     private var searchField: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.focusImmersiveTextMuted)
 
             TextField("Search swipes by hook, topic, creator...", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.focusImmersiveText)
         }
         .padding(.horizontal, 20)
@@ -3820,7 +3773,7 @@ struct ContentSwipeAttachmentEditor: View {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Loading swipe library...")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                         .foregroundStyle(DS.focusImmersiveTextMuted)
                 }
                 .frame(maxWidth: .infinity)
@@ -3828,10 +3781,10 @@ struct ContentSwipeAttachmentEditor: View {
             } else if filteredSwipes.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 28))
+                        .font(DS.pageTitle.weight(.regular))
                         .foregroundStyle(DS.focusImmersiveTextMuted)
                     Text(searchText.isEmpty ? "No swipes found" : "No swipes match '\(searchText)'")
-                        .font(.system(size: 13))
+                        .font(DS.callout)
                         .foregroundStyle(DS.focusImmersiveTextMuted)
                 }
                 .frame(maxWidth: .infinity)
@@ -3878,7 +3831,7 @@ struct ContentSwipeAttachmentEditor: View {
                 toggleSelection(for: swipe.uuid)
             } label: {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
+                    .font(DS.title2.weight(.regular))
                     .foregroundStyle(isSelected ? DS.entityContent : DS.focusImmersiveTextMuted)
             }
             .buttonStyle(.plain)
@@ -3891,13 +3844,13 @@ struct ContentSwipeAttachmentEditor: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(swipe.title ?? "Untitled Swipe")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.buttonText)
                             .foregroundStyle(DS.focusImmersiveText)
                             .lineLimit(1)
 
                         if !hookText.isEmpty {
                             Text(String(hookText.prefix(100)))
-                                .font(.system(size: 11))
+                                .font(DS.footnote)
                                 .foregroundStyle(DS.focusImmersiveTextSecondary)
                                 .lineLimit(2)
                         }
@@ -3909,7 +3862,7 @@ struct ContentSwipeAttachmentEditor: View {
 
                 if let hookType = swipe.swipeAnalysis?.hookType {
                     Text(hookType.displayName)
-                        .font(.system(size: 9, weight: .medium))
+                        .font(DS.microBadge)
                         .foregroundStyle(DS.entitySwipe)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -3926,7 +3879,7 @@ struct ContentSwipeAttachmentEditor: View {
                 selectedBlueprintUUID = swipe.uuid
             } label: {
                 Text(isBlueprint ? "Blueprint" : "Set Blueprint")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2.weight(.semibold))
                     .foregroundStyle(isBlueprint ? DS.textOnAccent : DS.entityContent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -3952,18 +3905,21 @@ struct ContentSwipeAttachmentEditor: View {
 
         return Group {
             if let urlStr = thumbUrl, let url = URL(string: urlStr) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(DS.focusImmersiveBorder)
+                CachedAsyncImage(url: url, stableKey: swipe.uuid) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .empty, .failure:
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(DS.focusImmersiveBorder)
+                    }
                 }
             } else {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(DS.focusImmersiveBorder)
                     .overlay(
                         Image(systemName: "doc.text")
-                            .font(.system(size: 14))
+                            .font(DS.navTitle.weight(.regular))
                             .foregroundStyle(DS.focusImmersiveTextMuted)
                     )
             }
@@ -3975,7 +3931,7 @@ struct ContentSwipeAttachmentEditor: View {
     private var footer: some View {
         HStack(spacing: 12) {
             Text("\(selectedSwipeUUIDs.count) selected")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.focusImmersiveTextMuted)
 
             Spacer()
@@ -3984,7 +3940,7 @@ struct ContentSwipeAttachmentEditor: View {
                 dismiss()
             } label: {
                 Text("Cancel")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
                     .foregroundStyle(DS.focusImmersiveTextSecondary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
@@ -4009,7 +3965,7 @@ struct ContentSwipeAttachmentEditor: View {
                             .tint(DS.textOnAccent)
                     }
                     Text("Save References")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DS.buttonText.weight(.semibold))
                         .foregroundStyle(DS.textOnAccent)
                 }
                 .padding(.horizontal, 16)

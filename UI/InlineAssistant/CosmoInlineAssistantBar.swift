@@ -2,8 +2,13 @@ import AppKit
 import SwiftUI
 
 enum CosmoInlineAssistantBarVisibilityPolicy {
-    static func shouldShow(isInlinePaneOpen: Bool) -> Bool {
-        !isInlinePaneOpen
+    static func shouldShow(isInlinePaneOpen: Bool, focusedEntityType: EntityType? = nil) -> Bool {
+        // The Deep Dive / Inquiry surfaces have their own permanent capture
+        // dock — the global assistant orb would duplicate it there.
+        if focusedEntityType == .deepDive || focusedEntityType == .inquirySession {
+            return false
+        }
+        return !isInlinePaneOpen
     }
 }
 
@@ -105,6 +110,7 @@ struct CosmoInlineAssistantBar: View {
 
     @State private var isComposerFocused = false
     @State private var isHovering = false
+    @State private var isStudioPresented = false
     @State private var isPinnedOpen = false
     @State private var isContextMenuVisible = false
     @State private var isSkillMenuVisible = false
@@ -130,6 +136,9 @@ struct CosmoInlineAssistantBar: View {
                 isHovering = hovering
                 if hovering {
                     isPinnedOpen = false
+                    // Hover signals intent — write the prompt-cache prefix now so the
+                    // first real request streams from a warm cache.
+                    CosmoInlineAssistantCacheWarmer.warmIfNeeded()
                 } else {
                     collapseIfIdle()
                 }
@@ -145,9 +154,13 @@ struct CosmoInlineAssistantBar: View {
             }
             .onChange(of: store.composerText) { _, text in
                 syncComposerMenus(text: text)
+                store.refreshSkillSuggestion()
             }
             .onAppear { installMouseDownMonitorIfNeeded() }
             .onDisappear { removeMouseDownMonitor() }
+            .sheet(isPresented: $isStudioPresented) {
+                CosmoAssistantStudioView { isStudioPresented = false }
+            }
             .accessibilityElement(children: .contain)
     }
 
@@ -195,17 +208,42 @@ struct CosmoInlineAssistantBar: View {
         .padding(.vertical, 8)
     }
 
+    /// The orb wears the assistant's state: each phase gets its own symbol and
+    /// motion so progress reads as character, not a generic spinner.
     private var iconView: some View {
-        Image(systemName: store.isProcessing ? "sparkles" : "sparkle")
+        Image(systemName: phaseSymbolName)
             .font(DS.title2)
-            .foregroundStyle(DS.accent)
+            .foregroundStyle(phaseIconColor)
             .frame(width: 28, height: 28)
-            .symbolEffect(.pulse, options: .repeating, value: store.isProcessing)
+            .symbolEffect(.pulse, options: .repeating, isActive: store.phase.isWorking)
+            .contentTransition(.symbolEffect(.replace))
+            .animation(ProMotionSprings.snappy, value: phaseSymbolName)
             .accessibilityHidden(true)
     }
 
+    private var phaseSymbolName: String {
+        switch store.phase {
+        case .idle: return "sparkle"
+        case .planning: return "sparkles"
+        case .gathering: return "magnifyingglass"
+        case .drafting: return "pencil.and.outline"
+        case .reviewing: return "checkmark.circle"
+        }
+    }
+
+    private var phaseIconColor: Color {
+        store.phase == .reviewing ? DS.green : DS.accent
+    }
+
     private var trailingControls: some View {
+        controlsRow
+            .animation(ProMotionSprings.snappy, value: store.selectedSkillID)
+    }
+
+    private var controlsRow: some View {
         HStack(spacing: 12) {
+            activeSkillChip
+            skillSuggestionChip
             if store.isProcessing {
                 CosmoInlineAssistantWorkingStatusView(
                     leadingText: CosmoInlineAssistantBarProcessingPolicy.leadingText(isProcessing: store.isProcessing),
@@ -229,6 +267,13 @@ struct CosmoInlineAssistantBar: View {
                     },
                     onDismissMentionOverlayFromBackspace: {
                         dismissInlineMenus(trimActiveQuery: false)
+                    },
+                    onTab: {
+                        guard store.skillSuggestion != nil else { return false }
+                        withAnimation(ProMotionSprings.snappy) {
+                            store.acceptSkillSuggestion()
+                        }
+                        return true
                     }
                 )
                     .frame(maxWidth: .infinity)
@@ -259,6 +304,84 @@ struct CosmoInlineAssistantBar: View {
             .disabled(!canSubmit)
             .help("Send")
             .accessibilityLabel("Send")
+        }
+    }
+
+    /// Visible "skill session" indicator: once a skill is invoked it stays
+    /// active for every turn (sticky session), so the bar wears the skill's
+    /// name like an agent badge. ✕ exits skill mode without clearing the chat.
+    @ViewBuilder
+    private var activeSkillChip: some View {
+        if let skillID = store.selectedSkillID,
+           let skill = skillRegistry.skill(id: skillID) {
+            HStack(spacing: DS.space4) {
+                Image(systemName: skill.icon)
+                    .font(DS.caption2.weight(.medium))
+                    .accessibilityHidden(true)
+                Text(skill.name)
+                    .font(DS.caption.weight(.semibold))
+                    .lineLimit(1)
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        store.selectedSkillID = nil
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(DS.caption2.weight(.semibold))
+                        .frame(width: 14, height: 14)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .cosmoClickCursor()
+                .help("Exit \(skill.name) mode (or type /clear)")
+                .accessibilityLabel("Exit \(skill.name) skill mode")
+            }
+            .foregroundStyle(DS.accent)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
+            .background(DS.accentSoft, in: Capsule())
+            .transition(.scale(scale: 0.9, anchor: .leading).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(skill.name) skill session active")
+        }
+    }
+
+    /// Ghost chip for the embedding-routed skill suggestion. Tab (or click)
+    /// confirms; it never auto-applies — explicit selection always wins.
+    @ViewBuilder
+    private var skillSuggestionChip: some View {
+        if store.selectedSkillID == nil,
+           !store.isProcessing,
+           let suggestion = store.skillSuggestion {
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    store.acceptSkillSuggestion()
+                }
+            } label: {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: suggestion.icon)
+                        .font(DS.caption2.weight(.medium))
+                        .accessibilityHidden(true)
+                    Text(suggestion.skillName)
+                        .font(DS.caption.weight(.medium))
+                        .lineLimit(1)
+                    Text("⇥")
+                        .font(DS.caption2.weight(.semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, DS.space8)
+                .padding(.vertical, DS.space4)
+                .background(.quaternary.opacity(0.5), in: Capsule())
+                .overlay(Capsule().strokeBorder(DS.border, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .cosmoClickCursor()
+            .help("Press Tab to use the \(suggestion.skillName) skill")
+            .accessibilityLabel("Suggested skill: \(suggestion.skillName). Press Tab to use it.")
+            .transition(.scale(scale: 0.92, anchor: .leading).combined(with: .opacity))
         }
     }
 
@@ -302,6 +425,10 @@ struct CosmoInlineAssistantBar: View {
                 },
                 onCreateSkill: {
                     startSkillBuilder()
+                },
+                onOpenStudio: {
+                    dismissSkillMenu(trimSlashQuery: true)
+                    isStudioPresented = true
                 },
                 onDismiss: {
                     dismissSkillMenu(trimSlashQuery: true)
@@ -658,6 +785,7 @@ private struct CosmoInlineAssistantSkillMenu: View {
     let onSelect: (CosmoInlineSkillDefinition) -> Void
     let onClearSession: () -> Void
     let onCreateSkill: () -> Void
+    let onOpenStudio: () -> Void
     let onDismiss: () -> Void
 
     @State private var selectedRoute: CosmoInlineAssistantRoute?
@@ -815,6 +943,15 @@ private struct CosmoInlineAssistantSkillMenu: View {
                     subtitle: "Start a skill-builder prompt",
                     accent: DS.accent,
                     action: onCreateSkill
+                )
+
+                utilityRow(
+                    id: "studio",
+                    icon: "slider.horizontal.3",
+                    title: "Assistant Studio...",
+                    subtitle: "Manage skills, personality, and metrics",
+                    accent: DS.accent,
+                    action: onOpenStudio
                 )
             }
             .padding(12)

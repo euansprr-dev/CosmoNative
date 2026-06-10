@@ -1828,6 +1828,33 @@ class CosmoDatabase: ObservableObject {
             print("✅ shared context session tables created")
         }
 
+        migrator.registerMigration("create_inline_assistant_skills") { db in
+            print("🔨 Creating inline_assistant_skills table...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS inline_assistant_skills (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    definition TEXT NOT NULL,
+                    trigger_embedding BLOB,
+                    is_enabled INTEGER NOT NULL DEFAULT 1,
+                    is_builtin INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    is_deleted INTEGER NOT NULL DEFAULT 0,
+                    _local_version INTEGER DEFAULT 1,
+                    _server_version INTEGER DEFAULT 0,
+                    _sync_version INTEGER DEFAULT 0,
+                    _local_pending INTEGER DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_inline_assistant_skills_enabled
+                    ON inline_assistant_skills(is_enabled, is_deleted);
+                CREATE INDEX IF NOT EXISTS idx_inline_assistant_skills_updated
+                    ON inline_assistant_skills(updated_at DESC);
+            """)
+            print("✅ inline_assistant_skills table created")
+        }
+
         return migrator
     }
 

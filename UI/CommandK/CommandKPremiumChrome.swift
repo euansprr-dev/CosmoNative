@@ -26,6 +26,14 @@ enum CommandKMetrics {
     static let domainCardHeight: CGFloat = 196
     static let recentCardMinWidth: CGFloat = 196
     static let compactMaxHeight: CGFloat = 600
+    static let railWidth: CGFloat = 360
+
+    // Expanded-domain masthead title placement
+    static let mastheadTitleLeadingWide: CGFloat = 46
+    static let mastheadTitleLeadingTight: CGFloat = 34
+    static let mastheadTitleTopDefault: CGFloat = 42
+    static let mastheadTitleTopIdeas: CGFloat = 48
+    static let mastheadDatabaseTitleTop: CGFloat = 36
 }
 
 enum CommandKPreviewPaper {
@@ -391,11 +399,15 @@ private struct CommandKSectionModifier: ViewModifier {
 }
 
 private struct CortexSearchBarPanelModifier: ViewModifier {
+    var glassID: String?
+    var glassNamespace: Namespace.ID?
+
     func body(content: Content) -> some View {
         CosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .globalSidebar,
-            cornerRadius: CommandKMetrics.searchBarHeight / 2
+            cornerRadius: CommandKMetrics.searchBarHeight / 2,
+            glassID: glassID,
+            glassNamespace: glassNamespace
         ) {
             content
         }
@@ -507,8 +519,8 @@ extension View {
         modifier(CommandKSectionModifier(cornerRadius: cornerRadius))
     }
 
-    func cortexSearchBarPanel() -> some View {
-        modifier(CortexSearchBarPanelModifier())
+    func cortexSearchBarPanel(glassID: String? = nil, in namespace: Namespace.ID? = nil) -> some View {
+        modifier(CortexSearchBarPanelModifier(glassID: glassID, glassNamespace: namespace))
     }
 
     /// Standard right-click menu for any atom card in Command-K

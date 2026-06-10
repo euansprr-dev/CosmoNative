@@ -132,7 +132,7 @@ struct MainView: View {
     @State private var commandKReturnTab: CommandKTab? = nil
     @State private var commandKBehindFocusMode = false
     @State private var commandKSearchFocusRequest = 0
-    @StateObject private var commandKViewModel = CommandKViewModel()
+    @State private var commandKViewModel = CommandKViewModel()
 
     // Block context menu (right-click on block)
     @StateObject private var blockFrameTracker = CanvasBlockFrameTracker()
@@ -163,11 +163,6 @@ struct MainView: View {
     @State private var isHoveringSidebarRevealTrigger = false
     @State private var isHoveringSidebarPanel = false
     @State private var sidebarHoverCloseTask: Task<Void, Never>?
-    @State private var isSidebarContentPushAnimating = false
-    @State private var sidebarContentPushAnimationTask: Task<Void, Never>?
-    @State private var canvasSceneTint: CosmoGlassSceneTint = .fallback
-    @State private var canvasSceneMaterial: CosmoGlassSceneMaterial = .fallback
-    @State private var routeSceneSignals: [CosmoGlassSceneSignal] = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
@@ -236,7 +231,10 @@ struct MainView: View {
             }
             .zIndex(40)
 
-            if CosmoInlineAssistantBarVisibilityPolicy.shouldShow(isInlinePaneOpen: isInlineAssistantPaneOpen) {
+            if CosmoInlineAssistantBarVisibilityPolicy.shouldShow(
+                isInlinePaneOpen: isInlineAssistantPaneOpen,
+                focusedEntityType: appState.focusedEntity?.type
+            ) {
                 // Bottom assistant composer: answers open the side pane, actions stay as diff proposals.
                 VStack {
                     Spacer()
@@ -265,7 +263,7 @@ struct MainView: View {
                 )
                     .opacity(showCommandK ? 1 : 0)
                     .allowsHitTesting(showCommandK)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .transition(.opacity)
                     .zIndex(200)
                     .animation(.spring(response: 0.2), value: showCommandK)
             }
@@ -927,12 +925,10 @@ struct MainView: View {
             .background {
                 appSceneBackdrop
             }
-            .coordinateSpace(name: CosmoGlassSceneMaterial.coordinateSpaceName)
             .animation(sidebarAnimation, value: isSidebarHidden)
             .animation(sidebarAnimation, value: isSidebarHoverRevealed)
             .animation(sidebarAnimation, value: sidebarPanelWidth)
             .animation(routeContentTransitionAnimation, value: currentDestination)
-            .animation(sceneTintAnimation, value: sidebarSceneTintAnimationKey)
             .onAppear {
                 syncSidebarContext(with: currentDestination)
                 restoreSidebarState()
@@ -941,7 +937,6 @@ struct MainView: View {
             }
             .onDisappear {
                 cancelSidebarHoverClose()
-                cancelSidebarContentPushFreeze()
             }
             .onChange(of: geo.size) { _, newSize in
                 updateSidebarInteractionWidth(
@@ -961,41 +956,6 @@ struct MainView: View {
             .onChange(of: sidebarPanelWidth) { _, _ in
                 updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
             }
-            .onChange(of: contentPushOffset) { oldValue, newValue in
-                guard oldValue != newValue else { return }
-                freezeRouteSceneSignalsDuringSidebarPush()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .cosmoGlassSceneTintDidChange)) { notification in
-                guard let tint = notification.object as? CosmoGlassSceneTint else { return }
-                canvasSceneTint = tint
-                let material = CosmoGlassSceneMaterial(fallbackTint: tint, mode: .canvasEdgeResponse)
-                if !canvasSceneMaterial.isVisuallyEquivalent(to: material) {
-                    canvasSceneMaterial = material
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .cosmoGlassSceneMaterialDidChange)) { notification in
-                guard let material = notification.object as? CosmoGlassSceneMaterial else { return }
-                canvasSceneTint = material.representativeTint
-                if !canvasSceneMaterial.isVisuallyEquivalent(to: material) {
-                    canvasSceneMaterial = material
-                }
-            }
-            .onPreferenceChange(CosmoGlassSceneSignalPreferenceKey.self) { signals in
-                guard MainSidebarSceneSignalPolicy.shouldAcceptRouteSceneSignals(
-                    isContentPushAnimating: isSidebarContentPushAnimating
-                ) else { return }
-
-                let cappedSignals = MainSidebarSceneSignalPolicy.routeSignals(
-                    from: signals,
-                    sidebarReservedWidth: sidebarReservedWidth
-                )
-                if MainSidebarSceneSignalPolicy.shouldUpdateRouteSignals(
-                    current: routeSceneSignals,
-                    next: cappedSignals
-                ) {
-                    routeSceneSignals = cappedSignals
-                }
-            }
         }
     }
 
@@ -1007,8 +967,6 @@ struct MainView: View {
             panelWidth: $sidebarPanelWidth,
             thinkspaceManager: thinkspaceManager,
             commandCenterViewModel: commandCenterViewModel,
-            sceneTint: activeSidebarSceneTint,
-            sceneMaterial: activeSidebarSceneMaterial,
             cornerRadius: cornerRadius,
             sidebarButtonTitle: sidebarButtonTitle,
             sidebarButtonHelp: sidebarButtonHelp,
@@ -1068,7 +1026,6 @@ struct MainView: View {
         cancelSidebarHoverClose()
         isHoveringSidebarRevealTrigger = false
         isHoveringSidebarPanel = false
-        freezeRouteSceneSignalsIfContentWillPush()
         withAnimation(sidebarAnimation) {
             isSidebarHidden = true
             isSidebarHoverRevealed = false
@@ -1159,7 +1116,6 @@ struct MainView: View {
         cancelSidebarHoverClose()
         isHoveringSidebarRevealTrigger = false
         isHoveringSidebarPanel = false
-        freezeRouteSceneSignalsIfContentWillPush()
         withAnimation(sidebarAnimation) {
             isSidebarHidden.toggle()
             isSidebarHoverRevealed = false
@@ -1170,7 +1126,6 @@ struct MainView: View {
         cancelSidebarHoverClose()
         isHoveringSidebarRevealTrigger = false
         isHoveringSidebarPanel = false
-        freezeRouteSceneSignalsIfContentWillPush()
         withAnimation(sidebarAnimation) {
             isSidebarHidden = false
             isSidebarHoverRevealed = false
@@ -1209,7 +1164,6 @@ struct MainView: View {
 
         guard isSidebarHidden, !isSidebarHoverRevealed else { return }
 
-        freezeRouteSceneSignalsIfContentWillPush()
         withAnimation(sidebarAnimation) {
             isSidebarHoverRevealed = true
         }
@@ -1236,7 +1190,6 @@ struct MainView: View {
                 isHoveringSidebarPanel: isHoveringSidebarPanel
             ) else { return }
 
-            freezeRouteSceneSignalsIfContentWillPush()
             withAnimation(sidebarAnimation) {
                 isSidebarHoverRevealed = false
             }
@@ -1246,33 +1199,6 @@ struct MainView: View {
     private func cancelSidebarHoverClose() {
         sidebarHoverCloseTask?.cancel()
         sidebarHoverCloseTask = nil
-    }
-
-    private func freezeRouteSceneSignalsIfContentWillPush() {
-        if case .thinkspace = currentDestination, appState.focusedEntity == nil {
-            return
-        }
-
-        freezeRouteSceneSignalsDuringSidebarPush()
-    }
-
-    private func freezeRouteSceneSignalsDuringSidebarPush() {
-        sidebarContentPushAnimationTask?.cancel()
-        isSidebarContentPushAnimating = true
-
-        sidebarContentPushAnimationTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 420_000_000)
-            guard !Task.isCancelled else { return }
-
-            isSidebarContentPushAnimating = false
-            sidebarContentPushAnimationTask = nil
-        }
-    }
-
-    private func cancelSidebarContentPushFreeze() {
-        sidebarContentPushAnimationTask?.cancel()
-        sidebarContentPushAnimationTask = nil
-        isSidebarContentPushAnimating = false
     }
 
     private func syncSidebarContext(with destination: SidebarDestination) {
@@ -1309,94 +1235,6 @@ struct MainView: View {
                 .blendMode(DS.palette.isDark ? .screen : .multiply)
                 .ignoresSafeArea()
         }
-    }
-
-    private var activeSidebarSceneTint: CosmoGlassSceneTint {
-        if let focusedEntity = appState.focusedEntity {
-            return focusModeSceneTint(for: focusedEntity.type)
-        }
-
-        switch currentDestination {
-        case .thinkspace:
-            return canvasSceneTint.dampened(0.58)
-        case .commandCenter, .inbox, .codex, .discover, .swipeFile:
-            return .neutral
-        }
-    }
-
-    private var activeSidebarSceneMaterial: CosmoGlassSceneMaterial {
-        if let focusedEntity = appState.focusedEntity {
-            let tint = focusModeSceneTint(for: focusedEntity.type)
-            return CosmoGlassSceneMaterial(fallbackTint: tint, mode: .rimAccentOnly)
-        }
-
-        switch currentDestination {
-        case .thinkspace:
-            return mergedSidebarSceneMaterial(
-                base: canvasSceneMaterial.dampened(0.82),
-                extraSignals: MainSidebarSceneSignalPolicy.canvasSignals(from: routeSceneSignals)
-            )
-        case .commandCenter, .inbox, .discover, .swipeFile:
-            return sidebarRouteSceneMaterial
-        case .codex:
-            return .neutral
-        }
-    }
-
-    private var sidebarRouteSceneMaterial: CosmoGlassSceneMaterial {
-        guard !routeSceneSignals.isEmpty else { return .neutral }
-
-        let signals = Array(routeSceneSignals.prefix(8))
-        let fallbackTint = CosmoGlassSceneTint(
-            primary: signals.first?.color ?? DS.textMuted,
-            secondary: signals.dropFirst().first?.color ?? DS.surfaceElevated,
-            tertiary: signals.dropFirst(2).first?.color ?? DS.borderActive,
-            intensity: 0.12,
-            edgeIntensity: 0.22
-        )
-
-        return CosmoGlassSceneMaterial(
-            fallbackTint: fallbackTint,
-            signals: signals,
-            busyness: min(Double(signals.count) / 8.0, 1),
-            luminanceBias: DS.palette.isDark ? -0.06 : 0.04,
-            mode: .canvasEdgeResponse
-        )
-    }
-
-    private func mergedSidebarSceneMaterial(
-        base: CosmoGlassSceneMaterial,
-        extraSignals: [CosmoGlassSceneSignal]
-    ) -> CosmoGlassSceneMaterial {
-        let visibleExtras = extraSignals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
-        guard !visibleExtras.isEmpty else { return base }
-
-        let mergedSignals = Array((visibleExtras + base.signals).prefix(8))
-        return CosmoGlassSceneMaterial(
-            fallbackTint: base.fallbackTint,
-            signals: mergedSignals,
-            busyness: min(Double(mergedSignals.count) / 8.0, 1),
-            luminanceBias: base.luminanceBias,
-            mode: .canvasEdgeResponse
-        )
-    }
-
-    private func focusModeSceneTint(for type: EntityType) -> CosmoGlassSceneTint {
-        CosmoGlassSceneTint(
-            primary: type.color,
-            secondary: DS.textMuted,
-            tertiary: DS.surfaceElevated,
-            intensity: 0.10,
-            edgeIntensity: 0.16
-        )
-    }
-
-    private var sceneTintAnimation: Animation? {
-        reduceMotion ? nil : .easeInOut(duration: 0.32)
-    }
-
-    private var sidebarSceneTintAnimationKey: String {
-        "\(currentDestination)-\(appState.focusedEntity?.type.rawValue ?? "scene")"
     }
 
     /// Wire up cross-thinkspace drag manager callbacks

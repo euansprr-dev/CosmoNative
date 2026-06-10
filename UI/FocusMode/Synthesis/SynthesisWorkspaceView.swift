@@ -11,6 +11,8 @@ struct SynthesisWorkspaceView: View {
     @StateObject private var engine = SynthesisEngine()
     @State private var editableArgument: String = ""
     @State private var showEvidence = false
+    @State private var argumentReviewProposal: CosmoAssistantProposal?
+    @State private var editableSurface: SynthesisEditableSurface?
 
     var body: some View {
         ZStack {
@@ -45,6 +47,26 @@ struct SynthesisWorkspaceView: View {
         .task {
             let result = await engine.synthesize(atoms: sourceAtoms)
             editableArgument = result.synthesizedArgument
+        }
+        .onAppear {
+            let surface = SynthesisEditableSurface(
+                textRef: { editableArgument },
+                applyText: { editableArgument = $0 }
+            )
+            editableSurface = surface
+            CosmoEditableSurfaceRegistry.shared.register(surface)
+        }
+        .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
+            argumentReviewProposal = proposals.last { proposal in
+                proposal.surfaceID == SynthesisEditableSurface.surfaceIdentifier
+                    && proposal.hasReviewableOperations
+            }
+        }
+        .onDisappear {
+            CosmoEditableSurfaceRegistry.shared.unregister(
+                surfaceID: SynthesisEditableSurface.surfaceIdentifier
+            )
+            editableSurface = nil
         }
         .onExitCommand {
             onDismiss()
@@ -234,10 +256,16 @@ struct SynthesisWorkspaceView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(DS.textSecondary)
 
-            TextEditor(text: $editableArgument)
-                .font(.system(size: 14, weight: .regular))
-                .foregroundColor(DS.text)
-                .scrollContentBackground(.hidden)
+            if let review = argumentReviewProposal {
+                // Inline assistant review — the argument becomes the diff until
+                // every change is accepted or rejected.
+                CosmoInlineDiffReviewView(
+                    store: CosmoInlineAssistantStore.shared,
+                    proposal: review,
+                    sourceText: editableArgument,
+                    bodyFont: .system(size: 14),
+                    textColor: DS.text
+                )
                 .padding(12)
                 .background(DS.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -245,7 +273,20 @@ struct SynthesisWorkspaceView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(DS.border, lineWidth: 1)
                 )
-                .frame(minHeight: 160)
+            } else {
+                TextEditor(text: $editableArgument)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(DS.text)
+                    .scrollContentBackground(.hidden)
+                    .padding(12)
+                    .background(DS.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(DS.border, lineWidth: 1)
+                    )
+                    .frame(minHeight: 160)
+            }
         }
     }
 
@@ -488,5 +529,65 @@ private struct FlowLayout: Layout {
         }
 
         return (CGSize(width: totalWidth, height: currentY + lineHeight), positions)
+    }
+}
+
+// MARK: - Inline Assistant Surface
+
+/// Exposes the synthesized argument as an inline-assistant editable surface.
+/// The workspace is a single transient session, so the surface ID is fixed —
+/// registering a new session replaces the old one.
+@MainActor
+final class SynthesisEditableSurface: CosmoEditableSurfaceProvider {
+    static let surfaceIdentifier = "synthesis:workspace"
+    static let targetIdentifier = "synthesis:workspace:argument"
+
+    private let textRef: () -> String
+    private let applyText: (String) -> Void
+
+    init(textRef: @escaping () -> String, applyText: @escaping (String) -> Void) {
+        self.textRef = textRef
+        self.applyText = applyText
+    }
+
+    var surfaceID: String { Self.surfaceIdentifier }
+
+    func editableSnapshot() -> CosmoEditableSourceSnapshot {
+        let text = textRef()
+        return CosmoEditableSourceSnapshot(
+            surfaceID: Self.surfaceIdentifier,
+            targetID: Self.targetIdentifier,
+            kind: .text,
+            title: "Synthesized argument",
+            text: text,
+            sourceHash: CosmoEditableSurfaceHasher.hash(text),
+            anchors: [
+                .init(id: "argument", label: "Argument", utf16Start: 0, utf16Length: text.utf16.count)
+            ]
+        )
+    }
+
+    func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
+        guard operation.targetID == Self.targetIdentifier else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Target changed"
+            )
+        }
+
+        let text = textRef()
+        guard let placement = CosmoInlineTextEditResolver.placement(for: operation, in: text) else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Original text not found"
+            )
+        }
+
+        var updated = text
+        updated.replaceSubrange(placement.range, with: placement.replacementText)
+        applyText(updated)
+        return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
+    }
+
+    func reject(operation: CosmoAssistantProposalOperation) async -> CosmoEditableOperationResult {
+        CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Rejected")
     }
 }

@@ -205,12 +205,37 @@ final class InquiryPlacementEngineTests: XCTestCase {
 
         XCTAssertEqual(plan.intent, .conceptExploration)
         XCTAssertTrue(queries.contains("pranayama meaning"))
-        XCTAssertTrue(queries.contains("prana"))
-        XCTAssertTrue(queries.contains("youtube"))
+        XCTAssertTrue(queries.contains("prana"))            // Seeded from anchor terms
+        XCTAssertTrue(plan.queries.contains { $0.lane == .teacherLecture && $0.providers.contains(.youtube) })
+        XCTAssertTrue(plan.queries.contains { $0.query.hasSuffix("podcast") && $0.providers.contains(.youtube) })
         XCTAssertTrue(queries.contains("book"))
-        XCTAssertTrue(queries.contains("patanjali") || queries.contains("hatha yoga pradipika"))
+        XCTAssertTrue(queries.contains("classic text translation commentary"))
         XCTAssertFalse(queries.contains("randomized controlled trial"))
         XCTAssertFalse(queries.contains("mental disorders"))
+    }
+
+    func testLectureQueriesAreCondensedKeywords() {
+        let profile = InquiryBranchResearchProfile(
+            deepDiveTitle: "Self-Improvement",
+            activeQuestionTitle: "What is the peak human mental & physical state and how can it be achieved?",
+            activeQuestionUUID: "q-peak",
+            branchNodeId: "node-peak",
+            ancestorTitles: [],
+            claims: [],
+            evidence: []
+        )
+        let plan = DeepScoutIntentPlanner.plan(for: profile, mode: .deepScout)
+        let lectureQueries = plan.queries.filter { $0.lane == .teacherLecture }.map(\.query)
+
+        XCTAssertFalse(lectureQueries.isEmpty)
+        for query in lectureQueries {
+            // Short keyword queries like a human would type — no sentence-length
+            // searches and no "teacher lecture youtube" noise.
+            XCTAssertLessThanOrEqual(query.split(separator: " ").count, 6, "query too long: \(query)")
+            XCTAssertFalse(query.contains("youtube"))
+            XCTAssertFalse(query.contains("how can it be"))
+        }
+        XCTAssertEqual(DeepScoutIntentPlanner.condensed("the peak human mental & physical state and how can it be achieved"), "peak human mental physical state")
     }
 
     func testDeepScoutV2KeepsClinicalQueriesForClinicalQuestion() {
@@ -357,8 +382,8 @@ final class InquiryPlacementEngineTests: XCTestCase {
         let joined = queries.joined(separator: "\n").lowercased()
 
         XCTAssertTrue(joined.contains("book"))
-        XCTAssertTrue(joined.contains("youtube"))
-        XCTAssertTrue(joined.contains("patanjali") || joined.contains("hatha yoga pradipika"))
+        XCTAssertTrue(joined.contains("podcast"))
+        XCTAssertTrue(joined.contains("classic text translation commentary"))
         XCTAssertFalse(joined.contains("randomized controlled trial"))
         XCTAssertFalse(joined.contains("mental disorders"))
     }
@@ -402,11 +427,14 @@ final class InquiryPlacementEngineTests: XCTestCase {
         )
 
         let queries = InquirySourceRecommendationEngine.scoutQueries(for: profile)
+        let plan = DeepScoutIntentPlanner.plan(for: profile, mode: .deepScout)
 
         XCTAssertGreaterThanOrEqual(queries.count, 4)
         XCTAssertTrue(queries.allSatisfy { $0.localizedCaseInsensitiveContains("breath") })
         XCTAssertTrue(queries.contains { $0.localizedCaseInsensitiveContains("review") || $0.localizedCaseInsensitiveContains("meta-analysis") })
-        XCTAssertTrue(queries.contains { $0.localizedCaseInsensitiveContains("youtube") || $0.localizedCaseInsensitiveContains("video") })
+        // Video coverage now comes from condensed lecture-lane queries against
+        // the YouTube provider rather than a literal "youtube" query suffix.
+        XCTAssertTrue(plan.queries.contains { $0.lane == .teacherLecture && $0.providers.contains(.youtube) })
     }
 
     func testDeepScoutActivityPlanNamesVisibleSearchSteps() {
@@ -593,7 +621,10 @@ final class InquiryPlacementEngineTests: XCTestCase {
             branchNodeId: "node-prana",
             ancestorTitles: [],
             claims: [],
-            evidence: []
+            evidence: [],
+            // Mirrors what the workspace VM derives from the deep dive title,
+            // aliases, and lexicon — the planner/ranker no longer hardcode topics.
+            anchorTerms: ["breathwork", "pranayama", "prana"]
         )
     }
 
@@ -637,5 +668,106 @@ final class InquiryPlacementEngineTests: XCTestCase {
             )
         )
         return atom
+    }
+}
+
+final class ResearchTreeDedupTests: XCTestCase {
+    func testAppendRootQuestionDedupsByNormalizedLabel() {
+        var tree = ResearchTreeDocument.bootstrap(rootQuestionAtomUUID: nil)
+        let first = tree.appendRootQuestion(label: "What is pranayama?")
+        let duplicate = tree.appendRootQuestion(label: "what is pranayama")
+
+        XCTAssertEqual(first, duplicate)
+        XCTAssertEqual(tree.rootQuestionNodeIds.count, 2) // bootstrap placeholder + one real
+    }
+
+    func testAppendRootQuestionDedupsByAtomUUID() {
+        var tree = ResearchTreeDocument.bootstrap(rootQuestionAtomUUID: nil)
+        let first = tree.appendRootQuestion(atomUUID: "q-1", label: "What is pranayama?")
+        let duplicate = tree.appendRootQuestion(atomUUID: "q-1", label: "Renamed question")
+
+        XCTAssertEqual(first, duplicate)
+    }
+
+    func testAppendRootQuestionBackfillsAtomUUIDOnLabelMatch() {
+        var tree = ResearchTreeDocument.bootstrap(rootQuestionAtomUUID: nil)
+        let first = tree.appendRootQuestion(label: "What is pranayama?")
+        let resolved = tree.appendRootQuestion(atomUUID: "q-9", label: "What is pranayama?")
+
+        XCTAssertEqual(first, resolved)
+        XCTAssertEqual(tree.nodes[first]?.atomUUID, "q-9")
+    }
+
+    func testDistinctQuestionsStillAppend() {
+        var tree = ResearchTreeDocument.bootstrap(rootQuestionAtomUUID: nil)
+        let first = tree.appendRootQuestion(label: "What is pranayama?")
+        let second = tree.appendRootQuestion(label: "How does CO2 tolerance adapt?")
+
+        XCTAssertNotEqual(first, second)
+    }
+}
+
+final class ConnectionSectionCaptureTests: XCTestCase {
+    func testEverySectionKindHasADockPrefix() {
+        let cases: [(String, InquiryDockRouteIntent, ExtractKind)] = [
+            ("goal: feel calm under pressure", .goal, .goal),
+            ("problem: shallow breathing all day", .problem, .problem),
+            ("benefit: better sleep within a week", .benefit, .benefit),
+            ("example: monks slowing heart rate on demand", .example, .example),
+            ("mechanism: long exhales activate the vagus nerve", .mechanism, .mechanism),
+            ("objection: most studies are tiny", .objection, .objection),
+            ("principle: exhale longer than you inhale", .principle, .principle),
+            ("assumption: nasal breathing is always better", .assumption, .assumption),
+            ("quote: breath is the bridge", .quote, .quote),
+            ("reference: The Oxygen Advantage", .reference, .reference),
+            ("ref: Breath by James Nestor", .reference, .reference),
+            ("concept: CO2 tolerance", .term, .term)
+        ]
+        for (input, expectedIntent, expectedKind) in cases {
+            let parsed = InquiryDockPrefixParser.parse(input)
+            XCTAssertEqual(parsed.intent, expectedIntent, "for input: \(input)")
+            XCTAssertEqual(parsed.extractKind, expectedKind, "for input: \(input)")
+            XCTAssertFalse(parsed.body.isEmpty, "for input: \(input)")
+        }
+    }
+
+    func testNewKindsRouteToTheirConnectionSections() async {
+        func extractAtom(_ uuid: String, body: String, kind: ExtractKind) -> Atom {
+            var atom = Atom.new(type: .extract, title: body, body: body)
+            atom.uuid = uuid
+            return atom.withMetadata(ExtractMetadata(kind: kind, parentQuestionUUID: "q-1"))
+        }
+        let session = Atom.new(type: .inquirySession, title: "Session")
+        let assignment = ConceptResolver.ConceptAssignment(
+            conceptKey: "peak experience",
+            conceptName: "Peak experience",
+            aliases: [],
+            action: .createNew,
+            extractUUIDs: ["e-goal", "e-problem", "e-benefit"],
+            rationale: "",
+            confidence: 0.9
+        )
+        let candidates = await ConnectionRoutingEngine().proposals(
+            forSession: session,
+            assignments: [assignment],
+            extracts: [
+                extractAtom("e-goal", body: "Reach flow on demand", kind: .goal),
+                extractAtom("e-problem", body: "Constant distraction", kind: .problem),
+                extractAtom("e-benefit", body: "Deeper recovery", kind: .benefit)
+            ]
+        )
+        let sections = candidates.first?.proposedSections ?? [:]
+        XCTAssertTrue(sections[.goal]?.contains { $0.body == "Reach flow on demand" } ?? false)
+        XCTAssertTrue(sections[.problems]?.contains { $0.body == "Constant distraction" } ?? false)
+        XCTAssertTrue(sections[.benefits]?.contains { $0.body == "Deeper recovery" } ?? false)
+    }
+
+    func testSlashFilterMatchesNewCommands() {
+        XCTAssertTrue(InquiryDockSuggestion.all.contains { $0.token == "goal:" })
+        XCTAssertTrue(InquiryDockSuggestion.all.contains { $0.token == "reference:" })
+        XCTAssertTrue(InquiryDockSuggestion.all.contains { $0.token == "concept:" })
+        let goal = InquiryDockSuggestion.all.first { $0.token == "goal:" }!
+        XCTAssertTrue(goal.matchesSlashFilter("go"))
+        XCTAssertFalse(goal.matchesSlashFilter("claim"))
     }
 }

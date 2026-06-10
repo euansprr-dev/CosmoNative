@@ -12,7 +12,6 @@ struct CosmoMenuChrome: ViewModifier {
 
     func body(content: Content) -> some View {
         CosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .globalSidebar,
             cornerRadius: cornerRadius
         ) {

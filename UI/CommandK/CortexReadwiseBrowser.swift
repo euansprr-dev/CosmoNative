@@ -5,7 +5,7 @@ import SwiftUI
 import AppKit
 
 struct CortexReadwiseBrowser: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     @StateObject private var bookStore = ReadwiseBookStore.shared
     @State private var hasAppeared = false
     @State private var selectedBookID: Int?

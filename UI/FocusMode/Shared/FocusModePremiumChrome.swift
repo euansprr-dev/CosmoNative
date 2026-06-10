@@ -18,7 +18,7 @@ struct FocusModeGlassRail<Content: View>: View {
     var body: some View {
         content
             .padding(contentPadding)
-            .cosmoGlassPanel(sceneMaterial: .neutral, role: .globalSidebar, cornerRadius: cornerRadius)
+            .cosmoGlassPanel(role: .globalSidebar, cornerRadius: cornerRadius)
     }
 }
 

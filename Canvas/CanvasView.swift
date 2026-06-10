@@ -142,6 +142,9 @@ struct CanvasView: View {
 
     @State private var canvasSize: CGSize = .zero
     @State private var selectedBlockId: String?
+    /// The inline assistant's editable surface for the currently selected
+    /// text-bearing canvas block (note / sticky note).
+    @State private var selectedBlockEditableSurface: CanvasBlockEditableSurface?
     @State private var dragOffset: CGSize = .zero
 
     // Canvas panning state
@@ -184,11 +187,6 @@ struct CanvasView: View {
 
     // Thinkspace switch transition
     @State private var thinkspaceSwitchTask: Task<Void, Never>?
-    @State private var sceneTintUpdateTask: Task<Void, Never>?
-    @State private var sceneTintThrottleTask: Task<Void, Never>?
-    @State private var sceneTintNeedsTrailingPublish = false
-    @State private var lastPublishedSceneTintKey: String?
-    @State private var lastPublishedSceneMaterial: CosmoGlassSceneMaterial?
     @State private var canvasContentOpacity: Double = 1.0
     @State private var canvasContentScale: CGFloat = 1.0
     @State private var canvasContentBlur: CGFloat = 0
@@ -371,14 +369,12 @@ struct CanvasView: View {
                                     canvasOffset.width += value.translation.width / effectiveScale
                                     canvasOffset.height += value.translation.height / effectiveScale
                                     spacePanOffset = .zero
-                                    publishSceneTintImmediately()
                                 }
                         )
                         .onAppear { NSCursor.openHand.push() }
                         .onDisappear {
                             NSCursor.pop()
                             spacePanOffset = .zero
-                            publishSceneTintImmediately()
                         }
                 }
             }
@@ -404,17 +400,21 @@ struct CanvasView: View {
                 )
             }
             .overlay(alignment: .topTrailing) {
-                // Drawing tools + view layers + unified inspector
-                VStack(alignment: .trailing, spacing: 12) {
-                    CanvasDrawingToolbar(drawingState: drawingState)
+                // Drawing tools + view layers + unified inspector — canvas-mode chrome
+                // only; the library is a browsing surface and hides them.
+                if thinkspaceMode == .canvas {
+                    VStack(alignment: .trailing, spacing: 12) {
+                        CanvasDrawingToolbar(drawingState: drawingState)
 
-                    // Unified inspector slot (block OR cluster)
-                    canvasInspectorPanel
+                        // Unified inspector slot (block OR cluster)
+                        canvasInspectorPanel
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.top, 16)
+                    .animation(ProMotionSprings.gentle, value: selectedBlockId)
+                    .animation(ProMotionSprings.gentle, value: clusterEngine.selectedClusterId)
+                    .transition(.opacity.combined(with: .offset(y: -10)))
                 }
-                .padding(.trailing, 16)
-                .padding(.top, 16)
-                .animation(ProMotionSprings.gentle, value: selectedBlockId)
-                .animation(ProMotionSprings.gentle, value: clusterEngine.selectedClusterId)
             }
             // Thinkspace sidebar trigger + overlay disabled — UnifiedSidebar + peek rail handle navigation
             // Ambient knowledge panel (right edge)
@@ -435,7 +435,6 @@ struct CanvasView: View {
             // so 100ms delay is imperceptible. Previously ran 60-120x/sec during pan/zoom.
             .onChange(of: spatialEngine.blocks.count) { _, _ in
                 scheduleFrameUpdate()
-                scheduleSceneTintPublish()
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
@@ -449,19 +448,11 @@ struct CanvasView: View {
             }
             .onChange(of: canvasOffset) { _, _ in
                 scheduleFrameUpdate()
-                scheduleSceneTintPublish(delay: .milliseconds(80))
                 debouncedSaveZoomPan()
             }
             .onChange(of: canvasScale) { _, _ in
                 scheduleFrameUpdate()
-                scheduleSceneTintPublish(delay: .milliseconds(80))
                 debouncedSaveZoomPan()
-            }
-            .onChange(of: selectedBlockId) { _, _ in
-                scheduleSceneTintPublish(delay: .milliseconds(80))
-            }
-            .onChange(of: clusterEngine.selectedClusterId) { _, _ in
-                scheduleSceneTintPublish(delay: .milliseconds(80))
             }
         }
         // NOTE: Removed .drawingGroup() from here - it was breaking async image loading
@@ -566,7 +557,7 @@ struct CanvasView: View {
     // MARK: - Zoom Indicator
     private var zoomIndicator: some View {
         Group {
-            if effectiveScale != 1.0 {
+            if effectiveScale != 1.0 && thinkspaceMode == .canvas {
                 HStack(spacing: 8) {
                     // Zoom level display
                     Text("\(Int(effectiveScale * 100))%")
@@ -598,6 +589,7 @@ struct CanvasView: View {
             }
         }
         .animation(ProMotionSprings.gentle, value: effectiveScale != 1.0)
+        .animation(ProMotionSprings.gentle, value: thinkspaceMode)
     }
 
     private var selectedInspectableBlock: CanvasBlock? {
@@ -817,7 +809,6 @@ struct CanvasView: View {
                 },
                 onChangeColor: { id, colorIndex in
                     clusterEngine.changeClusterColor(id: id, colorIndex: colorIndex)
-                    scheduleSceneTintPublish()
                 },
                 onChangeSortOrder: { id, order in
                     clusterEngine.setSortOrder(for: id, order: order)
@@ -859,15 +850,12 @@ struct CanvasView: View {
                     let newScale = canvasScale * magnification
                     canvasScale = min(max(newScale, minScale), maxScale)
                     clusterMagnification = 1.0
-                    publishSceneTintImmediately()
                 },
                 expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
             )
-            .cosmoGlassSceneSignalsEnabled(false)
 
             canvasClusterDropPreviewLayer
             blocksLayer(snapshot: snapshot)
-                .cosmoGlassSceneSignalsEnabled(false)
             inboxBlocksLayer
 
             // Drag-to-connect overlay shares the same raw canvas coordinates as blocks.
@@ -890,12 +878,14 @@ struct CanvasView: View {
         ThinkspaceLibraryModeView(
             thinkspaceName: thinkspaceManager.currentThinkspace?.name ?? "Thinkspace",
             snapshot: thinkspaceLibrarySnapshot,
-            onOpenItem: { item in
-                openLibraryItem(item)
-            },
-            onFileIntoFolder: { itemUUID, clusterID in
-                fileLibraryItemIntoFolder(itemUUID: itemUUID, clusterID: clusterID)
-            }
+            actions: ThinkspaceLibraryActions(
+                openItem: { openLibraryItem($0) },
+                revealOnCanvas: { revealLibraryItemOnCanvas($0) },
+                fileIntoFolder: { fileLibraryItemIntoFolder(itemUUID: $0, clusterID: $1) },
+                removeFromFolder: { removeLibraryItemFromFolder(itemUUID: $0, clusterID: $1) },
+                renameFolder: { clusterEngine.renameUserCluster(id: $0, to: $1) },
+                deleteFolder: { clusterEngine.removeUserCluster(id: $0) }
+            )
         )
         .onAppear {
             refreshLibraryInventory()
@@ -918,6 +908,29 @@ struct CanvasView: View {
             blocks: spatialEngine.blocks
         )
         clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+    }
+
+    /// Un-file an item from a folder via the library's context menu or a drop on the
+    /// breadcrumb. Persists through the cluster engine, which also dissolves
+    /// empty non-zone clusters.
+    private func removeLibraryItemFromFolder(itemUUID: String, clusterID: UUID) {
+        clusterEngine.removeBlockFromCluster(
+            blockUUID: itemUUID,
+            clusterId: clusterID,
+            blocks: spatialEngine.blocks
+        )
+        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+    }
+
+    /// "Reveal on Canvas" — flip back to canvas mode, then glide the camera to the block.
+    private func revealLibraryItemOnCanvas(_ item: ThinkspaceLibraryItem) {
+        guard item.isOnCanvas else { return }
+        withAnimation(modeSwitcherAnimation) {
+            thinkspaceMode = .canvas
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            flyCameraToBlock(atomUUID: item.entityUuid)
+        }
     }
 
     private func selectThinkspaceMode(_ mode: ThinkspaceCanvasMode) {
@@ -1205,7 +1218,6 @@ struct CanvasView: View {
                         // When zoomed out, a 100px drag should move the canvas 100px on screen
                         canvasOffset.width += value.translation.width / viewportTransform.effectiveScale
                         canvasOffset.height += value.translation.height / viewportTransform.effectiveScale
-                        publishSceneTintImmediately()
                     }
             )
             .simultaneousGesture(
@@ -1220,7 +1232,6 @@ struct CanvasView: View {
                         // produce a visible snap/bounce in drawing overlays.
                         let newScale = canvasScale * value.magnification
                         canvasScale = min(max(newScale, minScale), maxScale)
-                        publishSceneTintImmediately()
                     }
             )
     }
@@ -1278,176 +1289,6 @@ struct CanvasView: View {
         guard size.width > 0, size.height > 0, canvasSize != size else { return }
         canvasSize = size
         scheduleFrameUpdate()
-        scheduleSceneTintPublish()
-    }
-
-    private func scheduleSceneTintPublish(delay: Duration = .milliseconds(300)) {
-        sceneTintUpdateTask?.cancel()
-        sceneTintUpdateTask = Task { @MainActor in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled else { return }
-            publishSceneTint()
-        }
-    }
-
-    private func publishSceneTintImmediately() {
-        sceneTintUpdateTask?.cancel()
-        if sceneTintThrottleTask == nil {
-            publishSceneTint()
-            sceneTintThrottleTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(33))
-                sceneTintThrottleTask = nil
-                if sceneTintNeedsTrailingPublish {
-                    sceneTintNeedsTrailingPublish = false
-                    publishSceneTint()
-                }
-            }
-        } else {
-            sceneTintNeedsTrailingPublish = true
-        }
-    }
-
-    private func publishSceneTint() {
-        guard canvasIsActive else { return }
-        let visibleClusters = visibleClusterSignals()
-        let visibleBlocks = visibleBlockSignals()
-        let tint = currentCanvasSceneTint(
-            visibleClusters: visibleClusters,
-            visibleBlocks: visibleBlocks
-        )
-        let material = currentCanvasSceneMaterial(
-            fallbackTint: tint,
-            visibleClusters: visibleClusters,
-            visibleBlocks: visibleBlocks
-        )
-
-        if lastPublishedSceneTintKey != tint.visualKey {
-            lastPublishedSceneTintKey = tint.visualKey
-            NotificationCenter.default.post(
-                name: .cosmoGlassSceneTintDidChange,
-                object: tint
-            )
-        }
-
-        if lastPublishedSceneMaterial?.isVisuallyEquivalent(to: material) != true {
-            lastPublishedSceneMaterial = material
-            NotificationCenter.default.post(
-                name: .cosmoGlassSceneMaterialDidChange,
-                object: material
-            )
-        }
-    }
-
-    private func currentCanvasSceneTint(
-        visibleClusters: [SceneColorSignal],
-        visibleBlocks: [SceneColorSignal]
-    ) -> CosmoGlassSceneTint {
-        let nearClusterColors = visibleClusters.filter { $0.isNearSidebar }.map { $0.color }
-        let nearBlockColors = visibleBlocks.filter { $0.isNearSidebar }.map { $0.color }
-
-        var palette: [Color] = []
-        palette.append(contentsOf: nearClusterColors)
-        palette.append(contentsOf: nearBlockColors)
-
-        let hasNearContent = !nearClusterColors.isEmpty || !nearBlockColors.isEmpty
-
-        let intensity: Double
-        let edgeIntensity: Double
-        if hasNearContent {
-            intensity = 0.17
-            edgeIntensity = 0.275
-        } else {
-            intensity = 0.08
-            edgeIntensity = 0.10
-        }
-
-        return CosmoGlassSceneTint(
-            primary: paletteColor(at: 0, in: palette, fallback: DS.accent),
-            secondary: paletteColor(at: 1, in: palette, fallback: DS.entityConnection),
-            tertiary: paletteColor(at: 2, in: palette, fallback: DS.green),
-            intensity: intensity,
-            edgeIntensity: edgeIntensity
-        )
-    }
-
-    private func currentCanvasSceneMaterial(
-        fallbackTint: CosmoGlassSceneTint,
-        visibleClusters: [SceneColorSignal],
-        visibleBlocks: [SceneColorSignal]
-    ) -> CosmoGlassSceneMaterial {
-        let clusterSignals = visibleClusters
-            .filter { $0.isNearSidebar }
-            .sorted { $0.rect.minX < $1.rect.minX }
-        let blockSignals = visibleBlocks
-            .filter { $0.isNearSidebar }
-            .sorted { $0.rect.minX < $1.rect.minX }
-        var signals: [CosmoGlassSceneSignal] = []
-
-        signals.append(
-            contentsOf: clusterSignals.prefix(3).map { signal in
-                CosmoGlassSceneSignal(
-                    id: "canvas-cluster-\(signal.id)",
-                    color: signal.color,
-                    rect: signal.rect,
-                    intensity: 0.22,
-                    source: .canvasCluster,
-                    allowsDeepDiffusion: signal.rect.minX < 640
-                )
-            }
-        )
-
-        signals.append(
-            contentsOf: blockSignals.prefix(5).map { signal in
-                CosmoGlassSceneSignal(
-                    id: "canvas-block-\(signal.id)",
-                    color: signal.color,
-                    rect: signal.rect,
-                    intensity: 0.27,
-                    source: .canvasBlock,
-                    allowsDeepDiffusion: signal.rect.minX < 640
-                )
-            }
-        )
-
-        return CosmoGlassSceneMaterial(
-            fallbackTint: fallbackTint,
-            signals: signals,
-            busyness: min(Double(signals.count) / 8.0, 1),
-            luminanceBias: -0.04,
-            mode: signals.isEmpty ? .nativeOnly : .canvasEdgeResponse
-        )
-    }
-
-    private typealias SceneColorSignal = CanvasSceneColorSignal
-
-    private func visibleClusterSignals() -> [SceneColorSignal] {
-        CanvasSceneSignalBuilder.clusterSignals(
-            clusters: clusterEngine.allClusters,
-            transform: viewportTransform,
-            viewportSize: canvasSize,
-            draggingClusterId: draggingClusterId,
-            clusterDragTranslation: clusterDragTranslation
-        )
-    }
-
-    private func visibleBlockSignals() -> [SceneColorSignal] {
-        let signalBlocks = renderPipeline.hasResolvedSnapshot
-            ? renderPipeline.lastRenderableBlocks
-            : renderedBlocks
-        return CanvasSceneSignalBuilder.blockSignals(
-            blocks: signalBlocks,
-            transform: viewportTransform,
-            viewportSize: canvasSize,
-            activeBlockDrag: blockDragState,
-            draggingClusterId: draggingClusterId,
-            draggingClusterMemberUUIDs: draggingClusterMemberUUIDs,
-            clusterDragTranslation: clusterDragTranslation,
-            consumedBlockUUIDs: clusterConsumedBlockUUIDs
-        )
-    }
-
-    private func paletteColor(at index: Int, in palette: [Color], fallback: Color) -> Color {
-        palette.indices.contains(index) ? palette[index] : fallback
     }
 
     // MARK: - Body
@@ -1494,8 +1335,6 @@ struct CanvasView: View {
                         userClusters: clusterEngine.userClusters
                     )
                     refreshLibraryInventory()
-                    scheduleSceneTintPublish(delay: .milliseconds(80))
-                    
                 }
 
                 // Load persisted inbox blocks
@@ -1570,6 +1409,19 @@ struct CanvasView: View {
                     nonisolated(unsafe) let notification = notification
                     if let blockId = notification.userInfo?["blockId"] as? String {
                         handleTap(blockId: blockId)
+                    }
+                }
+
+                // Fly the camera to frame a block (agent navigation: "show me where X is")
+                addCanvasObserver(
+                    forName: CosmoNotification.Canvas.focusBlock,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    if let atomUUID = notification.userInfo?["atomUUID"] as? String {
+                        flyCameraToBlock(atomUUID: atomUUID)
                     }
                 }
 
@@ -2054,11 +1906,6 @@ struct CanvasView: View {
                 }
                 isSpaceHeld = false
                 removeCanvasObservers()
-                sceneTintUpdateTask?.cancel()
-                sceneTintUpdateTask = nil
-                sceneTintThrottleTask?.cancel()
-                sceneTintThrottleTask = nil
-                sceneTintNeedsTrailingPublish = false
                 thinkspaceSwitchTask?.cancel()
                 thinkspaceSwitchTask = nil
                 libraryLoadTask?.cancel()
@@ -2069,9 +1916,6 @@ struct CanvasView: View {
             }
             .onChange(of: isActive) { _, newValue in
                 canvasIsActive = newValue
-                if newValue {
-                    scheduleSceneTintPublish(delay: .milliseconds(80))
-                }
                 if !newValue && isSpaceHeld {
                     isSpaceHeld = false
                 }
@@ -2099,7 +1943,6 @@ struct CanvasView: View {
                         CosmoUndoManager.shared.clearHistory()
                         CosmoWindowViewModel.shared.refreshContext()
                         refreshLibraryInventoryForThinkspaceSwitch()
-                        scheduleSceneTintPublish(delay: .milliseconds(80))
                         animateThinkspaceContentIn()
                     } else {
                         prepareEmptyThinkspaceSwitchState(for: newId)
@@ -2129,7 +1972,6 @@ struct CanvasView: View {
                         thinkspaceId: newId,
                         userClusters: clusterEngine.userClusters
                     )
-                    scheduleSceneTintPublish(delay: .milliseconds(80))
 
                     if !cachedThinkspaceSnapshotApplied {
                         // 3. Animate new content IN (emerging from background)
@@ -3043,8 +2885,6 @@ struct CanvasView: View {
         } else {
             clearCanvasClusterDropPreview()
         }
-
-        publishSceneTintImmediately()
     }
 
     /// Detect when a dragged block enters the sidebar zone for cross-thinkspace transfer
@@ -3097,7 +2937,6 @@ struct CanvasView: View {
         // into another thinkspace, let the shared manager finish the transfer.
         if isCrossThinkspaceDrop {
             blockDragState.clear()
-            publishSceneTintImmediately()
             // The crossDragManager's NSEvent mouseUp handler or completeDrop will handle the rest
             let fallbackPosition = crossDragManager.floatingPosition
             if let window = NSApp.keyWindow ?? NSApp.mainWindow {
@@ -3178,8 +3017,6 @@ struct CanvasView: View {
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
             updateClusterMembership(for: block, resolvedTargetClusterId: finalResolvedTargetClusterId)
         }
-
-        publishSceneTintImmediately()
     }
 
     /// Update cluster membership when a block is dragged into/out of a user cluster zone.
@@ -3253,7 +3090,6 @@ struct CanvasView: View {
         }
 
         clusterEngine.resizeCluster(id: clusterId, delta: delta, edge: edge, blocks: spatialEngine.blocks)
-        publishSceneTintImmediately()
 
         guard cluster.viewMode == .canvas,
               let currentRect = clusterEngine.userClusters.first(where: { $0.id == clusterId })?.boundingRect,
@@ -3290,7 +3126,6 @@ struct CanvasView: View {
         }
 
         clusterEngine.commitClusterResize(id: clusterId, blocks: spatialEngine.blocks)
-        publishSceneTintImmediately()
     }
 
     /// Handle live cluster drag — single state write instead of N per-block writes
@@ -3303,7 +3138,6 @@ struct CanvasView: View {
             draggingClusterMemberUUIDs = Set(clusterEngine.memberBlockUUIDs(for: clusterId))
         }
         clusterDragTranslation = translation
-        publishSceneTintImmediately()
     }
 
     /// Commit cluster drag — move all member blocks to their new positions
@@ -3342,7 +3176,6 @@ struct CanvasView: View {
 
         // Persist moved cluster + member block positions
         clusterEngine.persistAfterMove()
-        publishSceneTintImmediately()
     }
 
     /// Clears any live drag preview offsets for a specific cluster.
@@ -3352,7 +3185,6 @@ struct CanvasView: View {
             draggingClusterId = nil
             draggingClusterMemberUUIDs = []
         }
-        publishSceneTintImmediately()
     }
 
     // Legacy handlers (kept for compatibility with other callers)
@@ -3396,6 +3228,58 @@ struct CanvasView: View {
             let queryText = [block.title, block.subtitle ?? ""].joined(separator: " ")
             ambientEngine.updateContext(focusAtomUUID: block.entityUuid, currentText: queryText)
         }
+
+        // Selecting a text-bearing block makes it the inline assistant's editable
+        // surface, so "tighten this sticky" works without opening focus mode.
+        updateInlineEditableSurface(forBlockId: blockId)
+    }
+
+    private func updateInlineEditableSurface(forBlockId blockId: String) {
+        guard let block = spatialEngine.blocks.first(where: { $0.id == blockId }),
+              CanvasBlockEditableSurface.supports(block.entityType) else { return }
+
+        if let existing = selectedBlockEditableSurface, existing.atomUUID == block.entityUuid {
+            CosmoEditableSurfaceRegistry.shared.activate(surfaceID: existing.surfaceID)
+            return
+        }
+
+        let atomUUID = block.entityUuid
+        Task { @MainActor in
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID),
+                  // Guard against a selection change racing the fetch.
+                  selectedBlockId == blockId else { return }
+            if let previous = selectedBlockEditableSurface {
+                CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: previous.surfaceID)
+            }
+            let surface = CanvasBlockEditableSurface(atom: atom)
+            selectedBlockEditableSurface = surface
+            CosmoEditableSurfaceRegistry.shared.register(surface)
+        }
+    }
+
+    /// Glide the camera to frame a block — the agent's spatial "show me" primitive.
+    /// Pulses the block's selection so the eye lands on it after the glide.
+    private func flyCameraToBlock(atomUUID: String) {
+        guard let block = spatialEngine.blocks.first(where: { $0.entityUuid == atomUUID }) else { return }
+
+        let blockCenter = CGPoint(
+            x: block.position.x + block.size.width / 2,
+            y: block.position.y + block.size.height / 2
+        )
+
+        // Frame at a readable zoom: keep the current scale when it's already
+        // comfortable, otherwise settle at 1.0.
+        var targetTransform = viewportTransform
+        targetTransform.committedScale = (0.7...1.6).contains(canvasScale) ? canvasScale : 1.0
+        targetTransform.gestureMagnification = 1.0
+        targetTransform.gesturePanOffset = .zero
+
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+            canvasScale = targetTransform.committedScale
+            canvasOffset = targetTransform.centeringOffset(for: blockCenter)
+        }
+
+        handleTap(blockId: block.id)
     }
 
     private func handleEmptyCanvasDoubleClick() {
@@ -3409,7 +3293,6 @@ struct CanvasView: View {
         withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
             canvasScale = newScale
         }
-        publishSceneTintImmediately()
     }
 
     private func openBlockInFocusMode(_ block: CanvasBlock) {
@@ -4944,642 +4827,6 @@ struct CanvasBlockStaticView: View, Equatable {
     }
 }
 
-// MARK: - Thinkspace Mode Library
-
-enum ThinkspaceCanvasMode: String, CaseIterable, Identifiable {
-    case canvas
-    case library
-    case deepDive
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .canvas: return "Canvas"
-        case .library: return "Library"
-        case .deepDive: return "Deep Dive"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .canvas: return "square.grid.3x3"
-        case .library: return "folder"
-        case .deepDive: return "circle.hexagongrid.circle"
-        }
-    }
-}
-
-struct ThinkspaceLibraryItem: Identifiable, Equatable {
-    let id: String
-    let title: String
-    let entityType: EntityType
-    let entityId: Int64
-    let entityUuid: String
-    let isOnCanvas: Bool
-    let block: CanvasBlock?
-}
-
-struct ThinkspaceLibraryFolder: Identifiable, Equatable {
-    let id: UUID
-    let title: String
-    let colorIndex: Int
-    let items: [ThinkspaceLibraryItem]
-
-    var color: Color {
-        let index = ((colorIndex % CanvasCluster.palette.count) + CanvasCluster.palette.count) % CanvasCluster.palette.count
-        return CanvasCluster.palette[index]
-    }
-}
-
-struct ThinkspaceLibrarySnapshot: Equatable {
-    let folders: [ThinkspaceLibraryFolder]
-    let looseItems: [ThinkspaceLibraryItem]
-
-    static func make(
-        blocks: [CanvasBlock],
-        clusters: [CanvasCluster],
-        inventory: [ChildDoc]
-    ) -> ThinkspaceLibrarySnapshot {
-        var itemsByUUID: [String: ThinkspaceLibraryItem] = [:]
-
-        for doc in inventory where !doc.entityUuid.isEmpty {
-            itemsByUUID[doc.entityUuid] = ThinkspaceLibraryItem(
-                id: doc.entityUuid,
-                title: doc.title,
-                entityType: doc.entityType,
-                entityId: doc.entityId,
-                entityUuid: doc.entityUuid,
-                isOnCanvas: false,
-                block: nil
-            )
-        }
-
-        for block in blocks where !block.entityUuid.isEmpty {
-            itemsByUUID[block.entityUuid] = ThinkspaceLibraryItem(
-                id: block.entityUuid,
-                title: block.title.isEmpty ? block.entityType.rawValue.replacingOccurrences(of: "_", with: " ").capitalized : block.title,
-                entityType: block.entityType,
-                entityId: block.entityId,
-                entityUuid: block.entityUuid,
-                isOnCanvas: true,
-                block: block
-            )
-        }
-
-        let sortedClusters = clusters.sorted { lhs, rhs in
-            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
-
-        let folders = sortedClusters.map { cluster in
-            let items = cluster.blockUUIDs
-                .compactMap { itemsByUUID[$0] }
-                .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-            return ThinkspaceLibraryFolder(
-                id: cluster.id,
-                title: cluster.name,
-                colorIndex: cluster.colorIndex,
-                items: items
-            )
-        }
-
-        let clusteredUUIDs = Set(clusters.flatMap(\.blockUUIDs))
-        let looseItems = itemsByUUID.values
-            .filter { !clusteredUUIDs.contains($0.entityUuid) }
-            .sorted { lhs, rhs in
-                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
-
-        return ThinkspaceLibrarySnapshot(folders: folders, looseItems: looseItems)
-    }
-}
-
-private struct ThinkspaceLibraryModeView: View {
-    let thinkspaceName: String
-    let snapshot: ThinkspaceLibrarySnapshot
-    let onOpenItem: (ThinkspaceLibraryItem) -> Void
-    let onFileIntoFolder: (String, UUID) -> Void
-
-    @State private var selectedFolderID: UUID?
-    @State private var searchText = ""
-
-    var body: some View {
-        ZStack {
-            DS.canvas
-                .ignoresSafeArea()
-                .filmGrain()
-
-            libraryContent
-                .padding(.horizontal, 44)
-                .padding(.vertical, 34)
-        }
-    }
-
-    private var itemCount: Int {
-        snapshot.looseItems.count + snapshot.folders.reduce(0) { $0 + $1.items.count }
-    }
-
-    private var selectedFolder: ThinkspaceLibraryFolder? {
-        selectedFolderID.flatMap { id in snapshot.folders.first { $0.id == id } }
-    }
-
-    private var visibleLooseItems: [ThinkspaceLibraryItem] {
-        filteredItems(snapshot.looseItems)
-    }
-
-    private var visibleFolders: [ThinkspaceLibraryFolder] {
-        guard selectedFolder == nil else { return [] }
-        guard !trimmedSearch.isEmpty else { return snapshot.folders }
-        return snapshot.folders.filter { folder in
-            matches(folder.title) || folder.items.contains(where: { matches($0.title) })
-        }
-    }
-
-    private var visibleFolderItems: [ThinkspaceLibraryItem] {
-        filteredItems(selectedFolder?.items ?? [])
-    }
-
-    private var trimmedSearch: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var libraryContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            ThinkspaceLibraryHeader(
-                title: selectedFolder?.title ?? thinkspaceName,
-                subtitle: subtitleText,
-                searchText: $searchText,
-                selectedFolder: selectedFolder,
-                onBack: { selectedFolderID = nil }
-            )
-
-            ScrollView {
-                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 28) {
-                    rootFolderTiles
-                    documentTiles
-                }
-                .padding(.top, 4)
-                .padding(.bottom, 92)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .animation(ProMotionSprings.gentle, value: snapshot)
-            }
-            .overlay {
-                if shouldShowEmptyState {
-                    emptyState
-                }
-            }
-        }
-    }
-
-    private var rootFolderTiles: some View {
-        ForEach(Array(visibleFolders.enumerated()), id: \.element.id) { index, folder in
-            ThinkspaceLibraryFolderTile(
-                folder: folder,
-                appearIndex: index,
-                onOpen: { selectedFolderID = folder.id },
-                onFileItem: { itemUUID in onFileIntoFolder(itemUUID, folder.id) }
-            )
-        }
-    }
-
-    private var documentTiles: some View {
-        let base = visibleFolders.count
-        return ForEach(Array(currentVisibleItems.enumerated()), id: \.element.id) { index, item in
-            ThinkspaceLibraryDocumentTile(
-                item: item,
-                appearIndex: base + index,
-                onOpen: { onOpenItem(item) }
-            )
-        }
-    }
-
-    private var currentVisibleItems: [ThinkspaceLibraryItem] {
-        selectedFolder == nil ? visibleLooseItems : visibleFolderItems
-    }
-
-    private var gridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 156, maximum: 180), spacing: 28, alignment: .top)]
-    }
-
-    private var subtitleText: String {
-        if let folder = selectedFolder {
-            return "\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")"
-        }
-        return "\(itemCount) item\(itemCount == 1 ? "" : "s")"
-    }
-
-    private var shouldShowEmptyState: Bool {
-        if selectedFolder != nil {
-            return visibleFolderItems.isEmpty
-        }
-        return visibleFolders.isEmpty && visibleLooseItems.isEmpty
-    }
-
-    private var emptyState: some View {
-        ThinkspaceLibraryEmptyState(
-            icon: trimmedSearch.isEmpty ? "folder" : "magnifyingglass",
-            title: emptyTitle,
-            message: emptyMessage
-        )
-        .frame(maxWidth: .infinity, minHeight: 260)
-    }
-
-    private var emptyTitle: String {
-        if !trimmedSearch.isEmpty { return "No matches" }
-        if selectedFolder != nil { return "This cluster is empty" }
-        return "Your workspace is ready"
-    }
-
-    private var emptyMessage: String {
-        if !trimmedSearch.isEmpty {
-            return "Try a document, cluster, or phrase from this Thinkspace."
-        }
-        if selectedFolder != nil {
-            return "Drag documents into this cluster from the canvas to fill it."
-        }
-        return "Create a block or capture a thought to start building this library."
-    }
-
-    private func filteredItems(_ items: [ThinkspaceLibraryItem]) -> [ThinkspaceLibraryItem] {
-        guard !trimmedSearch.isEmpty else { return items }
-        return items.filter { item in
-            matches(item.title) || matches(item.block?.subtitle ?? "") || matches(item.block?.metadata["content"] ?? "")
-        }
-    }
-
-    private func matches(_ value: String) -> Bool {
-        value.localizedCaseInsensitiveContains(trimmedSearch)
-    }
-}
-
-private struct ThinkspaceLibraryHeader: View {
-    let title: String
-    let subtitle: String
-    @Binding var searchText: String
-    let selectedFolder: ThinkspaceLibraryFolder?
-    let onBack: () -> Void
-
-    @FocusState private var searchFocused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            breadcrumb
-            HStack(alignment: .firstTextBaseline) {
-                titleBlock
-                Spacer(minLength: 24)
-                searchField
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var breadcrumb: some View {
-        if let selectedFolder {
-            Button(action: onBack) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(DS.caption.weight(.semibold))
-                    Text("Library")
-                    Text("/")
-                        .foregroundStyle(DS.textMuted)
-                    Text(selectedFolder.title)
-                        .foregroundStyle(DS.text)
-                }
-                .font(DS.subheadline.weight(.medium))
-                .foregroundStyle(DS.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back to Library")
-        }
-    }
-
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(DS.pageTitle)
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-            Text(subtitle)
-                .font(DS.subheadline)
-                .foregroundStyle(DS.textMuted)
-                .monospacedDigit()
-        }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(DS.callout.weight(.medium))
-                .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
-            TextField("Search anything...", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(DS.callout)
-                .foregroundStyle(DS.text)
-                .focused($searchFocused)
-                .frame(width: 240)
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-        .dsGlassInput(isFocused: searchFocused, cornerRadius: 18)
-        .animation(ProMotionSprings.gentle, value: searchFocused)
-    }
-}
-
-private struct ThinkspaceLibraryFolderTile: View {
-    let folder: ThinkspaceLibraryFolder
-    var appearIndex: Int = 0
-    let onOpen: () -> Void
-    let onFileItem: (String) -> Void
-
-    @State private var isHovered = false
-    @State private var isDropTarget = false
-    @State private var hasAppeared = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var isActive: Bool { isHovered || isDropTarget }
-
-    var body: some View {
-        Button(action: onOpen) {
-            VStack(spacing: 12) {
-                previewWell
-                label
-            }
-            .frame(width: 156)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .dropDestination(for: String.self) { items, _ in
-            guard let uuid = items.first else { return false }
-            onFileItem(uuid)
-            return true
-        } isTargeted: { targeting in
-            withAnimation(ProMotionSprings.bouncy) { isDropTarget = targeting }
-        }
-        .scaleEffect(isDropTarget ? 1.03 : (isHovered ? 1.01 : 1))
-        .animation(ProMotionSprings.hover, value: isActive)
-        .opacity(hasAppeared || reduceMotion ? 1 : 0)
-        .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.96)
-        .onHover { hovering in isHovered = hovering }
-        .onAppear(perform: animateEntrance)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel("\(folder.title), \(folder.items.count) items. Drop an item here to file it.")
-    }
-
-    private var previewWell: some View {
-        ThinkspaceLibraryFolderGlyph(color: folder.color, itemCount: folder.items.count)
-            .frame(width: 92, height: 66)
-            .frame(width: 156, height: 132)
-            .glassCard(isHovered: isActive, tint: folder.color, cornerRadius: 18)
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(folder.color.opacity(isDropTarget ? 0.55 : 0), lineWidth: 2)
-            )
-            .cardShadow(isHovered: isActive)
-    }
-
-    private var label: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 5) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(folder.color.opacity(0.82))
-                    .frame(width: 11, height: 9)
-                Text(folder.title)
-                    .font(DS.headline)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-            }
-            Text("\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .monospacedDigit()
-                .lineLimit(1)
-        }
-        .frame(width: 156, height: 44, alignment: .top)
-    }
-
-    private func animateEntrance() {
-        guard !reduceMotion, !hasAppeared else { hasAppeared = true; return }
-        withAnimation(ProMotionSprings.cascade(index: min(appearIndex, 8))) { hasAppeared = true }
-    }
-}
-
-private struct ThinkspaceLibraryDocumentTile: View {
-    let item: ThinkspaceLibraryItem
-    var appearIndex: Int = 0
-    let onOpen: () -> Void
-
-    @State private var isHovered = false
-    @State private var hasAppeared = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        draggableTile
-            .scaleEffect(isHovered ? 1.01 : 1)
-            .animation(ProMotionSprings.hover, value: isHovered)
-            .opacity(hasAppeared || reduceMotion ? 1 : 0)
-            .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.96)
-            .onHover { hovering in isHovered = hovering }
-            .onAppear(perform: animateEntrance)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("\(item.title), \(item.isOnCanvas ? "on canvas" : "stored")")
-    }
-
-    // On-canvas items can be dragged into a folder; stored items aren't draggable.
-    @ViewBuilder
-    private var draggableTile: some View {
-        if item.block != nil {
-            tileButton.draggable(item.entityUuid) { dragPreview }
-        } else {
-            tileButton
-        }
-    }
-
-    private var tileButton: some View {
-        Button(action: onOpen) {
-            VStack(spacing: 12) {
-                previewWell
-                label
-            }
-            .frame(width: 156)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var previewWell: some View {
-        ZStack(alignment: .topTrailing) {
-            previewContent
-            typeBadge
-        }
-        .frame(width: 116, height: 132)
-        .glassCard(isHovered: isHovered, tint: item.entityType.color, cornerRadius: 18)
-        .cardShadow(isHovered: isHovered)
-    }
-
-    private var dragPreview: some View {
-        HStack(spacing: 8) {
-            Image(systemName: item.entityType.icon)
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(item.entityType.color)
-            Text(item.title)
-                .font(DS.caption)
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(maxWidth: 220)
-        .glassCard(isHovered: true, tint: item.entityType.color, cornerRadius: 12)
-        .cardShadow(isHovered: true)
-    }
-
-    @ViewBuilder
-    private var previewContent: some View {
-        if let thumbnail = thumbnailPath {
-            SpotlightImageContent(urlString: thumbnail)
-        } else if item.entityType == .connection {
-            SpotlightConnectionPreview(preview: previewText, accentColor: item.entityType.color)
-        } else if let previewText, !previewText.isEmpty {
-            SpotlightPageContent(text: previewText, accentColor: item.entityType.color)
-        } else {
-            SpotlightFauxPage(accentColor: item.entityType.color)
-        }
-    }
-
-    private var typeBadge: some View {
-        Image(systemName: item.entityType.icon)
-            .font(DS.caption.weight(.bold))
-            .foregroundStyle(item.entityType.color)
-            .frame(width: 22, height: 22)
-            .background(DS.glassCardFill, in: Circle())
-            .overlay(Circle().strokeBorder(DS.glassBorder, lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
-            .padding(7)
-    }
-
-    private var label: some View {
-        VStack(spacing: 4) {
-            Text(item.title)
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-            Text(item.isOnCanvas ? "On canvas" : "Stored")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .lineLimit(1)
-        }
-        .frame(width: 156, height: 44, alignment: .top)
-    }
-
-    private var previewText: String? {
-        item.block?.metadata["content"] ?? item.block?.subtitle ?? item.title
-    }
-
-    private var thumbnailPath: String? {
-        item.block?.metadata["thumbnail"] ?? item.block?.metadata["imagePath"]
-    }
-
-    private func animateEntrance() {
-        guard !reduceMotion, !hasAppeared else { hasAppeared = true; return }
-        withAnimation(ProMotionSprings.cascade(index: min(appearIndex, 8))) { hasAppeared = true }
-    }
-}
-
-private struct ThinkspaceLibraryFolderGlyph: View {
-    let color: Color
-    var itemCount: Int = 0
-
-    var body: some View {
-        ZStack {
-            backTab
-            if itemCount > 0 { peekingDocs }
-            folderBody
-        }
-        .frame(width: 92, height: 66)
-        .shadow(color: color.opacity(0.30), radius: 8, y: 6)
-    }
-
-    // The folder's back tab, peeking up-left behind the front face.
-    private var backTab: some View {
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(
-                LinearGradient(colors: [color.opacity(0.95), color.opacity(0.80)],
-                               startPoint: .top, endPoint: .bottom)
-            )
-            .frame(width: 44, height: 20)
-            .offset(x: -22, y: -16)
-    }
-
-    // Pale "document" edges peeking above the lip when the folder holds items (Finder cue).
-    private var peekingDocs: some View {
-        ZStack {
-            doc(fill: DS.surfaceCard, dx: 5, dy: -9, angle: 3)
-            doc(fill: DS.surfaceElevated, dx: -5, dy: -11, angle: -3)
-        }
-    }
-
-    private func doc(fill: Color, dx: CGFloat, dy: CGFloat, angle: Double) -> some View {
-        RoundedRectangle(cornerRadius: 4, style: .continuous)
-            .fill(fill)
-            .overlay(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
-            )
-            .frame(width: 66, height: 44)
-            .rotationEffect(.degrees(angle))
-            .offset(x: dx, y: dy)
-    }
-
-    // Front face: vertical gradient + a bright specular lip + a glassy inner edge.
-    private var folderBody: some View {
-        RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .fill(
-                LinearGradient(colors: [color.opacity(0.97), color.opacity(0.82)],
-                               startPoint: .top, endPoint: .bottom)
-            )
-            .frame(width: 88, height: 52)
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(Color.white.opacity(0.45))
-                    .frame(width: 66, height: 3)
-                    .padding(.top, 5)
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-            )
-            .offset(y: 7)
-    }
-}
-
-private struct ThinkspaceLibraryEmptyState: View {
-    let icon: String
-    let title: String
-    let message: String
-
-    var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(DS.title1)
-                .foregroundStyle(DS.textMuted)
-                .frame(width: 68, height: 68)
-                .dsGlassSection(cornerRadius: 20)
-            Text(title)
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
-            Text(message)
-                .font(DS.callout)
-                .foregroundStyle(DS.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
-        }
-    }
-}
-
 // MARK: - Per-Block Transform Host
 struct CanvasBlockTransformHost<StaticContent: View>: View {
     let block: CanvasBlock
@@ -5844,4 +5091,95 @@ class CanvasContextProvider: CosmoContextProvider {
     }
 
     var availableActions: [CosmoWindowAction] { [] }
+}
+
+// MARK: - Canvas Block Editable Surface
+
+/// Atom-backed inline-assistant surface for text-bearing canvas blocks.
+/// Applies resolve against the *fresh* atom body and persist through the
+/// repository; the block views' GRDB observation picks the change up, so the
+/// canvas re-renders without any direct view coupling.
+@MainActor
+final class CanvasBlockEditableSurface: CosmoEditableSurfaceProvider {
+    let atomUUID: String
+    private let title: String
+    private var loadedText: String
+
+    static func supports(_ entityType: EntityType) -> Bool {
+        entityType == .note || entityType == .stickyNote
+    }
+
+    static func surfaceID(for atomUUID: String) -> String {
+        "canvasBlock:\(atomUUID)"
+    }
+
+    init(atom: Atom) {
+        self.atomUUID = atom.uuid
+        self.title = atom.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.loadedText = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.body
+        ).plainText
+    }
+
+    var surfaceID: String { Self.surfaceID(for: atomUUID) }
+
+    func editableSnapshot() -> CosmoEditableSourceSnapshot {
+        CosmoEditableSourceSnapshot(
+            surfaceID: surfaceID,
+            targetID: "\(surfaceID):body",
+            kind: .text,
+            title: title.isEmpty ? "Canvas note" : title,
+            text: loadedText,
+            sourceHash: CosmoEditableSurfaceHasher.hash(loadedText),
+            anchors: [
+                .init(id: "body", label: "Body", utf16Start: 0, utf16Length: loadedText.utf16.count)
+            ]
+        )
+    }
+
+    func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
+        guard operation.targetID == "\(surfaceID):body" else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Target changed"
+            )
+        }
+        guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "This block's atom is no longer available"
+            )
+        }
+
+        var bodyText = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.body
+        ).plainText
+
+        guard let placement = CosmoInlineTextEditResolver.placement(for: operation, in: bodyText) else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Original text not found"
+            )
+        }
+        bodyText.replaceSubrange(placement.range, with: placement.replacementText)
+
+        // Same plain-text round-trip the Note focus mode apply uses: regenerate the
+        // body document from the edited plain text and persist both fields together.
+        let written = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: atom.metadata,
+            bodyDocument: RichDocument.migrateLegacy(bodyText)
+        )
+        var updated = atom
+        updated.body = written.body
+        updated.metadata = written.metadata
+        _ = try await AtomRepository.shared.update(updated)
+
+        loadedText = bodyText
+        return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
+    }
+
+    func reject(operation: CosmoAssistantProposalOperation) async -> CosmoEditableOperationResult {
+        CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Rejected")
+    }
 }

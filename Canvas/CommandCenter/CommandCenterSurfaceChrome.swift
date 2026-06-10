@@ -12,7 +12,7 @@ struct CommandCenterGlassRail<Content: View>: View {
     var body: some View {
         content
             .padding(DS.space12)
-            .cosmoGlassPanel(sceneMaterial: .neutral, role: .globalSidebar, cornerRadius: cornerRadius)
+            .cosmoGlassPanel(role: .globalSidebar, cornerRadius: cornerRadius)
     }
 }
 

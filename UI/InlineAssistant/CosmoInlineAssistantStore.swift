@@ -13,6 +13,9 @@ struct CosmoInlineAssistantPaneMessage: Identifiable, Codable, Equatable, Sendab
     var content: String
     var proposalID: UUID? = nil
     var createdAt = Date()
+    /// Sources the assistant actually read for this message — rendered as
+    /// clickable chips. Decodes as nil from older persisted sessions.
+    var sourceRefs: [CosmoAssistantSourceRef]? = nil
 }
 
 enum CosmoInlineAssistantSessionScope {
@@ -136,13 +139,94 @@ enum CosmoInlineAssistantPromptClassifier {
     }
 }
 
+// MARK: - Thinking States
+
+/// The inline assistant's visible state machine. Each phase has its own narration
+/// register and (in the bar/orb) its own motion, so progress reads as character
+/// instead of a generic spinner.
+enum CosmoInlineAssistantPhase: Equatable, Sendable {
+    case idle
+    /// Request sent; the model is deciding what to do (no tool has fired yet).
+    case planning
+    /// Tools are running — narrated with verb-first status lines.
+    case gathering(status: String)
+    /// The model is producing its deliverable (streaming an answer or staging edits).
+    case drafting
+    /// A proposal is staged and awaiting the user's accept/reject.
+    case reviewing
+
+    var isWorking: Bool {
+        switch self {
+        case .planning, .gathering, .drafting: return true
+        case .idle, .reviewing: return false
+        }
+    }
+
+    var statusText: String? {
+        switch self {
+        case .idle: return nil
+        case .planning: return "Cosmo is thinking…"
+        case .gathering(let status): return status
+        case .drafting: return "Cosmo is writing…"
+        case .reviewing: return nil
+        }
+    }
+}
+
+/// Turns raw tool activity into verb-first status lines in the user's vocabulary —
+/// "Pulling swipes on curiosity hooks", "Checking Hormozi's voice profile" — built
+/// client-side from the tool name + arguments at zero model cost. The narration IS
+/// the personality made visible; generic "Working…" tells the user nothing.
+enum CosmoInlineAssistantStatusGrammar {
+    static func line(toolName: String, displayLabel: String, args: [String: String]) -> String {
+        let subject = args["query"] ?? args["title"] ?? args["clientName"] ?? args["client_name"] ?? args["name"]
+        let trimmedSubject = subject?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch toolName {
+        case "search_swipes", "find_similar_swipes", "filter_swipes_by_taxonomy":
+            if let trimmedSubject, !trimmedSubject.isEmpty { return "Pulling swipes on \(trimmedSubject)" }
+            return "Pulling swipes"
+        case "get_client_profile", "lookup_client_facts":
+            if let trimmedSubject, !trimmedSubject.isEmpty { return "Checking \(trimmedSubject)'s profile" }
+            return "Checking the client profile"
+        case "search_ideas":
+            if let trimmedSubject, !trimmedSubject.isEmpty { return "Searching ideas for \(trimmedSubject)" }
+            return "Searching your ideas"
+        case "retrieve_context", "search_memory":
+            if let trimmedSubject, !trimmedSubject.isEmpty { return "Recalling \(trimmedSubject)" }
+            return "Recalling related work"
+        case "web_search", "search_web":
+            if let trimmedSubject, !trimmedSubject.isEmpty { return "Researching \(trimmedSubject)" }
+            return "Researching online"
+        case "read_draft", "get_content":
+            return "Reading your draft"
+        case "get_lessons":
+            return "Reviewing learned rules"
+        case "propose_workspace_edit":
+            return "Staging your edits"
+        case "answer_in_assistant_pane":
+            return "Writing the answer"
+        case "create_inline_skill":
+            return "Saving the new skill"
+        case "inspect_current_thinkspace":
+            return "Looking at your canvas"
+        default:
+            return displayLabel
+        }
+    }
+}
+
 enum CosmoInlineAssistantActivityLabel {
     static let maxStatusLength = 72
 
     static func statusText(for event: ToolActivityEvent) -> String? {
         switch event {
-        case .started(_, let displayLabel, _):
-            return compact(displayLabel)
+        case .started(let name, let displayLabel, let args):
+            return compact(CosmoInlineAssistantStatusGrammar.line(
+                toolName: name,
+                displayLabel: displayLabel,
+                args: args
+            ))
         case .completed:
             // After each step the model is generating the next one — show live progress
             // instead of a stale label during the LLM call that follows.
@@ -160,6 +244,120 @@ enum CosmoInlineAssistantActivityLabel {
         guard normalized.count > maxStatusLength else { return normalized }
         let end = normalized.index(normalized.startIndex, offsetBy: maxStatusLength - 3)
         return String(normalized[..<end]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+    }
+}
+
+// MARK: - Embedding Skill Auto-Routing
+
+/// Zero-LLM skill routing: embeds the composer prompt with the local nomic daemon
+/// and cosine-matches it against each skill's trigger description. The winning
+/// skill surfaces as a ghost chip the user can Tab to confirm — explicit /slash
+/// selection always beats this suggestion. Replaces brittle keyword heuristics
+/// and gets *better* as users describe triggers in their own vocabulary.
+@MainActor
+final class CosmoInlineSkillAutoRouter {
+    static let shared = CosmoInlineSkillAutoRouter()
+
+    struct Suggestion: Equatable {
+        let skillID: String
+        let skillName: String
+        let icon: String
+        let score: Float
+    }
+
+    /// Skills the router never suggests: the per-route defaults the request falls
+    /// back to anyway — a suggestion that matches the fallback is pure noise.
+    private static let defaultSkillIDs: Set<String> = [
+        CosmoInlineAssistantSkillID.inlineEdit.rawValue,
+        CosmoInlineAssistantSkillID.researchAnswer.rawValue
+    ]
+
+    private static let minimumScore: Float = 0.50
+    private static let minimumMargin: Float = 0.05
+    private static let minimumPromptLength = 12
+
+    /// Per-skill vector cache keyed by a fingerprint of the routing text, so
+    /// edited skills re-embed and untouched ones don't.
+    private var skillVectors: [String: (fingerprint: String, vector: [Float])] = [:]
+
+    func suggestion(
+        for rawPrompt: String,
+        registry: CosmoInlineSkillRegistry = CosmoInlineSkillRegistry()
+    ) async -> Suggestion? {
+        let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard prompt.count >= Self.minimumPromptLength,
+              !prompt.hasPrefix("/") else { return nil }
+
+        guard let promptVector = await embed(prompt) else { return nil }
+
+        var best: (skill: CosmoInlineSkillDefinition, score: Float)?
+        var runnerUpScore: Float = 0
+
+        for skill in registry.enabledSkills where !Self.defaultSkillIDs.contains(skill.id) {
+            guard let skillVector = await vector(for: skill) else { continue }
+            let score = Self.cosineSimilarity(promptVector, skillVector)
+            if score > (best?.score ?? 0) {
+                runnerUpScore = best?.score ?? 0
+                best = (skill, score)
+            } else if score > runnerUpScore {
+                runnerUpScore = score
+            }
+        }
+
+        guard let best,
+              best.score >= Self.minimumScore,
+              best.score - runnerUpScore >= Self.minimumMargin else {
+            return nil // Below confidence or ambiguous — stay quiet, never guess.
+        }
+
+        return Suggestion(
+            skillID: best.skill.id,
+            skillName: best.skill.name,
+            icon: best.skill.icon,
+            score: best.score
+        )
+    }
+
+    private func vector(for skill: CosmoInlineSkillDefinition) async -> [Float]? {
+        let routingText = Self.routingText(for: skill)
+        let fingerprint = CosmoEditableSurfaceHasher.hash(routingText)
+
+        if let cached = skillVectors[skill.id], cached.fingerprint == fingerprint {
+            return cached.vector
+        }
+        guard let vector = await embed(routingText) else { return nil }
+        skillVectors[skill.id] = (fingerprint, vector)
+        return vector
+    }
+
+    static func routingText(for skill: CosmoInlineSkillDefinition) -> String {
+        var parts = [skill.name, skill.triggerDescription ?? skill.summary]
+        parts.append(contentsOf: skill.triggerPhrases)
+        return parts
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: ". ")
+    }
+
+    private func embed(_ text: String) async -> [Float]? {
+        if let cached = await EmbeddingCache.shared.get(for: text) { return cached }
+        guard let full = try? await DaemonXPCClient.shared.embed(text: text) else { return nil }
+        let truncated = Array(full.prefix(256)) // Matryoshka truncation, matches stored vectors
+        await EmbeddingCache.shared.set(truncated, for: text)
+        return truncated
+    }
+
+    static func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
+        guard a.count == b.count, !a.isEmpty else { return 0 }
+        var dot: Float = 0
+        var magnitudeA: Float = 0
+        var magnitudeB: Float = 0
+        for index in a.indices {
+            dot += a[index] * b[index]
+            magnitudeA += a[index] * a[index]
+            magnitudeB += b[index] * b[index]
+        }
+        let denominator = magnitudeA.squareRoot() * magnitudeB.squareRoot()
+        return denominator > 0 ? dot / denominator : 0
     }
 }
 
@@ -222,6 +420,10 @@ enum CosmoInlineAssistantToolBundlePolicy {
             bundles.insert(.contentSearch)
         }
 
+        // The agent can always take the user places — navigation is reversible
+        // and costs four small tool definitions.
+        bundles.insert(.navigation)
+
         return bundles
     }
 
@@ -254,12 +456,17 @@ final class CosmoInlineAssistantStore: ObservableObject {
     @Published var composerText = ""
     @Published var isProcessing = false
     @Published var statusText: String?
+    @Published var phase: CosmoInlineAssistantPhase = .idle
     @Published var proposals: [CosmoAssistantProposal] = []
     @Published var paneMessages: [CosmoInlineAssistantPaneMessage] = []
     @Published var selectedContextAtoms: [Atom] = []
     @Published var selectedSkillID: String?
     @Published var isPaneRequested = false
     @Published var errorText: String?
+    /// Embedding-routed skill suggestion shown as a ghost chip (Tab to confirm).
+    @Published var skillSuggestion: CosmoInlineSkillAutoRouter.Suggestion?
+
+    private var skillSuggestionTask: Task<Void, Never>?
 
     private let agentBridge: CosmoInlineAssistantAgentBridge
     private let sessionPersistence: CosmoInlineAssistantSessionPersistence
@@ -268,6 +475,18 @@ final class CosmoInlineAssistantStore: ObservableObject {
     private var activeSubmissionRoute: CosmoInlineAssistantRoute?
     private var lastSubmissionRoute: CosmoInlineAssistantRoute?
     private var activeSubmissionShouldOpenPaneForAnswer = false
+    /// The pane message currently being streamed token-by-token, if any.
+    /// Finalized (replaced with the complete answer) when the tool call lands.
+    private var streamingPaneMessageID: UUID?
+    /// Supplies the sources actually read for the in-flight request — set by the
+    /// agent bridge for the request's duration, attached to answers/proposals as
+    /// clickable context chips.
+    var sourceRefsProvider: (() -> [CosmoAssistantSourceRef])?
+
+    private var currentSourceRefs: [CosmoAssistantSourceRef]? {
+        let refs = sourceRefsProvider?() ?? []
+        return refs.isEmpty ? nil : refs
+    }
 
     init(
         agentBridge: CosmoInlineAssistantAgentBridge = .live,
@@ -293,13 +512,22 @@ final class CosmoInlineAssistantStore: ObservableObject {
             registry: skillRegistry
         )
         let effectiveSkillID = slashCommand?.skillID ?? selectedSkillID
-        let prompt = slashCommand?.remainingPrompt ?? rawPrompt
-        guard !prompt.isEmpty else { return }
+        var prompt = slashCommand?.remainingPrompt ?? rawPrompt
+        if prompt.isEmpty {
+            // A bare slash command ("/concept ⏎") is a valid way to start a
+            // skill session — kick it off instead of silently doing nothing.
+            guard effectiveSkillID != nil else { return }
+            prompt = "Begin."
+        }
 
         composerText = ""
         errorText = nil
+        skillSuggestionTask?.cancel()
+        skillSuggestion = nil
         isProcessing = true
+        phase = .planning
         statusText = "Reading current context"
+        CosmoInlineAssistantMetrics.shared.requestStarted()
 
         let selectedSkillPlan = effectiveSkillID.map {
             CosmoInlineAssistantSkillRuntime.plan(
@@ -326,7 +554,11 @@ final class CosmoInlineAssistantStore: ObservableObject {
             activeSubmissionSkillID = nil
             activeSubmissionRoute = nil
             activeSubmissionShouldOpenPaneForAnswer = false
-            selectedSkillID = nil
+            // Skill sessions are sticky: once a skill is invoked (slash command
+            // or picker), every following turn stays in that skill — like
+            // talking to a dedicated agent — until /clear, the chip's ✕, or
+            // another slash command replaces it.
+            selectedSkillID = effectiveSkillID
             persistActiveSession()
         }
 
@@ -347,19 +579,53 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
         isProcessing = false
         statusText = nil
+        streamingPaneMessageID = nil
+        phase = activePendingProposal != nil ? .reviewing : .idle
     }
 
     func receive(proposal: CosmoAssistantProposal) {
-        proposals.append(proposal)
+        var stamped = proposal
+        if stamped.skillID == nil {
+            stamped.skillID = activeSubmissionSkillID
+        }
+        proposals.append(stamped)
         paneMessages.append(.init(
             role: .assistant,
-            content: proposal.summary,
-            proposalID: proposal.id
+            content: stamped.summary,
+            proposalID: stamped.id,
+            sourceRefs: currentSourceRefs
         ))
         if !activeSubmissionShouldOpenPaneForAnswer {
             isPaneRequested = false
         }
+        phase = .reviewing
+        CosmoInlineAssistantMetrics.shared.proposalStaged()
         persistActiveSession()
+    }
+
+    /// Streamed fragment of the pane answer, decoded live from the
+    /// `answer_in_assistant_pane` tool call's partial JSON. Creates the assistant
+    /// message on the first delta and grows it in place, so the answer reads out
+    /// token-by-token instead of landing as a wall of text seconds later.
+    func receivePaneAnswerDelta(_ delta: String) {
+        guard !delta.isEmpty else { return }
+        phase = .drafting
+        statusText = nil
+        CosmoInlineAssistantMetrics.shared.firstAnswerTokenArrived()
+
+        if let streamingID = streamingPaneMessageID,
+           let index = paneMessages.firstIndex(where: { $0.id == streamingID }) {
+            paneMessages[index].content += delta
+            return
+        }
+
+        let effectiveRoute = activeSubmissionRoute
+        if effectiveRoute != .action || activeSubmissionShouldOpenPaneForAnswer {
+            isPaneRequested = true
+        }
+        let message = CosmoInlineAssistantPaneMessage(role: .assistant, content: delta)
+        streamingPaneMessageID = message.id
+        paneMessages.append(message)
     }
 
     func receivePaneAnswer(
@@ -373,10 +639,29 @@ final class CosmoInlineAssistantStore: ObservableObject {
         if shouldOpenPane {
             isPaneRequested = true
         }
+        CosmoInlineAssistantMetrics.shared.paneAnswerDelivered()
+
+        // If this answer was streamed in, finalize the streaming message in place
+        // (the complete tool arguments are authoritative) instead of duplicating it.
+        if let streamingID = streamingPaneMessageID,
+           let index = paneMessages.firstIndex(where: { $0.id == streamingID }) {
+            if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                paneMessages.insert(.init(role: .system, content: title), at: index)
+                paneMessages[index + 1].content = answer
+                paneMessages[index + 1].sourceRefs = currentSourceRefs
+            } else {
+                paneMessages[index].content = answer
+                paneMessages[index].sourceRefs = currentSourceRefs
+            }
+            streamingPaneMessageID = nil
+            persistActiveSession()
+            return
+        }
+
         if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             paneMessages.append(.init(role: .system, content: title))
         }
-        paneMessages.append(.init(role: .assistant, content: answer))
+        paneMessages.append(.init(role: .assistant, content: answer, sourceRefs: currentSourceRefs))
         persistActiveSession()
     }
 
@@ -413,8 +698,55 @@ final class CosmoInlineAssistantStore: ObservableObject {
         persistActiveSession()
     }
 
+    /// Debounced embedding-based skill routing for the composer's current text.
+    /// Quiet by design: no suggestion while a skill is already selected, while a
+    /// slash command is being typed, or when the router isn't confident.
+    func refreshSkillSuggestion() {
+        skillSuggestionTask?.cancel()
+
+        let prompt = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard selectedSkillID == nil, !prompt.isEmpty, !prompt.hasPrefix("/") else {
+            skillSuggestion = nil
+            return
+        }
+
+        skillSuggestionTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            let suggestion = await CosmoInlineSkillAutoRouter.shared.suggestion(for: prompt)
+            guard !Task.isCancelled, let self,
+                  self.composerText.trimmingCharacters(in: .whitespacesAndNewlines) == prompt else { return }
+            self.skillSuggestion = suggestion
+        }
+    }
+
+    /// Confirm the ghost-chip suggestion (Tab in the composer).
+    func acceptSkillSuggestion() {
+        guard let suggestion = skillSuggestion else { return }
+        selectedSkillID = suggestion.skillID
+        skillSuggestion = nil
+        persistActiveSession()
+    }
+
+    func dismissSkillSuggestion() {
+        skillSuggestion = nil
+    }
+
     func receiveToolActivity(_ event: ToolActivityEvent) {
         statusText = CosmoInlineAssistantActivityLabel.statusText(for: event)
+
+        switch event {
+        case .started(let name, _, _):
+            if name == "inline_thinking" || name == "inline_context" {
+                phase = .planning
+            } else if let status = statusText {
+                phase = .gathering(status: status)
+            }
+        case .completed:
+            phase = .drafting
+        case .allDone:
+            break
+        }
     }
 
     func accept(
@@ -423,7 +755,14 @@ final class CosmoInlineAssistantStore: ObservableObject {
     ) async {
         guard let location = operationLocation(for: operationID) else { return }
         let proposal = proposals[location.proposalIndex]
-        guard let provider = registry.provider(surfaceID: proposal.surfaceID) else {
+
+        // Live view first; if no view has this surface open, fall back to applying
+        // straight to the atom (e.g. appending to a note that isn't open).
+        var resolvedProvider: (any CosmoEditableSurfaceProvider)? = registry.provider(surfaceID: proposal.surfaceID)
+        if resolvedProvider == nil {
+            resolvedProvider = await CosmoAtomBackedEditableSurface.load(surfaceID: proposal.surfaceID)
+        }
+        guard let provider = resolvedProvider else {
             markOperation(operationID, as: .conflicted)
             errorText = "The editable surface for this proposal is no longer available."
             return
@@ -459,10 +798,37 @@ final class CosmoInlineAssistantStore: ObservableObject {
             markOperation(operationID, as: result.status)
             errorText = nil
             persistActiveSession()
+            if result.status == .applied || result.status == .accepted {
+                recordSkillOutcome(
+                    proposal: proposals[location.proposalIndex],
+                    operation: operation,
+                    accepted: true
+                )
+            }
         } catch {
             markOperation(operationID, as: .conflicted)
             errorText = error.localizedDescription
             persistActiveSession()
+        }
+    }
+
+    /// Skill-scoped learning: every accept/reject accrues to the skill that
+    /// produced the proposal, so per-skill accept rates (and future lesson
+    /// extraction) reflect real usage instead of vibes.
+    private func recordSkillOutcome(
+        proposal: CosmoAssistantProposal,
+        operation: CosmoAssistantProposalOperation,
+        accepted: Bool
+    ) {
+        guard let skillID = proposal.skillID else { return }
+        let suggestion = operation.proposedText ?? proposal.summary
+        Task {
+            await AgentOutcomeTracker.shared.trackSuggestionAcceptance(
+                suggestion: String(suggestion.prefix(500)),
+                userFeedback: accepted ? "accepted inline diff" : "rejected inline diff",
+                accepted: accepted,
+                category: "skill:\(skillID)"
+            )
         }
     }
 
@@ -483,6 +849,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
         errorText = nil
         persistActiveSession()
+        recordSkillOutcome(proposal: proposal, operation: operation, accepted: false)
     }
 
     func acceptAll(proposalID: UUID) async {
@@ -618,6 +985,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     private func markOperation(_ operationID: UUID, as status: CosmoProposalStatus) {
         guard let location = operationLocation(for: operationID) else { return }
         proposals[location.proposalIndex].operations[location.operationIndex].status = status
+        CosmoInlineAssistantMetrics.shared.operationResolved(status: status)
     }
 
     private func persistActiveSession() {
@@ -645,6 +1013,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         composerText = ""
         errorText = nil
         statusText = nil
+        phase = .idle
+        streamingPaneMessageID = nil
         isPaneRequested = false
     }
 
@@ -659,6 +1029,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         activeSubmissionRoute = nil
         errorText = nil
         statusText = nil
+        phase = .idle
+        streamingPaneMessageID = nil
         isPaneRequested = false
     }
 

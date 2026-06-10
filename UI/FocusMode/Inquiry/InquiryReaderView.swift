@@ -11,6 +11,7 @@ struct InquiryReaderView: View {
 
     @State private var lastSelectedText: String = ""
     @State private var readerMode: Bool = true
+    @State private var loadState: WebSourceLoadState = .loading
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,6 +59,9 @@ struct InquiryReaderView: View {
 
             Spacer()
 
+            if let urlString = tab.url, let url = URL(string: urlString) {
+                openInBrowserButton(url)
+            }
             if tab.kind == .web {
                 readerToggle
             }
@@ -65,6 +69,21 @@ struct InquiryReaderView: View {
         .padding(.horizontal, DS.space16)
         .padding(.vertical, DS.space10)
         .background(DS.surface)
+    }
+
+    private func openInBrowserButton(_ url: URL) -> some View {
+        Button {
+            NSWorkspace.shared.open(url)
+        } label: {
+            Image(systemName: "safari")
+                .font(.system(size: 11))
+                .foregroundStyle(CosmoColors.textSecondary)
+                .frame(width: 24, height: 24)
+                .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open in browser")
     }
 
     private var readerToggle: some View {
@@ -93,13 +112,13 @@ struct InquiryReaderView: View {
         switch tab.kind {
         case .web, .pdf:
             if let urlString = tab.url, let url = URL(string: urlString) {
-                WebSourceView(url: url, readerMode: readerMode, lastSelectedText: $lastSelectedText)
+                webContent(url: url, readerMode: readerMode)
             } else {
                 missingURLState
             }
         case .youTube:
             if let urlString = tab.url, let url = URL(string: urlString) {
-                WebSourceView(url: url, readerMode: false, lastSelectedText: $lastSelectedText)
+                webContent(url: url, readerMode: false)
             } else {
                 missingURLState
             }
@@ -110,6 +129,69 @@ struct InquiryReaderView: View {
                 missingURLState
             }
         }
+    }
+
+    @ViewBuilder
+    private func webContent(url: URL, readerMode: Bool) -> some View {
+        ZStack {
+            WebSourceView(url: url, readerMode: readerMode, lastSelectedText: $lastSelectedText, loadState: $loadState)
+            switch loadState {
+            case .loading:
+                loadingState
+            case .failed(let message):
+                failureState(url: url, message: message)
+            case .loaded:
+                EmptyView()
+            }
+        }
+        .animation(ProMotionSprings.gentle, value: loadState)
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: DS.space10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Loading source…")
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.bg)
+        .transition(.opacity)
+    }
+
+    private func failureState(url: URL, message: String) -> some View {
+        VStack(spacing: DS.space10) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 18, weight: .light))
+                .foregroundStyle(CosmoColors.textTertiary)
+                .accessibilityHidden(true)
+            Text("This page couldn't be loaded here.")
+                .font(.system(.body, design: .serif))
+                .foregroundStyle(CosmoColors.textSecondary)
+            Text(message)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
+                .lineLimit(2)
+                .frame(maxWidth: 360)
+                .multilineTextAlignment(.center)
+            Button {
+                NSWorkspace.shared.open(url)
+            } label: {
+                Text("Open in Browser")
+                    .font(CosmoTypography.label)
+                    .padding(.horizontal, DS.space12)
+                    .padding(.vertical, 6)
+                    .background(DS.accent, in: Capsule())
+                    .foregroundStyle(DS.textOnAccent)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open source in browser")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.bg)
+        .transition(.opacity)
     }
 
     private var missingURLState: some View {

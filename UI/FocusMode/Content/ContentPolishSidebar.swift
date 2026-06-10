@@ -23,11 +23,11 @@ struct ContentPolishSidebar: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14))
-                    .foregroundColor(DS.green)
+                    .foregroundStyle(DS.green)
 
                 Text("Polish")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
             }
@@ -98,10 +98,10 @@ struct ContentPolishSidebar: View {
             VStack(spacing: 1) {
                 Text("\(Int(score))")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Text(analysis.readabilityRating.label)
                     .font(.system(size: 8, weight: .medium))
-                    .foregroundColor(color)
+                    .foregroundStyle(color)
             }
         }
         .shadow(color: color.opacity(0.12), radius: 6)
@@ -119,11 +119,11 @@ struct ContentPolishSidebar: View {
         HStack(spacing: 6) {
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             Spacer()
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
         }
     }
 
@@ -149,7 +149,7 @@ struct ContentPolishSidebar: View {
                 .frame(width: 6, height: 6)
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
         }
     }
 
@@ -179,13 +179,13 @@ struct ContentPolishSidebar: View {
 
             Text(label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
             Text("\(count)")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundColor(count > 0 ? color : DS.textMuted)
+                .foregroundStyle(count > 0 ? color : DS.textMuted)
         }
     }
 
@@ -200,7 +200,7 @@ struct ContentPolishSidebar: View {
                 ProgressView().controlSize(.small)
                 Text(scorecardEngine.evaluationProgress.isEmpty ? "Evaluating..." : scorecardEngine.evaluationProgress)
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -217,7 +217,7 @@ struct ContentPolishSidebar: View {
                     Text("Run Scorecard")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(DS.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -246,11 +246,11 @@ struct ContentPolishSidebar: View {
             HStack {
                 Text("Confidence")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                 Spacer()
                 Text("\(scorecard.overallConfidence)%")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .padding(.top, 4)
 
@@ -264,7 +264,7 @@ struct ContentPolishSidebar: View {
                     Text("Re-evaluate")
                         .font(.system(size: 9, weight: .medium))
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(DS.glassCardFill, in: Capsule())
@@ -281,14 +281,14 @@ struct ContentPolishSidebar: View {
             HStack {
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Text(String(format: "%.1f", score))
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundColor(scoreColor(score))
+                    .foregroundStyle(scoreColor(score))
                 Text("/10")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             GeometryReader { geo in
@@ -322,7 +322,7 @@ struct ContentPolishSidebar: View {
                 ProgressView().controlSize(.small)
                 Text("Analyzing risks...")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -339,7 +339,7 @@ struct ContentPolishSidebar: View {
                     Text("Run Red Team")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(.red)
+                .foregroundStyle(.red)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -355,10 +355,10 @@ struct ContentPolishSidebar: View {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.shield.fill")
                         .font(.system(size: 14))
-                        .foregroundColor(DS.green)
+                        .foregroundStyle(DS.green)
                     Text("No significant risks found")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.green)
+                        .foregroundStyle(DS.green)
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -369,15 +369,15 @@ struct ContentPolishSidebar: View {
                         HStack(spacing: 6) {
                             Image(systemName: card.riskType.iconName)
                                 .font(.system(size: 10))
-                                .foregroundColor(card.severity.color)
+                                .foregroundStyle(card.severity.color)
                             Text(card.title)
                                 .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(DS.text)
+                                .foregroundStyle(DS.text)
                                 .lineLimit(1)
                             Spacer()
                             Text(card.severity.displayName.uppercased())
                                 .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(card.severity.color)
+                                .foregroundStyle(card.severity.color)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
                                 .background(card.severity.color.opacity(0.15), in: Capsule())
@@ -385,7 +385,7 @@ struct ContentPolishSidebar: View {
                         if !card.recommendation.isEmpty {
                             Text(card.recommendation)
                                 .font(.system(size: 9))
-                                .foregroundColor(DS.textMuted)
+                                .foregroundStyle(DS.textMuted)
                                 .lineLimit(2)
                         }
                     }
@@ -404,7 +404,7 @@ struct ContentPolishSidebar: View {
                     Text("Re-evaluate")
                         .font(.system(size: 9, weight: .medium))
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(DS.glassCardFill, in: Capsule())
@@ -420,7 +420,7 @@ struct ContentPolishSidebar: View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             Text(title)
                 .dsSmallCapsLabel()
         }

@@ -14,8 +14,9 @@ struct FloatingOverlayBackdrop: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(.ultraThinMaterial).opacity(0.75)
-            DS.bg.opacity(0.15)
+            // Kept light so Liquid Glass panels have real content to refract.
+            Rectangle().fill(.ultraThinMaterial).opacity(0.45)
+            DS.bg.opacity(0.08)
         }
         .ignoresSafeArea()
         .contentShape(Rectangle())
@@ -31,10 +32,11 @@ struct CortexOverlayBackdrop: View {
 
     var body: some View {
         ZStack {
+            // Kept light so Liquid Glass panels have real content to refract.
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .opacity(DS.palette.isDark ? 0.62 : 0.42)
-            (DS.palette.isDark ? Color.black.opacity(0.24) : DS.bg.opacity(0.15))
+                .opacity(DS.palette.isDark ? 0.34 : 0.20)
+            (DS.palette.isDark ? Color.black.opacity(0.14) : DS.bg.opacity(0.08))
         }
         .ignoresSafeArea()
         .contentShape(Rectangle())
@@ -64,7 +66,6 @@ private struct FloatingOverlayPanelModifier: ViewModifier {
 private struct SettingsGlassPanelModifier: ViewModifier {
     func body(content: Content) -> some View {
         CosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .globalSidebar,
             cornerRadius: CommandKMetrics.overlayCornerRadius
         ) {
@@ -85,8 +86,8 @@ extension View {
     }
 
     /// Apply the same spatial glass system used by settings and the global sidebar.
-    func cortexGlassPanel() -> some View {
-        modifier(CortexGlassPanelModifier())
+    func cortexGlassPanel(glassID: String? = nil, in namespace: Namespace.ID? = nil) -> some View {
+        modifier(CortexGlassPanelModifier(glassID: glassID, glassNamespace: namespace))
     }
 
     /// Apply the shared spatial glass system used by floating inspector panels.
@@ -104,11 +105,15 @@ extension View {
 
 /// Frosted glass panel for the Cortex Command-K overlay.
 private struct CortexGlassPanelModifier: ViewModifier {
+    var glassID: String?
+    var glassNamespace: Namespace.ID?
+
     func body(content: Content) -> some View {
         CosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .globalSidebar,
-            cornerRadius: CommandKMetrics.overlayCornerRadius
+            cornerRadius: CommandKMetrics.overlayCornerRadius,
+            glassID: glassID,
+            glassNamespace: glassNamespace
         ) {
             content
         }
@@ -123,7 +128,6 @@ private struct CortexInspectorPanelModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         CosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .globalSidebar,
             cornerRadius: cornerRadius
         ) {
@@ -177,10 +181,10 @@ private struct CortexChipBody: View {
     @State private var isHovered = false
 
     var body: some View {
-        let baseFill: Color = isHovered ? DS.glassInputFillFocused : DS.glassInputFill
-        let strokeColor: Color = {
-            if isDestructive && isHovered { return DS.red.opacity(0.55) }
-            return isHovered ? DS.glassBorderFocused : DS.glassBorder
+        let glass: Glass = {
+            if isDestructive && isHovered { return .regular.tint(DS.red.opacity(0.16)).interactive() }
+            if isHovered { return .regular.tint(DS.glassInputFillFocused.opacity(0.45)).interactive() }
+            return .regular.interactive()
         }()
         let textColor: Color = {
             if isDestructive { return isHovered ? DS.red : DS.red.opacity(0.85) }
@@ -193,12 +197,7 @@ private struct CortexChipBody: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .padding(.horizontal, 10)
-            .background(
-                Capsule(style: .continuous).fill(baseFill)
-            )
-            .overlay(
-                Capsule(style: .continuous).strokeBorder(strokeColor, lineWidth: 0.5)
-            )
+            .glassEffect(glass, in: .capsule)
             .offset(y: isHovered ? -1 : 0)
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .onHover { hovering in
@@ -221,10 +220,10 @@ struct FloatingOverlayCloseButton: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(DS.inkFaded)
                 .frame(width: 28, height: 28)
-                .background(DS.commandChromeControlFill, in: Circle())
-                .overlay(Circle().stroke(DS.commandChromeControlBorder, lineWidth: 0.5))
+                .glassEffect(.regular.interactive(), in: .circle)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Close")
     }
 }
 

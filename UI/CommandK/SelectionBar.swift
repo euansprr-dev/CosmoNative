@@ -7,7 +7,7 @@ import SwiftUI
 // MARK: - SelectionBar
 
 struct SelectionBar: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     var accentColor: Color = DS.accent
     var onDelete: () -> Void
 

@@ -19,6 +19,7 @@ final class DeepDiveOverviewViewModel {
     var connections: [Atom] = []
     var sessions: [Atom] = []
     var topicInboxItems: [InboxItem] = []
+    var extracts: [Atom] = []
 
     // Computed
     var currentQuestionTitle: String? {
@@ -26,6 +27,60 @@ final class DeepDiveOverviewViewModel {
             ?? questions.first { ($0.questionMetadata?.status ?? .open) == .open }
             ?? questions.first
         return active?.title
+    }
+
+    /// Questions with normalized-title duplicates collapsed; the richest copy
+    /// (most extracts, then most recent) represents each.
+    var dedupedQuestions: [Atom] {
+        Self.dedupeQuestions(questions, extractCount: { self.questionCounts($0).extracts })
+    }
+
+    nonisolated static func dedupeQuestions(_ questions: [Atom], extractCount: (Atom) -> Int) -> [Atom] {
+        var byKey: [String: Atom] = [:]
+        var order: [String] = []
+        for question in questions {
+            let key = ResearchTreeDocument.normalizedQuestionKey(question.title ?? "")
+            guard !key.isEmpty else { continue }
+            if let current = byKey[key] {
+                let currentScore = (extractCount(current), current.updatedAt)
+                let candidateScore = (extractCount(question), question.updatedAt)
+                if candidateScore > currentScore { byKey[key] = question }
+            } else {
+                byKey[key] = question
+                order.append(key)
+            }
+        }
+        return order.compactMap { byKey[$0] }
+    }
+
+    /// Narrative revisions, newest first, for the understanding history disclosure.
+    var understandingRevisions: [UnderstandingNarrativeRevision] {
+        (understanding.narrativeHistory ?? []).reversed()
+    }
+
+    /// Lexicon entries joined to their promoted/matching concept Connection.
+    var conceptEntries: [(lexicon: Atom, connection: Atom?)] {
+        lexicon.map { entry in
+            if let promoted = entry.lexiconMetadata?.promotedToUUID,
+               let connection = connections.first(where: { $0.uuid == promoted }) {
+                return (entry, connection)
+            }
+            let key = ConceptResolver.conceptKey(entry.title ?? "")
+            let match = key.isEmpty ? nil : connections.first {
+                ConceptResolver.conceptKey($0.title ?? "") == key
+            }
+            return (entry, match)
+        }
+    }
+
+    func questionCounts(_ question: Atom) -> (extracts: Int, sessions: Int) {
+        let extractCount = extracts.filter { $0.extractMetadata?.parentQuestionUUID == question.uuid }.count
+        let sessionUUIDs = Set(
+            extracts
+                .filter { $0.extractMetadata?.parentQuestionUUID == question.uuid }
+                .compactMap { $0.extractMetadata?.parentSessionUUID }
+        )
+        return (extractCount, sessionUUIDs.count)
     }
 
     // Current Understanding editor state
@@ -51,7 +106,8 @@ final class DeepDiveOverviewViewModel {
     func load() async {
         // Reload root atom (in case Telegram capture mutated it while view was open).
         if let fresh = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
-            atom = fresh
+            // Clean up legacy appended-markdown bodies into structured revisions.
+            atom = (try? await DeepDiveBodyMigration.migrateIfNeeded(fresh)) ?? fresh
             understandingDraftOneSentence = atom.deepDiveStructured?.currentUnderstanding.oneSentenceModel ?? understandingDraftOneSentence
         }
 
@@ -61,14 +117,16 @@ final class DeepDiveOverviewViewModel {
         async let src = (try? await InquiryRepository.shared.fetchSources(forDeepDive: atom)) ?? []
         async let cons = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: atom)) ?? []
         async let inbox = (try? await loadTopicInboxItems()) ?? []
+        async let ext = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: atom.uuid)) ?? []
 
-        let (loadedQs, loadedLex, loadedSes, loadedSrc, loadedCons, loadedInbox) = await (qs, lex, ses, src, cons, inbox)
+        let (loadedQs, loadedLex, loadedSes, loadedSrc, loadedCons, loadedInbox, loadedExt) = await (qs, lex, ses, src, cons, inbox, ext)
         questions = loadedQs.sorted { ($0.updatedAt) > ($1.updatedAt) }
         lexicon = loadedLex.sorted { ($0.title ?? "") < ($1.title ?? "") }
         sessions = loadedSes
         sources = loadedSrc
         connections = loadedCons
         topicInboxItems = loadedInbox
+        extracts = loadedExt
     }
 
     /// Topic Inbox = pending InboxItems whose recommendation targets this Deep Dive (by UUID match in

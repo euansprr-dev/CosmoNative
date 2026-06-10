@@ -63,13 +63,13 @@ struct ContentPipelineBar: View {
             if !compact {
                 Text(phase.displayName)
                     .font(.system(size: 10, weight: phase == currentPhase ? .semibold : .regular))
-                    .foregroundColor(phaseLabelColor(phase))
+                    .foregroundStyle(phaseLabelColor(phase))
 
                 // Duration badge for current phase
                 if phase == currentPhase, let enteredAt = phaseEnteredAt {
                     Text(durationString(from: enteredAt))
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
         }
@@ -122,7 +122,7 @@ struct ContentPipelineBar: View {
                     )
                 Text("\(phaseIndex(phase) + 1)")
                     .font(.system(size: compact ? 7 : 9, weight: .medium).monospacedDigit())
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }

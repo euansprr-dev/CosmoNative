@@ -32,6 +32,7 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
     case scheduling
     case analytics
     case preferences
+    case navigation
 
     var id: String { rawValue }
 
@@ -50,6 +51,7 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
         case .scheduling: return "Scheduling"
         case .analytics: return "Analytics"
         case .preferences: return "Preferences"
+        case .navigation: return "Navigation"
         }
     }
 
@@ -68,6 +70,7 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
         case .scheduling: return "calendar"
         case .analytics: return "chart.bar"
         case .preferences: return "slider.horizontal.3"
+        case .navigation: return "location"
         }
     }
 
@@ -99,6 +102,8 @@ enum AgentToolBundle: String, Codable, Sendable, CaseIterable, Identifiable {
             return "Lets the agent access performance, scoring, XP, analytics, and aggregate signals for prioritization and review."
         case .preferences:
             return "Lets the agent read and update global preferences, standing instructions, and long-term behavioral guidance."
+        case .navigation:
+            return "Lets the agent take you places: open atoms in focus mode or panes, jump to thinkspaces, fly the canvas camera to a block, and navigate to app areas like the Command Center."
         }
     }
 }

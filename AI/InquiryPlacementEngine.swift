@@ -517,6 +517,16 @@ enum InquiryDockRouteIntent: String, Sendable, Equatable {
     case challenge
     case summarize
     case refreshSources
+    case goal
+    case problem
+    case benefit
+    case example
+    case mechanism
+    case objection
+    case principle
+    case assumption
+    case quote
+    case reference
 }
 
 struct InquiryDockParseResult: Sendable, Equatable {
@@ -534,6 +544,16 @@ struct InquiryDockParseResult: Sendable, Equatable {
         case .term: return .term
         case .practice: return .practice
         case .output: return .outputIdea
+        case .goal: return .goal
+        case .problem: return .problem
+        case .benefit: return .benefit
+        case .example: return .example
+        case .mechanism: return .mechanism
+        case .objection: return .objection
+        case .principle: return .principle
+        case .assumption: return .assumption
+        case .quote: return .quote
+        case .reference: return .reference
         default: return nil
         }
     }
@@ -581,9 +601,21 @@ struct InquiryDockPrefixParser {
             ("scout:", .deepScout),
             ("source:", .source),
             ("term:", .term),
+            ("concept:", .term),
             ("practice:", .practice),
             ("output:", .output),
             ("note:", .note),
+            ("goal:", .goal),
+            ("problem:", .problem),
+            ("benefit:", .benefit),
+            ("example:", .example),
+            ("mechanism:", .mechanism),
+            ("objection:", .objection),
+            ("principle:", .principle),
+            ("assumption:", .assumption),
+            ("quote:", .quote),
+            ("reference:", .reference),
+            ("ref:", .reference),
             ("q:", .question)
         ]
 
@@ -626,6 +658,9 @@ struct InquiryBranchResearchProfile: Sendable, Equatable {
     var claims: [String]
     var evidence: [String]
     var sourceQuery: String? = nil
+    /// Domain anchor terms derived from the deep dive title, aliases, and lexicon —
+    /// replaces hardcoded topic keywords in ranking and topic gating.
+    var anchorTerms: Set<String> = []
 
     var query: String {
         var rawPieces: [String] = []
@@ -663,7 +698,8 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         profile: InquiryBranchResearchProfile,
         existingSourceRefs: [InquirySourceRef],
         localSources: [Atom],
-        searchMode: InquirySourceSearchMode = .quick
+        searchMode: InquirySourceSearchMode = .quick,
+        onProgress: (@MainActor (InquiryProviderStatus) -> Void)? = nil
     ) async -> InquiryRecommendationBatch {
         let localCandidates = Self.localCandidates(from: localSources, profile: profile)
 
@@ -681,41 +717,49 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
             academicQueries = Array(queries.prefix(1))
         }
 
-        let (openAlexStatus, openAlexCandidates) = await Self.fetchOpenAlexAcross(queries: academicQueries, profile: profile)
-        let (crossrefStatus, crossrefCandidates) = await Self.fetchCrossrefAcross(queries: academicQueries, profile: profile)
+        @Sendable func report(_ status: InquiryProviderStatus) async {
+            guard let onProgress else { return }
+            await MainActor.run { onProgress(status) }
+        }
+        @Sendable func tracked(
+            _ fetch: @escaping () async -> (InquiryProviderStatus, [InquirySourceCandidate])
+        ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+            let result = await fetch()
+            await report(result.0)
+            return result
+        }
 
-        var rawCandidates = localCandidates + openAlexCandidates + crossrefCandidates
-        var statuses = [
-            InquiryProviderStatus(provider: .local, state: .succeeded, count: localCandidates.count),
-            openAlexStatus,
-            crossrefStatus
-        ]
+        var rawCandidates = localCandidates
+        var statuses = [InquiryProviderStatus(provider: .local, state: .succeeded, count: localCandidates.count)]
+        await report(statuses[0])
 
         if searchMode == .deepScout {
-            let (semanticStatus, semanticCandidates) = await Self.fetchSemanticScholarAcross(queries: academicQueries, profile: profile)
-            let (pubMedStatus, pubMedCandidates) = await Self.fetchEuropePMCAcross(queries: academicQueries, profile: profile)
-            let (googleBooksStatus, googleBooksCandidates) = await Self.fetchPlannedProvider(.googleBooks, plan: deepScoutPlan, profile: profile)
-            let (openLibraryStatus, openLibraryCandidates) = await Self.fetchPlannedProvider(.openLibrary, plan: deepScoutPlan, profile: profile)
-            let (archiveStatus, archiveCandidates) = await Self.fetchPlannedProvider(.internetArchive, plan: deepScoutPlan, profile: profile)
-            let (youtubeStatus, youtubeCandidates) = await Self.fetchPlannedProvider(.youtube, plan: deepScoutPlan, profile: profile)
-            let (webStatus, webCandidates) = await Self.fetchWebResearch(query: profile.query, profile: profile)
-            rawCandidates.append(contentsOf: semanticCandidates)
-            rawCandidates.append(contentsOf: pubMedCandidates)
-            rawCandidates.append(contentsOf: googleBooksCandidates)
-            rawCandidates.append(contentsOf: openLibraryCandidates)
-            rawCandidates.append(contentsOf: archiveCandidates)
-            rawCandidates.append(contentsOf: youtubeCandidates)
-            rawCandidates.append(contentsOf: webCandidates)
-            statuses += [
-                semanticStatus,
-                pubMedStatus,
-                googleBooksStatus,
-                openLibraryStatus,
-                archiveStatus,
-                youtubeStatus,
-                webStatus
-            ]
+            // All providers fan out concurrently; each reports its status as it lands.
+            async let openAlex = tracked { await Self.fetchOpenAlexAcross(queries: academicQueries, profile: profile) }
+            async let crossref = tracked { await Self.fetchCrossrefAcross(queries: academicQueries, profile: profile) }
+            async let semantic = tracked { await Self.fetchSemanticScholarAcross(queries: academicQueries, profile: profile) }
+            async let pubMed = tracked { await Self.fetchEuropePMCAcross(queries: academicQueries, profile: profile) }
+            async let googleBooks = tracked { await Self.fetchPlannedProvider(.googleBooks, plan: deepScoutPlan, profile: profile) }
+            async let openLibrary = tracked { await Self.fetchPlannedProvider(.openLibrary, plan: deepScoutPlan, profile: profile) }
+            async let archive = tracked { await Self.fetchPlannedProvider(.internetArchive, plan: deepScoutPlan, profile: profile) }
+            async let youtube = tracked { await Self.fetchPlannedProvider(.youtube, plan: deepScoutPlan, profile: profile) }
+            async let podcasts = tracked { await Self.fetchPlannedProvider(.podcast, plan: deepScoutPlan, profile: profile) }
+            async let web = tracked { await Self.fetchWebResearch(query: profile.query, profile: profile) }
+
+            let results = await [openAlex, crossref, semantic, pubMed, googleBooks, openLibrary, archive, youtube, podcasts, web]
+            for (status, candidates) in results {
+                rawCandidates.append(contentsOf: candidates)
+                statuses.append(status)
+            }
             rawCandidates = Self.applyDeepScoutMetadata(rawCandidates, plan: deepScoutPlan)
+        } else {
+            async let openAlex = tracked { await Self.fetchOpenAlexAcross(queries: academicQueries, profile: profile) }
+            async let crossref = tracked { await Self.fetchCrossrefAcross(queries: academicQueries, profile: profile) }
+            let results = await [openAlex, crossref]
+            for (status, candidates) in results {
+                rawCandidates.append(contentsOf: candidates)
+                statuses.append(status)
+            }
         }
 
         let merged = Self.mergeCandidates(rawCandidates)
@@ -737,7 +781,7 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
             searchMode: searchMode,
             providerStatuses: statuses,
             scoutSteps: Self.scoutSteps(for: searchMode, queryCount: queries.count, candidateCount: rawCandidates.count, rankedCount: ranked.count),
-            candidates: Array(ranked.prefix(12))
+            candidates: Array(ranked.prefix(20))
         )
     }
 
@@ -1089,6 +1133,13 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
                     intent: plan.intent,
                     profile: profile
                 )
+            case .podcast:
+                result = await DeepScoutProviders.fetchPodcasts(
+                    query: query.query,
+                    lane: query.lane,
+                    intent: plan.intent,
+                    profile: profile
+                )
             default:
                 result = (InquiryProviderStatus(provider: provider, state: .idle, count: 0), [])
             }
@@ -1117,7 +1168,7 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         switch provider {
         case .openAlex, .crossref, .semanticScholar, .pubMed, .arxiv:
             return true
-        case .local, .youtube, .web, .googleBooks, .openLibrary, .internetArchive:
+        case .local, .youtube, .podcast, .web, .googleBooks, .openLibrary, .internetArchive:
             return false
         }
     }
@@ -1143,7 +1194,7 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
             return .localLibrary
         case .googleBooks, .openLibrary, .internetArchive:
             return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
-        case .youtube:
+        case .youtube, .podcast:
             return .teacherLecture
         case .pubMed:
             return .clinicalEvidence
@@ -1517,8 +1568,17 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
 
     private static func mergeCandidates(_ candidates: [InquirySourceCandidate]) -> [InquirySourceCandidate] {
         var merged: [String: InquirySourceCandidate] = [:]
+        var byWork: [String: String] = [:]   // work key (title+author) → merge key
         for candidate in candidates {
-            let key = mergeKey(for: candidate)
+            var key = mergeKey(for: candidate)
+            // The same book/paper often appears with different URLs across
+            // providers (Google Books vs Open Library) — collapse by work key.
+            let work = workKey(for: candidate)
+            if let existingKey = byWork[work] {
+                key = existingKey
+            } else {
+                byWork[work] = key
+            }
             if let existing = merged[key], existing.provider == .local {
                 continue
             }
@@ -1534,6 +1594,15 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         if let doi = candidate.doi?.lowercased(), !doi.isEmpty { return "doi:\(doi)" }
         if let url = candidate.url?.lowercased(), !url.isEmpty { return "url:\(url)" }
         return "title:\(InquiryPlacementEngine.normalized(candidate.title))"
+    }
+
+    private static func workKey(for candidate: InquirySourceCandidate) -> String {
+        let title = InquiryPlacementEngine.normalized(candidate.title)
+        let authorLastName = candidate.authors.first?
+            .split(separator: " ")
+            .last
+            .map { InquiryPlacementEngine.normalized(String($0)) } ?? ""
+        return "\(title)|\(authorLastName)"
     }
 
     private static func alreadyImported(_ candidate: InquirySourceCandidate, existingSourceRefs: [InquirySourceRef]) -> Bool {
@@ -1553,7 +1622,7 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         case .crossref: return 0.07
         case .semanticScholar, .pubMed: return 0.11
         case .arxiv: return 0.08
-        case .youtube: return 0.04
+        case .youtube, .podcast: return 0.04
         case .web: return 0.03
         case .googleBooks, .openLibrary, .internetArchive: return 0.04
         }

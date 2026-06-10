@@ -28,8 +28,14 @@ final class ConnectionFocusModeStateMigrationTests: XCTestCase {
         XCTAssertEqual(decoded.sections.count, ConnectionSectionType.allCases.count)
     }
 
-    func testLegacyCollaboratorCrystallizeMessageMigratesToDraftProposal() throws {
-        let encoded = try JSONEncoder().encode(ConnectionFocusModeState(atomUUID: "connection-uuid"))
+    /// Old persisted blobs carry collaborator history (collaboratorMessages,
+    /// activeDraftProposal, collaboratorSession). Those features are gone —
+    /// the keys must be silently ignored and the sections must survive.
+    func testV2JSONWithCollaboratorKeysStillDecodes() throws {
+        var state = ConnectionFocusModeState(atomUUID: "connection-uuid")
+        state.addItem(ConnectionItem(content: "Trust compounds."), toSection: .claims)
+
+        let encoded = try JSONEncoder().encode(state)
         var json = try XCTUnwrap(
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
@@ -42,71 +48,67 @@ final class ConnectionFocusModeStateMigrationTests: XCTestCase {
                 "crystallizeContent": "Trust is a loop, not a trait."
             ]
         ]
+        json["activeDraftProposal"] = [
+            "id": UUID().uuidString,
+            "targetSection": "claims",
+            "draftText": "Pending draft",
+            "visibleText": "Pending draft",
+            "rationale": "",
+            "sourceIDs": [] as [String],
+            "status": "streaming",
+            "createdAt": 770000000.0
+        ]
+        json["collaboratorSession"] = [
+            "presetID": "deepen.connection",
+            "hasBootstrapped": true
+        ]
 
         let data = try JSONSerialization.data(withJSONObject: json)
         let decoded = try JSONDecoder().decode(ConnectionFocusModeState.self, from: data)
 
-        XCTAssertEqual(decoded.collaboratorMessages.count, 1)
-        XCTAssertEqual(decoded.collaboratorMessages.first?.draftProposal?.targetSection, .goal)
-        XCTAssertEqual(decoded.collaboratorMessages.first?.draftProposal?.draftText, "Trust is a loop, not a trait.")
-        XCTAssertFalse(decoded.collaboratorSession.hasBootstrapped)
-        XCTAssertNil(decoded.activeDraftProposal)
+        XCTAssertEqual(decoded.atomUUID, "connection-uuid")
+        XCTAssertEqual(
+            decoded.section(for: .claims)?.items.map(\.resolvedPlainText),
+            ["Trust compounds."]
+        )
     }
 
-    func testCollaboratorMessagePreservesMultipleDraftProposals() throws {
-        let claim = ConnectionDraftProposal(
-            targetSection: .claims,
-            draftText: "The subconscious executes toward the clearest image.",
-            status: .pending
-        )
-        let example = ConnectionDraftProposal(
-            targetSection: .examples,
-            draftText: "A painter finishes the image internally before the first brushstroke.",
-            status: .pending
-        )
-        let message = CollaboratorMessage(
-            role: .assistant,
-            text: "I'll stage the claim first, then the painter example.",
-            questionSuggestion: "What would make the image concrete enough to test?",
-            draftProposals: [claim, example]
-        )
+    /// V2 stored ForgeMode raw values under the `forgeMode` key. They map
+    /// onto ConnectionViewMode: forge/chalkboard → board, manuscript stays.
+    func testLegacyForgeModeMapsToViewMode() throws {
+        for (legacy, expected): (String, ConnectionViewMode) in [
+            ("forge", .board),
+            ("chalkboard", .board),
+            ("manuscript", .manuscript),
+            ("outline", .outline),
+            ("somethingUnknown", .board)
+        ] {
+            let state = ConnectionFocusModeState(atomUUID: "connection-uuid")
+            let encoded = try JSONEncoder().encode(state)
+            var json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+            )
+            json["forgeMode"] = legacy
 
-        let data = try JSONEncoder().encode(message)
-        let decoded = try JSONDecoder().decode(CollaboratorMessage.self, from: data)
+            let data = try JSONSerialization.data(withJSONObject: json)
+            let decoded = try JSONDecoder().decode(ConnectionFocusModeState.self, from: data)
 
-        XCTAssertEqual(decoded.draftProposals.count, 2)
-        XCTAssertEqual(decoded.draftProposal?.targetSection, .claims)
-        XCTAssertEqual(decoded.draftProposals[1].targetSection, .examples)
-        XCTAssertEqual(decoded.questionSuggestion, "What would make the image concrete enough to test?")
+            XCTAssertEqual(decoded.viewMode, expected, "legacy \(legacy)")
+        }
     }
 
-    func testUpdatingCollaboratorDraftKeepsQueuedDrafts() throws {
+    func testViewModeRoundTripsUnderForgeModeKey() throws {
         var state = ConnectionFocusModeState(atomUUID: "connection-uuid")
-        var claim = ConnectionDraftProposal(
-            targetSection: .claims,
-            draftText: "The subconscious executes toward the clearest image.",
-            status: .pending
-        )
-        let example = ConnectionDraftProposal(
-            targetSection: .examples,
-            draftText: "A painter finishes the image internally before the first brushstroke.",
-            status: .pending
-        )
-        let message = CollaboratorMessage(
-            role: .assistant,
-            text: "I'll stage both.",
-            draftProposals: [claim, example]
-        )
-        state.appendCollaboratorMessage(message)
+        state.viewMode = .outline
 
-        claim.status = .accepted
-        claim.insertedAt = Date()
-        state.updateCollaboratorDraft(claim)
+        let encoded = try JSONEncoder().encode(state)
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertEqual(json["forgeMode"] as? String, "outline")
 
-        let updatedMessage = try XCTUnwrap(state.collaboratorMessages.first)
-        XCTAssertEqual(updatedMessage.draftProposals.count, 2)
-        XCTAssertEqual(updatedMessage.draftProposals[0].status, .accepted)
-        XCTAssertEqual(updatedMessage.draftProposals[1].status, .pending)
+        let decoded = try JSONDecoder().decode(ConnectionFocusModeState.self, from: encoded)
+        XCTAssertEqual(decoded.viewMode, .outline)
     }
 
     func testConnectionStructuredDataBackfillsInquiryV2Sections() throws {

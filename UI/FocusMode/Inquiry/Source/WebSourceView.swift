@@ -5,10 +5,19 @@
 import SwiftUI
 import WebKit
 
+/// Load lifecycle for a web source, surfaced so the reader can show
+/// spinner/failure states instead of a silent blank pane.
+enum WebSourceLoadState: Equatable {
+    case loading
+    case loaded
+    case failed(String)
+}
+
 struct WebSourceView: NSViewRepresentable {
     let url: URL
     let readerMode: Bool
     @Binding var lastSelectedText: String
+    var loadState: Binding<WebSourceLoadState>? = nil
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -44,6 +53,9 @@ struct WebSourceView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
+        // Academic publishers (doi.org redirect targets) often refuse the
+        // default embedded-WebKit user agent — present as Safari.
+        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
         webView.load(URLRequest(url: url))
         return webView
     }
@@ -98,8 +110,35 @@ struct WebSourceView: NSViewRepresentable {
             }
         }
 
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            setLoadState(.loading)
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             // Apply reader mode on first load (re-applied via updateNSView)
+            setLoadState(.loaded)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            reportFailure(error)
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            reportFailure(error)
+        }
+
+        private func reportFailure(_ error: Error) {
+            let nsError = error as NSError
+            // Redirect-triggered cancellations are not real failures.
+            guard !(nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled) else { return }
+            setLoadState(.failed(error.localizedDescription))
+        }
+
+        private func setLoadState(_ state: WebSourceLoadState) {
+            guard let binding = parent.loadState else { return }
+            Task { @MainActor in
+                binding.wrappedValue = state
+            }
         }
     }
 }

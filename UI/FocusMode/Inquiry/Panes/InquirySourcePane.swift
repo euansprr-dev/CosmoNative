@@ -827,7 +827,7 @@ struct InquirySourcePane: View {
             return .localLibrary
         case .googleBooks, .openLibrary, .internetArchive:
             return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
-        case .youtube:
+        case .youtube, .podcast:
             return .teacherLecture
         case .pubMed:
             return .clinicalEvidence

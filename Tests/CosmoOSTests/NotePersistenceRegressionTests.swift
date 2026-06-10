@@ -177,13 +177,22 @@ final class NotePersistenceRegressionTests: XCTestCase {
         XCTAssertGreaterThan(titleInset.height, 0)
     }
 
-    func testNoteBodyEditorsUseOneContinuousTextSurfaceForSelection() throws {
+    /// The Notes focus mode is a Notion-style block editor: every line is its
+    /// own block field (BlockListView), with multi-block selection handled at
+    /// the block level (BlockSelectionCoordinator) — NOT by collapsing the
+    /// body into one continuous NSTextView. The canvas note block stays on the
+    /// lightweight continuous editor.
+    func testNoteFocusBodyUsesBlockEditorWithBlockLevelSelection() throws {
         let noteFocusSource = try String(
             contentsOf: packageRoot.appendingPathComponent("UI/FocusMode/Notes/NoteFocusModeView.swift"),
             encoding: .utf8
         )
         let noteBlockSource = try String(
             contentsOf: packageRoot.appendingPathComponent("Canvas/NoteBlockView.swift"),
+            encoding: .utf8
+        )
+        let blockListSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/BlockEditor/BlockListView.swift"),
             encoding: .utf8
         )
 
@@ -205,8 +214,9 @@ final class NotePersistenceRegressionTests: XCTestCase {
         )
         let blockBodySource = String(noteBlockSource[blockBodyRange.lowerBound..<blockFooterRange.lowerBound])
 
-        XCTAssertTrue(focusBodySource.contains("CosmoDocumentEditor("))
-        XCTAssertFalse(focusBodySource.contains("BlockListView("))
+        XCTAssertTrue(focusBodySource.contains("BlockListView("))
+        XCTAssertFalse(focusBodySource.contains("CosmoDocumentEditor("))
+        XCTAssertTrue(blockListSource.contains("BlockSelectionCoordinator"))
         XCTAssertTrue(blockBodySource.contains("CosmoDocumentEditor("))
         XCTAssertFalse(blockBodySource.contains("BlockListView("))
     }

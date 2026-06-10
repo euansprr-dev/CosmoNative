@@ -234,13 +234,6 @@ struct CosmoBlockWrapper<Content: View>: View {
                 x: 0,
                 y: 0
             )
-            .cosmoGlassSceneSignal(
-                id: "canvas-block-wrapper-\(block.id)",
-                source: .canvasBlock,
-                color: accentColor,
-                intensity: block.entityType == .image ? 0.64 : 0.46,
-                allowsDeepDiffusion: block.entityType == .image || block.size.width >= 300
-            )
             .animation(isDragging ? nil : ProMotionSprings.hover, value: isDragging)
             // Per design language: card hover is depth change, not scale.
             .contentShape(RoundedRectangle(cornerRadius: DS.radiusMedium))

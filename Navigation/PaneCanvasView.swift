@@ -152,7 +152,6 @@ struct PaneCanvasView: View {
 
                     blocksLayer(snapshot: snapshot)
                 }
-                .cosmoGlassSceneSignalsEnabled(false)
                 .offset(
                     x: compositorTransform.contentOffset.width,
                     y: compositorTransform.contentOffset.height

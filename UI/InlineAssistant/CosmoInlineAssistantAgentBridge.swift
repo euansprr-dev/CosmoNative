@@ -4,7 +4,15 @@ struct CosmoInlineAssistantPreparedAgentRequest {
     var prompt: String
     var conversationID: String
     var tierOverride: AgentModelTier?
+    /// Pinned intent — keeps the tool set and cached prompt prefix byte-stable
+    /// instead of fragmenting on keyword-classification noise.
+    var intentOverride: AgentIntent?
+    /// Byte-stable instruction layer (route rules + personality). Lives inside the
+    /// prompt-cache prefix; must not contain anything request-specific.
     var systemPromptOverride: String?
+    /// Per-request context (surface snapshot, resolved skill facts, working frame).
+    /// Rendered after the cache breakpoint so it never invalidates the prefix.
+    var volatileContextOverride: String?
     var responseMode: AgentResponseMode
     var profileToolBundles: [AgentToolBundle]
     var forcedToolBundles: Set<AgentToolBundle>
@@ -23,6 +31,7 @@ struct CosmoInlineAssistantAgentBridge {
     static let live = CosmoInlineAssistantAgentBridge { prompt, route, store in
         let perfStart = Date()
         let executor = AgentToolExecutor.shared
+        executor.resetSessionSourceRefs()
         executor.onWorkspaceEditProposal = { proposal in
             store.receive(proposal: proposal)
         }
@@ -41,11 +50,24 @@ struct CosmoInlineAssistantAgentBridge {
             executor.contextSourceIDs = []
             executor.contextConversationID = nil
             executor.activeClientUUID = nil
+            store.sourceRefsProvider = nil
         }
 
         let activeSurface = CosmoEditableSurfaceRegistry.shared.activeSurface
         let snapshot = activeSurface?.editableSnapshot()
         store.activateSession(surfaceID: snapshot?.surfaceID)
+
+        // Chips show what was actually read: tool-read refs plus the prefetched
+        // ambient pack (which the model is told to use without re-searching).
+        let surfaceIDForRefs = snapshot?.surfaceID
+        store.sourceRefsProvider = {
+            var refs = AgentToolExecutor.shared.sessionSourceRefs
+            for ambient in CosmoInlineAmbientContextPack.shared.sourceRefs(forSurfaceID: surfaceIDForRefs)
+            where !refs.contains(where: { $0.uuid == ambient.uuid }) {
+                refs.append(ambient)
+            }
+            return refs
+        }
         let contextStatus = snapshot.map { "Reading \($0.title)" } ?? "Reading current context"
         store.receiveToolActivity(.started(
             name: "inline_context",
@@ -76,7 +98,9 @@ struct CosmoInlineAssistantAgentBridge {
             conversationId: preparedRequest.conversationID,
             source: .inApp,
             tierOverride: preparedRequest.tierOverride,
+            intentOverride: preparedRequest.intentOverride,
             systemPromptOverride: preparedRequest.systemPromptOverride,
+            volatileContextOverride: preparedRequest.volatileContextOverride,
             responseMode: preparedRequest.responseMode,
             profileToolBundles: preparedRequest.profileToolBundles,
             forcedToolBundles: preparedRequest.forcedToolBundles,
@@ -86,8 +110,14 @@ struct CosmoInlineAssistantAgentBridge {
                 Task { @MainActor in
                     store.receiveToolActivity(event)
                 }
+            },
+            onPaneAnswerDelta: { delta in
+                Task { @MainActor in
+                    store.receivePaneAnswerDelta(delta)
+                }
             }
         )
+        CosmoAgentService.shared.noteInlinePrefixWritten()
         let perfTotalMs = Int(Date().timeIntervalSince(perfStart) * 1000)
         print("[AGENT-PERF] inline TOTAL=\(perfTotalMs)ms (prepare=\(perfPrepareMs)ms, agentLoop=\(perfTotalMs - perfPrepareMs)ms)")
         CosmoWindowViewModel.shared.finishInlineAssistantAgentRequest(
@@ -124,4 +154,32 @@ struct CosmoInlineAssistantAgentBridge {
     }
 
     static let mock = CosmoInlineAssistantAgentBridge { _, _, _ in }
+}
+
+/// Opportunistically writes the inline assistant's cached prompt prefix (tools +
+/// identity + static route instructions) into the provider's prompt cache before
+/// the user submits anything — fired on orb hover and surface activation, so the
+/// first real keystroke-to-token skips the cold cache write.
+@MainActor
+enum CosmoInlineAssistantCacheWarmer {
+    private static var inFlight = false
+
+    static func warmIfNeeded(route: CosmoInlineAssistantRoute = .action) {
+        guard !inFlight else { return }
+        inFlight = true
+        Task(priority: .utility) {
+            await CosmoAgentService.shared.prewarmCachedPrefix(
+                intent: CosmoInlineAssistantRequestShape.pinnedIntent(for: route),
+                staticPromptOverride: CosmoInlineAssistantInstructionPrompt.staticInstructions(
+                    for: route,
+                    requiresPaneExplanation: false
+                ),
+                responseMode: CosmoInlineAssistantRequestShape.responseMode(for: route),
+                profileToolBundles: [],
+                forcedToolBundles: CosmoInlineAssistantRequestShape.baselineToolBundles(for: route),
+                tier: .sensor
+            )
+            inFlight = false
+        }
+    }
 }

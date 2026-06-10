@@ -301,6 +301,74 @@ class CosmoAgentService: ObservableObject {
         return response.content
     }
 
+    // MARK: - Cache Pre-warming
+
+    /// Tracks the last time the inline assistant's cached prefix was written
+    /// (by a real request or a prewarm) so we don't re-warm a hot cache.
+    private var lastInlinePrefixWarm: Date?
+    private let prefixWarmInterval: TimeInterval = 240 // Anthropic's 5-min TTL minus safety margin
+
+    /// Write the cached prompt prefix (tools + identity + static instructions) into
+    /// the provider's prompt cache ahead of the first real request. Fired on surface
+    /// activation / orb hover so the first keystroke-to-token feels instant.
+    /// Reproduces the exact assembly path a real request takes — same registry,
+    /// same assembler — so the warmed bytes match the real request's prefix.
+    func prewarmCachedPrefix(
+        intent: AgentIntent,
+        staticPromptOverride: String?,
+        responseMode: AgentResponseMode,
+        profileToolBundles: [AgentToolBundle],
+        forcedToolBundles: Set<AgentToolBundle>,
+        tier: AgentModelTier
+    ) async {
+        guard let provider = llmProvider as? PrewarmingLLMProvider else { return }
+        if let lastWarm = lastInlinePrefixWarm,
+           Date().timeIntervalSince(lastWarm) < prefixWarmInterval {
+            return
+        }
+        lastInlinePrefixWarm = Date()
+
+        var tools = toolRegistry.toolsForIntent(
+            intent,
+            source: .inApp,
+            profileBundles: profileToolBundles,
+            forcedBundles: forcedToolBundles
+        )
+        tools = responseMode.filteredTools(tools)
+
+        let effectiveOverride = [staticPromptOverride, responseMode.promptOverride]
+            .compactMap { $0 }
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
+
+        let systemPrompt = await contextAssembler.assembleSystemPrompt(
+            conversation: nil,
+            preferences: [],
+            tools: tools,
+            intent: intent,
+            systemPromptOverride: effectiveOverride.isEmpty ? nil : effectiveOverride,
+            lightweightContext: true
+        )
+
+        do {
+            let warmStart = Date()
+            try await provider.prewarm(
+                tools: tools,
+                model: tier.modelId,
+                systemPrompt: systemPrompt
+            )
+            print("[AGENT-PERF] prewarm prefix=\(systemPrompt.cached.count)c tools=\(tools.count) in \(Int(Date().timeIntervalSince(warmStart) * 1000))ms")
+        } catch {
+            // Prewarm is opportunistic — failures only mean the first request pays the cold write.
+            print("[AGENT-PERF] prewarm skipped: \(error.localizedDescription)")
+        }
+    }
+
+    /// Real inline requests also refresh the warm window.
+    func noteInlinePrefixWritten() {
+        lastInlinePrefixWarm = Date()
+    }
+
     // MARK: - Process Message (Main Entry Point)
 
     /// Process a user message through the full agent pipeline:
@@ -310,12 +378,15 @@ class CosmoAgentService: ObservableObject {
         conversationId: String? = nil,
         source: MessageSource = .inApp,
         tierOverride: AgentModelTier? = nil,
+        intentOverride: AgentIntent? = nil,
         systemPromptOverride: String? = nil,
+        volatileContextOverride: String? = nil,
         responseMode: AgentResponseMode = .automatic,
         profileToolBundles: [AgentToolBundle] = [],
         forcedToolBundles: Set<AgentToolBundle> = [],
         lightweightContext: Bool = false,
-        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
+        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil,
+        onPaneAnswerDelta: (@Sendable (String) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         activeSessionCount += 1
         isProcessing = true
@@ -382,7 +453,11 @@ class CosmoAgentService: ObservableObject {
         // 6. Escalate intent if conversation has creative history.
         // Keeps creative tool guidance active when the user gives follow-up
         // direction without explicit draft keywords.
-        let effectiveIntent = escalateIntentFromConversation(classification.intent, conversation: conversation)
+        // A pinned intentOverride wins: callers like the inline assistant pin the
+        // intent so the tool set and cached prompt prefix stay byte-stable across
+        // requests instead of fragmenting on keyword-classification noise.
+        let effectiveIntent = intentOverride
+            ?? escalateIntentFromConversation(classification.intent, conversation: conversation)
 
         // 7. Route to direct tool execution for all sources
         // The LLM handles multi-step operations naturally through its tool loop
@@ -394,11 +469,13 @@ class CosmoAgentService: ObservableObject {
             provider: provider,
             tierOverride: tierOverride,
             systemPromptOverride: systemPromptOverride,
+            volatileContextOverride: volatileContextOverride,
             responseMode: responseMode,
             profileToolBundles: profileToolBundles,
             forcedToolBundles: forcedToolBundles,
             lightweightContext: lightweightContext,
-            onToolActivity: onToolActivity
+            onToolActivity: onToolActivity,
+            onPaneAnswerDelta: onPaneAnswerDelta
         )
     }
 
@@ -411,11 +488,13 @@ class CosmoAgentService: ObservableObject {
         provider: LLMProvider,
         tierOverride: AgentModelTier? = nil,
         systemPromptOverride: String? = nil,
+        volatileContextOverride: String? = nil,
         responseMode: AgentResponseMode = .automatic,
         profileToolBundles: [AgentToolBundle] = [],
         forcedToolBundles: Set<AgentToolBundle> = [],
         lightweightContext: Bool = false,
-        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
+        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil,
+        onPaneAnswerDelta: (@Sendable (String) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         // --- Feedback classification for previous generation (scoped per conversation) ---
         if let feedback = pendingFeedback[conversation.id] {
@@ -477,6 +556,7 @@ class CosmoAgentService: ObservableObject {
             intent: intent,
             activeItemsContext: activeItemsContext[conversation.id],
             systemPromptOverride: effectiveSystemPromptOverride.isEmpty ? nil : effectiveSystemPromptOverride,
+            volatileContextOverride: volatileContextOverride,
             lightweightContext: lightweightContext
         )
         print("[AGENT-PERF] assembleSystemPrompt=\(Int(Date().timeIntervalSince(perfAsmStart) * 1000))ms lightweight=\(lightweightContext) cached=\(systemPrompt.cached.count)c dynamic=\(systemPrompt.dynamic.count)c (~\((systemPrompt.cached.count + systemPrompt.dynamic.count) / 4) tok) tools=\(tools.count) intent=\(intent) tier=\(tierOverride.map { "\($0)" } ?? "default")")
@@ -570,7 +650,8 @@ class CosmoAgentService: ObservableObject {
                 responseMode: responseMode,
                 conversation: &conversation,
                 contextTrace: &contextTrace,
-                onToolActivity: onToolActivity
+                onToolActivity: onToolActivity,
+                onPaneAnswerDelta: onPaneAnswerDelta
             )
         }
 
@@ -584,7 +665,8 @@ class CosmoAgentService: ObservableObject {
             responseMode: responseMode,
             conversation: &conversation,
             contextTrace: &contextTrace,
-            onToolActivity: onToolActivity
+            onToolActivity: onToolActivity,
+            onPaneAnswerDelta: onPaneAnswerDelta
         )
     }
 
@@ -604,6 +686,63 @@ class CosmoAgentService: ObservableObject {
         )
     }
 
+    /// One LLM completion, streamed when the caller wants live pane-answer deltas.
+    /// The inline assistant's answer arrives as `answer_in_assistant_pane` tool-call
+    /// JSON, so "streaming the answer" means decoding the tool's partial `answer`
+    /// field as argument deltas arrive and forwarding only the new suffix.
+    private func completeWithOptionalStreaming(
+        provider: LLMProvider,
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        tier: AgentModelTier,
+        systemPrompt: SystemPrompt,
+        onPaneAnswerDelta: (@Sendable (String) -> Void)?
+    ) async throws -> LLMResponse {
+        guard let onPaneAnswerDelta,
+              let streamingProvider = provider as? StreamingLLMProvider else {
+            return try await provider.complete(
+                messages: messages,
+                tools: tools,
+                model: selectedModel,
+                tier: tier,
+                systemPrompt: systemPrompt
+            )
+        }
+
+        // Events arrive sequentially from the SSE task; the lock guards against
+        // provider implementations that might deliver from different executors.
+        final class AnswerStreamState: @unchecked Sendable {
+            private let lock = NSLock()
+            private var emittedLength = 0
+
+            func suffix(ofAccumulatedAnswer answer: String) -> String? {
+                lock.lock()
+                defer { lock.unlock() }
+                guard answer.count > emittedLength else { return nil }
+                let suffix = String(answer.dropFirst(emittedLength))
+                emittedLength = answer.count
+                return suffix
+            }
+        }
+        let state = AnswerStreamState()
+
+        return try await streamingProvider.completeStreamingEvents(
+            messages: messages,
+            tools: tools,
+            model: selectedModel,
+            tier: tier,
+            systemPrompt: systemPrompt
+        ) { event in
+            guard case .toolCallArgumentsDelta(_, let name, let accumulatedJSON) = event,
+                  name == "answer_in_assistant_pane",
+                  let answer = LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: accumulatedJSON),
+                  let delta = state.suffix(ofAccumulatedAnswer: answer) else {
+                return
+            }
+            onPaneAnswerDelta(delta)
+        }
+    }
+
     /// Execute the LLM tool loop, iterating until the LLM returns text-only or the limit is reached.
     private func executeToolLoop(
         provider: LLMProvider,
@@ -615,7 +754,8 @@ class CosmoAgentService: ObservableObject {
         responseMode: AgentResponseMode,
         conversation: inout AgentConversation,
         contextTrace: inout AgentContextTrace,
-        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
+        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil,
+        onPaneAnswerDelta: (@Sendable (String) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         // Tool loop — iterate until the LLM returns a text-only response
         let iterationLimit = maxToolIterations(for: intent)
@@ -637,15 +777,16 @@ class CosmoAgentService: ObservableObject {
 
             do {
                 let perfIterStart = Date()
-                let response = try await provider.complete(
+                let response = try await completeWithOptionalStreaming(
+                    provider: provider,
                     messages: llmMessages,
                     tools: activeTools.isEmpty ? nil : activeTools,
-                    model: selectedModel,
                     tier: modelTier,
-                    systemPrompt: activeSystemPrompt
+                    systemPrompt: activeSystemPrompt,
+                    onPaneAnswerDelta: onPaneAnswerDelta
                 )
                 let perfIterMs = Int(Date().timeIntervalSince(perfIterStart) * 1000)
-                print("[AGENT-PERF] iter \(iterations) llm=\(perfIterMs)ms model=\(modelTier.modelId) (selected=\(selectedModel)) tier=\(modelTier) msgs=\(llmMessages.count) tools=\(activeTools.count) tokens≈\(conversation.estimatedTokenCount) → toolCalls=\(response.toolCalls.count)")
+                print("[AGENT-PERF] iter \(iterations) llm=\(perfIterMs)ms model=\(modelTier.modelId) (selected=\(selectedModel)) tier=\(modelTier) msgs=\(llmMessages.count) tools=\(activeTools.count) tokens≈\(conversation.estimatedTokenCount) → toolCalls=\(response.toolCalls.count) cacheRead=\(response.cacheReadInputTokens) cacheWrite=\(response.cacheCreationInputTokens)")
 
                 if response.toolCalls.isEmpty {
                     let trimmedContent = response.content?.trimmingCharacters(in: .whitespacesAndNewlines)

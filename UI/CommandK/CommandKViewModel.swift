@@ -6,6 +6,7 @@
 import SwiftUI
 import Combine
 import AppKit
+import Observation
 
 // MARK: - CommandKTab
 
@@ -584,18 +585,49 @@ enum CommandKSearchMatcher {
 
     static func matches(normalizedQuery: String, in value: String?) -> Bool {
         guard !normalizedQuery.isEmpty, let value, !value.isEmpty else { return false }
-        return normalize(value).contains(normalizedQuery)
+        return matches(normalizedQuery: normalizedQuery, inNormalizedText: normalize(value))
     }
 
+    /// Spotlight-style matching: the full phrase matches anywhere, or every
+    /// query token matches somewhere in the text regardless of word order.
     static func matches(normalizedQuery: String, inNormalizedText normalizedText: String) -> Bool {
         guard !normalizedQuery.isEmpty, !normalizedText.isEmpty else { return false }
-        return normalizedText.contains(normalizedQuery)
+        if normalizedText.contains(normalizedQuery) { return true }
+        let queryTokens = normalizedQuery.split(separator: " ")
+        guard queryTokens.count > 1 else { return false }
+        return queryTokens.allSatisfy { normalizedText.contains($0) }
     }
 
     static func matches(_ query: String, inAny values: [String?]) -> Bool {
         let normalizedQuery = normalizeQuery(query)
         guard !normalizedQuery.isEmpty else { return false }
-        return values.contains { matches(normalizedQuery: normalizedQuery, in: $0) }
+        if values.contains(where: { matches(normalizedQuery: normalizedQuery, in: $0) }) {
+            return true
+        }
+        // Multi-word queries may span fields (e.g. one token in the title,
+        // another in the body), so also match against the joined text.
+        return matches(normalizedQuery: normalizedQuery, inNormalizedText: searchableText(from: values))
+    }
+
+    /// Match-quality score in 0...1 shared by every Command-K source so
+    /// relevance is comparable across atoms, swipes, ideas, and books.
+    /// 0 means no match; title matches always outrank body-only matches.
+    static func matchQuality(
+        normalizedQuery: String,
+        normalizedTitle: String,
+        normalizedFullText: String
+    ) -> Double {
+        guard matches(normalizedQuery: normalizedQuery, inNormalizedText: normalizedFullText) else {
+            return 0
+        }
+        if normalizedTitle == normalizedQuery { return 1.0 }
+        if normalizedTitle.hasPrefix(normalizedQuery) { return 0.88 }
+        if normalizedTitle.contains(normalizedQuery) { return 0.72 }
+        let queryTokens = normalizedQuery.split(separator: " ")
+        if !queryTokens.isEmpty, queryTokens.allSatisfy({ normalizedTitle.contains($0) }) {
+            return 0.64
+        }
+        return 0.42
     }
 }
 
@@ -783,17 +815,25 @@ enum CommandKUnifiedSearchComposer {
         }
 
         let swipeItemsByUUID = Dictionary(uniqueKeysWithValues: swipeGalleryItems.map { ($0.atomUUID, $0) })
+        let ideaItemsByUUID = Dictionary(uniqueKeysWithValues: ideaGalleryItems.map { ($0.atomUUID, $0) })
         var includedAtomUUIDs = Set<String>()
         var allResults: [UnifiedSearchResult] = []
 
         allResults.append(contentsOf: browserPinResults(for: browserPins, normalizedQuery: normalizedQuery))
 
         for result in hybridResults.prefix(hybridLimit) {
-            if result.atomType == .idea { continue }
             includedAtomUUIDs.insert(result.atomUUID)
 
-            if result.atomType == .research, let swipeItem = swipeItemsByUUID[result.atomUUID] {
-                allResults.append(swipeResult(for: swipeItem, relevance: max(result.relevance, swipeRelevance(for: swipeItem))))
+            if result.atomType == .idea {
+                if let ideaItem = ideaItemsByUUID[result.atomUUID] {
+                    allResults.append(ideaResult(for: ideaItem, relevance: max(result.relevance, ideaRelevance(for: ideaItem, normalizedQuery: normalizedQuery))))
+                } else {
+                    // Gallery not loaded yet — surface the engine match directly
+                    // instead of dropping an exact hit.
+                    allResults.append(ideaResult(for: result))
+                }
+            } else if result.atomType == .research, let swipeItem = swipeItemsByUUID[result.atomUUID] {
+                allResults.append(swipeResult(for: swipeItem, relevance: max(result.relevance, swipeRelevance(for: swipeItem, normalizedQuery: normalizedQuery))))
             } else {
                 allResults.append(atomResult(for: result))
             }
@@ -801,10 +841,9 @@ enum CommandKUnifiedSearchComposer {
 
         var addedSwipes = 0
         for item in swipeGalleryItems where !includedAtomUUIDs.contains(item.atomUUID) {
-            guard CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, inNormalizedText: item.searchableText) else {
-                continue
-            }
-            allResults.append(swipeResult(for: item, relevance: swipeRelevance(for: item)))
+            let relevance = swipeRelevance(for: item, normalizedQuery: normalizedQuery)
+            guard relevance > 0 else { continue }
+            allResults.append(swipeResult(for: item, relevance: relevance))
             includedAtomUUIDs.insert(item.atomUUID)
             addedSwipes += 1
             if addedSwipes >= swipeLimit { break }
@@ -813,7 +852,7 @@ enum CommandKUnifiedSearchComposer {
         var addedIdeas = 0
         for item in ideaGalleryItems where !includedAtomUUIDs.contains(item.atomUUID) {
             guard IdeasTab.matchesSearch(item, query: query) else { continue }
-            allResults.append(ideaResult(for: item))
+            allResults.append(ideaResult(for: item, relevance: ideaRelevance(for: item, normalizedQuery: normalizedQuery)))
             includedAtomUUIDs.insert(item.atomUUID)
             addedIdeas += 1
             if addedIdeas >= ideaLimit { break }
@@ -826,6 +865,11 @@ enum CommandKUnifiedSearchComposer {
             }
             let snippet = matchingHighlight?.text.prefix(120).description
                 ?? "\(book.numHighlights) highlight\(book.numHighlights == 1 ? "" : "s")"
+            let titleQuality = CommandKSearchMatcher.matchQuality(
+                normalizedQuery: normalizedQuery,
+                normalizedTitle: CommandKSearchMatcher.normalize(book.title),
+                normalizedFullText: CommandKSearchMatcher.searchableText(from: [book.title, book.author])
+            )
 
             allResults.append(UnifiedSearchResult(
                 id: "readwise-\(book.id)",
@@ -836,7 +880,7 @@ enum CommandKUnifiedSearchComposer {
                 snippet: snippet,
                 icon: book.category.icon,
                 accentColor: DS.entityReadwise,
-                relevance: matchingHighlight != nil ? 0.5 : 0.35,
+                relevance: max(titleQuality, matchingHighlight != nil ? 0.5 : 0.35),
                 atomUUID: nil,
                 atomType: nil,
                 thinkspaceId: nil,
@@ -1005,7 +1049,7 @@ enum CommandKUnifiedSearchComposer {
         )
     }
 
-    private static func ideaResult(for item: IdeaGalleryItem) -> UnifiedSearchResult {
+    private static func ideaResult(for item: IdeaGalleryItem, relevance: Double) -> UnifiedSearchResult {
         UnifiedSearchResult(
             id: "idea-\(item.atomUUID)",
             source: .ideas,
@@ -1015,8 +1059,31 @@ enum CommandKUnifiedSearchComposer {
             snippet: item.body?.prefix(120).description,
             icon: "lightbulb.fill",
             accentColor: DS.entityIdea,
-            relevance: item.insightScore ?? 0.4,
+            relevance: relevance,
             atomUUID: item.atomUUID,
+            atomType: .idea,
+            thinkspaceId: nil,
+            projectUUID: nil,
+            projectName: nil,
+            thinkspaceNames: [],
+            readwiseBookId: nil
+        )
+    }
+
+    /// Idea result built straight from an engine match, for when the idea
+    /// gallery has not been loaded yet.
+    private static func ideaResult(for result: RankedResult) -> UnifiedSearchResult {
+        UnifiedSearchResult(
+            id: "idea-\(result.atomUUID)",
+            source: .ideas,
+            resultKind: .atom,
+            title: result.title,
+            subtitle: AtomType.idea.displayName,
+            snippet: result.snippet?.prefix(120).description,
+            icon: "lightbulb.fill",
+            accentColor: DS.entityIdea,
+            relevance: result.relevance,
+            atomUUID: result.atomUUID,
             atomType: .idea,
             thinkspaceId: nil,
             projectUUID: nil,
@@ -1047,8 +1114,27 @@ enum CommandKUnifiedSearchComposer {
         )
     }
 
-    private static func swipeRelevance(for item: SwipeGalleryItem) -> Double {
-        (item.hookScore ?? 50) / 100.0
+    /// Swipes are all curated, high-quality captures — rank them by how well
+    /// they match the query, never by hook score.
+    private static func swipeRelevance(for item: SwipeGalleryItem, normalizedQuery: String) -> Double {
+        CommandKSearchMatcher.matchQuality(
+            normalizedQuery: normalizedQuery,
+            normalizedTitle: CommandKSearchMatcher.normalize(item.title),
+            normalizedFullText: item.searchableText
+        )
+    }
+
+    private static func ideaRelevance(for item: IdeaGalleryItem, normalizedQuery: String) -> Double {
+        let quality = CommandKSearchMatcher.matchQuality(
+            normalizedQuery: normalizedQuery,
+            normalizedTitle: CommandKSearchMatcher.normalize(item.title),
+            normalizedFullText: CommandKSearchMatcher.searchableText(
+                from: [item.title, item.body, item.clientName] + item.tags.map(Optional.some)
+            )
+        )
+        // Items can reach this path via IdeasTab.matchesSearch with field-level
+        // matches the joined text scorer might miss — keep a floor.
+        return max(quality, 0.4)
     }
     private static func accentColor(for type: AtomType) -> Color {
         switch type {
@@ -1234,118 +1320,140 @@ enum CommandKInstantSwipeCaptureError: LocalizedError {
 }
 
 @MainActor
-public final class CommandKViewModel: ObservableObject {
+@Observable
+public final class CommandKViewModel {
 
     // MARK: - Cortex Mode State
 
     /// Current interaction mode (compact → searchResults → expandedDomain)
-    @Published public var cortexMode: CortexMode = .compact
+    public var cortexMode: CortexMode = .compact
 
     /// Recent items for compact mode display
-    @Published public var recentItems: [RecentDisplayItem] = []
+    public var recentItems: [RecentDisplayItem] = []
 
     /// The initial tab passed from MainView (nil = start compact)
     var initialExpandedTab: CommandKTab?
 
     // MARK: - Published State
 
-    /// Current search query. Live typing is kept non-published so each
-    /// keystroke does not invalidate the entire Command-K surface.
-    public var query: String = ""
+    /// Current search query. Live typing is kept out of observation tracking
+    /// so each keystroke does not invalidate the entire Command-K surface.
+    @ObservationIgnored public var query: String = ""
 
     /// Bumped only when the view model changes the field programmatically.
-    @Published public private(set) var querySyncToken: Int = 0
+    public private(set) var querySyncToken: Int = 0
 
     /// Current search results
-    @Published public private(set) var results: [RankedResult] = []
+    public private(set) var results: [RankedResult] = []
 
     /// Selected result/node UUID
-    @Published public var selectedNodeId: String?
+    public var selectedNodeId: String?
 
-    /// Current search phase
-    public private(set) var currentPhase: SearchPhase = .idle
+    /// Current search phase. Kept out of observation tracking so background
+    /// phase changes do not invalidate the Command-K surface.
+    @ObservationIgnored public private(set) var currentPhase: SearchPhase = .idle
 
     /// User-visible search feedback that is independent from background search phase.
-    @Published public private(set) var searchFeedback: CommandKSearchFeedback = .none
+    public private(set) var searchFeedback: CommandKSearchFeedback = .none
 
     /// Whether voice input is active
-    @Published public var isVoiceActive: Bool = false
+    public var isVoiceActive: Bool = false
 
     /// Multi-select type filters
-    @Published public var selectedTypeFilters: Set<AtomType> = []
+    public var selectedTypeFilters: Set<AtomType> = [] {
+        didSet { applyFiltersToResults() }
+    }
 
     /// Filter counts by type (computed from unfiltered results)
-    @Published public private(set) var filterCounts: [AtomType: Int] = [:]
+    public private(set) var filterCounts: [AtomType: Int] = [:]
 
     /// Error message (if any)
-    @Published public var errorMessage: String?
+    public var errorMessage: String?
 
     // MARK: - Swipe Gallery State
 
     /// Swipe gallery items loaded from research atoms
-    @Published public var swipeGalleryItems: [SwipeGalleryItem] = []
+    public var swipeGalleryItems: [SwipeGalleryItem] = [] {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Current grouping mode for swipe gallery
-    @Published public var swipeGrouping: SwipeGrouping = .narrativeStyle
+    public var swipeGrouping: SwipeGrouping = .narrativeStyle
 
     /// Current sort mode for swipe gallery
-    @Published public var swipeSortMode: SwipeSortMode = .recent
+    public var swipeSortMode: SwipeSortMode = .recent {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Platform filter for swipe gallery (nil = all)
-    @Published public var swipePlatformFilter: String?
+    public var swipePlatformFilter: String? {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Hook type filter for swipe gallery (nil = all)
-    @Published public var swipeHookTypeFilter: SwipeHookType?
+    public var swipeHookTypeFilter: SwipeHookType? {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Narrative style filters for swipe gallery (multi-select)
-    @Published var swipeNarrativeFilters: Set<NarrativeStyle> = []
+    var swipeNarrativeFilters: Set<NarrativeStyle> = [] {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Content format filters for swipe gallery (multi-select)
-    @Published var swipeContentFormatFilters: Set<ContentFormat> = []
+    var swipeContentFormatFilters: Set<ContentFormat> = [] {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Niche filter for swipe gallery (nil = all)
-    @Published var swipeNicheFilter: String?
+    var swipeNicheFilter: String? {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Creator filter for swipe gallery (nil = all)
-    @Published var swipeCreatorFilter: String?
+    var swipeCreatorFilter: String? {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Available niches extracted from swipe gallery items
-    @Published var availableNiches: [String] = []
+    var availableNiches: [String] = []
 
     /// Available creators extracted from swipe gallery items
-    @Published var availableCreators: [(name: String, uuid: String)] = []
+    var availableCreators: [(name: String, uuid: String)] = []
 
     /// Creator search query for autocomplete
-    @Published var creatorSearchQuery: String = ""
+    var creatorSearchQuery: String = ""
 
     /// Whether swipe gallery has been loaded
     private var swipeGalleryLoaded = false
 
     /// Cached filtered swipes — recomputed only when filter inputs change
-    @Published public private(set) var cachedFilteredSwipes: [SwipeGalleryItem] = []
+    public private(set) var cachedFilteredSwipes: [SwipeGalleryItem] = []
 
     /// Cached clustered sections — recomputed from cachedFilteredSwipes
-    @Published public private(set) var cachedClusteredSections: [FormatSection] = []
+    public private(set) var cachedClusteredSections: [FormatSection] = []
 
     /// View mode for swipe gallery: clustered folders or flat grid
-    @Published var swipeViewMode: SwipeViewMode = .clustered
+    var swipeViewMode: SwipeViewMode = .clustered
 
     /// Search query passed from SwipeGalleryTab for filtering
-    @Published var swipeSearchQuery: String = ""
+    var swipeSearchQuery: String = "" {
+        didSet { scheduleSwipeFilterRecompute() }
+    }
 
     /// Expansion state for Layer 1 format group sections
-    @Published var expandedFormatGroups: Set<String> = Set(FormatGroup.allCases.map(\.rawValue))
+    var expandedFormatGroups: Set<String> = Set(FormatGroup.allCases.map(\.rawValue))
 
     /// Expansion state for Layer 2 narrative clusters (collapsed by default)
-    @Published var expandedClusters: Set<String> = []
+    var expandedClusters: Set<String> = []
 
     /// Precomputed swipe facets used by the command menu chrome.
-    @Published private(set) var swipeFacetSummary: CommandKSwipeFacetSummary = .empty
+    private(set) var swipeFacetSummary: CommandKSwipeFacetSummary = .empty
 
     // MARK: - Multi-Select State
 
     /// UUIDs of cards selected via Shift+Click across gallery tabs
-    @Published var selectedUUIDs: Set<String> = []
+    var selectedUUIDs: Set<String> = []
 
     /// Whether multi-select mode is active (at least one card selected)
     var isMultiSelectActive: Bool { !selectedUUIDs.isEmpty }
@@ -1367,37 +1475,37 @@ public final class CommandKViewModel: ObservableObject {
     // MARK: - Unified Search State
 
     /// Whether unified cross-library search is active (query is non-empty)
-    @Published var isUnifiedSearchActive: Bool = false
+    var isUnifiedSearchActive: Bool = false
 
     /// Grouped unified results by source
-    @Published var unifiedGroupedResults: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = []
+    var unifiedGroupedResults: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = []
 
     /// Flat ordered list for keyboard navigation across all unified groups
-    @Published var unifiedFlatResults: [UnifiedSearchResult] = []
+    var unifiedFlatResults: [UnifiedSearchResult] = []
 
     /// Selected Readwise book ID for navigation from unified results
-    @Published var selectedReadwiseBookId: Int?
+    var selectedReadwiseBookId: Int?
 
     /// Card items for masonry grid display of unified search results
-    @Published var unifiedCardItems: [UnifiedCardItem] = []
+    var unifiedCardItems: [UnifiedCardItem] = []
 
     /// Library items keyed by lookup key — used to render Database section with real library previews
-    @Published var unifiedLibraryItemsByID: [String: LibraryItem] = [:]
+    var unifiedLibraryItemsByID: [String: LibraryItem] = [:]
 
     // MARK: - Idea Gallery State
 
     /// Idea gallery items loaded from idea atoms
-    @Published var ideaGalleryItems: [IdeaGalleryItem] = []
+    var ideaGalleryItems: [IdeaGalleryItem] = []
 
     /// Whether idea gallery has been loaded
     private var ideaGalleryLoaded = false
 
     /// Lightweight counts for domains whose full content has not been loaded yet.
-    @Published private(set) var swipeTotalCount: Int = 0
-    @Published private(set) var ideaTotalCount: Int = 0
+    private(set) var swipeTotalCount: Int = 0
+    private(set) var ideaTotalCount: Int = 0
 
     /// Cached domain counts and masthead previews. Building this in `body` is too expensive.
-    @Published private(set) var domainPresentation: CommandKDomainPresentation = .empty
+    private(set) var domainPresentation: CommandKDomainPresentation = .empty
 
     // MARK: - Configuration
 
@@ -1411,38 +1519,38 @@ public final class CommandKViewModel: ObservableObject {
     private let maxResults = 25
 
     /// Whether we're showing recents (empty query)
-    @Published var isShowingRecents: Bool = false
+    var isShowingRecents: Bool = false
 
     /// Whether AI re-ranking has been applied
-    @Published var isAIRanked: Bool = false
+    var isAIRanked: Bool = false
 
     /// Grouped results by atom type (ordered by best score)
-    @Published var groupedResults: [(type: AtomType, results: [RankedResult])] = []
+    var groupedResults: [(type: AtomType, results: [RankedResult])] = []
 
     /// Flat ordered list for keyboard navigation (across groups)
-    @Published var flatNavigableResults: [RankedResult] = []
+    var flatNavigableResults: [RankedResult] = []
 
     /// Currently selected index in flatNavigableResults for keyboard nav
-    @Published var selectedResultIndex: Int = -1
+    var selectedResultIndex: Int = -1
 
     /// Flat ordered list for keyboard navigation in expanded domain rail mode.
-    @Published private(set) var expandedDomainSelectionIDs: [String] = []
+    private(set) var expandedDomainSelectionIDs: [String] = []
     private var expandedDomainOpenTargets: [String: CommandKDomainOpenTarget] = [:]
 
     /// Active #type prefix filter parsed from query
-    @Published var activeTypePrefix: AtomType? = nil
+    var activeTypePrefix: AtomType? = nil
 
     /// Top fast action parsed from the current query, shown before search results.
-    @Published var primaryAction: CommandKAction? = nil
+    var primaryAction: CommandKAction? = nil
 
     /// Saved quicklinks and user commands that match the current query.
-    @Published var userCommandRows: [CommandKUserCommandRow] = []
+    var userCommandRows: [CommandKUserCommandRow] = []
 
     /// Whether a fast action is currently executing.
-    @Published var isExecutingAction: Bool = false
+    var isExecutingAction: Bool = false
 
     /// Inline status for the action preview row.
-    @Published var actionStatusMessage: String? = nil
+    var actionStatusMessage: String? = nil
 
     private var executablePrimaryAction: CommandKAction? = nil
 
@@ -1676,6 +1784,7 @@ public final class CommandKViewModel: ObservableObject {
     private var searchIndexTask: Task<Void, Never>?
     private var unifiedSearchEnrichmentTask: Task<Void, Never>?
     private var swipeFilterTask: Task<Void, Never>?
+    private var swipeFilterDebounceTask: Task<Void, Never>?
     private var queryDebounceTask: Task<Void, Never>?
     private var swipeFilterGeneration = 0
     private var isSurfaceActive = true
@@ -1686,6 +1795,10 @@ public final class CommandKViewModel: ObservableObject {
     /// Unfiltered results for computing filter counts
     private var unfilteredResults: [RankedResult] = []
 
+    /// Query that produced the current search state. A background refresh for
+    /// the same query keeps the visible results and swaps them in place.
+    private var lastSearchedQuery: String?
+
     // MARK: - Initialization
 
     public convenience init() {
@@ -1694,8 +1807,7 @@ public final class CommandKViewModel: ObservableObject {
 
     init(userCommandStore: CommandKUserCommandStore) {
         self.userCommandStore = userCommandStore
-        setupFilterObserver()
-        setupSwipeFilterPipeline()
+        scheduleSwipeFilterRecompute()
         setupSwipeRefreshListener()
         setupIdeaRefreshListener()
         setupCommandKRefreshListener()
@@ -1707,6 +1819,11 @@ public final class CommandKViewModel: ObservableObject {
 
         if active {
             prewarmSearchIndexIfNeeded()
+            // Warm the swipe/idea galleries so the first keystroke's unified
+            // pass can match against them instead of waiting for enrichment.
+            Task { @MainActor [weak self] in
+                await self?.preloadUnifiedSearchSupportData()
+            }
         } else {
             searchTask?.cancel()
             queryDebounceTask?.cancel()
@@ -1716,6 +1833,7 @@ public final class CommandKViewModel: ObservableObject {
             searchIndexTask?.cancel()
             unifiedSearchEnrichmentTask?.cancel()
             swipeFilterTask?.cancel()
+            swipeFilterDebounceTask?.cancel()
             setCurrentPhase(.idle)
         }
     }
@@ -1745,15 +1863,6 @@ public final class CommandKViewModel: ObservableObject {
         querySyncToken &+= 1
     }
 
-    private func setupFilterObserver() {
-        $selectedTypeFilters
-            .dropFirst()
-            .sink { [weak self] _ in
-                self?.applyFiltersToResults()
-            }
-            .store(in: &cancellables)
-    }
-
     private func prewarmSearchIndexIfNeeded(force: Bool = false) {
         guard isSurfaceActive else { return }
         guard force || !searchIndexLoaded else { return }
@@ -1768,12 +1877,38 @@ public final class CommandKViewModel: ObservableObject {
             do {
                 let atoms = try await AtomRepository.shared.fetchRecent(limit: 10_000)
                 guard !Task.isCancelled, self.isSurfaceActive else { return }
-                self.searchIndex.replace(atoms: atoms)
+                // Normalizing 10k full-text bodies is too heavy for the main
+                // actor — build the entries on a background task.
+                let entries = await Task.detached(priority: .userInitiated) {
+                    CommandKSearchIndex.entries(for: atoms)
+                }.value
+                guard !Task.isCancelled, self.isSurfaceActive else { return }
+                self.searchIndex.replace(entries)
                 self.searchIndexLoaded = true
             } catch {
                 CommandKPerformanceInstrumentation.logger.error("Command-K search index prewarm failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    /// Merge two ranked result lists, deduping by atom UUID and keeping the
+    /// higher-relevance entry, sorted by relevance.
+    static func mergeRankedResults(primary: [RankedResult], additional: [RankedResult]) -> [RankedResult] {
+        guard !additional.isEmpty else { return primary }
+        var merged = primary
+        var bestRelevanceByUUID: [String: Double] = [:]
+        for result in primary {
+            bestRelevanceByUUID[result.atomUUID] = max(bestRelevanceByUUID[result.atomUUID] ?? 0, result.relevance)
+        }
+        for result in additional {
+            if let existing = bestRelevanceByUUID[result.atomUUID], existing >= result.relevance {
+                continue
+            }
+            merged.removeAll { $0.atomUUID == result.atomUUID }
+            merged.append(result)
+            bestRelevanceByUUID[result.atomUUID] = result.relevance
+        }
+        return merged.sorted()
     }
 
     /// Parse #type prefix from query and return (stripped query, type filter)
@@ -1798,12 +1933,17 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     /// Perform search with current query using HybridSearchEngine
-    public func performSearch(query: String) async {
+    /// - Parameter isBackgroundRefresh: true when re-running because atom data
+    ///   changed (sync pull, agent write) rather than a user keystroke. A
+    ///   same-query refresh keeps the visible results and selection on screen
+    ///   and swaps them in place once fresh results arrive.
+    public func performSearch(query: String, isBackgroundRefresh: Bool = false) async {
         // Cancel previous search
         searchTask?.cancel()
         instantIndexSearchTask?.cancel()
         instantIndexSearchGeneration &+= 1
         guard isSurfaceActive else { return }
+        let preserveVisibleResults = isBackgroundRefresh && query == lastSearchedQuery
         let requestID = await searchPipeline.nextRequestID()
         let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("perform-search")
         defer {
@@ -1837,6 +1977,7 @@ public final class CommandKViewModel: ObservableObject {
 
         // Handle empty query - show recents
         if searchQuery.isEmpty && prefixType == nil && parsedAction == nil {
+            lastSearchedQuery = nil
             setSearchFeedback(.none)
             setUnifiedSearchResults(active: false, grouped: [], flat: [], cards: [])
             setUserCommandRows([])
@@ -1855,6 +1996,7 @@ public final class CommandKViewModel: ObservableObject {
         }
 
         if case .expandedDomain = cortexMode {
+            lastSearchedQuery = nil
             setPrimaryAction(nil)
             setUserCommandRows([])
             results = []
@@ -1866,27 +2008,35 @@ public final class CommandKViewModel: ObservableObject {
             return
         }
 
-        results = []
-        unfilteredResults = []
-        groupedResults = []
-        flatNavigableResults = []
+        if !preserveVisibleResults {
+            results = []
+            unfilteredResults = []
+            groupedResults = []
+            flatNavigableResults = []
+        }
 
         let matchedUserCommandRows = prefixType == nil
             ? await loadUserCommandRows(for: searchQuery)
             : []
         guard await searchPipeline.isCurrent(requestID) else { return }
         setUserCommandRows(matchedUserCommandRows)
-        updateActiveSearchSelection()
+        if !preserveVisibleResults {
+            updateActiveSearchSelection()
+        }
 
         // Auto-transition to search results when typing in compact mode
         if cortexMode == .compact {
             cortexMode = .searchResults
         }
-        // Reset phase so CortexSearchResultsView shows loading, not premature "no results"
-        setCurrentPhase(.searching)
+        // Reset phase so CortexSearchResultsView shows loading, not premature "no results".
+        // A same-query background refresh keeps its visible results, so no loading phase.
+        if !preserveVisibleResults {
+            setCurrentPhase(.searching)
+        }
 
         // Skip search in task creation mode
         if isTaskCreationMode {
+            lastSearchedQuery = nil
             results = []
             unfilteredResults = []
             groupedResults = []
@@ -1900,12 +2050,15 @@ public final class CommandKViewModel: ObservableObject {
         }
 
         isShowingRecents = false
-        setCurrentPhase(.searching)
-        results = []
-        unfilteredResults = []
-        groupedResults = []
-        flatNavigableResults = []
-        filterCounts = [:]
+        lastSearchedQuery = query
+        if !preserveVisibleResults {
+            setCurrentPhase(.searching)
+            results = []
+            unfilteredResults = []
+            groupedResults = []
+            flatNavigableResults = []
+            filterCounts = [:]
+        }
         isAIRanked = false
 
         let effectiveQuery = searchQuery.isEmpty ? "" : searchQuery
@@ -1925,15 +2078,24 @@ public final class CommandKViewModel: ObservableObject {
         }
         guard await searchPipeline.isCurrent(requestID), isSurfaceActive else { return }
         if !instantIndexedResults.isEmpty {
-            unfilteredResults = instantIndexedResults
+            // On a background refresh, merge into the visible set so the list
+            // is not truncated to the instant subset while hybrid re-runs.
+            unfilteredResults = preserveVisibleResults
+                ? Self.mergeRankedResults(primary: unfilteredResults, additional: instantIndexedResults)
+                : instantIndexedResults
             computeFilterCounts()
             applyFiltersToResults()
-            await performInstantUnifiedSearch(query: queryForSearch, searchRequestID: requestID)
+            await performInstantUnifiedSearch(
+                query: queryForSearch,
+                preserveSelection: preserveVisibleResults,
+                searchRequestID: requestID
+            )
             setCurrentPhase(.instant)
         } else {
             await performInstantUnifiedSearch(
                 query: queryForSearch,
                 preserveVisibleResultsWhenEmpty: true,
+                preserveSelection: preserveVisibleResults,
                 searchRequestID: requestID
             )
         }
@@ -1948,11 +2110,21 @@ public final class CommandKViewModel: ObservableObject {
 
         if let cached = await QueryResultCache.shared.get(for: cacheKey) {
             guard await searchPipeline.isCurrent(requestID), isSurfaceActive else { return }
-            unfilteredResults = cached
+            // Merge fresh instant-index matches so atoms created or edited
+            // after the cache entry was written still appear.
+            unfilteredResults = Self.mergeRankedResults(primary: cached, additional: instantIndexedResults)
             computeFilterCounts()
             applyFiltersToResults()
-            await performInstantUnifiedSearch(query: queryForSearch, searchRequestID: requestID)
-            scheduleUnifiedSearchEnrichment(for: queryForSearch, searchRequestID: requestID)
+            await performInstantUnifiedSearch(
+                query: queryForSearch,
+                preserveSelection: preserveVisibleResults,
+                searchRequestID: requestID
+            )
+            scheduleUnifiedSearchEnrichment(
+                for: queryForSearch,
+                preserveSelection: preserveVisibleResults,
+                searchRequestID: requestID
+            )
             setCurrentPhase(.instant)
             return
         }
@@ -1989,6 +2161,7 @@ public final class CommandKViewModel: ObservableObject {
                     // Use UUID directly from atoms_fts (no legacy ID resolution needed)
                     let atomUUID = result.entityUUID ?? "\(result.entityType.rawValue)-\(result.entityId)"
 
+                    let updatedAt = result.updatedAt ?? ISO8601.string(from: Date())
                     rankedResults.append(RankedResult(
                         atomUUID: atomUUID,
                         atomType: atomType,
@@ -1996,9 +2169,9 @@ public final class CommandKViewModel: ObservableObject {
                         snippet: result.preview,
                         semanticWeight: result.vectorSimilarity,
                         structuralWeight: result.bm25Score / 25.0,  // Normalize
-                        recencyWeight: 0.5,  // Default
+                        recencyWeight: result.updatedAt.map(WeightCalculator.recencyWeight(fromISO8601:)) ?? 0.5,
                         usageWeight: 0.5,    // Default
-                        updatedAt: ISO8601.string(from: Date()),
+                        updatedAt: updatedAt,
                         accessCount: 0
                     ))
                 }
@@ -2023,8 +2196,16 @@ public final class CommandKViewModel: ObservableObject {
                     unfilteredResults = rankedResults
                     computeFilterCounts()
                     applyFiltersToResults()
-                    await performInstantUnifiedSearch(query: queryForSearch, searchRequestID: requestID)
-                    scheduleUnifiedSearchEnrichment(for: queryForSearch, searchRequestID: requestID)
+                    await performInstantUnifiedSearch(
+                        query: queryForSearch,
+                        preserveSelection: preserveVisibleResults,
+                        searchRequestID: requestID
+                    )
+                    scheduleUnifiedSearchEnrichment(
+                        for: queryForSearch,
+                        preserveSelection: preserveVisibleResults,
+                        searchRequestID: requestID
+                    )
                     setCurrentPhase(.complete)
 
                     // Cache unfiltered results
@@ -2074,8 +2255,16 @@ public final class CommandKViewModel: ObservableObject {
                             }
                             unfilteredResults = reRankedResults.sorted()
                             applyFiltersToResults()
-                            await performInstantUnifiedSearch(query: queryForReRank, searchRequestID: requestID)
-                            scheduleUnifiedSearchEnrichment(for: queryForReRank, searchRequestID: requestID)
+                            await performInstantUnifiedSearch(
+                                query: queryForReRank,
+                                preserveSelection: preserveVisibleResults,
+                                searchRequestID: requestID
+                            )
+                            scheduleUnifiedSearchEnrichment(
+                                for: queryForReRank,
+                                preserveSelection: preserveVisibleResults,
+                                searchRequestID: requestID
+                            )
                             isAIRanked = true
                         }
                         CommandKPerformanceInstrumentation.signposter.endInterval("ai-rerank", rerankSignpost)
@@ -2865,6 +3054,7 @@ public final class CommandKViewModel: ObservableObject {
         setQueryProgrammatically("")
         setPrimaryAction(nil)
         userCommandRows = []
+        lastSearchedQuery = nil
         results = []
         unfilteredResults = []
         groupedResults = []
@@ -2978,7 +3168,7 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     /// Cached total database atom count (loaded on init)
-    @Published public var databaseTotalCount: Int = 0
+    public var databaseTotalCount: Int = 0
 
     /// Domain item counts for bubbles
     public var domainCounts: [CommandKTab: Int] {
@@ -2989,7 +3179,7 @@ public final class CommandKViewModel: ObservableObject {
         domainPresentation.previews
     }
 
-    @Published public var deepDiveTotalCount: Int = 0
+    public var deepDiveTotalCount: Int = 0
 
     private func refreshDomainPresentation() {
         domainPresentation = CommandKDomainPresentation.build(
@@ -3171,7 +3361,7 @@ public final class CommandKViewModel: ObservableObject {
         activeSearchSelectionIDs.firstIndex(of: selectionID) ?? -1
     }
 
-    private func updateActiveSearchSelection() {
+    private func updateActiveSearchSelection(preservingSelection: Bool = false) {
         let ids = activeSearchSelectionIDs
         guard !ids.isEmpty else {
             if selectedResultIndex != -1 {
@@ -3179,6 +3369,17 @@ public final class CommandKViewModel: ObservableObject {
             }
             if selectedNodeId != nil {
                 selectedNodeId = nil
+            }
+            return
+        }
+
+        // Background refreshes keep the user's selection (and therefore their
+        // scroll position) as long as the selected row still exists.
+        if preservingSelection,
+           let selectedNodeId,
+           let currentIndex = ids.firstIndex(of: selectedNodeId) {
+            if selectedResultIndex != currentIndex {
+                selectedResultIndex = currentIndex
             }
             return
         }
@@ -3282,30 +3483,15 @@ public final class CommandKViewModel: ObservableObject {
 
     // MARK: - Swipe Filter Pipeline
 
-    /// Sets up Combine pipeline to memoize filtered swipes + clustered sections.
-    /// Recomputes only when a filter input changes (debounced 50ms).
-    private func setupSwipeFilterPipeline() {
-        // Observe all filter inputs and recompute when any change
-        Publishers.CombineLatest4(
-            $swipeGalleryItems,
-            $swipePlatformFilter,
-            $swipeHookTypeFilter,
-            $swipeSortMode
-        )
-        .combineLatest(
-            Publishers.CombineLatest4(
-                $swipeNarrativeFilters,
-                $swipeContentFormatFilters,
-                $swipeNicheFilter,
-                $swipeCreatorFilter
-            )
-        )
-        .combineLatest($swipeSearchQuery)
-        .debounce(for: .milliseconds(150), scheduler: DispatchQueue.main)
-        .sink { [weak self] _ in
-            self?.recomputeFilteredSwipes()
+    /// Memoizes filtered swipes + clustered sections. Called from `didSet`
+    /// on every swipe filter input; coalesces rapid changes (debounced 150ms).
+    private func scheduleSwipeFilterRecompute() {
+        swipeFilterDebounceTask?.cancel()
+        swipeFilterDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.recomputeFilteredSwipes()
         }
-        .store(in: &cancellables)
     }
 
     /// Recompute cached filtered swipes and clustered sections from current filter state.
@@ -3521,6 +3707,10 @@ public final class CommandKViewModel: ObservableObject {
             removeDeletedSwipeFromMemory(uuid: uuid)
         }
 
+        // Atom data changed — cached query results are stale now, even if
+        // Command-K is closed and reopened within the cache TTL.
+        Task { await QueryResultCache.shared.clear() }
+
         scheduleCommandKRefresh(for: notification)
     }
 
@@ -3535,7 +3725,10 @@ public final class CommandKViewModel: ObservableObject {
 
         commandKRefreshTask?.cancel()
         commandKRefreshTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 120_000_000)
+            // Trailing debounce. Sync pulls and agent loops can post one
+            // notification per atom; 300ms coalesces near-misses that a
+            // 120ms window would re-run the full pipeline for.
+            try? await Task.sleep(nanoseconds: 300_000_000)
             guard let self, !Task.isCancelled, self.isSurfaceActive else { return }
 
             await self.loadDatabaseCount()
@@ -3547,7 +3740,7 @@ public final class CommandKViewModel: ObservableObject {
                     await self.loadRecentsForCompact()
                 }
             } else {
-                await self.performSearch(query: self.query)
+                await self.performSearch(query: self.query, isBackgroundRefresh: true)
             }
         }
     }
@@ -3895,6 +4088,7 @@ public final class CommandKViewModel: ObservableObject {
     private func performInstantUnifiedSearch(
         query: String,
         preserveVisibleResultsWhenEmpty: Bool = false,
+        preserveSelection: Bool = false,
         searchRequestID: CommandKSearchRequestID? = nil
     ) async {
         await updateUnifiedSearch(
@@ -3902,6 +4096,7 @@ public final class CommandKViewModel: ObservableObject {
             preloadSupportData: false,
             includeThinkspaces: false,
             preserveVisibleResultsWhenEmpty: preserveVisibleResultsWhenEmpty,
+            preserveSelection: preserveSelection,
             searchRequestID: searchRequestID
         )
     }
@@ -3917,7 +4112,11 @@ public final class CommandKViewModel: ObservableObject {
         scheduleUnifiedSearchEnrichment(for: query, searchRequestID: nil)
     }
 
-    private func scheduleUnifiedSearchEnrichment(for query: String, searchRequestID: CommandKSearchRequestID? = nil) {
+    private func scheduleUnifiedSearchEnrichment(
+        for query: String,
+        preserveSelection: Bool = false,
+        searchRequestID: CommandKSearchRequestID? = nil
+    ) {
         unifiedSearchEnrichmentTask?.cancel()
         let expectedQuery = query.trimmingCharacters(in: .whitespaces)
         guard !expectedQuery.isEmpty else { return }
@@ -3936,6 +4135,7 @@ public final class CommandKViewModel: ObservableObject {
                 query: query,
                 preloadSupportData: true,
                 includeThinkspaces: true,
+                preserveSelection: preserveSelection,
                 searchRequestID: searchRequestID
             )
         }
@@ -3946,6 +4146,7 @@ public final class CommandKViewModel: ObservableObject {
         preloadSupportData: Bool,
         includeThinkspaces: Bool,
         preserveVisibleResultsWhenEmpty: Bool = false,
+        preserveSelection: Bool = false,
         searchRequestID: CommandKSearchRequestID? = nil
     ) async {
         guard isSurfaceActive, await isCurrentSearchRequest(searchRequestID) else { return }
@@ -4080,7 +4281,7 @@ public final class CommandKViewModel: ObservableObject {
             cards: cardItems
         )
 
-        updateActiveSearchSelection()
+        updateActiveSearchSelection(preservingSelection: preserveSelection)
         refreshSearchFeedback(for: query)
     }
 
@@ -4178,7 +4379,9 @@ public final class CommandKViewModel: ObservableObject {
         instantIndexSearchTask?.cancel()
         unifiedSearchEnrichmentTask?.cancel()
         swipeFilterTask?.cancel()
+        swipeFilterDebounceTask?.cancel()
         setQueryProgrammatically("")
+        lastSearchedQuery = nil
         results = []
         unfilteredResults = []
         filterCounts = [:]

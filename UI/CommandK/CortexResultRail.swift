@@ -316,7 +316,7 @@ enum CommandKDomainRailDataSource {
 }
 
 struct CortexResultRail: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     var domainItems: [CommandKDomainRailItem] = []
     var isDomainLoading = false
     var onSelectDomainItem: (CommandKDomainRailItem) -> Void = { _ in }
@@ -336,6 +336,7 @@ struct CortexResultRail: View {
                 })
             }
             .scrollIndicators(.hidden)
+            .scrollEdgeEffectStyle(.soft, for: .all)
             .cortexThinScrollbar(metrics: railScrollMetrics)
             .onChange(of: viewModel.selectedResultIndex) { _, _ in
                 guard let id = viewModel.selectedNodeId else { return }
@@ -653,8 +654,9 @@ private struct CortexRailRow: View {
     }
 
     private var rowBackground: some View {
+        // Matches the sidebar row recipe so rail + sidebar rows read as one family.
         RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-            .fill(isSelected ? accent.opacity(0.10) : (isHovered ? DS.commandChromeProminentFill : Color.clear))
+            .fill(isSelected ? accent.opacity(0.10) : (isHovered ? DS.surfaceHover.opacity(0.40) : Color.clear))
     }
 
     private var rowBorder: some View {

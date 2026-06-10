@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct CortexCompactView: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     var namespace: Namespace.ID
     var openDomain: (CommandKTab) -> Void
 

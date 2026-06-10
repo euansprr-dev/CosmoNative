@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 
 struct LibraryTab: View {
 
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     let searchQuery: String
     @StateObject private var libraryViewModel = LibraryViewModel()
     @State private var viewMode: LibraryViewMode = .grid

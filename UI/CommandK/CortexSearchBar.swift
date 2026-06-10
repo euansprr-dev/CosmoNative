@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct CortexSearchBar: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     var isSearchFocused: FocusState<Bool>.Binding
     var expandedTab: CommandKTab?
     var onBack: (() -> Void)?

@@ -176,6 +176,9 @@ enum ExtractKind: String, Codable, CaseIterable, Sendable, Hashable {
     case note
     case sourceSnippet
     case aiInsight
+    case goal
+    case problem
+    case benefit
 
     var displayName: String {
         switch self {
@@ -199,6 +202,9 @@ enum ExtractKind: String, Codable, CaseIterable, Sendable, Hashable {
         case .note: return "Note"
         case .sourceSnippet: return "Source Snippet"
         case .aiInsight: return "AI Insight"
+        case .goal: return "Goal"
+        case .problem: return "Problem"
+        case .benefit: return "Benefit"
         }
     }
 
@@ -224,6 +230,9 @@ enum ExtractKind: String, Codable, CaseIterable, Sendable, Hashable {
         case .note: return "note.text"
         case .sourceSnippet: return "doc.plaintext"
         case .aiInsight: return "sparkles"
+        case .goal: return "target"
+        case .problem: return "exclamationmark.octagon"
+        case .benefit: return "gift"
         }
     }
 
@@ -243,6 +252,12 @@ enum ExtractKind: String, Codable, CaseIterable, Sendable, Hashable {
             return false
         }
     }
+
+    /// Kinds offered in user-facing "change kind" correction menus, in display order.
+    static let correctionOptions: [ExtractKind] = [
+        .goal, .problem, .claim, .speculativeClaim, .evidence, .counterevidence,
+        .mechanism, .example, .benefit, .question, .term, .practice, .reference, .note
+    ]
 }
 
 /// Lifecycle for an Extract.
@@ -413,6 +428,7 @@ enum InquirySourceProvider: String, Codable, CaseIterable, Sendable, Hashable {
     case pubMed
     case arxiv
     case youtube
+    case podcast
     case web
     case googleBooks
     case openLibrary
@@ -427,6 +443,7 @@ enum InquirySourceProvider: String, Codable, CaseIterable, Sendable, Hashable {
         case .pubMed: return "PubMed"
         case .arxiv: return "arXiv"
         case .youtube: return "YouTube"
+        case .podcast: return "Podcasts"
         case .web: return "Web"
         case .googleBooks: return "Google Books"
         case .openLibrary: return "Open Library"
@@ -848,6 +865,7 @@ struct DeepDiveMetadata: Codable, Sendable {
     var relatedDeepDiveUUIDs: [String]?
     var domainTagUUID: String?               // Optional clientProfile/domain affinity
     var coverGlyph: String?                  // SF symbol or symbolic identifier
+    var bodyMigratedAt: String?              // ISO8601 — appended-blob → narrativeHistory migration marker
 
     init(
         aliases: [String]? = nil,
@@ -858,7 +876,8 @@ struct DeepDiveMetadata: Codable, Sendable {
         lastInquiryAt: String? = nil,
         relatedDeepDiveUUIDs: [String]? = nil,
         domainTagUUID: String? = nil,
-        coverGlyph: String? = nil
+        coverGlyph: String? = nil,
+        bodyMigratedAt: String? = nil
     ) {
         self.aliases = aliases
         self.parentThinkspaceUUIDs = parentThinkspaceUUIDs
@@ -869,6 +888,7 @@ struct DeepDiveMetadata: Codable, Sendable {
         self.relatedDeepDiveUUIDs = relatedDeepDiveUUIDs
         self.domainTagUUID = domainTagUUID
         self.coverGlyph = coverGlyph
+        self.bodyMigratedAt = bodyMigratedAt
     }
 }
 
@@ -974,6 +994,39 @@ struct ModelVersion: Codable, Sendable, Identifiable {
     }
 }
 
+/// A full-narrative revision of the understanding, with session provenance.
+/// Replaces the old raw-markdown "_Appended from Inquiry Session_" body appends.
+struct UnderstandingNarrativeRevision: Codable, Sendable, Identifiable {
+    enum Kind: String, Codable, Sendable {
+        case crystallization
+        case canvasOp
+        case migration
+        case manual
+    }
+    var id: String
+    var date: String                  // ISO8601
+    var text: String
+    var sessionUUID: String?
+    var originOperationId: String?    // canvas-op / crystallization id; idempotency key
+    var kind: Kind?
+
+    init(
+        id: String = UUID().uuidString,
+        date: String,
+        text: String,
+        sessionUUID: String? = nil,
+        originOperationId: String? = nil,
+        kind: Kind? = nil
+    ) {
+        self.id = id
+        self.date = date
+        self.text = text
+        self.sessionUUID = sessionUUID
+        self.originOperationId = originOperationId
+        self.kind = kind
+    }
+}
+
 /// The user's living model of a Deep Dive's topic.
 struct CurrentUnderstanding: Codable, Sendable {
     var oneSentenceModel: String
@@ -986,6 +1039,8 @@ struct CurrentUnderstanding: Codable, Sendable {
     var explainExpertly: String
     var lastUpdated: String?           // ISO8601
     var versionHistory: [ModelVersion]
+    var narrative: String?             // Latest multi-paragraph synthesis
+    var narrativeHistory: [UnderstandingNarrativeRevision]?  // Newest last
 
     init(
         oneSentenceModel: String = "",
@@ -997,7 +1052,9 @@ struct CurrentUnderstanding: Codable, Sendable {
         explainSimply: String = "",
         explainExpertly: String = "",
         lastUpdated: String? = nil,
-        versionHistory: [ModelVersion] = []
+        versionHistory: [ModelVersion] = [],
+        narrative: String? = nil,
+        narrativeHistory: [UnderstandingNarrativeRevision]? = nil
     ) {
         self.oneSentenceModel = oneSentenceModel
         self.corePrinciples = corePrinciples
@@ -1009,6 +1066,22 @@ struct CurrentUnderstanding: Codable, Sendable {
         self.explainExpertly = explainExpertly
         self.lastUpdated = lastUpdated
         self.versionHistory = versionHistory
+        self.narrative = narrative
+        self.narrativeHistory = narrativeHistory
+    }
+
+    /// Records a narrative revision exactly once per origin operation.
+    /// Returns false when a revision with the same originOperationId already exists.
+    @discardableResult
+    mutating func recordNarrativeRevision(_ revision: UnderstandingNarrativeRevision) -> Bool {
+        if let originId = revision.originOperationId,
+           narrativeHistory?.contains(where: { $0.originOperationId == originId }) == true {
+            return false
+        }
+        narrativeHistory = (narrativeHistory ?? []) + [revision]
+        narrative = revision.text
+        lastUpdated = revision.date
+        return true
     }
 }
 
@@ -1270,9 +1343,39 @@ struct ResearchTreeDocument: Codable, Sendable {
             .map(\.id)
     }
 
-    /// Append a root-level question under the Deep Dive topic. Returns the new node id.
+    /// Normalizes a question title for duplicate detection.
+    static func normalizedQuestionKey(_ text: String) -> String {
+        text.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "?!.,;:"))
+            .split(separator: " ")
+            .joined(separator: " ")
+    }
+
+    /// Finds an existing visible root question matching the atomUUID or normalized label.
+    func existingRootQuestionNodeId(atomUUID: String?, label: String?) -> String? {
+        let key = label.map(Self.normalizedQuestionKey)
+        return rootQuestionNodeIds.first { nodeId in
+            guard let node = nodes[nodeId] else { return false }
+            if let atomUUID, node.atomUUID == atomUUID { return true }
+            if let key, !key.isEmpty, let nodeLabel = node.meta.label,
+               Self.normalizedQuestionKey(nodeLabel) == key { return true }
+            return false
+        }
+    }
+
+    /// Append a root-level question under the Deep Dive topic. Returns the new node id,
+    /// or the existing node id when the same question is already a root branch.
     @discardableResult
     mutating func appendRootQuestion(atomUUID: String? = nil, label: String? = nil, aiSuggested: Bool = false, accepted: Bool = true, sourceTabId: String? = nil, placementDecisionId: String? = nil) -> String {
+        if let existingId = existingRootQuestionNodeId(atomUUID: atomUUID, label: label) {
+            if let atomUUID, var existing = nodes[existingId], existing.atomUUID == nil {
+                existing.atomUUID = atomUUID
+                existing.meta.isPlaceholder = false
+                nodes[existingId] = existing
+            }
+            return existingId
+        }
         let newNode = ResearchTreeNode(
             kind: .question,
             atomUUID: atomUUID,
@@ -1552,6 +1655,7 @@ struct InquirySourceRef: Codable, Sendable, Identifiable {
     var lastOpenedAt: String
     var extractCount: Int
     var noteCount: Int
+    var addedByUser: Bool?     // True when the user pasted/added this source themselves
 
     init(
         sourceUUID: String,
@@ -1566,7 +1670,8 @@ struct InquirySourceRef: Codable, Sendable, Identifiable {
         openedAt: String = ISO8601.string(from: Date()),
         lastOpenedAt: String = ISO8601.string(from: Date()),
         extractCount: Int = 0,
-        noteCount: Int = 0
+        noteCount: Int = 0,
+        addedByUser: Bool? = nil
     ) {
         self.sourceUUID = sourceUUID
         self.tabId = tabId
@@ -1581,6 +1686,7 @@ struct InquirySourceRef: Codable, Sendable, Identifiable {
         self.lastOpenedAt = lastOpenedAt
         self.extractCount = extractCount
         self.noteCount = noteCount
+        self.addedByUser = addedByUser
     }
 }
 
@@ -2238,6 +2344,9 @@ struct CrystallizationOutput: Codable, Sendable {
         var materialCount: Int
         var proposedNotes: [ConnectionSectionItemDraft]
         var accepted: Bool
+        var mergeTargetConnectionUUID: String?   // AI-chosen merge destination (concept-first)
+        var conceptAliases: [String]?
+        var conceptKey: String?                  // Normalized concept name; cross-session dedup
 
         init(
             id: String = UUID().uuidString,
@@ -2252,7 +2361,10 @@ struct CrystallizationOutput: Codable, Sendable {
             branchNodeId: String? = nil,
             materialCount: Int = 0,
             proposedNotes: [ConnectionSectionItemDraft] = [],
-            accepted: Bool = false
+            accepted: Bool = false,
+            mergeTargetConnectionUUID: String? = nil,
+            conceptAliases: [String]? = nil,
+            conceptKey: String? = nil
         ) {
             self.id = id
             self.name = name
@@ -2267,12 +2379,16 @@ struct CrystallizationOutput: Codable, Sendable {
             self.materialCount = materialCount
             self.proposedNotes = proposedNotes
             self.accepted = accepted
+            self.mergeTargetConnectionUUID = mergeTargetConnectionUUID
+            self.conceptAliases = conceptAliases
+            self.conceptKey = conceptKey
         }
 
         private enum CodingKeys: String, CodingKey {
             case id, name, rationale, clusterExtractUUIDs, seededLexiconCandidateIds
             case proposedTitle, proposedConcept, proposedSections, proposedReferences
             case branchNodeId, materialCount, proposedNotes, accepted
+            case mergeTargetConnectionUUID, conceptAliases, conceptKey
         }
 
         init(from decoder: Decoder) throws {
@@ -2294,6 +2410,9 @@ struct CrystallizationOutput: Codable, Sendable {
             materialCount = try c.decodeIfPresent(Int.self, forKey: .materialCount) ?? clusterExtractUUIDs.count
             proposedNotes = try c.decodeIfPresent([ConnectionSectionItemDraft].self, forKey: .proposedNotes) ?? []
             accepted = try c.decodeIfPresent(Bool.self, forKey: .accepted) ?? false
+            mergeTargetConnectionUUID = try c.decodeIfPresent(String.self, forKey: .mergeTargetConnectionUUID)
+            conceptAliases = try c.decodeIfPresent([String].self, forKey: .conceptAliases)
+            conceptKey = try c.decodeIfPresent(String.self, forKey: .conceptKey)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -2314,6 +2433,9 @@ struct CrystallizationOutput: Codable, Sendable {
             try c.encode(materialCount, forKey: .materialCount)
             try c.encode(proposedNotes, forKey: .proposedNotes)
             try c.encode(accepted, forKey: .accepted)
+            try c.encodeIfPresent(mergeTargetConnectionUUID, forKey: .mergeTargetConnectionUUID)
+            try c.encodeIfPresent(conceptAliases, forKey: .conceptAliases)
+            try c.encodeIfPresent(conceptKey, forKey: .conceptKey)
         }
     }
     struct ModelUpdateProposal: Codable, Sendable, Identifiable {
@@ -2501,6 +2623,7 @@ struct InquirySessionStructured: Codable, Sendable {
     var routeReceipts: [InquiryRouteReceipt]
     var crystallizationResult: CrystallizationOutput?
     var currentUnderstandingDraft: LiveUnderstandingDraft?
+    var liveRoutingDecisions: [InquiryLiveRoutingDecision]
 
     enum CodingKeys: String, CodingKey {
         case researchTree
@@ -2517,6 +2640,7 @@ struct InquirySessionStructured: Codable, Sendable {
         case routeReceipts
         case crystallizationResult
         case currentUnderstandingDraft
+        case liveRoutingDecisions
     }
 
     init(
@@ -2533,7 +2657,8 @@ struct InquirySessionStructured: Codable, Sendable {
         recommendationBatches: [InquiryRecommendationBatch] = [],
         routeReceipts: [InquiryRouteReceipt] = [],
         crystallizationResult: CrystallizationOutput? = nil,
-        currentUnderstandingDraft: LiveUnderstandingDraft? = nil
+        currentUnderstandingDraft: LiveUnderstandingDraft? = nil,
+        liveRoutingDecisions: [InquiryLiveRoutingDecision] = []
     ) {
         self.researchTree = researchTree
         self.sourceTabs = sourceTabs
@@ -2549,6 +2674,7 @@ struct InquirySessionStructured: Codable, Sendable {
         self.routeReceipts = routeReceipts
         self.crystallizationResult = crystallizationResult
         self.currentUnderstandingDraft = currentUnderstandingDraft
+        self.liveRoutingDecisions = liveRoutingDecisions
     }
 
     init(from decoder: Decoder) throws {
@@ -2567,6 +2693,37 @@ struct InquirySessionStructured: Codable, Sendable {
         routeReceipts = try container.decodeIfPresent([InquiryRouteReceipt].self, forKey: .routeReceipts) ?? []
         crystallizationResult = try container.decodeIfPresent(CrystallizationOutput.self, forKey: .crystallizationResult)
         currentUnderstandingDraft = try container.decodeIfPresent(LiveUnderstandingDraft.self, forKey: .currentUnderstandingDraft)
+        liveRoutingDecisions = try container.decodeIfPresent([InquiryLiveRoutingDecision].self, forKey: .liveRoutingDecisions) ?? []
+    }
+}
+
+/// A persisted live-router decision: how one capture was split/typed/placed.
+/// The id doubles as the idempotency key stamped onto refined extracts.
+struct InquiryLiveRoutingDecision: Codable, Sendable, Identifiable {
+    struct Destination: Codable, Sendable {
+        var extractUUID: String
+        var kind: ExtractKind
+        var questionUUID: String?
+        var conceptNames: [String]
+    }
+    var id: String
+    var sourceExtractUUID: String?
+    var appliedAt: String          // ISO8601
+    var summary: String            // "Split into 2 claims · 1 new branch"
+    var destinations: [Destination]
+
+    init(
+        id: String = UUID().uuidString,
+        sourceExtractUUID: String? = nil,
+        appliedAt: String = ISO8601.string(from: Date()),
+        summary: String,
+        destinations: [Destination] = []
+    ) {
+        self.id = id
+        self.sourceExtractUUID = sourceExtractUUID
+        self.appliedAt = appliedAt
+        self.summary = summary
+        self.destinations = destinations
     }
 }
 
@@ -2694,6 +2851,8 @@ struct ExtractMetadata: Codable, Sendable {
     var promotedToUUID: String?
     var originType: String?              // "highlight" | "deepen" | "ai" | "telegram" | "voice" | "manual"
     var citation: String?                // Display chip e.g. "Buteyko Paper · 2007 · Author"
+    var routingDecisionId: String?       // Live-router decision that settled this extract (idempotency)
+    var conceptNames: [String]?          // Concept-page assignments ("Pranayama", "Vagus nerve")
 
     init(
         kind: ExtractKind,
@@ -2710,7 +2869,9 @@ struct ExtractMetadata: Codable, Sendable {
         committedAt: String? = ISO8601.string(from: Date()),
         promotedToUUID: String? = nil,
         originType: String? = nil,
-        citation: String? = nil
+        citation: String? = nil,
+        routingDecisionId: String? = nil,
+        conceptNames: [String]? = nil
     ) {
         self.kind = kind
         self.sourceUUID = sourceUUID
@@ -2727,6 +2888,8 @@ struct ExtractMetadata: Codable, Sendable {
         self.promotedToUUID = promotedToUUID
         self.originType = originType
         self.citation = citation
+        self.routingDecisionId = routingDecisionId
+        self.conceptNames = conceptNames
     }
 }
 

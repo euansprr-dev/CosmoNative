@@ -490,6 +490,37 @@ final class InquiryRepository {
         )
     }
 
+    /// Returns an existing question with the same normalized title under the deep dive,
+    /// or creates a new one. Prevents duplicate questions across sessions/crystallizations.
+    @discardableResult
+    func findOrCreateQuestion(
+        title: String,
+        parentDeepDiveUUID: String?,
+        originSessionUUID: String?,
+        parentQuestionUUID: String?,
+        originExtractUUID: String?
+    ) async throws -> (atom: Atom, created: Bool) {
+        if let deepDiveUUID = parentDeepDiveUUID {
+            let key = ResearchTreeDocument.normalizedQuestionKey(title)
+            if !key.isEmpty {
+                let existing = try await fetchQuestions(forDeepDive: deepDiveUUID)
+                if let match = existing.first(where: {
+                    ResearchTreeDocument.normalizedQuestionKey($0.title ?? "") == key
+                }) {
+                    return (match, false)
+                }
+            }
+        }
+        let created = try await createQuestion(
+            title: title,
+            parentDeepDiveUUID: parentDeepDiveUUID,
+            originSessionUUID: originSessionUUID,
+            parentQuestionUUID: parentQuestionUUID,
+            originExtractUUID: originExtractUUID
+        )
+        return (created, true)
+    }
+
     // MARK: - Extract
 
     @discardableResult
@@ -505,7 +536,8 @@ final class InquiryRepository {
         sourceTabId: String?,
         userNote: String?,
         originType: String?,
-        citation: String?
+        citation: String?,
+        status: ExtractStatus = .committed
     ) async throws -> Atom {
         let metadata = ExtractMetadata(
             kind: kind,
@@ -517,7 +549,7 @@ final class InquiryRepository {
             parentBranchNodeId: branchNodeId,
             sourceTabId: sourceTabId,
             userNote: userNote,
-            status: .committed,
+            status: status,
             originType: originType,
             citation: citation
         )

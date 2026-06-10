@@ -122,9 +122,15 @@ struct InquiryWorkspaceView: View {
                     .padding(.top, DS.space8)
                     .transition(.opacity)
             }
-            InquiryDockView(viewModel: viewModel, dockDraft: $dockDraft, dockFocused: $dockFocused)
+            if !viewModel.routingReceipts.isEmpty {
+                InquiryRoutingReceiptStack(viewModel: viewModel)
+                    .padding(.horizontal, DS.space20)
+                    .transition(.opacity)
+            }
+            InquiryAssistantDock(viewModel: viewModel, dockDraft: $dockDraft, dockFocused: $dockFocused)
         }
         .animation(ProMotionSprings.gentle, value: viewModel.ephemeralAIReplies.count)
+        .animation(ProMotionSprings.gentle, value: viewModel.routingReceipts.count)
     }
 
     // MARK: - Toast overlay

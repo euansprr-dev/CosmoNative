@@ -107,7 +107,7 @@ struct BrainstormContextSidebar: View {
         HStack(spacing: 8) {
             Image(systemName: "sparkle.magnifyingglass")
                 .font(.system(size: 12))
-                .foregroundColor(DS.accent.opacity(0.6))
+                .foregroundStyle(DS.accent.opacity(0.6))
 
             Text("DISCOVER")
                 .dsSectionLabel()
@@ -134,7 +134,7 @@ struct BrainstormContextSidebar: View {
         } label: {
             Image(systemName: "sidebar.right")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .padding(5)
                 .background(DS.border, in: RoundedRectangle(cornerRadius: 5))
         }
@@ -149,7 +149,7 @@ struct BrainstormContextSidebar: View {
                 .tint(DS.accent.opacity(0.3))
             Text("Searching knowledge base...")
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -161,11 +161,11 @@ struct BrainstormContextSidebar: View {
 
             Image(systemName: "sparkle.magnifyingglass")
                 .font(.system(size: 28))
-                .foregroundColor(DS.accent.opacity(0.15))
+                .foregroundStyle(DS.accent.opacity(0.15))
 
             Text("Enter a description to discover\nrelated swipes, research & content")
                 .font(DS.cardMeta)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
 
@@ -207,7 +207,7 @@ struct BrainstormContextSidebar: View {
 
                 Text("\(items.count)")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             // Cards
@@ -244,20 +244,20 @@ struct BrainstormContextSidebar: View {
             // Type icon
             Image(systemName: ref.type.iconName)
                 .font(.system(size: 10))
-                .foregroundColor(colorForAtomType(ref.type))
+                .foregroundStyle(colorForAtomType(ref.type))
                 .frame(width: 16)
 
             // Title + preview
             VStack(alignment: .leading, spacing: 2) {
                 Text(ref.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isHovered ? DS.text : DS.text.opacity(0.85))
+                    .foregroundStyle(isHovered ? DS.text : DS.text.opacity(0.85))
                     .lineLimit(1)
 
                 if !ref.preview.isEmpty {
                     Text(ref.preview)
                         .font(.system(size: 9))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .lineLimit(2)
                 }
             }
@@ -269,11 +269,11 @@ struct BrainstormContextSidebar: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(String(format: "%.0f%%", ref.relevanceScore * 100))
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(isHovered ? DS.textMuted : DS.textMuted.opacity(0.5))
+                    .foregroundStyle(isHovered ? DS.textMuted : DS.textMuted.opacity(0.5))
             }
         }
         .padding(.horizontal, 10)
@@ -314,7 +314,7 @@ struct BrainstormContextSidebar: View {
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 22, height: 22)
                     .background(DS.border, in: RoundedRectangle(cornerRadius: 5))
             }
@@ -323,11 +323,11 @@ struct BrainstormContextSidebar: View {
             if let detail = detailAtom {
                 Image(systemName: detail.type.iconName)
                     .font(.system(size: 11))
-                    .foregroundColor(colorForAtomType(detail.type))
+                    .foregroundStyle(colorForAtomType(detail.type))
 
                 Text(detail.title ?? "Untitled")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
             } else {
                 Text("Loading")
@@ -389,11 +389,11 @@ struct BrainstormContextSidebar: View {
                     HStack(spacing: 8) {
                         Image(systemName: hookType.iconName)
                             .font(.system(size: 10))
-                            .foregroundColor(hookType.color)
+                            .foregroundStyle(hookType.color)
 
                         Text(hookType.displayName)
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(hookType.color)
+                            .foregroundStyle(hookType.color)
 
                         Spacer()
 
@@ -404,7 +404,7 @@ struct BrainstormContextSidebar: View {
                                 Text(String(format: "%.0f", score * 100))
                                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                             }
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -417,10 +417,10 @@ struct BrainstormContextSidebar: View {
                     HStack(spacing: 6) {
                         Image(systemName: "rectangle.3.group.fill")
                             .font(.system(size: 9))
-                            .foregroundColor(DS.accent.opacity(0.6))
+                            .foregroundStyle(DS.accent.opacity(0.6))
                         Text(framework.displayName)
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(DS.textSecondary)
+                            .foregroundStyle(DS.textSecondary)
                     }
                 }
             }
@@ -464,7 +464,7 @@ struct BrainstormContextSidebar: View {
                 .frame(width: 5, height: 5)
             Text(status.displayName)
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(status.color)
+                .foregroundStyle(status.color)
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
@@ -478,7 +478,7 @@ struct BrainstormContextSidebar: View {
             Text(format.displayName)
                 .font(.system(size: 9, weight: .medium))
         }
-        .foregroundColor(format.color)
+        .foregroundStyle(format.color)
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(format.color.opacity(0.12), in: Capsule())
@@ -491,7 +491,7 @@ struct BrainstormContextSidebar: View {
             Text(platform.displayName)
                 .font(.system(size: 9, weight: .medium))
         }
-        .foregroundColor(DS.textSecondary)
+        .foregroundStyle(DS.textSecondary)
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(DS.border, in: Capsule())
@@ -504,10 +504,10 @@ struct BrainstormContextSidebar: View {
         HStack(spacing: 6) {
             Image(systemName: detail.type.iconName)
                 .font(.system(size: 9))
-                .foregroundColor(colorForAtomType(detail.type))
+                .foregroundStyle(colorForAtomType(detail.type))
             Text(detail.type.displayName)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(colorForAtomType(detail.type))
+                .foregroundStyle(colorForAtomType(detail.type))
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
@@ -524,12 +524,12 @@ struct BrainstormContextSidebar: View {
             if bodyText.isEmpty {
                 Text("No content")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .italic()
             } else {
                 Text(String(bodyText.prefix(800)))
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -556,7 +556,7 @@ struct BrainstormContextSidebar: View {
                     Text("Open in Focus Mode")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
                 .background(colorForAtomType(detail.type).opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
@@ -604,7 +604,7 @@ struct BrainstormContextSidebar: View {
             Text(text)
                 .font(.system(size: 10, weight: .medium))
         }
-        .foregroundColor(DS.textSecondary)
+        .foregroundStyle(DS.textSecondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(DS.border, in: Capsule())

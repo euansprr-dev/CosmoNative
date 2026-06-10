@@ -30,6 +30,24 @@ struct BlockOperationResult: Equatable {
         guard let focusPath else { return nil }
         return try? BlockOperations.currentBlock(in: document, at: focusPath).id
     }
+
+    /// Converts this result's caret intent into an offset-from-end for the
+    /// focused block — the representation the text views consume (immune to
+    /// rendered list/quote prefixes at the head of the text).
+    func caretOffsetFromEnd(for block: RichBlock) -> Int? {
+        let contentLength = block.plainInlineText.utf16.count
+        switch intent {
+        case .preserveCaret:
+            return nil
+        case .start:
+            return contentLength
+        case .end:
+            return 0
+        case .explicitOffset:
+            guard let caretUTF16Offset else { return nil }
+            return max(0, contentLength - caretUTF16Offset)
+        }
+    }
 }
 
 enum BlockCaretIntent: Equatable, Hashable, Sendable {

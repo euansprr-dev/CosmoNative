@@ -10,6 +10,100 @@ actor ConnectionRoutingEngine {
         self.minimumMaterialCount = minimumMaterialCount
     }
 
+    /// Concept-first proposals: one candidate per resolved concept assignment.
+    /// Candidates carry a stable per-concept id and an explicit merge target so the
+    /// same concept never produces duplicate Connections across sessions.
+    func proposals(
+        forSession session: Atom,
+        assignments: [ConceptResolver.ConceptAssignment],
+        extracts: [Atom],
+        sources: [InquirySourceRef] = []
+    ) -> [CrystallizationOutput.ConnectionCandidate] {
+        let sourceTitlesByUUID = Dictionary(uniqueKeysWithValues: sources.map { ($0.sourceUUID, $0.title) })
+        let extractsByUUID = Dictionary(uniqueKeysWithValues: extracts.map { ($0.uuid, $0) })
+
+        var candidates: [CrystallizationOutput.ConnectionCandidate] = []
+        for assignment in assignments {
+            let conceptExtracts = assignment.extractUUIDs.compactMap { extractsByUUID[$0] }
+            guard !conceptExtracts.isEmpty else { continue }
+            let routed = routedConceptSections(
+                conceptName: assignment.conceptName,
+                extracts: conceptExtracts,
+                sourceTitlesByUUID: sourceTitlesByUUID
+            )
+            guard routed.materialCount > 0 else { continue }
+
+            let mergeTarget: String?
+            if case .mergeInto(let connectionUUID) = assignment.action {
+                mergeTarget = connectionUUID
+            } else {
+                mergeTarget = nil
+            }
+            candidates.append(CrystallizationOutput.ConnectionCandidate(
+                id: "connection-candidate-concept-\(assignment.conceptKey)",
+                name: assignment.conceptName,
+                rationale: assignment.rationale.isEmpty
+                    ? "\(routed.materialCount) extracts cluster around \(assignment.conceptName)."
+                    : assignment.rationale,
+                clusterExtractUUIDs: conceptExtracts.map(\.uuid),
+                proposedTitle: assignment.conceptName,
+                proposedConcept: assignment.conceptName,
+                proposedSections: routed.sections,
+                proposedReferences: [],
+                materialCount: routed.materialCount,
+                proposedNotes: routed.notes,
+                accepted: mergeTarget != nil || routed.materialCount >= minimumMaterialCount,
+                mergeTargetConnectionUUID: mergeTarget,
+                conceptAliases: assignment.aliases.isEmpty ? nil : assignment.aliases,
+                conceptKey: assignment.conceptKey
+            ))
+        }
+        return crossLinked(candidates)
+    }
+
+    private func routedConceptSections(
+        conceptName: String,
+        extracts: [Atom],
+        sourceTitlesByUUID: [String: String]
+    ) -> RoutedMaterial {
+        var sections: [ConnectionSectionType: [ConnectionSectionItemDraft]] = [
+            .goal: [ConnectionSectionItemDraft(body: "Understand \(conceptName).", kindLabel: "Goal")],
+            .conceptName: [ConnectionSectionItemDraft(body: conceptName, kindLabel: "Concept")]
+        ]
+        var notes: [ConnectionSectionItemDraft] = []
+        var materialCount = 0
+        var referencedSourceUUIDs = Set<String>()
+
+        for extract in extracts {
+            guard let kind = extract.extractMetadata?.kind else { continue }
+            let body = (extract.body ?? extract.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { continue }
+            if let target = sectionType(for: kind) {
+                sections[target, default: []].append(draft(from: extract, kind: kind))
+            } else if kind == .note || kind == .term || kind == .aiInsight {
+                notes.append(draft(from: extract, kind: kind))
+            } else {
+                continue
+            }
+            if let sourceUUID = extract.extractMetadata?.sourceUUID {
+                referencedSourceUUIDs.insert(sourceUUID)
+            }
+            materialCount += 1
+        }
+
+        let referenceDrafts = referencedSourceUUIDs.sorted().map { uuid in
+            ConnectionSectionItemDraft(
+                body: sourceTitlesByUUID[uuid] ?? "Source \(uuid.prefix(8))",
+                sourceUUID: uuid,
+                kindLabel: "Source"
+            )
+        }
+        if !referenceDrafts.isEmpty {
+            sections[.references, default: []].append(contentsOf: referenceDrafts)
+        }
+        return RoutedMaterial(sections: sections, notes: notes, materialCount: materialCount)
+    }
+
     func proposals(
         forSession session: Atom,
         branches: [ResearchTreeNode],
@@ -179,6 +273,10 @@ actor ConnectionRoutingEngine {
 
     private func sectionType(for kind: ExtractKind) -> ConnectionSectionType? {
         switch kind {
+        case .goal:
+            return .goal
+        case .problem:
+            return .problems
         case .claim, .speculativeClaim:
             return .claims
         case .evidence:
@@ -189,7 +287,7 @@ actor ConnectionRoutingEngine {
             return .process
         case .example:
             return .examples
-        case .outputIdea:
+        case .outputIdea, .benefit:
             return .benefits
         case .question:
             return .openQuestions

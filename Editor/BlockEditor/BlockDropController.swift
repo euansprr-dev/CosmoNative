@@ -51,6 +51,11 @@ enum BlockDropController {
 }
 
 enum BlockInteractionPolicy {
+    /// Total leading width of the block gutter: ＋ button (22) + spacing (2)
+    /// + six-dot handle (24) + row gap (4). Hosts use this to align titles
+    /// and metadata with the block text column.
+    static let gutterWidth: CGFloat = 52
+
     enum VerticalAnchor: Equatable, Hashable, Sendable {
         case textBaseline
         case headingBaseline
@@ -88,7 +93,7 @@ enum BlockInteractionPolicy {
 
     static func chrome(isHovered: Bool, isDropTarget: Bool, darkMode: Bool) -> Chrome {
         Chrome(
-            reservedLeadingWidth: 28,
+            reservedLeadingWidth: Self.gutterWidth,
             handleOpacity: isHovered || isDropTarget ? 1 : 0,
             dropIndicatorOpacity: isDropTarget ? (darkMode ? 0.9 : 0.75) : 0,
             dropIndicatorHeight: isDropTarget ? 2 : 0

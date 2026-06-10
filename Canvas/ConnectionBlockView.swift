@@ -102,14 +102,7 @@ struct ConnectionBlockView: View {
         return trimmed.isEmpty ? "Untitled Connection" : trimmed
     }
 
-    // MARK: - Connection Content (V2 "The Crucible" preview)
-
-    /// Ordering for the canvas block's compact station grid.
-    private static let stationGridOrder: [ConnectionSectionType] = [
-        .goal, .problems, .claims, .evidence,
-        .benefits, .examples, .beliefsObjections, .process,
-        .openQuestions, .conceptName, .references
-    ]
+    // MARK: - Connection Content (at-a-glance preview)
 
     private var connectionContent: some View {
         VStack(spacing: 0) {
@@ -120,7 +113,7 @@ struct ConnectionBlockView: View {
 
             Rectangle().fill(DS.sepiaSubtle).frame(height: 0.5)
 
-            stationGrid
+            sectionPreviewList
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
 
@@ -131,34 +124,66 @@ struct ConnectionBlockView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
+    /// Populated sections in sortOrder, capped for the block preview.
+    private var previewSections: [ConnectionSection] {
+        sections
+            .filter { !$0.items.isEmpty }
+            .sorted { $0.type.sortOrder < $1.type.sortOrder }
+    }
+
     // MARK: - Masthead (block)
 
     private var crucibleMasthead: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                if isEditingTitle {
-                    inlineTitleEditor
-                } else {
-                    Text(displayTitle)
-                        .font(.system(size: 15, weight: .light, design: .serif))
-                        .tracking(0.3)
-                        .foregroundStyle(editableTitle.isEmpty ? DS.textMuted : DS.inkWash)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            titleDocumentAtEditStart = titleDocument
-                            isEditingTitle = true
-                        }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if isEditingTitle {
+                        inlineTitleEditor
+                    } else {
+                        Text(displayTitle)
+                            .font(.system(size: 15, weight: .light, design: .serif))
+                            .tracking(0.3)
+                            .foregroundStyle(editableTitle.isEmpty ? DS.textMuted : DS.inkWash)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                titleDocumentAtEditStart = titleDocument
+                                isEditingTitle = true
+                            }
+                    }
+                    Text(frameworkTypeLabel)
+                        .font(DS.smallCaps)
+                        .tracking(1.6)
+                        .foregroundStyle(DS.giltMuted)
                 }
-                Text(frameworkTypeLabel)
-                    .font(DS.smallCaps)
-                    .tracking(1.6)
-                    .foregroundStyle(DS.giltMuted)
+                Spacer(minLength: 6)
+                Text("\(populatedSectionCount)/\(ConnectionSectionType.allCases.count)")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(DS.textMuted)
+                    .help("\(populatedSectionCount) of \(ConnectionSectionType.allCases.count) sections filled")
             }
-            Spacer(minLength: 6)
-            MaturityCrystalInline(filledCount: populatedSectionCount)
+            maturityBar
         }
+    }
+
+    /// Thin completion bar — how filled this concept is, readable at a glance.
+    private var maturityBar: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(DS.sepiaSubtle)
+                Capsule()
+                    .fill(accentColor.opacity(0.75))
+                    .frame(
+                        width: geometry.size.width *
+                            CGFloat(populatedSectionCount) / CGFloat(ConnectionSectionType.allCases.count)
+                    )
+            }
+        }
+        .frame(height: 3)
+        .accessibilityElement()
+        .accessibilityLabel("Maturity: \(populatedSectionCount) of \(ConnectionSectionType.allCases.count) sections filled")
     }
 
     private var inlineTitleEditor: some View {
@@ -198,65 +223,118 @@ struct ConnectionBlockView: View {
         return "MENTAL MODEL"
     }
 
-    // MARK: - Station Grid
+    // MARK: - Section previews
 
-    private var stationGrid: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 4)
-        return LazyVGrid(columns: columns, spacing: 4) {
-            ForEach(Self.stationGridOrder, id: \.self) { type in
-                stationCell(for: type)
+    /// Up to four populated sections with their first item — real content,
+    /// not abbreviations. Empty connections show the opening prompts instead.
+    @ViewBuilder
+    private var sectionPreviewList: some View {
+        let preview = previewSections
+        if preview.isEmpty {
+            emptyStatePrompts
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(preview.prefix(4)) { section in
+                    sectionPreviewRow(section)
+                }
+                if preview.count > 4 {
+                    Text("+\(preview.count - 4) more section\(preview.count - 4 == 1 ? "" : "s")")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                        .padding(.leading, 22)
+                }
             }
         }
     }
 
-    private func stationCell(for type: ConnectionSectionType) -> some View {
-        let section = sections.first(where: { $0.type == type })
-        let isPopulated = (section?.items.isEmpty == false)
-        return Button {
-            openFocusAtStation(type)
+    private func sectionPreviewRow(_ section: ConnectionSection) -> some View {
+        Button {
+            openFocusAtStation(section.type)
         } label: {
-            VStack(spacing: 3) {
-                Text(isPopulated ? "◆" : "·")
-                    .font(.system(size: isPopulated ? 12 : 14, weight: .regular, design: .serif))
-                    .foregroundStyle(isPopulated ? type.accentColor.opacity(0.85) : DS.inkFaded)
-                Text(type.abbreviation)
-                    .font(DS.smallCaps)
-                    .tracking(1.0)
-                    .foregroundStyle(isPopulated ? DS.inkWash.opacity(0.8) : DS.inkFaded)
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: section.type.icon)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(section.type.accentColor)
+                    .frame(width: 14)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(section.type.displayName)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.inkWash)
+                        Text("\(section.items.count)")
+                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .foregroundStyle(DS.textMuted)
+                    }
+                    if let first = section.items.first {
+                        Text(first.resolvedPlainText)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textSecondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: 40)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(type.accentColor.opacity(isPopulated ? 0.05 : 0))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(DS.sepiaSubtle, lineWidth: 0.5)
-            )
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .contentShape(.rect(cornerRadius: 6))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(type.displayName), \(isPopulated ? "\(section?.items.count ?? 0) items" : "empty"). Tap to open focus mode.")
+        .help("Open \(section.type.displayName) in focus mode")
+        .accessibilityLabel("\(section.type.displayName), \(section.items.count) items. Opens focus mode.")
+    }
+
+    /// Teaches what a Connection is for instead of showing 11 empty cells.
+    private var emptyStatePrompts: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach([ConnectionSectionType.goal, .problems, .conceptName], id: \.self) { type in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: type.icon)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(type.accentColor.opacity(0.6))
+                        .frame(width: 14)
+                        .padding(.top, 1)
+                    Text(type.promptQuestion)
+                        .font(DS.caption2)
+                        .italic()
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Footer
 
+    /// Distinct sources cited by items across all sections.
+    private var citedSourceCount: Int {
+        Set(sections.flatMap { $0.items }.compactMap { $0.sourceAtomUUID }).count
+    }
+
     private var crucibleFooter: some View {
         HStack(spacing: 6) {
-            Image(systemName: "sparkles")
+            Image(systemName: "link")
                 .font(.system(size: 8))
                 .foregroundStyle(accentColor.opacity(0.5))
-            Text("\(totalItemCount) insights")
+            Text("\(totalItemCount) item\(totalItemCount == 1 ? "" : "s")\(citedSourceCount > 0 ? " · \(citedSourceCount) source\(citedSourceCount == 1 ? "" : "s")" : "")")
                 .font(DS.caption2)
                 .foregroundStyle(accentColor.opacity(0.6))
             Spacer()
-            Text("drag here")
-                .font(DS.caption2)
-                .italic()
-                .foregroundStyle(DS.textMuted)
+            if let stamp = block.metadata["updated"] ?? block.metadata["created"] {
+                Text(formatTimestamp(stamp))
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
         }
     }
 
     private func openFocusAtStation(_ type: ConnectionSectionType) {
+        if let atomUUID = atom?.uuid {
+            ConnectionFocusDeepLink.stash(atomUUID: atomUUID, section: type)
+        }
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
@@ -266,86 +344,6 @@ struct ConnectionBlockView: View {
                 "focusStation": type.rawValue
             ]
         )
-    }
-
-    // MARK: - Compact Header
-
-    private var compactHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Gilt corner ornament lives on the wrapper; leave top breathing room here.
-            Color.clear.frame(height: 6)
-
-            if isEditingTitle {
-                CosmoDocumentEditor(
-                    document: $titleDocument,
-                    fontSize: titleFontSize,
-                    compact: titleStyle.compact,
-                    placeholder: "Untitled Connection",
-                    allowSlashCommands: false,
-                    allowMentions: true,
-                    allowSelectionMenu: false,
-                    allowImages: false,
-                    titleConfiguration: titleStyle.titleConfiguration,
-                    baseFontWeight: titleStyle.baseFontWeight,
-                    scrollsInternally: true,
-                    onContentHeightChange: { newHeight in
-                        titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
-                    },
-                    onPlainTextChange: { _ in
-                        // Don't update editableTitle during editing — it changes displayTitle
-                        // which triggers a CosmoBlockWrapper re-render that can reset the NSTextView.
-                        // editableTitle is set from commitTitleEdit when editing ends.
-                    },
-                    onStructuredDocumentChange: { document, _ in
-                        titleDocument = document
-                    },
-                    onActivate: { isEditingTitle = true },
-                    onDeactivate: { isEditingTitle = false },
-                    onCommit: { isEditingTitle = false },
-                    autoFocus: true
-                )
-                .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
-            } else {
-                Text(displayTitle)
-                    .font(titleStyle.swiftUIFont)
-                    .foregroundStyle(editableTitle.isEmpty ? DS.textMuted : DS.text)
-                    .lineLimit(titleStyle.previewLineLimit)
-                    .truncationMode(.tail)
-                    .multilineTextAlignment(titleStyle.swiftUITextAlignment)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        titleDocumentAtEditStart = titleDocument
-                        isEditingTitle = true
-                    }
-            }
-
-            Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/\(ConnectionSectionType.allCases.count) sections")
-                .font(DS.footnote)
-                .foregroundStyle(DS.textMuted)
-        }
-    }
-
-    // MARK: - Footer
-
-    private var footerBar: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "link")
-                .font(.system(size: 9))
-                .foregroundStyle(accentColor.opacity(0.5))
-            Text("\(totalItemCount) items")
-                .font(DS.caption2)
-                .foregroundStyle(accentColor.opacity(0.6))
-
-            Spacer()
-
-            if let created = block.metadata["created"] ?? block.metadata["updated"] {
-                Text(formatTimestamp(created))
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-            }
-        }
     }
 
     // MARK: - GRDB Observation
@@ -795,326 +793,6 @@ struct ConnectionBlockView: View {
     }
 }
 
-// MARK: - Compact Section Row
-
-private struct CompactSectionRow: View {
-    @Binding var section: ConnectionSection
-    let onAddItem: (RichDocument, String) -> Void
-    let onDeleteItem: (UUID) -> Void
-    let onEditItem: (UUID, RichDocument, String) -> Void
-
-    @State private var isAddingItem = false
-    @State private var newItemText = ""
-    @State private var newItemDocument: RichDocument = .empty
-    @State private var addItemEditorHeight: CGFloat = 22
-    @FocusState private var isAddFieldFocused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Section header (collapsible)
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    section.isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    // Colored dot
-                    Circle()
-                        .fill(section.type.accentColor)
-                        .frame(width: 6, height: 6)
-
-                    // Section name
-                    Text(section.type.displayName)
-                        .font(DS.subheadline)
-                        .foregroundStyle(DS.text)
-
-                    // Count badge
-                    if !section.items.isEmpty {
-                        Text("\(section.items.count)")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(section.type.accentColor)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(section.type.accentColor.opacity(0.15))
-                            )
-                    }
-
-                    Spacer()
-
-                    // Chevron
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(DS.textMuted)
-                        .rotationEffect(.degrees(section.isExpanded ? 90 : 0))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            // Expanded content
-            if section.isExpanded {
-                VStack(alignment: .leading, spacing: 2) {
-                    // Items
-                    ForEach(section.items) { item in
-                        CompactItemRow(
-                            item: item,
-                            accentColor: section.type.accentColor,
-                            onEdit: { document, plainText in
-                                onEditItem(item.id, document, plainText)
-                            },
-                            onDelete: {
-                                onDeleteItem(item.id)
-                            }
-                        )
-                    }
-
-                    // Add item row
-                    if isAddingItem {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 8))
-                                .foregroundStyle(section.type.accentColor.opacity(0.5))
-                                .frame(width: 12)
-
-                            CosmoDocumentEditor(
-                                document: $newItemDocument,
-                                fontSize: 12,
-                                compact: true,
-                                placeholder: "Add item...",
-                                allowSlashCommands: false,
-                                allowMentions: true,
-                                allowSelectionMenu: false,
-                                allowImages: false,
-                                onContentHeightChange: { height in
-                                    addItemEditorHeight = height
-                                },
-                                onPlainTextChange: { plainText in
-                                    print("[CONN-SECTION] onPlainTextChange — len=\(plainText.count) preview=\"\(String(plainText.prefix(40)))\"")
-                                    newItemText = plainText
-                                },
-                                onDocumentChange: { _, plainText in
-                                    print("[CONN-SECTION] onDocumentChange — len=\(plainText.count) preview=\"\(String(plainText.prefix(40)))\" newItemTextBefore=\(newItemText.count)")
-                                    newItemText = plainText
-                                },
-                                onCommit: {
-                                    print("[CONN-SECTION] onCommit — newItemText=\"\(newItemText)\" newItemDocPlain=\"\(newItemDocument.plainText)\"")
-                                    commitAddItem()
-                                }
-                            )
-                            .frame(height: max(22, addItemEditorHeight))
-
-                            Button {
-                                cancelAddItem()
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(DS.textMuted)
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                print("[CONN-SECTION] checkmark button tapped — newItemText=\"\(newItemText)\"")
-                                commitAddItem()
-                            } label: {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundStyle(section.type.accentColor)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(newItemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .opacity(newItemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                    } else {
-                        Button {
-                            isAddingItem = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                isAddFieldFocused = true
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 8))
-                                Text("Add")
-                                    .font(.system(size: 11))
-                            }
-                            .foregroundStyle(section.type.accentColor.opacity(0.5))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.leading, 20)
-                .padding(.bottom, 4)
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusXSmall + 2)
-                .fill(sectionBackground)
-        )
-    }
-
-    private var sectionBackground: Color {
-        if section.items.isEmpty {
-            return section.isExpanded ? DS.surfaceElevated : Color.clear
-        }
-        return section.type.accentColor.opacity(section.isExpanded ? 0.04 : 0.02)
-    }
-
-    private func commitAddItem() {
-        let text = newItemText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let docText = newItemDocument.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
-        print("[CONN-SECTION] commitAddItem — newItemText=\"\(text)\" (\(text.count) chars) docPlainText=\"\(docText)\" (\(docText.count) chars)")
-        if !text.isEmpty {
-            onAddItem(newItemDocument, text)
-        }
-        // Clear and keep input open for the next item
-        newItemText = ""
-        newItemDocument = .empty
-        addItemEditorHeight = 22
-    }
-
-    private func cancelAddItem() {
-        newItemText = ""
-        newItemDocument = .empty
-        isAddingItem = false
-    }
-}
-
-// MARK: - Compact Item Row
-
-private struct CompactItemRow: View {
-    let item: ConnectionItem
-    let accentColor: Color
-    let onEdit: (RichDocument, String) -> Void
-    let onDelete: () -> Void
-
-    @State private var isHovered = false
-    @State private var isEditing = false
-    @State private var editDocument: RichDocument = .empty
-    @State private var editText = ""
-    @FocusState private var isFieldFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            // Bullet
-            Circle()
-                .fill(accentColor.opacity(0.4))
-                .frame(width: 4, height: 4)
-                .frame(width: 12)
-
-            if isEditing {
-                CosmoDocumentEditor(
-                    document: $editDocument,
-                    fontSize: 12,
-                    compact: true,
-                    placeholder: "",
-                    allowSlashCommands: false,
-                    allowMentions: true,
-                    allowSelectionMenu: false,
-                    allowImages: false,
-                    onPlainTextChange: { plainText in
-                        editText = plainText
-                    },
-                    onDocumentChange: { _, plainText in
-                        editText = plainText
-                    }
-                )
-                .frame(minHeight: 22)
-
-                HStack(spacing: 4) {
-                    Button {
-                        cancelEdit()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(DS.textMuted)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        commitEdit()
-                    } label: {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(accentColor)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .opacity(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
-                }
-            } else {
-                CosmoDocumentRenderer(document: item.resolvedDocument, fontSize: 12, lineLimit: 3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Spacer(minLength: 0)
-
-            // Hover actions
-            if isHovered && !isEditing {
-                HStack(spacing: 4) {
-                    Button {
-                        startEdit()
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 9))
-                            .foregroundStyle(DS.textMuted)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        onDelete()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 9))
-                            .foregroundStyle(DS.red.opacity(0.5))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-    }
-
-    private func startEdit() {
-        editDocument = item.resolvedDocument
-        editText = item.resolvedPlainText
-        isEditing = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            isFieldFocused = true
-        }
-    }
-
-    private func commitEdit() {
-        let text = editText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty {
-            onEdit(editDocument, text)
-        }
-        isEditing = false
-        editText = ""
-        editDocument = .empty
-    }
-
-    private func cancelEdit() {
-        isEditing = false
-        editText = ""
-        editDocument = .empty
-    }
-}
 
 // MARK: - Preview
 

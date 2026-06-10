@@ -20,23 +20,33 @@ struct InquiryMapOverlay: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().background(DS.borderSubtle)
-            ScrollView {
-                VStack(alignment: .leading, spacing: DS.space12) {
-                    ForEach(rootNodes, id: \.id) { node in
-                        InquiryBranchMapNodeView(viewModel: viewModel, node: node, depth: 0)
-                    }
+            InquiryMindMapView(root: sessionRoot) { node in
+                if node.atomUUID != nil || node.branchNodeId != nil {
+                    viewModel.setActiveQuestion(node.atomUUID, branchNodeId: node.branchNodeId)
+                    viewModel.dismissMap()
                 }
-                .padding(.horizontal, DS.space24)
-                .padding(.vertical, DS.space20)
             }
         }
-        .frame(maxWidth: 720, maxHeight: 540)
+        .frame(maxWidth: 880, maxHeight: 620)
         .background(DS.vellum, in: RoundedRectangle(cornerRadius: DS.radiusLarge))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusLarge)
                 .stroke(DS.sepiaBorder, lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.20), radius: 32, y: 16)
+    }
+
+    private var sessionRoot: MindMapNode {
+        MindMapBuilder.buildSessionTree(
+            tree: viewModel.structured.researchTree,
+            rootTitle: viewModel.deepDive?.title ?? "Inquiry",
+            questionTitle: { viewModel.questionTitle(for: $0) },
+            countsLabel: { uuid in
+                let label = viewModel.counts(for: uuid).compactLabel
+                return label.isEmpty ? nil : label
+            },
+            activeQuestionUUID: viewModel.activeQuestionUUID
+        )
     }
 
     private var header: some View {
@@ -67,9 +77,6 @@ struct InquiryMapOverlay: View {
         .padding(.vertical, DS.space12)
     }
 
-    private var rootNodes: [ResearchTreeNode] {
-        viewModel.rootQuestionNodeIds().compactMap { viewModel.structured.researchTree.nodes[$0] }
-    }
 }
 
 // MARK: - Branch map node

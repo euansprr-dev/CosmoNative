@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct LinkSwipesOverlay: View {
-    @ObservedObject var viewModel: IdeaFocusModeViewModel
+    var viewModel: IdeaFocusModeViewModel
     @Binding var isPresented: Bool
     var blueprintMode: Bool = false
 

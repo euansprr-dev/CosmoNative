@@ -1,10 +1,20 @@
 import Foundation
 import Observation
 
+/// A one-shot caret placement attached to a focus change after a structural
+/// edit (split/merge/delete). Offset is from the END of the block's text in
+/// UTF-16 — immune to rendered list/quote prefixes at the head.
+struct BlockCaretRequest: Equatable {
+    var blockID: UUID
+    var utf16OffsetFromEnd: Int
+    var token: Int
+}
+
 @MainActor
 @Observable
 final class BlockFocusCoordinator {
     private(set) var focusedBlockID: UUID?
+    private(set) var caretRequest: BlockCaretRequest?
     private var registeredBlockIDs: [UUID] = []
 
     func register(_ blockID: UUID?) {
@@ -23,7 +33,23 @@ final class BlockFocusCoordinator {
     func focus(_ blockID: UUID?) {
         guard let blockID else { return }
         register(blockID)
-        focusedBlockID = blockID
+        // Same-value writes still notify Observation — skip them so the
+        // per-keystroke focus reaffirmation doesn't re-render every row.
+        if focusedBlockID != blockID {
+            focusedBlockID = blockID
+        }
+    }
+
+    /// Focus with an explicit caret placement (used after structural edits).
+    func focus(_ blockID: UUID?, caretOffsetFromEnd: Int?) {
+        guard let blockID else { return }
+        focus(blockID)
+        guard let caretOffsetFromEnd else { return }
+        caretRequest = BlockCaretRequest(
+            blockID: blockID,
+            utf16OffsetFromEnd: caretOffsetFromEnd,
+            token: (caretRequest?.token ?? 0) + 1
+        )
     }
 
     func commandTargetID(for blockID: UUID?, baseTargetID: String?) -> String? {

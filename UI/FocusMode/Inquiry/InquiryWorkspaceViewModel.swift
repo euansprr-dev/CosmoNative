@@ -15,6 +15,12 @@ final class InquiryWorkspaceViewModel {
     private(set) var rootQuestion: Atom?
     private(set) var questions: [Atom] = []
     private(set) var extracts: [Atom] = []
+    private(set) var lexicon: [Atom] = []
+    /// Concept pages already promoted for this deep dive — captures anywhere in
+    /// the topic link back to these instead of spawning near-duplicates.
+    private(set) var deepDiveConnections: [Atom] = []
+    /// Per-provider live progress while a scout run is in flight.
+    private(set) var liveProviderStatuses: [InquiryProviderStatus] = []
 
     // Live structured + metadata (mirrors session.* but mutable)
     var structured: InquirySessionStructured
@@ -93,6 +99,8 @@ final class InquiryWorkspaceViewModel {
         guard let deepDive else { return }
         questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: deepDive.uuid)) ?? []
         extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: deepDive.uuid)) ?? []
+        lexicon = (try? await InquiryRepository.shared.fetchLexicon(forDeepDive: deepDive.uuid)) ?? []
+        deepDiveConnections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive)) ?? []
     }
 
     private func syncRootNodeLabel(with question: Atom) {
@@ -887,7 +895,9 @@ final class InquiryWorkspaceViewModel {
 
     func refreshSourceRecommendationsIfNeeded() async {
         guard activeRecommendationBatch == nil else { return }
-        await refreshSourceRecommendations()
+        // Full Deep Scout by default: diverse lanes (primary texts, books,
+        // lectures, practice guides, web) instead of academic-only quick mode.
+        await refreshSourceRecommendations(mode: .deepScout)
     }
 
     func refreshSourceRecommendations(
@@ -903,12 +913,22 @@ final class InquiryWorkspaceViewModel {
         startSourceActivity(plan: InquirySourceRecommendationEngine.activityPlan(for: profile, mode: mode))
 
         let localSources = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
+        liveProviderStatuses = []
         let batch = await InquirySourceRecommendationEngine.shared.recommend(
             profile: profile,
             existingSourceRefs: structured.sourceRefs,
             localSources: localSources,
-            searchMode: mode
+            searchMode: mode,
+            onProgress: { [weak self] status in
+                guard let self else { return }
+                if let idx = self.liveProviderStatuses.firstIndex(where: { $0.provider == status.provider }) {
+                    self.liveProviderStatuses[idx] = status
+                } else {
+                    self.liveProviderStatuses.append(status)
+                }
+            }
         )
+        liveProviderStatuses = []
 
         structured.recommendationBatches.removeAll { existing in
             existing.branchNodeId == batch.branchNodeId || existing.questionUUID == batch.questionUUID
@@ -1051,7 +1071,7 @@ final class InquiryWorkspaceViewModel {
         do {
             let source = try await InquiryRepository.shared.createOrFindURLSource(urlString: canonical, title: title)
             let tab = openTab(for: source, url: canonical, title: title)
-            upsertSourceRef(for: source, tab: tab, url: canonical, title: title)
+            upsertSourceRef(for: source, tab: tab, url: canonical, title: title, addedByUser: true)
             activeSourceTabId = tab.id
             appendActivity(
                 .init(
@@ -1157,7 +1177,7 @@ final class InquiryWorkspaceViewModel {
         return tab
     }
 
-    private func upsertSourceRef(for source: Atom, tab: SourceTab, url: String, title: String) {
+    private func upsertSourceRef(for source: Atom, tab: SourceTab, url: String, title: String, addedByUser: Bool = false) {
         let now = ISO8601.string(from: Date())
         let domain = URL(string: url)?.host
         if let idx = structured.sourceRefs.firstIndex(where: { $0.sourceUUID == source.uuid }) {
@@ -1169,6 +1189,7 @@ final class InquiryWorkspaceViewModel {
             structured.sourceRefs[idx].primaryQuestionUUID = activeQuestionUUID
             structured.sourceRefs[idx].primaryNodeId = activeBranchNodeId
             structured.sourceRefs[idx].lastOpenedAt = now
+            if addedByUser { structured.sourceRefs[idx].addedByUser = true }
         } else {
             structured.sourceRefs.append(
                 InquirySourceRef(
@@ -1180,7 +1201,8 @@ final class InquiryWorkspaceViewModel {
                     primaryQuestionUUID: activeQuestionUUID,
                     primaryNodeId: activeBranchNodeId,
                     openedAt: now,
-                    lastOpenedAt: now
+                    lastOpenedAt: now,
+                    addedByUser: addedByUser ? true : nil
                 )
             )
         }
@@ -1251,8 +1273,26 @@ final class InquiryWorkspaceViewModel {
             ancestorTitles: activeQuestion.map { questionAncestors(for: $0).compactMap(\.title) } ?? [],
             claims: claims(for: activeQuestionUUID).compactMap { $0.body ?? $0.title },
             evidence: evidence(for: activeQuestionUUID).compactMap { $0.body ?? $0.title },
-            sourceQuery: sourceQuery
+            sourceQuery: sourceQuery,
+            anchorTerms: domainAnchorTerms()
         )
+    }
+
+    /// Anchor terms grounding source ranking in THIS deep dive's domain:
+    /// title tokens + aliases + lexicon terms/aliases + root question tokens.
+    private func domainAnchorTerms() -> Set<String> {
+        var rawPieces: [String] = []
+        if let title = deepDive?.title { rawPieces.append(title) }
+        if let metadata = deepDive?.deepDiveMetadata {
+            rawPieces.append(contentsOf: metadata.aliases ?? [])
+            rawPieces.append(contentsOf: metadata.topicAliases ?? [])
+        }
+        for entry in lexicon {
+            if let term = entry.title { rawPieces.append(term) }
+            rawPieces.append(contentsOf: entry.lexiconMetadata?.aliases ?? [])
+        }
+        if let rootTitle = rootQuestion?.title { rawPieces.append(rootTitle) }
+        return InquirySourceRecommendationEngine.significantTokens(rawPieces.joined(separator: " "))
     }
 
     private func updateActiveRecommendationBatch(_ update: (inout InquiryRecommendationBatch) -> Void) {
@@ -1354,7 +1394,8 @@ final class InquiryWorkspaceViewModel {
             createEvidenceChallengeTask(body)
         case .summarize:
             await summarizeFromDock(body)
-        case .note, .claim, .speculativeClaim, .evidence, .counterevidence, .term, .practice, .output:
+        case .note, .claim, .speculativeClaim, .evidence, .counterevidence, .term, .practice, .output,
+             .goal, .problem, .benefit, .example, .mechanism, .objection, .principle, .assumption, .quote, .reference:
             guard let kind = parsed.extractKind else { return }
             await saveDockExtract(body, kind: kind, originType: parsed.intent.rawValue)
         case .ask:
@@ -1386,6 +1427,7 @@ final class InquiryWorkspaceViewModel {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         do {
+            // Provisional until the live router confirms or refines the routing.
             let extract = try await InquiryRepository.shared.createExtract(
                 body: trimmed,
                 kind: kind,
@@ -1398,7 +1440,8 @@ final class InquiryWorkspaceViewModel {
                 sourceTabId: activeSourceTabId,
                 userNote: nil,
                 originType: originType,
-                citation: activeSourceTab?.url ?? activeSourceTab?.title
+                citation: activeSourceTab?.url ?? activeSourceTab?.title,
+                status: .temporary
             )
             registerSavedExtract(extract, sourceTabId: activeSourceTabId)
             appendRouteReceipt(
@@ -1413,7 +1456,20 @@ final class InquiryWorkspaceViewModel {
                 )
             )
             routeThought(trimmed, originExtractUUID: extract.uuid, sourceTabId: activeSourceTabId)
-            showToast("\(kind.displayName) saved", detail: "Routed to \(activeQuestionTitle)")
+            scheduleLiveRefinement(forExtract: extract.uuid, text: trimmed, kind: kind)
+            pushRoutingReceipt(InquiryRoutingReceiptItem(
+                id: extract.uuid,
+                headline: "\(kind.displayName) saved",
+                destinations: [.init(
+                    extractUUID: extract.uuid,
+                    kind: kind,
+                    questionUUID: activeQuestionUUID,
+                    questionTitle: activeQuestionTitle,
+                    conceptNames: [],
+                    isNewBranch: false
+                )],
+                isProvisional: true
+            ))
             scheduleSave()
             return extract
         } catch {
@@ -1421,6 +1477,306 @@ final class InquiryWorkspaceViewModel {
             showToast("Save failed", detail: error.localizedDescription)
             return nil
         }
+    }
+
+    // MARK: - Routing receipts (transparency layer above the dock)
+
+    private(set) var routingReceipts: [InquiryRoutingReceiptItem] = []
+    private var receiptEvictionTasks: [String: Task<Void, Never>] = [:]
+
+    func pushRoutingReceipt(_ item: InquiryRoutingReceiptItem) {
+        if let idx = routingReceipts.firstIndex(where: { $0.id == item.id }) {
+            routingReceipts[idx] = item
+        } else {
+            routingReceipts.append(item)
+            if routingReceipts.count > 2 {
+                let evicted = routingReceipts.removeFirst()
+                receiptEvictionTasks[evicted.id]?.cancel()
+                receiptEvictionTasks[evicted.id] = nil
+            }
+        }
+        receiptEvictionTasks[item.id]?.cancel()
+        receiptEvictionTasks[item.id] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.dismissRoutingReceipt(item.id)
+        }
+    }
+
+    func dismissRoutingReceipt(_ id: String) {
+        routingReceipts.removeAll { $0.id == id }
+        receiptEvictionTasks[id]?.cancel()
+        receiptEvictionTasks[id] = nil
+    }
+
+    // MARK: - Reroute corrections (tap-to-correct from receipts)
+
+    func rerouteExtract(_ extractUUID: String, toKind kind: ExtractKind) async {
+        cancelPendingRefinement(forExtract: extractUUID)
+        guard var extract = try? await AtomRepository.shared.fetch(uuid: extractUUID),
+              var metadata = extract.extractMetadata, metadata.kind != kind else { return }
+        metadata.kind = kind
+        metadata.status = .committed
+        metadata.routingDecisionId = "user-correction-\(UUID().uuidString)"
+        extract = extract.withMetadata(metadata)
+        _ = try? await AtomRepository.shared.update(extract)
+        updateReceiptDestination(extractUUID: extractUUID) { $0.kind = kind }
+        scheduleSave()
+        await reloadDeepDiveScopedAtoms()
+    }
+
+    func rerouteExtract(_ extractUUID: String, toQuestionUUID questionUUID: String) async {
+        cancelPendingRefinement(forExtract: extractUUID)
+        guard var extract = try? await AtomRepository.shared.fetch(uuid: extractUUID),
+              var metadata = extract.extractMetadata, metadata.parentQuestionUUID != questionUUID else { return }
+        metadata.parentQuestionUUID = questionUUID
+        metadata.status = .committed
+        metadata.routingDecisionId = "user-correction-\(UUID().uuidString)"
+        extract = extract.withMetadata(metadata)
+        _ = try? await AtomRepository.shared.update(extract)
+        relocateExtractNode(extractUUID: extractUUID, toQuestionUUID: questionUUID)
+        updateReceiptDestination(extractUUID: extractUUID) {
+            $0.questionUUID = questionUUID
+            $0.questionTitle = questionTitle(for: questionUUID)
+        }
+        scheduleSave()
+        await reloadDeepDiveScopedAtoms()
+    }
+
+    /// A manual correction outranks any in-flight live-router refinement: cancel
+    /// the pending task so the LLM result cannot overwrite the user's choice.
+    /// (The stamped routingDecisionId guards the already-fetched case too.)
+    private func cancelPendingRefinement(forExtract extractUUID: String) {
+        liveRefinementTasks[extractUUID]?.cancel()
+        liveRefinementTasks[extractUUID] = nil
+    }
+
+    func promoteExtractToBranch(_ extractUUID: String) async {
+        guard let extract = try? await AtomRepository.shared.fetch(uuid: extractUUID),
+              let body = extract.body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty else { return }
+        let title = String(body.prefix(120))
+        guard let questionUUID = await resolveBranchQuestion(title) else { return }
+        await rerouteExtract(extractUUID, toQuestionUUID: questionUUID)
+    }
+
+    private func updateReceiptDestination(
+        extractUUID: String,
+        _ update: (inout InquiryRoutingReceiptItem.Destination) -> Void
+    ) {
+        for receiptIdx in routingReceipts.indices {
+            for destIdx in routingReceipts[receiptIdx].destinations.indices
+            where routingReceipts[receiptIdx].destinations[destIdx].extractUUID == extractUUID {
+                update(&routingReceipts[receiptIdx].destinations[destIdx])
+            }
+        }
+    }
+
+    // MARK: - Live routing refinement (hybrid async)
+
+    private var liveRefinementTasks: [String: Task<Void, Never>] = [:]
+
+    func cancelLiveRefinements() {
+        for task in liveRefinementTasks.values { task.cancel() }
+        liveRefinementTasks.removeAll()
+    }
+
+    private func scheduleLiveRefinement(forExtract extractUUID: String, text: String, kind: ExtractKind) {
+        liveRefinementTasks[extractUUID]?.cancel()
+        let context = liveRouterContext()
+        liveRefinementTasks[extractUUID] = Task { [weak self] in
+            let refinement = await InquiryLiveRouter.shared.refine(text: text, currentKind: kind, context: context)
+            guard !Task.isCancelled else { return }
+            await self?.applyRefinement(refinement, toExtract: extractUUID, originalText: text, originalKind: kind)
+            self?.liveRefinementTasks[extractUUID] = nil
+        }
+    }
+
+    private func liveRouterContext() -> InquiryLiveRouter.ContextSnapshot {
+        InquiryLiveRouter.ContextSnapshot(
+            deepDiveTitle: deepDive?.title,
+            activeQuestionUUID: activeQuestionUUID,
+            activeQuestionTitle: activeQuestionTitle,
+            questions: questions.compactMap { question in
+                guard let title = question.title else { return nil }
+                return InquiryLiveRouter.ContextSnapshot.QuestionRef(
+                    uuid: question.uuid,
+                    title: title,
+                    parentUUID: question.questionMetadata?.parentQuestionUUID
+                )
+            },
+            lexiconTerms: lexicon.compactMap(\.title),
+            conceptNames: deepDiveConnections.compactMap(\.title),
+            recentCaptures: structured.sessionCaptures.suffix(4).map(\.body)
+        )
+    }
+
+    private func applyRefinement(
+        _ refinement: InquiryLiveRouter.Refinement?,
+        toExtract extractUUID: String,
+        originalText: String,
+        originalKind: ExtractKind
+    ) async {
+        guard var extract = try? await AtomRepository.shared.fetch(uuid: extractUUID),
+              var metadata = extract.extractMetadata else { return }
+        guard metadata.routingDecisionId == nil else { return }   // Already refined.
+
+        // No refinement (offline/timeout): heuristics stand; just settle.
+        guard let refinement else {
+            metadata.status = .committed
+            metadata.routingDecisionId = "heuristic-\(UUID().uuidString)"
+            extract = extract.withMetadata(metadata)
+            _ = try? await AtomRepository.shared.update(extract)
+            if let idx = routingReceipts.firstIndex(where: { $0.id == extractUUID }) {
+                routingReceipts[idx].isProvisional = false
+            }
+            await reloadDeepDiveScopedAtoms()
+            return
+        }
+
+        let plan = InquiryLiveRouter.applyPlan(
+            for: refinement,
+            originalText: originalText,
+            originalKind: originalKind,
+            originalQuestionUUID: metadata.parentQuestionUUID
+        )
+
+        var destinations: [InquiryLiveRoutingDecision.Destination] = []
+
+        // 1. Settle the original extract.
+        if let newText = plan.original.newText { extract.body = newText; extract.title = String(newText.prefix(80)) }
+        if let newKind = plan.original.newKind { metadata.kind = newKind }
+        var targetQuestionUUID = plan.original.targetQuestionUUID
+        if let branchTitle = plan.original.newBranchTitle {
+            targetQuestionUUID = await resolveBranchQuestion(branchTitle)
+        }
+        if let target = targetQuestionUUID {
+            metadata.parentQuestionUUID = target
+            relocateExtractNode(extractUUID: extractUUID, toQuestionUUID: target)
+        }
+        if !plan.original.conceptNames.isEmpty { metadata.conceptNames = plan.original.conceptNames }
+        metadata.status = .committed
+        metadata.routingDecisionId = refinement.decisionId
+        extract = extract.withMetadata(metadata)
+        _ = try? await AtomRepository.shared.update(extract)
+        destinations.append(.init(
+            extractUUID: extractUUID,
+            kind: metadata.kind,
+            questionUUID: metadata.parentQuestionUUID,
+            conceptNames: plan.original.conceptNames
+        ))
+
+        // 2. Materialize split-off units as their own extracts.
+        for unit in plan.additions {
+            var unitQuestionUUID = unit.targetQuestionUUID ?? metadata.parentQuestionUUID
+            if let branchTitle = unit.newBranchTitle {
+                unitQuestionUUID = await resolveBranchQuestion(branchTitle) ?? unitQuestionUUID
+            }
+            guard let created = try? await InquiryRepository.shared.createExtract(
+                body: unit.text,
+                kind: unit.kind,
+                sourceUUID: metadata.sourceUUID,
+                selectionRange: nil,
+                sessionUUID: session.uuid,
+                questionUUID: unitQuestionUUID,
+                deepDiveUUID: deepDive?.uuid,
+                branchNodeId: unitQuestionUUID.flatMap { questionNodeId(for: $0) } ?? activeBranchNodeId,
+                sourceTabId: metadata.sourceTabId,
+                userNote: nil,
+                originType: "liveRouter",
+                citation: metadata.citation
+            ) else { continue }
+            if var createdMetadata = created.extractMetadata {
+                createdMetadata.routingDecisionId = refinement.decisionId
+                createdMetadata.conceptNames = unit.conceptNames.isEmpty ? nil : unit.conceptNames
+                _ = try? await AtomRepository.shared.update(created.withMetadata(createdMetadata))
+            }
+            structured.researchTree.appendChild(
+                parentId: unitQuestionUUID.flatMap { questionNodeId(for: $0) } ?? activeBranchNodeId,
+                kind: .extract,
+                atomUUID: created.uuid,
+                label: String(unit.text.prefix(60))
+            )
+            destinations.append(.init(
+                extractUUID: created.uuid,
+                kind: unit.kind,
+                questionUUID: unitQuestionUUID,
+                conceptNames: unit.conceptNames
+            ))
+        }
+
+        // 3. Persist the decision + surface a receipt when something changed.
+        structured.liveRoutingDecisions.append(InquiryLiveRoutingDecision(
+            id: refinement.decisionId,
+            sourceExtractUUID: extractUUID,
+            summary: plan.summary,
+            destinations: destinations
+        ))
+        if !plan.isNoOp {
+            appendRouteReceipt(
+                InquiryRouteReceipt(
+                    kind: .extractSaved,
+                    message: "Routing refined",
+                    detail: plan.summary,
+                    questionUUID: metadata.parentQuestionUUID,
+                    branchNodeId: activeBranchNodeId,
+                    extractUUID: extractUUID
+                )
+            )
+        }
+        pushRoutingReceipt(InquiryRoutingReceiptItem(
+            id: extractUUID,
+            headline: plan.isNoOp ? "Routing confirmed" : plan.summary,
+            destinations: destinations.map { destination in
+                .init(
+                    extractUUID: destination.extractUUID,
+                    kind: destination.kind,
+                    questionUUID: destination.questionUUID,
+                    questionTitle: questionTitle(for: destination.questionUUID),
+                    conceptNames: destination.conceptNames,
+                    isNewBranch: false
+                )
+            },
+            isProvisional: false
+        ))
+        scheduleSave()
+        await reloadDeepDiveScopedAtoms()
+    }
+
+    /// Quiet find-or-create for live-router branch proposals: never steals focus.
+    private func resolveBranchQuestion(_ title: String) async -> String? {
+        if let existing = questions.first(where: {
+            InquiryPlacementEngine.normalized($0.title ?? "") == InquiryPlacementEngine.normalized(title)
+        }) {
+            return existing.uuid
+        }
+        guard let result = try? await InquiryRepository.shared.findOrCreateQuestion(
+            title: title,
+            parentDeepDiveUUID: deepDive?.uuid,
+            originSessionUUID: session.uuid,
+            parentQuestionUUID: activeQuestionUUID,
+            originExtractUUID: nil
+        ) else { return nil }
+        if result.created {
+            questions.append(result.atom)
+            structured.researchTree.appendChild(
+                parentId: activeBranchNodeId,
+                kind: .question,
+                atomUUID: result.atom.uuid,
+                label: title,
+                aiSuggested: true,
+                accepted: true,
+                nodeType: .branchQuestion,
+                relationshipType: .childOf,
+                visibility: .solidNode
+            )
+        }
+        return result.atom.uuid
+    }
+
+    private func relocateExtractNode(extractUUID: String, toQuestionUUID questionUUID: String) {
+        guard let nodeId = structured.researchTree.nodes.values.first(where: { $0.atomUUID == extractUUID })?.id,
+              let targetNodeId = questionNodeId(for: questionUUID) else { return }
+        _ = structured.researchTree.reparentNode(nodeId, to: targetNodeId, relationshipType: .childOf)
     }
 
     private func createRootLikeQuestion(_ raw: String) async {
@@ -1904,6 +2260,7 @@ final class InquiryWorkspaceViewModel {
     /// Persist pending changes immediately and mark the session paused.
     func pauseAndPersist() async {
         saveTask?.cancel()
+        cancelLiveRefinements()
         do {
             session = try await InquiryRepository.shared.saveSession(session, metadata: metadata, structured: structured)
             session = try await InquiryRepository.shared.pauseSession(session)

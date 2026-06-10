@@ -1,4 +1,5 @@
 import Combine
+import Observation
 import XCTest
 @testable import CosmoOS
 
@@ -159,6 +160,80 @@ final class CommandKSearchPipelineTests: XCTestCase {
 
         XCTAssertEqual(viewModel.unifiedFlatResults.map(\.id), ["atom-existing"])
         XCTAssertEqual(viewModel.selectedNodeId, existing.selectionID)
+    }
+
+    @MainActor
+    func testBackgroundRefreshForSameQueryKeepsVisibleResultsAndSelection() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        let query = "background-refresh-preserve-\(UUID().uuidString)"
+        viewModel.cortexMode = .searchResults
+        viewModel.query = query
+        await viewModel.performSearch(query: query)
+
+        // Simulate the landed search the user is now scrolling: ranked results
+        // plus the unified rows built from them, with the second row selected.
+        let ranked = [
+            RankedResult(
+                atomUUID: "preserve-atom-1",
+                atomType: .idea,
+                title: "Preserve One",
+                snippet: "first",
+                semanticWeight: 0.9,
+                updatedAt: "2026-06-10T00:00:00Z"
+            ),
+            RankedResult(
+                atomUUID: "preserve-atom-2",
+                atomType: .idea,
+                title: "Preserve Two",
+                snippet: "second",
+                semanticWeight: 0.8,
+                updatedAt: "2026-06-10T00:00:00Z"
+            )
+        ]
+        viewModel.testingApplyUnfilteredResults(ranked)
+        let unified = ranked.map { result in
+            UnifiedSearchResult(
+                id: result.atomUUID,
+                source: .atoms,
+                resultKind: .atom,
+                title: result.title,
+                subtitle: "Idea",
+                snippet: result.snippet,
+                icon: "lightbulb.fill",
+                accentColor: DS.entityIdea,
+                relevance: result.relevance,
+                atomUUID: result.atomUUID,
+                atomType: .idea,
+                thinkspaceId: nil,
+                projectUUID: nil,
+                projectName: nil,
+                thinkspaceNames: [],
+                readwiseBookId: nil
+            )
+        }
+        viewModel.isUnifiedSearchActive = true
+        viewModel.unifiedGroupedResults = [(.atoms, unified)]
+        viewModel.unifiedFlatResults = unified
+        viewModel.selectedNodeId = "preserve-atom-2"
+        viewModel.selectedResultIndex = 1
+
+        await viewModel.performSearch(query: query, isBackgroundRefresh: true)
+
+        // The visible list must not be cleared while fresh results are computed,
+        // and the user's selection (scroll anchor) must survive the refresh.
+        XCTAssertEqual(viewModel.results.map(\.atomUUID), ["preserve-atom-1", "preserve-atom-2"])
+        XCTAssertTrue(viewModel.unifiedFlatResults.contains { $0.selectionID == "preserve-atom-2" })
+        XCTAssertEqual(viewModel.selectedNodeId, "preserve-atom-2")
+        XCTAssertEqual(viewModel.selectedResultIndex, viewModel.searchSelectionIndex(for: "preserve-atom-2"))
     }
 
     @MainActor
@@ -849,6 +924,213 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(probes, 4)
     }
 
+    func testMatcherMatchesMultiWordQueriesRegardlessOfOrder() {
+        let text = CommandKSearchMatcher.normalize("Turn onboarding calls into a story bank")
+
+        XCTAssertTrue(CommandKSearchMatcher.matches(normalizedQuery: "story onboarding", inNormalizedText: text))
+        XCTAssertTrue(CommandKSearchMatcher.matches(normalizedQuery: "bank calls", inNormalizedText: text))
+        XCTAssertFalse(CommandKSearchMatcher.matches(normalizedQuery: "story missing", inNormalizedText: text))
+    }
+
+    func testMatcherMatchesTokensSpanningMultipleFields() {
+        XCTAssertTrue(CommandKSearchMatcher.matches("acme hook", inAny: ["Lead magnet hook", "Notes for Acme client"]))
+        XCTAssertFalse(CommandKSearchMatcher.matches("acme missing", inAny: ["Lead magnet hook", "Notes for Acme client"]))
+    }
+
+    func testSearchIndexMatchesMultiWordQueriesOutOfOrderAndAcrossFields() {
+        var index = CommandKSearchIndex()
+        index.replace([
+            CommandKSearchIndex.Entry(
+                id: "idea-1",
+                atomUUID: "idea-1",
+                atomType: .idea,
+                title: "Greenhouse Ritual",
+                snippet: "Daily writing loop",
+                updatedAt: "2026-05-01T00:00:00Z"
+            )
+        ])
+
+        XCTAssertEqual(index.search("ritual greenhouse", limit: 10).map(\.atomUUID), ["idea-1"])
+        XCTAssertEqual(index.search("greenhouse writing", limit: 10).map(\.atomUUID), ["idea-1"])
+        XCTAssertTrue(index.search("greenhouse missing", limit: 10).isEmpty)
+    }
+
+    func testSearchIndexMatchesMetadataContent() {
+        var index = CommandKSearchIndex()
+        index.replace([
+            CommandKSearchIndex.Entry(
+                id: "research-1",
+                atomUUID: "research-1",
+                atomType: .research,
+                title: "Untitled capture",
+                snippet: nil,
+                updatedAt: "2026-05-01T00:00:00Z",
+                metadata: "{\"summary\":\"Seller financing playbook\"}"
+            )
+        ])
+
+        XCTAssertEqual(index.search("seller financing", limit: 10).map(\.atomUUID), ["research-1"])
+    }
+
+    func testSearchIndexRanksRecentMatchAboveStaleOnEqualMatchQuality() {
+        var index = CommandKSearchIndex()
+        index.replace([
+            CommandKSearchIndex.Entry(
+                id: "stale",
+                atomUUID: "stale",
+                atomType: .idea,
+                title: "Quarterly plan",
+                snippet: nil,
+                updatedAt: "2020-01-01T00:00:00Z"
+            ),
+            CommandKSearchIndex.Entry(
+                id: "fresh",
+                atomUUID: "fresh",
+                atomType: .idea,
+                title: "Quarterly plan",
+                snippet: nil,
+                updatedAt: ISO8601.string(from: Date())
+            )
+        ])
+
+        XCTAssertEqual(index.search("quarterly", limit: 10).map(\.atomUUID), ["fresh", "stale"])
+    }
+
+    func testUnifiedSearchIncludesIdeaEngineMatchesWhenGalleryNotLoaded() {
+        let ideaMatch = RankedResult(
+            atomUUID: "idea-engine-match",
+            atomType: .idea,
+            title: "Story bank idea",
+            snippet: "Turn onboarding calls into a story bank",
+            semanticWeight: 0.4,
+            structuralWeight: 0.9,
+            recencyWeight: 0.5,
+            usageWeight: 0.5,
+            updatedAt: "2026-05-01T00:00:00Z",
+            accessCount: 0
+        )
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "story bank",
+            hybridResults: [ideaMatch],
+            swipeGalleryItems: [],
+            ideaGalleryItems: [],
+            readwiseBooks: [],
+            browserPins: []
+        )
+
+        let result = output.flatResults.first { $0.atomUUID == "idea-engine-match" }
+        XCTAssertEqual(result?.source, .ideas)
+        XCTAssertEqual(result?.title, "Story bank idea")
+    }
+
+    func testUnifiedSearchRanksSwipesByMatchQualityNotHookScore() {
+        let exactMatchLowScore = SwipeGalleryItem(
+            atomUUID: "swipe-exact",
+            title: "Seller financing playbook",
+            hookText: nil,
+            hookScore: 1,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+        let weakMatchHighScore = SwipeGalleryItem(
+            atomUUID: "swipe-weak",
+            title: "Unrelated capture",
+            hookText: "A seller story about financing a playbook launch",
+            hookScore: 99,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "seller financing playbook",
+            hybridResults: [],
+            swipeGalleryItems: [weakMatchHighScore, exactMatchLowScore],
+            ideaGalleryItems: [],
+            readwiseBooks: [],
+            browserPins: []
+        )
+
+        let swipeResults = output.flatResults.filter { $0.source == .swipes }
+        XCTAssertEqual(swipeResults.map(\.atomUUID), ["swipe-exact", "swipe-weak"])
+    }
+
+    @MainActor
+    func testMergeRankedResultsKeepsFreshInstantMatchesMissingFromCache() {
+        let cached = RankedResult(
+            atomUUID: "cached-atom",
+            atomType: .idea,
+            title: "Cached idea",
+            semanticWeight: 0.6,
+            structuralWeight: 0.6,
+            recencyWeight: 0.5,
+            usageWeight: 0.5,
+            updatedAt: "2026-05-01T00:00:00Z"
+        )
+        let fresh = RankedResult(
+            atomUUID: "fresh-atom",
+            atomType: .idea,
+            title: "Idea created after the cache entry",
+            semanticWeight: 0.0,
+            structuralWeight: 1.0,
+            recencyWeight: 1.0,
+            usageWeight: 0.5,
+            updatedAt: ISO8601.string(from: Date())
+        )
+        let duplicateLowerRelevance = RankedResult(
+            atomUUID: "cached-atom",
+            atomType: .idea,
+            title: "Cached idea",
+            semanticWeight: 0.0,
+            structuralWeight: 0.1,
+            recencyWeight: 0.1,
+            usageWeight: 0.1,
+            updatedAt: "2026-05-01T00:00:00Z"
+        )
+
+        let merged = CommandKViewModel.mergeRankedResults(
+            primary: [cached],
+            additional: [fresh, duplicateLowerRelevance]
+        )
+
+        XCTAssertEqual(Set(merged.map(\.atomUUID)), ["cached-atom", "fresh-atom"])
+        XCTAssertEqual(merged.filter { $0.atomUUID == "cached-atom" }.count, 1)
+        XCTAssertEqual(merged.first { $0.atomUUID == "cached-atom" }?.relevance, cached.relevance)
+    }
+
+    func testHybridFTS5QueryRequiresAllTermsAndQuotesTokens() {
+        XCTAssertEqual(
+            HybridSearchEngine.prepareFTS5Query("seller financing"),
+            "\"seller\"* \"financing\"*"
+        )
+        XCTAssertEqual(
+            HybridSearchEngine.prepareFTS5Query("seller financing", matchAnyTerm: true),
+            "\"seller\"* OR \"financing\"*"
+        )
+        // Operators and punctuation must stay inside quotes so MATCH can't throw.
+        XCTAssertEqual(
+            HybridSearchEngine.prepareFTS5Query("launch (beta) AND done"),
+            "\"launch\"* \"(beta)\"* \"AND\"* \"done\"*"
+        )
+    }
+
+    func testAtomFtsQueryQuotesTokensAndRequiresAllTerms() {
+        XCTAssertEqual(
+            AtomSearchEngine.prepareFtsQuery("seller financing"),
+            "\"seller\"* \"financing\"*"
+        )
+        XCTAssertEqual(
+            AtomSearchEngine.prepareFtsQuery("seller financing", matchAnyTerm: true),
+            "\"seller\"* OR \"financing\"*"
+        )
+        XCTAssertEqual(
+            AtomSearchEngine.prepareFtsQuery("launch (beta)"),
+            "\"launch\"* \"(beta)\"*"
+        )
+    }
+
     func testSearchPipelineRejectsStaleRequests() async {
         let pipeline = CommandKSearchPipeline()
         let older = await pipeline.nextRequestID()
@@ -1248,17 +1530,18 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let initialSelection = try XCTUnwrap(viewModel.selectedNodeId)
         XCTAssertEqual(viewModel.primaryAction?.id, initialSelection)
 
-        var selectionEvents: [String?] = []
-        let cancellable = viewModel.$selectedNodeId
-            .dropFirst()
-            .sink { selectionEvents.append($0) }
-        defer { cancellable.cancel() }
+        var selectionDidChange = false
+        withObservationTracking {
+            _ = viewModel.selectedNodeId
+        } onChange: {
+            selectionDidChange = true
+        }
 
         await viewModel.performSearch(query: "idea Euan: turn")
 
         XCTAssertEqual(viewModel.selectedNodeId, initialSelection)
         XCTAssertEqual(viewModel.primaryAction?.id, initialSelection)
-        XCTAssertTrue(selectionEvents.isEmpty)
+        XCTAssertFalse(selectionDidChange)
     }
 
     @MainActor
@@ -1273,16 +1556,20 @@ final class CommandKSearchPipelineTests: XCTestCase {
         )
         defer { viewModel.setSurfaceActive(false) }
 
-        var invalidationCount = 0
-        let cancellable = viewModel.objectWillChange
-            .sink { invalidationCount += 1 }
-        defer { cancellable.cancel() }
+        // currentPhase is @ObservationIgnored, so reading it must register no
+        // dependency and phase changes must never invalidate the surface.
+        var surfaceInvalidated = false
+        withObservationTracking {
+            _ = viewModel.currentPhase
+        } onChange: {
+            surfaceInvalidated = true
+        }
 
         viewModel.testingSetSearchPhase(.searching)
         viewModel.testingSetSearchPhase(.instant)
         viewModel.testingSetSearchPhase(.complete)
 
-        XCTAssertEqual(invalidationCount, 0)
+        XCTAssertFalse(surfaceInvalidated)
         XCTAssertEqual(viewModel.currentPhase, .complete)
     }
 
@@ -1298,17 +1585,21 @@ final class CommandKSearchPipelineTests: XCTestCase {
         )
         defer { viewModel.setSurfaceActive(false) }
 
-        var invalidationCount = 0
-        let cancellable = viewModel.objectWillChange
-            .sink { invalidationCount += 1 }
-        defer { cancellable.cancel() }
+        // query is @ObservationIgnored, so live typing must register no
+        // dependency and must never invalidate the surface.
+        var surfaceInvalidated = false
+        withObservationTracking {
+            _ = viewModel.query
+        } onChange: {
+            surfaceInvalidated = true
+        }
 
         viewModel.updateQuery("i")
         viewModel.updateQuery("id")
         viewModel.updateQuery("ide")
 
         XCTAssertEqual(viewModel.query, "ide")
-        XCTAssertEqual(invalidationCount, 0)
+        XCTAssertFalse(surfaceInvalidated)
     }
 
     func testCommandKPreviewPaneDoesNotForceRemountOnSelectionIdentity() throws {
@@ -1347,17 +1638,17 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let initialSelection = try XCTUnwrap(viewModel.selectedNodeId)
         let initialPreviewIdentity = try XCTUnwrap(viewModel.primaryAction?.id)
 
-        var selectionEvents: [String?] = []
-        var previewEvents: [String?] = []
-        let selectionCancellable = viewModel.$selectedNodeId
-            .dropFirst()
-            .sink { selectionEvents.append($0) }
-        let previewCancellable = viewModel.$primaryAction
-            .dropFirst()
-            .sink { previewEvents.append($0?.id) }
-        defer {
-            selectionCancellable.cancel()
-            previewCancellable.cancel()
+        var selectionDidChange = false
+        withObservationTracking {
+            _ = viewModel.selectedNodeId
+        } onChange: {
+            selectionDidChange = true
+        }
+        var previewDidChange = false
+        withObservationTracking {
+            _ = viewModel.primaryAction
+        } onChange: {
+            previewDidChange = true
         }
 
         viewModel.testingSetSearchPhase(.searching)
@@ -1365,8 +1656,8 @@ final class CommandKSearchPipelineTests: XCTestCase {
 
         XCTAssertEqual(viewModel.selectedNodeId, initialSelection)
         XCTAssertEqual(viewModel.primaryAction?.id, initialPreviewIdentity)
-        XCTAssertTrue(selectionEvents.isEmpty)
-        XCTAssertTrue(previewEvents.isEmpty)
+        XCTAssertFalse(selectionDidChange)
+        XCTAssertFalse(previewDidChange)
     }
 
     @MainActor
@@ -1385,17 +1676,18 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let initialSelection = try XCTUnwrap(viewModel.selectedNodeId)
         let initialAction = try XCTUnwrap(viewModel.primaryAction)
 
-        var previewEvents: [String?] = []
-        let cancellable = viewModel.$primaryAction
-            .dropFirst()
-            .sink { previewEvents.append($0?.id) }
-        defer { cancellable.cancel() }
+        var previewDidChange = false
+        withObservationTracking {
+            _ = viewModel.primaryAction
+        } onChange: {
+            previewDidChange = true
+        }
 
         await viewModel.performSearch(query: "idea Euan: turn onboarding calls into a story bank")
 
         XCTAssertEqual(viewModel.selectedNodeId, initialSelection)
         XCTAssertEqual(viewModel.primaryAction, initialAction)
-        XCTAssertTrue(previewEvents.isEmpty)
+        XCTAssertFalse(previewDidChange)
     }
 
     @MainActor
@@ -1434,17 +1726,18 @@ final class CommandKSearchPipelineTests: XCTestCase {
         viewModel.selectedNodeId = action.id
         viewModel.selectedResultIndex = 0
 
-        var selectionEvents: [String?] = []
-        let cancellable = viewModel.$selectedNodeId
-            .dropFirst()
-            .sink { selectionEvents.append($0) }
-        defer { cancellable.cancel() }
+        var selectionDidChange = false
+        withObservationTracking {
+            _ = viewModel.selectedNodeId
+        } onChange: {
+            selectionDidChange = true
+        }
 
         viewModel.testingApplyUnfilteredResults([legacyResult])
 
         XCTAssertEqual(viewModel.selectedNodeId, action.id)
         XCTAssertEqual(viewModel.selectedResultIndex, 0)
-        XCTAssertTrue(selectionEvents.isEmpty)
+        XCTAssertFalse(selectionDidChange)
     }
 
     @MainActor
@@ -1472,17 +1765,25 @@ final class CommandKSearchPipelineTests: XCTestCase {
             accessCount: 0
         )
 
-        var resultPublishCount = 0
-        let cancellable = viewModel.$results
-            .dropFirst()
-            .sink { _ in resultPublishCount += 1 }
-        defer { cancellable.cancel() }
+        var firstApplyDidPublish = false
+        withObservationTracking {
+            _ = viewModel.results
+        } onChange: {
+            firstApplyDidPublish = true
+        }
 
         viewModel.testingApplyUnfilteredResults([result])
-        XCTAssertEqual(resultPublishCount, 1)
+        XCTAssertTrue(firstApplyDidPublish)
+
+        var secondApplyDidPublish = false
+        withObservationTracking {
+            _ = viewModel.results
+        } onChange: {
+            secondApplyDidPublish = true
+        }
 
         viewModel.testingApplyUnfilteredResults([result])
-        XCTAssertEqual(resultPublishCount, 1)
+        XCTAssertFalse(secondApplyDidPublish)
         XCTAssertEqual(viewModel.results.map(\.atomUUID), ["stable-result"])
     }
 
@@ -1899,6 +2200,56 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(action?.kind, .openApp)
         XCTAssertEqual(action?.title, "Open Safari")
         XCTAssertEqual(action?.payload.title, "Safari")
+    }
+
+    // MARK: - Search Type Exclusion
+
+    func testInternalBookkeepingTypesAreExcludedFromSearch() {
+        XCTAssertTrue(AtomType.systemEvent.isExcludedFromSearch, "agent conversation logs are system_event atoms")
+        XCTAssertTrue(AtomType.syncEvent.isExcludedFromSearch)
+        XCTAssertTrue(AtomType.xpEvent.isExcludedFromSearch)
+        XCTAssertTrue(AtomType.dimensionSnapshot.isExcludedFromSearch)
+        XCTAssertTrue(AtomType.agentLearning.isExcludedFromSearch)
+        XCTAssertTrue(AtomType.userPreference.isExcludedFromSearch)
+
+        XCTAssertFalse(AtomType.idea.isExcludedFromSearch)
+        XCTAssertFalse(AtomType.note.isExcludedFromSearch)
+        XCTAssertFalse(AtomType.task.isExcludedFromSearch)
+        XCTAssertFalse(AtomType.research.isExcludedFromSearch)
+        XCTAssertFalse(AtomType.content.isExcludedFromSearch)
+        XCTAssertFalse(AtomType.journalEntry.isExcludedFromSearch)
+
+        XCTAssertTrue(AtomType.searchExcludedRawValues.contains("system_event"))
+    }
+
+    func testAgentConversationAtomsDoNotSurfaceInHybridSearch() async throws {
+        let marker = "zxqvconversationexclusion"
+        let conversation = Atom.new(
+            type: .systemEvent,
+            title: "Agent Conversation: inApp \(marker)",
+            body: "[{\"role\":\"user\",\"content\":\"transcript mentioning \(marker)\"}]",
+            metadata: "{\"subtype\":\"agent_conversation\"}"
+        )
+        let idea = Atom.new(
+            type: .idea,
+            title: "Idea about \(marker)",
+            body: "A real idea mentioning \(marker)"
+        )
+        let savedConversation = try await AtomRepository.shared.create(conversation)
+        createdUUIDs.append(savedConversation.uuid)
+        let savedIdea = try await AtomRepository.shared.create(idea)
+        createdUUIDs.append(savedIdea.uuid)
+
+        let results = try await HybridSearchEngine.shared.search(query: marker, limit: 10)
+
+        XCTAssertFalse(
+            results.contains { $0.entityUUID == savedConversation.uuid },
+            "system_event atoms must never surface in search results"
+        )
+        XCTAssertTrue(
+            results.contains { $0.entityUUID == savedIdea.uuid },
+            "user-facing atoms must still match by keyword"
+        )
     }
 
     private func recentlyUpdated(_ atom: Atom, updatedAt: String) -> Atom {

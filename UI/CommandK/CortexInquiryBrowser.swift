@@ -6,7 +6,7 @@ import SwiftUI
 
 @MainActor
 struct CortexInquiryBrowser: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
 
     @State private var deepDives: [Atom] = []
     @State private var showingNewDeepDiveSheet = false

@@ -62,6 +62,18 @@ final class InquirySessionLauncher {
             existingRootQuestion = nil
         }
 
+        // One question = one continuing session. Re-opening a question resumes
+        // its existing session — sources, notes trail, and tree intact —
+        // instead of resetting everything into a fresh session.
+        if let resumable = await resumableSession(
+            deepDive: deepDive,
+            rootQuestionUUID: existingRootQuestion?.uuid,
+            mainQuestionTitle: mainQuestionTitle
+        ) {
+            await openSession(resumable, appState: appState)
+            return
+        }
+
         do {
             let result = try await InquiryRepository.shared.startSession(
                 deepDive: deepDive,
@@ -82,6 +94,32 @@ final class InquirySessionLauncher {
             )
         } catch {
             print("[InquirySessionLauncher] startSession failed: \(error)")
+        }
+    }
+
+    /// The most recent non-archived session for this question (matched by root
+    /// question UUID, falling back to normalized title). Crystallized sessions
+    /// resume too — they reactivate on open and keep growing their trail.
+    private func resumableSession(
+        deepDive: Atom,
+        rootQuestionUUID: String?,
+        mainQuestionTitle: String?
+    ) async -> Atom? {
+        guard rootQuestionUUID != nil || mainQuestionTitle != nil else { return nil }
+        guard let sessions = try? await InquiryRepository.shared.fetchSessions(forDeepDive: deepDive.uuid) else {
+            return nil
+        }
+        let titleKey = mainQuestionTitle.map(ResearchTreeDocument.normalizedQuestionKey)
+        let matches = sessions.filter { session in
+            guard let metadata = session.inquirySessionMetadata, metadata.status != .archived else { return false }
+            if let rootQuestionUUID, metadata.mainQuestionUUID == rootQuestionUUID { return true }
+            if let titleKey, !titleKey.isEmpty,
+               let sessionTitle = session.title,
+               ResearchTreeDocument.normalizedQuestionKey(sessionTitle) == titleKey { return true }
+            return false
+        }
+        return matches.max { lhs, rhs in
+            (lhs.inquirySessionMetadata?.lastActiveAt ?? "") < (rhs.inquirySessionMetadata?.lastActiveAt ?? "")
         }
     }
 

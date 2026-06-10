@@ -157,7 +157,7 @@ struct ContentDraftView: View {
                 }) {
                     Image(systemName: "sidebar.left")
                         .font(.system(size: 12))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 20, height: 20)
                         .background(
                             Circle()
@@ -183,7 +183,7 @@ struct ContentDraftView: View {
                     if state.outline.isEmpty {
                         Text("No outline items")
                             .font(.system(size: 12))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 32)
                     }
@@ -200,21 +200,21 @@ struct ContentDraftView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Related")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
 
                 if state.relatedAtoms.isEmpty {
                     Text("None found")
                         .font(.system(size: 12))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 } else {
                     ForEach(state.relatedAtoms.prefix(5)) { ref in
                         HStack(spacing: 6) {
                             Image(systemName: ref.type.iconName)
                                 .font(.system(size: 10))
-                                .foregroundColor(relatedTypeColor(ref.type))
+                                .foregroundStyle(relatedTypeColor(ref.type))
                             Text(ref.title)
                                 .font(DS.timestamp)
-                                .foregroundColor(DS.textSecondary)
+                                .foregroundStyle(DS.textSecondary)
                                 .lineLimit(1)
                         }
                     }
@@ -243,13 +243,13 @@ struct ContentDraftView: View {
             HStack(spacing: 8) {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 14))
-                    .foregroundColor(
+                    .foregroundStyle(
                         item.isCompleted ? DS.accent : DS.textMuted
                     )
 
                 Text(item.title)
                     .font(DS.sectionDesc)
-                    .foregroundColor(
+                    .foregroundStyle(
                         item.isCompleted ? DS.textMuted : DS.textSecondary
                     )
                     .strikethrough(item.isCompleted, color: DS.textMuted)
@@ -282,7 +282,7 @@ struct ContentDraftView: View {
                         TextField("Untitled Content", text: $editableTitle)
                             .textFieldStyle(.plain)
                             .font(DS.pageTitle)
-                            .foregroundColor(DS.text)
+                            .foregroundStyle(DS.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.bottom, 8)
 
@@ -290,7 +290,7 @@ struct ContentDraftView: View {
                         if !state.contentDescription.isEmpty {
                             Text(state.contentDescription)
                                 .font(DS.body)
-                                .foregroundColor(DS.textSecondary)
+                                .foregroundStyle(DS.textSecondary)
                                 .lineLimit(3)
                                 .padding(.bottom, 20)
                         }
@@ -400,7 +400,7 @@ struct ContentDraftView: View {
             if let error = draftGenerationError {
                 Text(error)
                     .font(.system(size: 11))
-                    .foregroundColor(.orange.opacity(0.8))
+                    .foregroundStyle(.orange.opacity(0.8))
                     .multilineTextAlignment(.leading)
             }
         }
@@ -416,10 +416,10 @@ struct ContentDraftView: View {
                 .tint(DS.accent)
             Text("Opus is writing your draft...")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
             Text("Analyzing swipe patterns and building your first draft")
                 .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.vertical, 24)
     }
@@ -432,7 +432,7 @@ struct ContentDraftView: View {
             Text("Generate Draft with Opus")
                 .font(DS.buttonText)
         }
-        .foregroundColor(DS.accent)
+        .foregroundStyle(DS.accent)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(
@@ -451,14 +451,14 @@ struct ContentDraftView: View {
         HStack(spacing: 8) {
             Image(systemName: "chart.bar.fill")
                 .font(.system(size: 11))
-                .foregroundColor(color)
+                .foregroundStyle(color)
             Text("Confidence: \(score)%")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(color)
+                .foregroundStyle(color)
             if let count = draftSwipeSourceCount, count > 0 {
                 Text("(\(count) swipes analyzed)")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
         }
         .padding(.horizontal, 12)
@@ -478,7 +478,7 @@ struct ContentDraftView: View {
                 Text("Self-corrected against \(ruleCount) failure rules")
                     .font(.system(size: 10))
             }
-            .foregroundColor(DS.textMuted)
+            .foregroundStyle(DS.textMuted)
             .padding(.top, 2)
         }
     }
@@ -522,7 +522,7 @@ struct ContentDraftView: View {
                 }) {
                     Image(systemName: "sidebar.left")
                         .font(.system(size: 14))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .padding(8)
                         .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 6))
                         .overlay(
@@ -562,7 +562,7 @@ struct ContentDraftView: View {
             }) {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 30, height: 30)
             }
             .buttonStyle(.plain)
@@ -600,7 +600,7 @@ struct ContentDraftView: View {
             Text(label)
                 .font(.system(size: 11, weight: .medium))
         }
-        .foregroundColor(DS.text)
+        .foregroundStyle(DS.text)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(
@@ -617,12 +617,12 @@ struct ContentDraftView: View {
         HStack(spacing: 6) {
             Image(systemName: "text.bubble")
                 .font(.system(size: 11))
-                .foregroundColor(DS.accent.opacity(0.7))
+                .foregroundStyle(DS.accent.opacity(0.7))
 
             TextField("Custom instruction...", text: $customPromptText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .onSubmit {
                     guard !customPromptText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                     triggerCustomPrompt(customPromptText)
@@ -638,7 +638,7 @@ struct ContentDraftView: View {
             }) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 16))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
             }
             .buttonStyle(.plain)
         }
@@ -687,16 +687,16 @@ struct ContentDraftView: View {
     private var inlineResultHeader: some View {
         HStack {
             Image(systemName: "sparkles")
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
                 .font(.system(size: 12))
             Text("AI Suggestion")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
             Spacer()
             Button(action: { dismissInlineAI() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -712,7 +712,7 @@ struct ContentDraftView: View {
                 .tint(DS.accent)
             Text("Generating...")
                 .font(.system(size: 11))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -725,10 +725,10 @@ struct ContentDraftView: View {
             HStack(spacing: 4) {
                 Image(systemName: result.action.iconName)
                     .font(.system(size: 10))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                 Text(result.action.displayName)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -769,7 +769,7 @@ struct ContentDraftView: View {
             Text("Accept")
                 .font(.system(size: 11, weight: .medium))
         }
-        .foregroundColor(DS.textOnAccent)
+        .foregroundStyle(DS.textOnAccent)
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .background(
@@ -786,7 +786,7 @@ struct ContentDraftView: View {
             Text("Reject")
                 .font(.system(size: 11, weight: .medium))
         }
-        .foregroundColor(DS.textSecondary)
+        .foregroundStyle(DS.textSecondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .background(
@@ -817,12 +817,12 @@ struct ContentDraftView: View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: selectedRephraseIndex == index ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 12))
-                .foregroundColor(selectedRephraseIndex == index ? DS.accent : DS.textMuted)
+                .foregroundStyle(selectedRephraseIndex == index ? DS.accent : DS.textMuted)
                 .padding(.top, 1)
 
             Text(variant)
                 .font(.system(size: 11))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
         }
@@ -863,7 +863,7 @@ struct ContentDraftView: View {
         ScrollView {
             Text(continuation)
                 .font(.system(size: 11))
-                .foregroundColor(.green.opacity(0.9))
+                .foregroundStyle(.green.opacity(0.9))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxHeight: 120)
@@ -879,15 +879,15 @@ struct ContentDraftView: View {
         VStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 16))
-                .foregroundColor(.orange)
+                .foregroundStyle(.orange)
             Text(errorMessage)
                 .font(.system(size: 11))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .multilineTextAlignment(.center)
             Button(action: { dismissInlineAI() }) {
                 Text("Dismiss")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
             }
             .buttonStyle(.plain)
         }
@@ -902,10 +902,10 @@ struct ContentDraftView: View {
             HStack(spacing: 6) {
                 Image(systemName: "doc.text.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                 Text("Draft")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             Spacer()
@@ -921,22 +921,22 @@ struct ContentDraftView: View {
                         } else {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(DS.accent)
+                                .foregroundStyle(DS.accent)
                         }
                         Text(saveState == .saving ? "Saving..." : "Saved")
                             .font(.system(size: 11))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .transition(.opacity)
                 }
 
                 Text("\(wordCount) words")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
 
                 Text("\(state.completedOutlineCount)/\(state.outline.count) outline")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
         }
         .padding(.horizontal, 24)
@@ -1440,14 +1440,14 @@ struct InlineDiffText: View {
             switch w.type {
             case .unchanged:
                 return result + separator + Text(w.text)
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             case .removed:
                 return result + separator + Text(w.text)
-                    .foregroundColor(.red.opacity(0.7))
+                    .foregroundStyle(.red.opacity(0.7))
                     .strikethrough(true, color: .red.opacity(0.5))
             case .added:
                 return result + separator + Text(w.text)
-                    .foregroundColor(.green.opacity(0.85))
+                    .foregroundStyle(.green.opacity(0.85))
             }
         }
         .font(.system(size: 11))

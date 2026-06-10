@@ -8,7 +8,7 @@ enum DeepScoutRanker {
         profile: InquiryBranchResearchProfile,
         plan: DeepScoutPlan,
         existingSourceRefs: [InquirySourceRef],
-        limit: Int = 12
+        limit: Int = 20
     ) -> [InquirySourceCandidate] {
         let plannedLanes = Set(plan.queries.map(\.lane))
         let scored = candidates.compactMap { candidate -> ScoredCandidate? in
@@ -37,6 +37,7 @@ enum DeepScoutRanker {
                         + intentBoost(for: candidate.researchIntent, expected: plan.intent)
                         + (plannedLanes.contains(lane) ? 0.04 : 0)
                         + clinicalDriftPenalty(text: text, lane: lane, intent: plan.intent)
+                        - junkTitlePenalty(title: candidate.title)
                         + (alreadyImported ? -0.18 : 0)
                 )
             )
@@ -95,21 +96,11 @@ enum DeepScoutRanker {
         profile: InquiryBranchResearchProfile
     ) -> Double {
         let overlapBoost = min(0.24, Double(matchedTokens.count) * 0.06)
-        let lower = text.lowercased()
-        let profileText = [
-            profile.deepDiveTitle,
-            profile.sourceQuery,
-            profile.activeQuestionTitle,
-            profile.ancestorTitles.joined(separator: " ")
-        ].compactMap { $0 }.joined(separator: " ").lowercased()
-        let anchorBoost: Double
-        if profileText.contains("pranayama") {
-            anchorBoost = containsAny(lower, ["pranayama", "prana"]) ? 0.14 : (containsAny(lower, ["breath", "breathing"]) ? 0.06 : 0)
-        } else if profileText.contains("breath") {
-            anchorBoost = containsAny(lower, ["breath", "breathing", "respiration", "respiratory"]) ? 0.12 : 0
-        } else {
-            anchorBoost = 0
-        }
+        // Anchor terms come from the deep dive's title, aliases, and lexicon —
+        // domain-agnostic, no hardcoded topics.
+        let candidateTokens = InquirySourceRecommendationEngine.significantTokens(text)
+        let anchorMatches = candidateTokens.intersection(profile.anchorTerms).count
+        let anchorBoost = min(0.14, Double(anchorMatches) * 0.07)
         return overlapBoost + anchorBoost
     }
 
@@ -163,9 +154,12 @@ enum DeepScoutRanker {
         switch provider {
         case .local: return 0.12
         case .googleBooks, .openLibrary, .internetArchive:
-            return nonClinicalIntent(intent) ? 0.12 : 0.04
+            return nonClinicalIntent(intent) ? 0.14 : 0.04
         case .youtube:
-            return nonClinicalIntent(intent) ? 0.10 : 0.03
+            return nonClinicalIntent(intent) ? 0.14 : 0.03
+        case .podcast:
+            // iTunes episode search matches loosely — YouTube leads the lecture lane.
+            return nonClinicalIntent(intent) ? 0.04 : 0.01
         case .openAlex, .crossref, .semanticScholar:
             return intent == .clinicalEvidence || intent == .mechanismScience ? 0.11 : 0.05
         case .pubMed:
@@ -238,7 +232,7 @@ enum DeepScoutRanker {
             return .localLibrary
         case .googleBooks, .openLibrary, .internetArchive:
             return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
-        case .youtube:
+        case .youtube, .podcast:
             return .teacherLecture
         case .pubMed:
             return .clinicalEvidence
@@ -249,24 +243,29 @@ enum DeepScoutRanker {
         }
     }
 
+    /// Penalizes catalog-dump titles ("CIA Reading Room cia-rdp85t00875r0016...")
+    /// whose names are archival identifiers rather than readable works.
+    static func junkTitlePenalty(title: String) -> Double {
+        let tokens = title.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "-" })
+            .map(String.init)
+        let idTokens = tokens.filter { token in
+            guard token.count >= 6 else { return false }
+            let digits = token.filter(\.isNumber).count
+            let letters = token.filter(\.isLetter).count
+            // Pure long numbers, or dense letter–digit mixes, read as catalog IDs.
+            if letters == 0, digits >= 6 { return true }
+            return digits >= 4 && letters >= 2
+        }
+        return min(0.4, Double(idTokens.count) * 0.2)
+    }
+
     private static func passesTopicGate(text: String, profile: InquiryBranchResearchProfile) -> Bool {
         let candidateTokens = InquirySourceRecommendationEngine.significantTokens(text)
         if !candidateTokens.intersection(profile.tokens).isEmpty { return true }
-
-        let lower = text.lowercased()
-        let profileText = [
-            profile.deepDiveTitle,
-            profile.sourceQuery,
-            profile.activeQuestionTitle
-        ].compactMap { $0 }.joined(separator: " ").lowercased()
-
-        if profileText.contains("pranayama") {
-            return containsAny(lower, ["pranayama", "prana", "breath", "breathing"])
-        }
-        if profileText.contains("breath") {
-            return containsAny(lower, ["breath", "breathing", "respiration", "respiratory"])
-        }
-        return false
+        // Anchor-only matches pass too: a candidate about the deep dive's domain
+        // can be relevant even when it shares no tokens with the active question.
+        return !candidateTokens.intersection(profile.anchorTerms).isEmpty
     }
 
     private static func alreadyImported(_ candidate: InquirySourceCandidate, existingSourceRefs: [InquirySourceRef]) -> Bool {

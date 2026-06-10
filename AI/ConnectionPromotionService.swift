@@ -66,23 +66,67 @@ final class ConnectionPromotionService {
             result.linked += try await ensureLinks(for: updated, candidate: candidate, siblingUUIDs: siblingUUIDs)
         }
 
+        // Mark crystallized extracts so the next run only processes new material
+        // and the notes rail can show what's already in a Connection.
+        for candidate in accepted {
+            guard let promoted = promotedByCandidateId[candidate.id] else { continue }
+            await markExtractsPromoted(candidate.clusterExtractUUIDs, into: promoted.uuid)
+        }
+
         if let deepDive {
             currentDeepDive = try await ensureDeepDiveLinks(deepDive, connectionUUIDs: promotedByCandidateId.values.map(\.uuid))
         }
 
-        if let thinkspaceUUID = currentDeepDive?.deepDiveMetadata?.primaryThinkspaceUUID
-            ?? currentDeepDive?.deepDiveMetadata?.parentThinkspaceUUIDs?.first {
+        if let thinkspaceUUID = await resolveThinkspaceUUID(for: currentDeepDive) {
             for (index, connection) in promotedByCandidateId.values.sorted(by: { ($0.title ?? "") < ($1.title ?? "") }).enumerated() {
                 if try await placeConnectionIfNeeded(connection, thinkspaceUUID: thinkspaceUUID, index: index, sessionUUID: session.uuid) {
                     result.canvasBlocksCreated += 1
                 }
             }
+            // CanvasView reloads its blocks on this targeted notification —
+            // blocksChanged alone is not observed for reload.
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.refreshThinkspacePlacements,
+                object: nil,
+                userInfo: ["thinkspaceId": thinkspaceUUID]
+            )
         }
 
         NotificationCenter.default.post(name: CosmoNotification.Canvas.blocksChanged, object: nil)
         NotificationCenter.default.post(name: CosmoNotification.Canvas.thinkspaceChanged, object: nil)
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.graphNodeUpdated, object: nil)
         return result
+    }
+
+    private func markExtractsPromoted(_ extractUUIDs: [String], into connectionUUID: String) async {
+        for uuid in extractUUIDs {
+            guard var extract = try? await atoms.fetch(uuid: uuid),
+                  var metadata = extract.extractMetadata,
+                  metadata.status != .promoted else { continue }
+            metadata.status = .promoted
+            metadata.promotedToUUID = connectionUUID
+            extract = extract.withMetadata(metadata)
+            _ = try? await atoms.update(extract)
+        }
+    }
+
+    /// Resolves where promoted Connections should be placed. Deep dives created
+    /// outside a thinkspace have no link — fall back to the open thinkspace and
+    /// persist that link so future promotions land in the same place.
+    private func resolveThinkspaceUUID(for deepDive: Atom?) async -> String? {
+        if let linked = deepDive?.deepDiveMetadata?.primaryThinkspaceUUID
+            ?? deepDive?.deepDiveMetadata?.parentThinkspaceUUIDs?.first {
+            return linked
+        }
+        guard let current = ThinkspaceManager.shared.currentThinkspace?.id else { return nil }
+        if var dd = deepDive {
+            var metadata = dd.deepDiveMetadata ?? DeepDiveMetadata()
+            metadata.primaryThinkspaceUUID = current
+            metadata.parentThinkspaceUUIDs = (metadata.parentThinkspaceUUIDs ?? []) + [current]
+            dd = dd.withMetadata(metadata)
+            _ = try? await atoms.update(dd)
+        }
+        return current
     }
 
     private func upsertConnection(
@@ -92,20 +136,7 @@ final class ConnectionPromotionService {
         deepDive: Atom?,
         siblingUUIDsByCandidateId: [String: String]
     ) async throws -> Atom {
-        let sections = sections(for: candidate, siblingUUIDsByCandidateId: siblingUUIDsByCandidateId)
-        let structured = ConnectionStructuredData(sections: sections)
-        let body = flattenedBody(sections: sections, notes: candidate.proposedNotes)
-        let metadata = InquiryPromotedConnectionMetadata(
-            originInquirySessionUUID: session.uuid,
-            originDeepDiveUUID: deepDive?.uuid,
-            inquiryBranchNodeId: candidate.branchNodeId,
-            materialCount: candidate.materialCount,
-            candidateId: candidate.id,
-            crystallizedAt: iso.string(from: Date())
-        )
-        let metadataJSON = try encode(metadata)
-        let structuredJSON = structured.toJSON()
-
+        let proposedSections = sections(for: candidate, siblingUUIDsByCandidateId: siblingUUIDsByCandidateId)
         let links = baseLinks(
             for: candidate,
             sessionUUID: session.uuid,
@@ -114,28 +145,96 @@ final class ConnectionPromotionService {
         )
 
         let saved: Atom
+        let finalSections: [ConnectionSection]
         if var existing {
-            existing.title = candidate.proposedTitle
-            existing.body = body
-            existing.structured = structuredJSON
-            existing.metadata = metadataJSON
+            // Merge, never replace: a concept page accumulates knowledge across
+            // sessions, so user edits and previously merged items must survive.
+            let existingSections = existing.structured
+                .flatMap { ConnectionStructuredData.fromJSON($0)?.sections } ?? []
+            finalSections = Self.mergedSections(existing: existingSections, proposed: proposedSections)
+
+            var metadata = existing.metadataValue(as: InquiryPromotedConnectionMetadata.self)
+                ?? InquiryPromotedConnectionMetadata(
+                    originInquirySessionUUID: session.uuid,
+                    originDeepDiveUUID: deepDive?.uuid,
+                    inquiryBranchNodeId: candidate.branchNodeId,
+                    materialCount: candidate.materialCount,
+                    candidateId: candidate.id,
+                    crystallizedAt: iso.string(from: Date())
+                )
+            metadata.contributingSessionUUIDs = Array(Set((metadata.contributingSessionUUIDs ?? []) + [session.uuid])).sorted()
+            metadata.mergedExtractUUIDs = Array(Set((metadata.mergedExtractUUIDs ?? []) + candidate.clusterExtractUUIDs)).sorted()
+            metadata.materialCount = finalSections.reduce(0) { $0 + $1.items.count }
+            metadata.crystallizedAt = iso.string(from: Date())
+
+            if (existing.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                existing.title = candidate.proposedTitle
+            }
+            existing.body = flattenedBody(sections: finalSections, notes: candidate.proposedNotes)
+            existing.structured = ConnectionStructuredData(sections: finalSections).toJSON()
+            existing.metadata = try encode(metadata)
             existing = existing.withLinks(mergeLinks(existing.linksList, links))
             saved = try await atoms.update(existing)
         } else {
+            finalSections = proposedSections
+            var metadata = InquiryPromotedConnectionMetadata(
+                originInquirySessionUUID: session.uuid,
+                originDeepDiveUUID: deepDive?.uuid,
+                inquiryBranchNodeId: candidate.branchNodeId,
+                materialCount: candidate.materialCount,
+                candidateId: candidate.id,
+                crystallizedAt: iso.string(from: Date())
+            )
+            metadata.contributingSessionUUIDs = [session.uuid]
+            metadata.mergedExtractUUIDs = candidate.clusterExtractUUIDs.sorted()
             saved = try await atoms.create(
                 type: .connection,
                 title: candidate.proposedTitle,
-                body: body,
-                structured: structuredJSON,
-                metadata: metadataJSON,
+                body: flattenedBody(sections: finalSections, notes: candidate.proposedNotes),
+                structured: ConnectionStructuredData(sections: finalSections).toJSON(),
+                metadata: try encode(metadata),
                 links: links
             )
         }
 
         var state = ConnectionFocusModeState(atomUUID: saved.uuid)
-        state.sections = sections
+        state.sections = finalSections
         state.save()
         return saved
+    }
+
+    /// Merges proposed items into existing sections. An item is skipped when any
+    /// existing section already holds it — matched by provenance (sourceAtomUUID)
+    /// or normalized content — making repeated crystallizations idempotent.
+    nonisolated static func mergedSections(
+        existing: [ConnectionSection],
+        proposed: [ConnectionSection]
+    ) -> [ConnectionSection] {
+        var merged = ConnectionFocusModeState.backfillingMissingSections(existing)
+        var seenSourceUUIDs = Set(merged.flatMap { $0.items.compactMap(\.sourceAtomUUID) })
+        var seenContentKeys = Set(merged.flatMap { $0.items.map { normalizedKey($0.resolvedPlainText) } })
+
+        for section in proposed {
+            for item in section.items {
+                if let sourceUUID = item.sourceAtomUUID, seenSourceUUIDs.contains(sourceUUID) { continue }
+                let contentKey = normalizedKey(item.resolvedPlainText)
+                if !contentKey.isEmpty, seenContentKeys.contains(contentKey) { continue }
+
+                guard let index = merged.firstIndex(where: { $0.type == section.type }) else { continue }
+                merged[index].items.append(item)
+                if let sourceUUID = item.sourceAtomUUID { seenSourceUUIDs.insert(sourceUUID) }
+                seenContentKeys.insert(contentKey)
+            }
+        }
+        return merged
+    }
+
+    nonisolated private static func normalizedKey(_ value: String) -> String {
+        value
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func sections(
@@ -242,15 +341,30 @@ final class ConnectionPromotionService {
     }
 
     private func existingConnection(for candidate: CrystallizationOutput.ConnectionCandidate, deepDive: Atom?) async throws -> Atom? {
+        // 1. Explicit merge target chosen by the concept resolver wins.
+        if let targetUUID = candidate.mergeTargetConnectionUUID,
+           let target = try await atoms.fetch(uuid: targetUUID) {
+            return target
+        }
         guard let deepDive else { return nil }
         let existing = try await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive)
+        // 2. Same concept key from a previous crystallization.
+        if let conceptKey = candidate.conceptKey,
+           let match = existing.first(where: { atom in
+               atom.metadataValue(as: InquiryPromotedConnectionMetadata.self)?.candidateId == "connection-candidate-concept-\(conceptKey)"
+           }) {
+            return match
+        }
+        // 3. Legacy per-branch match.
         if let branchNodeId = candidate.branchNodeId,
            let match = existing.first(where: { atom in
                atom.metadataValue(as: InquiryPromotedConnectionMetadata.self)?.inquiryBranchNodeId == branchNodeId
            }) {
             return match
         }
-        return existing.first { normalized($0.title ?? "") == normalized(candidate.proposedTitle) }
+        // 4. Title/alias match.
+        let titleKeys = Set(([candidate.proposedTitle] + (candidate.conceptAliases ?? [])).map(normalized))
+        return existing.first { titleKeys.contains(normalized($0.title ?? "")) }
     }
 
     private func placeConnectionIfNeeded(_ connection: Atom, thinkspaceUUID: String, index: Int, sessionUUID: String) async throws -> Bool {
@@ -259,8 +373,11 @@ final class ConnectionPromotionService {
         }
 
         let blockId = UUID().uuidString
-        let x = -140 + CGFloat(index * 340)
-        let y = CGFloat(220 + (index % 2) * 120)
+        // Land next to the user's existing content, not at canvas origin where
+        // it would be invisible at their current viewport.
+        let anchor = try await contentAnchor(thinkspaceUUID: thinkspaceUUID)
+        let x = anchor.x + CGFloat(index * 340)
+        let y = anchor.y + CGFloat((index % 2) * 120)
         var block = CanvasBlock.fromAtom(connection, position: CGPoint(x: x, y: y))
         block = CanvasBlock(
             id: blockId,
@@ -284,6 +401,26 @@ final class ConnectionPromotionService {
         }
         try await appendBlockToThinkspaceMetadata(blockId: blockId, thinkspaceUUID: thinkspaceUUID)
         return true
+    }
+
+    /// A placement origin just right of the thinkspace's existing content,
+    /// vertically centered on it. Empty canvases get a sensible default.
+    private func contentAnchor(thinkspaceUUID: String) async throws -> CGPoint {
+        let bounds: (maxX: Double, avgY: Double)? = try await database.asyncRead { db in
+            try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT MAX(position_x + width) AS max_x, AVG(position_y) AS avg_y FROM canvas_blocks
+                    WHERE thinkspace_id = ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
+                """,
+                arguments: [thinkspaceUUID]
+            ).flatMap { row in
+                guard let maxX: Double = row["max_x"], let avgY: Double = row["avg_y"] else { return nil }
+                return (maxX, avgY)
+            }
+        }
+        guard let bounds else { return CGPoint(x: -140, y: 220) }
+        return CGPoint(x: bounds.maxX + 120, y: bounds.avgY)
     }
 
     private func existingCanvasBlockId(atomUUID: String, thinkspaceUUID: String) async throws -> String? {
@@ -346,4 +483,6 @@ private struct InquiryPromotedConnectionMetadata: Codable, Sendable {
     var materialCount: Int
     var candidateId: String
     var crystallizedAt: String
+    var mergedExtractUUIDs: [String]?         // Provenance for idempotent merges
+    var contributingSessionUUIDs: [String]?   // Every session that fed this page
 }

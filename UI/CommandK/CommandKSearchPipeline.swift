@@ -901,6 +901,7 @@ struct CommandKSearchIndex: Sendable {
         let updatedAt: String
         let searchableText: String
         let normalizedTitle: String
+        let recencyWeight: Double
 
         init(
             id: String,
@@ -908,7 +909,8 @@ struct CommandKSearchIndex: Sendable {
             atomType: AtomType,
             title: String,
             snippet: String?,
-            updatedAt: String
+            updatedAt: String,
+            metadata: String? = nil
         ) {
             self.id = id
             self.atomUUID = atomUUID
@@ -919,9 +921,11 @@ struct CommandKSearchIndex: Sendable {
             self.searchableText = CommandKSearchMatcher.searchableText(from: [
                 title,
                 snippet,
+                metadata,
                 atomType.rawValue
             ])
             self.normalizedTitle = CommandKSearchMatcher.normalize(title)
+            self.recencyWeight = WeightCalculator.recencyWeight(fromISO8601: updatedAt)
         }
     }
 
@@ -932,14 +936,21 @@ struct CommandKSearchIndex: Sendable {
     }
 
     mutating func replace(atoms: [Atom]) {
-        entries = atoms.map { atom in
+        entries = Self.entries(for: atoms)
+    }
+
+    /// Entry construction normalizes each atom's full title/body/metadata text
+    /// — call this off the main actor for large batches.
+    static func entries(for atoms: [Atom]) -> [Entry] {
+        atoms.map { atom in
             Entry(
                 id: atom.uuid,
                 atomUUID: atom.uuid,
                 atomType: atom.type,
                 title: atom.title ?? "Untitled",
                 snippet: atom.body,
-                updatedAt: atom.updatedAt
+                updatedAt: atom.updatedAt,
+                metadata: atom.metadata
             )
         }
     }
@@ -953,18 +964,12 @@ struct CommandKSearchIndex: Sendable {
 
         for entry in entries {
             if shouldCancel() { return [] }
-            guard entry.searchableText.contains(normalizedQuery) else { continue }
-
-            let structural: Double
-            if entry.normalizedTitle == normalizedQuery {
-                structural = 1.0
-            } else if entry.normalizedTitle.hasPrefix(normalizedQuery) {
-                structural = 0.86
-            } else if entry.normalizedTitle.contains(normalizedQuery) {
-                structural = 0.68
-            } else {
-                structural = 0.42
-            }
+            let structural = CommandKSearchMatcher.matchQuality(
+                normalizedQuery: normalizedQuery,
+                normalizedTitle: entry.normalizedTitle,
+                normalizedFullText: entry.searchableText
+            )
+            guard structural > 0 else { continue }
 
             matches.append(RankedResult(
                 atomUUID: entry.atomUUID,
@@ -973,7 +978,7 @@ struct CommandKSearchIndex: Sendable {
                 snippet: entry.snippet?.prefix(160).description,
                 semanticWeight: 0.0,
                 structuralWeight: structural,
-                recencyWeight: 0.5,
+                recencyWeight: entry.recencyWeight,
                 usageWeight: 0.5,
                 updatedAt: entry.updatedAt
             ))

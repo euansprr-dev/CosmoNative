@@ -10,6 +10,7 @@ struct BlockTextEditorRow: View {
     let blockID: UUID
     let focusCoordinator: BlockFocusCoordinator
     var fontSize: CGFloat
+    var fontDesign: NSFontDescriptor.SystemDesign = .default
     var placeholder: String
     var darkMode: Bool
     var overrideTextColor: NSColor?
@@ -25,6 +26,7 @@ struct BlockTextEditorRow: View {
     var onSelectionChanged: ((EditorSelectionSnapshot) -> Void)?
     var onDocumentChange: ((RichDocument, String) -> Void)?
     var onExitFinalEmptyTextRegion: (() -> Bool)?
+    var onSelectionCommand: ((BlockSelectionEditorCommand) -> Bool)? = nil
 
     @State private var undoRegistrar = BlockUndoRegistrar()
 
@@ -32,6 +34,7 @@ struct BlockTextEditorRow: View {
         CosmoDocumentEditor(
             document: blockDocumentBinding,
             fontSize: fontSize,
+            fontDesign: fontDesign,
             placeholder: placeholder,
             darkMode: darkMode,
             overrideTextColor: overrideTextColor,
@@ -46,10 +49,16 @@ struct BlockTextEditorRow: View {
             editorTargetID: focusCoordinator.commandTargetID(for: blockID, baseTargetID: editorTargetID),
             navigationTargetID: navigationTargetID,
             onDocumentChange: handleBlockDocumentChange,
-            onActivate: { focusCoordinator.focus(blockID) },
+            onActivate: {
+                focusCoordinator.focus(blockID)
+                _ = onSelectionCommand?(.clearSelection)
+            },
             onDeactivate: clearAbandonedSlashTrigger,
             onBoundaryCommand: handleBoundaryCommand,
             onSlashCommandSelected: executeSlashCommand,
+            splitsOnReturn: true,
+            immediateDocumentSync: true,
+            caretRequest: editorCaretRequest,
             autoFocus: autoFocus || focusCoordinator.focusedBlockID == blockID
         )
         .onAppear {
@@ -62,6 +71,12 @@ struct BlockTextEditorRow: View {
     private var currentBlock: RichBlock? {
         guard let currentPath else { return nil }
         return try? BlockOperations.currentBlock(in: document, at: currentPath)
+    }
+
+    /// The coordinator's one-shot caret request, narrowed to this block.
+    private var editorCaretRequest: EditorCaretRequest? {
+        guard let request = focusCoordinator.caretRequest, request.blockID == blockID else { return nil }
+        return EditorCaretRequest(utf16OffsetFromEnd: request.utf16OffsetFromEnd, token: request.token)
     }
 
     private var currentPath: BlockPath? {
@@ -124,7 +139,47 @@ struct BlockTextEditorRow: View {
             return deleteOrMergeBackward()
         case .insertNewlineOnEmptyFinalLine:
             return exitEmptyListOrFinalRegion()
+        case .splitBlock(let caretUTF16OffsetFromEnd, let livePlainText):
+            return splitCurrentBlock(caretOffsetFromEnd: caretUTF16OffsetFromEnd, livePlainText: livePlainText)
+        case .escapeSelectBlock:
+            return onSelectionCommand?(.selectCurrentBlock) ?? false
+        case .selectAllBlocks:
+            return onSelectionCommand?(.selectAllBlocks) ?? false
         }
+    }
+
+    /// Return pressed mid-block — split at the caret. Reconciles the block
+    /// with the text view's live string first (the document binding lags by
+    /// ~50ms) so fast typing right before Return is never lost.
+    private func splitCurrentBlock(caretOffsetFromEnd: Int, livePlainText: String) -> Bool {
+        guard let block = currentBlock, let currentPath else { return false }
+
+        var workingDocument = document
+        var workingBlock = block
+        let liveContent = block.kind.strippedRenderPrefix(from: livePlainText)
+        if liveContent != workingBlock.plainInlineText {
+            workingBlock.inlines = [.text(liveContent)]
+            guard let reconciled = try? BlockOperations.replaceBlock(
+                in: workingDocument,
+                at: currentPath,
+                with: workingBlock
+            ) else {
+                return false
+            }
+            workingDocument = reconciled.document
+        }
+
+        let contentLength = workingBlock.plainInlineText.utf16.count
+        let offset = max(0, min(contentLength, contentLength - caretOffsetFromEnd))
+        guard let result = try? BlockOperations.splitTextBlock(
+            in: workingDocument,
+            at: currentPath,
+            utf16Offset: offset
+        ) else {
+            return false
+        }
+        apply(result, undoActionName: "Split Block")
+        return true
     }
 
     private func deleteOrMergeBackward() -> Bool {
@@ -224,7 +279,7 @@ struct BlockTextEditorRow: View {
         }
         if let focusPath = result.focusPath,
            let focusedBlock = try? BlockOperations.currentBlock(in: result.document, at: focusPath) {
-            focusCoordinator.focus(focusedBlock.id)
+            focusCoordinator.focus(focusedBlock.id, caretOffsetFromEnd: result.caretOffsetFromEnd(for: focusedBlock))
         }
         onDocumentChange?(result.document, result.document.plainText)
     }

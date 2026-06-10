@@ -37,22 +37,51 @@ final class InquiryCrystallizationEngine {
         Be precise, specific, and ground every claim in the session content. Empty arrays are fine.
         Do not invent extracts. Do not include any prose outside the JSON.
         """
-        let output: CrystallizationOutput
+        // Concept routing is independent of the synthesis text — resolve it
+        // concurrently with the synthesis call instead of after it.
+        async let projectionContext = loadProjectionContext(session: session, deepDive: deepDive, extracts: allExtracts)
+        var output: CrystallizationOutput
         do {
             let raw = try await ResearchService.shared.analyze(
                 prompt: prompt,
                 systemPrompt: systemPrompt,
                 tier: .strategist
             )
-            if let output = parse(raw: raw) {
-                return await attachCanvasProjection(to: output, session: session, deepDive: deepDive, extracts: allExtracts)
-            }
-            output = heuristicFallback(session: session, deepDive: deepDive, extracts: allExtracts)
+            output = parse(raw: raw) ?? heuristicFallback(session: session, deepDive: deepDive, extracts: allExtracts)
         } catch {
             print("[InquiryCrystallizationEngine] LLM failed: \(error) — falling back to heuristic")
             output = heuristicFallback(session: session, deepDive: deepDive, extracts: allExtracts)
         }
-        return await attachCanvasProjection(to: output, session: session, deepDive: deepDive, extracts: allExtracts)
+        return await attachCanvasProjection(to: output, session: session, deepDive: deepDive, extracts: allExtracts, context: projectionContext)
+    }
+
+    /// Everything the canvas projection needs that does not depend on the synthesis
+    /// output: Deep Dive scoped atoms plus concept assignments for the extracts.
+    private struct ProjectionContext: Sendable {
+        var questions: [Atom] = []
+        var lexicon: [Atom] = []
+        var connections: [Atom] = []
+        var sources: [Atom] = []
+        var assignments: [ConceptResolver.ConceptAssignment] = []
+    }
+
+    private func loadProjectionContext(session: Atom, deepDive: Atom?, extracts: [Atom]) async -> ProjectionContext {
+        var context = ProjectionContext()
+        if let deepDive {
+            context.questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: deepDive.uuid)) ?? []
+            context.lexicon = (try? await InquiryRepository.shared.fetchLexicon(forDeepDive: deepDive.uuid)) ?? []
+            context.connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive)) ?? []
+            context.sources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: deepDive)) ?? []
+        }
+        context.assignments = await ConceptResolver.shared.resolve(ConceptResolver.Input(
+            deepDive: deepDive,
+            session: session,
+            extracts: extracts,
+            lexicon: context.lexicon,
+            existingConnections: context.connections,
+            questions: context.questions
+        ))
+        return context
     }
 
     // MARK: - Prompt building
@@ -214,18 +243,33 @@ final class InquiryCrystallizationEngine {
         to output: CrystallizationOutput,
         session: Atom,
         deepDive: Atom?,
-        extracts: [Atom]
+        extracts: [Atom],
+        context: ProjectionContext
     ) async -> CrystallizationOutput {
         var copy = output
         let sourceRefs = session.inquirySessionStructured?.sourceRefs ?? []
         let branchNodes = session.inquirySessionStructured
             .map { Array($0.researchTree.nodes.values) } ?? []
-        copy.possibleConnections = await ConnectionRoutingEngine().proposals(
-            forSession: session,
-            branches: branchNodes,
-            extracts: extracts,
-            sources: sourceRefs
-        )
+
+        // Concept-first: the context carries durable concept assignments (persisted
+        // capture-time tags, LLM for the untagged remainder), so propose one
+        // Connection per concept with explicit merge targets. Falls back to
+        // per-branch proposals when nothing resolved.
+        if context.assignments.isEmpty {
+            copy.possibleConnections = await ConnectionRoutingEngine().proposals(
+                forSession: session,
+                branches: branchNodes,
+                extracts: extracts,
+                sources: sourceRefs
+            )
+        } else {
+            copy.possibleConnections = await ConnectionRoutingEngine().proposals(
+                forSession: session,
+                assignments: context.assignments,
+                extracts: extracts,
+                sources: sourceRefs
+            )
+        }
 
         guard let deepDive,
               let thinkspaceUUID = deepDive.deepDiveMetadata?.primaryThinkspaceUUID
@@ -233,19 +277,15 @@ final class InquiryCrystallizationEngine {
             return copy
         }
 
-        let questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: deepDive.uuid)) ?? []
-        let sources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: deepDive)) ?? []
-        let connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive)) ?? []
-
         let operations = buildCanvasOperations(
             output: copy,
             session: session,
             deepDive: deepDive,
             thinkspaceUUID: thinkspaceUUID,
             extracts: extracts,
-            questions: questions,
-            sources: sources,
-            connections: connections,
+            questions: context.questions,
+            sources: context.sources,
+            connections: context.connections,
             sourceRefs: sourceRefs
         )
 
@@ -600,8 +640,11 @@ final class InquiryCrystallizationEngine {
         var summary = AppliedSummary()
         guard let dd = deepDive else { return summary }
 
-        // 1. Lexicon entries
+        // 1. Lexicon entries (skip terms that already exist for this Deep Dive)
+        let existingLexicon = (try? await InquiryRepository.shared.fetchLexicon(forDeepDive: dd.uuid)) ?? []
+        let existingTermKeys = Set(existingLexicon.compactMap { $0.title.map(ConceptResolver.conceptKey) })
         for candidate in output.lexiconCandidates where candidate.accepted {
+            guard !existingTermKeys.contains(ConceptResolver.conceptKey(candidate.term)) else { continue }
             do {
                 _ = try await InquiryRepository.shared.createLexiconEntry(
                     term: candidate.term,
@@ -614,17 +657,17 @@ final class InquiryCrystallizationEngine {
             }
         }
 
-        // 2. New questions
+        // 2. New questions (find-or-create: re-crystallizing must not duplicate)
         for q in output.newQuestions where q.accepted {
             do {
-                _ = try await InquiryRepository.shared.createQuestion(
+                let result = try await InquiryRepository.shared.findOrCreateQuestion(
                     title: q.text,
                     parentDeepDiveUUID: dd.uuid,
                     originSessionUUID: session.uuid,
                     parentQuestionUUID: nil,
                     originExtractUUID: nil
                 )
-                summary.questionsCreated += 1
+                if result.created { summary.questionsCreated += 1 }
             } catch {
                 print("[InquiryCrystallizationEngine] question create failed: \(error)")
             }

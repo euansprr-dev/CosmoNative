@@ -7,6 +7,7 @@ struct BlockListView: View {
     @Binding var document: RichDocument
 
     var fontSize: CGFloat = 17
+    var fontDesign: NSFontDescriptor.SystemDesign = .default
     var placeholder: String = "Start writing..."
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
@@ -19,6 +20,7 @@ struct BlockListView: View {
     var editorTargetID: String? = nil
     var navigationTargetID: UUID? = nil
     var focusCoordinator: BlockFocusCoordinator? = nil
+    var selectionCoordinator: BlockSelectionCoordinator? = nil
     var autoFocusFirstTextRegion: Bool = false
     var onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil
     var onContentHeightChange: ((CGFloat) -> Void)? = nil
@@ -26,7 +28,9 @@ struct BlockListView: View {
     var onDocumentChange: ((RichDocument, String) -> Void)? = nil
 
     @State private var ownedFocusCoordinator = BlockFocusCoordinator()
+    @State private var ownedSelectionCoordinator = BlockSelectionCoordinator()
     @State private var undoRegistrar = BlockUndoRegistrar()
+    @FocusState private var selectionKeyboardFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
@@ -35,6 +39,12 @@ struct BlockListView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        .focusable(resolvedSelectionCoordinator.isActive)
+        .focusEffectDisabled()
+        .focused($selectionKeyboardFocused)
+        .onKeyPress(phases: .down) { press in
+            handleSelectionKeyPress(press)
+        }
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
         } action: { newHeight in
@@ -49,42 +59,63 @@ struct BlockListView: View {
                 scheduleEnsureEditableDocument()
             }
         }
+        .onChange(of: document.blocks.count) { _, _ in
+            if resolvedSelectionCoordinator.isActive {
+                resolvedSelectionCoordinator.prune(against: document)
+            }
+        }
     }
 
     @ViewBuilder
     private func rowView(for block: RichBlock, at path: BlockPath) -> some View {
-        BlockRowView(block: block, path: path, darkMode: darkMode, onMove: moveBlock) {
-            switch block.kind {
-            case .divider:
-                dividerRow
-            case .image:
-                imageRow(for: block)
-            case .element:
-                ElementBlockView(
-                    block: blockBinding(at: path, fallback: block),
-                    focusCoordinator: resolvedFocusCoordinator,
-                    fontSize: fontSize,
-                    darkMode: darkMode,
-                    overrideTextColor: overrideTextColor,
-                    allowSlashCommands: allowSlashCommands,
-                    allowMentions: allowMentions,
-                    allowSelectionMenu: allowSelectionMenu,
-                    allowImages: allowImages,
-                    typewriterMode: typewriterMode,
-                    editorTargetID: editorTargetID,
-                    navigationTargetID: navigationTargetID,
-                    onSelectionChanged: onSelectionChanged,
-                    onExitBody: { insertParagraph(after: path) },
-                    onElementChange: emitDocumentChange
-                )
-            case .content, .research:
-                VStack(alignment: .leading, spacing: 6) {
-                    blockKindBadge(for: block.kind)
-                    textBlockRow(for: block, at: path)
-                }
-            default:
+        BlockRowView(
+            block: block,
+            path: path,
+            darkMode: darkMode,
+            isSelected: resolvedSelectionCoordinator.isSelected(block.id),
+            onMove: moveBlock,
+            onInsertBelow: { insertParagraph(after: path) },
+            onHandleClick: { handleClicked(block) },
+            onHandleShiftClick: { resolvedSelectionCoordinator.selectRange(to: block.id, in: document) },
+            handleMenu: { handleMenu(for: block) }
+        ) {
+            blockContent(for: block, at: path)
+                .overlay { selectionClickCatcher(for: block) }
+        }
+    }
+
+    @ViewBuilder
+    private func blockContent(for block: RichBlock, at path: BlockPath) -> some View {
+        switch block.kind {
+        case .divider:
+            dividerRow
+        case .image:
+            imageRow(for: block)
+        case .element:
+            ElementBlockView(
+                block: blockBinding(at: path, fallback: block),
+                focusCoordinator: resolvedFocusCoordinator,
+                fontSize: fontSize,
+                darkMode: darkMode,
+                overrideTextColor: overrideTextColor,
+                allowSlashCommands: allowSlashCommands,
+                allowMentions: allowMentions,
+                allowSelectionMenu: allowSelectionMenu,
+                allowImages: allowImages,
+                typewriterMode: typewriterMode,
+                editorTargetID: editorTargetID,
+                navigationTargetID: navigationTargetID,
+                onSelectionChanged: onSelectionChanged,
+                onExitBody: { insertParagraph(after: path) },
+                onElementChange: emitDocumentChange
+            )
+        case .content, .research:
+            VStack(alignment: .leading, spacing: 6) {
+                blockKindBadge(for: block.kind)
                 textBlockRow(for: block, at: path)
             }
+        default:
+            textBlockRow(for: block, at: path)
         }
     }
 
@@ -95,6 +126,7 @@ struct BlockListView: View {
             blockID: block.id,
             focusCoordinator: resolvedFocusCoordinator,
             fontSize: fontSize,
+            fontDesign: fontDesign,
             placeholder: BlockPlaceholderPolicy.shouldShowBodyPlaceholder(
                 for: block,
                 at: path,
@@ -113,7 +145,10 @@ struct BlockListView: View {
             autoFocus: autoFocusFirstTextRegion && path.indices == [0],
             onSelectionChanged: onSelectionChanged,
             onDocumentChange: onDocumentChange,
-            onExitFinalEmptyTextRegion: onExitFinalEmptyTextRegion
+            onExitFinalEmptyTextRegion: onExitFinalEmptyTextRegion,
+            onSelectionCommand: { command in
+                handleEditorSelectionCommand(block.id, command)
+            }
         )
     }
 
@@ -145,25 +180,203 @@ struct BlockListView: View {
     private func blockKindBadge(for kind: RichBlockKind) -> some View {
         HStack(spacing: 5) {
             Image(systemName: kind == .content ? "doc.text" : "magnifyingglass.circle")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption.weight(.medium))
             Text(kind == .content ? "Content" : "Research")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption.weight(.medium))
         }
         .foregroundStyle(darkMode ? Color.white.opacity(0.58) : DS.documentTextMuted)
         .padding(.leading, 2)
     }
 
-    private var regions: [BlockRegion] {
-        let splitRegions = BlockSplitter.split(document.blocks)
-        if splitRegions.isEmpty {
-            return [BlockRegion(kind: .text, range: 0..<0, blocks: [])]
-        }
-        return splitRegions
-    }
-
     private var resolvedFocusCoordinator: BlockFocusCoordinator {
         focusCoordinator ?? ownedFocusCoordinator
     }
+
+    private var resolvedSelectionCoordinator: BlockSelectionCoordinator {
+        selectionCoordinator ?? ownedSelectionCoordinator
+    }
+
+    // MARK: - Block Selection
+
+    /// While block selection is active, clicks land on blocks instead of text
+    /// (the Notion model): Shift+Click extends the range, a plain click exits
+    /// selection and resumes editing the clicked block. The overlay only
+    /// exists during selection, so normal editing pays nothing for it.
+    @ViewBuilder
+    private func selectionClickCatcher(for block: RichBlock) -> some View {
+        if resolvedSelectionCoordinator.isActive {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if NSEvent.modifierFlags.contains(.shift) {
+                        resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
+                    } else {
+                        resolvedSelectionCoordinator.clear()
+                        selectionKeyboardFocused = false
+                        resolvedFocusCoordinator.focus(block.id)
+                    }
+                }
+        }
+    }
+
+    private func handleClicked(_ block: RichBlock) {
+        let selection = resolvedSelectionCoordinator
+        if !(selection.isActive && selection.isSelected(block.id)) {
+            selection.select(block.id)
+        }
+        activateSelectionKeyboard()
+    }
+
+    private func handleEditorSelectionCommand(_ blockID: UUID, _ command: BlockSelectionEditorCommand) -> Bool {
+        let selection = resolvedSelectionCoordinator
+        switch command {
+        case .selectCurrentBlock:
+            selection.select(blockID)
+            activateSelectionKeyboard()
+            return true
+        case .selectAllBlocks:
+            selection.selectAll(in: document)
+            activateSelectionKeyboard()
+            return true
+        case .clearSelection:
+            if selection.isActive {
+                selection.clear()
+            }
+            return true
+        }
+    }
+
+    private func handleSelectionKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        let selection = resolvedSelectionCoordinator
+        guard selection.isActive else { return .ignored }
+
+        switch press.key {
+        case .escape:
+            clearSelectionAndResumeEditing()
+            return .handled
+        case .upArrow, .downArrow:
+            let direction: BlockSelectionDirection = press.key == .upArrow ? .up : .down
+            if press.modifiers.contains(.shift) {
+                selection.extend(direction, in: document)
+            } else {
+                selection.step(direction, in: document)
+            }
+            return .handled
+        case .delete, .deleteForward:
+            deleteSelectedBlocks(selection.selectedBlockIDs)
+            return .handled
+        case .return:
+            beginEditingSelection()
+            return .handled
+        default:
+            break
+        }
+
+        if press.modifiers.contains(.command) {
+            switch press.characters {
+            case "d":
+                duplicateSelectedBlocks(selection.selectedBlockIDs)
+                return .handled
+            case "c":
+                copySelectionToPasteboard()
+                return .handled
+            case "x":
+                copySelectionToPasteboard()
+                deleteSelectedBlocks(selection.selectedBlockIDs)
+                return .handled
+            case "a":
+                selection.selectAll(in: document)
+                return .handled
+            default:
+                break
+            }
+        }
+        return .ignored
+    }
+
+    /// Moves AppKit first responder off the text views so arrow keys, delete,
+    /// and shortcuts land on the block list while blocks are selected.
+    private func activateSelectionKeyboard() {
+        DispatchQueue.main.async {
+            NSApp.keyWindow?.makeFirstResponder(nil)
+            selectionKeyboardFocused = true
+        }
+    }
+
+    private func clearSelectionAndResumeEditing() {
+        let anchor = resolvedSelectionCoordinator.anchorBlockID
+        resolvedSelectionCoordinator.clear()
+        selectionKeyboardFocused = false
+        if let anchor {
+            resolvedFocusCoordinator.focus(anchor)
+        }
+    }
+
+    private func beginEditingSelection() {
+        let target = resolvedSelectionCoordinator.leadBlockID ?? resolvedSelectionCoordinator.anchorBlockID
+        resolvedSelectionCoordinator.clear()
+        selectionKeyboardFocused = false
+        if let target {
+            resolvedFocusCoordinator.focus(target)
+        }
+    }
+
+    private func copySelectionToPasteboard() {
+        let text = BlockOperations.plainText(
+            ofBlocksWithIDs: resolvedSelectionCoordinator.selectedBlockIDs,
+            in: document
+        )
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    // MARK: - Handle Menu
+
+    private func handleMenu(for block: RichBlock) -> BlockHandleMenuView {
+        let targets = menuTargetIDs(for: block)
+        return BlockHandleMenuView(
+            currentKind: sharedKind(of: targets),
+            selectionCount: targets.count,
+            onTransform: { kind in transformBlocks(targets, to: kind) },
+            onDuplicate: { duplicateSelectedBlocks(targets) },
+            onDelete: { deleteSelectedBlocks(targets) }
+        )
+    }
+
+    private func menuTargetIDs(for block: RichBlock) -> Set<UUID> {
+        let selection = resolvedSelectionCoordinator
+        if selection.isActive, selection.isSelected(block.id) {
+            return selection.selectedBlockIDs
+        }
+        return [block.id]
+    }
+
+    private func sharedKind(of ids: Set<UUID>) -> RichBlockKind? {
+        let kinds = Set(document.blocks.filter { ids.contains($0.id) }.map(\.kind))
+        return kinds.count == 1 ? kinds.first : nil
+    }
+
+    private func transformBlocks(_ ids: Set<UUID>, to kind: RichBlockKind) {
+        guard let result = BlockOperations.transformBlocks(withIDs: ids, in: document, to: kind) else { return }
+        commit(result, undoActionName: "Turn Into", focusAfterCommit: false)
+    }
+
+    private func duplicateSelectedBlocks(_ ids: Set<UUID>) {
+        guard let (result, duplicatedIDs) = BlockOperations.duplicateBlocks(withIDs: ids, in: document) else { return }
+        commit(result, undoActionName: "Duplicate Blocks", focusAfterCommit: false)
+        resolvedSelectionCoordinator.setSelection(duplicatedIDs)
+        activateSelectionKeyboard()
+    }
+
+    private func deleteSelectedBlocks(_ ids: Set<UUID>) {
+        guard let result = BlockOperations.deleteBlocks(withIDs: ids, in: document) else { return }
+        resolvedSelectionCoordinator.clear()
+        selectionKeyboardFocused = false
+        commit(result, undoActionName: "Delete Blocks")
+    }
+
+    // MARK: - Document Mutations
 
     private func blockBinding(at path: BlockPath, fallback: RichBlock) -> Binding<RichBlock> {
         Binding(
@@ -203,7 +416,7 @@ struct BlockListView: View {
         commit(result, undoActionName: "Move Block")
     }
 
-    private func commit(_ result: BlockOperationResult, undoActionName: String) {
+    private func commit(_ result: BlockOperationResult, undoActionName: String, focusAfterCommit: Bool = true) {
         let before = document
         document = result.document
         undoRegistrar.register(
@@ -213,9 +426,10 @@ struct BlockListView: View {
             actionName: undoActionName
         )
         emitDocumentChange()
-        if let focusPath = result.focusPath,
+        if focusAfterCommit,
+           let focusPath = result.focusPath,
            let focusedBlock = try? BlockOperations.currentBlock(in: result.document, at: focusPath) {
-            resolvedFocusCoordinator.focus(focusedBlock.id)
+            resolvedFocusCoordinator.focus(focusedBlock.id, caretOffsetFromEnd: result.caretOffsetFromEnd(for: focusedBlock))
         }
     }
 

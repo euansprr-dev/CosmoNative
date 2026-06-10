@@ -38,9 +38,9 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
     }
 
     func testContextEditorDoesNotForceBlurDuringSwiftUIUpdates() throws {
-        let source = try ideaFocusViewSource()
-        guard let editorRange = source.range(of: "private struct IdeaContextTextEditor"),
-              let hookRange = source.range(of: "private struct HookLineEditor") else {
+        let source = try ideaManuscriptEditorsSource()
+        guard let editorRange = source.range(of: "struct IdeaContextTextEditor"),
+              let hookRange = source.range(of: "struct HookLineEditor") else {
             XCTFail("Could not locate IdeaContextTextEditor source.")
             return
         }
@@ -57,9 +57,9 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
     }
 
     func testContextTextEditorPinsTextContainerOriginToTopInset() throws {
-        let source = try ideaFocusViewSource()
-        guard let textViewRange = source.range(of: "private final class IdeaContextTextView"),
-              let hookRange = source.range(of: "private struct HookLineEditor") else {
+        let source = try ideaManuscriptEditorsSource()
+        guard let textViewRange = source.range(of: "final class IdeaContextTextView"),
+              let hookRange = source.range(of: "struct HookLineEditor") else {
             XCTFail("Could not locate IdeaContextTextView source.")
             return
         }
@@ -85,7 +85,7 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
     }
 
     func testFocusModeTextViewsShareClipboardKeyEquivalentHandling() throws {
-        let source = try ideaFocusViewSource()
+        let source = try ideaManuscriptEditorsSource()
         for className in ["IdeaContextTextView", "HookLineTextView", "OutlineSlideNoteTextView"] {
             let classSource = try sourceBlock(named: className, in: source)
             XCTAssertTrue(
@@ -110,6 +110,32 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
         ))
     }
 
+    /// June 2026 Idea v2: the advanced outline (physics grid, element browser,
+    /// drag items) was removed — only the simple outline remains.
+    func testIdeaFocusViewDroppedAdvancedOutlineMode() throws {
+        let source = try ideaFocusViewSource()
+        XCTAssertFalse(source.contains("outlineAdvancedMode"))
+        XCTAssertFalse(source.contains("CodexDragItem"))
+        XCTAssertFalse(source.contains("AdvancedElementBrowser"))
+    }
+
+    @MainActor
+    func testIdeaWorkspaceBreakpointAndInspectorToggle() {
+        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 1400), .regular)
+        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 1000), .regular)
+        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 999), .compact)
+
+        let model = IdeaWorkspaceModel()
+        XCTAssertTrue(model.isInspectorShowing, "Inspector is a visible side column at full width")
+        model.toggleInspector()
+        XCTAssertFalse(model.isInspectorVisible)
+
+        model.breakpoint = .compact
+        XCTAssertFalse(model.isInspectorShowing, "Compact widths hide the inspector by default")
+        model.toggleInspector()
+        XCTAssertTrue(model.isInspectorOverlayPresented)
+    }
+
     private func ideaFocusViewSource() throws -> String {
         try String(
             contentsOf: repositoryRoot().appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeView.swift"),
@@ -120,6 +146,15 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
     private func ideaFocusViewModelSource() throws -> String {
         try String(
             contentsOf: repositoryRoot().appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeViewModel.swift"),
+            encoding: .utf8
+        )
+    }
+
+    /// The AppKit-backed editors moved to their own file in the June 2026
+    /// Idea v2 revamp; editor-internals assertions read it directly.
+    private func ideaManuscriptEditorsSource() throws -> String {
+        try String(
+            contentsOf: repositoryRoot().appendingPathComponent("UI/FocusMode/Ideas/IdeaManuscriptEditors.swift"),
             encoding: .utf8
         )
     }

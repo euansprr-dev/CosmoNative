@@ -152,6 +152,19 @@ final class CosmoTextView: NSTextView {
     /// instead of being forwarded up the responder chain (canvas zoom).
     var scrollsInternally: Bool = false
 
+    /// Second ⌘A escalates from "all text in this block" to "all blocks" when
+    /// the editor participates in a block list (Notion-style selection).
+    var onSelectAllEscalation: (() -> Bool)?
+
+    override func selectAll(_ sender: Any?) {
+        let length = (string as NSString).length
+        let coversAllText = length == 0 || selectedRange() == NSRange(location: 0, length: length)
+        if coversAllText, onSelectAllEscalation?() == true {
+            return
+        }
+        super.selectAll(sender)
+    }
+
     /// Called when the user clicks while the editor is read-only (isEditable == false).
     /// Used by canvas blocks to enter edit mode from a single click.
     var onTapWhileReadOnly: (() -> Void)?
@@ -879,6 +892,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     @Binding var shouldRefocus: Bool
 
     var fontSize: CGFloat = 16
+    var fontDesign: NSFontDescriptor.SystemDesign = .default
     var compact: Bool = false
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
@@ -908,6 +922,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var onMention: ((CGPoint, String) -> Void)?
     var onSelectionChange: ((EditorSelectionSnapshot) -> Void)?
     var onDismissMenus: (() -> Void)?
+    /// Whether the host currently shows an overlay menu (slash, mention,
+    /// selection). Lets Esc close menus before escalating to block selection.
+    var menusVisible: (() -> Bool)?
     var onContentHeightChange: ((CGFloat) -> Void)?
     var onActivate: (() -> Void)?
     var onDeactivate: (() -> Void)?
@@ -919,6 +936,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// Direct structured callback for edits that change block topology and need
     /// SwiftUI block views to update immediately.
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)?
+    /// Block-row mode: Return splits the block (boundary command) instead of
+    /// inserting a newline into this text view.
+    var splitsOnReturn: Bool = false
+    /// One-shot caret placement after an external structural edit (split/merge).
+    var caretRequest: EditorCaretRequest? = nil
+    /// Bumped by the host when editor content was rebuilt from the document by
+    /// an EXTERNAL change — content must apply even while this view is focused.
+    var externalContentToken: Int = 0
 
     var resolvedEditorTextColor: NSColor {
         overrideTextColor ?? (darkMode ? NSColor.white : NSColor(DS.documentText))
@@ -938,6 +963,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.applyFocusBand(to: textView)
         context.coordinator.textViewReference = textView
+        textView.onSelectAllEscalation = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onBoundaryCommand?(.selectAllBlocks) == true
+        }
         context.coordinator.installScrollDismissObserver(for: scrollView)
         context.coordinator.installFrameChangeObserver(for: scrollView)
         context.coordinator.normalizeSingleLineViewport(for: textView)
@@ -963,7 +991,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // Without this guard, GRDB observation spam triggers updateNSView which overwrites
         // the NSTextView with stale binding content, destroying text the user just typed.
         let isFirstResponder = textView.window?.firstResponder == textView
-        guard !context.coordinator.isUpdatingFromTextView, !isFirstResponder else {
+        // Structural edits (split/merge/delete, style changes) rebuild the
+        // content externally and MUST land even in the focused text view —
+        // otherwise the view keeps stale text and later writes it back over
+        // the document (the classic merge-corruption bug).
+        let hasFreshExternalContent = context.coordinator.lastAppliedContentToken != externalContentToken
+        guard (!context.coordinator.isUpdatingFromTextView && !isFirstResponder) || hasFreshExternalContent else {
             applyStorageOverrides(textView.textStorage)
             context.coordinator.applyPolishHighlights(to: textView)
             context.coordinator.applyFocusBand(to: textView)
@@ -973,10 +1006,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     self.shouldRefocus = false
                 }
             }
+            context.coordinator.applyCaretRequestIfNeeded(to: textView)
             context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
             return
         }
 
+        context.coordinator.lastAppliedContentToken = externalContentToken
         if !textView.attributedString().isEqual(to: attributedText) {
             let selectedRange = textView.selectedRange()
             textView.textStorage?.setAttributedString(attributedText)
@@ -992,6 +1027,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.applyFocusBand(to: textView)
         context.coordinator.normalizeSingleLineViewport(for: textView)
+        context.coordinator.applyCaretRequestIfNeeded(to: textView)
         context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
 
         if shouldRefocus {
@@ -1161,7 +1197,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     }
 
     private func resolvedBaseFont() -> NSFont {
-        NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
+        EditorFontPolicy.font(ofSize: fontSize, weight: baseFontWeight, design: fontDesign)
     }
 
     private func resolvedTextInsets() -> NSSize {
@@ -1227,6 +1263,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         /// Deferred attributedText sync — 50ms debounce for performance.
         /// Must be cancellable from resignFirstResponder to flush final state.
         var deferredSyncWorkItem: DispatchWorkItem?
+        /// Last externalContentToken whose content this view has applied —
+        /// a mismatch forces application even while first responder.
+        var lastAppliedContentToken = 0
+        /// Last consumed one-shot caret request token.
+        var lastAppliedCaretToken = 0
         private var lastReportedHeight: CGFloat = 0
         private var lastObservedFrameWidth: CGFloat = 0
         private var lastNavigationTargetID: UUID?
@@ -1720,6 +1761,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                if parent.menusVisible?() != true,
+                   parent.onBoundaryCommand?(.escapeSelectBlock) == true {
+                    dismissMenus()
+                    return true
+                }
                 dismissMenus()
                 return true
             }
@@ -1762,6 +1808,29 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 if selectionIsOnEmptyFinalLine(in: textView),
                    parent.onBoundaryCommand?(.insertNewlineOnEmptyFinalLine) == true {
                     return true
+                }
+
+                // Block rows: Return ALWAYS splits the block at the caret —
+                // the Notion model. Shift+Return (insertLineBreak above) is
+                // the only way to stay in the block. Menus keep Return for
+                // committing their selection. The caret offset is measured
+                // from the END of the text so list/quote prefixes rendered at
+                // the head don't shift it; the live string rides along since
+                // the document binding can lag the text view by ~50ms.
+                if parent.splitsOnReturn, parent.menusVisible?() != true {
+                    let selection = textView.selectedRange()
+                    if selection.length > 0 {
+                        textView.insertText("", replacementRange: selection)
+                    }
+                    let textLength = (textView.string as NSString).length
+                    let caretOffsetFromEnd = max(0, textLength - textView.selectedRange().location)
+                    if parent.onBoundaryCommand?(.splitBlock(
+                        caretUTF16OffsetFromEnd: caretOffsetFromEnd,
+                        livePlainText: textView.string
+                    )) == true {
+                        dismissMenus()
+                        return true
+                    }
                 }
 
                 if let collapsedHeadingRange = collapsedHeadingLineRangeContainingSelection(in: textView) {
@@ -2045,6 +2114,22 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private func dismissMenus() {
             mentionStartIndex = nil
             parent.onDismissMenus?()
+        }
+
+        /// Consumes a one-shot caret request from a structural edit — focuses
+        /// the view and places the caret measured from the END of the text so
+        /// rendered list/quote prefixes at the head don't shift it.
+        func applyCaretRequestIfNeeded(to textView: CosmoTextView) {
+            guard let request = parent.caretRequest, request.token != lastAppliedCaretToken else { return }
+            lastAppliedCaretToken = request.token
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView else { return }
+                let length = (textView.string as NSString).length
+                let location = max(0, min(length, length - request.utf16OffsetFromEnd))
+                textView.window?.makeFirstResponder(textView)
+                textView.setSelectedRange(NSRange(location: location, length: 0))
+                textView.scrollRangeToVisible(NSRange(location: location, length: 0))
+            }
         }
 
         // MARK: - Commands
@@ -2349,11 +2434,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             switch level {
             case 1:
-                font = NSFont.systemFont(ofSize: max(32, parent.fontSize + 16), weight: .bold)
+                font = EditorFontPolicy.font(ofSize: max(32, parent.fontSize + 16), weight: .bold, design: parent.fontDesign)
             case 2:
-                font = NSFont.systemFont(ofSize: max(24, parent.fontSize + 8), weight: .semibold)
+                font = EditorFontPolicy.font(ofSize: max(24, parent.fontSize + 8), weight: .semibold, design: parent.fontDesign)
             default:
-                font = NSFont.systemFont(ofSize: max(20, parent.fontSize + 4), weight: .medium)
+                font = EditorFontPolicy.font(ofSize: max(20, parent.fontSize + 4), weight: .medium, design: parent.fontDesign)
             }
 
             let lineRange = currentLineRange(in: textView)
@@ -2752,7 +2837,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             isInHeadingMode = false
             activeBlockMode = .none
             textView.typingAttributes = [
-                .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
+                .font: EditorFontPolicy.font(ofSize: parent.fontSize, weight: parent.baseFontWeight, design: parent.fontDesign),
                 .foregroundColor: parent.resolvedEditorTextColor,
                 .paragraphStyle: defaultParagraphStyle()
             ]
@@ -2763,7 +2848,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private func resetInlineFormattingOnly(_ textView: NSTextView) {
             isInHeadingMode = false
             var attrs = textView.typingAttributes
-            attrs[.font] = NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight)
+            attrs[.font] = EditorFontPolicy.font(ofSize: parent.fontSize, weight: parent.baseFontWeight, design: parent.fontDesign)
             attrs[.foregroundColor] = parent.resolvedEditorTextColor
             attrs.removeValue(forKey: RichDocumentAttributeKeys.headingLevel)
             attrs.removeValue(forKey: RichDocumentAttributeKeys.headingBlockID)

@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct CortexActionBar: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     let primaryAction: CommandKContextualAction?
     let actions: [CommandKContextualAction]
     var hasSelection: Bool

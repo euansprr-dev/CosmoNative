@@ -16,7 +16,7 @@ public struct CommandKView: View {
     var initialTab: CommandKTab?
     var isActive: Bool
     var searchFocusRequest: Int
-    @StateObject private var viewModel: CommandKViewModel
+    @State private var viewModel: CommandKViewModel
     @FocusState private var isSearchFocused: Bool
     @Namespace private var cortexNamespace
     @State private var searchText = ""
@@ -52,7 +52,7 @@ public struct CommandKView: View {
         }
         self.isActive = isActive
         self.searchFocusRequest = searchFocusRequest
-        _viewModel = StateObject(wrappedValue: viewModel)
+        _viewModel = State(initialValue: viewModel)
     }
 
     // MARK: - Body
@@ -132,7 +132,7 @@ public struct CommandKView: View {
             viewModel.openSelected()
             return .handled
         }
-        .onKeyPress(.tab) { handleTab() }
+        .onKeyPress(keys: [.tab]) { handleTab($0) }
     }
 
     // MARK: - Background
@@ -144,11 +144,13 @@ public struct CommandKView: View {
     // MARK: - Panel Container
 
     private func panelContainer(geometry: GeometryProxy) -> some View {
-        VStack(spacing: DS.space12) {
-            searchBarPill(geometry: geometry)
-                .zIndex(2)
-            contentPanel(geometry: geometry)
-                .zIndex(3)
+        GlassEffectContainer(spacing: DS.space12) {
+            VStack(spacing: DS.space12) {
+                searchBarPill(geometry: geometry)
+                    .zIndex(2)
+                contentPanel(geometry: geometry)
+                    .zIndex(3)
+            }
         }
     }
 
@@ -236,10 +238,10 @@ public struct CommandKView: View {
         }
         .padding(.horizontal, DS.space20)
         .frame(width: searchBarWidth(for: geometry), height: CommandKMetrics.searchBarHeight)
-        .cortexSearchBarPanel()
+        .cortexSearchBarPanel(glassID: "cortex-pill", in: cortexNamespace)
         .overlay(
             RoundedRectangle(cornerRadius: CommandKMetrics.searchBarHeight / 2, style: .continuous)
-                .strokeBorder(isSearchFocused ? DS.gilt.opacity(0.45) : Color.clear, lineWidth: isSearchFocused ? 1 : 0)
+                .strokeBorder(isSearchFocused ? DS.focusRing : Color.clear, lineWidth: isSearchFocused ? 1 : 0)
         )
     }
 
@@ -259,18 +261,19 @@ public struct CommandKView: View {
                 Text(scopeLabel)
                     .font(DS.caption)
                     .foregroundStyle(DS.textSecondary)
+                    .contentTransition(.opacity)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(DS.textMuted)
             }
             .padding(.horizontal, DS.space10)
             .padding(.vertical, DS.space6)
-            .background(DS.commandChromeControlFill, in: Capsule())
-            .overlay(Capsule().strokeBorder(DS.commandChromeControlBorder, lineWidth: 0.5))
+            .glassEffect(.regular.interactive(), in: .capsule)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .animation(ProMotionSprings.snappy, value: scopeLabel)
         .accessibilityLabel("Search scope")
     }
 
@@ -329,7 +332,7 @@ public struct CommandKView: View {
             )
                 .frame(height: contentPanelHeight(for: geometry))
                 .frame(width: panelWidth(for: geometry))
-                .cortexGlassPanel()
+                .cortexGlassPanel(glassID: "cortex-panel", in: cortexNamespace)
         }
     }
 
@@ -365,6 +368,7 @@ public struct CommandKView: View {
         HStack(spacing: DS.space16) {
             keyHint(keys: "↑↓", label: "Navigate")
             keyHint(keys: "↵", label: "Open")
+            keyHint(keys: "⇥", label: "Scope")
             keyHint(keys: "⎋", label: "Close")
             Spacer()
         }
@@ -474,12 +478,15 @@ public struct CommandKView: View {
                 .font(DS.callout)
                 .foregroundStyle(viewModel.isVoiceActive ? DS.accent : DS.textSecondary)
                 .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(viewModel.isVoiceActive ? DS.accent.opacity(0.15) : Color.clear)
+                .glassEffect(
+                    viewModel.isVoiceActive
+                        ? .regular.tint(DS.accent.opacity(0.15)).interactive()
+                        : .regular.interactive(),
+                    in: .circle
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Voice input")
     }
 
     private var clearQueryButton: some View {
@@ -640,8 +647,19 @@ public struct CommandKView: View {
         }
     }
 
-    private func handleTab() -> KeyPress.Result {
+    private func handleTab(_ press: KeyPress) -> KeyPress.Result {
         guard !isActionPanelPresented else { return .ignored }
+
+        let scopes = CortexScope.allCases
+        let offset = press.modifiers.contains(.shift) ? -1 : 1
+
+        if case .expandedDomain(let currentTab) = viewModel.cortexMode,
+           let index = scopes.firstIndex(where: { $0.tab == currentTab }) {
+            let next = scopes[(index + offset + scopes.count) % scopes.count]
+            openExpandedDomain(next.tab)
+        } else if let edge = offset > 0 ? scopes.first : scopes.last {
+            openExpandedDomain(edge.tab)
+        }
         return .handled
     }
 
@@ -839,8 +857,8 @@ private struct CortexExpandedDomainShell<Content: View>: View {
             databaseHeaderChips
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.leading, 46)
-        .padding(.top, 36)
+        .padding(.leading, CommandKMetrics.mastheadTitleLeadingWide)
+        .padding(.top, CommandKMetrics.mastheadDatabaseTitleTop)
         .allowsHitTesting(false)
     }
 
@@ -876,15 +894,15 @@ private struct CortexExpandedDomainShell<Content: View>: View {
 
     private var titleLeadingPadding: CGFloat {
         switch tab {
-        case .database, .ideas: return 46
-        default: return 34
+        case .database, .ideas: return CommandKMetrics.mastheadTitleLeadingWide
+        default: return CommandKMetrics.mastheadTitleLeadingTight
         }
     }
 
     private var titleTopPadding: CGFloat {
         switch tab {
-        case .ideas: return 48
-        default: return 42
+        case .ideas: return CommandKMetrics.mastheadTitleTopIdeas
+        default: return CommandKMetrics.mastheadTitleTopDefault
         }
     }
 
@@ -899,7 +917,7 @@ private struct CortexExpandedDomainShell<Content: View>: View {
         Group {
             if tab == .swipeGallery && DS.palette.isDark {
                 LinearGradient(
-                    colors: [Color(hex: "1D1B17"), Color(hex: "11100E")],
+                    colors: DS.mastheadSwipeBodyDark,
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -923,7 +941,7 @@ private struct CortexExpandedDomainShell<Content: View>: View {
             Text(title)
                 .font(.system(size: 14, weight: .medium))
         }
-        .foregroundStyle(isActive ? Color(hex: "18261D") : Color.white.opacity(0.9))
+        .foregroundStyle(isActive ? DS.mastheadChipText : Color.white.opacity(0.9))
         .padding(.horizontal, 14)
         .frame(height: 34)
         .background(
@@ -967,52 +985,15 @@ private struct CommandKHeaderScene: View {
     }
 }
 
-private struct CommandKHeaderMastheadPalette {
-    let background: [Color]
-    let accent: Color
-    let line: Color
-    let cardFill: Color
-    let cardStroke: Color
-    let text: Color
+private typealias CommandKHeaderMastheadPalette = DS.MastheadScenePalette
 
-    static func palette(for tab: CommandKTab) -> CommandKHeaderMastheadPalette {
+extension DS.MastheadScenePalette {
+    static func palette(for tab: CommandKTab) -> DS.MastheadScenePalette {
         switch tab {
-        case .database, .inquiry:
-            return CommandKHeaderMastheadPalette(
-                background: [Color(hex: "1D432A"), Color(hex: "163520"), Color(hex: "0B1C12")],
-                accent: Color(hex: "A9CFB0"),
-                line: Color(hex: "D6E6D4"),
-                cardFill: Color(hex: "EFF5EC"),
-                cardStroke: Color(hex: "DDEBDD"),
-                text: Color(hex: "F6FBF3")
-            )
-        case .swipeGallery:
-            return CommandKHeaderMastheadPalette(
-                background: [Color(hex: "A16E34"), Color(hex: "7A4A1D"), Color(hex: "3A1E0A")],
-                accent: Color(hex: "FFD08C"),
-                line: Color(hex: "F7D9AA"),
-                cardFill: Color(hex: "F8E8D0"),
-                cardStroke: Color(hex: "F2D2A1"),
-                text: Color(hex: "FFF9EF")
-            )
-        case .ideas:
-            return CommandKHeaderMastheadPalette(
-                background: [Color(hex: "4B4387"), Color(hex: "312B67"), Color(hex: "19163D")],
-                accent: Color(hex: "CFC5FF"),
-                line: Color(hex: "DDD7FF"),
-                cardFill: Color(hex: "F3F0FA"),
-                cardStroke: Color(hex: "D9D1F4"),
-                text: Color(hex: "FAF8FF")
-            )
-        case .readwise:
-            return CommandKHeaderMastheadPalette(
-                background: [Color(hex: "A87338"), Color(hex: "7D4D24"), Color(hex: "43240D")],
-                accent: Color(hex: "F1C48B"),
-                line: Color(hex: "F2D8B4"),
-                cardFill: Color(hex: "F4E4CE"),
-                cardStroke: Color(hex: "E5C9A5"),
-                text: Color(hex: "FFF7ED")
-            )
+        case .database, .inquiry: return DS.mastheadDatabaseScene
+        case .swipeGallery: return DS.mastheadSwipeScene
+        case .ideas: return DS.mastheadIdeasScene
+        case .readwise: return DS.mastheadLibraryScene
         }
     }
 }

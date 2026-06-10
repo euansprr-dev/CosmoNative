@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct LinkConnectionsOverlay: View {
-    @ObservedObject var viewModel: IdeaFocusModeViewModel
+    var viewModel: IdeaFocusModeViewModel
     @Binding var isPresented: Bool
 
     @State private var searchText: String = ""

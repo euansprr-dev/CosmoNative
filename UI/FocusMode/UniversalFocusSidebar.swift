@@ -29,13 +29,6 @@ struct UniversalFocusSidebar<Content: View>: View {
         // This eliminates ghost hit areas from .offset() (which only moves visuals, not hit testing).
         if shouldShow {
             CosmoGlassPanel(
-                sceneTint: CosmoGlassSceneTint(
-                    primary: accentColor,
-                    secondary: DS.accent,
-                    tertiary: DS.entityContent,
-                    intensity: 0.54,
-                    edgeIntensity: 0.64
-                ),
                 role: .focusSidebar,
                 cornerRadius: 18
             ) {

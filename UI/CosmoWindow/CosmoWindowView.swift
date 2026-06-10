@@ -102,7 +102,6 @@ struct CosmoWindowView: View {
             composerSection
         }
         .cosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .floatingAssistant,
             cornerRadius: CosmoWindowMetrics.panelCornerRadius
         )
@@ -589,7 +588,6 @@ struct CosmoWindowView: View {
         .padding(16)
         .frame(width: 340)
         .cosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .floatingAssistant,
             cornerRadius: 18
         )
@@ -1507,7 +1505,7 @@ private struct CosmoAgentPickerPopover: View {
         }
         .padding(12)
         .frame(width: 292)
-        .cosmoGlassPanel(sceneMaterial: .neutral, role: .floatingAssistant, cornerRadius: 16)
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 16)
     }
 
     private func agentRow(_ profile: CustomAgentProfile?) -> some View {
@@ -1829,7 +1827,6 @@ private struct CosmoModelPickerPopover: View {
         .padding(12)
         .frame(width: 268)
         .cosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .floatingAssistant,
             cornerRadius: 16
         )

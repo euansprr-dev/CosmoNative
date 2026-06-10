@@ -273,6 +273,13 @@ struct InquiryNotebookPane: View {
         .padding(DS.space10)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
+        .contextMenu {
+            InquiryExtractCorrectionMenu(
+                viewModel: viewModel,
+                extractUUID: item.uuid,
+                currentKind: kind
+            )
+        }
     }
 
     @ViewBuilder

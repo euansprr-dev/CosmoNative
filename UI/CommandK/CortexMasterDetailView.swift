@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct CortexMasterDetailView: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     var isDomainHydrated = true
 
     @StateObject private var libraryVM = LibraryViewModel()
@@ -28,7 +28,7 @@ struct CortexMasterDetailView: View {
                     onSelectDomainItem: selectDomainItem,
                     onOpenDomainItem: openDomainItem
                 )
-                    .frame(width: 360)
+                    .frame(width: CommandKMetrics.railWidth)
 
                 Rectangle()
                     .fill(DS.commandChromeSeparatorStrong)

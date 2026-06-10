@@ -62,7 +62,9 @@ enum DeepScoutProviders {
         intent: InquiryResearchIntent,
         profile: InquiryBranchResearchProfile
     ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
-        let archiveQuery = "(\(query)) AND mediatype:(texts)"
+        // Title-scoped: full-text search surfaces archival noise (catalog IDs,
+        // declassified document dumps) whose bodies merely mention the terms.
+        let archiveQuery = "title:(\(query)) AND mediatype:(texts)"
         guard let url = searchURL(base: "https://archive.org/advancedsearch.php", queryItems: [
             URLQueryItem(name: "q", value: archiveQuery),
             URLQueryItem(name: "fl[]", value: "identifier"),
@@ -97,7 +99,9 @@ enum DeepScoutProviders {
         profile: InquiryBranchResearchProfile
     ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
         guard let apiKey = APIKeys.youtube, !apiKey.isEmpty else {
-            return (InquiryProviderStatus(provider: .youtube, state: .missingKey, message: "Add a YouTube API key to include videos"), [])
+            // No Data API key — fall back to parsing the public results page so
+            // videos still appear (they're a core source lane, not optional).
+            return await fetchYouTubeViaSearchPage(query: query, lane: lane, intent: intent, profile: profile)
         }
         guard let url = searchURL(base: "https://www.googleapis.com/youtube/v3/search", queryItems: [
             URLQueryItem(name: "part", value: "snippet"),
@@ -124,6 +128,180 @@ enum DeepScoutProviders {
         } catch {
             return (InquiryProviderStatus(provider: .youtube, state: .failed, message: error.localizedDescription), [])
         }
+    }
+
+    /// Keyless YouTube fallback: fetches the public results page and parses the
+    /// embedded ytInitialData JSON for videoRenderer entries. Less precise than
+    /// the Data API but keeps the lecture lane alive without configuration.
+    static func fetchYouTubeViaSearchPage(
+        query: String,
+        lane: InquirySourceLane,
+        intent: InquiryResearchIntent,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        guard let url = searchURL(base: "https://www.youtube.com/results", queryItems: [
+            URLQueryItem(name: "search_query", value: query),
+            URLQueryItem(name: "hl", value: "en")
+        ]) else {
+            return (InquiryProviderStatus(provider: .youtube, state: .failed, message: "Invalid query"), [])
+        }
+        var request = URLRequest(url: url)
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let html = String(data: data, encoding: .utf8),
+                  let initialData = ytInitialData(in: html) else {
+                return (InquiryProviderStatus(provider: .youtube, state: .failed, message: "Could not parse results page"), [])
+            }
+            let renderers = collectDictionaries(named: "videoRenderer", in: initialData)
+            let candidates = renderers.prefix(8).compactMap {
+                youtubeScrapedCandidate(from: $0, lane: lane, intent: intent, profile: profile)
+            }
+            return (InquiryProviderStatus(provider: .youtube, state: .succeeded, count: candidates.count), Array(candidates))
+        } catch {
+            return (InquiryProviderStatus(provider: .youtube, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    private static func ytInitialData(in html: String) -> [String: Any]? {
+        guard let markerRange = html.range(of: "var ytInitialData = ") else { return nil }
+        let tail = html[markerRange.upperBound...]
+        guard let endRange = tail.range(of: ";</script>") else { return nil }
+        let json = String(tail[..<endRange.lowerBound])
+        guard let data = json.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// Recursively collects every dictionary stored under the given key — robust
+    /// against YouTube reshuffling its nesting structure.
+    private static func collectDictionaries(named key: String, in object: Any, limit: Int = 16) -> [[String: Any]] {
+        var found: [[String: Any]] = []
+        func walk(_ node: Any) {
+            guard found.count < limit else { return }
+            if let dict = node as? [String: Any] {
+                if let match = dict[key] as? [String: Any] {
+                    found.append(match)
+                }
+                for value in dict.values { walk(value) }
+            } else if let array = node as? [Any] {
+                for value in array { walk(value) }
+            }
+        }
+        walk(object)
+        return found
+    }
+
+    private static func youtubeScrapedCandidate(
+        from renderer: [String: Any],
+        lane: InquirySourceLane,
+        intent: InquiryResearchIntent,
+        profile: InquiryBranchResearchProfile
+    ) -> InquirySourceCandidate? {
+        guard let videoId = renderer["videoId"] as? String, !videoId.isEmpty,
+              let title = runsText(renderer["title"]), !title.isEmpty else { return nil }
+        let channel = runsText(renderer["ownerText"]) ?? runsText(renderer["longBylineText"])
+        let published = simpleText(renderer["publishedTimeText"])
+        let views = simpleText(renderer["viewCountText"])
+        let length = simpleText(renderer["lengthText"])
+        let snippet = runsText((renderer["detailedMetadataSnippets"] as? [[String: Any]])?.first?["snippetText"])
+
+        return InquirySourceCandidate(
+            id: stableID(provider: .youtube, key: videoId),
+            provider: .youtube,
+            sourceKind: .video,
+            title: decodeHTMLEntities(title),
+            subtitle: channel,
+            url: "https://www.youtube.com/watch?v=\(videoId)",
+            abstract: snippet,
+            evidenceRole: lane == .teacherLecture ? .lecture : .videoExplainer,
+            reason: "Deep Scout lecture candidate from YouTube.",
+            qualitySignals: [channel, published, views, length, "Video"].compactMap { $0 },
+            branchQuestionUUID: profile.activeQuestionUUID,
+            branchNodeId: profile.branchNodeId,
+            researchIntent: intent,
+            sourceLane: lane
+        )
+    }
+
+    private static func runsText(_ node: Any?) -> String? {
+        guard let dict = node as? [String: Any] else { return nil }
+        if let simple = dict["simpleText"] as? String { return simple }
+        guard let runs = dict["runs"] as? [[String: Any]] else { return nil }
+        let joined = runs.compactMap { $0["text"] as? String }.joined()
+        return joined.isEmpty ? nil : joined
+    }
+
+    private static func simpleText(_ node: Any?) -> String? {
+        guard let dict = node as? [String: Any] else { return nil }
+        return (dict["simpleText"] as? String) ?? runsText(dict)
+    }
+
+    /// Podcast episodes via the iTunes Search API — keyless and stable.
+    static func fetchPodcasts(
+        query: String,
+        lane: InquirySourceLane,
+        intent: InquiryResearchIntent,
+        profile: InquiryBranchResearchProfile
+    ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        guard let url = searchURL(base: "https://itunes.apple.com/search", queryItems: [
+            URLQueryItem(name: "media", value: "podcast"),
+            URLQueryItem(name: "entity", value: "podcastEpisode"),
+            URLQueryItem(name: "term", value: query),
+            URLQueryItem(name: "limit", value: "8")
+        ]) else {
+            return (InquiryProviderStatus(provider: .podcast, state: .failed, message: "Invalid query"), [])
+        }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let results = object?["results"] as? [[String: Any]] ?? []
+            let candidates = results.compactMap {
+                podcastCandidate(from: $0, lane: lane, intent: intent, profile: profile)
+            }
+            return (InquiryProviderStatus(provider: .podcast, state: .succeeded, count: candidates.count), candidates)
+        } catch {
+            return (InquiryProviderStatus(provider: .podcast, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    private static func podcastCandidate(
+        from result: [String: Any],
+        lane: InquirySourceLane,
+        intent: InquiryResearchIntent,
+        profile: InquiryBranchResearchProfile
+    ) -> InquirySourceCandidate? {
+        guard let title = result["trackName"] as? String, !title.isEmpty,
+              let pageURL = (result["trackViewUrl"] as? String) ?? (result["collectionViewUrl"] as? String) else {
+            return nil
+        }
+        let show = result["collectionName"] as? String
+        let releaseDate = (result["releaseDate"] as? String).map { String($0.prefix(4)) }
+        let description = (result["description"] as? String) ?? (result["shortDescription"] as? String)
+        let key = (result["trackId"] as? Int).map(String.init) ?? pageURL
+
+        return InquirySourceCandidate(
+            id: stableID(provider: .podcast, key: key),
+            provider: .podcast,
+            sourceKind: .video,
+            title: decodeHTMLEntities(title),
+            subtitle: show,
+            publishedDate: releaseDate,
+            url: pageURL,
+            abstract: description,
+            evidenceRole: .lecture,
+            reason: "Deep Scout podcast episode from iTunes.",
+            qualitySignals: [show, releaseDate.map { "Published \($0)" }, "Podcast"].compactMap { $0 },
+            branchQuestionUUID: profile.activeQuestionUUID,
+            branchNodeId: profile.branchNodeId,
+            researchIntent: intent,
+            sourceLane: lane
+        )
     }
 
     static func openLibraryCandidate(

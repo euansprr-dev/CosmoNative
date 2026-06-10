@@ -157,6 +157,7 @@ struct RichTextEditor: View {
 
     // Configuration
     var fontSize: CGFloat = 16
+    var fontDesign: NSFontDescriptor.SystemDesign = .default
     var compact: Bool = false  // Compact mode for notes
     var darkMode: Bool = false  // Dark mode for Thinkspace blocks
     var overrideTextColor: NSColor? = nil
@@ -189,6 +190,9 @@ struct RichTextEditor: View {
     var onCommit: (() -> Void)? = nil
     var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
     var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
+    var splitsOnReturn: Bool = false
+    var caretRequest: EditorCaretRequest? = nil
+    var externalContentToken: Int = 0
     var onPlainTextDidChange: ((String) -> Void)? = nil
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
     var autoFocus: Bool = false
@@ -224,6 +228,7 @@ struct RichTextEditor: View {
         text: Binding<NSAttributedString>,
         plainText: Binding<String>,
         fontSize: CGFloat = 16,
+        fontDesign: NSFontDescriptor.SystemDesign = .default,
         compact: Bool = false,
         placeholder: String = "Start typing...",
         darkMode: Bool = false,
@@ -257,6 +262,9 @@ struct RichTextEditor: View {
         onCommit: (() -> Void)? = nil,
         onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil,
         onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil,
+        splitsOnReturn: Bool = false,
+        caretRequest: EditorCaretRequest? = nil,
+        externalContentToken: Int = 0,
         onPlainTextDidChange: ((String) -> Void)? = nil,
         onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil,
         autoFocus: Bool = false,
@@ -265,6 +273,7 @@ struct RichTextEditor: View {
         self._text = text
         self._plainText = plainText
         self.fontSize = fontSize
+        self.fontDesign = fontDesign
         self.compact = compact
         self.placeholder = placeholder
         self.darkMode = darkMode
@@ -298,6 +307,9 @@ struct RichTextEditor: View {
         self.onCommit = onCommit
         self.onBoundaryCommand = onBoundaryCommand
         self.onSlashCommandSelected = onSlashCommandSelected
+        self.splitsOnReturn = splitsOnReturn
+        self.caretRequest = caretRequest
+        self.externalContentToken = externalContentToken
         self.onPlainTextDidChange = onPlainTextDidChange
         self.onStructuredDocumentChange = onStructuredDocumentChange
         self.autoFocus = autoFocus
@@ -313,6 +325,7 @@ struct RichTextEditor: View {
                 cursorPosition: $cursorPosition,
                 shouldRefocus: $shouldRefocusEditor,
                 fontSize: fontSize,
+                fontDesign: fontDesign,
                 compact: compact,
                 darkMode: darkMode,
                 overrideTextColor: overrideTextColor,
@@ -369,6 +382,7 @@ struct RichTextEditor: View {
                 onDismissMenus: {
                     dismissAllOverlays()
                 },
+                menusVisible: { isOverlayVisible },
                 onContentHeightChange: { height in
                     scheduleMeasuredContentHeightUpdate(height)
                 },
@@ -377,7 +391,10 @@ struct RichTextEditor: View {
                 onCommit: onCommit,
                 onBoundaryCommand: onBoundaryCommand,
                 onPlainTextDidChange: onPlainTextDidChange,
-                onStructuredDocumentChange: onStructuredDocumentChange
+                onStructuredDocumentChange: onStructuredDocumentChange,
+                splitsOnReturn: splitsOnReturn,
+                caretRequest: caretRequest,
+                externalContentToken: externalContentToken
             )
             // Non-scrolling editors report their live height through
             // CosmoScrollView.intrinsicContentSize. Do not also pin this view to
@@ -395,7 +412,7 @@ struct RichTextEditor: View {
             // Placeholder - aligned with textContainerInset (16x16)
             if plainText.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: fontSize, weight: swiftUIFontWeight))
+                    .font(.system(size: fontSize, weight: swiftUIFontWeight, design: EditorFontPolicy.swiftUIDesign(fontDesign)))
                     .foregroundStyle(darkMode ? Color.white.opacity(0.4) : DS.documentTextMuted)
                     .padding(.top, editorInsets.top)
                     .padding(.leading, editorInsets.leading)

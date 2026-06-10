@@ -39,7 +39,13 @@ struct InquirySourcesRail: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DS.space8) {
-                    ForEach(visibleSources, id: \.sourceUUID) { ref in
+                    if !userAddedSources.isEmpty {
+                        sourceGroupHeader("ADDED BY YOU", icon: "person", count: userAddedSources.count)
+                        ForEach(userAddedSources, id: \.sourceUUID) { ref in
+                            InquirySourceRow(viewModel: viewModel, ref: ref)
+                        }
+                    }
+                    ForEach(discoveredSources, id: \.sourceUUID) { ref in
                         InquirySourceRow(viewModel: viewModel, ref: ref)
                     }
                     if !candidates.isEmpty {
@@ -50,6 +56,24 @@ struct InquirySourcesRail: View {
                 .padding(.vertical, DS.space12)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func sourceGroupHeader(_ title: String, icon: String, count: Int) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DS.accent.opacity(0.7))
+                .accessibilityHidden(true)
+            Text(title)
+                .font(CosmoTypography.labelSmall)
+                .tracking(1.1)
+                .foregroundStyle(CosmoColors.textTertiary)
+            Spacer()
+            Text("\(count)")
+                .font(CosmoTypography.labelSmall)
+                .foregroundStyle(CosmoColors.textTertiary)
+                .monospacedDigit()
         }
     }
 
@@ -116,6 +140,9 @@ struct InquirySourcesRail: View {
                 .padding(.vertical, DS.space8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if viewModel.isRefreshingSources, !viewModel.liveProviderStatuses.isEmpty {
+                InquiryScoutProgressList(statuses: viewModel.liveProviderStatuses)
+            }
             Button {
                 Task { await viewModel.refreshSourceRecommendations(query: nil, mode: .deepScout) }
             } label: {
@@ -148,12 +175,20 @@ struct InquirySourcesRail: View {
             .sorted { $0.lastOpenedAt > $1.lastOpenedAt }
     }
 
+    private var userAddedSources: [InquirySourceRef] {
+        visibleSources.filter { $0.addedByUser == true }
+    }
+
+    private var discoveredSources: [InquirySourceRef] {
+        visibleSources.filter { $0.addedByUser != true }
+    }
+
     private var candidates: [InquirySourceCandidate] {
         viewModel.activeSourceCandidates.filter { $0.importStatus == .candidate }
     }
 
     private var candidateGroups: [CandidateLaneGroup] {
-        let limited = Array(candidates.prefix(12))
+        let limited = Array(candidates.prefix(20))
         let grouped = Dictionary(grouping: limited) { candidate in
             candidate.sourceLane ?? fallbackLane(for: candidate)
         }
@@ -182,7 +217,7 @@ struct InquirySourcesRail: View {
             return .localLibrary
         case .googleBooks, .openLibrary, .internetArchive:
             return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
-        case .youtube:
+        case .youtube, .podcast:
             return .teacherLecture
         case .pubMed:
             return .clinicalEvidence
@@ -197,6 +232,62 @@ struct InquirySourcesRail: View {
 private struct CandidateLaneGroup {
     var lane: InquirySourceLane
     var candidates: [InquirySourceCandidate]
+}
+
+// MARK: - Live provider progress
+
+private struct InquiryScoutProgressList: View {
+    let statuses: [InquiryProviderStatus]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(statuses.sorted { $0.provider.displayName < $1.provider.displayName }) { status in
+                HStack(spacing: 6) {
+                    statusIcon(status.state)
+                    Text(status.provider.displayName)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                        .lineLimit(1)
+                    Spacer()
+                    if status.state == .succeeded, status.count > 0 {
+                        Text("\(status.count)")
+                            .font(CosmoTypography.caption)
+                            .foregroundStyle(CosmoColors.textTertiary)
+                            .monospacedDigit()
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.bottom, DS.space8)
+        .animation(ProMotionSprings.gentle, value: statuses)
+    }
+
+    @ViewBuilder
+    private func statusIcon(_ state: InquiryProviderStatus.State) -> some View {
+        switch state {
+        case .idle, .loading:
+            ProgressView()
+                .controlSize(.mini)
+                .scaleEffect(0.55)
+                .frame(width: 10, height: 10)
+        case .succeeded:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(DS.green)
+                .accessibilityLabel("Done")
+        case .failed, .rateLimited:
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 9))
+                .foregroundStyle(DS.orange)
+                .accessibilityLabel("Failed")
+        case .missingKey:
+            Image(systemName: "key.slash")
+                .font(.system(size: 9))
+                .foregroundStyle(CosmoColors.textTertiary)
+                .accessibilityLabel("Missing API key")
+        }
+    }
 }
 
 // MARK: - Source row
@@ -324,7 +415,7 @@ struct InquiryCandidateRow: View {
             return .localLibrary
         case .googleBooks, .openLibrary, .internetArchive:
             return candidate.evidenceRole == .primaryText ? .primaryText : .deepRead
-        case .youtube:
+        case .youtube, .podcast:
             return .teacherLecture
         case .pubMed:
             return .clinicalEvidence

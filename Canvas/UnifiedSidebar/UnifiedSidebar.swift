@@ -3,6 +3,7 @@
 // March 2026 — Command Center navigation
 
 import SwiftUI
+import AppKit
 
 // MARK: - Navigation Destination
 
@@ -31,40 +32,6 @@ enum MainSidebarContentLayoutPolicy {
         }
 
         return sidebarReservedWidth
-    }
-}
-
-enum MainSidebarSceneSignalPolicy {
-    static func shouldAcceptRouteSceneSignals(isContentPushAnimating: Bool) -> Bool {
-        !isContentPushAnimating
-    }
-
-    static func routeSignals(
-        from signals: [CosmoGlassSceneSignal],
-        sidebarReservedWidth: CGFloat
-    ) -> [CosmoGlassSceneSignal] {
-        let visibleSignals = signals.filter { $0.rect.width > 1 && $0.rect.height > 1 }
-        return Array(
-            visibleSignals
-                .sorted {
-                    let lhsDistance = max(0, $0.rect.minX - sidebarReservedWidth)
-                    let rhsDistance = max(0, $1.rect.minX - sidebarReservedWidth)
-                    if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
-                    return $0.intensity > $1.intensity
-                }
-                .prefix(8)
-        )
-    }
-
-    static func shouldUpdateRouteSignals(
-        current: [CosmoGlassSceneSignal],
-        next: [CosmoGlassSceneSignal]
-    ) -> Bool {
-        current.map(\.visualKey) != next.map(\.visualKey)
-    }
-
-    static func canvasSignals(from signals: [CosmoGlassSceneSignal]) -> [CosmoGlassSceneSignal] {
-        signals.filter { $0.source == .canvasBlock || $0.source == .canvasCluster }
     }
 }
 
@@ -235,7 +202,7 @@ enum UnifiedSidebarMetrics {
     static let railHitTarget: CGFloat = 32
     static let hoverRevealTriggerWidth: CGFloat = 18
     static let iconSize: CGFloat = 16
-    static let resizeHandleWidth: CGFloat = 8
+    static let resizeHandleWidth: CGFloat = 10
     static let floatingMargin: CGFloat = 8
 
     static func clampedExpandedWidth(_ width: CGFloat) -> CGFloat {
@@ -298,32 +265,17 @@ private struct UnifiedSidebarRowChromeModifier: ViewModifier {
     let activeBorder: Color
 
     func body(content: Content) -> some View {
+        // Liquid Glass panels are brighter than the old synthetic material, so
+        // row fills stay lighter and the rim depth comes from the glass itself.
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(isActive ? activeFill.opacity(0.78) : (isHovered ? hoverFill.opacity(0.58) : Color.clear))
+                    .fill(isActive ? activeFill.opacity(0.55) : (isHovered ? hoverFill.opacity(0.40) : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(isActive ? activeBorder.opacity(0.7) : DS.sidebarMaterialHighlight.opacity(isHovered ? 0.16 : 0), lineWidth: 0.75)
+                    .stroke(isActive ? activeBorder.opacity(0.5) : Color.clear, lineWidth: 0.75)
             )
-            .overlay(alignment: .topLeading) {
-                if isActive {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    DS.sidebarMaterialHighlight.opacity(0.22),
-                                    Color.clear
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.55
-                        )
-                        .allowsHitTesting(false)
-                }
-            }
     }
 }
 
@@ -358,8 +310,6 @@ struct UnifiedSidebar: View {
     @Binding var panelWidth: CGFloat
     @ObservedObject var thinkspaceManager: ThinkspaceManager
     @ObservedObject var commandCenterViewModel: CommandCenterDashboardViewModel
-    var sceneTint: CosmoGlassSceneTint = .fallback
-    var sceneMaterial: CosmoGlassSceneMaterial? = nil
     var cornerRadius: CGFloat = UnifiedSidebarMetrics.panelCornerRadius
     var sidebarButtonTitle: String = "Close sidebar"
     var sidebarButtonHelp: String = "Close sidebar"
@@ -397,8 +347,6 @@ struct UnifiedSidebar: View {
 
     var body: some View {
         CosmoGlassPanel(
-            sceneTint: sceneTint,
-            sceneMaterial: sceneMaterial,
             role: .globalSidebar,
             cornerRadius: cornerRadius
         ) {
@@ -704,13 +652,20 @@ struct UnifiedSidebar: View {
             .contentShape(Rectangle())
             .overlay(alignment: .center) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(isResizeHandleHovered ? DS.borderActive : DS.sidebarMaterialBorder)
+                    .fill(isResizeHandleHovered || resizeStartWidth != nil ? DS.borderActive : DS.sidebarMaterialBorder)
                     .frame(width: 2, height: 52)
                     .opacity(isResizeHandleHovered || resizeStartWidth != nil ? 1 : 0.5)
                     .padding(.trailing, 2)
             }
             .onHover { hovering in
-                isResizeHandleHovered = hovering
+                withAnimation(ProMotionSprings.hover) {
+                    isResizeHandleHovered = hovering
+                }
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
             }
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -1465,7 +1420,7 @@ private struct SidebarSearchContext: View {
         .background(DS.surfaceElevated, in: .rect(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isSearchFocused ? DS.borderActive : DS.borderSubtle, lineWidth: 1)
+                .stroke(isSearchFocused ? DS.focusRing : DS.borderSubtle, lineWidth: 1)
         )
     }
 

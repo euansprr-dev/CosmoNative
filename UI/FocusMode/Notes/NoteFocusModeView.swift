@@ -235,6 +235,7 @@ struct NoteFocusModeView: View {
         self._plainContent = State(initialValue: initialDocuments.plainContent)
         self._tags = State(initialValue: initialDocuments.tags)
         self._createdAt = State(initialValue: initialDocuments.createdAt)
+        self._noteStyle = State(initialValue: NoteDocumentStyle.load(fromMetadata: atom.metadata))
     }
 
     // MARK: - State
@@ -293,9 +294,19 @@ struct NoteFocusModeView: View {
     @State private var saveGeneration: Int = 0
     @State private var lastRichCheckpointAt: Date?
 
+    // V2 block editor + per-document style
+    @State private var noteStyle: NoteDocumentStyle = .default
+    @State private var styleMenuPresented = false
+    @State private var bodyFocusCoordinator = BlockFocusCoordinator()
+
     private let database = CosmoDatabase.shared
     private let autoSaveDelay: TimeInterval = 0.5
     private let autosavePolicy = NoteAutosavePolicy()
+
+    /// Chrome recede — toolbar fades while the user is actively writing (iA pattern).
+    @State private var isActivelyTyping = false
+    @State private var typingActivityTask: Task<Void, Never>?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let titleStyle = SharedTitleSurfaceStyle.noteFocus
 
     private var focusBackground: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveBackground : DS.documentBackground }
@@ -334,26 +345,33 @@ struct NoteFocusModeView: View {
                         .ignoresSafeArea()
                 }
 
-            // Main three-rail layout
-            VStack(spacing: 0) {
-                topBar
-
-                HStack(alignment: .top, spacing: 0) {
-                    if showsLeftRail {
-                        outlineRail
-                            .frame(width: 208)
-                            .transition(.move(edge: .leading).combined(with: .opacity))
-                    }
-
-                    centerColumn
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    if showsRightRail {
-                        carrelRail
-                            .frame(width: 272)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
+            // Main three-rail layout — the toolbar floats as an overlay so the
+            // manuscript scrolls under its glass; the rails (glass themselves)
+            // stay clear of it to avoid glass-on-glass.
+            HStack(alignment: .top, spacing: 0) {
+                if showsLeftRail {
+                    outlineRail
+                        .frame(width: 208)
+                        .padding(.leading, DS.space16)
+                        .padding(.top, noteToolbarClearance)
+                        .padding(.bottom, DS.space16)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
                 }
+
+                centerColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if showsRightRail {
+                    carrelRail
+                        .frame(width: 272)
+                        .padding(.trailing, DS.space16)
+                        .padding(.top, noteToolbarClearance)
+                        .padding(.bottom, DS.space16)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .top) {
+                topBar
             }
 
             // Persistent floating blocks overlay
@@ -368,7 +386,7 @@ struct NoteFocusModeView: View {
                     centerAtom: atom,
                     onClose: { withAnimation(ProMotionSprings.modal) { graphOverlayVisible = false } }
                 )
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .transition(.opacity)
                 .zIndex(100)
             }
         }
@@ -480,6 +498,10 @@ struct NoteFocusModeView: View {
         .sheet(isPresented: $showTagEditor) {
             TagEditorSheet(tags: $tags)
         }
+        .onChange(of: noteStyle) { _, _ in
+            guard !isInitialLoad else { return }
+            triggerAutoSave()
+        }
         .onChange(of: isEditingTitle) { _, isEditing in
             if isEditing {
                 if titleChromeModeAtEditStart == nil {
@@ -565,19 +587,24 @@ struct NoteFocusModeView: View {
 
             if saveState != .idle {
                 noteSaveBadge
-                    .transition(.scale.combined(with: .opacity))
+                    .transition(.opacity)
             }
 
             Spacer()
 
             topBarChromeButtons
         }
-        .padding(.horizontal, DS.space24)
-        .padding(.vertical, DS.space12)
-        .background {
-            FocusModeEditorBlurTapLayer()
-            topBarBackground
-                .allowsHitTesting(false)
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space6)
+        .background(FocusModeEditorBlurTapLayer())
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
+        .padding(.horizontal, DS.space16)
+        .padding(.top, DS.space12)
+        .padding(.bottom, DS.space8)
+        .opacity(isActivelyTyping ? 0.25 : 1)
+        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: isActivelyTyping)
+        .onHover { hovering in
+            if hovering { wakeChrome() }
         }
     }
 
@@ -622,14 +649,7 @@ struct NoteFocusModeView: View {
 
     private var topBarChromeButtons: some View {
         HStack(spacing: DS.space8) {
-            chromeIconButton(
-                systemName: "point.3.filled.connected.trianglepath.dotted",
-                isActive: graphOverlayVisible,
-                tint: DS.gilt,
-                help: "Graph view (⌘G)",
-                accessibilityLabel: "Toggle graph view",
-                action: { toggleGraphOverlay() }
-            )
+            styleMenuButton
             chromeIconButton(
                 systemName: "rectangle.split.3x1",
                 isActive: leftRailVisible || rightRailVisible,
@@ -639,12 +659,12 @@ struct NoteFocusModeView: View {
                 action: { togglePanels() }
             )
             chromeIconButton(
-                systemName: typewriterMode ? "keyboard.fill" : "keyboard",
-                isActive: typewriterMode,
-                tint: DS.accent,
-                help: "Typewriter mode",
-                accessibilityLabel: "Toggle typewriter mode",
-                action: { withAnimation(ProMotionSprings.snappy) { typewriterMode.toggle() } }
+                systemName: "point.3.filled.connected.trianglepath.dotted",
+                isActive: graphOverlayVisible,
+                tint: DS.gilt,
+                help: "Graph view (⌘G)",
+                accessibilityLabel: "Toggle graph view",
+                action: { toggleGraphOverlay() }
             )
             if isPaneContext {
                 chromeIconButton(
@@ -659,6 +679,22 @@ struct NoteFocusModeView: View {
         }
     }
 
+    /// "Aa" — the document's voice. Font family, text size, page width, and
+    /// typewriter mode live here, per-note.
+    private var styleMenuButton: some View {
+        chromeIconButton(
+            systemName: "textformat",
+            isActive: styleMenuPresented || noteStyle != .default,
+            tint: DS.accent,
+            help: "Document style",
+            accessibilityLabel: "Document style",
+            action: { styleMenuPresented.toggle() }
+        )
+        .popover(isPresented: $styleMenuPresented, arrowEdge: .bottom) {
+            NoteStyleMenuView(style: $noteStyle, typewriterMode: $typewriterMode)
+        }
+    }
+
     private func chromeIconButton(
         systemName: String,
         isActive: Bool,
@@ -667,33 +703,60 @@ struct NoteFocusModeView: View {
         accessibilityLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(DS.callout)
-                .foregroundStyle(isActive ? tint : focusTextMuted)
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(isActive ? tint.opacity(0.14) : focusBorder.opacity(0.4))
-                )
-                .accessibilityLabel(accessibilityLabel)
-        }
-        .buttonStyle(.plain)
-        .frame(minWidth: 44, minHeight: 44)
-        .help(help)
-    }
-
-    private var topBarBackground: some View {
-        LinearGradient(
-            colors: [focusBackground.opacity(0.96), focusBackground.opacity(0.78), .clear],
-            startPoint: .top,
-            endPoint: .bottom
+        NoteChromeIconButton(
+            systemName: systemName,
+            isActive: isActive,
+            tint: tint,
+            inactiveColor: focusTextMuted,
+            hoverFill: focusBorder.opacity(0.3),
+            help: help,
+            accessibilityLabel: accessibilityLabel,
+            action: action
         )
     }
 
     // MARK: - Center Column
 
+    /// Clearance the manuscript reserves at rest so it starts below the floating
+    /// toolbar — but slides *under* the glass once scrolling.
+    private var noteToolbarClearance: CGFloat { 76 }
+
+    /// The block column = reading measure + the block gutter (＋ / ⋮⋮ controls).
+    /// Title and metadata are inset by the gutter so all text shares one left edge.
+    private var bodyColumnWidth: CGFloat {
+        noteStyle.pageWidth.readingWidth + BlockInteractionPolicy.gutterWidth
+    }
+
+    /// Click in the empty space below the last block to keep writing — focuses
+    /// the tail paragraph, creating one if the document ends with something else.
+    private var bodyTailClickCatcher: some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 160)
+            .contentShape(Rectangle())
+            .onTapGesture { focusDocumentTail() }
+    }
+
+    private func focusDocumentTail() {
+        if let last = bodyDocument.blocks.last,
+           last.kind.isTextEditableBlock,
+           last.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            bodyFocusCoordinator.focus(last.id)
+            return
+        }
+        let paragraph = RichBlock.paragraph("")
+        bodyDocument.blocks.append(paragraph)
+        handleBodyDocumentChange(bodyDocument, plainText: bodyDocument.plainText)
+        bodyFocusCoordinator.focus(paragraph.id)
+    }
+
     private var centerColumn: some View {
+        centerScroll
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .contentMargins(.top, noteToolbarClearance, for: .scrollContent)
+    }
+
+    private var centerScroll: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 0) {
                 if isEmptyNote {
@@ -704,8 +767,12 @@ struct NoteFocusModeView: View {
                         .frame(maxWidth: CosmoTypography.optimalReadingWidth)
                 } else {
                     titleSection
+                        .padding(.leading, BlockInteractionPolicy.gutterWidth)
+                        .frame(maxWidth: bodyColumnWidth, alignment: .leading)
                         .padding(.top, DS.space36)
                     dateTagsRow
+                        .padding(.leading, BlockInteractionPolicy.gutterWidth)
+                        .frame(maxWidth: bodyColumnWidth, alignment: .leading)
                         .padding(.top, DS.space12)
                         .padding(.bottom, DS.space24)
                     if NoteFocusHeaderLayoutPolicy.showsMetadataDivider(for: titleChromeMode) {
@@ -721,33 +788,38 @@ struct NoteFocusModeView: View {
                         bodyFont: .system(size: 17),
                         textColor: focusText
                     )
-                    .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
+                    .padding(.leading, BlockInteractionPolicy.gutterWidth)
+                    .frame(maxWidth: bodyColumnWidth, alignment: .topLeading)
                     .frame(minHeight: max(400, scrollViewportHeight - 200), alignment: .topLeading)
                     .padding(.top, isEmptyNote ? DS.space32 : DS.space24)
                     .padding(.bottom, DS.space48)
                 } else {
-                    CosmoDocumentEditor(
-                        document: $bodyDocument,
-                        fontSize: 17,
-                        placeholder: "Start writing…",
-                        darkMode: DS.usesImmersiveFocusAppearance,
-                        overrideTextColor: NSColor(focusText),
-                        allowSlashCommands: true,
-                        allowMentions: true,
-                        allowSelectionMenu: true,
-                        allowImages: true,
-                        typewriterMode: typewriterMode,
-                        scrollsInternally: false,
-                        onSelectionChanged: { snapshot in
-                            selectedText = snapshot.text
-                            refreshCosmoContextIfActive()
-                        },
-                        editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
-                        navigationTargetID: bodyNavigationTargetID,
-                        onPlainTextChange: handleBodyPlainTextChange,
-                        onDocumentChange: handleBodyDocumentChange
-                    )
-                    .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
+                    VStack(alignment: .leading, spacing: 0) {
+                        BlockListView(
+                            document: $bodyDocument,
+                            fontSize: noteStyle.textSize.pointSize,
+                            fontDesign: noteStyle.fontFamily.design,
+                            placeholder: "Start writing…",
+                            darkMode: DS.usesImmersiveFocusAppearance,
+                            overrideTextColor: NSColor(focusText),
+                            allowSlashCommands: true,
+                            allowMentions: true,
+                            allowSelectionMenu: true,
+                            allowImages: true,
+                            typewriterMode: typewriterMode,
+                            scrollsInternally: false,
+                            editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
+                            navigationTargetID: bodyNavigationTargetID,
+                            focusCoordinator: bodyFocusCoordinator,
+                            onSelectionChanged: { snapshot in
+                                selectedText = snapshot.text
+                                refreshCosmoContextIfActive()
+                            },
+                            onDocumentChange: handleBodyDocumentChange
+                        )
+                        bodyTailClickCatcher
+                    }
+                    .frame(maxWidth: bodyColumnWidth, alignment: .topLeading)
                     .frame(
                         minHeight: max(400, scrollViewportHeight - 200),
                         alignment: .topLeading
@@ -828,20 +900,12 @@ struct NoteFocusModeView: View {
                 Spacer(minLength: DS.space24)
             }
             .padding(.horizontal, DS.space20)
-            .padding(.top, DS.space36)
+            .padding(.top, DS.space24)
             .padding(.bottom, DS.space24)
         }
+        .scrollEdgeEffectStyle(.soft, for: .vertical)
         .frame(maxHeight: .infinity)
-        .background(
-            Rectangle()
-                .fill(DS.vellum.opacity(0.5))
-                .overlay(
-                    Rectangle()
-                        .fill(DS.sepiaBorder.opacity(0.4))
-                        .frame(width: 0.5),
-                    alignment: .trailing
-                )
-        )
+        .cosmoGlassPanel(role: .focusSidebar, cornerRadius: 22)
     }
 
     private func outlineEntryRow(_ entry: RichHeadingOutlineEntry) -> some View {
@@ -903,20 +967,12 @@ struct NoteFocusModeView: View {
                 Spacer(minLength: DS.space24)
             }
             .padding(.horizontal, DS.space20)
-            .padding(.top, DS.space36)
+            .padding(.top, DS.space24)
             .padding(.bottom, DS.space24)
         }
+        .scrollEdgeEffectStyle(.soft, for: .vertical)
         .frame(maxHeight: .infinity)
-        .background(
-            Rectangle()
-                .fill(DS.vellum.opacity(0.5))
-                .overlay(
-                    Rectangle()
-                        .fill(DS.sepiaBorder.opacity(0.4))
-                        .frame(width: 0.5),
-                    alignment: .leading
-                )
-        )
+        .cosmoGlassPanel(role: .focusSidebar, cornerRadius: 22)
     }
 
     private var backlinksSection: some View {
@@ -1119,6 +1175,7 @@ struct NoteFocusModeView: View {
 
         if changed {
             hasLocalBodyEdits = true
+            registerTypingActivity()
             triggerAutoSave()
         }
     }
@@ -1140,8 +1197,28 @@ struct NoteFocusModeView: View {
 
         if changed {
             hasLocalBodyEdits = true
+            registerTypingActivity()
             triggerAutoSave()
         }
+    }
+
+    // MARK: - Chrome Recede
+
+    /// Marks the user as actively writing; chrome fades until typing pauses
+    /// (~1.4s) or the pointer touches the toolbar.
+    private func registerTypingActivity() {
+        isActivelyTyping = true
+        typingActivityTask?.cancel()
+        typingActivityTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            guard !Task.isCancelled else { return }
+            isActivelyTyping = false
+        }
+    }
+
+    private func wakeChrome() {
+        typingActivityTask?.cancel()
+        isActivelyTyping = false
     }
 
     // MARK: - Text Analysis
@@ -1174,7 +1251,12 @@ struct NoteFocusModeView: View {
     }
 
     private func updateBodyHeadingOutline(from document: RichDocument) {
-        bodyHeadingOutline = RichDocumentHeadings.outline(in: document)
+        let outline = RichDocumentHeadings.outline(in: document)
+        // Runs per keystroke now (immediate block sync) — skip the state write
+        // when nothing changed so the outline rail doesn't re-render.
+        if outline != bodyHeadingOutline {
+            bodyHeadingOutline = outline
+        }
     }
 
     private func navigateToBodyHeading(_ entry: RichHeadingOutlineEntry) {
@@ -1396,17 +1478,9 @@ struct NoteFocusModeView: View {
             Text(saveState == .saving ? "Saving..." : "Saved")
                 .font(DS.caption)
         }
-        .foregroundStyle(saveState == .saved ? DS.entityNote : focusTextSecondary)
-        .padding(.horizontal, DS.space8)
-        .padding(.vertical, DS.space4)
-        .background(
-            Capsule()
-                .fill(
-                    saveState == .saved
-                        ? DS.entityNote.opacity(0.15)
-                        : focusBorder
-                )
-        )
+        .foregroundStyle(saveState == .saved ? DS.entityNote.opacity(0.85) : focusTextMuted)
+        .contentTransition(.opacity)
+        .animation(ProMotionSprings.gentle, value: saveState)
     }
 
     // MARK: - Computed Properties
@@ -1713,6 +1787,7 @@ struct NoteFocusModeView: View {
         let bodyDocumentCopy = bodyDocument
         let plainContentCopy = plainContent
         let tagsCopy = tags
+        let noteStyleCopy = noteStyle
         let uuid = atom.uuid
         let hasLocalBodyEditsCopy = hasLocalBodyEdits
         AtomRepository.shared.refreshEditingLock(uuid: uuid)
@@ -1739,7 +1814,7 @@ struct NoteFocusModeView: View {
                 ) else {
                     throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
                 }
-                let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
+                let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
 
                 try db.execute(
                     sql: """
@@ -1792,6 +1867,7 @@ struct NoteFocusModeView: View {
         let titleCopy = titlePlainText
         let contentCopy = plainContent
         let tagsCopy = tags
+        let noteStyleCopy = noteStyle
         let uuid = atom.uuid
         let hasLocalBodyEditsCopy = hasLocalBodyEdits
         saveGeneration += 1
@@ -1833,7 +1909,7 @@ struct NoteFocusModeView: View {
                         ) else {
                             throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
                         }
-                        let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
+                        let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
 
                         try db.execute(
                             sql: """
@@ -1897,7 +1973,7 @@ struct NoteFocusModeView: View {
                         ) else {
                             throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
                         }
-                        let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy)
+                        let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
 
                         try db.execute(
                             sql: """
@@ -1955,8 +2031,12 @@ struct NoteFocusModeView: View {
         refreshCosmoContextIfActive()
     }
 
-    nonisolated private static func metadataString(for snapshot: NoteDocumentSnapshot, tags: [String]) -> String? {
-        metadataString(existingMetadata: snapshot.metadata, tags: tags)
+    nonisolated private static func metadataString(
+        for snapshot: NoteDocumentSnapshot,
+        tags: [String],
+        style: NoteDocumentStyle
+    ) -> String? {
+        style.write(intoMetadata: metadataString(existingMetadata: snapshot.metadata, tags: tags))
     }
 
     nonisolated private static func metadataString(existingMetadata: String?, tags: [String]) -> String? {
@@ -2124,6 +2204,40 @@ fileprivate struct FlowTagCloud: View {
 
 // MARK: - Empty State
 
+fileprivate struct NoteChromeIconButton: View {
+    let systemName: String
+    let isActive: Bool
+    let tint: Color
+    let inactiveColor: Color
+    let hoverFill: Color
+    let help: String
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(DS.callout)
+                .foregroundStyle(isActive ? tint : inactiveColor)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
+                        .fill(isActive ? tint.opacity(0.14) : hoverFill.opacity(isHovered ? 1 : 0))
+                )
+                .accessibilityLabel(accessibilityLabel)
+        }
+        .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44)
+        .contentShape(Circle())
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help(help)
+    }
+}
+
 fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
     let title: Title
     @State private var appeared = false
@@ -2135,7 +2249,7 @@ fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
     var body: some View {
         VStack(spacing: DS.space20) {
             Image(systemName: "diamond")
-                .font(.system(size: 32, weight: .ultraLight))
+                .font(DS.display.weight(.ultraLight))
                 .foregroundStyle(DS.gilt.opacity(0.6))
                 .accessibilityHidden(true)
                 .rotationEffect(.degrees(appeared ? 0 : -8))
@@ -2250,8 +2364,12 @@ fileprivate struct NoteGraphOverlayView: View {
             .pickerStyle(.segmented)
             .frame(width: 140)
         }
-        .padding(.horizontal, DS.space24)
-        .padding(.vertical, DS.space16)
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space6)
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
+        .padding(.horizontal, DS.space16)
+        .padding(.top, DS.space12)
+        .padding(.bottom, DS.space8)
     }
 
     private var graphCanvas: some View {

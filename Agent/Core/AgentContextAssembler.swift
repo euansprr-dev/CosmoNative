@@ -46,6 +46,7 @@ class AgentContextAssembler {
         intent: AgentIntent? = nil,
         activeItemsContext: String? = nil,
         systemPromptOverride: String? = nil,
+        volatileContextOverride: String? = nil,
         lightweightContext: Bool = false
     ) async -> SystemPrompt {
         // Increase token budget for strategy/query intents that need swipe library + pipeline data
@@ -56,6 +57,10 @@ class AgentContextAssembler {
         }
 
         // --- Cached sections: static content that stays the same across requests ---
+        // IMPORTANT: nothing request-specific may enter this list. The cached prompt
+        // is sent with cache_control — any byte that varies per request (surface text,
+        // timestamps, resolved context) invalidates the whole prefix and silently
+        // turns every request into a full-price cache write.
         var cachedSections: [(priority: Int, content: String)] = []
 
         // Layer 1: Identity and personality (always included, highest priority)
@@ -248,7 +253,20 @@ class AgentContextAssembler {
         // Apply token budget to dynamic sections
         let dynamicPrompt = applyTokenBudget(sections: dynamicSections, budget: max(0, tokenBudget - estimateTokens(cachedPrompt)))
 
-        return SystemPrompt(cached: cachedPrompt, dynamic: dynamicPrompt)
+        // Volatile per-request context (surface snapshots, resolved skill facts)
+        // leads the dynamic portion and is exempt from the token budget: diff
+        // operations match against the surface text verbatim, so truncating it
+        // would break originalText location.
+        var dynamicParts: [String] = []
+        if let volatileContextOverride,
+           !volatileContextOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            dynamicParts.append(volatileContextOverride)
+        }
+        if !dynamicPrompt.isEmpty {
+            dynamicParts.append(dynamicPrompt)
+        }
+
+        return SystemPrompt(cached: cachedPrompt, dynamic: dynamicParts.joined(separator: "\n\n"))
     }
 
     // MARK: - Token Budget

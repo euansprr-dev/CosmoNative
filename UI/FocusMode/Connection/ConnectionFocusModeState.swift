@@ -1,15 +1,18 @@
 // CosmoOS/UI/FocusMode/Connection/ConnectionFocusModeState.swift
 // Data models and state for Connection Focus Mode
-// 8 structured sections with items, ghost suggestions, and connected sources
+// 11 structured sections with items, ghost suggestions, and connected sources
 // December 2025 - Complete rewrite following PRD spec
-// April 2026 - V2 "The Crucible": concept type, station positions, live insights, collaborator messages, modes
+// April 2026 - V2 "The Crucible": concept type, station positions, live insights
+// June 2026 - Workspace revamp: collaborator removed (now the /concept inline
+//             assistant skill), ForgeMode replaced by ConnectionViewMode
 
 import SwiftUI
 import Foundation
 
 // MARK: - Concept Framework Type (V2)
 
-/// The shape of the framework being crystallized. Influences collaborator tone and masthead subtitle.
+/// The shape of the framework being crystallized. Shown in the masthead and
+/// surfaced to the /concept skill through the editable surface's Type line.
 enum ConceptFrameworkType: String, Codable, CaseIterable {
     case mentalModel
     case framework
@@ -28,27 +31,6 @@ enum ConceptFrameworkType: String, Codable, CaseIterable {
         case .lawOfNature: return "Law of Nature"
         }
     }
-
-    /// Shapes the Cosmo collaborator's voice.
-    var collaboratorTone: String {
-        switch self {
-        case .mentalModel: return "Socratic and probing — help the user see the shape of their own thought"
-        case .framework: return "Rigorous and structural — press for coherent parts and clear ordering"
-        case .principle: return "Categorical and canonical — press for universality and counter-examples"
-        case .doctrine: return "Assertive and confident — help the user state claims boldly"
-        case .heuristic: return "Pragmatic and field-tested — press for 'when does this fail?'"
-        case .lawOfNature: return "Empirical and precise — press for mechanism and prediction"
-        }
-    }
-}
-
-// MARK: - Forge Mode (V2)
-
-/// Viewing mode within the focus mode. State of interaction, not of data.
-enum ForgeMode: String, Codable {
-    case forge       // Default: spatial stations workshop
-    case manuscript  // Flattened serif reading flow
-    case chalkboard  // Dark mood overlay for loose sketching
 }
 
 // MARK: - Live Insight (V2)
@@ -101,189 +83,6 @@ struct LiveInsight: Identifiable, Codable, Equatable {
         self.message = message
         self.relatedSections = relatedSections
         self.createdAt = createdAt
-    }
-}
-
-// MARK: - Collaborator Message (V2)
-
-/// A single message in the Concept Collaborator conversation.
-enum CollaboratorObservationKind: String, Codable, Equatable, CaseIterable {
-    case pattern
-    case paradox
-    case name
-    case contrast
-    case sourceLink
-
-    var label: String {
-        switch self {
-        case .pattern: return "pattern"
-        case .paradox: return "paradox"
-        case .name: return "name"
-        case .contrast: return "contrast"
-        case .sourceLink: return "source"
-        }
-    }
-}
-
-enum ConnectionDraftProposalStatus: String, Codable, Equatable {
-    case streaming
-    case pending
-    case accepted
-    case dismissed
-}
-
-struct ConnectionDraftProposal: Identifiable, Codable, Equatable {
-    let id: UUID
-    var targetSection: ConnectionSectionType
-    var draftText: String
-    var visibleText: String
-    var rationale: String
-    var sourceIDs: [String]
-    var status: ConnectionDraftProposalStatus
-    let createdAt: Date
-    var insertedAt: Date?
-
-    init(
-        id: UUID = UUID(),
-        targetSection: ConnectionSectionType,
-        draftText: String,
-        visibleText: String? = nil,
-        rationale: String = "",
-        sourceIDs: [String] = [],
-        status: ConnectionDraftProposalStatus = .pending,
-        createdAt: Date = Date(),
-        insertedAt: Date? = nil
-    ) {
-        self.id = id
-        self.targetSection = targetSection
-        self.draftText = draftText
-        self.visibleText = visibleText ?? draftText
-        self.rationale = rationale
-        self.sourceIDs = sourceIDs
-        self.status = status
-        self.createdAt = createdAt
-        self.insertedAt = insertedAt
-    }
-
-    var renderedText: String {
-        if status == .streaming {
-            return visibleText
-        }
-        return visibleText.isEmpty ? draftText : visibleText
-    }
-}
-
-struct ConnectionCollaboratorSession: Codable, Equatable {
-    var presetID: String = "deepen.connection"
-    var hasBootstrapped: Bool = false
-    var lastBootstrapAt: Date?
-}
-
-struct CollaboratorMessage: Identifiable, Codable, Equatable {
-    let id: UUID
-    let role: Role
-    let text: String
-    let observationKind: CollaboratorObservationKind?
-    let questionSuggestion: String?
-    let recommendedAction: String?
-    var draftProposals: [ConnectionDraftProposal]
-    let createdAt: Date
-
-    var draftProposal: ConnectionDraftProposal? {
-        get { draftProposals.first }
-        set {
-            if let newValue {
-                if draftProposals.isEmpty {
-                    draftProposals = [newValue]
-                } else {
-                    draftProposals[0] = newValue
-                }
-            } else {
-                draftProposals.removeAll()
-            }
-        }
-    }
-
-    enum Role: String, Codable {
-        case user
-        case assistant
-    }
-
-    init(
-        id: UUID = UUID(),
-        role: Role,
-        text: String,
-        observationKind: CollaboratorObservationKind? = nil,
-        questionSuggestion: String? = nil,
-        recommendedAction: String? = nil,
-        draftProposal: ConnectionDraftProposal? = nil,
-        draftProposals: [ConnectionDraftProposal] = [],
-        createdAt: Date = Date()
-    ) {
-        self.id = id
-        self.role = role
-        self.text = text
-        self.observationKind = observationKind
-        self.questionSuggestion = questionSuggestion
-        self.recommendedAction = recommendedAction
-        if !draftProposals.isEmpty {
-            self.draftProposals = draftProposals
-        } else if let draftProposal {
-            self.draftProposals = [draftProposal]
-        } else {
-            self.draftProposals = []
-        }
-        self.createdAt = createdAt
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, role, text, observationKind, questionSuggestion, recommendedAction, draftProposal, draftProposals, createdAt
-        case crystallizeTarget, crystallizeContent
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        self.role = try c.decode(Role.self, forKey: .role)
-        self.text = try c.decode(String.self, forKey: .text)
-        self.observationKind = try c.decodeIfPresent(CollaboratorObservationKind.self, forKey: .observationKind)
-        self.questionSuggestion = try c.decodeIfPresent(String.self, forKey: .questionSuggestion)
-        self.recommendedAction = try c.decodeIfPresent(String.self, forKey: .recommendedAction)
-        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-
-        if let drafts = try c.decodeIfPresent([ConnectionDraftProposal].self, forKey: .draftProposals),
-           !drafts.isEmpty {
-            self.draftProposals = drafts
-        } else if let draft = try c.decodeIfPresent(ConnectionDraftProposal.self, forKey: .draftProposal) {
-            self.draftProposals = [draft]
-        } else if let legacyTarget = try c.decodeIfPresent(ConnectionSectionType.self, forKey: .crystallizeTarget),
-                  let legacyContent = try c.decodeIfPresent(String.self, forKey: .crystallizeContent),
-                  !legacyContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            self.draftProposals = [ConnectionDraftProposal(
-                targetSection: legacyTarget,
-                draftText: legacyContent,
-                visibleText: legacyContent,
-                rationale: text,
-                status: .pending
-            )]
-        } else {
-            self.draftProposals = []
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-        try c.encode(role, forKey: .role)
-        try c.encode(text, forKey: .text)
-        try c.encodeIfPresent(observationKind, forKey: .observationKind)
-        try c.encodeIfPresent(questionSuggestion, forKey: .questionSuggestion)
-        try c.encodeIfPresent(recommendedAction, forKey: .recommendedAction)
-        try c.encodeIfPresent(draftProposal, forKey: .draftProposal)
-        if !draftProposals.isEmpty {
-            try c.encode(draftProposals, forKey: .draftProposals)
-        }
-        try c.encode(createdAt, forKey: .createdAt)
     }
 }
 
@@ -654,20 +453,12 @@ struct ConnectionFocusModeState: Codable {
     /// Governs persisted layout migrations for the connection workspace.
     private var layoutVersion: Int = Self.currentLayoutVersion
 
-    /// Current viewing mode. Default is `.forge`.
-    var forgeMode: ForgeMode = .forge
+    /// Current center-column view mode. Persisted under the legacy
+    /// `forgeMode` key; old `forge`/`chalkboard` values map to `.board`.
+    var viewMode: ConnectionViewMode = .board
 
     /// Rolling AI observations. Capped at 20 most recent.
     var liveInsights: [LiveInsight] = []
-
-    /// Concept Collaborator conversation history. Capped at 50 most recent.
-    var collaboratorMessages: [CollaboratorMessage] = []
-
-    /// One active staged draft at a time for the Forge preview.
-    var activeDraftProposal: ConnectionDraftProposal?
-
-    /// Per-connection collaborator bootstrap / preset state.
-    var collaboratorSession: ConnectionCollaboratorSession = .init()
 
     init(atomUUID: String) {
         self.atomUUID = atomUUID
@@ -685,11 +476,8 @@ struct ConnectionFocusModeState: Codable {
         self.canvasSizesRaw = [:]
         self.hiddenPanelsRaw = []
         self.layoutVersion = Self.currentLayoutVersion
-        self.forgeMode = .forge
+        self.viewMode = .board
         self.liveInsights = []
-        self.collaboratorMessages = []
-        self.activeDraftProposal = nil
-        self.collaboratorSession = .init()
     }
 
     // MARK: - V2 accessors
@@ -818,77 +606,17 @@ struct ConnectionFocusModeState: Codable {
         canvasSizesRaw[id]?.cgSize
     }
 
-    mutating func appendCollaboratorMessage(_ message: CollaboratorMessage) {
-        collaboratorMessages.append(message)
-        if collaboratorMessages.count > 50 {
-            collaboratorMessages.removeFirst(collaboratorMessages.count - 50)
-        }
-        lastModified = Date()
-    }
-
-    mutating func updateCollaboratorDraft(_ draft: ConnectionDraftProposal) {
-        if activeDraftProposal?.id == draft.id {
-            activeDraftProposal = draft
-        }
-        if let messageIndex = collaboratorMessages.firstIndex(where: { message in
-            message.draftProposals.contains(where: { $0.id == draft.id })
-        }),
-           let draftIndex = collaboratorMessages[messageIndex].draftProposals.firstIndex(where: { $0.id == draft.id }) {
-            collaboratorMessages[messageIndex].draftProposals[draftIndex] = draft
-        }
-        lastModified = Date()
-    }
-
-    mutating func setCollaboratorDraft(_ draft: ConnectionDraftProposal?, forMessageID messageID: UUID) {
-        if let messageIndex = collaboratorMessages.firstIndex(where: { $0.id == messageID }) {
-            if let draft {
-                if let draftIndex = collaboratorMessages[messageIndex].draftProposals.firstIndex(where: { $0.id == draft.id }) {
-                    collaboratorMessages[messageIndex].draftProposals[draftIndex] = draft
-                } else {
-                    collaboratorMessages[messageIndex].draftProposals.append(draft)
-                }
-            } else {
-                collaboratorMessages[messageIndex].draftProposals.removeAll()
-            }
-            lastModified = Date()
-        }
-    }
-
-    mutating func setActiveDraftProposal(_ draft: ConnectionDraftProposal?) {
-        activeDraftProposal = draft
-        lastModified = Date()
-    }
-
-    mutating func markCollaboratorBootstrapped(presetID: String = "deepen.connection") {
-        collaboratorSession.presetID = presetID
-        collaboratorSession.hasBootstrapped = true
-        collaboratorSession.lastBootstrapAt = Date()
-        lastModified = Date()
-    }
-
-    mutating func normalizeCollaboratorStateAfterLoad() {
-        if !collaboratorMessages.isEmpty {
-            collaboratorSession.hasBootstrapped = true
-        }
-        guard var draft = activeDraftProposal else { return }
-        if draft.status == .streaming {
-            draft.status = .pending
-            draft.visibleText = draft.draftText
-            updateCollaboratorDraft(draft)
-        }
-    }
-
     mutating func setLiveInsights(_ insights: [LiveInsight]) {
         liveInsights = Array(insights.prefix(20))
         lastModified = Date()
     }
 
-    // MARK: - Codable (explicit to accept V1 JSON without V2 keys)
+    // MARK: - Codable (explicit to accept V1/V2 JSON without newer keys —
+    // legacy collaborator keys in old blobs are simply ignored)
 
     private enum CodingKeys: String, CodingKey {
         case atomUUID, sections, viewportState, floatingPanelIDs, isGeneratingGhosts, lastModified
-        case conceptType, stationPositionsRaw, forgeMode, liveInsights, collaboratorMessages
-        case activeDraftProposal, collaboratorSession
+        case conceptType, stationPositionsRaw, forgeMode, liveInsights
         case canvasPositionsRaw, canvasSizesRaw, hiddenPanelsRaw, layoutVersion
     }
 
@@ -904,11 +632,10 @@ struct ConnectionFocusModeState: Codable {
         // V2 fields — tolerate absence from V1 persisted JSON.
         self.conceptType = try c.decodeIfPresent(ConceptFrameworkType.self, forKey: .conceptType) ?? .mentalModel
         self.stationPositionsRaw = try c.decodeIfPresent([String: CodablePoint].self, forKey: .stationPositionsRaw) ?? [:]
-        self.forgeMode = try c.decodeIfPresent(ForgeMode.self, forKey: .forgeMode) ?? .forge
+        // Tolerant view-mode decode: V2 stored ForgeMode (forge/manuscript/chalkboard).
+        let storedMode = try c.decodeIfPresent(String.self, forKey: .forgeMode) ?? ""
+        self.viewMode = ConnectionViewMode(legacyRawValue: storedMode)
         self.liveInsights = try c.decodeIfPresent([LiveInsight].self, forKey: .liveInsights) ?? []
-        self.collaboratorMessages = try c.decodeIfPresent([CollaboratorMessage].self, forKey: .collaboratorMessages) ?? []
-        self.activeDraftProposal = try c.decodeIfPresent(ConnectionDraftProposal.self, forKey: .activeDraftProposal)
-        self.collaboratorSession = try c.decodeIfPresent(ConnectionCollaboratorSession.self, forKey: .collaboratorSession) ?? .init()
         self.layoutVersion = try c.decodeIfPresent(Int.self, forKey: .layoutVersion) ?? 0
         // V3 fields — migrate from V2 stationPositionsRaw when canvasPositionsRaw is empty.
         let decodedCanvasPositions = try c.decodeIfPresent([String: CodablePoint].self, forKey: .canvasPositionsRaw) ?? [:]
@@ -942,11 +669,8 @@ struct ConnectionFocusModeState: Codable {
         try c.encode(lastModified, forKey: .lastModified)
         try c.encode(conceptType, forKey: .conceptType)
         try c.encode(stationPositionsRaw, forKey: .stationPositionsRaw)
-        try c.encode(forgeMode, forKey: .forgeMode)
+        try c.encode(viewMode.rawValue, forKey: .forgeMode)
         try c.encode(liveInsights, forKey: .liveInsights)
-        try c.encode(collaboratorMessages, forKey: .collaboratorMessages)
-        try c.encodeIfPresent(activeDraftProposal, forKey: .activeDraftProposal)
-        try c.encode(collaboratorSession, forKey: .collaboratorSession)
         try c.encode(canvasPositionsRaw, forKey: .canvasPositionsRaw)
         try c.encode(canvasSizesRaw, forKey: .canvasSizesRaw)
         try c.encode(hiddenPanelsRaw, forKey: .hiddenPanelsRaw)
@@ -1054,14 +778,6 @@ struct ConnectionFocusModeState: Codable {
 
     var completedSectionCount: Int {
         sections.filter { !$0.items.isEmpty }.count
-    }
-
-    var collaboratorObservationCount: Int {
-        collaboratorMessages.reduce(into: 0) { partial, message in
-            if message.observationKind != nil {
-                partial += 1
-            }
-        }
     }
 
     var flattenedBodyText: String {

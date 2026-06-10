@@ -37,9 +37,13 @@ final class FocusModeAppearanceTests: XCTestCase {
 
         for file in focusModeFiles {
             let source = try source(file)
+            // June 2026 Greenhouse-clean workspaces (Connection, Idea) route
+            // through DS.bg deliberately; everything else stays immersive.
             XCTAssertTrue(
-                source.contains("DS.focusImmersiveBackground") || source.contains("focusBackground"),
-                "\(file) should route its top-level surface through immersive focus tokens"
+                source.contains("DS.focusImmersiveBackground")
+                    || source.contains("focusBackground")
+                    || source.contains("DS.bg.ignoresSafeArea"),
+                "\(file) should route its top-level surface through semantic focus tokens"
             )
         }
     }
@@ -50,14 +54,17 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertTrue(wrapperSource.contains("DS.canvasDocumentSurface"))
     }
 
-    func testCanvasNoteBodyUsesBlockListEditorForStructuredElements() throws {
+    /// Canvas note blocks are lightweight previews/editors — they use the
+    /// continuous CosmoDocumentEditor. The full block-line system
+    /// (BlockListView) is the Notes focus mode's surface.
+    func testCanvasNoteBodyUsesContinuousEditorWhileFocusModeOwnsBlocks() throws {
         let noteBlockSource = try source("Canvas/NoteBlockView.swift")
         let bodyViewRange = try XCTUnwrap(noteBlockSource.range(of: "private var bodyView: some View"))
         let footerRange = try XCTUnwrap(noteBlockSource.range(of: "private var noteFooter: some View"))
         let bodyViewSource = String(noteBlockSource[bodyViewRange.lowerBound..<footerRange.lowerBound])
 
-        XCTAssertTrue(bodyViewSource.contains("BlockListView("))
-        XCTAssertFalse(bodyViewSource.contains("CosmoDocumentEditor("))
+        XCTAssertTrue(bodyViewSource.contains("CosmoDocumentEditor("))
+        XCTAssertFalse(bodyViewSource.contains("BlockListView("))
     }
 
     func testHeadingDisclosureColorDefaultsToAdaptiveRendererColor() throws {
@@ -107,13 +114,13 @@ final class FocusModeAppearanceTests: XCTestCase {
 
     func testPremiumFocusModesUseSharedGlassChromePrimitives() throws {
         let premiumChromeSource = try source("UI/FocusMode/Shared/FocusModePremiumChrome.swift")
-        let ideaFocusSource = try source("UI/FocusMode/Ideas/IdeaFocusModeView.swift")
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
 
         XCTAssertTrue(premiumChromeSource.contains("struct FocusModeGlassRail"))
         XCTAssertTrue(premiumChromeSource.contains("struct FocusModeInspectorSection"))
         XCTAssertTrue(premiumChromeSource.contains("struct FocusModeMediaWell"))
-        XCTAssertTrue(ideaFocusSource.contains("FocusModeInspectorSection"))
+        // Idea v2 moved to its own Greenhouse-clean inspector (IdeaInspectorView);
+        // SwipeStudy still uses the shared premium chrome.
         XCTAssertTrue(swipeFocusSource.contains("FocusModeInspectorSection"))
     }
 

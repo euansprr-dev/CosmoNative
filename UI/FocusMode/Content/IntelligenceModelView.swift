@@ -103,7 +103,7 @@ struct IntelligenceModelView: View {
         Button(action: { if !isDisabled { selectedFormat = format } }) {
             Text(format.rawValue)
                 .font(.system(size: 10, weight: isSelected ? .bold : .medium))
-                .foregroundColor(isDisabled ? DS.textMuted : isSelected ? .white : DS.textSecondary)
+                .foregroundStyle(isDisabled ? DS.textMuted : isSelected ? .white : DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 5)
                 .background(isSelected ? DS.borderActive : Color.clear, in: Capsule())
@@ -207,10 +207,10 @@ struct IntelligenceModelView: View {
         HStack(spacing: 8) {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 14))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             Text("No \(format) analysis — add \(format) documents and regenerate.")
                 .font(DS.cardMeta)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.vertical, 20)
@@ -222,17 +222,17 @@ struct IntelligenceModelView: View {
         HStack(spacing: 8) {
             Image(systemName: "brain.head.profile")
                 .font(.system(size: 14))
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
 
             Text("Intelligence Model")
                 .font(DS.navTitle)
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
             Text("Generated \(model.generatedAt.formatted(date: .abbreviated, time: .shortened))")
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -283,7 +283,7 @@ struct IntelligenceModelView: View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 11))
-                .foregroundColor(color)
+                .foregroundStyle(color)
 
             Text(title)
                 .dsSmallCapsLabel()
@@ -292,11 +292,11 @@ struct IntelligenceModelView: View {
 
             Text("\(metricCount) metrics")
                 .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -314,14 +314,14 @@ struct IntelligenceModelView: View {
             HStack(alignment: .top, spacing: 8) {
                 Text(metric.label)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 120, alignment: .leading)
 
                 if isEditing {
                     TextField("Value", text: $editingMetricValue)
                         .textFieldStyle(.plain)
                         .font(DS.cardMeta)
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(DS.border, in: RoundedRectangle(cornerRadius: 4))
@@ -329,7 +329,7 @@ struct IntelligenceModelView: View {
                 } else {
                     Text(metric.value)
                         .font(DS.cardMeta)
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -346,7 +346,7 @@ struct IntelligenceModelView: View {
                     }) {
                         Image(systemName: "pencil")
                             .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
@@ -366,14 +366,14 @@ struct IntelligenceModelView: View {
             Button(action: { saveEdit(metricKey: metricKey, oldValue: oldValue, sectionKey: sectionKey) }) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(DS.green)
+                    .foregroundStyle(DS.green)
             }
             .buttonStyle(.plain)
 
             Button(action: { editingMetricKey = "" }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -383,7 +383,7 @@ struct IntelligenceModelView: View {
     private func confidenceBadge(_ confidence: ConfidenceLevel) -> some View {
         Text(confidence.displayName)
             .font(.system(size: 8, weight: .bold))
-            .foregroundColor(confidence.color)
+            .foregroundStyle(confidence.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
@@ -397,15 +397,15 @@ struct IntelligenceModelView: View {
         HStack(spacing: 4) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 8))
-                .foregroundColor(DS.orange.opacity(0.6))
+                .foregroundStyle(DS.orange.opacity(0.6))
 
             Text("User override")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(DS.orange.opacity(0.6))
+                .foregroundStyle(DS.orange.opacity(0.6))
 
             Text("- AI suggested: \(override.generatedValue)")
                 .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .lineLimit(1)
         }
         .padding(.leading, 128)
@@ -421,7 +421,7 @@ struct IntelligenceModelView: View {
                 Text("Update Intelligence Model")
                     .font(DS.buttonText)
             }
-            .foregroundColor(DS.accent)
+            .foregroundStyle(DS.accent)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
@@ -502,7 +502,7 @@ struct IntelligenceModelView: View {
         HStack(spacing: 8) {
             Image(systemName: "shield.lefthalf.filled")
                 .font(.system(size: 11))
-                .foregroundColor(.red)
+                .foregroundStyle(.red)
 
             Text(title)
                 .dsSmallCapsLabel()
@@ -518,11 +518,11 @@ struct IntelligenceModelView: View {
 
             Text("\(ruleCount) rules")
                 .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -532,7 +532,7 @@ struct IntelligenceModelView: View {
     private func severityCountBadge(count: Int, severity: FailureRuleSeverity) -> some View {
         Text("\(count) \(severity.displayName)")
             .font(.system(size: 8, weight: .bold))
-            .foregroundColor(severity.color)
+            .foregroundStyle(severity.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
@@ -547,23 +547,23 @@ struct IntelligenceModelView: View {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.green)
+                    .foregroundStyle(DS.green)
                 Text("\(fingerprint.topPerformerCount) top performers")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             Text("vs")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             HStack(spacing: 4) {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(.red)
+                    .foregroundStyle(.red)
                 Text("\(fingerprint.underperformerCount) underperformers")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             Spacer()
@@ -580,13 +580,13 @@ struct IntelligenceModelView: View {
             HStack(spacing: 8) {
                 Text(rule.dimension)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
 
                 Text(rule.severity.displayName.uppercased())
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(rule.severity.color)
+                    .foregroundStyle(rule.severity.color)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
@@ -596,7 +596,7 @@ struct IntelligenceModelView: View {
 
                 Text(rule.delta)
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             // Comparison: best vs worst
@@ -606,7 +606,7 @@ struct IntelligenceModelView: View {
 
                 Image(systemName: "arrow.right")
                     .font(.system(size: 8))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .padding(.horizontal, 6)
 
                 comparisonMetric(label: "Worst", value: rule.worstMetric, color: .red)
@@ -616,7 +616,7 @@ struct IntelligenceModelView: View {
             // Rule statement
             Text(rule.rule)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(rule.severity == .high ? Color.red.opacity(0.9) : DS.textSecondary)
+                .foregroundStyle(rule.severity == .high ? Color.red.opacity(0.9) : DS.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 12)
@@ -632,11 +632,11 @@ struct IntelligenceModelView: View {
 
             Text(label)
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Text(value)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .lineLimit(1)
         }
     }

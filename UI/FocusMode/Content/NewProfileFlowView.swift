@@ -98,18 +98,18 @@ struct NewProfileFlowView: View {
         HStack(spacing: 10) {
             Image(systemName: "person.crop.rectangle.stack.fill")
                 .font(.system(size: 16))
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
 
             Text(existingAtom == nil ? "New Profile" : "Edit Profile")
                 .font(DS.cardTitle)
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark")
                     .font(DS.buttonText)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 28, height: 28)
                     .background(DS.border, in: Circle())
             }
@@ -152,13 +152,13 @@ struct NewProfileFlowView: View {
                 } else {
                     Text("\(step)")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(isActive ? DS.text : DS.textMuted)
+                        .foregroundStyle(isActive ? DS.text : DS.textMuted)
                 }
             }
 
             Text(stepName(step))
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(isActive ? DS.textSecondary : DS.textMuted)
+                .foregroundStyle(isActive ? DS.textSecondary : DS.textMuted)
         }
     }
 
@@ -227,13 +227,13 @@ struct NewProfileFlowView: View {
                 if required {
                     Text("*")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(DS.red.opacity(0.6))
+                        .foregroundStyle(DS.red.opacity(0.6))
                 }
             }
             TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .font(DS.sectionDesc)
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
                 .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
@@ -261,7 +261,7 @@ struct NewProfileFlowView: View {
             Text(platform.displayName)
                 .font(DS.timestamp)
         }
-        .foregroundColor(isSelected ? DS.text : DS.textSecondary)
+        .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
@@ -282,7 +282,7 @@ struct NewProfileFlowView: View {
 
             Text("Upload your brand story, top-performing content, and voice guides to train the AI model.")
                 .font(DS.cardMeta)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
             documentCategoryTabs
             documentsForCategory
@@ -334,7 +334,7 @@ struct NewProfileFlowView: View {
             if count > 0 {
                 Text("\(count)")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(isSelected ? DS.text : DS.textMuted)
+                    .foregroundStyle(isSelected ? DS.text : DS.textMuted)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(
@@ -343,7 +343,7 @@ struct NewProfileFlowView: View {
                     )
             }
         }
-        .foregroundColor(isSelected ? DS.text : DS.textSecondary)
+        .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(
@@ -370,18 +370,18 @@ struct NewProfileFlowView: View {
         VStack(spacing: 8) {
             Image(systemName: selectedDocCategory.iconName)
                 .font(.system(size: 24))
-                .foregroundColor(DS.borderActive)
+                .foregroundStyle(DS.borderActive)
 
             Text("No \(selectedDocCategory.displayName.lowercased()) documents yet")
                 .font(DS.cardMeta)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
-                .foregroundColor(DS.border)
+                .foregroundStyle(DS.border)
         )
     }
 
@@ -408,16 +408,16 @@ struct NewProfileFlowView: View {
             if doc.sourceURL != nil {
                 Image(systemName: "link")
                     .font(DS.timestamp)
-                    .foregroundColor(DS.accent.opacity(0.7))
+                    .foregroundStyle(DS.accent.opacity(0.7))
             } else {
                 Image(systemName: doc.filename != nil ? "doc.text.fill" : "text.alignleft")
                     .font(DS.timestamp)
-                    .foregroundColor(DS.accent.opacity(0.7))
+                    .foregroundStyle(DS.accent.opacity(0.7))
             }
 
             Text(doc.title.isEmpty ? (doc.filename ?? "Untitled") : doc.title)
                 .font(DS.buttonText)
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
 
             Spacer()
@@ -425,13 +425,13 @@ struct NewProfileFlowView: View {
             if !isTranscribing && !doc.content.isEmpty {
                 Text("\(doc.content.count) chars")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             Button(action: { removeDocument(doc.id); transcriptionManager.states.removeValue(forKey: doc.id) }) {
                 Image(systemName: "xmark.circle.fill")
                     .font(DS.cardMeta)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -446,17 +446,17 @@ struct NewProfileFlowView: View {
                     .frame(height: 42)
                 Text(txState?.progressText ?? "Transcribing...")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.accent.opacity(0.6))
+                    .foregroundStyle(DS.accent.opacity(0.6))
             }
         } else if let error = txState?.error {
             // Error state
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.orange)
+                    .foregroundStyle(DS.orange)
                 Text(error)
                     .font(.system(size: 10))
-                    .foregroundColor(DS.orange.opacity(0.9))
+                    .foregroundStyle(DS.orange.opacity(0.9))
                     .lineLimit(2)
             }
         } else {
@@ -465,10 +465,10 @@ struct NewProfileFlowView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.circle.fill")
                             .font(.system(size: 10))
-                            .foregroundColor(DS.accent.opacity(0.8))
+                            .foregroundStyle(DS.accent.opacity(0.8))
                         Text(warning)
                             .font(.system(size: 10))
-                            .foregroundColor(DS.accent.opacity(0.85))
+                            .foregroundStyle(DS.accent.opacity(0.85))
                             .lineLimit(2)
                     }
                 }
@@ -479,7 +479,7 @@ struct NewProfileFlowView: View {
                     } else {
                         Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
                             .font(DS.timestamp)
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .lineLimit(2)
                     }
                 }
@@ -497,12 +497,12 @@ struct NewProfileFlowView: View {
                 if let sourceURL = doc.sourceURL {
                     Text(sourceURL)
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(DS.textMuted.opacity(0.6))
+                        .foregroundStyle(DS.textMuted.opacity(0.6))
                         .lineLimit(1)
                 }
                 Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
                     .font(DS.timestamp)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -563,7 +563,7 @@ struct NewProfileFlowView: View {
             Text(text)
                 .font(DS.timestamp)
         }
-        .foregroundColor(DS.accent.opacity(0.8))
+        .foregroundStyle(DS.accent.opacity(0.8))
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
@@ -607,10 +607,10 @@ struct NewProfileFlowView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 11))
-                        .foregroundColor(DS.accent.opacity(0.6))
+                        .foregroundStyle(DS.accent.opacity(0.6))
                     Text("Add underperforming content in Step 2 to generate a Failure Fingerprint — the AI will compare what works vs what doesn't across 8 dimensions.")
                         .font(DS.timestamp)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
 
@@ -622,7 +622,7 @@ struct NewProfileFlowView: View {
 
                     Text(generationProgress)
                         .font(DS.buttonText)
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
                         .animation(.easeInOut, value: generationProgress)
                 }
                 .padding(.vertical, 20)
@@ -630,15 +630,15 @@ struct NewProfileFlowView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 28))
-                        .foregroundColor(DS.green)
+                        .foregroundStyle(DS.green)
 
                     Text("Intelligence Model Generated")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
 
                     Text("Generated at \(model.generatedAt.formatted(date: .abbreviated, time: .shortened))")
                         .font(DS.timestamp)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
 
                     // Failure fingerprint summary
                     if let fp = model.failureFingerprint, !fp.rules.isEmpty {
@@ -648,7 +648,7 @@ struct NewProfileFlowView: View {
                     Button(action: { Task { await generateModel() } }) {
                         Text("Regenerate")
                             .font(DS.timestamp)
-                            .foregroundColor(DS.accent)
+                            .foregroundStyle(DS.accent)
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 4)
@@ -666,10 +666,10 @@ struct NewProfileFlowView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(DS.timestamp)
-                        .foregroundColor(DS.orange)
+                        .foregroundStyle(DS.orange)
                     Text(error)
                         .font(DS.timestamp)
-                        .foregroundColor(DS.orange.opacity(0.9))
+                        .foregroundStyle(DS.orange.opacity(0.9))
                         .lineLimit(3)
                 }
             }
@@ -682,17 +682,17 @@ struct NewProfileFlowView: View {
         HStack(spacing: 8) {
             Image(systemName: met ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 13))
-                .foregroundColor(met ? DS.green : DS.textMuted)
+                .foregroundStyle(met ? DS.green : DS.textMuted)
 
             Text(label)
                 .font(DS.cardMeta)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
             Spacer()
 
             Text(detail)
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -733,15 +733,15 @@ struct NewProfileFlowView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 28))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
 
                     Text("No intelligence model generated yet")
                         .font(DS.sectionDesc)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
 
                     Text("Go back to Step 3 to generate one, or save the profile without it.")
                         .font(DS.timestamp)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
@@ -763,7 +763,7 @@ struct NewProfileFlowView: View {
                         Text("Back")
                             .font(DS.sectionDesc)
                     }
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -774,7 +774,7 @@ struct NewProfileFlowView: View {
                 Button(action: { withAnimation(.spring(response: 0.3)) { currentStep = 3 } }) {
                     Text("Skip")
                         .font(DS.buttonText)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, 8)
@@ -784,7 +784,7 @@ struct NewProfileFlowView: View {
                 Button(action: { withAnimation(.spring(response: 0.3)) { currentStep = 4 } }) {
                     Text("Skip")
                         .font(DS.buttonText)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, 8)
@@ -853,11 +853,11 @@ struct NewProfileFlowView: View {
             HStack {
                 Text("Paste Text")
                     .font(DS.navTitle)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Button("Cancel") { showPasteModal = false }
                     .font(DS.cardMeta)
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .buttonStyle(.plain)
             }
             .padding(16)
@@ -868,7 +868,7 @@ struct NewProfileFlowView: View {
                 TextField("Title (optional)", text: $pasteTitle)
                     .textFieldStyle(.plain)
                     .font(DS.sectionDesc)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .padding(10)
                     .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
 
@@ -876,13 +876,13 @@ struct NewProfileFlowView: View {
                     if pasteText.isEmpty {
                         Text("Paste your content here...")
                             .font(DS.cardMeta)
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                     }
                     TextEditor(text: $pasteText)
                         .font(DS.cardMeta)
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .scrollContentBackground(.hidden)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -942,11 +942,11 @@ struct NewProfileFlowView: View {
             HStack {
                 Text("Write Document")
                     .font(DS.navTitle)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Button("Cancel") { showWriteModal = false }
                     .font(DS.cardMeta)
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .buttonStyle(.plain)
             }
             .padding(16)
@@ -957,7 +957,7 @@ struct NewProfileFlowView: View {
                 TextField("Document title", text: $writeTitle)
                     .textFieldStyle(.plain)
                     .font(DS.sectionDesc)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .padding(10)
                     .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
 
@@ -965,13 +965,13 @@ struct NewProfileFlowView: View {
                     if writeText.isEmpty {
                         Text("Start writing...")
                             .font(DS.cardMeta)
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                     }
                     TextEditor(text: $writeText)
                         .font(DS.cardMeta)
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .scrollContentBackground(.hidden)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -1048,11 +1048,11 @@ struct NewProfileFlowView: View {
         HStack {
             Text("Add Instagram URL")
                 .font(DS.navTitle)
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
             Spacer()
             Button("Cancel") { showURLModal = false }
                 .font(DS.cardMeta)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .buttonStyle(.plain)
         }
         .padding(16)
@@ -1063,17 +1063,17 @@ struct NewProfileFlowView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Paste the Instagram URL of a \(selectedDocCategory.displayName.lowercased()) post. It will be auto-transcribed using the same engine as the swipe file.")
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             HStack(spacing: 8) {
                 Image(systemName: "link")
                     .font(.system(size: 12))
-                    .foregroundColor(DS.accent.opacity(0.6))
+                    .foregroundStyle(DS.accent.opacity(0.6))
 
                 TextField("https://www.instagram.com/reel/...", text: $urlInput)
                     .textFieldStyle(.plain)
                     .font(DS.sectionDesc)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .onSubmit { submitURLFromModal() }
             }
             .padding(10)
@@ -1180,13 +1180,13 @@ struct NewProfileFlowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Transcript Review")
                     .font(DS.navTitle)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 if let reviewId = reviewingDocumentId,
                    let doc = documents.first(where: { $0.id == reviewId }),
                    let sourceURL = doc.sourceURL {
                     Text(sourceURL)
                         .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .lineLimit(1)
                 }
             }
@@ -1194,7 +1194,7 @@ struct NewProfileFlowView: View {
             Button(action: { saveAndCloseURLReview() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 28, height: 28)
                     .background(DS.borderSubtle, in: Circle())
             }
@@ -1207,7 +1207,7 @@ struct NewProfileFlowView: View {
     private var urlReviewEditor: some View {
         TextEditor(text: $reviewEditText)
             .font(DS.cardMeta)
-            .foregroundColor(DS.text)
+            .foregroundStyle(DS.text)
             .scrollContentBackground(.hidden)
             .padding(12)
     }
@@ -1217,7 +1217,7 @@ struct NewProfileFlowView: View {
         HStack {
             Text("\(reviewEditText.count) characters")
                 .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             Spacer()
             Button(action: { saveAndCloseURLReview() }) {
                 Text("Save Changes")
@@ -1255,7 +1255,7 @@ struct NewProfileFlowView: View {
     private func fieldLabel(_ label: String) -> some View {
         Text(label)
             .font(DS.buttonText)
-            .foregroundColor(DS.textSecondary)
+            .foregroundStyle(DS.textSecondary)
     }
 
     // MARK: - Failure Fingerprint Summary
@@ -1268,16 +1268,16 @@ struct NewProfileFlowView: View {
         HStack(spacing: 10) {
             Image(systemName: "shield.lefthalf.filled")
                 .font(.system(size: 12))
-                .foregroundColor(.red.opacity(0.8))
+                .foregroundStyle(.red.opacity(0.8))
 
             Text("Failure Fingerprint: \(fp.rules.count) rules")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             if highCount > 0 {
                 Text("\(highCount) HIGH")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.red)
+                    .foregroundStyle(.red)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.red.opacity(0.12)))
@@ -1285,7 +1285,7 @@ struct NewProfileFlowView: View {
             if medCount > 0 {
                 Text("\(medCount) MED")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.orange)
+                    .foregroundStyle(.orange)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.orange.opacity(0.12)))

@@ -8,7 +8,7 @@ import SwiftUI
 
 struct UnifiedSearchResultsView: View {
 
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
 
     private let minCardWidth: CGFloat = 248
     private let cardSpacing: CGFloat = CommandKMetrics.cardSpacing

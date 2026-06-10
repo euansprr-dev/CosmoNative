@@ -69,6 +69,16 @@ struct CanvasViewportTransform: Equatable {
         )
     }
 
+    /// The committed offset that centers `point` in the viewport at the current
+    /// scale (no live gesture). Derivation: `canvasToScreen(p) == screenCenter`
+    /// requires `p + contentOffset == screenCenter`.
+    func centeringOffset(for point: CGPoint) -> CGSize {
+        CGSize(
+            width: screenCenter.x - point.x,
+            height: screenCenter.y - point.y
+        )
+    }
+
     func canvasRectToScreen(_ rect: CGRect) -> CGRect {
         let minPoint = canvasToScreen(rect.origin)
         let maxPoint = canvasToScreen(CGPoint(x: rect.maxX, y: rect.maxY))

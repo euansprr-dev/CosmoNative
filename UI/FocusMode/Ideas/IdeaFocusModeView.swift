@@ -1,48 +1,19 @@
 // CosmoOS/UI/FocusMode/Ideas/IdeaFocusModeView.swift
-// The Atelier — manuscript column + marginalia gutter.
-// April 2026 — V2 redesign following the Akashic Codex aesthetic.
-//
-// The idea is a manuscript on vellum. Intelligence is marginalia in the gutter.
-// Gilt is ornament, never fill.
+// Idea Focus Mode v2 — Greenhouse clean.
+// June 2026 rewrite: floating glass toolbar (status, client, Begin Writing,
+// inspector toggle), centered manuscript column (the only serifs are the
+// idea's own title and body), and a structured right inspector for swipes /
+// framework / blueprint / research. Replaces the Atelier marginalia gutter.
+// Editors live in IdeaManuscriptEditors.swift; intelligence panels in
+// IdeaInspectorView.swift; chrome state in IdeaWorkspaceModel.swift.
 
 import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
 
-enum IdeaOutlineLayoutMetrics {
-    static let minimumEditorHeight: CGFloat = 22
-    static let normalRowSpacing: CGFloat = 12
-
-    static func editorHeight(forMeasuredHeight measuredHeight: CGFloat) -> CGFloat {
-        max(minimumEditorHeight, ceil(measuredHeight))
-    }
-}
-
-private enum HookEditorFocus: Hashable {
-    case existing(Int)
-    case draft
-}
-
-private enum HookLineLayoutMetrics {
-    static let minimumEditorHeight: CGFloat = 22
-
-    static func editorHeight(forMeasuredHeight measuredHeight: CGFloat) -> CGFloat {
-        max(minimumEditorHeight, ceil(measuredHeight))
-    }
-}
-
-enum OutlineSlideNavigationDirection: Equatable {
-    case previous
-    case next
-}
-
 // MARK: - Idea Focus Mode View
 
-/// Full-screen thinking surface for an idea.
-/// Centered manuscript column: serif title, chromeless context editor, numbered hooks, outline.
-/// Right marginalia gutter: swipes, framework, blueprint, research — all quiet, chromeless.
-/// Centered gilt-bracketed CTA at the bottom.
 struct IdeaFocusModeView: View {
     // MARK: - Properties
 
@@ -51,29 +22,26 @@ struct IdeaFocusModeView: View {
 
     // MARK: - State
 
-    @StateObject private var viewModel: IdeaFocusModeViewModel
+    @State private var viewModel: IdeaFocusModeViewModel
+    @State private var workspace = IdeaWorkspaceModel()
     @State private var newHookText: String = ""
     @State private var isPromoting: Bool = false
     @State private var showProfileEditor: Bool = false
     @State private var showBlueprintPicker: Bool = false
     @State private var isLoadingArcRecs: Bool = false
-    @State private var outlineAdvancedMode: Bool = false
-    @State private var hasAppeared: Bool = false
     @State private var showBlueprintSheet: Bool = false
     @State private var showResearchSheet: Bool = false
     @State private var showFrameworkSheet: Bool = false
     @State private var atelierScrollMetrics = CortexScrollMetrics()
+    @State private var bodyReviewProposal: CosmoAssistantProposal?
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
     @FocusState private var focusedHookEditor: HookEditorFocus?
     @FocusState private var focusedOutlineSlideID: UUID?
 
-    // MARK: - Constants
-
-    /// The idea's own accent — used sparingly for the focus rule and interactive states.
+    /// The idea's own accent — used sparingly for the focus rule.
     private let ideaAccent = DS.entityIdea
 
-    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
 
@@ -82,97 +50,225 @@ struct IdeaFocusModeView: View {
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
         self.onClose = onClose
-        _viewModel = StateObject(wrappedValue: IdeaFocusModeViewModel(atom: atom))
+        _viewModel = State(initialValue: IdeaFocusModeViewModel(atom: atom))
     }
 
     // MARK: - Body
 
     var body: some View {
         ZStack {
-            DS.focusImmersiveBackground.ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                atelierHeader
-
-                ScrollView {
-                    HStack(alignment: .top, spacing: DS.space24) {
-                        manuscriptColumn
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        marginaliaGutter
-                            .frame(width: 260)
-                            .padding(.top, 56)
-                    }
-                    .padding(.horizontal, DS.space24)
-                    .padding(.top, DS.space4)
-                    .padding(.bottom, DS.space20)
-                    .background(
-                        CortexScrollViewIntrospector { metrics in
-                            if metrics != atelierScrollMetrics {
-                                atelierScrollMetrics = metrics
-                            }
-                        }
-                    )
-                }
-                .scrollIndicators(.hidden)
-                .cortexThinScrollbar(metrics: atelierScrollMetrics)
-            }
-
+            workspaceLayout
             overlayPresentations
         }
+        .background(DS.bg.ignoresSafeArea())
         .background {
             FocusModeEditorBlurClickMonitor {
                 clearManuscriptEditingFocus()
             }
         }
         .focusImmersiveEntryTransition()
-        .onAppear {
-            AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
-            let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
-            if !isPaneContext || isPaneContextOwner {
-                CosmoWindowViewModel.shared.updateContext(provider: provider)
-            }
-            withAnimation(.easeOut(duration: 0.45).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
+        .onAppear(perform: handleAppear)
         .onChange(of: isPaneContextOwner) { _, isOwner in
-            if isOwner {
-                let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
-                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            if isOwner { registerContextProvider() }
+        }
+        .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
+            let surfaceID = "idea:\(atom.uuid)"
+            bodyReviewProposal = proposals.last { proposal in
+                proposal.surfaceID == surfaceID && proposal.hasReviewableOperations
             }
         }
         .onDisappear {
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             viewModel.saveOnClose()
         }
-        .onKeyPress(.escape) {
-            if showBlueprintPicker {
-                showBlueprintPicker = false
-                return .handled
-            }
-            if viewModel.showLinkSwipesOverlay {
-                viewModel.showLinkSwipesOverlay = false
-                return .handled
-            }
-            if viewModel.showLinkConnectionsOverlay {
-                viewModel.showLinkConnectionsOverlay = false
-                return .handled
-            }
-            onClose()
-            return .handled
-        }
+        .onKeyPress(.escape) { handleEscape() }
+        .onKeyPress { handleKeyCommand($0) }
         .overlay { profileEditorOverlay }
         .sheet(isPresented: $showBlueprintSheet) { atelierBlueprintSheet }
         .sheet(isPresented: $showResearchSheet) { atelierResearchSheet }
         .sheet(isPresented: $showFrameworkSheet) { atelierFrameworkSheet }
-        .onChange(of: viewModel.researchResults) { _, _ in
-            viewModel.scheduleAutoSave()
+        .onChange(of: viewModel.researchResults) { _, _ in viewModel.scheduleAutoSave() }
+        .onChange(of: viewModel.arcRecommendations) { _, _ in viewModel.scheduleAutoSave() }
+        .onChange(of: viewModel.chatHistory) { _, _ in viewModel.scheduleAutoSave() }
+    }
+
+    // MARK: - Layout
+
+    private var workspaceLayout: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                centerColumn
+                if workspace.breakpoint == .regular, workspace.isInspectorVisible {
+                    Divider().overlay(DS.borderSubtle)
+                    inspector
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .animation(ProMotionSprings.focusTransition, value: workspace.isInspectorVisible)
+            .overlay(alignment: .trailing) { inspectorOverlay }
+            .onChange(of: geometry.size.width, initial: true) { _, width in
+                let resolved = IdeaWorkspaceBreakpoint(width: width)
+                if workspace.breakpoint != resolved {
+                    workspace.breakpoint = resolved
+                }
+            }
         }
-        .onChange(of: viewModel.arcRecommendations) { _, _ in
-            viewModel.scheduleAutoSave()
+    }
+
+    private var centerColumn: some View {
+        ScrollView {
+            manuscriptColumn
+                .padding(.horizontal, DS.space24)
+                .padding(.top, DS.space16)
+                .padding(.bottom, DS.space48)
+                .frame(maxWidth: 680, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .background(
+                    CortexScrollViewIntrospector { metrics in
+                        if metrics != atelierScrollMetrics {
+                            atelierScrollMetrics = metrics
+                        }
+                    }
+                )
         }
-        .onChange(of: viewModel.chatHistory) { _, _ in
-            viewModel.scheduleAutoSave()
+        .scrollIndicators(.hidden)
+        .cortexThinScrollbar(metrics: atelierScrollMetrics)
+        .scrollEdgeEffectStyle(.soft, for: .all)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            IdeaWorkspaceToolbar(
+                viewModel: viewModel,
+                workspace: workspace,
+                isPaneContext: isPaneContext,
+                isPromoting: isPromoting,
+                actions: workspaceActions
+            )
+            .padding(.horizontal, DS.space16)
+            .padding(.top, DS.space10)
+            .padding(.bottom, DS.space6)
+        }
+    }
+
+    private var inspector: some View {
+        IdeaInspectorView(
+            viewModel: viewModel,
+            isLoadingArcRecommendations: isLoadingArcRecs,
+            actions: workspaceActions
+        )
+    }
+
+    /// Compact widths: the inspector covers the manuscript, so it's opt-in.
+    @ViewBuilder
+    private var inspectorOverlay: some View {
+        if workspace.breakpoint == .compact, workspace.isInspectorOverlayPresented {
+            inspector
+                .overlay(alignment: .leading) {
+                    Divider().overlay(DS.borderSubtle)
+                }
+                .shadow(color: .black.opacity(0.18), radius: 18, x: -6)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .zIndex(2)
+        }
+    }
+
+    private var workspaceActions: IdeaWorkspaceActions {
+        IdeaWorkspaceActions(
+            onShowLinkSwipes: { viewModel.showLinkSwipesOverlay = true },
+            onSuggestFramework: {
+                refreshArcRecommendations()
+                showFrameworkSheet = true
+            },
+            onChangeFramework: { showFrameworkSheet = true },
+            onShowBlueprintSheet: { showBlueprintSheet = true },
+            onShowBlueprintPicker: { showBlueprintPicker = true },
+            onShowResearch: { showResearchSheet = true },
+            onOpenAtomInPane: { openAtomInPane($0) },
+            onShowProfileEditor: { showProfileEditor = true },
+            onBeginWriting: beginWriting,
+            onClose: onClose
+        )
+    }
+
+    // MARK: - Lifecycle
+
+    private func handleAppear() {
+        AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
+        registerContextProvider()
+    }
+
+    private func registerContextProvider() {
+        guard !isPaneContext || isPaneContextOwner else { return }
+        let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
+        CosmoWindowViewModel.shared.updateContext(provider: provider)
+    }
+
+    // MARK: - Keyboard
+
+    private func handleEscape() -> KeyPress.Result {
+        if viewModel.showMentionOverlay {
+            viewModel.showMentionOverlay = false
+            viewModel.mentionSearchText = ""
+            return .handled
+        }
+        if showBlueprintPicker {
+            showBlueprintPicker = false
+            return .handled
+        }
+        if viewModel.showLinkSwipesOverlay {
+            viewModel.showLinkSwipesOverlay = false
+            return .handled
+        }
+        if viewModel.showLinkConnectionsOverlay {
+            viewModel.showLinkConnectionsOverlay = false
+            return .handled
+        }
+        if workspace.isInspectorOverlayPresented {
+            withAnimation(ProMotionSprings.focusTransition) {
+                workspace.isInspectorOverlayPresented = false
+            }
+            return .handled
+        }
+        onClose()
+        return .handled
+    }
+
+    private func handleKeyCommand(_ keyPress: KeyPress) -> KeyPress.Result {
+        guard keyPress.modifiers.contains(.command),
+              keyPress.modifiers.contains(.option),
+              keyPress.key == KeyEquivalent("i") else { return .ignored }
+        withAnimation(ProMotionSprings.focusTransition) {
+            workspace.toggleInspector()
+        }
+        return .handled
+    }
+
+    // MARK: - Actions
+
+    private func beginWriting() {
+        let isBodyEmpty = viewModel.editableBody
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !isPromoting, !isBodyEmpty else { return }
+        isPromoting = true
+        Task {
+            await viewModel.promoteToContent()
+            isPromoting = false
+        }
+    }
+
+    private func openAtomInPane(_ uuid: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": uuid, "asPane": true]
+        )
+    }
+
+    private func refreshArcRecommendations() {
+        isLoadingArcRecs = true
+        viewModel.arcRecommendations = []
+        viewModel.scheduleAutoSave()
+        Task {
+            await viewModel.generateArcRecommendations()
+            isLoadingArcRecs = false
         }
     }
 
@@ -185,19 +281,18 @@ struct IdeaFocusModeView: View {
             if let blueprint = viewModel.selectedBlueprint {
                 BlueprintDisplayView(
                     blueprintAtom: blueprint,
-                    displayMode: $viewModel.blueprintDisplayMode
+                    displayMode: Bindable(viewModel).blueprintDisplayMode
                 )
                 .padding(DS.space24)
             } else {
                 Text("No blueprint selected")
-                    .font(DS.dateSerif)
-                    .italic()
-                    .foregroundStyle(DS.inkFaded)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textMuted)
                     .padding(DS.space48)
             }
         }
         .frame(width: 720, height: 640)
-        .background(DS.focusImmersiveBackground)
+        .background(DS.bg)
     }
 
     @ViewBuilder
@@ -205,14 +300,14 @@ struct IdeaFocusModeView: View {
         VStack(spacing: 0) {
             AtelierSheetHeader(title: "RESEARCH") { showResearchSheet = false }
             IdeaResearchPanel(
-                results: $viewModel.researchResults,
+                results: Bindable(viewModel).researchResults,
                 ideaText: viewModel.editableBody,
                 clientNiche: viewModel.linkedClient?.title
             )
             .padding(DS.space24)
         }
         .frame(width: 720, height: 640)
-        .background(DS.focusImmersiveBackground)
+        .background(DS.bg)
     }
 
     @ViewBuilder
@@ -225,16 +320,14 @@ struct IdeaFocusModeView: View {
                     if isLoadingArcRecs {
                         HStack(spacing: DS.space8) {
                             ProgressView().controlSize(.small)
-                            Text("analyzing idea…")
-                                .font(DS.dateSerif)
-                                .italic()
-                                .foregroundStyle(DS.inkFaded)
+                            Text("Reading the idea…")
+                                .font(DS.callout)
+                                .foregroundStyle(DS.textMuted)
                         }
                     } else if viewModel.arcRecommendations.isEmpty {
-                        Text("add context to get arc suggestions")
-                            .font(DS.dateSerif)
-                            .italic()
-                            .foregroundStyle(DS.inkFaded)
+                        Text("Add more context to get framework suggestions.")
+                            .font(DS.callout)
+                            .foregroundStyle(DS.textMuted)
                     } else {
                         ForEach(viewModel.arcRecommendations) { rec in
                             atelierFrameworkRow(rec)
@@ -246,7 +339,7 @@ struct IdeaFocusModeView: View {
             }
         }
         .frame(width: 560, height: 540)
-        .background(DS.focusImmersiveBackground)
+        .background(DS.bg)
     }
 
     private func atelierFrameworkRow(_ rec: ArcRecommendation) -> some View {
@@ -258,30 +351,29 @@ struct IdeaFocusModeView: View {
             VStack(alignment: .leading, spacing: DS.space6) {
                 HStack(spacing: DS.space8) {
                     Text(rec.arcName)
-                        .font(.system(size: 15, weight: .regular, design: .serif))
+                        .font(DS.headline)
                         .foregroundStyle(DS.text)
-                    Text("\(Int(rec.confidence * 100)) %")
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .foregroundStyle(DS.inkFaded)
+                    Text("\(Int(rec.confidence * 100))%")
+                        .font(DS.caption.monospacedDigit())
+                        .foregroundStyle(DS.textMuted)
                     Spacer()
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(DS.gilt)
+                            .font(DS.caption.weight(.semibold))
+                            .foregroundStyle(DS.accent)
+                            .accessibilityHidden(true)
                     }
                 }
                 Text(rec.explanation)
                     .font(DS.callout)
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(3)
-                Rectangle()
-                    .fill(DS.sepiaSubtle)
-                    .frame(height: 0.5)
-                    .padding(.top, DS.space4)
+                Divider().overlay(DS.borderSubtle)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     // MARK: - Overlay Presentations
@@ -291,7 +383,7 @@ struct IdeaFocusModeView: View {
         if viewModel.showLinkSwipesOverlay {
             LinkSwipesOverlay(
                 viewModel: viewModel,
-                isPresented: $viewModel.showLinkSwipesOverlay
+                isPresented: Bindable(viewModel).showLinkSwipesOverlay
             )
             .transition(.opacity)
             .zIndex(100)
@@ -300,7 +392,7 @@ struct IdeaFocusModeView: View {
         if viewModel.showLinkConnectionsOverlay {
             LinkConnectionsOverlay(
                 viewModel: viewModel,
-                isPresented: $viewModel.showLinkConnectionsOverlay
+                isPresented: Bindable(viewModel).showLinkConnectionsOverlay
             )
             .transition(.opacity)
             .zIndex(100)
@@ -334,135 +426,17 @@ struct IdeaFocusModeView: View {
     }
 }
 
-// MARK: - Atelier Header (quiet, no chrome)
+// MARK: - Manuscript Column
 
 extension IdeaFocusModeView {
-    /// A whisper-thin nav strip. No filled bar, no divider — the only things present
-    /// are a back chevron on the left and a client picker on the right.
-    private var atelierHeader: some View {
-        HStack(spacing: DS.space12) {
-            if !isPaneContext {
-                atelierBackButton
-            }
-            Spacer()
-            clientPickerPill
-            if isPaneContext {
-                atelierCloseButton
-            }
-        }
-        .padding(.horizontal, DS.space20)
-        .padding(.vertical, DS.space12)
-        .opacity(hasAppeared ? 1 : 0)
-    }
-
-    private var atelierBackButton: some View {
-        Button(action: onClose) {
-            HStack(spacing: DS.space6) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .medium))
-                Text("back")
-                    .font(DS.dateSerif)
-                    .italic()
-            }
-            .foregroundStyle(DS.inkFaded)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(.escape, modifiers: [])
-        .accessibilityLabel("Go back")
-    }
-
-    private var atelierCloseButton: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(DS.inkFaded)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Close pane")
-    }
-
-    private var clientPickerPill: some View {
-        Menu {
-            ForEach(viewModel.clientProfiles, id: \.uuid) { client in
-                Button(client.title ?? "Client") {
-                    Task { await viewModel.assignClient(client) }
-                }
-            }
-            if viewModel.clientProfiles.isEmpty {
-                Text("No client profiles")
-            }
-            Divider()
-            Button {
-                showProfileEditor = true
-            } label: {
-                Label("Create New Profile", systemImage: "plus.circle")
-            }
-            if viewModel.linkedClient != nil {
-                Divider()
-                Button(role: .destructive) {
-                    Task { await viewModel.assignClient(nil) }
-                } label: {
-                    Label("Remove Client", systemImage: "xmark.circle")
-                }
-            }
-        } label: {
-            clientPickerLabel
-        }
-        .menuStyle(.borderlessButton)
-    }
-
-    @ViewBuilder
-    private var clientPickerLabel: some View {
-        if let client = viewModel.linkedClient {
-            HStack(spacing: DS.space6) {
-                Circle()
-                    .fill(DS.clientColor(for: client.uuid))
-                    .frame(width: 5, height: 5)
-                Text(client.title?.lowercased() ?? "client")
-                    .font(DS.dateSerif)
-                    .italic()
-                    .foregroundStyle(DS.inkFaded)
-            }
-            .contentShape(Rectangle())
-        } else {
-            Text("no client")
-                .font(DS.dateSerif)
-                .italic()
-                .foregroundStyle(DS.focusImmersiveTextMuted.opacity(0.8))
-                .contentShape(Rectangle())
-        }
-    }
-
-    private var isBodyEmpty: Bool {
-        viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-}
-
-// MARK: - Left Column
-
-extension IdeaFocusModeView {
-    /// The centered manuscript column — serif title, chromeless editor, numbered hooks,
-    /// floating-stanza outline, then the gilt CTA.
+    /// The centered manuscript — title hero, context editor, hooks, outline.
+    /// Content is the hero: no card chrome, hairline dividers carry structure.
     private var manuscriptColumn: some View {
         VStack(alignment: .leading, spacing: DS.space24) {
-            atelierTitleHero
-                .atelierStaggerIn(delay: 0.16, appeared: hasAppeared)
-
-            atelierContextEditor
-                .atelierStaggerIn(delay: 0.32, appeared: hasAppeared)
-
-            atelierHooksSection
-                .atelierStaggerIn(delay: 0.40, appeared: hasAppeared)
-
-            atelierOutlineSection
-                .atelierStaggerIn(delay: 0.48, appeared: hasAppeared)
-
-            atelierCTA
-                .padding(.top, DS.space24)
-                .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
+            titleHero
+            contextEditor
+            hooksSection
+            outlineSection
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(manuscriptWhitespaceBlurLayer)
@@ -485,16 +459,28 @@ extension IdeaFocusModeView {
         FocusModeEditorBlur.clearFirstResponder()
     }
 
+    private func sectionLabel(_ title: String) -> some View {
+        HStack(spacing: DS.space12) {
+            Text(title)
+                .font(DS.smallCaps)
+                .tracking(1.4)
+                .foregroundStyle(DS.textMuted)
+                .fixedSize()
+            Divider().overlay(DS.borderSubtle)
+        }
+        .frame(height: 12)
+    }
+
     // MARK: Title hero
 
-    private var atelierTitleHero: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            Text(statusOrnamentLabel)
+    private var titleHero: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text("IDEA · \(viewModel.selectedStatus.rawValue.uppercased())")
                 .font(DS.smallCaps)
-                .tracking(2.2)
-                .foregroundStyle(DS.giltMuted)
+                .tracking(1.4)
+                .foregroundStyle(DS.textMuted)
 
-            TextField("Untitled idea", text: $viewModel.editableTitle, axis: .vertical)
+            TextField("Untitled idea", text: Bindable(viewModel).editableTitle, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(DS.displaySerif)
                 .foregroundStyle(DS.text)
@@ -506,57 +492,65 @@ extension IdeaFocusModeView {
                 }
                 .accessibilityLabel("Idea title")
 
-            HStack(spacing: DS.space8) {
+            HStack(spacing: DS.space6) {
                 Text(formattedCreatedDate)
-                Text("·")
-                Text(viewModel.selectedFormat?.rawValue.lowercased() ?? "unformatted")
+                Text("·").accessibilityHidden(true)
+                Text(viewModel.selectedFormat?.rawValue.capitalized ?? "Unformatted")
                 if let client = viewModel.linkedClient {
-                    Text("·")
-                    Text(client.title?.lowercased() ?? "client")
+                    Text("·").accessibilityHidden(true)
+                    Text(client.title ?? "Client")
                 }
             }
-            .font(DS.dateSerif)
-            .italic()
-            .foregroundStyle(DS.focusImmersiveTextMuted)
-
-            Rectangle()
-                .fill(DS.sepiaSubtle)
-                .frame(width: 120, height: 0.5)
-                .padding(.top, DS.space4)
+            .font(DS.caption)
+            .foregroundStyle(DS.textMuted)
         }
-    }
-
-    private var statusOrnamentLabel: String {
-        let status = viewModel.selectedStatus.rawValue.uppercased()
-        return "· · · IDEA · \(status) · · ·"
     }
 
     private var formattedCreatedDate: String {
         guard let date = ISO8601.date(from: viewModel.idea.createdAt) else {
-            return "undated"
+            return "Undated"
         }
-        return CosmoDateFormatters.monthDay.string(from: date).lowercased()
+        return CosmoDateFormatters.monthDay.string(from: date)
     }
 
     // MARK: Context editor — chromeless manuscript
 
-    private var atelierContextEditor: some View {
+    private var contextEditor: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             contextMentionChips
 
+            if let review = bodyReviewProposal {
+                // Inline assistant review: the manuscript becomes the diff until
+                // every change is accepted or rejected — same surface, same type.
+                CosmoInlineDiffReviewView(
+                    store: CosmoInlineAssistantStore.shared,
+                    proposal: review,
+                    sourceText: viewModel.editableBody,
+                    bodyFont: .system(size: 17, weight: .regular, design: .serif),
+                    textColor: DS.text
+                )
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            } else {
+                contextEditingSurface
+            }
+        }
+    }
+
+    private var contextEditingSurface: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
             ZStack(alignment: .topLeading) {
                 if viewModel.editableBody.isEmpty {
                     Text("What's the angle?")
                         .font(.system(size: 17, weight: .regular, design: .serif))
                         .italic()
-                        .foregroundStyle(DS.focusImmersiveTextMuted.opacity(0.85))
+                        .foregroundStyle(DS.textMuted)
                         .padding(.top, 8)
                         .padding(.leading, 6)
                         .allowsHitTesting(false)
                 }
 
                 IdeaContextTextEditor(
-                    text: $viewModel.editableBody,
+                    text: Bindable(viewModel).editableBody,
                     isFocused: $isContextFocused
                 ) { newValue in
                     viewModel.scheduleAutoSave()
@@ -564,13 +558,6 @@ extension IdeaFocusModeView {
                     handleMentionTrigger(newValue)
                 }
                 .frame(maxWidth: .infinity, minHeight: IdeaContextTextView.minimumHeight, alignment: .topLeading)
-                .onChange(of: viewModel.editableBody) { _, newValue in
-                    if !isContextFocused {
-                        viewModel.scheduleAutoSave()
-                        viewModel.autoEnrich()
-                        handleMentionTrigger(newValue)
-                    }
-                }
                 .accessibilityLabel("Idea context and direction")
             }
             .overlay(alignment: .leading) {
@@ -583,29 +570,34 @@ extension IdeaFocusModeView {
                     .offset(x: isContextFocused ? -12 : -24)
                     .animation(ProMotionSprings.snappy, value: isContextFocused)
             }
-            .overlay(alignment: .topLeading) {
-                if viewModel.showMentionOverlay {
-                    CosmoMentionOverlay(
-                        isVisible: $viewModel.showMentionOverlay,
-                        searchText: $viewModel.mentionSearchText,
-                        onSelect: { mentioned in
-                            viewModel.addMention(mentioned)
-                            if let atIndex = viewModel.editableBody.lastIndex(of: "@") {
-                                viewModel.editableBody = String(viewModel.editableBody[viewModel.editableBody.startIndex..<atIndex])
-                            }
-                        },
-                        onDismiss: {
-                            viewModel.showMentionOverlay = false
-                            viewModel.mentionSearchText = ""
-                        }
-                    )
-                    .frame(width: 360)
-                    .frame(maxHeight: 340)
-                    .offset(y: 28)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                    .zIndex(10)
+            .overlay(alignment: .topLeading) { mentionOverlay }
+        }
+    }
+
+    @ViewBuilder
+    private var mentionOverlay: some View {
+        if viewModel.showMentionOverlay {
+            CosmoMentionOverlay(
+                isVisible: Bindable(viewModel).showMentionOverlay,
+                searchText: Bindable(viewModel).mentionSearchText,
+                onSelect: { mentioned in
+                    // Truncate the "@query" BEFORE addMention schedules
+                    // the autosave, so the snapshot captures the final body.
+                    if let atIndex = viewModel.editableBody.lastIndex(of: "@") {
+                        viewModel.editableBody = String(viewModel.editableBody[viewModel.editableBody.startIndex..<atIndex])
+                    }
+                    viewModel.addMention(mentioned)
+                },
+                onDismiss: {
+                    viewModel.showMentionOverlay = false
+                    viewModel.mentionSearchText = ""
                 }
-            }
+            )
+            .frame(width: 360)
+            .frame(maxHeight: 340)
+            .offset(y: 28)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+            .zIndex(10)
         }
     }
 
@@ -641,12 +633,12 @@ extension IdeaFocusModeView {
     private func contextMentionChip(_ mentioned: Atom) -> some View {
         let entityType = EntityType(rawValue: mentioned.type.rawValue) ?? .idea
         let chipColor = CosmoMentionColors.color(for: entityType)
-        return HStack(spacing: 4) {
+        return HStack(spacing: DS.space4) {
             Image(systemName: mentioned.type.iconName)
-                .font(.system(size: 9))
+                .font(DS.caption2)
+                .accessibilityHidden(true)
             Text(mentioned.title ?? "Untitled")
-                .font(DS.dateSerif)
-                .italic()
+                .font(DS.caption)
                 .lineLimit(1)
             Button {
                 withAnimation(ProMotionSprings.snappy) {
@@ -654,38 +646,41 @@ extension IdeaFocusModeView {
                 }
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(DS.caption2.weight(.bold))
                     .foregroundStyle(chipColor.opacity(0.5))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Remove mention \(mentioned.title ?? "untitled")")
         }
         .foregroundStyle(chipColor.opacity(0.85))
+        .padding(.horizontal, DS.space6)
         .padding(.vertical, 2)
+        .background(chipColor.opacity(0.08), in: Capsule())
     }
 }
 
-// MARK: - Hooks Section — numbered, no fills
+// MARK: - Hooks Section
 
 extension IdeaFocusModeView {
-    private var atelierHooksSection: some View {
+    private var hooksSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            AtelierOrnamentalSectionLabel(label: "HOOKS")
+            sectionLabel("HOOKS")
 
             VStack(alignment: .leading, spacing: DS.space10) {
                 ForEach(Array(viewModel.editableHooks.enumerated()), id: \.offset) { index, hook in
-                    atelierHookRow(hook, at: index)
+                    hookRow(hook, at: index)
                 }
-                atelierAddHookRow
+                addHookRow
             }
             .padding(.horizontal, DS.space4)
         }
     }
 
-    private func atelierHookRow(_ hook: String, at index: Int) -> some View {
+    private func hookRow(_ hook: String, at index: Int) -> some View {
         HStack(alignment: .top, spacing: DS.space12) {
             Text(romanNumeral(for: index + 1) + ".")
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundStyle(DS.giltMuted)
+                .font(DS.caption.monospacedDigit())
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 28, alignment: .leading)
                 .padding(.top, 3)
 
@@ -696,7 +691,7 @@ extension IdeaFocusModeView {
                 placeholder: "hook",
                 font: hookEditorFont(),
                 textColor: NSColor(DS.text),
-                placeholderColor: NSColor(DS.inkFaded.opacity(0.55)),
+                placeholderColor: NSColor(DS.textMuted.opacity(0.55)),
                 onReturn: finishHookEditing,
                 onDeleteEmpty: {
                     guard viewModel.editableHooks.indices.contains(index) else { return false }
@@ -721,8 +716,8 @@ extension IdeaFocusModeView {
                 }
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(DS.inkFaded.opacity(0.5))
+                    .font(DS.caption2.weight(.medium))
+                    .foregroundStyle(DS.textMuted.opacity(0.5))
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
             }
@@ -732,11 +727,11 @@ extension IdeaFocusModeView {
         }
     }
 
-    private var atelierAddHookRow: some View {
+    private var addHookRow: some View {
         HStack(alignment: .top, spacing: DS.space12) {
             Text("+")
-                .font(.system(size: 12, weight: .regular, design: .monospaced))
-                .foregroundStyle(DS.gilt.opacity(0.6))
+                .font(DS.caption.monospacedDigit())
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 28, alignment: .leading)
                 .padding(.top, 3)
 
@@ -744,10 +739,10 @@ extension IdeaFocusModeView {
                 text: $newHookText,
                 editorID: .draft,
                 focusedEditor: $focusedHookEditor,
-                placeholder: "add another",
+                placeholder: "Add a hook to test the angle",
                 font: hookEditorFont(italic: true),
-                textColor: NSColor(DS.inkFaded),
-                placeholderColor: NSColor(DS.inkFaded.opacity(0.65)),
+                textColor: NSColor(DS.textSecondary),
+                placeholderColor: NSColor(DS.textMuted.opacity(0.65)),
                 onReturn: addHook,
                 onDeleteEmpty: { false }
             )
@@ -810,20 +805,16 @@ extension IdeaFocusModeView {
     }
 }
 
-// MARK: - Inline Outline Section
+// MARK: - Outline Section (simple mode only)
 
 extension IdeaFocusModeView {
     @ViewBuilder
-    private var atelierOutlineSection: some View {
+    private var outlineSection: some View {
         VStack(alignment: .leading, spacing: DS.space16) {
-            atelierOutlineHeader
+            outlineHeader
 
             if let outline = viewModel.codexOutline {
-                if outlineAdvancedMode {
-                    advancedOutlineWorkspace(outline)
-                } else {
-                    normalOutlineSlides(outline)
-                }
+                outlineSlides(outline)
             }
         }
         .onAppear {
@@ -837,55 +828,37 @@ extension IdeaFocusModeView {
         }
     }
 
-    private var atelierOutlineHeader: some View {
+    private var outlineHeader: some View {
         HStack(spacing: DS.space12) {
-            AtelierOrnamentalSectionLabel(label: "OUTLINE")
-                .layoutPriority(0)
+            sectionLabel("OUTLINE")
 
-            HStack(spacing: DS.space12) {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        outlineAdvancedMode.toggle()
-                    }
-                } label: {
-                    Text(outlineAdvancedMode ? "advanced" : "simple")
-                        .font(DS.dateSerif)
-                        .italic()
-                        .foregroundStyle(outlineAdvancedMode ? DS.text : DS.inkFaded)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                Button { addNewSlide() } label: {
-                    Text("+ slide")
-                        .font(DS.dateSerif)
-                        .italic()
-                        .foregroundStyle(DS.gilt.opacity(0.8))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add slide")
+            Button { addNewSlide() } label: {
+                Label("Slide", systemImage: "plus")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .contentShape(Rectangle())
             }
-            .layoutPriority(1)
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("Add a slide")
+            .accessibilityLabel("Add slide")
         }
     }
 
-    // MARK: Normal Mode — floating stanzas, no cards
-
-    private func normalOutlineSlides(_ outline: CodexOutlineModel) -> some View {
+    private func outlineSlides(_ outline: CodexOutlineModel) -> some View {
         VStack(alignment: .leading, spacing: IdeaOutlineLayoutMetrics.normalRowSpacing) {
             ForEach(outline.slides) { slide in
-                normalSlideCard(slide)
+                outlineSlideRow(slide)
             }
         }
         .padding(.horizontal, DS.space4)
     }
 
-    private func normalSlideCard(_ slide: CodexOutlineSlide) -> some View {
+    private func outlineSlideRow(_ slide: CodexOutlineSlide) -> some View {
         HStack(alignment: .top, spacing: DS.space16) {
             Text(romanNumeral(for: slide.position))
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundStyle(DS.giltMuted)
+                .font(DS.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 36, height: IdeaOutlineLayoutMetrics.minimumEditorHeight, alignment: .topLeading)
 
             OutlineSlideNoteEditor(
@@ -904,8 +877,8 @@ extension IdeaFocusModeView {
 
             Button { removeSlide(slide.id) } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(DS.inkFaded.opacity(0.4))
+                    .font(DS.caption2.weight(.medium))
+                    .foregroundStyle(DS.textMuted.opacity(0.4))
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
             }
@@ -925,160 +898,7 @@ extension IdeaFocusModeView {
         )
     }
 
-    // MARK: Legacy — kept for reference but no longer used
-    @available(*, deprecated, message: "Replaced by outlineSection dual mode")
-    private var _outlineStartButton: some View {
-        Button {
-            startOutlineWithArc(nil)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "list.bullet.rectangle")
-                    .accessibilityHidden(true)
-                Text("Start Outline")
-            }
-            .font(DS.caption)
-            .foregroundStyle(ideaAccent)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(ideaAccent.opacity(0.1), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Start outline")
-    }
-
-    // MARK: Inline Slides
-
-    private func inlineOutlineSlides(_ outline: CodexOutlineModel) -> some View {
-        VStack(spacing: DS.space8) {
-            if let arc = outline.arcShape {
-                inlineArcBadge(arc)
-            }
-
-            ForEach(outline.slides) { slide in
-                inlineSlideCard(slide)
-            }
-        }
-    }
-
-    private func inlineArcBadge(_ arc: String) -> some View {
-        HStack(spacing: 6) {
-            Text("Arc:")
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-            CodexConceptTag(name: arc, color: CodexElementCategory.arcShape.color)
-        }
-    }
-
-    private func inlineSlideCard(_ slide: CodexOutlineSlide) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            inlineSlideCardHeader(slide)
-            inlineSlideCardTags(slide)
-            inlineSlideCardNote(slide)
-        }
-        .padding(8)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.borderSubtle, lineWidth: 0.5)
-        )
-    }
-
-    private func inlineSlideCardHeader(_ slide: CodexOutlineSlide) -> some View {
-        HStack {
-            Text("Slide \(slide.position)")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(DS.textOnAccent)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(DS.accent, in: Capsule())
-            Spacer()
-            Button {
-                removeSlide(slide.id)
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 10))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove slide \(slide.position)")
-        }
-    }
-
-    @ViewBuilder
-    private func inlineSlideCardTags(_ slide: CodexOutlineSlide) -> some View {
-        FlowLayout(spacing: 3) {
-            if let sa = slide.speechAct {
-                tagPill(sa, category: .speechAct)
-            } else {
-                emptySlot("Speech Act", hint: "The primary action this slide performs", category: .speechAct, slideId: slide.id, field: "speechAct")
-            }
-
-            ForEach(slide.readerDeltas, id: \.self) { delta in
-                tagPill(delta, category: .readerDelta)
-            }
-            emptySlot("+", hint: "What the reader feels after this slide", category: .readerDelta, slideId: slide.id, field: "readerDelta")
-
-            if let frame = slide.frame {
-                tagPill(frame, category: .frame)
-            }
-
-            ForEach(slide.techniques, id: \.self) { tech in
-                tagPill(tech, category: .technique)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func inlineSlideCardNote(_ slide: CodexOutlineSlide) -> some View {
-        if let note = slide.note, !note.isEmpty {
-            Text(note)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-                .italic()
-        }
-    }
-
-    // MARK: Tag Helpers
-
-    private func tagPill(_ name: String, category: CodexElementCategory) -> some View {
-        CodexConceptTag(name: name, color: category.color)
-            .help("\(category.displayName): \(name)")
-    }
-
-    private func emptySlot(_ label: String, hint: String, category: CodexElementCategory, slideId: UUID, field: String) -> some View {
-        Text(label)
-            .font(.system(size: 9))
-            .foregroundStyle(DS.textMuted)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .foregroundStyle(DS.borderSubtle)
-            )
-            .help(hint)
-            .dropDestination(for: CodexDragItem.self) { items, _ in
-                guard let item = items.first, item.category == category else { return false }
-                addElementToSlide(slideId: slideId, field: field, name: item.canonicalName)
-                return true
-            }
-    }
-
     // MARK: Outline Mutations
-
-    private func startOutlineWithArc(_ arcName: String?) {
-        let slideCount = viewModel.selectedContentType == "reel" ? 5 : 10
-        let slides = (1...slideCount).map { i in
-            CodexOutlineSlide(
-                id: UUID(), position: i,
-                speechAct: nil, readerDeltas: [], frame: nil,
-                distance: nil, techniques: [], transition: nil, note: nil
-            )
-        }
-        viewModel.replaceCodexOutline(CodexOutlineModel(arcShape: arcName, slides: slides))
-        if let arcName { viewModel.selectedArcType = arcName }
-    }
 
     private func addNewSlide() {
         guard var outline = viewModel.codexOutline else { return }
@@ -1134,1310 +954,28 @@ extension IdeaFocusModeView {
         guard slides.indices.contains(targetIndex) else { return }
         focusOutlineSlide(slides[targetIndex].id)
     }
-
-    private func addElementToSlide(slideId: UUID, field: String, name: String) {
-        guard var outline = viewModel.codexOutline,
-              let idx = outline.slides.firstIndex(where: { $0.id == slideId }) else { return }
-        switch field {
-        case "speechAct": outline.slides[idx].speechAct = name
-        case "readerDelta": outline.slides[idx].readerDeltas.append(name)
-        case "frame": outline.slides[idx].frame = name
-        case "distance": outline.slides[idx].distance = name
-        case "technique": outline.slides[idx].techniques.append(name)
-        case "transition": outline.slides[idx].transition = name
-        default: break
-        }
-        viewModel.replaceCodexOutline(outline)
-    }
-
-    private func removeElementFromSlide(slideId: UUID, field: String, name: String) {
-        guard var outline = viewModel.codexOutline,
-              let idx = outline.slides.firstIndex(where: { $0.id == slideId }) else { return }
-        switch field {
-        case "speechAct": outline.slides[idx].speechAct = nil
-        case "frame": outline.slides[idx].frame = nil
-        case "distance": outline.slides[idx].distance = nil
-        case "transition": outline.slides[idx].transition = nil
-        case "readerDelta": outline.slides[idx].readerDeltas.removeAll { $0 == name }
-        case "technique": outline.slides[idx].techniques.removeAll { $0 == name }
-        default: break
-        }
-        viewModel.replaceCodexOutline(outline)
-    }
-}
-
-private struct IdeaContextTextEditor: NSViewRepresentable {
-    @Binding var text: String
-    @FocusState.Binding var isFocused: Bool
-    let onTextChange: (String) -> Void
-
-    func makeNSView(context: Context) -> IdeaContextTextView {
-        let textView = IdeaContextTextView()
-        textView.delegate = context.coordinator
-        textView.drawsBackground = false
-        textView.isRichText = false
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.allowsUndo = true
-        textView.importsGraphics = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.textContainerInset = NSSize(width: 6, height: 6)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = true
-        textView.minSize = NSSize(width: 0, height: IdeaContextTextView.minimumHeight)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.applyManuscriptStyle()
-        textView.string = text
-        return textView
-    }
-
-    func updateNSView(_ textView: IdeaContextTextView, context: Context) {
-        context.coordinator.parent = self
-        textView.applyManuscriptStyle()
-
-        if textView.string != text {
-            let selectedRange = textView.selectedRange()
-            let textLength = (text as NSString).length
-            let selectionLocation = min(selectedRange.location, textLength)
-            textView.string = text
-            textView.setSelectedRange(NSRange(
-                location: selectionLocation,
-                length: min(selectedRange.length, max(0, textLength - selectionLocation))
-            ))
-            textView.invalidateIntrinsicContentSize()
-        }
-
-        // Let AppKit own first-responder changes for this freeform editor.
-        // Forcing focus from SwiftUI updates can reset the insertion point or
-        // briefly resign first responder while a keystroke is being committed.
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: IdeaContextTextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? nsView.frame.width
-        let measured = nsView.measuredHeight(for: width)
-        return CGSize(width: width, height: max(IdeaContextTextView.minimumHeight, measured))
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: IdeaContextTextEditor
-
-        init(parent: IdeaContextTextEditor) {
-            self.parent = parent
-        }
-
-        func textDidBeginEditing(_ notification: Notification) {
-            if let textView = notification.object as? NSTextView {
-                FocusModeTextClipboardTarget.activate(textView)
-            }
-            parent.isFocused = true
-        }
-
-        func textDidEndEditing(_ notification: Notification) {
-            parent.isFocused = false
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? IdeaContextTextView else { return }
-            FocusModeTextClipboardTarget.activate(textView)
-            parent.isFocused = true
-            parent.text = textView.string
-            parent.onTextChange(textView.string)
-            textView.invalidateIntrinsicContentSize()
-        }
-    }
-}
-
-private final class IdeaContextTextView: NSTextView {
-    static let minimumHeight: CGFloat = 200
-
-    override var textContainerOrigin: NSPoint {
-        NSPoint(x: textContainerInset.width, y: textContainerInset.height)
-    }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(
-            width: NSView.noIntrinsicMetric,
-            height: max(Self.minimumHeight, measuredHeight(for: bounds.width))
-        )
-    }
-
-    func applyManuscriptStyle() {
-        let font = Self.manuscriptFont
-        let color = NSColor(DS.text)
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 7
-
-        self.font = font
-        self.textColor = color
-        self.defaultParagraphStyle = paragraphStyle
-        self.typingAttributes = [
-            .font: font,
-            .foregroundColor: color,
-            .paragraphStyle: paragraphStyle
-        ]
-
-        guard let textStorage else { return }
-        let fullRange = NSRange(location: 0, length: textStorage.length)
-        textStorage.addAttributes([
-            .font: font,
-            .foregroundColor: color,
-            .paragraphStyle: paragraphStyle
-        ], range: fullRange)
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
-            return true
-        }
-
-        return super.performKeyEquivalent(with: event)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        FocusModeTextClipboardTarget.activate(self)
-        window?.makeFirstResponder(self)
-        super.mouseDown(with: event)
-    }
-
-    func measuredHeight(for width: CGFloat) -> CGFloat {
-        guard width > 0 else { return Self.minimumHeight }
-
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 7
-
-        let storage = NSTextStorage(string: string.isEmpty ? " " : string)
-        let container = NSTextContainer(size: NSSize(
-            width: max(0, width - textContainerInset.width * 2),
-            height: .greatestFiniteMagnitude
-        ))
-        let manager = NSLayoutManager()
-        container.lineFragmentPadding = 0
-        storage.addLayoutManager(manager)
-        manager.addTextContainer(container)
-        storage.addAttributes([
-            .font: Self.manuscriptFont,
-            .paragraphStyle: paragraphStyle
-        ], range: NSRange(location: 0, length: storage.length))
-        manager.ensureLayout(for: container)
-        return ceil(manager.usedRect(for: container).height + textContainerInset.height * 2)
-    }
-
-    private static var manuscriptFont: NSFont {
-        let base = NSFont.systemFont(ofSize: 17, weight: .regular)
-        guard let descriptor = base.fontDescriptor.withDesign(.serif),
-              let font = NSFont(descriptor: descriptor, size: 17) else {
-            return base
-        }
-        return font
-    }
-}
-
-private struct HookLineEditor: NSViewRepresentable {
-    @Binding var text: String
-    let editorID: HookEditorFocus
-    @FocusState.Binding var focusedEditor: HookEditorFocus?
-    let placeholder: String
-    let font: NSFont
-    let textColor: NSColor
-    let placeholderColor: NSColor
-    let onReturn: () -> Void
-    let onDeleteEmpty: () -> Bool
-
-    func makeNSView(context: Context) -> HookLineTextView {
-        let textView = HookLineTextView()
-        textView.delegate = context.coordinator
-        textView.drawsBackground = false
-        textView.isRichText = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.textContainerInset = .zero
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = true
-        textView.minSize = NSSize(width: 0, height: HookLineLayoutMetrics.minimumEditorHeight)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.font = font
-        textView.textColor = textColor
-        textView.placeholderColor = placeholderColor
-        textView.placeholder = placeholder
-        textView.onReturn = onReturn
-        textView.onDeleteEmpty = onDeleteEmpty
-        return textView
-    }
-
-    func updateNSView(_ textView: HookLineTextView, context: Context) {
-        context.coordinator.parent = self
-        textView.onReturn = onReturn
-        textView.onDeleteEmpty = onDeleteEmpty
-        textView.placeholder = placeholder
-        textView.placeholderColor = placeholderColor
-
-        if textView.font != font {
-            textView.font = font
-            textView.invalidateIntrinsicContentSize()
-        }
-        if textView.textColor != textColor {
-            textView.textColor = textColor
-        }
-
-        if textView.string != text {
-            textView.string = text
-            textView.invalidateIntrinsicContentSize()
-        }
-
-        if focusedEditor == editorID {
-            textView.requestFocusWhenReady()
-        } else if focusedEditor != nil, textView.window?.firstResponder === textView {
-            textView.window?.makeFirstResponder(nil)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: HookLineTextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? nsView.frame.width
-        let measured = nsView.measuredHeight(for: width)
-        return CGSize(width: width, height: HookLineLayoutMetrics.editorHeight(forMeasuredHeight: measured))
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: HookLineEditor
-
-        init(parent: HookLineEditor) {
-            self.parent = parent
-        }
-
-        func textDidBeginEditing(_ notification: Notification) {
-            if let textView = notification.object as? NSTextView {
-                FocusModeTextClipboardTarget.activate(textView)
-            }
-            parent.focusedEditor = parent.editorID
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? HookLineTextView else { return }
-            FocusModeTextClipboardTarget.activate(textView)
-            parent.focusedEditor = parent.editorID
-            parent.text = textView.string
-            textView.invalidateIntrinsicContentSize()
-        }
-    }
-}
-
-private final class HookLineTextView: NSTextView {
-    var placeholder: String = ""
-    var placeholderColor: NSColor = .secondaryLabelColor
-    var onReturn: (() -> Void)?
-    var onDeleteEmpty: (() -> Bool)?
-    private var shouldFocusWhenAttached = false
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(
-            width: NSView.noIntrinsicMetric,
-            height: HookLineLayoutMetrics.editorHeight(forMeasuredHeight: measuredHeight(for: bounds.width))
-        )
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        applyPendingFocusIfPossible()
-    }
-
-    func requestFocusWhenReady() {
-        shouldFocusWhenAttached = true
-        DispatchQueue.main.async { [weak self] in
-            self?.applyPendingFocusIfPossible()
-        }
-    }
-
-    private func applyPendingFocusIfPossible() {
-        guard shouldFocusWhenAttached, let window else { return }
-        shouldFocusWhenAttached = false
-        guard window.firstResponder !== self else { return }
-
-        window.makeFirstResponder(self)
-        FocusModeTextClipboardTarget.activate(self)
-        setSelectedRange(NSRange(location: string.count, length: 0))
-    }
-
-    override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let isPlainReturn = event.keyCode == 36 && flags.isEmpty
-        if isPlainReturn {
-            onReturn?()
-            return
-        }
-
-        let isShiftReturn = event.keyCode == 36 && flags == .shift
-        if isShiftReturn {
-            insertText("\n", replacementRange: selectedRange())
-            return
-        }
-
-        super.keyDown(with: event)
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
-            return true
-        }
-
-        return super.performKeyEquivalent(with: event)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        FocusModeTextClipboardTarget.activate(self)
-        window?.makeFirstResponder(self)
-        super.mouseDown(with: event)
-    }
-
-    override func doCommand(by selector: Selector) {
-        if selector == #selector(deleteBackward(_:)),
-           string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           onDeleteEmpty?() == true {
-            return
-        }
-
-        if selector == #selector(insertNewline(_:)) {
-            onReturn?()
-            return
-        }
-
-        super.doCommand(by: selector)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        guard string.isEmpty else { return }
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font ?? NSFont.systemFont(ofSize: 15),
-            .foregroundColor: placeholderColor
-        ]
-        placeholder.draw(at: NSPoint(x: 0, y: 1), withAttributes: attributes)
-    }
-
-    func measuredHeight(for width: CGFloat) -> CGFloat {
-        guard width > 0 else { return HookLineLayoutMetrics.minimumEditorHeight }
-        let storage = NSTextStorage(string: string.isEmpty ? " " : string)
-        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
-        let manager = NSLayoutManager()
-        container.lineFragmentPadding = 0
-        storage.addLayoutManager(manager)
-        manager.addTextContainer(container)
-        storage.addAttribute(.font, value: font ?? NSFont.systemFont(ofSize: 15), range: NSRange(location: 0, length: storage.length))
-        manager.ensureLayout(for: container)
-        return ceil(manager.usedRect(for: container).height)
-    }
-}
-
-private struct OutlineSlideNoteEditor: NSViewRepresentable {
-    @Binding var text: String
-    let slideID: UUID
-    @FocusState.Binding var focusedSlideID: UUID?
-    let placeholder: String
-    let onReturn: () -> Void
-    let onMoveFocus: (OutlineSlideNavigationDirection) -> Void
-    let onDeleteEmpty: () -> Bool
-
-    func makeNSView(context: Context) -> OutlineSlideNoteTextView {
-        let textView = OutlineSlideNoteTextView()
-        textView.slideID = slideID
-        textView.delegate = context.coordinator
-        textView.drawsBackground = false
-        textView.isRichText = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.textContainerInset = .zero
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.minSize = NSSize(width: 0, height: IdeaOutlineLayoutMetrics.minimumEditorHeight)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.font = NSFont.systemFont(ofSize: 14)
-        textView.textColor = NSColor(DS.text)
-        textView.placeholder = placeholder
-        textView.onReturn = onReturn
-        textView.onMoveFocus = onMoveFocus
-        textView.onDeleteEmpty = onDeleteEmpty
-        return textView
-    }
-
-    func updateNSView(_ textView: OutlineSlideNoteTextView, context: Context) {
-        context.coordinator.parent = self
-        textView.slideID = slideID
-        OutlineSlideFocusRegistry.shared.register(textView, for: slideID)
-        textView.onReturn = onReturn
-        textView.onMoveFocus = onMoveFocus
-        textView.onDeleteEmpty = onDeleteEmpty
-        textView.placeholder = placeholder
-
-        if textView.string != text {
-            textView.string = text
-            textView.invalidateIntrinsicContentSize()
-        }
-
-        if focusedSlideID == slideID {
-            textView.requestFocusWhenReady()
-        }
-    }
-
-    static func dismantleNSView(_ textView: OutlineSlideNoteTextView, coordinator: Coordinator) {
-        if let slideID = textView.slideID {
-            OutlineSlideFocusRegistry.shared.unregister(textView, for: slideID)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: OutlineSlideNoteTextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? nsView.frame.width
-        let measured = nsView.measuredHeight(for: width)
-        return CGSize(width: width, height: IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: measured))
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: OutlineSlideNoteEditor
-
-        init(parent: OutlineSlideNoteEditor) {
-            self.parent = parent
-        }
-
-        func textDidBeginEditing(_ notification: Notification) {
-            if let textView = notification.object as? NSTextView {
-                FocusModeTextClipboardTarget.activate(textView)
-            }
-            parent.focusedSlideID = parent.slideID
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? OutlineSlideNoteTextView else { return }
-            FocusModeTextClipboardTarget.activate(textView)
-            parent.text = textView.string
-            textView.invalidateIntrinsicContentSize()
-        }
-    }
-}
-
-final class OutlineSlideFocusRegistry {
-    static let shared = OutlineSlideFocusRegistry()
-
-    private struct Entry {
-        weak var textView: OutlineSlideNoteTextView?
-    }
-
-    private var textViewsBySlideID: [UUID: Entry] = [:]
-    private var pendingFocusSlideIDs: Set<UUID> = []
-
-    private init() {}
-
-    func register(_ textView: OutlineSlideNoteTextView, for slideID: UUID) {
-        textViewsBySlideID[slideID] = Entry(textView: textView)
-        if pendingFocusSlideIDs.contains(slideID) {
-            requestFocus(slideID)
-        }
-    }
-
-    func unregister(_ textView: OutlineSlideNoteTextView, for slideID: UUID) {
-        if textViewsBySlideID[slideID]?.textView === textView {
-            textViewsBySlideID.removeValue(forKey: slideID)
-        }
-    }
-
-    func requestFocus(_ slideID: UUID) {
-        guard let textView = textViewsBySlideID[slideID]?.textView else {
-            pendingFocusSlideIDs.insert(slideID)
-            return
-        }
-
-        pendingFocusSlideIDs.remove(slideID)
-        textView.requestFocusWhenReady()
-    }
-}
-
-final class OutlineSlideNoteTextView: NSTextView {
-    var slideID: UUID?
-    var placeholder: String = ""
-    var onReturn: (() -> Void)?
-    var onMoveFocus: ((OutlineSlideNavigationDirection) -> Void)?
-    var onDeleteEmpty: (() -> Bool)?
-    private var shouldFocusWhenAttached = false
-    private var focusAttemptCount = 0
-    private let maxFocusAttemptCount = 5
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(
-            width: NSView.noIntrinsicMetric,
-            height: IdeaOutlineLayoutMetrics.editorHeight(forMeasuredHeight: measuredHeight(for: bounds.width))
-        )
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        applyPendingFocusIfPossible()
-    }
-
-    func requestFocusWhenReady() {
-        shouldFocusWhenAttached = true
-        focusAttemptCount = 0
-        DispatchQueue.main.async { [weak self] in
-            self?.applyPendingFocusIfPossible()
-        }
-    }
-
-    private func applyPendingFocusIfPossible() {
-        guard shouldFocusWhenAttached, let window else { return }
-        guard window.firstResponder !== self else {
-            shouldFocusWhenAttached = false
-            FocusModeTextClipboardTarget.activate(self)
-            setSelectedRange(NSRange(location: string.count, length: 0))
-            return
-        }
-
-        guard window.makeFirstResponder(self) else {
-            focusAttemptCount += 1
-            if focusAttemptCount < maxFocusAttemptCount {
-                DispatchQueue.main.async { [weak self] in
-                    self?.applyPendingFocusIfPossible()
-                }
-            } else {
-                shouldFocusWhenAttached = false
-            }
-            return
-        }
-
-        shouldFocusWhenAttached = false
-        FocusModeTextClipboardTarget.activate(self)
-        setSelectedRange(NSRange(location: string.count, length: 0))
-    }
-
-    override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let isPlainReturn = event.keyCode == 36 && flags.isEmpty
-        if isPlainReturn {
-            onReturn?()
-            return
-        }
-
-        let isShiftReturn = event.keyCode == 36 && flags == .shift
-        if isShiftReturn {
-            insertText("\n", replacementRange: selectedRange())
-            return
-        }
-
-        if flags.isEmpty, event.keyCode == 126, selectedRange().location == 0 {
-            onMoveFocus?(.previous)
-            return
-        }
-
-        if flags.isEmpty, event.keyCode == 125, NSMaxRange(selectedRange()) >= string.count {
-            onMoveFocus?(.next)
-            return
-        }
-
-        super.keyDown(with: event)
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
-            return true
-        }
-
-        return super.performKeyEquivalent(with: event)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        FocusModeTextClipboardTarget.activate(self)
-        window?.makeFirstResponder(self)
-        super.mouseDown(with: event)
-    }
-
-    override func doCommand(by selector: Selector) {
-        if selector == #selector(deleteBackward(_:)),
-           string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           onDeleteEmpty?() == true {
-            return
-        }
-
-        if selector == #selector(insertNewline(_:)) {
-            onReturn?()
-            return
-        }
-
-        super.doCommand(by: selector)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        guard string.isEmpty else { return }
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font ?? NSFont.systemFont(ofSize: 14),
-            .foregroundColor: NSColor.secondaryLabelColor
-        ]
-        placeholder.draw(at: NSPoint(x: 0, y: 1), withAttributes: attributes)
-    }
-
-    func measuredHeight(for width: CGFloat) -> CGFloat {
-        guard width > 0 else { return IdeaOutlineLayoutMetrics.minimumEditorHeight }
-        let storage = NSTextStorage(string: string.isEmpty ? " " : string)
-        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
-        let manager = NSLayoutManager()
-        container.lineFragmentPadding = 0
-        storage.addLayoutManager(manager)
-        manager.addTextContainer(container)
-        storage.addAttribute(.font, value: font ?? NSFont.systemFont(ofSize: 14), range: NSRange(location: 0, length: storage.length))
-        manager.ensureLayout(for: container)
-        return ceil(manager.usedRect(for: container).height)
-    }
-}
-
-// MARK: - Advanced Outline Workspace
-
-extension IdeaFocusModeView {
-
-    /// Two-column advanced outline: slide editors (left) + element browser (right).
-    private func advancedOutlineWorkspace(_ outline: CodexOutlineModel) -> some View {
-        HStack(alignment: .top, spacing: DS.space12) {
-            advancedSlideList(outline)
-            AdvancedElementBrowser()
-        }
-    }
-
-    private func advancedSlideList(_ outline: CodexOutlineModel) -> some View {
-        ScrollView {
-            VStack(spacing: DS.space8) {
-                if let arc = outline.arcShape {
-                    inlineArcBadge(arc)
-                }
-                ForEach(outline.slides) { slide in
-                    advancedSlideCard(slide)
-                }
-            }
-            .padding(.vertical, DS.space4)
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    // MARK: Advanced Slide Card
-
-    private func advancedSlideCard(_ slide: CodexOutlineSlide) -> some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            advancedSlideHeader(slide)
-            advancedSlidePhysicsGrid(slide)
-        }
-        .padding(DS.space10)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.borderSubtle, lineWidth: 0.5)
-        )
-    }
-
-    private func advancedSlideHeader(_ slide: CodexOutlineSlide) -> some View {
-        HStack(spacing: DS.space6) {
-            slideBadge(slide.position)
-            TextField("Note...", text: slideNoteBinding(for: slide.id), axis: .vertical)
-                .font(DS.caption2)
-                .foregroundStyle(DS.text)
-                .textFieldStyle(.plain)
-                .lineLimit(1...2)
-            Spacer()
-            slideDeleteButton(slide)
-        }
-    }
-
-    private func slideBadge(_ position: Int) -> some View {
-        Text("\(position)")
-            .font(.system(size: 10, weight: .bold, design: .monospaced))
-            .foregroundStyle(DS.textOnAccent)
-            .frame(width: 22, height: 22)
-            .background(DS.entityIdea, in: Capsule())
-    }
-
-    private func slideDeleteButton(_ slide: CodexOutlineSlide) -> some View {
-        Button { removeSlide(slide.id) } label: {
-            Image(systemName: "trash")
-                .font(.system(size: 10))
-                .foregroundStyle(DS.textMuted)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Delete slide \(slide.position)")
-    }
-
-    // MARK: Physics Grid
-
-    private func advancedSlidePhysicsGrid(_ slide: CodexOutlineSlide) -> some View {
-        let columns = [
-            GridItem(.flexible(), spacing: DS.space6),
-            GridItem(.flexible(), spacing: DS.space6)
-        ]
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: DS.space6) {
-            physicsSlot(
-                "Speech Act", value: slide.speechAct,
-                category: .speechAct, slideId: slide.id, field: "speechAct",
-                hint: "The primary action this slide performs \u{2014} e.g., HOOK, CONFESSION, PROOF, REVEAL"
-            )
-            physicsSlot(
-                "Frame", value: slide.frame,
-                category: .frame, slideId: slide.id, field: "frame",
-                hint: "How this slide is positioned \u{2014} e.g., SETUP, LOSS, TRANSFORMATION, TUTORIAL"
-            )
-            physicsMultiSlot(
-                "Reader Deltas", values: slide.readerDeltas,
-                category: .readerDelta, slideId: slide.id, field: "readerDelta",
-                hint: "What the reader should feel after this slide \u{2014} e.g., CURIOSITY+, TRUST+, TENSION+"
-            )
-            physicsSlot(
-                "Distance", value: slide.distance,
-                category: .distance, slideId: slide.id, field: "distance",
-                hint: "Reader\u{2019}s proximity \u{2014} ZERO (live scene), NEAR (remembered), FAR (observed)"
-            )
-            physicsMultiSlot(
-                "Techniques", values: slide.techniques,
-                category: .technique, slideId: slide.id, field: "technique",
-                hint: "Craft moves active on this slide \u{2014} e.g., ELLIPSIS MOMENTUM, DIRECT DIALOGUE"
-            )
-            physicsSlot(
-                "\u{2192} Next", value: slide.transition,
-                category: .transition, slideId: slide.id, field: "transition",
-                hint: "How this slide connects to the next \u{2014} e.g., ESCALATION, ANSWER, PIVOT"
-            )
-        }
-    }
-
-    // MARK: Single-Value Physics Slot
-
-    private func physicsSlot(
-        _ label: String,
-        value: String?,
-        category: CodexElementCategory,
-        slideId: UUID,
-        field: String,
-        hint: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            slotLabel(label)
-            if let val = value {
-                filledSingleSlot(val, category: category, slideId: slideId, field: field)
-            } else {
-                emptySingleSlot(label, category: category, slideId: slideId, field: field)
-            }
-        }
-        .help(hint)
-    }
-
-    private func filledSingleSlot(
-        _ val: String,
-        category: CodexElementCategory,
-        slideId: UUID,
-        field: String
-    ) -> some View {
-        HStack(spacing: 2) {
-            CodexConceptTag(name: val, color: category.color)
-            slotRemoveButton {
-                removeElementFromSlide(slideId: slideId, field: field, name: val)
-            }
-        }
-    }
-
-    private func emptySingleSlot(
-        _ label: String,
-        category: CodexElementCategory,
-        slideId: UUID,
-        field: String
-    ) -> some View {
-        Text(label)
-            .font(.system(size: 8))
-            .foregroundStyle(DS.textMuted.opacity(0.5))
-            .frame(maxWidth: .infinity, minHeight: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .foregroundStyle(DS.borderSubtle)
-            )
-            .contentShape(Rectangle())
-            .dropDestination(for: CodexDragItem.self) { items, _ in
-                guard let item = items.first, item.category == category else { return false }
-                addElementToSlide(slideId: slideId, field: field, name: item.canonicalName)
-                return true
-            } isTargeted: { targeted in
-                // Visual feedback when dragging over
-            }
-    }
-
-    // MARK: Multi-Value Physics Slot
-
-    private func physicsMultiSlot(
-        _ label: String,
-        values: [String],
-        category: CodexElementCategory,
-        slideId: UUID,
-        field: String,
-        hint: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            slotLabel(label)
-            multiSlotContent(values, category: category, slideId: slideId, field: field)
-        }
-        .help(hint)
-    }
-
-    private func multiSlotContent(
-        _ values: [String],
-        category: CodexElementCategory,
-        slideId: UUID,
-        field: String
-    ) -> some View {
-        FlowLayout(spacing: 2) {
-            ForEach(values, id: \.self) { val in
-                HStack(spacing: 1) {
-                    CodexConceptTag(name: val, color: category.color)
-                    slotRemoveButton {
-                        removeElementFromSlide(slideId: slideId, field: field, name: val)
-                    }
-                }
-            }
-            multiSlotDropTarget(category: category, slideId: slideId, field: field)
-        }
-    }
-
-    private func multiSlotDropTarget(
-        category: CodexElementCategory,
-        slideId: UUID,
-        field: String
-    ) -> some View {
-        RoundedRectangle(cornerRadius: 4)
-            .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            .foregroundStyle(DS.borderSubtle)
-            .frame(width: 20, height: 18)
-            .overlay(
-                Image(systemName: "plus")
-                    .font(.system(size: 7))
-                    .foregroundStyle(DS.textMuted.opacity(0.5))
-                    .accessibilityHidden(true)
-            )
-            .dropDestination(for: CodexDragItem.self) { items, _ in
-                guard let item = items.first, item.category == category else { return false }
-                addElementToSlide(slideId: slideId, field: field, name: item.canonicalName)
-                return true
-            }
-    }
-
-    // MARK: Slot Shared Helpers
-
-    private func slotLabel(_ text: String) -> some View {
-        Text(text)
-            .dsSmallCapsLabel()
-    }
-
-    private func slotRemoveButton(action: @escaping () -> Void) -> some View {
-        Button {
-            withAnimation(ProMotionSprings.snappy) { action() }
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(DS.textMuted)
-                .frame(width: 14, height: 14)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Remove element")
-    }
-}
-
-// MARK: - Marginalia Gutter (the intelligence, rendered as marginal notes)
-
-extension IdeaFocusModeView {
-    /// Quiet right gutter for lightweight intelligence controls. Each section is
-    /// independent so the rail does not read as a detached mini-app.
-    private var marginaliaGutter: some View {
-        VStack(alignment: .leading, spacing: DS.space16) {
-            marginaliaSwipesSection
-                .atelierStaggerIn(delay: 0.56, appeared: hasAppeared)
-            marginaliaFrameworkSection
-                .atelierStaggerIn(delay: 0.60, appeared: hasAppeared)
-            marginaliaBlueprintSection
-                .atelierStaggerIn(delay: 0.64, appeared: hasAppeared)
-            marginaliaResearchSection
-                .atelierStaggerIn(delay: 0.68, appeared: hasAppeared)
-        }
-    }
-
-    // MARK: Swipes — vertical list, up to 3 visible
-
-    private var marginaliaSwipesSection: some View {
-        FocusModeInspectorSection(
-            "SWIPES",
-            countText: viewModel.linkedSwipes.isEmpty ? nil : "\(viewModel.linkedSwipes.count) matched"
-        ) {
-            if viewModel.linkedSwipes.isEmpty {
-                Button {
-                    viewModel.showLinkSwipesOverlay = true
-                } label: {
-                    Text("add swipes →")
-                        .font(DS.dateSerif)
-                        .italic()
-                        .foregroundStyle(DS.inkFaded.opacity(0.7))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Link swipes")
-            } else {
-                VStack(alignment: .leading, spacing: DS.space8) {
-                    ForEach(viewModel.linkedSwipes.prefix(3), id: \.uuid) { swipe in
-                        marginaliaSwipeRow(swipe)
-                    }
-                    HStack(spacing: DS.space8) {
-                        Button {
-                            viewModel.showLinkSwipesOverlay = true
-                        } label: {
-                            Text("add / remove →")
-                                .font(DS.dateSerif)
-                                .italic()
-                                .foregroundStyle(DS.gilt.opacity(0.7))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        if viewModel.linkedSwipes.count > 3 {
-                            Button {
-                                viewModel.showLinkSwipesOverlay = true
-                            } label: {
-                                Text("see all \(viewModel.linkedSwipes.count)")
-                                    .font(DS.dateSerif)
-                                    .italic()
-                                    .foregroundStyle(DS.inkFaded)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.top, DS.space2)
-                }
-            }
-        }
-    }
-
-    private func marginaliaSwipeRow(_ swipe: Atom) -> some View {
-        HStack(alignment: .top, spacing: DS.space8) {
-            Button {
-                openAtomInPane(swipe.uuid)
-            } label: {
-                HStack(alignment: .top, spacing: DS.space8) {
-                    Rectangle()
-                        .fill(DS.entitySwipe.opacity(0.18))
-                        .frame(width: 3)
-                        .frame(maxHeight: .infinity)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(swipe.title ?? "Untitled")
-                            .font(DS.callout)
-                            .foregroundStyle(DS.text)
-                            .lineLimit(2)
-                        if let hook = swipe.researchMetadata?.hook {
-                            Text(hook)
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.inkFaded)
-                                .lineLimit(1)
-                        }
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Spacer(minLength: 0)
-
-            Button {
-                Task { await viewModel.unlinkSwipe(swipe.uuid) }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.inkFaded)
-                    .frame(width: 18, height: 18)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove swipe \(swipe.title ?? "untitled")")
-        }
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    // MARK: Framework — name + confidence + change
-
-    private var marginaliaFrameworkSection: some View {
-        FocusModeInspectorSection("FRAMEWORK") {
-            if let framework = viewModel.selectedArcType ?? viewModel.arcRecommendations.first?.arcName {
-                VStack(alignment: .leading, spacing: DS.space4) {
-                    Text(framework)
-                        .font(.system(size: 14, weight: .regular, design: .serif))
-                        .foregroundStyle(DS.text)
-
-                    if let top = viewModel.arcRecommendations.first(where: { $0.arcName == framework }) {
-                        Text("\(Int(top.confidence * 100)) % match")
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
-                            .foregroundStyle(DS.inkFaded)
-                    }
-
-                    Button {
-                        showFrameworkSheet = true
-                    } label: {
-                        Text("change →")
-                            .font(DS.dateSerif)
-                            .italic()
-                            .foregroundStyle(DS.gilt.opacity(0.7))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, DS.space2)
-                }
-            } else {
-                Button {
-                    refreshArcRecommendations()
-                    showFrameworkSheet = true
-                } label: {
-                    Text(isLoadingArcRecs ? "analyzing…" : "suggest →")
-                        .font(DS.dateSerif)
-                        .italic()
-                        .foregroundStyle(DS.inkFaded.opacity(0.7))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(isLoadingArcRecs)
-            }
-        }
-    }
-
-    private func refreshArcRecommendations() {
-        isLoadingArcRecs = true
-        viewModel.arcRecommendations = []
-        viewModel.scheduleAutoSave()
-        Task {
-            await viewModel.generateArcRecommendations()
-            isLoadingArcRecs = false
-        }
-    }
-
-    // MARK: Blueprint — one-line summary, expand opens sheet
-
-    private var marginaliaBlueprintSection: some View {
-        FocusModeInspectorSection("BLUEPRINT") {
-            if let blueprint = viewModel.selectedBlueprint {
-                VStack(alignment: .leading, spacing: DS.space4) {
-                    Button {
-                        openAtomInPane(blueprint.uuid)
-                    } label: {
-                        Text(blueprint.title?.lowercased() ?? "blueprint")
-                            .font(.system(size: 14, weight: .regular, design: .serif))
-                            .foregroundStyle(DS.text)
-                            .lineLimit(2)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    HStack(spacing: DS.space8) {
-                        Button {
-                            showBlueprintSheet = true
-                        } label: {
-                            Text("expand →")
-                                .font(DS.dateSerif)
-                                .italic()
-                                .foregroundStyle(DS.gilt.opacity(0.7))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        Button {
-                            showBlueprintPicker = true
-                        } label: {
-                            Text("change")
-                                .font(DS.dateSerif)
-                                .italic()
-                                .foregroundStyle(DS.inkFaded)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        Button {
-                            viewModel.clearBlueprint()
-                        } label: {
-                            Text("remove")
-                                .font(DS.dateSerif)
-                                .italic()
-                                .foregroundStyle(DS.inkFaded)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.top, DS.space2)
-                }
-            } else {
-                Button {
-                    showBlueprintPicker = true
-                } label: {
-                    Text("select blueprint →")
-                        .font(DS.dateSerif)
-                        .italic()
-                        .foregroundStyle(DS.inkFaded.opacity(0.7))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func openAtomInPane(_ uuid: String) {
-        NotificationCenter.default.post(
-            name: CosmoNotification.Navigation.openBlockInFocusMode,
-            object: nil,
-            userInfo: ["atomUUID": uuid, "asPane": true]
-        )
-    }
-
-    // MARK: Research — stat lines, tap opens sheet
-
-    private var marginaliaResearchSection: some View {
-        FocusModeInspectorSection("RESEARCH") {
-            Button {
-                showResearchSheet = true
-            } label: {
-                VStack(alignment: .leading, spacing: DS.space4) {
-                    if viewModel.researchResults.isEmpty {
-                        Text("no sources yet →")
-                            .font(DS.dateSerif)
-                            .italic()
-                            .foregroundStyle(DS.inkFaded.opacity(0.7))
-                    } else {
-                        Text("· \(viewModel.researchResults.count) sources")
-                            .font(DS.callout)
-                            .foregroundStyle(DS.text)
-                        Text("open panel →")
-                            .font(DS.dateSerif)
-                            .italic()
-                            .foregroundStyle(DS.gilt.opacity(0.7))
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-}
-
-// MARK: - CTA — gilt-bracketed serif "begin writing"
-
-extension IdeaFocusModeView {
-    private var atelierCTA: some View {
-        HStack {
-            Spacer()
-            GiltBracketedCTA(
-                title: isPromoting ? "writing…" : "begin writing",
-                disabled: isPromoting || isBodyEmpty,
-                action: beginWriting
-            )
-            .keyboardShortcut(.return, modifiers: [.command])
-            Spacer()
-        }
-    }
-
-    private func beginWriting() {
-        guard !isPromoting, !isBodyEmpty else { return }
-        isPromoting = true
-        Task {
-            await viewModel.promoteToContent()
-            isPromoting = false
-        }
-    }
-}
-
-// MARK: - Flow Layout
-
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
-        return result.size
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
-        for (index, position) in result.positions.enumerated() {
-            guard index < subviews.count else { break }
-            subviews[index].place(
-                at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y),
-                proposal: .unspecified
-            )
-        }
-    }
-
-    private func arrangeSubviews(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
-        let maxWidth = proposal.width ?? .infinity
-        var positions: [CGPoint] = []
-        var currentX: CGFloat = 0
-        var currentY: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        var totalHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-
-            if currentX + size.width > maxWidth, currentX > 0 {
-                currentX = 0
-                currentY += lineHeight + spacing
-                lineHeight = 0
-            }
-
-            positions.append(CGPoint(x: currentX, y: currentY))
-            lineHeight = max(lineHeight, size.height)
-            currentX += size.width + spacing
-            totalHeight = currentY + lineHeight
-        }
-
-        return (CGSize(width: maxWidth, height: totalHeight), positions)
-    }
 }
 
 // MARK: - Preview
 
 #if DEBUG
-struct IdeaFocusModeView_Previews: PreviewProvider {
-    static var previews: some View {
-        IdeaFocusModeView(
-            atom: Atom.new(
-                type: .idea,
-                title: "The Paradox of Productivity",
-                body: "Most people optimize for output when they should be optimizing for clarity. The real bottleneck is not time -- it is attention quality."
-            ),
-            onClose: { print("Close") }
-        )
-        .frame(width: 1200, height: 800)
-    }
+#Preview("Idea Focus Mode") {
+    IdeaFocusModeView(
+        atom: Atom.new(
+            type: .idea,
+            title: "The Paradox of Productivity",
+            body: "Most people optimize for output when they should be optimizing for clarity. The real bottleneck is not time -- it is attention quality."
+        ),
+        onClose: {}
+    )
+    .frame(width: 1280, height: 800)
 }
 #endif
 
 // MARK: - Cosmo Context Provider
 
 @MainActor
-class IdeaContextProvider: CosmoContextProvider {
+class IdeaContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
     private let atom: Atom
     private weak var viewModel: IdeaFocusModeViewModel?
 
@@ -2447,6 +985,59 @@ class IdeaContextProvider: CosmoContextProvider {
     }
 
     var contextType: CosmoContextType { .ideaFocusMode }
+
+    var surfaceID: String {
+        "idea:\(atom.uuid)"
+    }
+
+    static func targetID(for atomUUID: String) -> String {
+        "idea:\(atomUUID):body"
+    }
+
+    func editableSnapshot() -> CosmoEditableSourceSnapshot {
+        let body = viewModel?.editableBody ?? atom.body ?? ""
+        let hooks = viewModel?.editableHooks ?? []
+
+        // Hooks ride along as anchors so the model can target them with
+        // structuredFieldReplacement (anchorID "hook-N") without the hook text
+        // living inside the body — body diffs stay locate-exact.
+        var anchors: [CosmoEditableAnchor] = [
+            .init(id: "body", label: "Idea context", utf16Start: 0, utf16Length: body.utf16.count)
+        ]
+        for (index, hook) in hooks.enumerated() {
+            anchors.append(.init(id: "hook-\(index)", label: hook, utf16Start: 0, utf16Length: 0))
+        }
+
+        let title = (viewModel?.editableTitle ?? atom.title ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return CosmoEditableSourceSnapshot(
+            surfaceID: surfaceID,
+            targetID: Self.targetID(for: atom.uuid),
+            kind: .text,
+            title: title.isEmpty ? "Untitled idea" : title,
+            text: body,
+            sourceHash: CosmoEditableSurfaceHasher.hash(body),
+            anchors: anchors
+        )
+    }
+
+    func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
+        guard let viewModel else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Idea editor is unavailable"
+            )
+        }
+        guard operation.targetID == Self.targetID(for: atom.uuid) else {
+            return CosmoEditableOperationResult(
+                operationID: operation.id, status: .conflicted, message: "Target changed"
+            )
+        }
+        return try await viewModel.applyInlineAssistantEdit(operation)
+    }
+
+    func reject(operation: CosmoAssistantProposalOperation) async -> CosmoEditableOperationResult {
+        CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Rejected")
+    }
 
     var contextSummary: String {
         let status = viewModel?.selectedStatus.rawValue ?? "spark"

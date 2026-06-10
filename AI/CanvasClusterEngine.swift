@@ -421,7 +421,9 @@ class CanvasClusterEngine: ObservableObject {
             withAnimation(ProMotionSprings.gentle) {
                 switch userClusters[index].viewMode {
                 case .canvas:
-                    userClusters[index].shrinkToFitMembers(blocks: blocks)
+                    // Canvas cluster rects are user-authoritative and grow-only;
+                    // removing a member must not shrink the container.
+                    break
                 case .grid:
                     break
                 case .list, .board:

@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct CortexIdeasBrowser: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     @State private var hasAppeared = false
     @State private var clientProfiles: [Atom] = []
     @State private var captureDrafts: [String: String] = [:]

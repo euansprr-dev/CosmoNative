@@ -567,27 +567,92 @@ enum DS {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // SIDEBAR MATERIAL — Semantic glass panel tokens
+    // LIQUID GLASS — Native macOS 26 glass panel tokens
     // ═══════════════════════════════════════════════════════════════
 
-    /// Base wash layered above native macOS material for major app sidebars.
-    static var sidebarMaterialBase: Color {
-        if palette.isDark { return Color.black.opacity(0.018) }
-        return usesMonoMaterial ? Color.white.opacity(0.665) : Color.white.opacity(0.010)
+    /// Tint carried by native Liquid Glass panels (warm parchment in Greenhouse
+    /// light, neutral smoke in dark, near-clear in mono themes).
+    static var glassPanelTint: Color {
+        if palette.isDark { return Color.black.opacity(0.12) }
+        return palette.bg.opacity(0.15)
     }
 
-    /// Opacity for the native material layer. Light mode needs a lower value so
-    /// bright canvas content can still register through the sidebar.
-    static var sidebarMaterialNativeOpacity: Double {
-        if palette.isDark { return 0.94 }
-        return usesMonoMaterial ? 0.650 : 0.74
+    /// Single soft drop shadow under Liquid Glass panels (replaces the legacy
+    /// 3-layer shadow stacks).
+    static var glassPanelShadow: Color {
+        Color.black.opacity(palette.isDark ? 0.22 : 0.07)
     }
 
-    /// Solid fallback used when Reduce Transparency is enabled.
-    static var sidebarMaterialFallback: Color {
-        if palette.isDark { return palette.surface }
-        return palette.surfaceElevated
+    // ═══════════════════════════════════════════════════════════════
+    // MASTHEAD — Command-K expanded-domain editorial scene palettes.
+    // Scene art keeps literal values by design, but lives here so themes
+    // (e.g. mono) can override the whole group in one place.
+    // ═══════════════════════════════════════════════════════════════
+
+    struct MastheadScenePalette {
+        let background: [Color]
+        let accent: Color
+        let line: Color
+        let cardFill: Color
+        let cardStroke: Color
+        let text: Color
     }
+
+    static var mastheadDatabaseScene: MastheadScenePalette {
+        MastheadScenePalette(
+            background: [Color(hex: "1D432A"), Color(hex: "163520"), Color(hex: "0B1C12")],
+            accent: Color(hex: "A9CFB0"),
+            line: Color(hex: "D6E6D4"),
+            cardFill: Color(hex: "EFF5EC"),
+            cardStroke: Color(hex: "DDEBDD"),
+            text: Color(hex: "F6FBF3")
+        )
+    }
+
+    static var mastheadSwipeScene: MastheadScenePalette {
+        MastheadScenePalette(
+            background: [Color(hex: "A16E34"), Color(hex: "7A4A1D"), Color(hex: "3A1E0A")],
+            accent: Color(hex: "FFD08C"),
+            line: Color(hex: "F7D9AA"),
+            cardFill: Color(hex: "F8E8D0"),
+            cardStroke: Color(hex: "F2D2A1"),
+            text: Color(hex: "FFF9EF")
+        )
+    }
+
+    static var mastheadIdeasScene: MastheadScenePalette {
+        MastheadScenePalette(
+            background: [Color(hex: "4B4387"), Color(hex: "312B67"), Color(hex: "19163D")],
+            accent: Color(hex: "CFC5FF"),
+            line: Color(hex: "DDD7FF"),
+            cardFill: Color(hex: "F3F0FA"),
+            cardStroke: Color(hex: "D9D1F4"),
+            text: Color(hex: "FAF8FF")
+        )
+    }
+
+    static var mastheadLibraryScene: MastheadScenePalette {
+        MastheadScenePalette(
+            background: [Color(hex: "A87338"), Color(hex: "7D4D24"), Color(hex: "43240D")],
+            accent: Color(hex: "F1C48B"),
+            line: Color(hex: "F2D8B4"),
+            cardFill: Color(hex: "F4E4CE"),
+            cardStroke: Color(hex: "E5C9A5"),
+            text: Color(hex: "FFF7ED")
+        )
+    }
+
+    /// Text color for the active chip in masthead headers.
+    static var mastheadChipText: Color { Color(hex: "18261D") }
+
+    /// Dark-mode body wash behind the swipe gallery browser.
+    static var mastheadSwipeBodyDark: [Color] { [Color(hex: "1D1B17"), Color(hex: "11100E")] }
+
+    // ═══════════════════════════════════════════════════════════════
+    // SIDEBAR MATERIAL — Legacy fake-glass panel tokens
+    // Superseded by native Liquid Glass (DS.glassPanel*). Border/highlight
+    // remain in use by row chrome; shadow is still used by floating chrome.
+    // ═══════════════════════════════════════════════════════════════
 
     /// Hairline material edge.
     static var sidebarMaterialBorder: Color {
@@ -601,38 +666,7 @@ enum DS {
         return Color.white.opacity(usesMonoMaterial ? 0.64 : 0.30)
     }
 
-    /// Inner shade that keeps translucent panels readable.
-    static var sidebarMaterialInnerShade: Color {
-        if palette.isDark { return Color.black.opacity(0.018) }
-        return Color.black.opacity(usesMonoMaterial ? 0 : 0.010)
-    }
-
-    /// Ambient scene tint cap for global sidebars.
-    static var sidebarMaterialAmbientOpacity: Double {
-        0
-    }
-
-    /// Stronger tint cap along the content-facing edge.
-    static var sidebarMaterialEdgeTintOpacity: Double {
-        0
-    }
-
-    /// Subtle edge response used only when canvas content is physically near the sidebar.
-    static var sidebarMaterialCanvasEdgeOpacity: Double {
-        0
-    }
-
-    /// Tiny rim-only accent cap for focus or compatibility tints.
-    static var sidebarMaterialRimAccentOpacity: Double {
-        0
-    }
-
-    /// Optional material texture opacity for major glass panels.
-    static var sidebarMaterialNoiseOpacity: Double {
-        0
-    }
-
-    /// Exterior shadow for inset glass panels.
+    /// Legacy fake-glass token — superseded by DS.glassPanelShadow; pending removal.
     static var sidebarMaterialShadow: Color {
         if palette.isDark { return Color.black.opacity(0.075) }
         return Color.black.opacity(usesMonoMaterial ? 0.034 : 0.028)
@@ -686,11 +720,14 @@ enum DS {
     /// Display serif — 32pt light New York, greeting hero ONLY
     static let displaySerif = Font.system(size: 32, weight: .light, design: .serif)
 
-    /// Date serif — 14pt regular New York, date line below greeting ONLY
+    /// Date serif — 14pt regular New York, date lines and marginalia/editorial accents
     static let dateSerif = Font.system(size: 14, weight: .regular, design: .serif)
 
     /// Space title serif — 21pt regular New York, Command-K space plate names
     static let spaceTitleSerif = Font.system(size: 21, weight: .regular, design: .serif)
+
+    /// Compact title serif — 15pt semibold New York, condensed manuscript title headers
+    static let compactTitleSerif = Font.system(size: 15, weight: .semibold, design: .serif)
 
     /// Monospace tabular — 28pt ultralight, timer digits
     static let monoTabular = Font.system(size: 28, weight: .ultraLight, design: .monospaced)
@@ -723,6 +760,12 @@ enum DS {
 
     /// Nav bar badge — alias for caption2
     static let navBadge = Font.system(size: 10, weight: .medium)
+
+    /// Micro badge — 9pt medium, tiny capsule badge text
+    static let microBadge = Font.system(size: 9, weight: .medium)
+
+    /// Micro icon — 8pt semibold, smallest ornament glyphs (disclosure chevrons)
+    static let microIcon = Font.system(size: 8, weight: .semibold)
 
     // ═══════════════════════════════════════════════════════════════
     // RADII — 5 values covering all use cases

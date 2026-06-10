@@ -13,11 +13,75 @@ struct EditorSelectionSnapshot: Equatable {
     )
 }
 
+/// Resolves content fonts for the editor, honoring a per-document font design
+/// (sans / serif / rounded / mono — the Craft-style document styles).
+enum EditorFontPolicy {
+    static func font(
+        ofSize size: CGFloat,
+        weight: NSFont.Weight,
+        design: NSFontDescriptor.SystemDesign
+    ) -> NSFont {
+        designed(NSFont.systemFont(ofSize: size, weight: weight), design: design)
+    }
+
+    static func designed(_ font: NSFont, design: NSFontDescriptor.SystemDesign) -> NSFont {
+        guard design != .default,
+              let descriptor = font.fontDescriptor.withDesign(design),
+              let next = NSFont(descriptor: descriptor, size: font.pointSize) else {
+            return font
+        }
+        return next
+    }
+
+    /// Re-styles every font run of a serialized document. Sizes, weights, and
+    /// bold/italic traits are preserved — only the design axis changes.
+    static func applyingDesign(
+        _ design: NSFontDescriptor.SystemDesign,
+        to attributed: NSAttributedString
+    ) -> NSAttributedString {
+        guard design != .default, attributed.length > 0 else { return attributed }
+        let result = NSMutableAttributedString(attributedString: attributed)
+        result.beginEditing()
+        result.enumerateAttribute(.font, in: NSRange(location: 0, length: result.length)) { value, range, _ in
+            guard let font = value as? NSFont else { return }
+            result.addAttribute(.font, value: designed(font, design: design), range: range)
+        }
+        result.endEditing()
+        return result
+    }
+
+    static func swiftUIDesign(_ design: NSFontDescriptor.SystemDesign) -> Font.Design {
+        switch design {
+        case .serif: return .serif
+        case .rounded: return .rounded
+        case .monospaced: return .monospaced
+        default: return .default
+        }
+    }
+}
+
 enum EditorBoundaryCommand: Equatable {
     case moveToPreviousBlock
     case moveToNextBlock
     case deleteBackwardAtStart
     case insertNewlineOnEmptyFinalLine
+    /// Return in a block row — split the block at the caret (Notion model).
+    /// The offset is measured from the END of the text view's content so list
+    /// and quote prefixes rendered at the head don't shift it. livePlainText
+    /// is the text view's current truth (the document binding can lag ~50ms).
+    case splitBlock(caretUTF16OffsetFromEnd: Int, livePlainText: String)
+    /// Esc with no menus open — the host selects the whole block (Notion-style).
+    case escapeSelectBlock
+    /// ⌘A when the block's text is already fully selected — escalate to all blocks.
+    case selectAllBlocks
+}
+
+/// A one-shot caret placement consumed by the text view after an external
+/// structural edit (split/merge/delete). Offset is from the END of the text
+/// in UTF-16, which is immune to rendered list/quote prefixes at the head.
+struct EditorCaretRequest: Equatable {
+    var utf16OffsetFromEnd: Int
+    var token: Int
 }
 
 struct CosmoDocumentEditor: View {
@@ -31,6 +95,7 @@ struct CosmoDocumentEditor: View {
     @State private var lastEmittedPlainText = ""
 
     var fontSize: CGFloat = 16
+    var fontDesign: NSFontDescriptor.SystemDesign = .default
     var compact: Bool = false
     var placeholder: String = "Start typing..."
     var darkMode: Bool = false
@@ -67,13 +132,26 @@ struct CosmoDocumentEditor: View {
     var onCommit: (() -> Void)? = nil
     var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
     var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
+    /// Block-row mode: Return splits the block instead of inserting a newline.
+    var splitsOnReturn: Bool = false
+    /// Block-row mode: document sync runs synchronously per keystroke (the
+    /// per-block document is one block, so serialization is trivial) — a
+    /// debounce here lets stale content race structural edits like merges.
+    var immediateDocumentSync: Bool = false
+    /// One-shot caret placement after an external structural edit.
+    var caretRequest: EditorCaretRequest? = nil
     var autoFocus: Bool = false
+
+    /// Bumped whenever the editor content is rebuilt from the document by an
+    /// EXTERNAL change — tells the text view to apply it even while focused.
+    @State private var externalContentToken = 0
 
     var body: some View {
         RichTextEditor(
             text: $attributedText,
             plainText: $plainTextMirror,
             fontSize: fontSize,
+            fontDesign: fontDesign,
             compact: compact,
             placeholder: placeholder,
             darkMode: darkMode,
@@ -107,6 +185,9 @@ struct CosmoDocumentEditor: View {
             onCommit: onCommit,
             onBoundaryCommand: onBoundaryCommand,
             onSlashCommandSelected: onSlashCommandSelected,
+            splitsOnReturn: splitsOnReturn,
+            caretRequest: caretRequest,
+            externalContentToken: externalContentToken,
             onPlainTextDidChange: { plainText in
                 // Direct per-keystroke callback from the NSTextView coordinator.
                 // This bypasses the SwiftUI @Binding→onChange chain which can
@@ -124,6 +205,12 @@ struct CosmoDocumentEditor: View {
             guard !isApplyingExternalUpdate, !isSyncingFromEditor else { return }
             syncEditorFromDocument()
         }
+        .onChange(of: fontSize) { _, _ in
+            syncEditorFromDocument()
+        }
+        .onChange(of: fontDesign) { _, _ in
+            syncEditorFromDocument()
+        }
         .onChange(of: plainTextMirror) { _, newValue in
             handlePlainTextMirrorChange(newValue)
         }
@@ -138,17 +225,21 @@ struct CosmoDocumentEditor: View {
     private func syncEditorFromDocument() {
         isApplyingExternalUpdate = true
         let resolved = resolvedDocumentForEditor()
-        attributedText = RichDocumentSerializer.attributedString(
-            from: resolved,
-            fontSize: fontSize,
-            darkMode: darkMode,
-            singleLine: singleLine,
-            baseFontWeight: baseFontWeight,
-            titleMode: titleConfiguration != nil
+        attributedText = EditorFontPolicy.applyingDesign(
+            fontDesign,
+            to: RichDocumentSerializer.attributedString(
+                from: resolved,
+                fontSize: fontSize,
+                darkMode: darkMode,
+                singleLine: singleLine,
+                baseFontWeight: baseFontWeight,
+                titleMode: titleConfiguration != nil
+            )
         )
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: resolved)
         plainTextMirror = resolvedPlainText
         lastEmittedPlainText = resolvedPlainText
+        externalContentToken += 1
         DispatchQueue.main.async {
             isApplyingExternalUpdate = false
         }
@@ -236,8 +327,12 @@ struct CosmoDocumentEditor: View {
                 isSyncingFromEditor = false
             }
         }
-        documentSyncWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
+        if immediateDocumentSync {
+            workItem.perform()
+        } else {
+            documentSyncWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
+        }
     }
 
     private func syncTitleDocumentFromEditor() {

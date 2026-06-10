@@ -75,9 +75,23 @@ class AgentToolExecutor {
     var onNoteStructurePlan: ((PendingNoteStructurePlan) -> Void)?
     var onWorkspaceEditProposal: (@MainActor (CosmoAssistantProposal) -> Void)?
     var onAssistantPaneAnswer: (@MainActor (_ title: String?, _ answer: String) -> Void)?
-    var inlineSkillStore: CosmoInlineSkillStore = .userDefaults()
+    var inlineSkillStore: CosmoInlineSkillStore = .defaultForRuntime()
 
     private init() {}
+
+    /// Sources actually read during the active request (recall hits, profiles) —
+    /// surfaced as clickable chips under the pane answer so every claim is
+    /// traceable. Reset by the caller per request.
+    private(set) var sessionSourceRefs: [CosmoAssistantSourceRef] = []
+
+    func resetSessionSourceRefs() {
+        sessionSourceRefs = []
+    }
+
+    func recordSourceRef(uuid: String, title: String, kind: String) {
+        guard !sessionSourceRefs.contains(where: { $0.uuid == uuid }) else { return }
+        sessionSourceRefs.append(CosmoAssistantSourceRef(uuid: uuid, title: title, kind: kind))
+    }
 
     /// Context atom UUIDs from @ mentions — passed to cloud writing engine
     /// so it can load full structured content (connections, research, etc.)
@@ -131,6 +145,7 @@ class AgentToolExecutor {
         case "advance_pipeline_phase": return try await advancePipelinePhase(arguments)
         case "create_content": return try await createContent(arguments)
         case "create_note": return try await createNote(arguments)
+        case "create_connection": return try await createConnection(arguments)
         case "get_content": return try await getContent(arguments)
         case "create_thinkspace": return try await createThinkspace(arguments)
         case "inspect_current_thinkspace": return try await inspectCurrentThinkspace(arguments)
@@ -138,7 +153,14 @@ class AgentToolExecutor {
         case "propose_note_structure_plan": return try await proposeNoteStructurePlan(arguments)
         case "propose_workspace_edit": return try await proposeWorkspaceEdit(arguments)
         case "answer_in_assistant_pane": return try await answerInAssistantPane(arguments)
+        case "append_to_note": return try await appendToNote(arguments)
         case "create_inline_skill": return try await createInlineSkill(arguments)
+        // Recall + Navigation
+        case "recall": return try await recall(arguments)
+        case "open_atom": return try await openAtom(arguments)
+        case "go_to_thinkspace": return try await goToThinkspace(arguments)
+        case "go_to_area": return try await goToArea(arguments)
+        case "focus_canvas_block": return try await focusCanvasBlock(arguments)
         // Calendar / Schedule Blocks
         case "get_calendar_blocks": return try await getCalendarBlocks(arguments)
         case "create_block": return try await createBlock(arguments)
@@ -1754,6 +1776,91 @@ class AgentToolExecutor {
         return jsonEncode(response)
     }
 
+    private func createConnection(_ args: [String: Any]) async throws -> String {
+        guard let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty else {
+            return jsonError("Missing required parameter: title")
+        }
+
+        let conceptType = (args["conceptType"] as? String)
+            .flatMap(ConceptFrameworkType.init(rawValue:)) ?? .mentalModel
+
+        var sections = ConnectionSectionType.allCases
+            .sorted { $0.sortOrder < $1.sortOrder }
+            .map { ConnectionSection(type: $0) }
+
+        var seededCount = 0
+        var unknownSections: [String] = []
+        for (key, value) in args["sections"] as? [String: Any] ?? [:] {
+            guard let type = ConnectionSectionType(rawValue: key) else {
+                unknownSections.append(key)
+                continue
+            }
+            let texts = (value as? [String]) ?? (value as? String).map { [$0] } ?? []
+            guard let index = sections.firstIndex(where: { $0.type == type }) else { continue }
+            for text in texts {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                sections[index].addItem(ConnectionItem(content: trimmed))
+                seededCount += 1
+            }
+        }
+
+        // Explicit String types: GRDB's SQL overload of joined(separator:)
+        // otherwise wins inference and breaks the create(body:) call.
+        let flattenedBody: String = sections
+            .filter { !$0.items.isEmpty }
+            .map { section -> String in
+                let lines: String = section.items
+                    .map { "• \($0.resolvedPlainText)" }
+                    .joined(separator: "\n")
+                return "\(section.type.displayName)\n\(lines)"
+            }
+            .joined(separator: "\n\n")
+
+        let atom = try await atomRepo.create(
+            type: .connection,
+            title: title,
+            body: flattenedBody.isEmpty ? nil : flattenedBody,
+            structured: ConnectionStructuredData(sections: sections).toJSON()
+        )
+
+        // Seed the focus-mode state so the workspace opens with the same
+        // sections and concept type (same persistence path the focus mode uses).
+        var state = ConnectionFocusModeState(atomUUID: atom.uuid)
+        state.sections = sections
+        state.conceptType = conceptType
+        state.save()
+
+        await rememberContextAtom(atom)
+
+        let open = args["open"] as? Bool ?? true
+        if open {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": atom.uuid, "asPane": true]
+            )
+        }
+
+        var response: [String: Any] = [
+            "success": true,
+            "uuid": atom.uuid,
+            "title": title,
+            "type": AtomType.connection.rawValue,
+            "conceptType": conceptType.rawValue,
+            "surfaceID": "connection:\(atom.uuid)",
+            "seededItems": seededCount,
+            "message": open
+                ? "Connection created and opened: \(title). It is now the active editable surface — stage section drafts against its `## Section` header lines."
+                : "Connection created: \(title)"
+        ]
+        if !unknownSections.isEmpty {
+            response["ignoredSections"] = unknownSections
+        }
+        return jsonEncode(response)
+    }
+
     private func getContent(_ args: [String: Any]) async throws -> String {
         guard let uuid = args["uuid"] as? String else {
             return jsonError("Missing required parameter: uuid")
@@ -1902,6 +2009,243 @@ class AgentToolExecutor {
         return jsonEncode(["success": true, "message": "Answer sent to assistant pane"])
     }
 
+    // MARK: - Recall (unified retrieval)
+
+    /// One high-signal retrieval tool over the whole atom graph: hybrid BM25 +
+    /// vector search, compact semantic results. Small models select better from
+    /// one good search tool than from six specialized ones.
+    private func recall(_ args: [String: Any]) async throws -> String {
+        guard let query = trimmedString(args["query"]) else {
+            return jsonError("Missing required parameter: query")
+        }
+
+        let limit = min(max(intValue(args["limit"]) ?? 6, 1), 12)
+        let entityTypes: [EntityType]? = {
+            switch trimmedString(args["kind"]) {
+            case "idea": return [.idea]
+            case "note": return [.note, .stickyNote]
+            case "content": return [.content]
+            case "research": return [.research]
+            case "connection": return [.connection]
+            case "swipe": return [.swipeFile]
+            case "thinkspace": return [.thinkspace]
+            default: return nil
+            }
+        }()
+
+        let results = (try? await HybridSearchEngine.shared.search(
+            query: query,
+            limit: limit,
+            entityTypes: entityTypes
+        )) ?? []
+
+        guard !results.isEmpty else {
+            return jsonEncode([
+                "success": true,
+                "results": [] as [[String: Any]],
+                "message": "Nothing matched. Try different words, or tell the user it isn't saved yet."
+            ] as [String: Any])
+        }
+
+        let compact = results.map { result -> [String: Any] in
+            var entry: [String: Any] = [
+                "title": result.title,
+                "type": result.entityType.rawValue,
+                "snippet": String(result.preview.prefix(220)),
+                "matchReason": result.matchReason.rawValue
+            ]
+            if let uuid = result.entityUUID {
+                entry["uuid"] = uuid
+                recordSourceRef(uuid: uuid, title: result.title, kind: result.entityType.rawValue)
+            }
+            if let updatedAt = result.updatedAt { entry["updatedAt"] = updatedAt }
+            return entry
+        }
+
+        return jsonEncode([
+            "success": true,
+            "results": compact,
+            "count": compact.count
+        ] as [String: Any])
+    }
+
+    // MARK: - Navigation ("legs")
+
+    /// Open an atom in focus mode, as a pane, or on the canvas. Reversible, so
+    /// no review gate — the agent takes the user there directly.
+    private func openAtom(_ args: [String: Any]) async throws -> String {
+        guard let uuid = trimmedString(args["uuid"]) else {
+            return jsonError("Missing required parameter: uuid")
+        }
+        guard let atom = try? await atomRepo.fetch(uuid: uuid) else {
+            return jsonError("No atom found with that UUID")
+        }
+
+        let mode = trimmedString(args["mode"]) ?? "focus"
+        switch mode {
+        case "pane":
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": uuid, "asPane": true]
+            )
+        case "canvas":
+            NotificationCenter.default.post(
+                name: CosmoNotification.NodeGraph.addToCanvas,
+                object: nil,
+                userInfo: ["atomUUID": uuid]
+            )
+        default:
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": uuid, "asPane": false]
+            )
+        }
+
+        return jsonEncode([
+            "success": true,
+            "title": atom.title ?? "Untitled",
+            "mode": mode,
+            "message": "Opened '\(atom.title ?? "Untitled")' (\(mode))."
+        ] as [String: Any])
+    }
+
+    private func goToThinkspace(_ args: [String: Any]) async throws -> String {
+        guard let uuid = trimmedString(args["uuid"]) else {
+            return jsonError("Missing required parameter: uuid")
+        }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.navigateToThinkspaceById,
+            object: nil,
+            userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: uuid).userInfo
+        )
+        return jsonEncode(["success": true, "message": "Navigated to the thinkspace."])
+    }
+
+    private func goToArea(_ args: [String: Any]) async throws -> String {
+        guard let area = trimmedString(args["area"]) else {
+            return jsonError("Missing required parameter: area")
+        }
+        switch area {
+        case "commandCenter":
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToCommandCenter,
+                object: nil
+            )
+        case "swipeGallery":
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openSwipeGallery,
+                object: nil
+            )
+        default:
+            return jsonError("Unknown area '\(area)'. Use commandCenter or swipeGallery.")
+        }
+        return jsonEncode(["success": true, "message": "Navigated to \(area)."])
+    }
+
+    /// Fly the canvas camera to frame a block — answers "where did I put X?" by
+    /// gliding there instead of describing coordinates.
+    private func focusCanvasBlock(_ args: [String: Any]) async throws -> String {
+        guard let atomUUID = trimmedString(args["atom_uuid"]) else {
+            return jsonError("Missing required parameter: atom_uuid")
+        }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.focusBlock,
+            object: nil,
+            userInfo: ["atomUUID": atomUUID]
+        )
+        return jsonEncode([
+            "success": true,
+            "message": "Camera is gliding to the block. Pair this with a one-line answer about what's there."
+        ] as [String: Any])
+    }
+
+    /// Stage a reviewed addition to a note that isn't the active surface.
+    /// Resolves the note by UUID or fuzzy title, then emits a normal workspace-edit
+    /// proposal targeting "note:<uuid>" — the store's atom-backed fallback applies it
+    /// on accept even when the note isn't open anywhere.
+    private func appendToNote(_ args: [String: Any]) async throws -> String {
+        guard let text = trimmedString(args["text"]) else {
+            return jsonError("Missing required parameter: text")
+        }
+
+        let atom: Atom?
+        if let uuid = trimmedString(args["note_uuid"]) {
+            atom = try? await AtomRepository.shared.fetch(uuid: uuid)
+        } else if let title = trimmedString(args["note_title"]) {
+            atom = await Self.noteMatching(title: title)
+        } else {
+            return jsonError("Provide note_uuid or note_title to target a note")
+        }
+
+        guard let atom, atom.type == .note else {
+            return jsonError("No matching note found. Use search tools to find the note's UUID, or ask the user which note they mean.")
+        }
+
+        let bodyText = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.body
+        ).plainText
+
+        let noteTitle = atom.title ?? "Untitled note"
+        let operation = CosmoAssistantProposalOperation(
+            kind: .textInsertion,
+            targetID: "note:\(atom.uuid):body",
+            anchorID: "body",
+            originalText: trimmedString(args["after_text"]),
+            proposedText: text,
+            sourceHash: CosmoEditableSurfaceHasher.hash(bodyText),
+            rationale: trimmedString(args["rationale"]) ?? "Added on your request."
+        )
+        let proposal = CosmoAssistantProposal(
+            prompt: "Append to \(noteTitle)",
+            surfaceID: "note:\(atom.uuid)",
+            title: "Add to \(noteTitle)",
+            summary: "Append \(text.split(separator: " ").count) words to \(noteTitle).",
+            operations: [operation]
+        )
+        // Inline requests route through the bridge callback; from any other entry
+        // point (Cosmo window, remote), stage straight into the shared review store.
+        if let onWorkspaceEditProposal {
+            onWorkspaceEditProposal(proposal)
+        } else {
+            CosmoInlineAssistantStore.shared.receive(proposal: proposal)
+        }
+
+        return jsonEncode([
+            "success": true,
+            "proposalId": proposal.id.uuidString,
+            "noteUUID": atom.uuid,
+            "noteTitle": noteTitle,
+            "message": "Addition staged for review. It will be saved to '\(noteTitle)' when the user accepts."
+        ] as [String: Any])
+    }
+
+    /// Fuzzy title match across notes: exact (case-insensitive) beats prefix beats
+    /// containment; most recently updated wins ties.
+    private static func noteMatching(title query: String) async -> Atom? {
+        guard let notes = try? await AtomRepository.shared.fetchAll(type: .note) else { return nil }
+        let normalizedQuery = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return nil }
+
+        var exact: Atom?
+        var prefix: Atom?
+        var containing: Atom?
+        for note in notes { // fetchAll returns updatedAt-descending — first hit is freshest
+            let noteTitle = note.title?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if noteTitle == normalizedQuery {
+                exact = exact ?? note
+            } else if noteTitle.hasPrefix(normalizedQuery) {
+                prefix = prefix ?? note
+            } else if noteTitle.contains(normalizedQuery) {
+                containing = containing ?? note
+            }
+        }
+        return exact ?? prefix ?? containing
+    }
+
     private func createInlineSkill(_ args: [String: Any]) async throws -> String {
         guard let name = trimmedString(args["name"]) else {
             return jsonError("Missing required parameter: name")
@@ -1923,6 +2267,12 @@ class AgentToolExecutor {
         }
 
         let id = trimmedString(args["id"]) ?? Self.inlineSkillID(from: name)
+        let examples = (args["examples"] as? [[String: Any]])?.compactMap { raw -> CosmoInlineSkillExample? in
+            guard let input = (raw["input"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let idealOutput = (raw["idealOutput"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !input.isEmpty, !idealOutput.isEmpty else { return nil }
+            return CosmoInlineSkillExample(input: input, idealOutput: idealOutput)
+        }
         let skill = CosmoInlineSkillDefinition.custom(
             id: id,
             name: name,
@@ -1937,7 +2287,10 @@ class AgentToolExecutor {
             outputContract: outputContract,
             tokenBudget: intValue(args["tokenBudget"]) ?? 1400,
             requiresReviewedDiff: boolValue(args["requiresReviewedDiff"]) ?? (route == .action),
-            panePolicy: panePolicy
+            panePolicy: panePolicy,
+            triggerDescription: trimmedString(args["triggerDescription"]),
+            examples: (examples?.isEmpty == false) ? examples : nil,
+            verification: trimmedString(args["verification"])
         )
         inlineSkillStore.save(skill)
 

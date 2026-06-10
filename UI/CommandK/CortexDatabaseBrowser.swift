@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct CortexDatabaseBrowser: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     @StateObject private var libraryVM = LibraryViewModel()
     @State private var hasAppeared = false
     @State private var selectedUUID: String?

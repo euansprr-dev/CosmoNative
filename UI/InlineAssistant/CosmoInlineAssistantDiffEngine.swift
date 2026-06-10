@@ -48,14 +48,27 @@ enum CosmoInlineAssistantDiffEngine {
 /// This is the single source of truth for "can this edit still apply" and "where do we
 /// splice the inline diff", so matching and applying never disagree.
 enum CosmoInlineDiffLocator {
-    /// Best-effort range of `needle` within `haystack`. Exact first, then whitespace-normalized.
+    /// Best-effort range of `needle` within `haystack`.
+    ///
+    /// Fallback chain, most precise first:
+    /// 1. exact byte match
+    /// 2. trimmed exact match
+    /// 3. whitespace-normalized + typography-folded match
+    /// 4. paragraph-anchored match (multi-line needles whose middle lines drifted)
+    /// 5. bounded fuzzy line match — unique candidate only
+    ///
+    /// Every stage either locates with confidence or returns nil so the operation
+    /// surfaces as conflicted. A diff that lands in the wrong place once costs more
+    /// trust than a hundred conflicts, so ambiguity always loses to conflict.
     static func range(of needle: String, in haystack: String) -> Range<String.Index>? {
         let trimmedNeedle = needle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedNeedle.isEmpty else { return nil }
 
         if let exact = haystack.range(of: needle) { return exact }
         if let trimmed = haystack.range(of: trimmedNeedle) { return trimmed }
-        return normalizedRange(of: trimmedNeedle, in: haystack)
+        if let normalized = normalizedRange(of: trimmedNeedle, in: haystack) { return normalized }
+        if let anchored = paragraphAnchoredRange(of: trimmedNeedle, in: haystack) { return anchored }
+        return boundedFuzzyLineRange(of: trimmedNeedle, in: haystack)
     }
 
     /// Whether `needle` can be located in `haystack` (exact or whitespace-normalized).
@@ -106,6 +119,147 @@ enum CosmoInlineDiffLocator {
 
         let matchEnd = matchStart + needleChars.count
         return startIndex[matchStart]..<endIndex[matchEnd - 1]
+    }
+
+    // MARK: Paragraph-anchored fallback
+
+    /// Multi-line needles whose middle lines drifted (re-wraps, edited list items)
+    /// can still be located by their first and last lines. Both anchors must locate
+    /// via the precise stages, appear in order, and the spanned region must be
+    /// size-plausible — otherwise nil, never a guess.
+    private static func paragraphAnchoredRange(of needle: String, in haystack: String) -> Range<String.Index>? {
+        let needleLines = needle
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard needleLines.count >= 3,
+              let firstLine = needleLines.first,
+              let lastLine = needleLines.last,
+              firstLine != lastLine else {
+            return nil
+        }
+
+        guard let firstRange = preciseRange(of: firstLine, in: haystack) else { return nil }
+        // Search the tail as its own String and map back by character offset —
+        // String and Substring indices are not interchangeable.
+        let tailString = String(haystack[firstRange.upperBound...])
+        guard let lastRangeInTail = preciseRange(of: lastLine, in: tailString) else { return nil }
+
+        let offsetUpper = tailString.distance(from: tailString.startIndex, to: lastRangeInTail.upperBound)
+        let lastUpper = haystack.index(firstRange.upperBound, offsetBy: offsetUpper)
+
+        let span = firstRange.lowerBound..<lastUpper
+
+        // Plausibility: the located span shouldn't be wildly larger than the needle —
+        // a last-line match pages below the first line means we anchored the wrong block.
+        let spanLength = haystack.distance(from: span.lowerBound, to: span.upperBound)
+        let needleLength = needle.count
+        guard spanLength <= max(needleLength * 2, needleLength + 200) else { return nil }
+
+        return span
+    }
+
+    /// Exact / trimmed / normalized matching only — used for anchor lines, where
+    /// fuzzy matching would compound uncertainty.
+    private static func preciseRange(of needle: String, in haystack: String) -> Range<String.Index>? {
+        if let exact = haystack.range(of: needle) { return exact }
+        let trimmed = needle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let trimmedMatch = haystack.range(of: trimmed) { return trimmedMatch }
+        return normalizedRange(of: trimmed, in: haystack)
+    }
+
+    // MARK: Bounded fuzzy fallback
+
+    /// Last resort for single-line needles: find a haystack line within a small
+    /// edit distance (≤ 10% of the needle, minimum 2). Applies only when exactly
+    /// ONE line qualifies — two plausible candidates mean ambiguity, and ambiguity
+    /// resolves to conflict, never to a guess.
+    private static func boundedFuzzyLineRange(of needle: String, in haystack: String) -> Range<String.Index>? {
+        let collapsedNeedle = collapseWhitespace(needle)
+        guard !collapsedNeedle.isEmpty,
+              !needle.contains("\n"),
+              collapsedNeedle.count >= 12 // tiny fragments are too ambiguous to fuzz
+        else { return nil }
+
+        let maxDistance = max(2, collapsedNeedle.count / 10)
+        let needleChars = Array(collapsedNeedle)
+
+        var bestRange: Range<String.Index>? = nil
+        var bestDistance = Int.max
+        var bestIsUnique = true
+
+        var lineStart = haystack.startIndex
+        while lineStart < haystack.endIndex {
+            let lineEnd = haystack[lineStart...].firstIndex(of: "\n") ?? haystack.endIndex
+            defer {
+                lineStart = lineEnd < haystack.endIndex ? haystack.index(after: lineEnd) : haystack.endIndex
+            }
+
+            let line = String(haystack[lineStart..<lineEnd])
+            let collapsedLine = collapseWhitespace(line)
+            // Cheap length gate before paying for edit distance.
+            guard abs(collapsedLine.count - needleChars.count) <= maxDistance else { continue }
+
+            let distance = boundedLevenshtein(needleChars, Array(collapsedLine), limit: maxDistance)
+            guard let distance else { continue }
+
+            if distance < bestDistance {
+                bestDistance = distance
+                bestIsUnique = true
+                // Trim the matched line's surrounding whitespace from the range.
+                bestRange = trimmedLineRange(lineStart..<lineEnd, in: haystack)
+            } else if distance == bestDistance {
+                bestIsUnique = false
+            }
+        }
+
+        guard bestIsUnique, bestDistance <= maxDistance else { return nil }
+        return bestRange
+    }
+
+    private static func trimmedLineRange(
+        _ range: Range<String.Index>,
+        in haystack: String
+    ) -> Range<String.Index> {
+        var lower = range.lowerBound
+        var upper = range.upperBound
+        while lower < upper, haystack[lower].isWhitespace {
+            lower = haystack.index(after: lower)
+        }
+        while upper > lower, haystack[haystack.index(before: upper)].isWhitespace {
+            upper = haystack.index(before: upper)
+        }
+        return lower..<upper
+    }
+
+    /// Levenshtein distance with an early-exit bound: returns nil as soon as the
+    /// distance provably exceeds `limit`, keeping the scan O(lines × needle × limit).
+    private static func boundedLevenshtein(_ a: [Character], _ b: [Character], limit: Int) -> Int? {
+        if abs(a.count - b.count) > limit { return nil }
+        if a == b { return 0 }
+
+        var previous = Array(0...b.count)
+        var current = [Int](repeating: 0, count: b.count + 1)
+
+        for i in 1...a.count {
+            current[0] = i
+            var rowMin = current[0]
+            for j in 1...b.count {
+                let cost = a[i - 1] == b[j - 1] ? 0 : 1
+                current[j] = Swift.min(
+                    previous[j] + 1,        // deletion
+                    current[j - 1] + 1,     // insertion
+                    previous[j - 1] + cost  // substitution
+                )
+                rowMin = Swift.min(rowMin, current[j])
+            }
+            if rowMin > limit { return nil }
+            swap(&previous, &current)
+        }
+
+        let distance = previous[b.count]
+        return distance <= limit ? distance : nil
     }
 
     private static func collapseWhitespace(_ text: String) -> String {

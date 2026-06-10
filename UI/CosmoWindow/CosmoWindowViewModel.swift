@@ -1456,17 +1456,28 @@ final class CosmoWindowViewModel: ObservableObject {
             agentProfile: activeProfile,
             forcedBundles: forcedBundles
         )
-        let inlinePrompt = CosmoInlineAssistantInstructionPrompt.make(
-            route: route,
-            snapshot: snapshot,
-            skillPlan: skillPlan,
-            workingContextFrame: workingContextFrame
+
+        // Cache-ordered split: the static instruction layer (route rules + personality)
+        // is byte-identical across requests and rides inside the prompt-cache prefix.
+        // Everything request-specific — context pack, runtime layer (varies with forced
+        // bundles), resolved skill facts, skill plan, working frame, and the surface
+        // snapshot — renders after the cache breakpoint so the prefix survives intact.
+        let staticInstructionOverride = CosmoInlineAssistantInstructionPrompt.staticInstructions(
+            for: route,
+            requiresPaneExplanation: CosmoInlineAssistantResearchIntent.shouldRequirePaneExplanation(skillPlan)
         )
-        let systemPromptOverride = [
+        let volatileContextOverride = [
             hasContextPackContent ? contextPack.promptBlock : nil,
             runtimePrompt,
             resolvedSkillContext.isEmpty ? nil : resolvedSkillContext.promptBlock,
-            inlinePrompt
+            // Prefetched related-work digest — assembled in the background when the
+            // surface activated, so the common request needs zero tool round-trips.
+            CosmoInlineAmbientContextPack.shared.digest(forSurfaceID: snapshot?.surfaceID),
+            CosmoInlineAssistantInstructionPrompt.volatileContext(
+                snapshot: snapshot,
+                skillPlan: skillPlan,
+                workingContextFrame: workingContextFrame
+            )
         ]
         .compactMap { $0 }
         .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1480,7 +1491,9 @@ final class CosmoWindowViewModel: ObservableObject {
             // Surgical edits run on the fast sensor tier (Haiku) by default — the heavy
             // global model is overkill for in-place edits and is far slower on cold calls.
             tierOverride: modelOverride ?? skillPlan.preferredModelTier ?? activeProfile?.preferredModelTier ?? .sensor,
-            systemPromptOverride: systemPromptOverride.isEmpty ? nil : systemPromptOverride,
+            intentOverride: CosmoInlineAssistantRequestShape.pinnedIntent(for: route),
+            systemPromptOverride: staticInstructionOverride,
+            volatileContextOverride: volatileContextOverride.isEmpty ? nil : volatileContextOverride,
             responseMode: responseMode,
             profileToolBundles: profileToolBundles,
             forcedToolBundles: forcedBundles,

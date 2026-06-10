@@ -10,7 +10,11 @@ final class SwipeLibraryFilteringTests: XCTestCase {
             [.x, .youtube, .substack, .instagram, .tiktok, .linkedin]
         )
         XCTAssertEqual(SwipeDiscoveryFilterPresentation.minimumOutlierOptions, [nil, 3, 5, 10, 20])
-        XCTAssertEqual(SwipeDiscoveryFilterPresentation.summary(for: query), "All · Last 3 months · 10x")
+        XCTAssertEqual(SwipeDiscoveryFilterPresentation.summary(for: query), "All · Last 3 months · Any score")
+        XCTAssertEqual(
+            SwipeDiscoveryFilterPresentation.summary(for: SocialDiscoveryQuery(minimumOutlierMultiplier: 10)),
+            "All · Last 3 months · 10×"
+        )
     }
 
     func testDiscoverySidebarSectionsAreDistinctDestinations() {

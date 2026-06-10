@@ -588,7 +588,9 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
             args: ["clientName": "Ben"]
         ))
 
-        XCTAssertEqual(store.statusText, "Loading profile: Ben")
+        // The status grammar rewrites known tools into verb-first lines in the
+        // user's vocabulary — the narration is the personality made visible.
+        XCTAssertEqual(store.statusText, "Checking Ben's profile")
 
         store.receiveToolActivity(.completed(
             name: "get_client_profile",
@@ -604,9 +606,12 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
     }
 
     func testToolActivityLabelsAreCompactedForTheBottomBar() {
+        // Unknown tools fall back to the provided display label, compacted to fit
+        // the bar. (Known tools like web_search get short verb-first grammar lines
+        // instead — covered below.)
         let label = CosmoInlineAssistantActivityLabel.statusText(
             for: .started(
-                name: "web_search",
+                name: "some_future_tool",
                 displayLabel: "Searching the web for \"examples of local government housing reimbursement rates in California with many details\"",
                 args: [:]
             )
@@ -614,6 +619,33 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
 
         XCTAssertLessThanOrEqual(label?.count ?? 0, 72)
         XCTAssertEqual(label?.hasSuffix("..."), true)
+    }
+
+    func testStatusGrammarRewritesKnownToolsVerbFirst() {
+        XCTAssertEqual(
+            CosmoInlineAssistantStatusGrammar.line(
+                toolName: "web_search",
+                displayLabel: "Searching the web for a very long query that would otherwise be truncated",
+                args: ["query": "curiosity hooks"]
+            ),
+            "Researching curiosity hooks"
+        )
+        XCTAssertEqual(
+            CosmoInlineAssistantStatusGrammar.line(
+                toolName: "search_swipes",
+                displayLabel: "search_swipes",
+                args: [:]
+            ),
+            "Pulling swipes"
+        )
+        XCTAssertEqual(
+            CosmoInlineAssistantStatusGrammar.line(
+                toolName: "propose_workspace_edit",
+                displayLabel: "propose_workspace_edit",
+                args: [:]
+            ),
+            "Staging your edits"
+        )
     }
 
     func testForcedToolBundlesMatchCommandStyleContextRequests() {

@@ -232,7 +232,12 @@ struct InquiryCrystallizationReviewV2: View {
         let session = viewModel.session
         let dd = viewModel.deepDive
         let extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: dd?.uuid ?? "")) ?? []
-        let sessionExtracts = extracts.filter { $0.extractMetadata?.parentSessionUUID == session.uuid }
+        // Incremental: material already crystallized into Connections stays out
+        // of the next run — only new captures since the last crystallization count.
+        let sessionExtracts = extracts.filter {
+            $0.extractMetadata?.parentSessionUUID == session.uuid
+                && $0.extractMetadata?.status != .promoted
+        }
 
         do {
             statusMessage = "Routing branches..."

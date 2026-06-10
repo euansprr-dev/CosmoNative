@@ -60,12 +60,34 @@ actor AtomSearchEngine {
 
     // MARK: - FTS Search (BM25 Keyword Search)
 
-    /// Full-text search using FTS5 BM25 ranking
+    /// Full-text search using FTS5 BM25 ranking.
+    /// Requires every term first (Spotlight semantics), broadening to
+    /// any-term matching when the strict query finds nothing.
     func search(query: String, options: AtomSearchOptions = .default) async throws -> [AtomSearchResult] {
         guard !query.isEmpty else { return [] }
 
-        // Escape special FTS5 characters and prepare query
-        let ftsQuery = prepareFtsQuery(query)
+        let strictQuery = Self.prepareFtsQuery(query)
+        let strictResults = try await runFtsSearch(
+            ftsQuery: strictQuery,
+            originalQuery: query,
+            options: options
+        )
+        if !strictResults.isEmpty {
+            return strictResults
+        }
+
+        let broadQuery = Self.prepareFtsQuery(query, matchAnyTerm: true)
+        guard broadQuery != strictQuery else { return strictResults }
+        return try await runFtsSearch(ftsQuery: broadQuery, originalQuery: query, options: options)
+    }
+
+    private func runFtsSearch(
+        ftsQuery: String,
+        originalQuery: String,
+        options: AtomSearchOptions
+    ) async throws -> [AtomSearchResult] {
+        guard !ftsQuery.isEmpty else { return [] }
+        let query = originalQuery
 
         let db = await getDatabase()
         return try await db.asyncRead { db in
@@ -88,6 +110,11 @@ actor AtomSearchEngine {
             if let types = options.types, !types.isEmpty {
                 let typeList = types.map { "'\($0.rawValue)'" }.joined(separator: ",")
                 sql += " AND atoms.type IN (\(typeList))"
+            } else {
+                // No explicit filter: keep internal bookkeeping atoms (agent
+                // conversation logs, sync/XP events…) out of search results.
+                let excludedList = AtomType.searchExcludedRawValues.map { "'\($0)'" }.joined(separator: ",")
+                sql += " AND atoms.type NOT IN (\(excludedList))"
             }
 
             if let projectUuid = options.projectUuid {
@@ -145,6 +172,9 @@ actor AtomSearchEngine {
             if let types = options.types, !types.isEmpty {
                 let typeList = types.map { "'\($0.rawValue)'" }.joined(separator: ",")
                 sql += " AND type IN (\(typeList))"
+            } else {
+                let excludedList = AtomType.searchExcludedRawValues.map { "'\($0)'" }.joined(separator: ",")
+                sql += " AND type NOT IN (\(excludedList))"
             }
 
             sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
@@ -184,23 +214,24 @@ actor AtomSearchEngine {
 
     // MARK: - Query Preparation
 
-    /// Prepare a query string for FTS5
-    private func prepareFtsQuery(_ query: String) -> String {
-        // Remove special FTS5 operators for safety
+    /// Prepare a query string for FTS5: each term quoted (so punctuation and
+    /// operators like AND/OR/NOT/():^ can't break MATCH syntax) with a prefix
+    /// wildcard. Terms are required (AND) by default; `matchAnyTerm`
+    /// broadens to OR.
+    nonisolated static func prepareFtsQuery(_ query: String, matchAnyTerm: Bool = false) -> String {
         let cleaned = query
-            .replacingOccurrences(of: "\"", with: "")
-            .replacingOccurrences(of: "*", with: "")
+            .replacingOccurrences(of: "*", with: " ")
             .replacingOccurrences(of: "-", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Split into words and create OR query
-        let words = cleaned.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        if words.count == 1 {
-            return "\(words[0])*" // Prefix search for single word
-        } else {
-            // Multiple words: match any word with prefix
-            return words.map { "\($0)*" }.joined(separator: " OR ")
-        }
+        let words = cleaned.components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+            .map { word in
+                let escaped = word.replacingOccurrences(of: "\"", with: "\"\"")
+                return "\"\(escaped)\"*"
+            }
+
+        return words.joined(separator: matchAnyTerm ? " OR " : " ")
     }
 
     /// Generate a snippet showing the match context

@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import GRDB
 
 enum CosmoInlineAssistantRoute: String, Codable, Equatable, Sendable {
     case action
@@ -20,6 +21,9 @@ enum CosmoInlineAssistantSkillID: String, Codable, CaseIterable, Equatable, Hash
     case researchAnswer
     case canvasOrganize
     case ideaStrategy
+    case concept
+    case skillBuilder
+    case synthesize
 }
 
 enum CosmoInlineAssistantSkillContext: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
@@ -66,6 +70,8 @@ struct CosmoInlineAssistantSkill: Codable, Equatable, Sendable {
     var triggerPhrases: [String] = []
     var preferredModelTier: AgentModelTier? = nil
     var panePolicy: CosmoInlineSkillPanePolicy = .openForAnswer
+    var examples: [CosmoInlineSkillExample]? = nil
+    var verification: String? = nil
 }
 
 enum CosmoInlineSkillPanePolicy: String, Codable, Equatable, Sendable {
@@ -99,7 +105,7 @@ struct CosmoInlineAssistantSkillPlan: Codable, Equatable, Sendable {
             .map { "- \($0)" }
             .joined(separator: "\n")
 
-        return """
+        var block = """
         ## Inline Skill Runtime
         Active skill: \(primarySkill.name)
         Skill id: \(primarySkill.id.rawValue)
@@ -115,6 +121,45 @@ struct CosmoInlineAssistantSkillPlan: Codable, Equatable, Sendable {
 
         Skill instructions:
         \(steps)
+        """
+
+        if let examples = primarySkill.examples, !examples.isEmpty {
+            let exampleBlocks = examples.map(\.promptBlock).joined(separator: "\n")
+            block += """
+
+
+            Skill examples — match this shape and quality exactly:
+            \(exampleBlocks)
+            """
+        }
+
+        if let verification = primarySkill.verification,
+           !verification.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            block += """
+
+
+            Before staging output, verify: \(verification)
+            If a check fails, fix the output before calling the tool — do not stage failing output.
+            """
+        }
+
+        return block
+    }
+}
+
+/// A paired example teaching a skill what great output looks like. Examples are
+/// the highest-leverage field for Haiku-tier skills — small models imitate far
+/// better than they follow abstract instructions.
+struct CosmoInlineSkillExample: Codable, Equatable, Sendable {
+    var input: String
+    var idealOutput: String
+
+    var promptBlock: String {
+        """
+        <example>
+        <input>\(input)</input>
+        <ideal_output>\(idealOutput)</ideal_output>
+        </example>
         """
     }
 }
@@ -139,6 +184,15 @@ struct CosmoInlineSkillDefinition: Identifiable, Codable, Equatable, Sendable {
     var isEnabled: Bool
     var createdAt: Date
     var updatedAt: Date
+    // Optional upgrades (decode as nil from older persisted definitions):
+    /// One-sentence description of *when* this skill should trigger, written for
+    /// embedding-based auto-routing — phrased in the user's own vocabulary.
+    var triggerDescription: String?
+    /// Input → ideal-output pairs injected with the skill's instructions.
+    var examples: [CosmoInlineSkillExample]?
+    /// Post-conditions the model must check before staging output
+    /// (e.g. "every slide keeps its SLIDE N header", "no invented metrics").
+    var verification: String?
 
     static func custom(
         id: String = UUID().uuidString,
@@ -155,6 +209,9 @@ struct CosmoInlineSkillDefinition: Identifiable, Codable, Equatable, Sendable {
         tokenBudget: Int = 1400,
         requiresReviewedDiff: Bool,
         panePolicy: CosmoInlineSkillPanePolicy,
+        triggerDescription: String? = nil,
+        examples: [CosmoInlineSkillExample]? = nil,
+        verification: String? = nil,
         now: Date = Date()
     ) -> CosmoInlineSkillDefinition {
         CosmoInlineSkillDefinition(
@@ -176,7 +233,10 @@ struct CosmoInlineSkillDefinition: Identifiable, Codable, Equatable, Sendable {
             isBuiltin: false,
             isEnabled: true,
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            triggerDescription: triggerDescription,
+            examples: examples,
+            verification: verification
         )
     }
 
@@ -220,7 +280,9 @@ struct CosmoInlineSkillDefinition: Identifiable, Codable, Equatable, Sendable {
             summary: summary,
             triggerPhrases: triggerPhrases,
             preferredModelTier: preferredModelTier,
-            panePolicy: panePolicy
+            panePolicy: panePolicy,
+            examples: examples,
+            verification: verification
         )
     }
 }
@@ -264,6 +326,101 @@ struct CosmoInlineSkillStore {
         )
     }
 
+    /// `CosmoDatabase.shared.dbQueue` is main-actor state; the store's closures are
+    /// nonisolated and overwhelmingly called on the main thread (registry, executor,
+    /// composer). Resolve with an isolation check so a rare off-main call hops
+    /// instead of crashing — GRDB queues themselves are thread-safe once obtained.
+    private static func resolveDBQueue() -> DatabaseQueue? {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated { CosmoDatabase.shared.dbQueue }
+        }
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated { CosmoDatabase.shared.dbQueue }
+        }
+    }
+
+    /// Durable GRDB-backed store (`inline_assistant_skills` table). Skills survive
+    /// reinstalls of preferences, can carry routing embeddings, and are positioned
+    /// for sync — UserDefaults was a stopgap.
+    static func database() -> CosmoInlineSkillStore {
+        CosmoInlineSkillStore(
+            load: {
+                guard let dbQueue = resolveDBQueue() else { return [] }
+                let decoder = JSONDecoder()
+                let rows = (try? dbQueue.read { db in
+                    try Row.fetchAll(db, sql: """
+                        SELECT definition FROM inline_assistant_skills
+                        WHERE is_deleted = 0
+                        ORDER BY updated_at DESC
+                        """)
+                }) ?? []
+                return rows.compactMap { row in
+                    guard let json = row["definition"] as? String,
+                          let data = json.data(using: .utf8) else { return nil }
+                    return try? decoder.decode(CosmoInlineSkillDefinition.self, from: data)
+                }
+            },
+            save: { skills in
+                guard let dbQueue = resolveDBQueue() else { return }
+                let encoder = JSONEncoder()
+                try? dbQueue.write { db in
+                    // Full-set replace mirrors the closure contract the other
+                    // backends use ("save the complete custom-skill list").
+                    try db.execute(sql: "UPDATE inline_assistant_skills SET is_deleted = 1")
+                    for skill in skills {
+                        guard let data = try? encoder.encode(skill),
+                              let json = String(data: data, encoding: .utf8) else { continue }
+                        try db.execute(
+                            sql: """
+                            INSERT INTO inline_assistant_skills
+                                (id, name, definition, is_enabled, is_builtin, created_at, updated_at, is_deleted)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                            ON CONFLICT(id) DO UPDATE SET
+                                name = excluded.name,
+                                definition = excluded.definition,
+                                is_enabled = excluded.is_enabled,
+                                updated_at = excluded.updated_at,
+                                is_deleted = 0
+                            """,
+                            arguments: [
+                                skill.id,
+                                skill.name,
+                                json,
+                                skill.isEnabled,
+                                skill.isBuiltin,
+                                ISO8601DateFormatter().string(from: skill.createdAt),
+                                ISO8601DateFormatter().string(from: skill.updatedAt)
+                            ]
+                        )
+                    }
+                }
+            }
+        )
+    }
+
+    /// One-shot migration flag. Benign under races — the migration itself is
+    /// guarded by "legacy skills exist AND the table is empty".
+    nonisolated(unsafe) private static var didMigrateFromUserDefaults = false
+
+    /// The production store: GRDB-backed, with a one-time migration of any skills
+    /// previously persisted in UserDefaults. Tests get the in-memory store.
+    static func defaultForRuntime() -> CosmoInlineSkillStore {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return inMemory()
+        }
+
+        let store = database()
+        if !didMigrateFromUserDefaults {
+            didMigrateFromUserDefaults = true
+            let legacy = userDefaults().customSkills()
+            if !legacy.isEmpty, store.customSkills().isEmpty {
+                legacy.forEach { store.save($0) }
+                print("✅ Migrated \(legacy.count) inline skills from UserDefaults to GRDB")
+            }
+        }
+        return store
+    }
+
     func customSkills() -> [CosmoInlineSkillDefinition] {
         load()
             .filter { !$0.isBuiltin }
@@ -289,7 +446,7 @@ struct CosmoInlineSkillStore {
 struct CosmoInlineSkillRegistry {
     var store: CosmoInlineSkillStore
 
-    init(store: CosmoInlineSkillStore = .userDefaults()) {
+    init(store: CosmoInlineSkillStore = .defaultForRuntime()) {
         self.store = store
     }
 
@@ -764,6 +921,12 @@ final class CosmoInlineAssistantWorkingContextCache {
             return "shape flow and story structure"
         case .researchAnswer:
             return "answer with retrieved context"
+        case .concept:
+            return "develop concept with staged section drafts"
+        case .skillBuilder:
+            return "design and create a new inline skill"
+        case .synthesize:
+            return "synthesize saved research into a drafted output"
         }
     }
 
@@ -1134,6 +1297,31 @@ enum CosmoInlineAssistantSkillRuntime {
             return CosmoInlineAssistantSkillPlan(primarySkill: skill, definitionID: definition.id)
         } else if isFollowUpLike(lower), let previousSkillID {
             skill = builtInSkill(previousSkillID)
+        } else if previousSkillID == .concept {
+            // Concept is a multi-turn conversation: a terse answer like
+            // "because it compounds" must stay with the concept partner
+            // instead of falling through to the edit/research heuristics.
+            // The session ends when the user picks another slash skill or
+            // the working-context frame expires.
+            skill = builtInSkill(.concept)
+        } else if previousSkillID == .skillBuilder {
+            // The skill builder is a multi-turn interview — short answers like
+            // "reels mostly" must stay with the builder, same as Concept.
+            skill = builtInSkill(.skillBuilder)
+        } else if containsAny(lower, [
+            "new skill", "create a skill", "make a skill", "build a skill",
+            "create an inline skill", "add a skill", "skill builder"
+        ]) {
+            skill = builtInSkill(.skillBuilder)
+        } else if previousSkillID == .synthesize {
+            // Synthesis is a gather → outline → draft conversation; short
+            // confirmations ("go", "use that order") must stay in the flow.
+            skill = builtInSkill(.synthesize)
+        } else if containsAny(lower, [
+            "synthesize", "synthesis", "pull together", "draft from my research",
+            "newsletter from", "chapter from", "essay from my"
+        ]) {
+            skill = builtInSkill(.synthesize)
         } else if isFactFillLike(lower) {
             skill = builtInSkill(.factFill)
         } else if isProfileBackedSlideExpansionEditLike(lower) {
@@ -1379,6 +1567,89 @@ enum CosmoInlineAssistantSkillRuntime {
                 triggerPhrases: ["flow", "outline", "strategy", "storytelling"],
                 preferredModelTier: .strategist,
                 panePolicy: .openForAnswer
+            )
+        case .concept:
+            return CosmoInlineAssistantSkill(
+                id: .concept,
+                name: "Concept",
+                description: "Concept-development partner: develops a Connection through one-question-at-a-time socratic dialogue, observations, and staged section drafts.",
+                route: .answer,
+                requiredContext: [.activeSurface, .currentFocus, .workspaceMemory],
+                toolBundles: [.workspaceEditing, .contentSearch],
+                outputContract: "pane_concept_turn_plus_optional_reviewed_diff",
+                instructions: [
+                    "You are a creative thought partner mining for what is uniquely the user's in an idea. If the active editable surface is a Connection (its surface text starts with a `# Title` line followed by `Type:` and `## Section` headers), that connection is the working concept. Otherwise ask one question to name the concept being developed, then call create_connection — seeding section items when the user already gave material — and continue developing the connection it opens.",
+                    "Hold a multi-turn conversation. Each turn either asks exactly ONE socratic question that builds on the previous answer, or stages section-targeted drafts. Never do both aggressively in one turn.",
+                    "Pick the sharpening question that pushes the idea one step further: vague idea → 'What specifically about this is interesting to you?'; observation → 'What would you do with this?'; business/product idea → 'What problem does this solve?'; question → 'What's your instinct on the answer?'; connection between things → 'What's the link you're seeing?'; reaction → 'What would the better version look like?'.",
+                    "Use four development drivers, and when one applies, open the reply with its label. Pattern: gaps between their approach and the standard one — 'I notice you emphasize X while most people focus on Y'. Paradox: counterintuitive truths — when they get better results doing the opposite of conventional wisdom, dig in immediately; paradoxes are gold. Name: when a concept they use is unnamed, test names ('Does \"[name]\" capture this?') and don't move on until it has at least a working title — stage it into the Concept Name section. Contrast: 'you do X while everyone else does Y' — help them see why the difference matters.",
+                    "Match tone to the Type line of the connection: Mental Model → socratic and probing; Framework → rigorous, press for coherent parts and clear ordering; Principle → press for universality and counter-examples; Doctrine → assertive, help them state claims boldly; Heuristic → pragmatic, press for 'when does this fail?'; Law of Nature → empirical, press for mechanism and prediction.",
+                    "If the connection is blank or barely started, invite the messy core idea — one sentence, a link, a half-formed question, doesn't matter. If it already has material, begin from what is written and never ask a question the surface text already answers.",
+                    "Stage every proposed insertion as a reviewed diff via propose_workspace_edit: one operation per section, kind textInsertion, originalText set to the exact section header line (e.g. `## Claims`) copied verbatim from the surface text, proposedText as `- ` bullet lines (one bullet per item). To append after an existing entry instead, set originalText to that exact bullet line. Never claim an insertion happened without staging it, never restate a whole section, and never mix sections in one operation.",
+                    "Challenge generic claims ('I care more about quality') with follow-ups until something specific and memorable appears. Don't compliment — observe, challenge, or dig deeper. When something is genuinely original, name what makes it original.",
+                    "Never use canned filler like 'What's the tension?' unless the user used that language first.",
+                    "After staging drafts, end the pane reply with one follow-up question that would deepen the concept once the user accepts.",
+                    "Keep prose to 2-5 sentences, conversational, not a questionnaire. Always deliver the conversational reply via answer_in_assistant_pane — even on turns that also stage drafts."
+                ],
+                tokenBudget: 2200,
+                requiresReviewedDiff: false,
+                icon: "diamond",
+                summary: "Develops a concept with you — socratic questions, sharp observations, drafts staged into Connection sections.",
+                triggerPhrases: ["concept", "develop concept", "crystallize", "deepen"],
+                preferredModelTier: .strategist,
+                panePolicy: .openForAnswer
+            )
+        case .skillBuilder:
+            return CosmoInlineAssistantSkill(
+                id: .skillBuilder,
+                name: "New Skill",
+                description: "Conversational skill builder: interviews briefly, drafts a complete skill definition with examples, dry-runs it against the active surface, then saves it via create_inline_skill.",
+                route: .answer,
+                requiredContext: [.activeSurface, .workspaceMemory],
+                toolBundles: [.workspaceEditing, .contentSearch],
+                outputContract: "pane_skill_spec_then_create_inline_skill",
+                instructions: [
+                    "You are designing a reusable inline skill WITH the user — a contract, not a prompt snippet. A great skill declares when it triggers, what context it needs, what its output looks like, and how to verify that output before staging.",
+                    "Interview with at most FOUR questions across the conversation, ONE per turn, and skip any the user already answered: (1) What should the skill do, concretely? (2) When should it trigger — in the user's own words, as they'd type it? (3) What does great output look like — ask them to paste or point at one real example they love. (4) What context does it need (client voice? swipes? research evidence? just the surface)?",
+                    "From their answers draft the complete definition and show it in the pane as a compact spec: name, one-line summary, trigger description (a single sentence in the user's vocabulary — this drives automatic routing), route (action stages diffs / answer goes to pane), model tier (sensor for precise mechanical edits, strategist for judgment and voice work), required context, 2-4 concrete instructions, and one input→ideal-output example distilled from the material they shared. Examples teach more than instructions — never save a skill without at least one.",
+                    "Include a one-line verification rule when the skill can fail quietly (e.g. 'no invented metrics', 'every slide keeps its SLIDE N header').",
+                    "DRY-RUN before saving: when the active surface has text and the skill's route is action, apply the draft skill's instructions to the live surface yourself and stage the result with propose_workspace_edit so the user sees the actual diff this skill would produce. For answer-route skills, produce one sample answer in the pane. Skills are born tested — never save one the user hasn't seen run.",
+                    "Iterate on their feedback. When the user confirms (yes / save it / create it / add it), call create_inline_skill with the full definition including the example baked into instructions, then confirm in one line how to invoke it (/Name or by just typing a matching request).",
+                    "Keep every pane turn short — the spec card plus one question or one confirmation ask. No meta-lectures about what skills are."
+                ],
+                tokenBudget: 2400,
+                requiresReviewedDiff: false,
+                icon: "wand.and.stars",
+                summary: "Builds a new slash-menu skill with you — interview, draft, dry-run on the live surface, save.",
+                triggerPhrases: ["new skill", "create skill", "make a skill", "build a skill", "skill builder"],
+                preferredModelTier: .strategist,
+                panePolicy: .alwaysOpenWithResult
+            )
+        case .synthesize:
+            return CosmoInlineAssistantSkill(
+                id: .synthesize,
+                name: "Synthesize",
+                description: "Turns saved research into a structured, cited draft: gather sources from the second brain, propose an outline, then draft section by section as reviewed diffs.",
+                route: .answer,
+                requiredContext: [.activeSurface, .currentFocus, .workspaceMemory, .researchEvidence],
+                toolBundles: [.workspaceEditing, .contentSearch, .strategy, .writing, .webResearch, .navigation],
+                outputContract: "gather_then_outline_then_sectioned_reviewed_diffs",
+                instructions: [
+                    "This is the whole point of Cosmo: research → save → structure → synthesize. You are turning the user's saved atoms into a coherent output (newsletter, chapter, essay, thread) — grounded in THEIR material, in THEIR thinking, never generic filler.",
+                    "GATHER first: call recall (multiple angles if needed — by topic, by source name, by adjacent concepts) to collect the relevant ideas, notes, research, and connections. Read the ambient related-work digest before searching — it is often most of the answer. Tell the user what you found as a compact source list (titles + one-line relevance) and ask only ONE question if scope is genuinely ambiguous; otherwise proceed.",
+                    "STRUCTURE second: propose an outline in the pane — sections with a one-line intent each and which sources feed which section. Wait for a nod (or 'go') before drafting. If the user gave a structure, use theirs.",
+                    "DRAFT third, SECTION BY SECTION: stage each section as its own propose_workspace_edit insertion into the active surface (anchored to the previous section or the matching heading). One section per proposal — small reviewable diffs, never a 5,000-token wall. After each staged section, continue to the next without waiting unless the user rejected the last one.",
+                    "CITE as you go: each section's rationale names the source atoms (titles) it drew from, so every claim is traceable back to the user's own research.",
+                    "Synthesis means finding the through-line ACROSS sources — tensions, patterns, the argument the user has been circling — not summarizing each source in turn. When two sources disagree, say so and use it.",
+                    "Never invent facts, quotes, or numbers that aren't in the gathered sources. A gap in the research is stated as a gap (and is allowed to become an open question in the draft).",
+                    "If no editable surface is active, ask whether to create a note for the draft (create_note), then stage sections into it."
+                ],
+                tokenBudget: 2600,
+                requiresReviewedDiff: false,
+                icon: "square.stack.3d.up",
+                summary: "Gathers your saved research, proposes a structure, then drafts section-by-section with citations.",
+                triggerPhrases: ["synthesize", "newsletter from", "chapter from", "draft from my research", "pull together"],
+                preferredModelTier: .strategist,
+                panePolicy: .openForResearchBackedAction
             )
         }
     }
@@ -1760,6 +2031,10 @@ struct CosmoAssistantProposal: Identifiable, Codable, Equatable, Sendable {
     var summary: String
     var operations: [CosmoAssistantProposalOperation]
     var createdAt: Date
+    /// The skill that produced this proposal, when one was active. Drives
+    /// skill-scoped learning: accept/reject outcomes accrue to the skill so it
+    /// improves with use.
+    var skillID: String?
 
     init(
         id: UUID = UUID(),
@@ -1768,7 +2043,8 @@ struct CosmoAssistantProposal: Identifiable, Codable, Equatable, Sendable {
         title: String,
         summary: String,
         operations: [CosmoAssistantProposalOperation],
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        skillID: String? = nil
     ) {
         self.id = id
         self.prompt = prompt
@@ -1777,6 +2053,7 @@ struct CosmoAssistantProposal: Identifiable, Codable, Equatable, Sendable {
         self.summary = summary
         self.operations = operations
         self.createdAt = createdAt
+        self.skillID = skillID
     }
 
     var addedHunkCount: Int {
@@ -1837,6 +2114,82 @@ struct CosmoAssistantProposal: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// A source the assistant actually read while producing a response — rendered
+/// as a clickable chip under the answer. Anti-hallucination made visible: the
+/// user can verify every claim against the atom it came from.
+struct CosmoAssistantSourceRef: Identifiable, Codable, Equatable, Hashable, Sendable {
+    var uuid: String
+    var title: String
+    var kind: String
+
+    var id: String { uuid }
+
+    var icon: String {
+        switch kind {
+        case "idea": return "lightbulb"
+        case "note", "sticky_note": return "note.text"
+        case "content": return "doc.text"
+        case "research": return "magnifyingglass"
+        case "connection": return "point.3.connected.trianglepath.dotted"
+        case "swipe_file": return "rectangle.stack"
+        case "clientProfile", "client_profile": return "person.crop.rectangle"
+        case "thinkspace": return "rectangle.3.group"
+        default: return "doc"
+        }
+    }
+}
+
+/// The assistant's character sheet: a single, versioned, user-editable persona
+/// document. Byte-stable between edits — it renders into the cached prompt
+/// prefix, so an edit costs exactly one cache rewrite and personality otherwise
+/// never drifts. Thread-safe because `staticInstructions` renders from
+/// nonisolated contexts.
+final class CosmoInlineAssistantPersonalityStore: @unchecked Sendable {
+    static let shared = CosmoInlineAssistantPersonalityStore()
+
+    private let lock = NSLock()
+    private let defaults: UserDefaults
+    private let storageKey = "cosmo.inline.personality.v1"
+    private var cachedText: String?
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var currentText: String {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cachedText { return cachedText }
+        let stored = defaults.string(forKey: storageKey)
+        let resolved = (stored?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? stored!
+            : CosmoInlineAssistantInstructionPrompt.defaultPersonality
+        cachedText = resolved
+        return resolved
+    }
+
+    var isCustomized: Bool {
+        currentText != CosmoInlineAssistantInstructionPrompt.defaultPersonality
+    }
+
+    func save(_ text: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == CosmoInlineAssistantInstructionPrompt.defaultPersonality {
+            defaults.removeObject(forKey: storageKey)
+            cachedText = CosmoInlineAssistantInstructionPrompt.defaultPersonality
+        } else {
+            defaults.set(trimmed, forKey: storageKey)
+            cachedText = trimmed
+        }
+    }
+
+    func resetToDefault() {
+        save("")
+    }
+}
+
 enum CosmoInlineAssistantInstructionPrompt {
     static func make(
         route: CosmoInlineAssistantRoute,
@@ -1845,15 +2198,52 @@ enum CosmoInlineAssistantInstructionPrompt {
         workingContextFrame: CosmoInlineAssistantWorkingContextFrame? = nil
     ) -> String {
         [
-            header,
-            personality,
-            skillPlan?.promptBlock,
-            workingContextFrame?.promptBlock,
-            routeInstructions(for: route, skillPlan: skillPlan),
-            surfaceInstructions(for: snapshot)
+            staticInstructions(
+                for: route,
+                requiresPaneExplanation: CosmoInlineAssistantResearchIntent.shouldRequirePaneExplanation(skillPlan)
+            ),
+            volatileContext(
+                snapshot: snapshot,
+                skillPlan: skillPlan,
+                workingContextFrame: workingContextFrame
+            )
         ]
         .compactMap { $0 }
         .joined(separator: "\n\n")
+    }
+
+    /// The byte-stable instruction layer: identical for every request on the same
+    /// route, so it can live inside the prompt-cache prefix. Anything that varies
+    /// per request (surface text, skill plan, working context) belongs in
+    /// `volatileContext` instead — a single changed byte here would invalidate the
+    /// entire cached prefix on every call.
+    static func staticInstructions(
+        for route: CosmoInlineAssistantRoute,
+        requiresPaneExplanation: Bool
+    ) -> String {
+        [
+            header,
+            personality,
+            routeInstructions(for: route, requiresPaneExplanation: requiresPaneExplanation)
+        ]
+        .joined(separator: "\n\n")
+    }
+
+    /// The per-request context layer: skill plan, working-context frame, and the
+    /// active surface snapshot. Rendered after the cache breakpoint.
+    static func volatileContext(
+        snapshot: CosmoEditableSourceSnapshot?,
+        skillPlan: CosmoInlineAssistantSkillPlan? = nil,
+        workingContextFrame: CosmoInlineAssistantWorkingContextFrame? = nil
+    ) -> String? {
+        let sections = [
+            skillPlan?.promptBlock,
+            workingContextFrame?.promptBlock,
+            surfaceInstructions(for: snapshot)
+        ]
+        .compactMap { $0 }
+
+        return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
     }
 
     private static let header = """
@@ -1867,29 +2257,50 @@ enum CosmoInlineAssistantInstructionPrompt {
     For substantive answers, explanations, analysis, or non-edit results, call answer_in_assistant_pane with the full response.
     """
 
-    private static let personality = """
+    /// The live persona: the user's edited character sheet when one exists,
+    /// otherwise the built-in default below.
+    private static var personality: String {
+        CosmoInlineAssistantPersonalityStore.shared.currentText
+    }
+
+    static let defaultPersonality = """
     ## Cosmo Personality Layer
-    Sound like a sharp, chill creative friend who knows the user's work. Be direct, specific, and casual without becoming fluffy.
+    Sound like a sharp, chill creative friend who knows the user's work. Be direct, specific, and casual without becoming fluffy. Voice is taught by example — match the register of the Cosmo replies below, not just the rules.
 
     Do:
     - Start from the user's actual ask and the active workspace.
     - Give concrete judgments, examples, and rewrites before abstract advice.
-    - Push back plainly when evidence is thin or an idea is weak.
+    - Push back plainly when evidence is thin or an idea is weak — say why in one line, then offer the stronger move.
     - Keep the final response tight unless the task genuinely needs depth.
+    - For minor choices (a word, an ordering, a default), pick the best option and note it — don't ask.
 
     Avoid:
     - AI disclaimers, generic praise, corporate framing, and filler.
     - Inventing client facts, metrics, examples, or voice traits.
     - Saying you analyzed context if you did not actually use the available tools or active surface.
+
+    Voice calibration (generic reply → Cosmo reply):
+    <example>
+    <generic>Great question! There are several approaches you could consider for improving this hook. Here are some options to think about...</generic>
+    <cosmo>The hook buries the lead — "$4,556/mo from one duplex" is the stopper and it's in line three. Staged a version with it first.</cosmo>
+    </example>
+    <example>
+    <generic>I've made the changes you requested! Let me know if you'd like any adjustments or have other questions.</generic>
+    <cosmo>Done — tightened both lines, kept your rhythm. The second one reads faster now.</cosmo>
+    </example>
+    <example>
+    <generic>That's an interesting idea! It has a lot of potential. You might want to consider developing it further by...</generic>
+    <cosmo>The premise is fine but it's the same angle as your March thread. The new part is the landlord objection — lead with that instead.</cosmo>
+    </example>
     """
 
     private static func routeInstructions(
         for route: CosmoInlineAssistantRoute,
-        skillPlan: CosmoInlineAssistantSkillPlan?
+        requiresPaneExplanation: Bool
     ) -> String {
         switch route {
         case .action:
-            let paneExplanation = CosmoInlineAssistantResearchIntent.shouldRequirePaneExplanation(skillPlan)
+            let paneExplanation = requiresPaneExplanation
                 ? """
 
                 For research-backed or source-backed edits, call both propose_workspace_edit and answer_in_assistant_pane in the same assistant/tool turn. The diff is the deliverable, but the pane explanation should briefly say what you used and why, in Cosmo's normal sharp/chill voice. Keep it short: source/fact, confidence, and what changed. Do not expose hidden chain-of-thought.
@@ -1937,5 +2348,49 @@ enum CosmoInlineAssistantInstructionPrompt {
         text:
         \(snapshot.text)
         """
+    }
+}
+
+/// The deterministic request shape for inline assistant calls. Both the live
+/// request path (`prepareInlineAssistantAgentRequest`) and the cache prewarmer
+/// derive from this single definition so the warmed prompt prefix and the real
+/// request's prefix can't drift apart.
+enum CosmoInlineAssistantRequestShape {
+    /// Inline requests pin their intent instead of running keyword classification:
+    /// a stable intent means a stable tool set and a stable cached prompt prefix.
+    /// Keyword classification would scatter identical edit requests across intents
+    /// (.query returns ~all 95 tools), fragmenting the cache and degrading Haiku's
+    /// tool selection.
+    static func pinnedIntent(for route: CosmoInlineAssistantRoute) -> AgentIntent {
+        switch route {
+        case .action: return .correct  // small focused tool set for surgical edits
+        case .answer: return .analyze  // analysis tools + web search, far leaner than .query
+        }
+    }
+
+    /// The default skill whose tool bundles shape the common-case request for a route.
+    static func defaultSkillID(for route: CosmoInlineAssistantRoute) -> CosmoInlineAssistantSkillID {
+        route == .action ? .inlineEdit : .researchAnswer
+    }
+
+    /// Tool bundles for the route's common case — used to pre-warm the prompt cache
+    /// with the same tool list a typical real request will carry.
+    static func baselineToolBundles(for route: CosmoInlineAssistantRoute) -> Set<AgentToolBundle> {
+        let plan = CosmoInlineAssistantSkillRuntime.plan(
+            for: "",
+            surfaceKind: .text,
+            previousSkillID: nil,
+            selectedSkillID: defaultSkillID(for: route).rawValue
+        )
+        var bundles = plan.toolBundles
+        bundles.insert(.workspaceEditing)
+        if route == .answer {
+            bundles.insert(.contentSearch)
+        }
+        return bundles
+    }
+
+    static func responseMode(for route: CosmoInlineAssistantRoute) -> AgentResponseMode {
+        route == .action ? .automatic : .inlineAssistant
     }
 }

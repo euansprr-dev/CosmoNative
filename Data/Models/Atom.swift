@@ -160,6 +160,30 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// Internal bookkeeping atoms (agent conversation logs, sync events, XP
+    /// events, sanctuary snapshots…) must never surface in user-facing search.
+    /// Thinkspaces are searched by name through ThinkspaceManager, not FTS.
+    var isExcludedFromSearch: Bool {
+        switch category {
+        case .system, .leveling, .sanctuary:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Raw values of search-excluded types, for SQL `NOT IN` clauses.
+    static let searchExcludedRawValues: [String] =
+        allCases.filter(\.isExcludedFromSearch).map(\.rawValue)
+
+    /// User-facing types eligible for recents and broad keyword search.
+    /// Single source of truth for the allowlist previously duplicated across
+    /// AtomRepository fetch methods.
+    static let userSearchableTypes: [AtomType] = [
+        .idea, .note, .task, .research, .content, .connection,
+        .project, .journalEntry, .image
+    ]
+
     /// Whether this atom type contributes to XP
     var contributesToXP: Bool {
         switch self {

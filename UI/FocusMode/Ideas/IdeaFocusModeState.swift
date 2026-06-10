@@ -10,23 +10,24 @@ import Foundation
 /// Tracks UI preferences and analysis timestamps so the workspace restores exactly
 /// where the user left off.
 @MainActor
-class IdeaFocusModeState: ObservableObject {
+@Observable
+final class IdeaFocusModeState {
     // MARK: - Published State
 
     /// The currently selected framework (SwipeFrameworkType rawValue), if any
-    @Published var selectedFramework: String?
+    var selectedFramework: String?
 
     /// Whether the right-hand intelligence panel is collapsed
-    @Published var intelligencePanelCollapsed: Bool = false
+    var intelligencePanelCollapsed: Bool = false
 
     /// ISO 8601 timestamp of the last analysis run
-    @Published var lastAnalyzedAt: String?
+    var lastAnalyzedAt: String?
 
     /// Index of the currently selected hook suggestion (nil = none selected)
-    @Published var selectedHookIndex: Int?
+    var selectedHookIndex: Int?
 
     /// Scroll offset within the intelligence panel (for restoring position)
-    @Published var intelligencePanelScrollOffset: CGFloat = 0
+    var intelligencePanelScrollOffset: CGFloat = 0
 
     // MARK: - Private
 

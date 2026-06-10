@@ -38,6 +38,11 @@ enum CosmoNotification {
         static let blockSelected = Notification.Name("com.cosmo.canvas.blockSelected")
         static let blockDeselected = Notification.Name("com.cosmo.canvas.blockDeselected")
 
+        /// Fly the canvas camera to frame a block (userInfo: ["atomUUID": String]).
+        /// The agent's "show me where" primitive — answers spatial questions by
+        /// gliding to the block instead of describing coordinates.
+        static let focusBlock = Notification.Name("com.cosmo.canvas.focusBlock")
+
         // Block manipulation
         static let removeBlock = Notification.Name("com.cosmo.canvas.removeBlock")
         static let duplicateBlock = Notification.Name("com.cosmo.canvas.duplicateBlock")

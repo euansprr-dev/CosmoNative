@@ -62,6 +62,7 @@ enum DeepScoutIntentPlanner {
             )
         }
 
+        let anchors = anchorSeed(for: profile, focus: focus)
         let queries: [DeepScoutQuery]
         switch intent {
         case .clinicalEvidence:
@@ -69,46 +70,66 @@ enum DeepScoutIntentPlanner {
         case .mechanismScience:
             queries = mechanismQueries(focus: focus)
         case .practiceTechnique:
-            queries = practiceQueries(focus: focus)
+            queries = practiceQueries(focus: focus, anchors: anchors)
         case .historicalLineage:
-            queries = lineageQueries(focus: focus)
+            queries = lineageQueries(focus: focus, anchors: anchors)
         case .philosophicalOrientation:
-            queries = philosophyQueries(focus: focus)
+            queries = philosophyQueries(focus: focus, anchors: anchors)
         case .sourceSurvey:
-            queries = surveyQueries(focus: focus)
+            queries = surveyQueries(focus: focus, anchors: anchors)
         case .conceptExploration:
-            queries = conceptQueries(focus: focus)
+            queries = conceptQueries(focus: focus, anchors: anchors)
         }
 
         return DeepScoutPlan(intent: intent, queries: deduped(queries))
     }
 
-    private static func conceptQueries(focus: String) -> [DeepScoutQuery] {
+    /// Up to two deep-dive anchor terms not already present in the focus —
+    /// grounds generic query templates in the topic's own vocabulary.
+    private static func anchorSeed(for profile: InquiryBranchResearchProfile, focus: String) -> String {
+        let focusTokens = InquirySourceRecommendationEngine.significantTokens(focus)
+        let fresh = profile.anchorTerms
+            .subtracting(focusTokens)
+            .sorted()
+            .prefix(2)
+        return fresh.joined(separator: " ")
+    }
+
+    private static func seeded(_ base: String, _ anchors: String) -> String {
+        anchors.isEmpty ? base : "\(base) \(anchors)"
+    }
+
+    private static func conceptQueries(focus: String, anchors: String) -> [DeepScoutQuery] {
         [
             DeepScoutQuery(
-                query: "\(focus) meaning prana pranayama",
+                query: seeded("\(focus) meaning primary text", anchors),
                 lane: .primaryText,
                 providers: [.web, .internetArchive]
             ),
             DeepScoutQuery(
-                query: "\(focus) book yoga pranayama",
+                query: seeded("\(focus) book", anchors),
                 lane: .deepRead,
                 providers: [.googleBooks, .openLibrary, .internetArchive]
             ),
             DeepScoutQuery(
-                query: "\(focus) patanjali hatha yoga pradipika commentary",
+                query: "\(focus) classic text translation commentary",
                 lane: .primaryText,
                 providers: [.internetArchive, .web, .openLibrary]
             ),
             DeepScoutQuery(
-                query: "\(focus) philosophy yoga prana pranayama",
+                query: seeded("\(focus) philosophy tradition", anchors),
                 lane: .scholarlyContext,
                 providers: [.openAlex, .crossref, .semanticScholar, .web]
             ),
             DeepScoutQuery(
-                query: "\(focus) teacher lecture youtube",
+                query: condensed(focus),
                 lane: .teacherLecture,
                 providers: [.youtube]
+            ),
+            DeepScoutQuery(
+                query: "\(condensed(focus)) podcast",
+                lane: .teacherLecture,
+                providers: [.youtube, .podcast]
             ),
             DeepScoutQuery(
                 query: "\(focus) scholarly overview review history",
@@ -136,9 +157,14 @@ enum DeepScoutIntentPlanner {
                 providers: [.openAlex, .crossref, .pubMed]
             ),
             DeepScoutQuery(
-                query: "\(focus) practitioner explanation youtube",
+                query: condensed(focus),
                 lane: .teacherLecture,
                 providers: [.youtube]
+            ),
+            DeepScoutQuery(
+                query: "\(condensed(focus)) podcast",
+                lane: .teacherLecture,
+                providers: [.youtube, .podcast]
             )
         ]
     }
@@ -156,19 +182,24 @@ enum DeepScoutIntentPlanner {
                 providers: [.openAlex, .semanticScholar, .pubMed]
             ),
             DeepScoutQuery(
-                query: "\(focus) book physiology breathing",
+                query: "\(focus) book physiology",
                 lane: .deepRead,
                 providers: [.googleBooks, .openLibrary]
             ),
             DeepScoutQuery(
-                query: "\(focus) expert lecture video youtube",
+                query: condensed(focus),
                 lane: .teacherLecture,
                 providers: [.youtube]
+            ),
+            DeepScoutQuery(
+                query: "\(condensed(focus)) podcast",
+                lane: .teacherLecture,
+                providers: [.youtube, .podcast]
             )
         ]
     }
 
-    private static func practiceQueries(focus: String) -> [DeepScoutQuery] {
+    private static func practiceQueries(focus: String, anchors: String) -> [DeepScoutQuery] {
         [
             DeepScoutQuery(
                 query: "\(focus) traditional practice guide",
@@ -176,14 +207,19 @@ enum DeepScoutIntentPlanner {
                 providers: [.web, .openLibrary, .internetArchive]
             ),
             DeepScoutQuery(
-                query: "\(focus) book practice technique yoga",
+                query: seeded("\(focus) book practice technique", anchors),
                 lane: .deepRead,
                 providers: [.googleBooks, .openLibrary]
             ),
             DeepScoutQuery(
-                query: "\(focus) teacher demonstration youtube",
+                query: "\(condensed(focus)) technique",
                 lane: .teacherLecture,
                 providers: [.youtube]
+            ),
+            DeepScoutQuery(
+                query: "\(condensed(focus)) podcast",
+                lane: .teacherLecture,
+                providers: [.youtube, .podcast]
             ),
             DeepScoutQuery(
                 query: "\(focus) contraindications safety",
@@ -193,7 +229,7 @@ enum DeepScoutIntentPlanner {
         ]
     }
 
-    private static func lineageQueries(focus: String) -> [DeepScoutQuery] {
+    private static func lineageQueries(focus: String, anchors: String) -> [DeepScoutQuery] {
         [
             DeepScoutQuery(
                 query: "\(focus) history lineage origin",
@@ -206,22 +242,27 @@ enum DeepScoutIntentPlanner {
                 providers: [.internetArchive, .openLibrary, .web]
             ),
             DeepScoutQuery(
-                query: "\(focus) book history yoga",
+                query: seeded("\(focus) book history", anchors),
                 lane: .deepRead,
                 providers: [.googleBooks, .openLibrary]
             ),
             DeepScoutQuery(
-                query: "\(focus) lecture history youtube",
+                query: "\(condensed(focus)) history",
                 lane: .teacherLecture,
                 providers: [.youtube]
+            ),
+            DeepScoutQuery(
+                query: "\(condensed(focus)) podcast",
+                lane: .teacherLecture,
+                providers: [.youtube, .podcast]
             )
         ]
     }
 
-    private static func philosophyQueries(focus: String) -> [DeepScoutQuery] {
+    private static func philosophyQueries(focus: String, anchors: String) -> [DeepScoutQuery] {
         [
             DeepScoutQuery(
-                query: "\(focus) philosophy yoga prana",
+                query: seeded("\(focus) philosophy", anchors),
                 lane: .scholarlyContext,
                 providers: [.openAlex, .crossref, .semanticScholar, .web]
             ),
@@ -231,26 +272,49 @@ enum DeepScoutIntentPlanner {
                 providers: [.internetArchive, .openLibrary, .web]
             ),
             DeepScoutQuery(
-                query: "\(focus) book philosophy yoga",
+                query: seeded("\(focus) book philosophy", anchors),
                 lane: .deepRead,
                 providers: [.googleBooks, .openLibrary]
             ),
             DeepScoutQuery(
-                query: "\(focus) teacher lecture youtube",
+                query: condensed(focus),
                 lane: .teacherLecture,
                 providers: [.youtube]
+            ),
+            DeepScoutQuery(
+                query: "\(condensed(focus)) podcast",
+                lane: .teacherLecture,
+                providers: [.youtube, .podcast]
             )
         ]
     }
 
-    private static func surveyQueries(focus: String) -> [DeepScoutQuery] {
-        conceptQueries(focus: focus) + [
+    private static func surveyQueries(focus: String, anchors: String) -> [DeepScoutQuery] {
+        conceptQueries(focus: focus, anchors: anchors) + [
             DeepScoutQuery(
                 query: "\(focus) bibliography recommended books",
                 lane: .deepRead,
                 providers: [.googleBooks, .openLibrary, .web]
             )
         ]
+    }
+
+    /// Condenses a long question focus into the short keyword query a person
+    /// would actually type into YouTube ("peak human mental physical state"
+    /// instead of the full sentence). Long queries surface loose, off-topic hits.
+    static func condensed(_ focus: String, limit: Int = 5) -> String {
+        let stopwords: Set<String> = [
+            "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "how",
+            "can", "it", "be", "is", "are", "was", "were", "what", "why", "when",
+            "where", "which", "do", "does", "did", "with", "that", "this", "its",
+            "my", "your", "our", "their", "about", "into", "from", "at", "by"
+        ]
+        let words = focus.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { $0.count > 1 && !stopwords.contains($0) }
+        guard !words.isEmpty else { return focus }
+        return words.prefix(limit).joined(separator: " ")
     }
 
     private static func normalizedFocus(for profile: InquiryBranchResearchProfile) -> String {

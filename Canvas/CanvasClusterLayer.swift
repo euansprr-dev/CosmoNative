@@ -136,13 +136,6 @@ struct CanvasClusterLayer: View {
             }
         }
         .frame(width: rect.width, height: rect.height)
-        .cosmoGlassSceneSignal(
-            id: "canvas-cluster-surface-\(cluster.id)",
-            source: .canvasCluster,
-            color: cluster.color,
-            intensity: cluster.isUserCreated ? 0.48 : 0.36,
-            allowsDeepDiffusion: rect.width >= 360 || rect.height >= 280
-        )
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay {
             clusterOutlineOverlay(

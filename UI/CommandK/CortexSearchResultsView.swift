@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct CortexSearchResultsView: View {
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     var openDomain: (CommandKTab) -> Void
 
     var body: some View {
@@ -63,6 +63,7 @@ struct CortexSearchResultsView: View {
                 }
                 .padding(DS.space24)
             }
+            .scrollEdgeEffectStyle(.soft, for: .all)
             .onChange(of: viewModel.selectedResultIndex) { _, newIndex in
                 guard newIndex >= 0, newIndex < viewModel.unifiedFlatResults.count else { return }
                 let result = viewModel.unifiedFlatResults[newIndex]

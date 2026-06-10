@@ -49,7 +49,6 @@ struct CosmoMentionOverlay: View {
         }
         .frame(maxHeight: 420)
         .cosmoGlassPanel(
-            sceneMaterial: .neutral,
             role: .floatingAssistant,
             cornerRadius: 18
         )

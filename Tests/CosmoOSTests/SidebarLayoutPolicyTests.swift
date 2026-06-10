@@ -200,63 +200,6 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         )
     }
 
-    func testRouteSceneSignalsFreezeDuringSidebarContentPush() {
-        XCTAssertFalse(
-            MainSidebarSceneSignalPolicy.shouldAcceptRouteSceneSignals(
-                isContentPushAnimating: true
-            )
-        )
-    }
-
-    func testRouteSceneSignalsUpdateWhenSidebarContentPushIsStable() {
-        XCTAssertTrue(
-            MainSidebarSceneSignalPolicy.shouldAcceptRouteSceneSignals(
-                isContentPushAnimating: false
-            )
-        )
-    }
-
-    func testRouteSceneSignalsAreCappedToNearestVisibleSignals() {
-        let signals = [
-            makeSceneSignal(id: "hidden", minX: 10, width: 0, intensity: 1),
-            makeSceneSignal(id: "near-low", minX: 330, intensity: 0.2),
-            makeSceneSignal(id: "near-high", minX: 330, intensity: 0.9),
-            makeSceneSignal(id: "far", minX: 900, intensity: 1),
-            makeSceneSignal(id: "behind-sidebar", minX: 200, intensity: 0.4),
-            makeSceneSignal(id: "six", minX: 360, intensity: 0.4),
-            makeSceneSignal(id: "seven", minX: 370, intensity: 0.4),
-            makeSceneSignal(id: "eight", minX: 380, intensity: 0.4),
-            makeSceneSignal(id: "nine", minX: 390, intensity: 0.4),
-            makeSceneSignal(id: "ten", minX: 400, intensity: 0.4),
-        ]
-
-        let capped = MainSidebarSceneSignalPolicy.routeSignals(
-            from: signals,
-            sidebarReservedWidth: 320
-        )
-
-        XCTAssertEqual(
-            capped.map(\.id),
-            ["behind-sidebar", "near-high", "near-low", "six", "seven", "eight", "nine", "ten"]
-        )
-    }
-
-    func testRouteSceneSignalsIgnoreSubPixelGeometryJitter() {
-        let current = [
-            makeSceneSignal(id: "a", minX: 330.2, minY: 20.2, width: 100.2, height: 44.2)
-        ]
-        let jittered = [
-            makeSceneSignal(id: "a", minX: 330.3, minY: 20.3, width: 100.3, height: 44.3)
-        ]
-
-        XCTAssertFalse(
-            MainSidebarSceneSignalPolicy.shouldUpdateRouteSignals(
-                current: current,
-                next: jittered
-            )
-        )
-    }
-
     func testMainContentPushUsesTransformInsteadOfAnimatingLayoutPadding() throws {
         let mainView = try String(
             contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
@@ -287,13 +230,13 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(sectionHeader.contains(".padding(.top, 4)"))
     }
 
-    func testContentFocusSidebarSurfacesDoNotHardTruncateWritingContext() throws {
+    func testContentFocusDoesNotReintroduceLegacyTruncationPatterns() throws {
+        // The legacy collapsible sidebar (ContentOutlineSidebarContent) was removed
+        // in the Scriptorium V2 pass — marginalia clamp visually but expose full
+        // text on focus/disclosure, which is the sanctioned pattern. These guards
+        // keep the old hard-truncation idioms from coming back.
         let contentFocusView = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
-            encoding: .utf8
-        )
-        let sidebarContent = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentOutlineSidebarContent.swift"),
             encoding: .utf8
         )
 
@@ -302,11 +245,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         )
         XCTAssertFalse(contentFocusView.contains("ForEach(supportingSwipeAtoms.prefix(3)"))
         XCTAssertFalse(contentFocusView.contains(".lineLimit(coreIdeaExpanded ? nil : 4)"))
-
-        XCTAssertFalse(sidebarContent.contains(".lineLimit(3)"))
-        XCTAssertFalse(sidebarContent.contains(".lineLimit(4)"))
-        XCTAssertFalse(sidebarContent.contains("swipes.prefix(3)"))
-        XCTAssertFalse(sidebarContent.contains("inheritedConnectionAtoms.prefix(3)"))
+        XCTAssertFalse(contentFocusView.contains("ContentOutlineSidebarContent"))
     }
 
     func testInboxStatsCountsInSinglePass() throws {
@@ -329,8 +268,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
             encoding: .utf8
         )
-        let ideaFocusView = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeView.swift"),
+        let ideaInspectorView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Ideas/IdeaInspectorView.swift"),
             encoding: .utf8
         )
 
@@ -339,7 +278,9 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(mainView.contains("asPane: shouldOpenAsPane"))
         XCTAssertTrue(mainView.contains("if asPane {"))
         XCTAssertTrue(mainView.contains("paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))"))
-        XCTAssertTrue(ideaFocusView.contains("openAtomInPane(blueprint.uuid)"))
+        // Idea v2: blueprint opening moved into the inspector, routed
+        // through IdeaWorkspaceActions back to the host's openAtomInPane.
+        XCTAssertTrue(ideaInspectorView.contains("onOpenAtomInPane(blueprint.uuid)"))
     }
 
     func testAsyncNavigationFetchesCancelAndIgnoreStaleResults() throws {
@@ -638,20 +579,25 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertLessThan(existingReturn.lowerBound, metadataFetch.lowerBound)
     }
 
-    func testContentFocusMarginaliaRailsUseIndependentSmallScrollbars() throws {
+    func testContentFocusMarginaliaRailsScrollSilentlyWithSingleManuscriptScrollbar() throws {
+        // Scriptorium V2 policy: the manuscript owns the page's only visible
+        // scrollbar. Margins still scroll, but silently — no per-margin
+        // PremiumManuscriptScrollbar, no margin scroll metrics.
         let contentFocusView = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
             encoding: .utf8
         )
 
-        XCTAssertTrue(contentFocusView.contains("@State private var leftMarginScrollMetrics = ManuscriptScrollMetrics()"))
-        XCTAssertTrue(contentFocusView.contains("@State private var rightMarginScrollMetrics = ManuscriptScrollMetrics()"))
         XCTAssertTrue(contentFocusView.contains("private func scriptoriumMarginScroll<Content: View>("))
-        XCTAssertTrue(contentFocusView.contains("ScrollView {\n            content()"))
-        XCTAssertTrue(contentFocusView.contains("PremiumManuscriptScrollbar(metrics: metrics.wrappedValue)"))
         XCTAssertTrue(contentFocusView.contains("scriptoriumMarginScroll(width: 260"))
         XCTAssertTrue(contentFocusView.contains("scriptoriumMarginScroll(width: 220"))
         XCTAssertTrue(contentFocusView.contains(".scrollIndicators(.hidden)"))
+
+        XCTAssertFalse(contentFocusView.contains("leftMarginScrollMetrics"))
+        XCTAssertFalse(contentFocusView.contains("rightMarginScrollMetrics"))
+        // Exactly one PremiumManuscriptScrollbar mount: the manuscript's.
+        let scrollbarMounts = contentFocusView.components(separatedBy: "PremiumManuscriptScrollbar(metrics:").count - 1
+        XCTAssertEqual(scrollbarMounts, 1)
     }
 
     func testIdeaFocusHooksUseMultilineEditorsForSavedAndDraftHooks() throws {
@@ -659,11 +605,16 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeView.swift"),
             encoding: .utf8
         )
+        // Idea v2: the AppKit-backed editors live in IdeaManuscriptEditors.swift.
+        let manuscriptEditors = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Ideas/IdeaManuscriptEditors.swift"),
+            encoding: .utf8
+        )
 
-        XCTAssertTrue(ideaFocusView.contains("private struct HookLineEditor: NSViewRepresentable"))
+        XCTAssertTrue(manuscriptEditors.contains("struct HookLineEditor: NSViewRepresentable"))
         XCTAssertTrue(ideaFocusView.contains("HookLineEditor("))
-        XCTAssertTrue(ideaFocusView.contains("let isShiftReturn"))
-        XCTAssertTrue(ideaFocusView.contains("insertText(\"\\n\", replacementRange: selectedRange())"))
+        XCTAssertTrue(manuscriptEditors.contains("let isShiftReturn"))
+        XCTAssertTrue(manuscriptEditors.contains("insertText(\"\\n\", replacementRange: selectedRange())"))
         XCTAssertFalse(ideaFocusView.contains("TextField(\"add another\", text: $newHookText)"))
         XCTAssertFalse(ideaFocusView.contains("Text(hook)\n                .font(DS.callout)"))
     }
@@ -675,23 +626,6 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             .deletingLastPathComponent()
     }
 
-    private func makeSceneSignal(
-        id: String,
-        minX: CGFloat,
-        minY: CGFloat = 0,
-        width: CGFloat = 100,
-        height: CGFloat = 44,
-        intensity: Double = 1,
-        source: CosmoGlassSceneSignalSource = .commandTask
-    ) -> CosmoGlassSceneSignal {
-        CosmoGlassSceneSignal(
-            id: id,
-            color: DS.accent,
-            rect: CGRect(x: minX, y: minY, width: width, height: height),
-            intensity: intensity,
-            source: source
-        )
-    }
 }
 
 private extension String {

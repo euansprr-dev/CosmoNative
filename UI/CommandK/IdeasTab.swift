@@ -35,7 +35,7 @@ struct IdeaClientSection: Identifiable {
 
 struct IdeasTab: View {
 
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     let searchQuery: String
 
     @State private var hasAppeared = false

@@ -20,6 +20,8 @@ struct MentionComposerTextView: NSViewRepresentable {
     var onSubmit: () -> Void
     var onTextChange: () -> Void
     var onDismissMentionOverlayFromBackspace: () -> Void = {}
+    /// Return true to consume Tab (e.g. accept a skill suggestion).
+    var onTab: () -> Bool = { false }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -50,6 +52,7 @@ struct MentionComposerTextView: NSViewRepresentable {
         textView.onSubmit = onSubmit
         textView.isMentionOverlayVisible = isMentionOverlayVisible
         textView.onDismissMentionOverlayFromBackspace = onDismissMentionOverlayFromBackspace
+        textView.onTab = onTab
         textView.string = text
         textView.placeholderString = placeholder
         textView.setSelectedRange(MentionComposerTextSelectionPolicy.clamped(selection, in: text))
@@ -68,6 +71,7 @@ struct MentionComposerTextView: NSViewRepresentable {
         textView.onSubmit = onSubmit
         textView.isMentionOverlayVisible = isMentionOverlayVisible
         textView.onDismissMentionOverlayFromBackspace = onDismissMentionOverlayFromBackspace
+        textView.onTab = onTab
         context.coordinator.parent = self
 
         // Sync text if it changed externally (e.g., mention insertion, clear on send).
@@ -498,10 +502,18 @@ extension Notification.Name {
 final class ComposerNSTextView: NSTextView {
     var onSubmit: (() -> Void)?
     var onDismissMentionOverlayFromBackspace: (() -> Void)?
+    /// Returns true when Tab was consumed (e.g. accepting a ghost-chip skill
+    /// suggestion); false falls through to default text-view behavior.
+    var onTab: (() -> Bool)?
     var isMentionOverlayVisible = false
     var placeholderString: String = ""
 
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 48, // Tab key
+           !event.modifierFlags.contains(.shift),
+           onTab?() == true {
+            return
+        }
         if MentionComposerKeyHandlingPolicy.shouldDismissMentionOverlay(
             keyCode: event.keyCode,
             isMentionOverlayVisible: isMentionOverlayVisible

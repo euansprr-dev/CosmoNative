@@ -54,27 +54,20 @@ final class ThemePaletteTests: XCTestCase {
     func testCodexMonoUsesLighterNativeSidebarMaterialChrome() {
         DS.palette = CodexMonoPalette()
 
-        assertColor(DS.sidebarMaterialBase, equalsHex: "FFFFFF", alpha: 0.665)
-        XCTAssertEqual(DS.sidebarMaterialNativeOpacity, 0.650, accuracy: 0.001)
-        assertColor(DS.sidebarMaterialFallback, equalsHex: "FFFFFF")
         assertColor(DS.sidebarMaterialBorder, equalsHex: "000000", alpha: 0.058)
         assertColor(DS.sidebarMaterialHighlight, equalsHex: "FFFFFF", alpha: 0.64)
-        assertColor(DS.sidebarMaterialInnerShade, equalsHex: "000000", alpha: 0.0)
         assertColor(DS.sidebarMaterialShadow, equalsHex: "000000", alpha: 0.034)
     }
 
-    func testCodexMonoUsesPopoverMaterialForSpotlightWeightGlobalChrome() {
+    func testGlassPanelRolesUseSoftLiquidGlassShadows() {
         DS.palette = CodexMonoPalette()
 
-        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.material, .popover)
-    }
-
-    func testCodexMonoGlobalPanelsUseStrongerSpotlightShadow() {
-        DS.palette = CodexMonoPalette()
-
-        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowRadius, 40, accuracy: 0.001)
-        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowYOffset, 11, accuracy: 0.001)
-        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.sideShadowOpacity, 0.074, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowRadius, 18, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowYOffset, 6, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.focusSidebar.shadowRadius, 12, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.focusSidebar.shadowYOffset, 4, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.floatingAssistant.shadowRadius, 18, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.floatingAssistant.shadowYOffset, 6, accuracy: 0.001)
     }
 
     func testCodexMonoKeepsSemanticSignalColorsDifferentiated() {
@@ -238,12 +231,9 @@ final class ThemePaletteTests: XCTestCase {
         let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
         DS.palette = theme.palette
 
-        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.material, .popover)
-        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowRadius, 40, accuracy: 0.001)
-        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowYOffset, 11, accuracy: 0.001)
-        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.sideShadowOpacity, 0.074, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowRadius, 18, accuracy: 0.001)
+        XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowYOffset, 6, accuracy: 0.001)
 
-        assertColor(DS.sidebarMaterialFallback, equalsHex: "050505")
         assertColor(DS.sidebarMaterialBorder, equalsHex: "FFFFFF", alpha: 0.16)
         assertColor(DS.sidebarMaterialHighlight, equalsHex: "FFFFFF", alpha: 0.18)
         assertColor(DS.sidebarMaterialShadow, equalsHex: "000000", alpha: 0.075)

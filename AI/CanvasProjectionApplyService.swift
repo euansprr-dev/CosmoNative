@@ -294,14 +294,17 @@ final class CanvasProjectionApplyService {
 
         var metadata = thinkspace.metadataValue(as: ThinkspaceMetadata.self) ?? ThinkspaceMetadata(name: thinkspace.title ?? "Thinkspace")
         if let index = metadata.clusters.firstIndex(where: { $0.id == clusterId }) {
-            metadata.clusters[index].synthesis = appendText(
-                metadata.clusters[index].synthesis,
-                title: "Crystallization update",
-                body: operation.rationale,
-                sessionUUID: projection.sessionUUID,
-                sourceArtifactUUID: operation.sourceArtifactID
-            )
-            metadata.clusters[index].synthesisUpdatedAt = iso.string(from: Date())
+            if metadata.clusters[index].synthesis?.contains("operation \(operation.id)") != true {
+                metadata.clusters[index].synthesis = appendText(
+                    metadata.clusters[index].synthesis,
+                    title: "Crystallization update",
+                    body: operation.rationale,
+                    sessionUUID: projection.sessionUUID,
+                    sourceArtifactUUID: operation.sourceArtifactID,
+                    operationId: operation.id
+                )
+                metadata.clusters[index].synthesisUpdatedAt = iso.string(from: Date())
+            }
         } else {
             let placement = operation.proposedPlacement ?? CanvasPlacementProposal(x: 0, y: 0, width: 760, height: 520)
             metadata.clusters.append(CodableCluster(
@@ -330,13 +333,33 @@ final class CanvasProjectionApplyService {
         guard var atom = try await atoms.fetch(uuid: atomUUID) else {
             throw CanvasProjectionApplyError.missingTarget
         }
-        atom.body = appendText(
-            atom.body,
-            title: operation.proposedTitle ?? operation.type.displayName,
-            body: operation.proposedBody ?? operation.rationale,
-            sessionUUID: session.uuid,
-            sourceArtifactUUID: operation.sourceArtifactID
-        )
+        // Deep Dives keep their body clean: updates land as structured,
+        // idempotent narrative revisions instead of raw markdown appends.
+        if atom.type == .deepDive {
+            var structured = atom.deepDiveStructured ?? DeepDiveStructured()
+            let recorded = structured.currentUnderstanding.recordNarrativeRevision(
+                UnderstandingNarrativeRevision(
+                    date: iso.string(from: Date()),
+                    text: operation.proposedBody ?? operation.rationale,
+                    sessionUUID: session.uuid,
+                    originOperationId: operation.id,
+                    kind: .canvasOp
+                )
+            )
+            guard recorded else { return }
+            atom = atom.withStructured(structured)
+        } else {
+            // Idempotency: each operation appends at most once.
+            if atom.body?.contains("operation \(operation.id)") == true { return }
+            atom.body = appendText(
+                atom.body,
+                title: operation.proposedTitle ?? operation.type.displayName,
+                body: operation.proposedBody ?? operation.rationale,
+                sessionUUID: session.uuid,
+                sourceArtifactUUID: operation.sourceArtifactID,
+                operationId: operation.id
+            )
+        }
         atom.updatedAt = iso.string(from: Date())
         _ = try await atoms.update(atom)
     }
@@ -371,12 +394,14 @@ final class CanvasProjectionApplyService {
 
     private func markArtifactInternal(_ atomUUID: String, projection: CanvasProjection, reason: String) async throws {
         guard var atom = try await atoms.fetch(uuid: atomUUID) else { return }
+        if atom.body?.contains("operation \(projection.id)") == true { return }
         atom.body = appendText(
             atom.body,
             title: "Kept internal by crystallization",
             body: reason,
             sessionUUID: projection.sessionUUID,
-            sourceArtifactUUID: atomUUID
+            sourceArtifactUUID: atomUUID,
+            operationId: projection.id
         )
         atom.updatedAt = iso.string(from: Date())
         _ = try await atoms.update(atom)
@@ -491,14 +516,14 @@ final class CanvasProjectionApplyService {
         _ = try await atoms.update(thinkspace)
     }
 
-    private func appendText(_ existing: String?, title: String, body: String, sessionUUID: String, sourceArtifactUUID: String) -> String {
+    private func appendText(_ existing: String?, title: String, body: String, sessionUUID: String, sourceArtifactUUID: String, operationId: String) -> String {
         let current = existing?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let section = """
 
         ## \(title)
         \(body)
 
-        _Appended from Inquiry Session \(sessionUUID), source artifact \(sourceArtifactUUID), \(iso.string(from: Date()))._
+        _Appended from Inquiry Session \(sessionUUID), source artifact \(sourceArtifactUUID), operation \(operationId), \(iso.string(from: Date()))._
         """
         return current.isEmpty ? section.trimmingCharacters(in: .whitespacesAndNewlines) : current + section
     }

@@ -1,5 +1,12 @@
 # Greenhouse Glass — The CosmoOS Polish Spec
 
+> ⚠️ **Superseded (June 2026): use the `peakui` skill instead** (`.claude/skills/peakui/`).
+> peakui is the maintained, current version of this language — updated for the native
+> macOS 26 Liquid Glass migration. Known-stale content below: the scene-signal API (§2,
+> §7.2) was **deleted**; `CosmoGlassPanel` no longer takes `sceneTint`/`sceneMaterial`;
+> §9's macOS 15 fallback guidance no longer applies (the app is macOS 26-only and native
+> glass is the foundation, not an enhancement).
+
 > Apple's Liquid Glass discipline, expressed in CosmoOS's warm materiality.
 > This is the design language distilled from the SwipeFile **Discover** and **Creators**
 > redesign. Apply it to any page and it will feel like a first‑party Apple app that is

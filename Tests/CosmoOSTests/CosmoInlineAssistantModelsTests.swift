@@ -214,3 +214,296 @@ final class CosmoInlineAssistantModelsTests: XCTestCase {
         XCTAssertTrue(rendered.contains("SLIDE 6\n--"))
     }
 }
+
+/// The hardened locator fallback chain: paragraph anchoring, bounded fuzzy,
+/// and — critically — the never-mis-apply property. A located range that is
+/// wrong is strictly worse than a conflict.
+final class CosmoInlineDiffLocatorHardeningTests: XCTestCase {
+    func testParagraphAnchoredMatchSurvivesMiddleLineDrift() {
+        let haystack = """
+        Intro paragraph stays put.
+
+        First line of the block anchors here.
+        The middle line was reworded by the user yesterday afternoon.
+        Last line of the block anchors here too.
+
+        Outro paragraph stays put.
+        """
+        // The model echoes the block with a stale middle line.
+        let needle = """
+        First line of the block anchors here.
+        A middle line the model remembers from an old snapshot.
+        Last line of the block anchors here too.
+        """
+
+        let range = CosmoInlineDiffLocator.range(of: needle, in: haystack)
+        XCTAssertNotNil(range)
+        if let range {
+            let located = String(haystack[range])
+            XCTAssertTrue(located.hasPrefix("First line of the block anchors here."))
+            XCTAssertTrue(located.hasSuffix("Last line of the block anchors here too."))
+        }
+    }
+
+    func testParagraphAnchoringRejectsImplausiblyWideSpans() {
+        // Last line exists, but pages away from the first line — anchoring the
+        // span would swallow unrelated content, so this must conflict.
+        let filler = Array(repeating: "Unrelated filler line padding the document.", count: 60)
+            .joined(separator: "\n")
+        let haystack = """
+        Alpha block first line.
+        \(filler)
+        Omega block last line.
+        """
+        let needle = """
+        Alpha block first line.
+        Something in between.
+        Omega block last line.
+        """
+
+        XCTAssertNil(CosmoInlineDiffLocator.range(of: needle, in: haystack))
+    }
+
+    func testBoundedFuzzyLocatesUniqueNearMissLine() {
+        let haystack = """
+        Keep this line untouched.
+        Rent for the duplexx is $4,556 per month total.
+        Keep this other line untouched.
+        """
+        // One typo ("duplexx") between the model's echo and the live document.
+        let needle = "Rent for the duplex is $4,556 per month total."
+
+        let range = CosmoInlineDiffLocator.range(of: needle, in: haystack)
+        XCTAssertNotNil(range)
+        if let range {
+            XCTAssertEqual(String(haystack[range]), "Rent for the duplexx is $4,556 per month total.")
+        }
+    }
+
+    func testBoundedFuzzyRefusesAmbiguousCandidates() {
+        // Two lines are equally close to the needle — ambiguity must conflict,
+        // never guess.
+        let haystack = """
+        The launch plan ships on Tuesday morning A.
+        The launch plan ships on Tuesday morning B.
+        """
+        let needle = "The launch plan ships on Tuesday morning X."
+
+        XCTAssertNil(CosmoInlineDiffLocator.range(of: needle, in: haystack))
+    }
+
+    func testBoundedFuzzyRefusesDistantText() {
+        let haystack = "A completely different sentence about gardening tools."
+        let needle = "Rent for the duplex is $4,556 per month total."
+
+        XCTAssertNil(CosmoInlineDiffLocator.range(of: needle, in: haystack))
+    }
+
+    /// Property: for a corpus of random single-line mutations within the fuzzy
+    /// budget, the locator either returns the mutated line's exact range or nil —
+    /// it never returns a range pointing at a different line.
+    func testLocateOrConflictNeverMisapplies() {
+        let documentLines = [
+            "Q3 retention cohort dropped twelve percent quarter over quarter.",
+            "The onboarding email rewrite shipped to half the audience.",
+            "Pricing experiment four moves the paywall behind day seven.",
+            "Creator payouts reconcile every Friday at noon eastern.",
+            "Support backlog cleared after the macro library refresh."
+        ]
+        let haystack = documentLines.joined(separator: "\n")
+
+        var generator = SystemRandomNumberGenerator()
+        for lineIndex in documentLines.indices {
+            let original = documentLines[lineIndex]
+            // Mutate one character (the kind of drift a stale echo produces).
+            var characters = Array(original)
+            let mutationIndex = Int.random(in: 5..<characters.count - 1, using: &generator)
+            characters[mutationIndex] = characters[mutationIndex] == "x" ? "y" : "x"
+            let needle = String(characters)
+
+            guard let range = CosmoInlineDiffLocator.range(of: needle, in: haystack) else {
+                continue // Conflict is always acceptable.
+            }
+            let located = String(haystack[range])
+            XCTAssertEqual(
+                located, original,
+                "Locator returned a range for a different line than the mutated source"
+            )
+        }
+    }
+}
+
+/// Streamed tool-argument decoding: the pane answer must read out cleanly from
+/// partial `answer_in_assistant_pane` JSON, including mid-escape boundaries.
+final class LLMPartialToolArgumentsTests: XCTestCase {
+    func testExtractsCompleteAnswerField() {
+        let json = #"{"title": "Review", "answer": "Tight hook. Cut the second line."}"#
+        XCTAssertEqual(
+            LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: json),
+            "Tight hook. Cut the second line."
+        )
+    }
+
+    func testExtractsGrowingPartialAnswer() {
+        let partial = #"{"title": "Review", "answer": "Tight hook. Cu"#
+        XCTAssertEqual(
+            LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: partial),
+            "Tight hook. Cu"
+        )
+    }
+
+    func testReturnsNilBeforeFieldOpens() {
+        XCTAssertNil(LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: #"{"title": "Rev"#))
+        XCTAssertNil(LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: #"{"answer""#))
+    }
+
+    func testDecodesEscapesAcrossChunks() {
+        let partial = #"{"answer": "Line one.\nLine \"two\" and a backslash \\ plus uni é"#
+        XCTAssertEqual(
+            LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: partial),
+            "Line one.\nLine \"two\" and a backslash \\ plus uni é"
+        )
+    }
+
+    func testTrailingLoneBackslashIsHeldNotEmitted() {
+        // A chunk boundary can land mid-escape; the dangling backslash must not leak.
+        let partial = #"{"answer": "Hold this \"#
+        XCTAssertEqual(
+            LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: partial),
+            "Hold this "
+        )
+    }
+
+    func testStopsAtClosingQuoteIgnoringLaterFields() {
+        let json = #"{"answer": "Done.", "title": "Ignore me"}"#
+        XCTAssertEqual(
+            LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: json),
+            "Done."
+        )
+    }
+}
+
+/// The cache-ordered prompt split: static instructions must be byte-identical
+/// across renders (they live inside the prompt-cache prefix), and the volatile
+/// layer must carry everything request-specific.
+final class CosmoInlineAssistantPromptSplitTests: XCTestCase {
+    func testStaticInstructionsAreByteStableAcrossRenders() {
+        for route in [CosmoInlineAssistantRoute.action, .answer] {
+            let first = CosmoInlineAssistantInstructionPrompt.staticInstructions(
+                for: route, requiresPaneExplanation: false
+            )
+            let second = CosmoInlineAssistantInstructionPrompt.staticInstructions(
+                for: route, requiresPaneExplanation: false
+            )
+            XCTAssertEqual(first, second)
+            XCTAssertFalse(first.isEmpty)
+        }
+    }
+
+    func testStaticInstructionsContainNoSurfaceText() {
+        let snapshot = CosmoEditableSourceSnapshot(
+            surfaceID: "note:test",
+            targetID: "body",
+            kind: .text,
+            title: "UNIQUE-SURFACE-TITLE-9X7",
+            text: "UNIQUE-SURFACE-BODY-3Q1",
+            sourceHash: "hash",
+            anchors: []
+        )
+
+        let staticPart = CosmoInlineAssistantInstructionPrompt.staticInstructions(
+            for: .action, requiresPaneExplanation: false
+        )
+        XCTAssertFalse(staticPart.contains("UNIQUE-SURFACE-TITLE-9X7"))
+        XCTAssertFalse(staticPart.contains("UNIQUE-SURFACE-BODY-3Q1"))
+
+        let volatilePart = CosmoInlineAssistantInstructionPrompt.volatileContext(snapshot: snapshot)
+        XCTAssertNotNil(volatilePart)
+        XCTAssertTrue(volatilePart?.contains("UNIQUE-SURFACE-BODY-3Q1") == true)
+    }
+
+    func testMakeComposesStaticAndVolatileLayers() {
+        let made = CosmoInlineAssistantInstructionPrompt.make(route: .answer, snapshot: nil)
+        let staticPart = CosmoInlineAssistantInstructionPrompt.staticInstructions(
+            for: .answer, requiresPaneExplanation: false
+        )
+        XCTAssertTrue(made.hasPrefix(staticPart))
+    }
+
+    func testPersonalityStoreCustomizationFlowsIntoStaticInstructions() {
+        let store = CosmoInlineAssistantPersonalityStore.shared
+        defer { store.resetToDefault() }
+
+        store.save("## Custom Persona\nSpeak like a pirate editor. UNIQUE-PERSONA-7Q2.")
+        XCTAssertTrue(store.isCustomized)
+        XCTAssertTrue(
+            CosmoInlineAssistantInstructionPrompt
+                .staticInstructions(for: .action, requiresPaneExplanation: false)
+                .contains("UNIQUE-PERSONA-7Q2")
+        )
+
+        store.resetToDefault()
+        XCTAssertFalse(store.isCustomized)
+        XCTAssertEqual(store.currentText, CosmoInlineAssistantInstructionPrompt.defaultPersonality)
+        XCTAssertTrue(
+            CosmoInlineAssistantInstructionPrompt
+                .staticInstructions(for: .action, requiresPaneExplanation: false)
+                .contains("Cosmo Personality Layer")
+        )
+    }
+
+    func testSkillExamplesAndVerificationRenderInSkillPromptBlock() {
+        var skill = CosmoInlineAssistantSkillRuntime.builtInSkill(.inlineEdit)
+        skill.examples = [
+            CosmoInlineSkillExample(input: "tighten the hook", idealOutput: "UNIQUE-EXAMPLE-OUT-4R8")
+        ]
+        skill.verification = "no invented metrics"
+        let plan = CosmoInlineAssistantSkillPlan(primarySkill: skill)
+
+        XCTAssertTrue(plan.promptBlock.contains("UNIQUE-EXAMPLE-OUT-4R8"))
+        XCTAssertTrue(plan.promptBlock.contains("Before staging output, verify: no invented metrics"))
+    }
+}
+
+/// Source-ref attachment: answers and proposals carry the receipts for what
+/// the assistant actually read.
+@MainActor
+final class CosmoInlineAssistantSourceChipTests: XCTestCase {
+    func testPaneAnswerCarriesProvidedSourceRefs() {
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        let refs = [
+            CosmoAssistantSourceRef(uuid: "u1", title: "Pricing research", kind: "research"),
+            CosmoAssistantSourceRef(uuid: "u2", title: "Retention thread", kind: "content")
+        ]
+        store.sourceRefsProvider = { refs }
+
+        store.receivePaneAnswer(title: nil, answer: "Here's the through-line.", route: .answer)
+
+        let answer = store.paneMessages.last { $0.role == .assistant }
+        XCTAssertEqual(answer?.sourceRefs, refs)
+    }
+
+    func testStreamedAnswerFinalizesWithSourceRefs() {
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        let refs = [CosmoAssistantSourceRef(uuid: "u1", title: "Pricing research", kind: "research")]
+        store.sourceRefsProvider = { refs }
+
+        store.receivePaneAnswerDelta("Here's the ")
+        store.receivePaneAnswerDelta("through-line.")
+        store.receivePaneAnswer(title: nil, answer: "Here's the through-line.", route: .answer)
+
+        let assistantMessages = store.paneMessages.filter { $0.role == .assistant }
+        XCTAssertEqual(assistantMessages.count, 1, "Streamed answer must finalize in place, not duplicate")
+        XCTAssertEqual(assistantMessages.first?.content, "Here's the through-line.")
+        XCTAssertEqual(assistantMessages.first?.sourceRefs, refs)
+    }
+
+    func testAnswersWithoutSourcesCarryNoChips() {
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.sourceRefsProvider = { [] }
+
+        store.receivePaneAnswer(title: nil, answer: "Quick take.", route: .answer)
+
+        XCTAssertNil(store.paneMessages.last { $0.role == .assistant }?.sourceRefs)
+    }
+}

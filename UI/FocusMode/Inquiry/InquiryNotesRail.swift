@@ -61,38 +61,158 @@ struct InquiryNotesRail: View {
     private var feed: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DS.space8) {
-                ForEach(items, id: \.feedId) { item in
-                    InquiryNoteRow(viewModel: viewModel, item: item)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                ForEach(groups) { group in
+                    InquiryNotesGroupHeader(group: group, isActive: group.questionUUID == viewModel.activeQuestionUUID)
+                    ForEach(group.items, id: \.feedId) { item in
+                        InquiryNoteRow(viewModel: viewModel, item: item)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
             }
             .padding(.horizontal, DS.space12)
             .padding(.vertical, DS.space12)
         }
-        .animation(ProMotionSprings.gentle, value: items.count)
+        .animation(ProMotionSprings.gentle, value: groupAnimationKey)
     }
 
     // MARK: - Data
 
-    private var items: [InquiryNoteFeedItem] {
-        var merged: [InquiryNoteFeedItem] = []
-
-        let savedExtracts = viewModel.extracts(
-            for: viewModel.activeQuestionUUID,
-            kinds: Set(ExtractKind.allCases)
+    private var groups: [NoteDestinationGroup] {
+        // The trail grows across sessions: everything captured for this
+        // session's questions stays visible, including earlier sessions' work.
+        let sessionQuestionUUIDs = Set(
+            viewModel.structured.researchTree.nodes.values
+                .filter { $0.kind == .question }
+                .compactMap(\.atomUUID)
         )
-        for atom in savedExtracts where atom.extractMetadata?.status != .ignored {
-            merged.append(.extract(atom))
+        let trailExtracts = viewModel.extracts.filter { atom in
+            guard let metadata = atom.extractMetadata, metadata.status != .ignored else { return false }
+            if metadata.parentSessionUUID == viewModel.session.uuid { return true }
+            return metadata.parentQuestionUUID.map(sessionQuestionUUIDs.contains) ?? false
+        }
+        let pendingCaptures = viewModel.structured.sessionCaptures.filter { $0.status == .pending }
+        return InquiryNotesGrouping.groups(
+            extracts: trailExtracts,
+            captures: pendingCaptures,
+            activeQuestionUUID: viewModel.activeQuestionUUID,
+            questionTitle: { viewModel.questionTitle(for: $0) }
+        )
+    }
+
+    private var items: [InquiryNoteFeedItem] {
+        groups.flatMap(\.items)
+    }
+
+    private var groupAnimationKey: Int {
+        var hasher = Hasher()
+        for group in groups {
+            hasher.combine(group.id)
+            for item in group.items {
+                hasher.combine(item.feedId)
+                hasher.combine(item.isProvisional)
+            }
+        }
+        return hasher.finalize()
+    }
+}
+
+// MARK: - Destination grouping
+
+/// One destination section in the notes rail: a question and everything routed to it.
+struct NoteDestinationGroup: Identifiable, Equatable {
+    static func == (lhs: NoteDestinationGroup, rhs: NoteDestinationGroup) -> Bool {
+        lhs.id == rhs.id && lhs.items.map(\.feedId) == rhs.items.map(\.feedId)
+    }
+    var id: String { questionUUID ?? "unassigned" }
+    var questionUUID: String?
+    var title: String
+    var items: [InquiryNoteFeedItem]
+    var conceptCounts: [(name: String, count: Int)]
+}
+
+enum InquiryNotesGrouping {
+    /// Pure grouping: extracts + pending captures → destination sections.
+    /// Active question pinned first, then by most-recent item.
+    static func groups(
+        extracts: [Atom],
+        captures: [SessionCapture],
+        activeQuestionUUID: String?,
+        questionTitle: (String?) -> String
+    ) -> [NoteDestinationGroup] {
+        var itemsByQuestion: [String?: [InquiryNoteFeedItem]] = [:]
+        for atom in extracts {
+            itemsByQuestion[atom.extractMetadata?.parentQuestionUUID, default: []].append(.extract(atom))
+        }
+        for capture in captures {
+            itemsByQuestion[capture.attachedQuestionId ?? activeQuestionUUID, default: []].append(.capture(capture))
         }
 
-        let liveCaptures = viewModel.structured.sessionCaptures.filter {
-            $0.status == .pending && ($0.attachedQuestionId ?? viewModel.activeQuestionUUID) == viewModel.activeQuestionUUID
+        var groups: [NoteDestinationGroup] = itemsByQuestion.map { questionUUID, items in
+            let sorted = items.sorted { $0.sortKey > $1.sortKey }
+            var conceptTally: [String: Int] = [:]
+            for case .extract(let atom) in sorted {
+                for concept in atom.extractMetadata?.conceptNames ?? [] {
+                    conceptTally[concept, default: 0] += 1
+                }
+            }
+            return NoteDestinationGroup(
+                questionUUID: questionUUID,
+                title: questionTitle(questionUUID),
+                items: sorted,
+                conceptCounts: conceptTally.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
+            )
         }
-        for capture in liveCaptures {
-            merged.append(.capture(capture))
+        groups.sort { lhs, rhs in
+            if lhs.questionUUID == activeQuestionUUID { return true }
+            if rhs.questionUUID == activeQuestionUUID { return false }
+            return (lhs.items.first?.sortKey ?? "") > (rhs.items.first?.sortKey ?? "")
         }
+        return groups
+    }
+}
 
-        return merged.sorted { $0.sortKey > $1.sortKey }
+// MARK: - Group header
+
+@MainActor
+struct InquiryNotesGroupHeader: View {
+    let group: NoteDestinationGroup
+    let isActive: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: DS.space6) {
+                Circle()
+                    .fill(isActive ? DS.accent : CosmoColors.textTertiary.opacity(0.5))
+                    .frame(width: 5, height: 5)
+                Text(group.title)
+                    .font(.system(.caption, design: .serif))
+                    .foregroundStyle(isActive ? CosmoColors.textPrimary : CosmoColors.textSecondary)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(group.items.count)")
+                    .font(CosmoTypography.labelSmall)
+                    .foregroundStyle(CosmoColors.textTertiary)
+                    .monospacedDigit()
+            }
+            if !group.conceptCounts.isEmpty {
+                conceptChips
+            }
+        }
+        .padding(.top, DS.space6)
+    }
+
+    private var conceptChips: some View {
+        HStack(spacing: 4) {
+            ForEach(group.conceptCounts.prefix(3), id: \.name) { concept in
+                Text("\(concept.count) → \(concept.name)")
+                    .font(CosmoTypography.labelSmall)
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, DS.space6)
+                    .padding(.vertical, 1)
+                    .background(DS.accentSoft, in: Capsule())
+                    .lineLimit(1)
+            }
+        }
     }
 }
 
@@ -124,6 +244,23 @@ enum InquiryNoteFeedItem: Identifiable {
         if case .capture = self { return true }
         return false
     }
+
+    /// True while the live router hasn't confirmed/refined this extract yet.
+    var isProvisional: Bool {
+        if case .extract(let atom) = self {
+            return atom.extractMetadata?.status == .temporary
+        }
+        return false
+    }
+
+    /// True once this extract has been crystallized into a Connection
+    /// (typically in a previous session).
+    var isCrystallized: Bool {
+        if case .extract(let atom) = self {
+            return atom.extractMetadata?.status == .promoted
+        }
+        return false
+    }
 }
 
 // MARK: - Single row
@@ -146,9 +283,14 @@ struct InquiryNoteRow: View {
                     .lineLimit(4)
                     .multilineTextAlignment(.leading)
                 intentSuggestion
-                Text(timestampText)
-                    .font(CosmoTypography.caption)
-                    .foregroundStyle(CosmoColors.textTertiary)
+                HStack(spacing: DS.space6) {
+                    Text(timestampText)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                    if item.isCrystallized {
+                        crystallizedBadge
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
@@ -159,6 +301,8 @@ struct InquiryNoteRow: View {
             RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .stroke(DS.sepiaSubtle, lineWidth: 0.5)
         )
+        .opacity(item.isProvisional ? 0.62 : 1)
+        .animation(ProMotionSprings.gentle, value: item.isProvisional)
         .contextMenu { contextMenu }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(kindLabel). \(bodyText)")
@@ -166,12 +310,31 @@ struct InquiryNoteRow: View {
 
     // MARK: - Subviews
 
+    /// Quiet marker for material already crystallized in an earlier session.
+    private var crystallizedBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "diamond.fill")
+                .font(.system(size: 6))
+                .accessibilityHidden(true)
+            Text("Crystallized")
+                .font(CosmoTypography.labelSmall)
+        }
+        .foregroundStyle(DS.accent.opacity(0.65))
+        .accessibilityLabel("Crystallized in a previous session")
+    }
+
     private var icon: some View {
-        Image(systemName: iconName)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(kindColor)
-            .frame(width: 18, height: 18)
-            .accessibilityHidden(true)
+        ZStack(alignment: .topTrailing) {
+            Image(systemName: iconName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(kindColor)
+                .frame(width: 18, height: 18)
+                .accessibilityHidden(true)
+            if item.isProvisional {
+                ProvisionalPulseDot()
+                    .offset(x: 4, y: -2)
+            }
+        }
     }
 
     @ViewBuilder
@@ -191,8 +354,12 @@ struct InquiryNoteRow: View {
             Button("Discard", role: .destructive) {
                 viewModel.discardCapture(capture.id)
             }
-        case .extract:
-            EmptyView()
+        case .extract(let atom):
+            InquiryExtractCorrectionMenu(
+                viewModel: viewModel,
+                extractUUID: atom.uuid,
+                currentKind: atom.extractMetadata?.kind
+            )
         }
     }
 
@@ -311,6 +478,9 @@ struct InquiryNoteRow: View {
         case .sourceQualityNote: return "source note"
         case .aiInsight: return "insight"
         case .note: return "note"
+        case .goal: return "goal"
+        case .problem: return "problem"
+        case .benefit: return "benefit"
         }
     }
 
@@ -337,5 +507,22 @@ final class RelativeISO8601Formatter {
     func relative(from iso: String) -> String {
         guard let date = parser.date(from: iso) else { return "" }
         return relative.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Provisional pulse indicator
+
+/// Small pulsing dot shown while the live router is still refining an extract.
+struct ProvisionalPulseDot: View {
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(DS.accent)
+            .frame(width: 5, height: 5)
+            .opacity(pulsing ? 0.35 : 0.9)
+            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
+            .onAppear { pulsing = true }
+            .accessibilityLabel("Routing in progress")
     }
 }

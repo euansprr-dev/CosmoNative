@@ -9,7 +9,7 @@ import SwiftUI
 
 struct ReadwiseLibraryTab: View {
 
-    @ObservedObject var viewModel: CommandKViewModel
+    var viewModel: CommandKViewModel
     let searchQuery: String
 
     @StateObject private var bookStore = ReadwiseBookStore.shared

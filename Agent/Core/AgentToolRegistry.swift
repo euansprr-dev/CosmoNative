@@ -19,6 +19,19 @@ class AgentToolRegistry {
     private var contextTools: [LLMToolDefinition] {
         [
             LLMToolDefinition(
+                name: "recall",
+                description: "Search the user's entire second brain — ideas, notes, content, research, swipes, connections, thinkspaces — in one hybrid keyword + semantic search. Call this whenever the answer depends on something the user previously saved: 'that note about X', 'my research on Y', 'what did I write about Z'. Returns compact results (title, type, snippet, uuid, updatedAt) ranked by relevance; pass a uuid to open_atom or focus_canvas_block to take the user there.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "What to find, in natural language."] as [String: Any],
+                        "kind": ["type": "string", "enum": ["any", "idea", "note", "content", "research", "connection", "swipe", "thinkspace"], "description": "Optional: restrict to one atom kind. Default any."] as [String: Any],
+                        "limit": ["type": "integer", "description": "Max results (default 6, max 12)."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["query"]
+                ]
+            ),
+            LLMToolDefinition(
                 name: "retrieve_context",
                 description: "Search active pinned documents, profiles, swipes, content, and memory before answering. Use this for source-grounded questions, exact fact lookup, and references to attached @ context.",
                 parametersSchema: [
@@ -292,6 +305,27 @@ class AgentToolRegistry {
                         "title": ["type": "string", "description": "Note title"] as [String: Any],
                         "body": ["type": "string", "description": "Full note body text to save"] as [String: Any],
                         "sourceUUID": ["type": "string", "description": "Optional UUID of the source atom this note was copied or derived from"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["title"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "create_connection",
+                description: "Create a new Connection atom — the structured workspace for developing a concept (goal, problems, claims, evidence, benefits, examples, beliefs & objections, process, open questions, concept name, references). Use when the user wants to develop, crystallize, or structure a concept and no connection is the active surface. Seed sections with any material the user already gave.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "The connection / concept title"] as [String: Any],
+                        "conceptType": [
+                            "type": "string",
+                            "enum": ["mentalModel", "framework", "principle", "doctrine", "heuristic", "lawOfNature"],
+                            "description": "The shape of the concept being developed. Defaults to mentalModel."
+                        ] as [String: Any],
+                        "sections": [
+                            "type": "object",
+                            "description": "Optional seed items keyed by section id (goal, problems, claims, evidence, benefits, examples, beliefsObjections, process, openQuestions, conceptName, references). Each value is an array of item strings."
+                        ] as [String: Any],
+                        "open": ["type": "boolean", "description": "Open the connection in a pane so it becomes the active editable surface (default true)."] as [String: Any]
                     ] as [String: Any],
                     "required": ["title"]
                 ]
@@ -1120,6 +1154,21 @@ class AgentToolRegistry {
                 ]
             ),
             LLMToolDefinition(
+                name: "append_to_note",
+                description: "Stage a reviewed addition to a note that is NOT the active surface — call this when the user says to add/append/save something 'to my X note' from anywhere in the app. Resolves the note by UUID or by title (fuzzy), and stages the text as a reviewed insertion the user accepts in the diff UI. The note does not need to be open; accepted text persists straight to the note. For edits to the ACTIVE surface, use propose_workspace_edit instead.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "note_uuid": ["type": "string", "description": "UUID of the target note, if known."] as [String: Any],
+                        "note_title": ["type": "string", "description": "Title of the target note (fuzzy matched) when the UUID is unknown, e.g. 'swipe learnings'."] as [String: Any],
+                        "text": ["type": "string", "description": "The content to append, written ready-to-save (no meta commentary)."] as [String: Any],
+                        "after_text": ["type": "string", "description": "Optional: existing note text the addition should follow, copied verbatim. Omit to append at the end."] as [String: Any],
+                        "rationale": ["type": "string", "description": "One short sentence on why this is being added."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["text"]
+                ]
+            ),
+            LLMToolDefinition(
                 name: "create_inline_skill",
                 description: "Create or update a custom inline assistant slash-menu skill from a finalized skill-builder spec. Use this when the user confirms a skill spec with language like 'yes make the skill', 'create it', 'save this skill', or 'add it to the slash menu'. This persists a CosmoInlineSkillDefinition so it appears in the inline assistant slash menu. After this succeeds, call answer_in_assistant_pane briefly telling the user the skill was created and how to invoke it.",
                 parametersSchema: [
@@ -1138,9 +1187,78 @@ class AgentToolRegistry {
                         "outputContract": ["type": "string", "description": "Expected result shape, e.g. reviewed_diff, pane_variations_card, source_backed_reviewed_diff."] as [String: Any],
                         "tokenBudget": ["type": "integer", "description": "Approximate token budget for this skill layer."] as [String: Any],
                         "requiresReviewedDiff": ["type": "boolean", "description": "Whether visible workspace changes must be staged as reviewed diffs."] as [String: Any],
-                        "panePolicy": ["type": "string", "enum": ["neverForAction", "openForAnswer", "openForResearchBackedAction", "alwaysOpenWithResult"], "description": "When the assistant pane should open for this skill."] as [String: Any]
+                        "panePolicy": ["type": "string", "enum": ["neverForAction", "openForAnswer", "openForResearchBackedAction", "alwaysOpenWithResult"], "description": "When the assistant pane should open for this skill."] as [String: Any],
+                        "triggerDescription": ["type": "string", "description": "One sentence describing WHEN this skill should trigger, phrased the way the user would type the request — drives embedding-based auto-routing."] as [String: Any],
+                        "examples": [
+                            "type": "array",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "input": ["type": "string", "description": "A realistic user request or source text."] as [String: Any],
+                                    "idealOutput": ["type": "string", "description": "Exactly what great output looks like for that input."] as [String: Any]
+                                ] as [String: Any],
+                                "required": ["input", "idealOutput"]
+                            ] as [String: Any],
+                            "description": "Input → ideal-output pairs that teach the skill its quality bar. Always include at least one — examples teach more than instructions."
+                        ] as [String: Any],
+                        "verification": ["type": "string", "description": "Optional one-line post-condition the skill must verify before staging output, e.g. 'no invented metrics'."] as [String: Any]
                     ] as [String: Any],
                     "required": ["name", "summary", "route", "instructions", "outputContract", "requiresReviewedDiff", "panePolicy"]
+                ]
+            )
+        ]
+    }
+
+    // MARK: - Navigation Tools
+
+    /// "Legs" — the agent can take the user places. Navigation is always
+    /// reversible, so unlike mutations it needs no review gate. These ride the
+    /// same notification plumbing the app's own UI uses.
+    private var navigationTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "open_atom",
+                description: "Open an atom for the user — in full-screen focus mode (default), as a floating pane, or placed on the current canvas. Call this when the user asks to open, show, view, or go to a specific idea/note/content/connection, or after you find the item they were looking for and they clearly want to see it. Navigation is reversible — prefer doing it over describing where the item lives.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "uuid": ["type": "string", "description": "The atom's UUID (from search results or context)."] as [String: Any],
+                        "mode": ["type": "string", "enum": ["focus", "pane", "canvas"], "description": "focus = full-screen focus mode (default); pane = floating pane; canvas = place a block on the current thinkspace."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["uuid"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "go_to_thinkspace",
+                description: "Navigate the user to a thinkspace canvas by UUID. Call this when the user asks to go to / open / switch to a specific thinkspace or canvas. Find the UUID first via search if you only have a name.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "uuid": ["type": "string", "description": "The thinkspace's UUID."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["uuid"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "go_to_area",
+                description: "Navigate the user to a top-level app area. Call this when the user asks to go home, open the command center, or open the swipe gallery.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "area": ["type": "string", "enum": ["commandCenter", "swipeGallery"], "description": "The destination area."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["area"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "focus_canvas_block",
+                description: "Fly the canvas camera to a specific block on the current thinkspace so the user can see it — the spatial answer to 'where did I put X?'. Use inspect_current_thinkspace first to find the block. Pair with a short answer: say what you found AND glide the camera to it.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "atom_uuid": ["type": "string", "description": "The atom UUID of the block to frame."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["atom_uuid"]
                 ]
             )
         ]
@@ -1348,7 +1466,10 @@ class AgentToolRegistry {
     func tools(forBundles bundles: Set<AgentToolBundle>, source: MessageSource = .inApp) -> [LLMToolDefinition] {
         var tools: [LLMToolDefinition] = []
 
-        for bundle in bundles {
+        // Deterministic order: Set iteration varies between launches, and tool order
+        // is part of the prompt-cache key — nondeterministic order silently
+        // fragments the Anthropic prompt cache across identical requests.
+        for bundle in bundles.sorted(by: { $0.rawValue < $1.rawValue }) {
             switch bundle {
             case .workspaceEditing:
                 tools += workspaceEditingTools
@@ -1376,6 +1497,8 @@ class AgentToolRegistry {
                 tools += analyticsTools + scoringTools
             case .preferences:
                 tools += preferenceTools + standingInstructionTools
+            case .navigation:
+                tools += navigationTools
             }
         }
 
@@ -1386,7 +1509,7 @@ class AgentToolRegistry {
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = deduplicated(contextTools + ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + clientFactLookupTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools + workspaceEditingTools)
+        allTools = deduplicated(contextTools + ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + clientFactLookupTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools + workspaceEditingTools + navigationTools)
     }
 
     private func deduplicated(_ tools: [LLMToolDefinition]) -> [LLMToolDefinition] {

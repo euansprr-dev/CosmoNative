@@ -65,12 +65,6 @@ struct CommandCenterDashboard: View {
         CommandCenterSidebar(viewModel: viewModel)
             .frame(width: 240)
             .padding(.trailing, DS.space24)
-            .cosmoGlassSceneSignal(
-                id: "command-center-internal-sidebar",
-                source: .commandTask,
-                color: DS.entityTask,
-                intensity: 0.18
-            )
     }
 
     // MARK: - Center Column — Timer + Content (Smart List or Project)
@@ -88,28 +82,10 @@ struct CommandCenterDashboard: View {
 
                         UpcomingBoardView(viewModel: viewModel, composer: composer)
                             .frame(maxHeight: .infinity)
-                            .cosmoGlassSceneSignal(
-                                id: "command-center-calendar",
-                                source: .commandCalendar,
-                                color: DS.info,
-                                intensity: 0.16
-                            )
                     } else {
                         CommandCenterMasthead(viewModel: viewModel)
-                            .cosmoGlassSceneSignal(
-                                id: "command-center-masthead",
-                                source: .routeAccent,
-                                color: DS.accent,
-                                intensity: 0.22
-                            )
 
                         DashboardTimeTracker(viewModel: viewModel)
-                            .cosmoGlassSceneSignal(
-                                id: "command-center-timer",
-                                source: .commandTask,
-                                color: DS.orange,
-                                intensity: 0.22
-                            )
 
                         gradientDivider
 
@@ -120,12 +96,6 @@ struct CommandCenterDashboard: View {
                                 viewModel.showReports = false
                             }
                         }
-                        .cosmoGlassSceneSignal(
-                            id: "command-center-tasks-\(viewModel.viewMode.rawValue)",
-                            source: .commandTask,
-                            color: DS.entityTask,
-                            intensity: 0.20
-                        )
                     }
                 }
             }
@@ -312,32 +282,14 @@ struct CommandCenterDashboard: View {
                 )
                 .id(task.uuid)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .cosmoGlassSceneSignal(
-                    id: "command-center-task-detail-\(task.uuid)",
-                    source: .commandTask,
-                    color: DS.entityTask,
-                    intensity: 0.26
-                )
             }
         case .reports:
             ScrollView(.vertical) {
                 DashboardReportsPanel(viewModel: viewModel)
             }
             .scrollIndicators(.never)
-            .cosmoGlassSceneSignal(
-                id: "command-center-reports",
-                source: .commandCalendar,
-                color: DS.info,
-                intensity: 0.24
-            )
         case .habits:
             DashboardHabitPanel(viewModel: viewModel, composer: composer)
-                .cosmoGlassSceneSignal(
-                    id: "command-center-habits",
-                    source: .commandHabit,
-                    color: DS.green,
-                    intensity: 0.28
-                )
         }
     }
 

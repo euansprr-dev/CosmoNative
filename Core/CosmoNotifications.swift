@@ -3,6 +3,7 @@
 // All notification names in one place with type-safe payloads
 
 import Foundation
+import AppKit
 import SwiftUI
 
 // MARK: - CosmoNotification Namespace
@@ -111,6 +112,10 @@ enum CosmoNotification {
         static let itemActioned = Notification.Name("com.cosmo.inbox.itemActioned")
         static let focusInboxItem = Notification.Name("com.cosmo.inbox.focusInboxItem")
         static let focusDatabaseItem = Notification.Name("com.cosmo.inbox.focusDatabaseItem")
+        /// ⌥⌘N — navigate to the inbox and put the cursor in the capture field.
+        static let focusCaptureField = Notification.Name("com.cosmo.inbox.focusCaptureField")
+        /// Navigate to the inbox queue (Command Center chip, deep links).
+        static let open = Notification.Name("com.cosmo.inbox.open")
     }
 
     // MARK: - Navigation Notifications
@@ -141,6 +146,25 @@ enum CosmoNotification {
 
         // Panes
         static let openAsPane = Notification.Name("com.cosmo.nav.openAsPane")
+        /// Peek an entity in the floating Quick Look-style overlay.
+        /// userInfo: ["type": EntityType, "id": Int64, "anchor": NSValue(rect:) optional]
+        static let peekEntity = Notification.Name("com.cosmo.nav.peekEntity")
+
+        /// Present the Constellation (all-thinkspaces zoom-out view).
+        static let presentConstellation = Notification.Name("com.cosmo.nav.presentConstellation")
+
+        /// Open the Spokes Compiler staging board for a content pillar.
+        /// userInfo: ["id": Int64]
+        static let compileSpokes = Notification.Name("com.cosmo.nav.compileSpokes")
+
+        /// Fly the current canvas to a saved Place. userInfo: ["placeUUID": String]
+        static let jumpToPlace = Notification.Name("com.cosmo.nav.jumpToPlace")
+
+        // Workbenches
+        /// Apply a saved workbench. userInfo: ["uuid": String]
+        static let applyWorkbench = Notification.Name("com.cosmo.nav.applyWorkbench")
+        /// Open the workbench composer to save the current layout.
+        static let composeWorkbench = Notification.Name("com.cosmo.nav.composeWorkbench")
         static let openWebBrowserPane = Notification.Name("com.cosmo.nav.openWebBrowserPane")
         static let openCosmoWindowPane = Notification.Name("com.cosmo.nav.openCosmoWindowPane")
         static let openCollaboratorPane = Notification.Name("com.cosmo.nav.openCollaboratorPane")
@@ -413,6 +437,11 @@ enum CosmoNotification {
     enum Automation {
         /// An automation rule was fired
         static let ruleFired = Notification.Name("com.cosmo.automation.ruleFired")
+        /// Begin creating a Flow from a cluster. userInfo: ["clusterId": String]
+        static let createFlow = Notification.Name("com.cosmo.automation.createFlow")
+        /// An autonomous flow run completed and staged a proposal.
+        /// userInfo: ["flowUUID": String, "thinkspaceId": String, "outputAtomUUID": String]
+        static let flowDidRun = Notification.Name("com.cosmo.automation.flowDidRun")
         /// An automation rule was created
         static let ruleCreated = Notification.Name("com.cosmo.automation.ruleCreated")
         /// An automation rule was updated (enabled/disabled, edited)
@@ -794,6 +823,29 @@ extension Notification.Name {
 
     /// Posted just before the app terminates so active focus modes can flush pending saves synchronously.
     public static let cosmoAppWillTerminate = Notification.Name("com.cosmo.appWillTerminate")
+}
+
+enum CosmoAssistantHotkeyRouter {
+    @MainActor
+    static func openFromOptionA(
+        notificationCenter: NotificationCenter = .default,
+        activateApp: Bool = true
+    ) {
+        if activateApp {
+            NSApp.activate(ignoringOtherApps: true)
+            if let mainWindow = NSApp.mainWindow {
+                mainWindow.makeKeyAndOrderFront(nil)
+            } else {
+                let visibleWindow = NSApp.windows.first { $0.isVisible && !$0.isMiniaturized }
+                visibleWindow?.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        notificationCenter.post(
+            name: CosmoNotification.Navigation.openInlineAssistant,
+            object: nil
+        )
+    }
 }
 
 /// Triggers an XP tracer animation

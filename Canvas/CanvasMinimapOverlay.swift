@@ -9,6 +9,8 @@ struct CanvasMinimapOverlay: View {
     let currentViewport: CGRect  // Current viewport in canvas coordinates
     let onNavigate: (CGPoint, Bool) -> Void
     let onDismiss: () -> Void
+    var places: [CanvasPlace] = []
+    var onJumpToPlace: ((CanvasPlace) -> Void)? = nil
 
     @State private var appeared = false
     @State private var hoveredCluster: UUID?
@@ -73,6 +75,15 @@ struct CanvasMinimapOverlay: View {
                         // Block dots
                         ForEach(blocks.filter(shouldShowBlock)) { block in
                             blockDot(block: block, layout: layout)
+                        }
+
+                        // Saved Places — accent diamonds, click to fly
+                        ForEach(places) { place in
+                            MinimapPlaceDiamond(
+                                place: place,
+                                position: canvasPointToMinimap(place.center, layout: layout),
+                                onJump: { onJumpToPlace?(place) }
+                            )
                         }
 
                         // Current viewport indicator

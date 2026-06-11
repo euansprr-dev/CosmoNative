@@ -1154,6 +1154,19 @@ class AgentToolRegistry {
                 ]
             ),
             LLMToolDefinition(
+                name: "propose_inquiry_question",
+                description: "Stage a research question for the user to investigate in a deep-dive inquiry session. Call this when the user hits a genuine unknown — they say they're not sure, don't know, or want to find out ('I'm not sure', 'I don't know actually', 'let's start a question around X', 'I'd have to look into that'). Refine the unknown into ONE sharp, researchable question phrased the way they'd ask it. This renders a confirmation card in the assistant pane; the inquiry session opens ONLY after the user confirms — never claim it started. Works on a Connection surface: the question is placed into that connection's deep dive automatically (as a root question or a sub-question of an existing line of inquiry). After staging, continue the conversation via answer_in_assistant_pane as usual.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "question": ["type": "string", "description": "The refined research question, one sentence, phrased as the user would ask it (e.g. 'What actually blocks people from reaching peak state once they know it exists?')."] as [String: Any],
+                        "rationale": ["type": "string", "description": "One sentence on why answering this question matters for the concept being developed."] as [String: Any],
+                        "surfaceID": ["type": "string", "description": "Editable surface id of the working Connection, from active context (e.g. 'connection:<uuid>'). Omit to use the active surface."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["question"]
+                ]
+            ),
+            LLMToolDefinition(
                 name: "append_to_note",
                 description: "Stage a reviewed addition to a note that is NOT the active surface — call this when the user says to add/append/save something 'to my X note' from anywhere in the app. Resolves the note by UUID or by title (fuzzy), and stages the text as a reviewed insertion the user accepts in the diff UI. The note does not need to be open; accepted text persists straight to the note. For edits to the ACTIVE surface, use propose_workspace_edit instead.",
                 parametersSchema: [

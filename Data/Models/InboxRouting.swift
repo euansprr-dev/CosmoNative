@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     case mergeAtom
@@ -15,7 +16,9 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
             return .place
         case .createStandaloneAtom:
-            return .new
+            // v2 only emits a standalone option when the router abstained —
+            // the item is unsorted, the option is just the manual-filing default.
+            return .unsorted
         }
     }
 }
@@ -120,16 +123,22 @@ struct InboxRecommendationBundle: Codable, Equatable, Sendable {
     let title: String
     let createdAt: String
     let recommendations: [InboxRecommendation]
+    /// Existing atoms the capture strongly relates to (without being a
+    /// duplicate of any) — powers the Connect verb. Optional for decode
+    /// compatibility with pre-June-2026 rows.
+    let relatedAtomUUIDs: [String]?
 
     init(
         bundleId: String = UUID().uuidString,
         title: String,
         createdAt: String = ISO8601.string(from: Date()),
-        recommendations: [InboxRecommendation]
+        recommendations: [InboxRecommendation],
+        relatedAtomUUIDs: [String]? = nil
     ) {
         self.bundleId = bundleId
         self.title = title
         self.createdAt = createdAt
+        self.relatedAtomUUIDs = relatedAtomUUIDs
         self.recommendations = recommendations.sorted { lhs, rhs in
             if abs(lhs.confidence - rhs.confidence) > 0.0001 {
                 return lhs.confidence > rhs.confidence
@@ -165,5 +174,46 @@ extension InboxItem {
 
     var alternativeRecommendationValues: [InboxRecommendation] {
         recommendationBundleValue?.alternativeRecommendations ?? []
+    }
+
+    /// Atoms this capture strongly relates to — enables the Connect verb.
+    var relatedAtomUUIDsValue: [String] {
+        recommendationBundleValue?.relatedAtomUUIDs ?? []
+    }
+}
+
+extension InboxRecommendation {
+    /// The same recommendation with the block landing position replaced — used
+    /// when the user drags the ghost block on the inspector minimap before placing.
+    func overridingBlockPosition(_ position: CGPoint) -> InboxRecommendation {
+        guard let plan = placementPlan else { return self }
+        let adjustedPlan = InboxPlacementPlan(
+            targetThinkspaceId: plan.targetThinkspaceId,
+            targetThinkspaceName: plan.targetThinkspaceName,
+            targetClusterId: plan.targetClusterId,
+            targetClusterName: plan.targetClusterName,
+            clusterViewMode: plan.clusterViewMode,
+            blockPositionX: Double(position.x),
+            blockPositionY: Double(position.y),
+            clusterRect: plan.clusterRect,
+            operations: plan.operations,
+            summary: plan.summary
+        )
+        return InboxRecommendation(
+            id: id,
+            kind: kind,
+            confidence: confidence,
+            suggestedAtomType: suggestedAtomType,
+            destinationPath: destinationPath,
+            rationale: rationale,
+            mergeTargetUuid: mergeTargetUuid,
+            mergeTargetTitle: mergeTargetTitle,
+            mergeTargetType: mergeTargetType,
+            thinkspaceId: thinkspaceId,
+            thinkspaceName: thinkspaceName,
+            clusterId: clusterId,
+            clusterName: clusterName,
+            placementPlan: adjustedPlan
+        )
     }
 }

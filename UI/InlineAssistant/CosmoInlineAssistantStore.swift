@@ -16,6 +16,15 @@ struct CosmoInlineAssistantPaneMessage: Identifiable, Codable, Equatable, Sendab
     /// Sources the assistant actually read for this message — rendered as
     /// clickable chips. Decodes as nil from older persisted sessions.
     var sourceRefs: [CosmoAssistantSourceRef]? = nil
+    /// Links the message to a staged inquiry-question confirmation card.
+    /// Decodes as nil from older persisted sessions.
+    var inquiryProposalID: UUID? = nil
+    /// The tool-call timeline behind this answer — replayed as a collapsed
+    /// receipt. Decodes as nil from older persisted sessions.
+    var activitySteps: [CosmoInlineAssistantActivityStep]? = nil
+    /// The skill that handled the run this (user) message started.
+    /// Decodes as nil from older persisted sessions.
+    var skillID: String? = nil
 }
 
 enum CosmoInlineAssistantSessionScope {
@@ -39,10 +48,13 @@ struct CosmoInlineAssistantPersistedSession: Codable, Equatable {
     var selectedContextAtoms: [Atom]
     var selectedSkillID: String?
     var lastSubmissionRoute: CosmoInlineAssistantRoute?
+    /// Optional so blobs persisted before inquiry cards decode unchanged.
+    var inquiryQuestionProposals: [CosmoAssistantInquiryQuestionProposal]? = nil
     var updatedAt = Date()
 
     var isEmpty: Bool {
         paneMessages.isEmpty && proposals.isEmpty && selectedContextAtoms.isEmpty && selectedSkillID == nil
+            && (inquiryQuestionProposals?.isEmpty ?? true)
     }
 }
 
@@ -171,6 +183,18 @@ enum CosmoInlineAssistantPhase: Equatable, Sendable {
         case .reviewing: return nil
         }
     }
+
+    /// One symbol vocabulary for every surface that wears the phase (orb, pane
+    /// header, timeline) — the bar and pane previously disagreed on idle.
+    var symbolName: String {
+        switch self {
+        case .idle: return "sparkle"
+        case .planning: return "sparkles"
+        case .gathering: return "magnifyingglass"
+        case .drafting: return "pencil.and.outline"
+        case .reviewing: return "checkmark.circle"
+        }
+    }
 }
 
 /// Turns raw tool activity into verb-first status lines in the user's vocabulary —
@@ -178,9 +202,16 @@ enum CosmoInlineAssistantPhase: Equatable, Sendable {
 /// client-side from the tool name + arguments at zero model cost. The narration IS
 /// the personality made visible; generic "Working…" tells the user nothing.
 enum CosmoInlineAssistantStatusGrammar {
+    /// The key argument worth narrating, in priority order. Shared by the status
+    /// line and the activity timeline so both name the same subject.
+    static func subject(args: [String: String]) -> String? {
+        let raw = args["query"] ?? args["title"] ?? args["clientName"] ?? args["client_name"] ?? args["name"]
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty ?? true) ? nil : trimmed
+    }
+
     static func line(toolName: String, displayLabel: String, args: [String: String]) -> String {
-        let subject = args["query"] ?? args["title"] ?? args["clientName"] ?? args["client_name"] ?? args["name"]
-        let trimmedSubject = subject?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSubject = subject(args: args)
 
         switch toolName {
         case "search_swipes", "find_similar_swipes", "filter_swipes_by_taxonomy":
@@ -458,6 +489,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     @Published var statusText: String?
     @Published var phase: CosmoInlineAssistantPhase = .idle
     @Published var proposals: [CosmoAssistantProposal] = []
+    @Published var inquiryQuestionProposals: [CosmoAssistantInquiryQuestionProposal] = []
     @Published var paneMessages: [CosmoInlineAssistantPaneMessage] = []
     @Published var selectedContextAtoms: [Atom] = []
     @Published var selectedSkillID: String?
@@ -465,8 +497,18 @@ final class CosmoInlineAssistantStore: ObservableObject {
     @Published var errorText: String?
     /// Embedding-routed skill suggestion shown as a ghost chip (Tab to confirm).
     @Published var skillSuggestion: CosmoInlineSkillAutoRouter.Suggestion?
+    /// The in-flight run's tool calls, in order — drives the live working
+    /// thread, then gets attached to the answer as its receipt.
+    @Published private(set) var currentRunSteps: [CosmoInlineAssistantActivityStep] = []
+    /// Title of the surface the active session is scoped to (nil for global).
+    @Published private(set) var activeSurfaceTitle: String?
+    /// Kind of the active surface — lets the empty state suggest starters that
+    /// fit what the user is looking at.
+    @Published private(set) var activeSurfaceKind: CosmoEditableSurfaceKind?
 
     private var skillSuggestionTask: Task<Void, Never>?
+    /// The in-flight agent run, held so the stop button can actually cancel it.
+    private var activeRunTask: Task<Void, Error>?
 
     private let agentBridge: CosmoInlineAssistantAgentBridge
     private let sessionPersistence: CosmoInlineAssistantSessionPersistence
@@ -477,7 +519,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     private var activeSubmissionShouldOpenPaneForAnswer = false
     /// The pane message currently being streamed token-by-token, if any.
     /// Finalized (replaced with the complete answer) when the tool call lands.
-    private var streamingPaneMessageID: UUID?
+    private(set) var streamingPaneMessageID: UUID?
     /// Supplies the sources actually read for the in-flight request — set by the
     /// agent bridge for the request's duration, attached to answers/proposals as
     /// clickable context chips.
@@ -527,6 +569,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         isProcessing = true
         phase = .planning
         statusText = "Reading current context"
+        currentRunSteps = []
         CosmoInlineAssistantMetrics.shared.requestStarted()
 
         let selectedSkillPlan = effectiveSkillID.map {
@@ -568,19 +611,59 @@ final class CosmoInlineAssistantStore: ObservableObject {
             isPaneRequested = false
         }
 
-        paneMessages.append(.init(role: .user, content: prompt))
+        paneMessages.append(.init(role: .user, content: prompt, skillID: effectiveSkillID))
         persistActiveSession()
 
-        do {
+        let runTask = Task { [agentBridge] in
             try await agentBridge.send(prompt, route, self)
-        } catch {
-            errorText = error.localizedDescription
         }
+        activeRunTask = runTask
+        do {
+            try await runTask.value
+        } catch {
+            if Self.isCancellation(error) {
+                finalizeCancelledRun()
+            } else {
+                errorText = error.localizedDescription
+            }
+        }
+        activeRunTask = nil
 
         isProcessing = false
         statusText = nil
         streamingPaneMessageID = nil
+        currentRunSteps = []
         phase = activePendingProposal != nil ? .reviewing : .idle
+    }
+
+    /// Stop the in-flight run. Cancellation propagates through the agent loop's
+    /// awaits; whatever already streamed into the pane stays.
+    func cancelActiveRun() {
+        activeRunTask?.cancel()
+    }
+
+    var canCancelActiveRun: Bool {
+        isProcessing && activeRunTask != nil
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
+    }
+
+    /// A stopped run still settles its receipts: a partially streamed answer
+    /// keeps its content and gets the steps so far; a run that produced nothing
+    /// leaves a quiet "Stopped" marker instead of vanishing.
+    private func finalizeCancelledRun() {
+        if let streamingID = streamingPaneMessageID,
+           let index = paneMessages.firstIndex(where: { $0.id == streamingID }) {
+            paneMessages[index].sourceRefs = currentSourceRefs
+            paneMessages[index].activitySteps = takeFinalizedRunSteps()
+        } else {
+            paneMessages.append(.init(role: .system, content: "Stopped"))
+        }
+        persistActiveSession()
     }
 
     func receive(proposal: CosmoAssistantProposal) {
@@ -593,13 +676,62 @@ final class CosmoInlineAssistantStore: ObservableObject {
             role: .assistant,
             content: stamped.summary,
             proposalID: stamped.id,
-            sourceRefs: currentSourceRefs
+            sourceRefs: currentSourceRefs,
+            activitySteps: takeFinalizedRunSteps()
         ))
         if !activeSubmissionShouldOpenPaneForAnswer {
             isPaneRequested = false
         }
         phase = .reviewing
         CosmoInlineAssistantMetrics.shared.proposalStaged()
+        persistActiveSession()
+    }
+
+    /// A staged inquiry-question card: the user confirms (→ deep-dive session)
+    /// or dismisses it, right in the conversation flow.
+    func receive(inquiryProposal: CosmoAssistantInquiryQuestionProposal) {
+        inquiryQuestionProposals.append(inquiryProposal)
+        paneMessages.append(.init(
+            role: .assistant,
+            content: inquiryProposal.question,
+            inquiryProposalID: inquiryProposal.id
+        ))
+        isPaneRequested = true
+        persistActiveSession()
+    }
+
+    func inquiryProposal(id: UUID) -> CosmoAssistantInquiryQuestionProposal? {
+        inquiryQuestionProposals.first { $0.id == id }
+    }
+
+    /// Confirm the card: create the question in its deep dive and jump into the
+    /// inquiry session. Errors surface in the pane without losing the card.
+    func startInquiry(proposalID: UUID) async {
+        guard let index = inquiryQuestionProposals.firstIndex(where: { $0.id == proposalID }) else { return }
+        let proposal = inquiryQuestionProposals[index]
+        if proposal.status == .started, let sessionUUID = proposal.startedSessionUUID {
+            CosmoInlineInquiryQuestionStarter.reopen(
+                sessionUUID: sessionUUID,
+                connectionUUID: proposal.connectionUUID
+            )
+            return
+        }
+
+        do {
+            let result = try await CosmoInlineInquiryQuestionStarter.start(proposal)
+            inquiryQuestionProposals[index].status = .started
+            inquiryQuestionProposals[index].startedSessionUUID = result.sessionUUID
+            inquiryQuestionProposals[index].deepDiveUUID = result.deepDiveUUID
+            persistActiveSession()
+        } catch {
+            errorText = "Couldn't start the inquiry: \(error.localizedDescription)"
+        }
+    }
+
+    func dismissInquiry(proposalID: UUID) {
+        guard let index = inquiryQuestionProposals.firstIndex(where: { $0.id == proposalID }),
+              inquiryQuestionProposals[index].status == .pending else { return }
+        inquiryQuestionProposals[index].status = .dismissed
         persistActiveSession()
     }
 
@@ -649,9 +781,11 @@ final class CosmoInlineAssistantStore: ObservableObject {
                 paneMessages.insert(.init(role: .system, content: title), at: index)
                 paneMessages[index + 1].content = answer
                 paneMessages[index + 1].sourceRefs = currentSourceRefs
+                paneMessages[index + 1].activitySteps = takeFinalizedRunSteps()
             } else {
                 paneMessages[index].content = answer
                 paneMessages[index].sourceRefs = currentSourceRefs
+                paneMessages[index].activitySteps = takeFinalizedRunSteps()
             }
             streamingPaneMessageID = nil
             persistActiveSession()
@@ -661,8 +795,25 @@ final class CosmoInlineAssistantStore: ObservableObject {
         if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             paneMessages.append(.init(role: .system, content: title))
         }
-        paneMessages.append(.init(role: .assistant, content: answer, sourceRefs: currentSourceRefs))
+        paneMessages.append(.init(
+            role: .assistant,
+            content: answer,
+            sourceRefs: currentSourceRefs,
+            activitySteps: takeFinalizedRunSteps()
+        ))
         persistActiveSession()
+    }
+
+    /// Whether this message is still receiving streamed deltas — streaming rows
+    /// render as cheap plain text; finalized rows get the rich prose treatment.
+    func isStreamingMessage(_ id: UUID) -> Bool {
+        streamingPaneMessageID == id
+    }
+
+    /// Sources known so far for the in-flight run — lets the streaming row
+    /// resolve `[[uuid]]` markers to titles before the rich finalize.
+    var currentStreamingSourceRefs: [CosmoAssistantSourceRef] {
+        sourceRefsProvider?() ?? []
     }
 
     func requestPane() {
@@ -732,21 +883,57 @@ final class CosmoInlineAssistantStore: ObservableObject {
         skillSuggestion = nil
     }
 
+    /// Synthetic bridge events that narrate planning — they drive the phase but
+    /// are not real tool calls, so they never become timeline steps.
+    private static let planningEventNames: Set<String> = ["inline_thinking", "inline_context"]
+
     func receiveToolActivity(_ event: ToolActivityEvent) {
         statusText = CosmoInlineAssistantActivityLabel.statusText(for: event)
 
         switch event {
-        case .started(let name, _, _):
-            if name == "inline_thinking" || name == "inline_context" {
+        case .started(let name, let displayLabel, let args):
+            if Self.planningEventNames.contains(name) {
                 phase = .planning
-            } else if let status = statusText {
-                phase = .gathering(status: status)
+            } else {
+                if let status = statusText {
+                    phase = .gathering(status: status)
+                }
+                currentRunSteps.append(CosmoInlineAssistantActivityStep(
+                    toolName: name,
+                    label: CosmoInlineAssistantActivityLabel.compact(
+                        CosmoInlineAssistantStatusGrammar.line(toolName: name, displayLabel: displayLabel, args: args)
+                    ),
+                    subject: CosmoInlineAssistantStatusGrammar.subject(args: args)
+                ))
             }
-        case .completed:
+        case .completed(let name, _, _):
             phase = .drafting
+            if let index = currentRunSteps.lastIndex(where: { $0.toolName == name && $0.state == .running }) {
+                currentRunSteps[index].state = .done
+                currentRunSteps[index].finishedAt = Date()
+            }
         case .allDone:
-            break
+            finishAllRunningSteps()
         }
+    }
+
+    private func finishAllRunningSteps() {
+        let now = Date()
+        for index in currentRunSteps.indices where currentRunSteps[index].state == .running {
+            currentRunSteps[index].state = .done
+            currentRunSteps[index].finishedAt = now
+        }
+    }
+
+    /// Hands the finished timeline to the message that landed it: stragglers are
+    /// marked done, the live thread empties, and only the first finalize in a run
+    /// gets steps — one receipt per run.
+    private func takeFinalizedRunSteps() -> [CosmoInlineAssistantActivityStep]? {
+        guard !currentRunSteps.isEmpty else { return nil }
+        finishAllRunningSteps()
+        let steps = currentRunSteps
+        currentRunSteps = []
+        return steps
     }
 
     func accept(
@@ -948,11 +1135,31 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
     func activateSession(surfaceID rawSurfaceID: String?) {
         let surfaceID = CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID)
-        guard surfaceID != activeSessionSurfaceID else { return }
+        guard surfaceID != activeSessionSurfaceID else {
+            refreshActiveSurfaceTitle()
+            return
+        }
 
         persistActiveSession()
         activeSessionSurfaceID = surfaceID
         restoreSession(for: surfaceID)
+        refreshActiveSurfaceTitle()
+    }
+
+    /// Names the surface the session is scoped to, so the pane header can say
+    /// what Cosmo is looking at. Global sessions stay untitled.
+    private func refreshActiveSurfaceTitle() {
+        guard activeSessionSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID,
+              let snapshot = CosmoEditableSurfaceRegistry.shared
+                .provider(surfaceID: activeSessionSurfaceID)?
+                .editableSnapshot() else {
+            activeSurfaceTitle = nil
+            activeSurfaceKind = nil
+            return
+        }
+        let title = snapshot.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        activeSurfaceTitle = title.isEmpty ? nil : title
+        activeSurfaceKind = snapshot.kind
     }
 
     var activeConversationID: String {
@@ -995,7 +1202,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
             proposals: proposals,
             selectedContextAtoms: selectedContextAtoms,
             selectedSkillID: selectedSkillID,
-            lastSubmissionRoute: lastSubmissionRoute
+            lastSubmissionRoute: lastSubmissionRoute,
+            inquiryQuestionProposals: inquiryQuestionProposals
         ))
     }
 
@@ -1007,6 +1215,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
         paneMessages = session.paneMessages
         proposals = session.proposals
+        inquiryQuestionProposals = session.inquiryQuestionProposals ?? []
         selectedContextAtoms = session.selectedContextAtoms
         selectedSkillID = session.selectedSkillID
         lastSubmissionRoute = session.lastSubmissionRoute
@@ -1015,6 +1224,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         statusText = nil
         phase = .idle
         streamingPaneMessageID = nil
+        currentRunSteps = []
         isPaneRequested = false
     }
 
@@ -1022,6 +1232,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         composerText = ""
         paneMessages = []
         proposals = []
+        inquiryQuestionProposals = []
         selectedContextAtoms = []
         selectedSkillID = nil
         lastSubmissionRoute = nil
@@ -1031,6 +1242,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         statusText = nil
         phase = .idle
         streamingPaneMessageID = nil
+        currentRunSteps = []
         isPaneRequested = false
     }
 

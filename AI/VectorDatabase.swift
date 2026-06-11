@@ -515,6 +515,58 @@ public actor VectorDatabase {
             .map(\.0)
     }
 
+    // MARK: - Embedding Access (inbox routing centroids)
+
+    /// Embed arbitrary text and truncate to the storage dimension. Used by the
+    /// inbox routing engine to compare captures against cluster centroids.
+    public func embedText(_ text: String) async throws -> [Float] {
+        let client = await MainActor.run { DaemonXPCClient.shared }
+        let embedding = try await client.embed(text: text)
+        return Self.truncateToMatryoshka(embedding)
+    }
+
+    /// Fetch stored embeddings for a set of entity UUIDs (chunk 0 only).
+    /// Returns entityUUID → vector; entities without an index entry are absent.
+    public func embeddings(forEntityUUIDs uuids: [String]) async throws -> [String: [Float]] {
+        guard !uuids.isEmpty else { return [:] }
+        guard let pool = dbPool else {
+            throw VectorDatabaseError.notInitialized
+        }
+
+        let hasExtension = extensionLoaded
+
+        return try await pool.read { db in
+            var result: [String: [Float]] = [:]
+            var start = 0
+            // Chunk the IN clause to stay under SQLite's bound-variable limit.
+            while start < uuids.count {
+                let slice = Array(uuids[start..<min(start + 200, uuids.count)])
+                start += 200
+
+                let placeholders = Array(repeating: "?", count: slice.count).joined(separator: ",")
+                let idColumn = hasExtension ? "v.rowid" : "v.id"
+                let sql = """
+                    SELECT m.entity_uuid, v.embedding
+                    FROM vector_metadata m
+                    JOIN vectors v ON \(idColumn) = m.vector_id
+                    WHERE m.entity_uuid IN (\(placeholders)) AND m.chunk_index = 0
+                """
+                let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(slice))
+                for row in rows {
+                    guard let uuid = row["entity_uuid"] as? String,
+                          let blob = row["embedding"] as? Data else { continue }
+                    result[uuid] = Self.blobToEmbedding(blob)
+                }
+            }
+            return result
+        }
+    }
+
+    /// Cosine similarity between two vectors (exposed for centroid scoring).
+    public nonisolated static func cosine(_ a: [Float], _ b: [Float]) -> Float {
+        cosineSimilarity(a, b)
+    }
+
     // MARK: - Delete Operations
 
     /// Delete vectors for an entity

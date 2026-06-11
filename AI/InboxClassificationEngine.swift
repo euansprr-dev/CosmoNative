@@ -1,10 +1,12 @@
+// CosmoOS/AI/InboxClassificationEngine.swift
+// Thin adapter between the staged routing engine and the InboxItem schema.
+// Runs off the main actor — classification work never blocks the UI.
+// June 2026 — Inbox Revamp (INBOX_REVAMP_PLAN.md §2)
+
 import Foundation
 
-@MainActor
-final class InboxClassificationEngine {
+final class InboxClassificationEngine: Sendable {
     static let shared = InboxClassificationEngine()
-
-    private let routingEngine = InboxRoutingEngine.shared
 
     private init() {}
 
@@ -48,7 +50,7 @@ final class InboxClassificationEngine {
         excludedAtomUUIDs: [String] = [],
         preferredTitle: String? = nil
     ) async -> ClassificationResult {
-        let routingResult = await routingEngine.classify(
+        let routingResult = await InboxRoutingEngine.shared.classify(
             text: text,
             source: source,
             excludedAtomUUIDs: excludedAtomUUIDs,
@@ -57,15 +59,20 @@ final class InboxClassificationEngine {
 
         let bundle = routingResult.bundle
         let primary = bundle.primaryRecommendation
-        let classification = primary?.kind.legacyClassification ?? .new
-        let confidence = primary?.confidence ?? 0.5
+
+        // The router abstains when nothing clears the confidence bars — that is
+        // an honest `unsorted`, never a fake suggestion.
+        let classification: InboxClassification = routingResult.abstained
+            ? .unsorted
+            : (primary?.kind.legacyClassification ?? .unsorted)
+        let confidence = routingResult.abstained ? 0 : (primary?.confidence ?? 0)
 
         return ClassificationResult(
             classification: classification,
             confidence: confidence,
             title: routingResult.title,
-            mergeTarget: mergeTarget(from: primary),
-            placeTarget: placeTarget(from: primary),
+            mergeTarget: routingResult.abstained ? nil : mergeTarget(from: primary),
+            placeTarget: routingResult.abstained ? nil : placeTarget(from: primary),
             alternatives: bundle.alternativeRecommendations.map(makeAlternative),
             recommendationBundle: bundle
         )

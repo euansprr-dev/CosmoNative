@@ -1336,6 +1336,17 @@ extension AtomRepository {
         }
     }
 
+    /// Count atoms across multiple types without hydrating them.
+    func count(types: [AtomType]) async throws -> Int {
+        let typeStrings = types.map { $0.rawValue }
+        return try await database.asyncRead { db in
+            try Atom
+                .filter(typeStrings.contains(Column("type")))
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .fetchCount(db)
+        }
+    }
+
     /// Count research atoms that represent saved swipe files without hydrating the gallery.
     func countSwipeFiles() async throws -> Int {
         try await database.asyncRead { db in

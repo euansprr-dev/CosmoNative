@@ -75,6 +75,7 @@ class AgentToolExecutor {
     var onNoteStructurePlan: ((PendingNoteStructurePlan) -> Void)?
     var onWorkspaceEditProposal: (@MainActor (CosmoAssistantProposal) -> Void)?
     var onAssistantPaneAnswer: (@MainActor (_ title: String?, _ answer: String) -> Void)?
+    var onInquiryQuestionProposal: (@MainActor (CosmoAssistantInquiryQuestionProposal) -> Void)?
     var inlineSkillStore: CosmoInlineSkillStore = .defaultForRuntime()
 
     private init() {}
@@ -153,6 +154,7 @@ class AgentToolExecutor {
         case "propose_note_structure_plan": return try await proposeNoteStructurePlan(arguments)
         case "propose_workspace_edit": return try await proposeWorkspaceEdit(arguments)
         case "answer_in_assistant_pane": return try await answerInAssistantPane(arguments)
+        case "propose_inquiry_question": return try await proposeInquiryQuestion(arguments)
         case "append_to_note": return try await appendToNote(arguments)
         case "create_inline_skill": return try await createInlineSkill(arguments)
         // Recall + Navigation
@@ -2007,6 +2009,55 @@ class AgentToolExecutor {
         }
         onAssistantPaneAnswer?(trimmedString(args["title"]), answer)
         return jsonEncode(["success": true, "message": "Answer sent to assistant pane"])
+    }
+
+    /// Stages an "open an inquiry?" confirmation card in the assistant pane.
+    /// Resolves the working Connection plus where the question would land
+    /// (deep dive home, root vs sub-question) so the card shows a concrete
+    /// destination. Navigation happens only when the user confirms.
+    private func proposeInquiryQuestion(_ args: [String: Any]) async throws -> String {
+        guard let question = trimmedString(args["question"]) else {
+            return jsonError("Missing required parameter: question")
+        }
+
+        let rawSurfaceID = trimmedString(args["surfaceID"])
+            ?? CosmoEditableSurfaceRegistry.shared.activeSurface?.editableSnapshot().surfaceID
+        guard let connection = await resolveConnection(fromSurfaceID: rawSurfaceID) else {
+            return jsonError("propose_inquiry_question needs a Connection surface — the active surface is not a connection. Develop the concept via create_connection first.")
+        }
+
+        let resolution = await CosmoInlineInquiryQuestionResolver.resolve(
+            question: question,
+            connection: connection
+        )
+        let proposal = CosmoAssistantInquiryQuestionProposal(
+            question: question,
+            rationale: trimmedString(args["rationale"]),
+            connectionUUID: connection.uuid,
+            connectionTitle: connection.title ?? "Untitled connection",
+            deepDiveUUID: resolution.deepDive?.uuid,
+            deepDiveTitle: resolution.deepDive?.title,
+            parentQuestionUUID: resolution.parentQuestion?.uuid,
+            parentQuestionTitle: resolution.parentQuestion?.title
+        )
+        onInquiryQuestionProposal?(proposal)
+
+        return jsonEncode([
+            "success": true,
+            "proposalId": proposal.id.uuidString,
+            "placement": proposal.placementLabel,
+            "message": "Inquiry question staged for user confirmation. The session opens ONLY after the user confirms in the pane — do not claim it has started. Briefly acknowledge the staged question and continue the concept conversation."
+        ] as [String: Any])
+    }
+
+    /// Surface ids for connections look like "connection:<uuid>" (target ids add
+    /// a ":sections" suffix); accept either and verify the atom is a Connection.
+    private func resolveConnection(fromSurfaceID surfaceID: String?) async -> Atom? {
+        guard let surfaceID else { return nil }
+        let parts = surfaceID.split(separator: ":").map(String.init)
+        guard parts.count >= 2, parts[0] == "connection" else { return nil }
+        guard let atom = try? await atomRepo.fetch(uuid: parts[1]), atom.type == .connection else { return nil }
+        return atom
     }
 
     // MARK: - Recall (unified retrieval)

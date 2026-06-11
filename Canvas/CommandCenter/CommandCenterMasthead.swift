@@ -4,6 +4,42 @@
 
 import SwiftUI
 
+/// Quiet "Inbox · N to triage" chip on the Today masthead — the morning-ritual
+/// seam between capture and triage. Disappears entirely at inbox zero, so it
+/// never nags. Click navigates to the inbox queue.
+struct CommandCenterInboxChip: View {
+    @ObservedObject private var inboxRepo = InboxRepository.shared
+    @State private var isHovered = false
+
+    var body: some View {
+        if !inboxRepo.items.isEmpty {
+            Button {
+                NotificationCenter.default.post(name: CosmoNotification.Inbox.open, object: nil)
+            } label: {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: "tray")
+                        .font(DS.caption2.weight(.semibold))
+                    Text("\(inboxRepo.items.count) to triage")
+                        .font(DS.caption.weight(.medium))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(isHovered ? DS.text : DS.commandCenterSecondaryText)
+                .padding(.horizontal, DS.space8)
+                .padding(.vertical, 3)
+                .background(DS.glassSectionFill, in: .capsule)
+                .overlay(Capsule().strokeBorder(DS.borderSubtle, lineWidth: 0.5))
+                .contentTransition(.numericText())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            }
+            .help("Open the inbox queue")
+            .accessibilityLabel("\(inboxRepo.items.count) captures to triage — open inbox")
+        }
+    }
+}
+
 struct CommandCenterMasthead: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
@@ -33,6 +69,10 @@ struct CommandCenterMasthead: View {
                             .font(DS.callout)
                             .foregroundStyle(DS.commandCenterSecondaryText)
                             .lineLimit(1)
+
+                        if viewModel.viewMode == .today {
+                            CommandCenterInboxChip()
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

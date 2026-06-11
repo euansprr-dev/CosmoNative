@@ -37,6 +37,7 @@ struct ResearchFocusModeView: View {
 
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneActive) private var isPaneActive
 
     // MARK: - Initialization
@@ -123,7 +124,7 @@ struct ResearchFocusModeView: View {
             .padding(.top, 56)
         }
         .overlay(alignment: .topTrailing) {
-            if isPaneContext {
+            if isPaneContext, !isPeekContext {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(DS.buttonText)
@@ -677,6 +678,9 @@ struct ResearchFocusModeView: View {
 
         case .createTemplate:
             break // Templates not supported in focus mode
+
+        case .createPortal:
+            break // Portals live on the thinkspace canvas, not in focus mode
         }
     }
 

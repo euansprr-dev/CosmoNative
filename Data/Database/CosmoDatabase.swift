@@ -1855,6 +1855,41 @@ class CosmoDatabase: ObservableObject {
             print("✅ inline_assistant_skills table created")
         }
 
+        migrator.registerMigration("create_flow_firings") { db in
+            print("🔨 Creating flow_firings table...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS flow_firings (
+                    uuid TEXT PRIMARY KEY NOT NULL,
+                    flowUUID TEXT NOT NULL,
+                    thinkspaceId TEXT,
+                    summary TEXT NOT NULL,
+                    outputAtomUUID TEXT,
+                    createdAt TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_flow_firings_flow
+                    ON flow_firings(flowUUID, createdAt DESC);
+            """)
+            print("✅ flow_firings table created")
+        }
+
+        migrator.registerMigration("create_workbenches") { db in
+            print("🔨 Creating workbenches table...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS workbenches (
+                    uuid TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    glyph TEXT NOT NULL,
+                    tintHex TEXT NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    sortOrder INTEGER NOT NULL DEFAULT 0,
+                    lastUsedAt TEXT,
+                    useCount INTEGER NOT NULL DEFAULT 0,
+                    createdAt TEXT NOT NULL
+                );
+            """)
+            print("✅ workbenches table created")
+        }
+
         return migrator
     }
 

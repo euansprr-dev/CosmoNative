@@ -37,6 +37,7 @@ struct ConnectionFocusModeView: View {
     @State private var reviewProposal: CosmoAssistantProposal?
 
     @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
 
     // MARK: - Initialization
@@ -90,7 +91,7 @@ struct ConnectionFocusModeView: View {
 
     @ViewBuilder
     private var paneCloseButton: some View {
-        if isPaneContext {
+        if isPaneContext, !isPeekContext {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(DS.buttonText)

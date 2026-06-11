@@ -1,44 +1,59 @@
+// CosmoOS/AI/InboxRoutingEngine.swift
+// Staged inbox router — meaning over mass, abstain by default.
+//
+// v2 (June 2026, INBOX_REVAMP_PLAN.md §2). The v1 additive-weights heuristic
+// rewarded big clusters (membership mass × 0.40) and recently-opened
+// thinkspaces (recency boost up to +0.20) with a pass bar of just 0.22 — which
+// is why every capture routed to the largest, most-recent cluster. v2 replaces
+// that with three stages:
+//
+//   Stage 0  Intent gate     — what *kind* of thing is this (task/idea/note…)?
+//                              Determines the verbs offered, never forces a folder.
+//   Stage 1  Merge check     — near-duplicates only (high score + title overlap).
+//   Stage 2  Placement       — cosine similarity against cluster/thinkspace
+//                              *centroids* with a required margin over the
+//                              runner-up. No membership mass, no recency boost.
+//
+// Anything that doesn't clear the bars abstains to `unsorted` — an honest
+// state, not a fake suggestion. Stage 3 (lazy batched LLM taxonomy pass for
+// unsorted items) lives in `taxonomyPass(items:)` and is driven by
+// InboxIngestService when the inbox becomes visible.
+//
+// Runs OFF the main actor: scoring, embedding math, and caching happen here;
+// only repository/search/planner calls hop to @MainActor singletons.
+
 import Foundation
 
-@MainActor
-final class InboxRoutingEngine {
+actor InboxRoutingEngine {
     static let shared = InboxRoutingEngine()
 
-    private let hybridSearch = HybridSearchEngine.shared
-    private let atomRepository = AtomRepository.shared
-    private let planner = SpatialPlacementPlanner.shared
+    private let config = InboxRoutingConfig.shared
     private let flashModel = "google/gemini-3.1-flash-lite-preview"
 
+    // Capture-text embeddings, keyed by content hash — repeated classification
+    // of the same capture (retry, reconcile pass) never re-embeds.
+    private var captureEmbeddingCache: [Int: [Float]] = [:]
+
+    // Cluster/thinkspace centroids, keyed by destination id. The fingerprint
+    // covers the sampled member list, so placements invalidate automatically.
+    private struct CentroidEntry {
+        let fingerprint: Int
+        let vector: [Float]
+    }
+    private var centroidCache: [String: CentroidEntry] = [:]
+
     private init() {}
+
+    // MARK: - Result
 
     struct RoutingResult: Sendable {
         let title: String
         let bundle: InboxRecommendationBundle
+        /// True when no stage cleared its confidence bar — the item is honestly unsorted.
+        let abstained: Bool
     }
 
-    private struct ThinkspaceCandidate {
-        let id: String
-        let name: String
-        let metadata: ThinkspaceMetadata
-        let lastOpened: Date
-        let score: Double
-        let lexicalScore: Double
-        let membershipScore: Double
-        let recentBoost: Double
-    }
-
-    private struct ClusterCandidate {
-        let thinkspaceId: String
-        let thinkspaceName: String
-        let thinkspaceMetadata: ThinkspaceMetadata
-        let cluster: CodableCluster
-        let score: Double
-        let lexicalScore: Double
-        let memberScore: Double
-        let graphScore: Double
-        let recentBoost: Double
-        let relatedAtomUUIDs: [String]
-    }
+    // MARK: - Classify
 
     func classify(
         text: String,
@@ -51,511 +66,577 @@ final class InboxRoutingEngine {
         let queryTokens = normalizedTokens(from: "\(title) \(text)")
         let excludedUUIDs = Set(excludedAtomUUIDs)
 
-        let searchResults = (try? await hybridSearch.search(
-            query: text,
-            limit: 12,
-            entityTypes: nil,
-            excludedEntityUUIDs: excludedAtomUUIDs
-        )) ?? []
+        // Single candidate-pool query, filtered to user content at the source —
+        // system atoms (agent conversation transcripts, telemetry) never enter.
+        let searchResults = await runTriageSearch(text: text, excludedAtomUUIDs: excludedAtomUUIDs)
 
-        let atomUUIDs = searchResults.compactMap(\.entityUUID)
-            .filter { !excludedUUIDs.contains($0) }
-        let atoms = (try? await atomRepository.fetchBatch(uuids: atomUUIDs)) ?? []
+        let atomUUIDs = searchResults.compactMap(\.entityUUID).filter { !excludedUUIDs.contains($0) }
+        let atoms = await fetchAtoms(uuids: atomUUIDs)
         let atomsByUUID = Dictionary(uniqueKeysWithValues: atoms.map { ($0.uuid, $0) })
-        let memberships = (try? await atomRepository.fetchThinkspaceMembership(for: atomUUIDs)) ?? [:]
-        let graphBoosts = await buildGraphBoosts(searchResults: searchResults, excludedUUIDs: excludedUUIDs)
-
-        let thinkspaceAtoms = ((try? await atomRepository.fetchAll(type: .thinkspace)) ?? []).filter { !$0.isDeleted }
-        let thinkspaceCandidates = buildThinkspaceCandidates(
-            from: thinkspaceAtoms,
-            queryTokens: queryTokens,
-            searchResults: searchResults,
-            memberships: memberships
-        )
-        let clusterCandidates = buildClusterCandidates(
-            from: thinkspaceAtoms,
-            queryTokens: queryTokens,
-            searchResults: searchResults,
-            graphBoosts: graphBoosts
-        )
 
         var recommendations: [InboxRecommendation] = []
 
-        if let mergeRecommendation = bestMergeRecommendation(
+        // Stage 1 — merge: rare by design.
+        if let merge = mergeRecommendation(
             title: title,
-            text: text,
             suggestedAtomType: suggestedAtomType,
             searchResults: searchResults,
             atomsByUUID: atomsByUUID,
-            graphBoosts: graphBoosts,
             excludedUUIDs: excludedUUIDs
         ) {
-            recommendations.append(mergeRecommendation)
+            recommendations.append(merge)
         }
 
-        if let bestCluster = clusterCandidates.first,
-           let placementPlan = await planner.planForExistingCluster(
-                title: title,
-                atomType: suggestedAtomType,
-                thinkspaceId: bestCluster.thinkspaceId,
-                thinkspaceName: bestCluster.thinkspaceName,
-                cluster: bestCluster.cluster,
-                relatedAtomUUIDs: bestCluster.relatedAtomUUIDs
-           ) {
-            recommendations.append(
-                InboxRecommendation(
-                    kind: .placeInExistingCluster,
-                    confidence: bestCluster.score,
-                    suggestedAtomType: suggestedAtomType.rawValue,
-                    destinationPath: "\(bestCluster.thinkspaceName) › \(bestCluster.cluster.name)",
-                    rationale: existingClusterRationale(bestCluster),
-                    thinkspaceId: bestCluster.thinkspaceId,
-                    thinkspaceName: bestCluster.thinkspaceName,
-                    clusterId: bestCluster.cluster.id,
-                    clusterName: bestCluster.cluster.name,
-                    placementPlan: placementPlan
-                )
-            )
-        }
-
-        if let bestThinkspace = thinkspaceCandidates.first {
-            let clusterName = suggestClusterName(from: title, removing: bestThinkspace.name)
-
-            if let clusterRecommendationPlan = await planner.planForNewCluster(
-                title: title,
-                atomType: suggestedAtomType,
-                thinkspaceId: bestThinkspace.id,
-                thinkspaceName: bestThinkspace.name,
-                clusterName: clusterName,
-                relatedAtomUUIDs: atomUUIDs
-            ) {
-                let clusterConfidence = newClusterConfidence(bestThinkspace: bestThinkspace, bestExistingCluster: clusterCandidates.first)
-                recommendations.append(
-                    InboxRecommendation(
-                        kind: .createClusterAndPlace,
-                        confidence: clusterConfidence,
-                        suggestedAtomType: suggestedAtomType.rawValue,
-                        destinationPath: "\(bestThinkspace.name) › \(clusterName)",
-                        rationale: "The capture aligns with \(bestThinkspace.name), but no current cluster is tight enough. Creating \(clusterName) keeps it distinct from nearby material.",
-                        thinkspaceId: bestThinkspace.id,
-                        thinkspaceName: bestThinkspace.name,
-                        clusterId: clusterRecommendationPlan.targetClusterId,
-                        clusterName: clusterName,
-                        placementPlan: clusterRecommendationPlan
-                    )
-                )
-            }
-
-            if let thinkspacePlan = await planner.planForThinkspacePlacement(
-                title: title,
-                atomType: suggestedAtomType,
-                thinkspaceId: bestThinkspace.id,
-                thinkspaceName: bestThinkspace.name,
-                relatedAtomUUIDs: atomUUIDs
-            ) {
-                recommendations.append(
-                    InboxRecommendation(
-                        kind: .placeInThinkspace,
-                        confidence: max(0.30, bestThinkspace.score - 0.06),
-                        suggestedAtomType: suggestedAtomType.rawValue,
-                        destinationPath: bestThinkspace.name,
-                        rationale: "The strongest structural match is the \(bestThinkspace.name) thinkspace, but the topic looks more like a fresh block than a direct merge.",
-                        thinkspaceId: bestThinkspace.id,
-                        thinkspaceName: bestThinkspace.name,
-                        placementPlan: thinkspacePlan
-                    )
-                )
-            }
-        }
-
-        let broadTopic = shouldCreateThinkspace(
+        // Stage 2 — placement against centroids.
+        let placement = await placementRecommendations(
             title: title,
             text: text,
-            bestMergeScore: recommendations.first(where: { $0.kind == .mergeAtom })?.confidence ?? 0,
-            bestThinkspaceScore: thinkspaceCandidates.first?.score ?? 0
+            suggestedAtomType: suggestedAtomType,
+            queryTokens: queryTokens,
+            searchResultUUIDs: Set(atomUUIDs)
         )
+        recommendations.append(contentsOf: placement)
 
-        if broadTopic {
-            let thinkspaceName = suggestedThinkspaceName(from: title)
-            let thinkspacePlan = planner.planForNewThinkspace(
-                title: title,
-                atomType: suggestedAtomType,
-                thinkspaceName: thinkspaceName
-            )
+        let abstained = recommendations.isEmpty
 
+        if abstained {
+            // The verb grid still needs a default for manual filing — a quiet,
+            // low-confidence standalone option that the UI never renders as a pill.
             recommendations.append(
                 InboxRecommendation(
-                    kind: .createThinkspaceAndPlace,
-                    confidence: max(0.40, 0.55 - (thinkspaceCandidates.first?.score ?? 0) * 0.2),
+                    kind: .createStandaloneAtom,
+                    confidence: 0.30,
                     suggestedAtomType: suggestedAtomType.rawValue,
-                    destinationPath: thinkspaceName,
-                    rationale: "This looks broader than a one-off note and doesn’t cleanly fit an existing thinkspace. Spinning up \(thinkspaceName) gives it room to grow.",
-                    thinkspaceId: nil,
-                    thinkspaceName: thinkspaceName,
-                    clusterId: thinkspacePlan.targetClusterId,
-                    clusterName: thinkspacePlan.targetClusterName,
-                    placementPlan: thinkspacePlan
+                    destinationPath: suggestedAtomType.displayName,
+                    rationale: "No destination cleared the confidence bar, so this capture stays unsorted until you decide."
                 )
             )
         }
 
-        recommendations.append(
-            InboxRecommendation(
-                kind: .createStandaloneAtom,
-                confidence: 0.26,
-                suggestedAtomType: suggestedAtomType.rawValue,
-                destinationPath: "\(suggestedAtomType.displayName)",
-                rationale: "No existing atom, cluster, or thinkspace has enough evidence yet. Creating a standalone \(suggestedAtomType.displayName.lowercased()) keeps the capture available without forcing a weak placement."
-            )
-        )
-
-        let deduped = dedupeRecommendations(recommendations)
-        let reranked = await rerankIfNeeded(text: text, title: title, recommendations: deduped)
+        // Strong-but-not-duplicate matches power the Connect verb: a capture
+        // that bridges existing material is a connection, not a merge.
+        let relatedAtomUUIDs = searchResults
+            .filter { result in
+                guard let uuid = result.entityUUID,
+                      let atom = atomsByUUID[uuid],
+                      AtomType.triageable.contains(atom.type),
+                      !atom.isDeleted else { return false }
+                return result.combinedScore >= 0.60
+            }
+            .compactMap(\.entityUUID)
+            .prefix(3)
 
         return RoutingResult(
             title: title,
             bundle: InboxRecommendationBundle(
                 title: title,
-                recommendations: reranked
-            )
+                recommendations: recommendations,
+                relatedAtomUUIDs: relatedAtomUUIDs.isEmpty ? nil : Array(relatedAtomUUIDs)
+            ),
+            abstained: abstained
         )
     }
 
-    private func buildThinkspaceCandidates(
-        from thinkspaceAtoms: [Atom],
-        queryTokens: Set<String>,
-        searchResults: [HybridSearchEngine.SearchResult],
-        memberships: [String: [String]]
-    ) -> [ThinkspaceCandidate] {
-        let resultPairs: [(String, HybridSearchEngine.SearchResult)] = searchResults.compactMap { result in
-            guard let uuid = result.entityUUID else { return nil }
-            return (uuid, result)
-        }
-        let resultsByUUID = Dictionary(uniqueKeysWithValues: resultPairs)
+    // MARK: - Stage 1 — Merge (near-duplicate territory only)
 
-        return thinkspaceAtoms.compactMap { atom -> ThinkspaceCandidate? in
-            guard let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { return nil }
-            let lexicalScore = textMatchScore(queryTokens: queryTokens, candidate: "\(metadata.name) \(atom.title ?? "")")
-            let supportingResults = memberships
-                .filter { $0.value.contains(atom.uuid) }
-                .compactMap { resultsByUUID[$0.key]?.combinedScore }
-            let membershipScore = supportingResults.isEmpty ? 0 : supportingResults.reduce(0, +) / Double(supportingResults.count)
-            let recentBoost = recencyBoost(for: metadata.lastOpened)
-            let finalScore = clamp01((membershipScore * 0.56) + (lexicalScore * 0.28) + (recentBoost * 0.16))
-
-            return ThinkspaceCandidate(
-                id: atom.uuid,
-                name: metadata.name,
-                metadata: metadata,
-                lastOpened: metadata.lastOpened,
-                score: finalScore,
-                lexicalScore: lexicalScore,
-                membershipScore: membershipScore,
-                recentBoost: recentBoost
-            )
-        }
-        .filter { $0.score > 0.18 }
-        .sorted { lhs, rhs in
-            if abs(lhs.score - rhs.score) > 0.0001 {
-                return lhs.score > rhs.score
-            }
-            return lhs.lastOpened > rhs.lastOpened
-        }
-    }
-
-    private func buildClusterCandidates(
-        from thinkspaceAtoms: [Atom],
-        queryTokens: Set<String>,
-        searchResults: [HybridSearchEngine.SearchResult],
-        graphBoosts: [String: Double]
-    ) -> [ClusterCandidate] {
-        let resultPairs: [(String, HybridSearchEngine.SearchResult)] = searchResults.compactMap { result in
-            guard let uuid = result.entityUUID else { return nil }
-            return (uuid, result)
-        }
-        let searchByUUID = Dictionary(uniqueKeysWithValues: resultPairs)
-
-        var candidates: [ClusterCandidate] = []
-
-        for atom in thinkspaceAtoms {
-            guard let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { continue }
-            let thinkspaceLexical = textMatchScore(queryTokens: queryTokens, candidate: metadata.name)
-            let recentBoost = recencyBoost(for: metadata.lastOpened)
-
-            for cluster in metadata.clusters {
-                let memberUUIDs = cluster.blockUUIDs
-                let clusterCandidateText = [
-                    cluster.name,
-                    cluster.intent ?? "",
-                    metadata.name
-                ].joined(separator: " ")
-
-                let lexicalScore = textMatchScore(queryTokens: queryTokens, candidate: clusterCandidateText)
-                let memberScores = memberUUIDs.compactMap { searchByUUID[$0]?.combinedScore }
-                let memberScore = memberScores.isEmpty ? 0 : memberScores.reduce(0, +) / Double(memberScores.count)
-                let graphScores = memberUUIDs.compactMap { graphBoosts[$0] }
-                let graphScore = graphScores.isEmpty ? 0 : graphScores.reduce(0, +) / Double(graphScores.count)
-                let densityBoost = min(Double(memberUUIDs.count) / 12.0, 1.0) * 0.05
-                let finalScore = clamp01(
-                    (memberScore * 0.40) +
-                    (lexicalScore * 0.27) +
-                    (thinkspaceLexical * 0.15) +
-                    (graphScore * 0.13) +
-                    (recentBoost * 0.05) +
-                    densityBoost
-                )
-
-                let relatedAtomUUIDs = Array(
-                    Set(
-                        memberUUIDs.filter { searchByUUID[$0] != nil } +
-                        memberUUIDs.filter { graphBoosts[$0] != nil }
-                    )
-                )
-
-                candidates.append(
-                    ClusterCandidate(
-                        thinkspaceId: atom.uuid,
-                        thinkspaceName: metadata.name,
-                        thinkspaceMetadata: metadata,
-                        cluster: cluster,
-                        score: finalScore,
-                        lexicalScore: lexicalScore,
-                        memberScore: memberScore,
-                        graphScore: graphScore,
-                        recentBoost: recentBoost,
-                        relatedAtomUUIDs: relatedAtomUUIDs
-                    )
-                )
-            }
-        }
-
-        return candidates
-            .filter { $0.score > 0.22 }
-            .sorted { lhs, rhs in
-                if abs(lhs.score - rhs.score) > 0.0001 {
-                    return lhs.score > rhs.score
-                }
-                return lhs.cluster.name < rhs.cluster.name
-            }
-    }
-
-    private func bestMergeRecommendation(
+    private func mergeRecommendation(
         title: String,
-        text: String,
         suggestedAtomType: AtomType,
         searchResults: [HybridSearchEngine.SearchResult],
         atomsByUUID: [String: Atom],
-        graphBoosts: [String: Double],
         excludedUUIDs: Set<String>
     ) -> InboxRecommendation? {
         let titleTokens = normalizedTokens(from: title)
 
-        let candidates = searchResults.compactMap { result -> InboxRecommendation? in
+        let candidates = searchResults.compactMap { result -> (atom: Atom, confidence: Double)? in
             guard let uuid = result.entityUUID,
                   !excludedUUIDs.contains(uuid),
                   let atom = atomsByUUID[uuid],
-                  atom.type != .thinkspace else {
+                  AtomType.triageable.contains(atom.type),
+                  !atom.isDeleted,
+                  !isAgentConversation(atom) else {
                 return nil
             }
 
-            let titleScore = textMatchScore(queryTokens: titleTokens, candidate: atom.title ?? result.title)
-            let exactBoost = normalizedPhrase(atom.title ?? result.title) == normalizedPhrase(title) ? 0.18 : 0
-            let graphBoost = graphBoosts[uuid] ?? 0
-            let confidence = clamp01((result.combinedScore * 0.68) + (titleScore * 0.18) + exactBoost + (graphBoost * 0.16))
+            let candidateTitle = atom.title ?? result.title
+            let exactTitleMatch = normalizedPhrase(candidateTitle) == normalizedPhrase(title)
+            let titleOverlap = textMatchScore(queryTokens: titleTokens, candidate: candidateTitle)
 
-            return InboxRecommendation(
-                kind: .mergeAtom,
-                confidence: confidence,
-                suggestedAtomType: suggestedAtomType.rawValue,
-                destinationPath: atom.title ?? result.title,
-                rationale: "This capture is closest to \(atom.title ?? result.title) and shares enough conceptual overlap to merge without losing structure.",
-                mergeTargetUuid: uuid,
-                mergeTargetTitle: atom.title ?? result.title,
-                mergeTargetType: atom.type.rawValue,
-                placementPlan: InboxPlacementPlan(
-                    targetThinkspaceId: nil,
-                    targetThinkspaceName: nil,
-                    targetClusterId: nil,
-                    targetClusterName: nil,
-                    clusterViewMode: nil,
-                    blockPositionX: nil,
-                    blockPositionY: nil,
-                    clusterRect: nil,
-                    operations: [
-                        InboxPlacementOperation(kind: .mergeIntoAtom, description: "Merge into \(atom.title ?? result.title)")
-                    ],
-                    summary: "Merge \(title) into \(atom.title ?? result.title)"
-                )
-            )
+            // The bar: a merge should feel like the system caught a duplicate.
+            guard result.combinedScore >= config.mergeMinCombinedScore else { return nil }
+            guard exactTitleMatch || titleOverlap >= config.mergeMinTitleOverlap else { return nil }
+
+            let confidence = clamp01(result.combinedScore + (exactTitleMatch ? 0.10 : 0))
+            return (atom, confidence)
         }
 
-        return candidates.sorted { $0.confidence > $1.confidence }.first
+        guard let best = candidates.max(by: { $0.confidence < $1.confidence }) else { return nil }
+        let targetTitle = best.atom.title ?? "Untitled"
+
+        return InboxRecommendation(
+            kind: .mergeAtom,
+            confidence: best.confidence,
+            suggestedAtomType: suggestedAtomType.rawValue,
+            destinationPath: targetTitle,
+            rationale: "This capture is nearly identical to \(targetTitle) — merging keeps one source of truth instead of a duplicate.",
+            mergeTargetUuid: best.atom.uuid,
+            mergeTargetTitle: targetTitle,
+            mergeTargetType: best.atom.type.rawValue,
+            placementPlan: InboxPlacementPlan(
+                targetThinkspaceId: nil,
+                targetThinkspaceName: nil,
+                targetClusterId: nil,
+                targetClusterName: nil,
+                clusterViewMode: nil,
+                blockPositionX: nil,
+                blockPositionY: nil,
+                clusterRect: nil,
+                operations: [
+                    InboxPlacementOperation(kind: .mergeIntoAtom, description: "Merge into \(targetTitle)")
+                ],
+                summary: "Merge \(title) into \(targetTitle)"
+            )
+        )
     }
 
-    private func dedupeRecommendations(_ recommendations: [InboxRecommendation]) -> [InboxRecommendation] {
-        var seen = Set<String>()
-        var deduped: [InboxRecommendation] = []
+    // MARK: - Stage 2 — Placement (centroids + margins)
 
-        for recommendation in recommendations.sorted(by: { $0.confidence > $1.confidence }) {
-            let key = "\(recommendation.kind.rawValue)|\(recommendation.destinationPath)|\(recommendation.mergeTargetUuid ?? "")|\(recommendation.clusterId ?? "")"
-            if seen.insert(key).inserted {
-                deduped.append(recommendation)
+    private struct DestinationScore {
+        let thinkspaceId: String
+        let thinkspaceName: String
+        let cluster: CodableCluster?   // nil = thinkspace-level destination
+        let semantic: Double
+        let lexical: Double
+        var score: Double { clamp01Static(semantic + lexical) }
+    }
+
+    private func placementRecommendations(
+        title: String,
+        text: String,
+        suggestedAtomType: AtomType,
+        queryTokens: Set<String>,
+        searchResultUUIDs: Set<String>
+    ) async -> [InboxRecommendation] {
+        guard let queryVector = await captureEmbedding(for: text) else { return [] }
+
+        let thinkspaceAtoms = await fetchThinkspaceAtoms()
+        guard !thinkspaceAtoms.isEmpty else { return [] }
+
+        var clusterScores: [DestinationScore] = []
+        var thinkspaceScores: [DestinationScore] = []
+
+        for atom in thinkspaceAtoms {
+            guard let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { continue }
+
+            for cluster in metadata.clusters {
+                guard let centroid = await centroid(
+                    forDestination: "cluster-\(cluster.id)",
+                    memberUUIDs: cluster.blockUUIDs
+                ) else { continue }
+
+                let semantic = Double(VectorDatabase.cosine(queryVector, centroid))
+                let lexical = textMatchScore(
+                    queryTokens: queryTokens,
+                    candidate: "\(cluster.name) \(cluster.intent ?? "") \(metadata.name)"
+                ) * config.lexicalBonusWeight
+                clusterScores.append(
+                    DestinationScore(
+                        thinkspaceId: atom.uuid,
+                        thinkspaceName: metadata.name,
+                        cluster: cluster,
+                        semantic: semantic,
+                        lexical: lexical
+                    )
+                )
+            }
+
+            let thinkspaceMembers = metadata.blockIds.isEmpty
+                ? metadata.clusters.flatMap(\.blockUUIDs)
+                : metadata.blockIds
+            if let centroid = await centroid(
+                forDestination: "thinkspace-\(atom.uuid)",
+                memberUUIDs: thinkspaceMembers
+            ) {
+                let semantic = Double(VectorDatabase.cosine(queryVector, centroid))
+                let lexical = textMatchScore(queryTokens: queryTokens, candidate: metadata.name)
+                    * config.lexicalBonusWeight
+                thinkspaceScores.append(
+                    DestinationScore(
+                        thinkspaceId: atom.uuid,
+                        thinkspaceName: metadata.name,
+                        cluster: nil,
+                        semantic: semantic,
+                        lexical: lexical
+                    )
+                )
             }
         }
 
-        return Array(deduped.prefix(5))
+        clusterScores.sort { $0.score > $1.score }
+        thinkspaceScores.sort { $0.score > $1.score }
+
+        // Confident cluster: clears the floor AND beats the runner-up by a real margin.
+        if let best = clusterScores.first, let cluster = best.cluster,
+           best.score >= config.placementMinScore,
+           clusterScores.count < 2 || (best.score - clusterScores[1].score) >= config.placementMinMargin {
+            let relatedUUIDs = cluster.blockUUIDs.filter { searchResultUUIDs.contains($0) }
+            if let plan = await planExistingCluster(
+                title: title,
+                atomType: suggestedAtomType,
+                destination: best,
+                cluster: cluster,
+                relatedAtomUUIDs: relatedUUIDs
+            ) {
+                return [
+                    InboxRecommendation(
+                        kind: .placeInExistingCluster,
+                        confidence: best.score,
+                        suggestedAtomType: suggestedAtomType.rawValue,
+                        destinationPath: "\(best.thinkspaceName) › \(cluster.name)",
+                        rationale: placementRationale(clusterName: cluster.name, intent: cluster.intent, thinkspaceName: best.thinkspaceName),
+                        thinkspaceId: best.thinkspaceId,
+                        thinkspaceName: best.thinkspaceName,
+                        clusterId: cluster.id,
+                        clusterName: cluster.name,
+                        placementPlan: plan
+                    )
+                ]
+            }
+        }
+
+        // Confident thinkspace, no cluster tight enough: offer the thinkspace
+        // surface, with "new cluster here" as the alternate.
+        if let best = thinkspaceScores.first,
+           best.score >= config.placementMinScore,
+           thinkspaceScores.count < 2 || (best.score - thinkspaceScores[1].score) >= config.placementMinMargin {
+            var recommendations: [InboxRecommendation] = []
+
+            if let plan = await planThinkspacePlacement(
+                title: title,
+                atomType: suggestedAtomType,
+                destination: best,
+                relatedAtomUUIDs: Array(searchResultUUIDs)
+            ) {
+                recommendations.append(
+                    InboxRecommendation(
+                        kind: .placeInThinkspace,
+                        confidence: best.score,
+                        suggestedAtomType: suggestedAtomType.rawValue,
+                        destinationPath: best.thinkspaceName,
+                        rationale: "This capture belongs with the material in \(best.thinkspaceName), but no single cluster there is a tight fit.",
+                        thinkspaceId: best.thinkspaceId,
+                        thinkspaceName: best.thinkspaceName,
+                        placementPlan: plan
+                    )
+                )
+            }
+
+            let clusterName = suggestClusterName(from: title, removing: best.thinkspaceName)
+            if let plan = await planNewCluster(
+                title: title,
+                atomType: suggestedAtomType,
+                destination: best,
+                clusterName: clusterName,
+                relatedAtomUUIDs: Array(searchResultUUIDs)
+            ) {
+                recommendations.append(
+                    InboxRecommendation(
+                        kind: .createClusterAndPlace,
+                        confidence: clamp01(best.score - 0.05),
+                        suggestedAtomType: suggestedAtomType.rawValue,
+                        destinationPath: "\(best.thinkspaceName) › \(clusterName)",
+                        rationale: "It fits \(best.thinkspaceName) but starts a thread of its own — a fresh \(clusterName) cluster keeps it distinct.",
+                        thinkspaceId: best.thinkspaceId,
+                        thinkspaceName: best.thinkspaceName,
+                        clusterId: plan.targetClusterId,
+                        clusterName: clusterName,
+                        placementPlan: plan
+                    )
+                )
+            }
+
+            return recommendations
+        }
+
+        return []
     }
 
-    private func rerankIfNeeded(
-        text: String,
-        title: String,
-        recommendations: [InboxRecommendation]
-    ) async -> [InboxRecommendation] {
-        let sorted = recommendations.sorted { $0.confidence > $1.confidence }
-        // Only re-rank when there's a *genuinely* ambiguous top, with at least three
-        // viable options. The previous threshold (gap < 0.08, count > 1) fired on
-        // nearly every classification, multiplying LLM cost by 88× during a
-        // bulk inbox load.
-        guard sorted.count >= 3 else { return sorted }
-        guard abs(sorted[0].confidence - sorted[1].confidence) < 0.05 else { return sorted }
+    private func placementRationale(clusterName: String, intent: String?, thinkspaceName: String) -> String {
+        if let intent, !intent.isEmpty {
+            return "\(clusterName) already collects material around “\(intent)”, and this capture sits squarely in that thread."
+        }
+        return "\(clusterName) inside \(thinkspaceName) is the closest existing thread by meaning, with clear distance to the next candidate."
+    }
 
-        let topCandidates = Array(sorted.prefix(3))
-        let options = topCandidates.enumerated().map { index, recommendation in
-            "\(index + 1). id=\(recommendation.id) route=\(recommendation.kind.rawValue) destination=\(recommendation.destinationPath) rationale=\(recommendation.rationale)"
+    // MARK: - Stage 3 — Lazy taxonomy pass (batched, for unsorted items)
+
+    struct TaxonomyAssignment: Sendable {
+        let itemUuid: String
+        let thinkspaceId: String
+        let thinkspaceName: String
+        let clusterId: String?
+        let clusterName: String?
+    }
+
+    /// One batched Flash call that teaches the model the *actual* folder
+    /// taxonomy (names, intents, example member titles) and asks it to file
+    /// each unsorted capture — with an explicit NONE option. Returns only
+    /// assignments to destinations that really exist.
+    func taxonomyPass(items: [(uuid: String, title: String?, text: String)]) async -> [TaxonomyAssignment] {
+        guard !items.isEmpty else { return [] }
+
+        let thinkspaceAtoms = await fetchThinkspaceAtoms()
+        guard !thinkspaceAtoms.isEmpty else { return [] }
+
+        // Build the taxonomy with example titles so the model learns what each
+        // destination actually contains, not just what it's called.
+        var destinations: [(key: String, thinkspaceId: String, thinkspaceName: String, clusterId: String?, clusterName: String?)] = []
+        var taxonomyLines: [String] = []
+
+        for atom in thinkspaceAtoms {
+            guard let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { continue }
+            for cluster in metadata.clusters {
+                let key = "D\(destinations.count + 1)"
+                destinations.append((key, atom.uuid, metadata.name, cluster.id, cluster.name))
+                let examples = await exampleTitles(for: cluster.blockUUIDs)
+                var line = "\(key): \(metadata.name) › \(cluster.name)"
+                if let intent = cluster.intent, !intent.isEmpty {
+                    line += " — collects: \(intent)"
+                }
+                if !examples.isEmpty {
+                    line += " — contains e.g. \(examples.map { "\"\($0)\"" }.joined(separator: ", "))"
+                }
+                taxonomyLines.append(line)
+            }
+            let key = "D\(destinations.count + 1)"
+            destinations.append((key, atom.uuid, metadata.name, nil, nil))
+            taxonomyLines.append("\(key): \(metadata.name) (the thinkspace surface itself, for material that fits the space but no cluster)")
+        }
+
+        guard !destinations.isEmpty else { return [] }
+
+        let captureLines = items.enumerated().map { index, item in
+            "C\(index + 1) (uuid \(item.uuid)): \(String(((item.title.map { "\($0) — " } ?? "") + item.text).prefix(280)))"
         }.joined(separator: "\n")
+
+        let prompt = """
+        You are filing captured thoughts into a personal knowledge base. For each capture, choose the destination whose EXISTING CONTENTS it belongs with, or NONE.
+
+        HOW TO DECIDE (apply in this order):
+        1. Read the capture and identify its core subject — what is it ABOUT, not what words it uses.
+        2. A destination matches only if the capture would sit naturally next to its example contents. The destination name alone is never enough evidence.
+        3. If two destinations both seem plausible, that is ambiguity: answer NONE. Guessing wrong is worse than leaving it unsorted.
+        4. If the capture is a task, a fleeting reminder, or about the user's own software/app features, answer NONE — those are handled elsewhere.
+
+        EXAMPLE OF A CORRECT MATCH: a capture "discipline is choosing what you want most over what you want now" belongs in a destination whose examples are Stoicism quotes about self-control.
+        EXAMPLE OF A CORRECT NONE: a capture "remix feature for the swipe file" matches no knowledge destination — it is a product idea, answer NONE even if a destination mentions "ideas".
+
+        DESTINATIONS:
+        \(taxonomyLines.joined(separator: "\n"))
+
+        CAPTURES:
+        \(captureLines)
+
+        Respond with ONLY a JSON array, one entry per capture, in this exact shape:
+        [{"uuid": "<capture uuid>", "destination": "<destination key or NONE>"}]
+        """
 
         do {
             let response = try await ResearchService.shared.analyze(
-                prompt: """
-                Choose the single best routing option for this inbox capture. Return ONLY the chosen id.
-
-                Capture title: \(title)
-                Capture text:
-                \(String(text.prefix(1200)))
-
-                Options:
-                \(options)
-                """,
+                prompt: prompt,
                 model: flashModel,
-                maxTokens: 24,
+                maxTokens: 600,
                 temperature: 0.0
             )
-
-            let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let chosen = topCandidates.first(where: { trimmed.contains($0.id) }) else {
-                return sorted
-            }
-
-            let boosted = recommendations.map { recommendation -> InboxRecommendation in
-                guard recommendation.id == chosen.id else { return recommendation }
-                return InboxRecommendation(
-                    id: recommendation.id,
-                    kind: recommendation.kind,
-                    confidence: clamp01(recommendation.confidence + 0.04),
-                    suggestedAtomType: recommendation.suggestedAtomType,
-                    destinationPath: recommendation.destinationPath,
-                    rationale: recommendation.rationale,
-                    mergeTargetUuid: recommendation.mergeTargetUuid,
-                    mergeTargetTitle: recommendation.mergeTargetTitle,
-                    mergeTargetType: recommendation.mergeTargetType,
-                    thinkspaceId: recommendation.thinkspaceId,
-                    thinkspaceName: recommendation.thinkspaceName,
-                    clusterId: recommendation.clusterId,
-                    clusterName: recommendation.clusterName,
-                    placementPlan: recommendation.placementPlan
-                )
-            }
-            return boosted.sorted { $0.confidence > $1.confidence }
+            return parseTaxonomyResponse(response, destinations: destinations, items: items)
         } catch {
-            return sorted
+            return []
         }
     }
 
-    private func buildGraphBoosts(
-        searchResults: [HybridSearchEngine.SearchResult],
-        excludedUUIDs: Set<String>
-    ) async -> [String: Double] {
-        var boosts: [String: Double] = [:]
-        let engine = GraphQueryEngine()
+    private func parseTaxonomyResponse(
+        _ response: String,
+        destinations: [(key: String, thinkspaceId: String, thinkspaceName: String, clusterId: String?, clusterName: String?)],
+        items: [(uuid: String, title: String?, text: String)]
+    ) -> [TaxonomyAssignment] {
+        guard let start = response.firstIndex(of: "["),
+              let end = response.lastIndex(of: "]"),
+              start < end,
+              let data = String(response[start...end]).data(using: .utf8),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
 
-        for result in searchResults.prefix(3) {
-            guard let uuid = result.entityUUID,
-                  !excludedUUIDs.contains(uuid) else {
-                continue
+        let destinationsByKey = Dictionary(uniqueKeysWithValues: destinations.map { ($0.key, $0) })
+        let validUuids = Set(items.map(\.uuid))
+
+        return entries.compactMap { entry in
+            guard let uuid = entry["uuid"] as? String,
+                  validUuids.contains(uuid),
+                  let key = entry["destination"] as? String,
+                  key.uppercased() != "NONE",
+                  let destination = destinationsByKey[key] else {
+                return nil
             }
+            return TaxonomyAssignment(
+                itemUuid: uuid,
+                thinkspaceId: destination.thinkspaceId,
+                thinkspaceName: destination.thinkspaceName,
+                clusterId: destination.clusterId,
+                clusterName: destination.clusterName
+            )
+        }
+    }
 
-            let neighbors = (try? await engine.getNeighbors(of: uuid, limit: 8)) ?? []
-            for neighbor in neighbors {
-                guard !excludedUUIDs.contains(neighbor.node.atomUUID) else { continue }
-                boosts[neighbor.node.atomUUID] = max(boosts[neighbor.node.atomUUID] ?? 0, neighbor.weight * 0.18)
-            }
+    // MARK: - Embeddings & centroids
+
+    private func captureEmbedding(for text: String) async -> [Float]? {
+        var hasher = Hasher()
+        hasher.combine(text)
+        let key = hasher.finalize()
+
+        if let cached = captureEmbeddingCache[key] { return cached }
+        guard let vector = try? await VectorDatabase.shared.embedText(String(text.prefix(2000))) else {
+            return nil
+        }
+        // Bound the cache — captures are transient.
+        if captureEmbeddingCache.count > 128 { captureEmbeddingCache.removeAll() }
+        captureEmbeddingCache[key] = vector
+        return vector
+    }
+
+    private func centroid(forDestination id: String, memberUUIDs: [String]) async -> [Float]? {
+        guard !memberUUIDs.isEmpty else { return nil }
+        let sample = Array(memberUUIDs.prefix(config.centroidSampleLimit))
+
+        var hasher = Hasher()
+        hasher.combine(sample)
+        let fingerprint = hasher.finalize()
+
+        if let cached = centroidCache[id], cached.fingerprint == fingerprint {
+            return cached.vector
         }
 
-        return boosts
-    }
-
-    private func existingClusterRationale(_ candidate: ClusterCandidate) -> String {
-        if let intent = candidate.cluster.intent, !intent.isEmpty {
-            return "\(candidate.cluster.name) already collects material around “\(intent)”, and this capture matches that cluster better than the surrounding thinkspace."
+        guard let vectors = try? await VectorDatabase.shared.embeddings(forEntityUUIDs: sample),
+              !vectors.isEmpty else {
+            return nil
         }
-        return "\(candidate.cluster.name) is the strongest local fit inside \(candidate.thinkspaceName), with both semantic similarity and cluster structure pointing to it."
+
+        let dimension = vectors.values.first?.count ?? 0
+        guard dimension > 0 else { return nil }
+
+        var mean = [Float](repeating: 0, count: dimension)
+        var counted = 0
+        for vector in vectors.values where vector.count == dimension {
+            for i in 0..<dimension { mean[i] += vector[i] }
+            counted += 1
+        }
+        guard counted > 0 else { return nil }
+        for i in 0..<dimension { mean[i] /= Float(counted) }
+
+        centroidCache[id] = CentroidEntry(fingerprint: fingerprint, vector: mean)
+        return mean
     }
 
-    private func newClusterConfidence(bestThinkspace: ThinkspaceCandidate, bestExistingCluster: ClusterCandidate?) -> Double {
-        let existingClusterPenalty = (bestExistingCluster?.score ?? 0) * 0.25
-        return clamp01((bestThinkspace.score * 0.82) - existingClusterPenalty + 0.12)
+    /// Drop a destination's cached centroid (called after placements mutate membership).
+    func invalidateCentroids() {
+        centroidCache.removeAll()
     }
 
-    private func shouldCreateThinkspace(
+    // MARK: - MainActor hops (search, repos, planner)
+
+    private func runTriageSearch(text: String, excludedAtomUUIDs: [String]) async -> [HybridSearchEngine.SearchResult] {
+        (try? await HybridSearchEngine.shared.search(
+            query: text,
+            limit: config.searchLimit,
+            entityTypes: EntityType.inboxTriageable,
+            excludedEntityUUIDs: excludedAtomUUIDs
+        )) ?? []
+    }
+
+    private func fetchAtoms(uuids: [String]) async -> [Atom] {
+        guard !uuids.isEmpty else { return [] }
+        return (try? await AtomRepository.shared.fetchBatch(uuids: uuids)) ?? []
+    }
+
+    private func fetchThinkspaceAtoms() async -> [Atom] {
+        ((try? await AtomRepository.shared.fetchAll(type: .thinkspace)) ?? []).filter { !$0.isDeleted }
+    }
+
+    private func exampleTitles(for memberUUIDs: [String]) async -> [String] {
+        let sample = Array(memberUUIDs.prefix(config.taxonomyExampleTitles * 2))
+        guard !sample.isEmpty else { return [] }
+        let atoms = await fetchAtoms(uuids: sample)
+        return atoms
+            .compactMap(\.title)
+            .filter { !$0.isEmpty }
+            .prefix(config.taxonomyExampleTitles)
+            .map { String($0.prefix(60)) }
+    }
+
+    private func planExistingCluster(
         title: String,
-        text: String,
-        bestMergeScore: Double,
-        bestThinkspaceScore: Double
-    ) -> Bool {
-        let titleWordCount = title.split(whereSeparator: \.isWhitespace).count
-        let broadSignals = [
-            "philosophy", "theory", "framework", "system", "world", "vision",
-            "research area", "archive", "domain", "study", "field"
-        ]
-        let lower = "\(title) \(text)".lowercased()
-        let hasBroadSignal = broadSignals.contains { lower.contains($0) }
-        let isCompactTopic = titleWordCount <= 4
-
-        return bestMergeScore < 0.58 &&
-            bestThinkspaceScore < 0.36 &&
-            (hasBroadSignal || isCompactTopic || text.count > 220)
+        atomType: AtomType,
+        destination: DestinationScore,
+        cluster: CodableCluster,
+        relatedAtomUUIDs: [String]
+    ) async -> InboxPlacementPlan? {
+        await SpatialPlacementPlanner.shared.planForExistingCluster(
+            title: title,
+            atomType: atomType,
+            thinkspaceId: destination.thinkspaceId,
+            thinkspaceName: destination.thinkspaceName,
+            cluster: cluster,
+            relatedAtomUUIDs: relatedAtomUUIDs
+        )
     }
 
-    private func suggestClusterName(from title: String, removing thinkspaceName: String?) -> String {
-        var cleaned = title
-        if let thinkspaceName, !thinkspaceName.isEmpty {
-            cleaned = cleaned.replacingOccurrences(of: thinkspaceName, with: "", options: [.caseInsensitive])
-        }
-        cleaned = cleaned
-            .replacingOccurrences(of: ":", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.isEmpty {
-            return "New Cluster"
-        }
-        return String(cleaned.split(whereSeparator: \.isWhitespace).prefix(4).joined(separator: " ")).capitalized
+    private func planThinkspacePlacement(
+        title: String,
+        atomType: AtomType,
+        destination: DestinationScore,
+        relatedAtomUUIDs: [String]
+    ) async -> InboxPlacementPlan? {
+        await SpatialPlacementPlanner.shared.planForThinkspacePlacement(
+            title: title,
+            atomType: atomType,
+            thinkspaceId: destination.thinkspaceId,
+            thinkspaceName: destination.thinkspaceName,
+            relatedAtomUUIDs: relatedAtomUUIDs
+        )
     }
 
-    private func suggestedThinkspaceName(from title: String) -> String {
-        let cleaned = title
-            .replacingOccurrences(of: ":", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? "New Thinkspace" : cleaned.capitalized
+    private func planNewCluster(
+        title: String,
+        atomType: AtomType,
+        destination: DestinationScore,
+        clusterName: String,
+        relatedAtomUUIDs: [String]
+    ) async -> InboxPlacementPlan? {
+        await SpatialPlacementPlanner.shared.planForNewCluster(
+            title: title,
+            atomType: atomType,
+            thinkspaceId: destination.thinkspaceId,
+            thinkspaceName: destination.thinkspaceName,
+            clusterName: clusterName,
+            relatedAtomUUIDs: relatedAtomUUIDs
+        )
+    }
+
+    // MARK: - Stage 0 — Intent gate (heuristic, local)
+
+    private func isAgentConversation(_ atom: Atom) -> Bool {
+        guard atom.type == .systemEvent else { return false }
+        return atom.metadata?.contains("\"subtype\":\"agent_conversation\"") ?? false
     }
 
     private func suggestAtomType(text: String) -> AtomType {
         let lower = text.lowercased()
-        if ["article", "study", "paper", "source", "read"].contains(where: { lower.contains($0) }) {
-            return .research
-        }
-        if ["todo", "task", "deadline", "follow up", "schedule"].contains(where: { lower.contains($0) }) {
+        if ["todo", "task", "deadline", "follow up", "schedule", "remind me"].contains(where: { lower.contains($0) }) {
             return .task
+        }
+        if ["article", "study", "paper", "source", "read this"].contains(where: { lower.contains($0) }) {
+            return .research
         }
         if ["idea", "what if", "concept", "thesis"].contains(where: { lower.contains($0) }) {
             return .idea
@@ -563,8 +644,10 @@ final class InboxRoutingEngine {
         if lower.count < 80 {
             return .idea
         }
-        return .connection
+        return .note
     }
+
+    // MARK: - Title extraction
 
     private func extractTitle(from text: String, preferredTitle: String?) async -> String {
         if let preferredTitle, !preferredTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -608,6 +691,23 @@ final class InboxRoutingEngine {
         return String(firstSentence.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func suggestClusterName(from title: String, removing thinkspaceName: String?) -> String {
+        var cleaned = title
+        if let thinkspaceName, !thinkspaceName.isEmpty {
+            cleaned = cleaned.replacingOccurrences(of: thinkspaceName, with: "", options: [.caseInsensitive])
+        }
+        cleaned = cleaned
+            .replacingOccurrences(of: ":", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty {
+            return "New Cluster"
+        }
+        return String(cleaned.split(whereSeparator: \.isWhitespace).prefix(4).joined(separator: " ")).capitalized
+    }
+
+    // MARK: - Text scoring
+
     private func normalizedTokens(from text: String) -> Set<String> {
         let separators = CharacterSet.alphanumerics.inverted
         return Set(
@@ -623,10 +723,7 @@ final class InboxRoutingEngine {
         guard !queryTokens.isEmpty, !candidateTokens.isEmpty else { return 0 }
 
         let overlap = queryTokens.intersection(candidateTokens)
-        let overlapScore = Double(overlap.count) / Double(max(queryTokens.count, candidateTokens.count))
-        let firstQueryTerm = queryTokens.sorted().first ?? ""
-        let phraseBoost = !firstQueryTerm.isEmpty && normalizedPhrase(candidate).contains(firstQueryTerm) ? 0.12 : 0
-        return clamp01(overlapScore + phraseBoost)
+        return clamp01(Double(overlap.count) / Double(max(queryTokens.count, candidateTokens.count)))
     }
 
     private func normalizedPhrase(_ text: String) -> String {
@@ -637,15 +734,11 @@ final class InboxRoutingEngine {
             .joined(separator: " ")
     }
 
-    private func recencyBoost(for date: Date) -> Double {
-        let days = Calendar.current.dateComponents([.day], from: date, to: Date()).day ?? 0
-        if days <= 2 { return 0.20 }
-        if days <= 7 { return 0.14 }
-        if days <= 30 { return 0.08 }
-        return 0.02
-    }
-
     private func clamp01(_ value: Double) -> Double {
         min(max(value, 0), 1)
     }
+}
+
+private func clamp01Static(_ value: Double) -> Double {
+    min(max(value, 0), 1)
 }

@@ -507,3 +507,131 @@ final class CosmoInlineAssistantSourceChipTests: XCTestCase {
         XCTAssertNil(store.paneMessages.last { $0.role == .assistant }?.sourceRefs)
     }
 }
+
+@MainActor
+final class CosmoInlineInquiryQuestionProposalTests: XCTestCase {
+    private func makeProposal(
+        deepDiveTitle: String? = nil,
+        parentQuestionTitle: String? = nil
+    ) -> CosmoAssistantInquiryQuestionProposal {
+        CosmoAssistantInquiryQuestionProposal(
+            question: "What actually blocks people from reaching peak state?",
+            rationale: "Awareness alone doesn't explain the gap.",
+            connectionUUID: "conn-1",
+            connectionTitle: "Peak experience",
+            deepDiveUUID: deepDiveTitle == nil ? nil : "dd-1",
+            deepDiveTitle: deepDiveTitle,
+            parentQuestionUUID: parentQuestionTitle == nil ? nil : "q-parent",
+            parentQuestionTitle: parentQuestionTitle
+        )
+    }
+
+    func testPlacementLabelPrefersParentThenDeepDiveThenConnection() {
+        XCTAssertEqual(
+            makeProposal(deepDiveTitle: "Peak states", parentQuestionTitle: "How does peak state work?").placementLabel,
+            "Sub-question under “How does peak state work?”"
+        )
+        XCTAssertEqual(
+            makeProposal(deepDiveTitle: "Peak states").placementLabel,
+            "New question in “Peak states”"
+        )
+        XCTAssertEqual(
+            makeProposal().placementLabel,
+            "New deep dive from “Peak experience”"
+        )
+    }
+
+    func testPersistedSessionFromBeforeInquiryCardsStillDecodes() throws {
+        // A blob persisted before inquiry cards existed has no
+        // inquiryQuestionProposals key — it must decode, not reset the session.
+        let legacyJSON = """
+        {
+          "schemaVersion": 1,
+          "surfaceID": "connection:conn-1",
+          "paneMessages": [],
+          "proposals": [],
+          "selectedContextAtoms": [],
+          "updatedAt": "2026-06-01T00:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let session = try decoder.decode(
+            CosmoInlineAssistantPersistedSession.self,
+            from: Data(legacyJSON.utf8)
+        )
+        XCTAssertNil(session.inquiryQuestionProposals)
+    }
+
+    func testReceiveInquiryProposalAppendsLinkedCardMessage() {
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        let proposal = makeProposal(deepDiveTitle: "Peak states")
+
+        store.receive(inquiryProposal: proposal)
+
+        XCTAssertEqual(store.inquiryQuestionProposals.count, 1)
+        XCTAssertEqual(store.paneMessages.last?.inquiryProposalID, proposal.id)
+        XCTAssertEqual(store.inquiryProposal(id: proposal.id)?.status, .pending)
+        XCTAssertTrue(store.isPaneRequested)
+    }
+
+    func testDismissInquiryMarksProposalDismissedOnce() {
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        let proposal = makeProposal()
+        store.receive(inquiryProposal: proposal)
+
+        store.dismissInquiry(proposalID: proposal.id)
+        XCTAssertEqual(store.inquiryProposal(id: proposal.id)?.status, .dismissed)
+
+        // Dismissing again (or after a start) is a no-op, never a crash.
+        store.dismissInquiry(proposalID: proposal.id)
+        XCTAssertEqual(store.inquiryProposal(id: proposal.id)?.status, .dismissed)
+    }
+
+    func testInquiryProposalsSurviveSessionPersistenceRoundTrip() {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+        let proposal = makeProposal(deepDiveTitle: "Peak states")
+        store.receive(inquiryProposal: proposal)
+
+        let restored = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        // ISO8601 persistence drops sub-second Date precision — compare fields, not whole structs.
+        XCTAssertEqual(restored.inquiryQuestionProposals.map(\.id), [proposal.id])
+        XCTAssertEqual(restored.inquiryQuestionProposals.first?.question, proposal.question)
+        XCTAssertEqual(restored.inquiryQuestionProposals.first?.status, .pending)
+        XCTAssertEqual(restored.inquiryQuestionProposals.first?.placementLabel, proposal.placementLabel)
+        XCTAssertEqual(restored.paneMessages.last?.inquiryProposalID, proposal.id)
+    }
+}
+
+/// Empty-state starters adapt to the surface; pill tints map source kinds onto
+/// the same entity colors the composer's mention pills use.
+final class CosmoInlineAssistantPaneEmptyStatePolicyTests: XCTestCase {
+    func testStartersAdaptToSurfaceKind() {
+        XCTAssertEqual(
+            CosmoInlineAssistantPaneEmptyStatePolicy.starters(for: .canvas).first?.label,
+            "Organize this canvas"
+        )
+        XCTAssertEqual(
+            CosmoInlineAssistantPaneEmptyStatePolicy.starters(for: .text).map(\.label),
+            ["Review this draft", "Tighten the opening", "Search my brain"]
+        )
+        XCTAssertEqual(CosmoInlineAssistantPaneEmptyStatePolicy.starters(for: nil).count, 3)
+        // Every starter must stage a usable prompt.
+        for kind in [CosmoEditableSurfaceKind.text, .structured, .canvas] {
+            for starter in CosmoInlineAssistantPaneEmptyStatePolicy.starters(for: kind) {
+                XCTAssertFalse(starter.prompt.isEmpty)
+            }
+        }
+    }
+
+    func testPillTintMapsSourceKindsToEntityTypes() {
+        XCTAssertEqual(CosmoMentionPillTint.entityType(forSourceKind: "idea"), .idea)
+        XCTAssertEqual(CosmoMentionPillTint.entityType(forSourceKind: "swipe_file"), .swipeFile)
+        XCTAssertEqual(CosmoMentionPillTint.entityType(forSourceKind: "clientProfile"), .connection)
+        XCTAssertEqual(CosmoMentionPillTint.entityType(forSourceKind: "client_profile"), .connection)
+        XCTAssertEqual(CosmoMentionPillTint.entityType(forSourceKind: "thinkspace"), .thinkspace)
+        XCTAssertEqual(CosmoMentionPillTint.entityType(forSourceKind: "unknown_kind"), .note)
+    }
+}

@@ -1,7 +1,9 @@
 // CosmoOS/UI/Inbox/InboxView.swift
-// Smart Triage Inbox — capture bar, temporal grouping, filters, batch actions,
-// keyboard navigation, intelligence, and beautiful empty state
-// March 2026
+// The triage queue. One calm ledger of explicit captures, a hero capture
+// field, and a floating glass inspector — clearable end-to-end from the
+// keyboard. Command Center masthead grammar, Connection workspace inspector
+// dialect.
+// June 2026 rebuild (INBOX_REVAMP_PLAN.md §3)
 
 import SwiftUI
 
@@ -21,229 +23,188 @@ struct InboxView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.bg)
-        .sheet(isPresented: $viewModel.showOverrideSheet) {
-            overrideSheet
-        }
-        .onKeyPress(.upArrow) { viewModel.moveFocusUp(); return .handled }
-        .onKeyPress(.downArrow) { viewModel.moveFocusDown(); return .handled }
-        .onKeyPress(.return) { Task { await viewModel.acceptFocused() }; return .handled }
-        .onKeyPress(.delete) { Task { await viewModel.dismissFocused() }; return .handled }
-        .onKeyPress(.space) { viewModel.toggleFocusedSelection(); return .handled }
-        .onKeyPress(.escape) { viewModel.deselectAll(); return .handled }
-        .background {
-            // Hidden button for Cmd+A select all
-            Button("") { viewModel.selectAll() }
-                .keyboardShortcut("a", modifiers: .command)
-                .hidden()
-        }
+        .sheet(isPresented: $viewModel.showOverrideSheet) { overrideSheet }
+        .modifier(InboxKeyboardModel(viewModel: viewModel))
         .onAppear { viewModel.isInboxVisible = true }
         .onDisappear { viewModel.isInboxVisible = false }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.focusCaptureField)) { _ in
+            route = .global
+            viewModel.requestCaptureFieldFocus()
+        }
     }
 
     // MARK: - Main Content
 
+    @ViewBuilder
     private var mainContent: some View {
-        VStack(spacing: 0) {
-            inboxHeader
-            switch route {
-            case .global:
-                captureBar
-                if !viewModel.items.isEmpty {
-                    statsAndFilters
-                }
-                Divider().foregroundStyle(DS.border)
-                itemsOrEmptyState
-            case .captureLanes:
+        switch route {
+        case .global:
+            queuePage
+        case .captureLanes:
+            VStack(spacing: 0) {
+                masthead
                 CaptureLanesView(showsLaneSidebar: false)
-            case .captureLane(let id):
+            }
+        case .captureLane(let id):
+            VStack(spacing: 0) {
+                masthead
                 CaptureLanesView(showsLaneSidebar: false, selectedDestinationId: id)
-            case .manageCommands:
+            }
+        case .manageCommands:
+            VStack(spacing: 0) {
+                masthead
                 CaptureLanesView(showsLaneSidebar: false, showsCommandRegistryOnly: true)
             }
         }
     }
 
-    // MARK: - Header
+    private var queuePage: some View {
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                masthead
+                captureHero
+                queueOrEmptyState
+            }
+            inspectorOverlay
+        }
+    }
 
-    private var inboxHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
+    // MARK: - Masthead (Command Center grammar)
+
+    private var masthead: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            HStack(alignment: .firstTextBaseline) {
                 Text("Inbox")
                     .font(DS.pageTitle)
                     .foregroundStyle(DS.text)
 
-                if visibleItemCount > 0 {
-                    Text("\(visibleItemCount) thought\(visibleItemCount == 1 ? "" : "s") waiting for a home")
-                        .font(DS.callout)
-                        .foregroundStyle(DS.textMuted)
-                        .contentTransition(.numericText())
-                }
+                Spacer()
+
+                lanesButton
             }
-            Spacer()
-            captureLanesToggle
-            viewToggle
+
+            if !viewModel.items.isEmpty {
+                Text(mastheadSubtitle)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
+                    .contentTransition(.numericText())
+            }
+
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 0.5)
+                .padding(.top, DS.space4)
         }
-        .padding(.horizontal, DS.space24)
-        .padding(.vertical, DS.space16)
+        // Same breathing room as the Command Center masthead — and clear of
+        // the floating sidebar toggle (32pt + 4pt inset) at the window's
+        // top-left when the sidebar is hidden.
+        .padding(.horizontal, DS.space32)
+        .padding(.top, DS.space36)
+        .padding(.bottom, DS.space10)
     }
 
-    private var visibleItemCount: Int {
-        viewModel.items.count + viewModel.unplacedDatabaseItems.count
+    private var mastheadSubtitle: String {
+        let total = viewModel.items.count
+        let suggested = viewModel.suggestedCount
+        var line = "\(total) capture\(total == 1 ? "" : "s")"
+        if suggested > 0 {
+            line += " · \(suggested) with suggested homes"
+        }
+        return line
     }
 
-    private var captureLanesToggle: some View {
+    private var lanesButton: some View {
         Button {
             withAnimation(ProMotionSprings.snappy) {
-                route = isShowingCaptureLanes ? .global : .captureLanes
+                route = route == .global ? .captureLanes : .global
             }
         } label: {
-            Label("Lanes", systemImage: "tray.2")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isShowingCaptureLanes ? DS.textOnAccent : DS.textSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(isShowingCaptureLanes ? DS.accent : DS.surface, in: .rect(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isShowingCaptureLanes ? DS.borderActive : DS.border, lineWidth: 1)
-                )
+            Label(route == .global ? "Lanes" : "Queue", systemImage: route == .global ? "tray.2" : "tray")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space6)
+                .background(DS.glassSectionFill, in: .capsule)
+                .overlay(Capsule().strokeBorder(DS.borderSubtle, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
+        .help(route == .global ? "Capture lanes" : "Back to the queue")
     }
 
-    private var isShowingCaptureLanes: Bool {
-        route != .global
-    }
+    // MARK: - Capture hero
 
-    private var viewToggle: some View {
-        HStack(spacing: 3) {
-            ForEach(InboxViewMode.allCases, id: \.rawValue) { mode in
-                Button {
-                    viewModel.setViewMode(mode)
-                } label: {
-                    Label(mode.title, systemImage: mode.icon)
-                        .font(.system(size: 12, weight: .semibold))
-                        .labelStyle(.titleAndIcon)
-                        .foregroundStyle(viewModel.viewMode == mode ? DS.textOnAccent : DS.textSecondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            viewModel.viewMode == mode ? DS.accent : Color.clear,
-                            in: .rect(cornerRadius: 8)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(DS.surface, in: .rect(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
-        )
-    }
-
-    // MARK: - Capture Bar
-
-    private var captureBar: some View {
+    private var captureHero: some View {
         InboxCaptureBar(viewModel: viewModel)
-            .padding(.horizontal, DS.space24)
-            .padding(.bottom, DS.space12)
+            .padding(.horizontal, DS.space32)
+            .padding(.top, DS.space6)
+            .padding(.bottom, DS.space10)
     }
 
-    // MARK: - Stats & Filters
-
-    private var statsAndFilters: some View {
-        InboxStatsBar(viewModel: viewModel)
-    }
-
-    // MARK: - Items or Empty State
+    // MARK: - Queue
 
     @ViewBuilder
-    private var itemsOrEmptyState: some View {
-        if visibleItemCount == 0 {
-            emptyState
-        } else if viewModel.viewMode == .canvas || viewModel.items.isEmpty {
-            InboxSpatialCanvasView(viewModel: viewModel)
+    private var queueOrEmptyState: some View {
+        if viewModel.items.isEmpty {
+            InboxEmptyState(viewModel: viewModel)
         } else {
-            itemsList
+            queueList
         }
     }
 
-    // MARK: - Items List (Sectioned)
-
-    private var itemsList: some View {
+    private var queueList: some View {
         ScrollView {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                groupSuggestions
                 ForEach(viewModel.groupedItems) { section in
                     Section {
-                        sectionItems(section)
+                        sectionRows(section)
                     } header: {
-                        InboxSectionHeader(
-                            title: section.title,
-                            itemCount: section.items.count
-                        )
+                        InboxSectionHeader(title: section.title, itemCount: section.items.count)
                     }
                 }
             }
-            .padding(.bottom, viewModel.isMultiSelectActive ? 80 : DS.space16)
+            // Rows sit slightly inside the masthead margin — the same
+            // title-to-content rhythm as the Today page's task list.
+            .padding(.horizontal, DS.space24)
+            .padding(.bottom, viewModel.isMultiSelectActive ? 88 : DS.space24)
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
         .animation(ProMotionSprings.gentle, value: viewModel.groupedItemsIdentity)
     }
 
-    @ViewBuilder
-    private var groupSuggestions: some View {
-        ForEach(viewModel.itemGroups) { group in
-            InboxGroupSuggestionCard(
-                group: group,
-                onExecute: { Task { await viewModel.executeBatchGroup(group) } },
-                onDismiss: { viewModel.dismissGroup(group) }
-            )
-            .padding(.horizontal, DS.space24)
-            .padding(.vertical, DS.space4)
-            .transition(.asymmetric(
-                insertion: .opacity.combined(with: .move(edge: .top)),
-                removal: .opacity
-            ))
-        }
-    }
-
-    private func sectionItems(_ section: InboxSection) -> some View {
+    private func sectionRows(_ section: InboxSection) -> some View {
         ForEach(Array(section.items.enumerated()), id: \.element.uuid) { index, item in
-            InboxItemCard(
+            InboxQueueRow(
                 item: item,
-                isProcessing: viewModel.processingItemIds.contains(item.uuid),
-                isExpanded: viewModel.isExpanded(item),
-                isSelected: viewModel.selectedItemIds.contains(item.uuid),
                 isFocused: viewModel.focusedItemId == item.uuid,
-                insight: viewModel.itemInsights[item.uuid],
+                isSelected: viewModel.selectedItemIds.contains(item.uuid),
+                isProcessing: viewModel.processingItemIds.contains(item.uuid),
+                onOpen: { viewModel.focusItem(item) },
                 onAccept: { Task { await viewModel.acceptSuggestion(for: item) } },
-                onOverride: { viewModel.showOverride(for: item) },
                 onDismiss: { Task { await viewModel.dismiss(item: item) } },
-                onToggleExpand: { viewModel.toggleExpanded(for: item) },
                 onToggleSelect: { viewModel.toggleSelection(for: item) }
             )
-            .padding(.horizontal, DS.space24)
-            .padding(.vertical, DS.space4)
             .transition(.asymmetric(
                 insertion: .opacity.combined(with: .move(edge: .top)),
-                removal: .opacity.combined(with: .scale(scale: 0.95))
+                removal: .opacity.combined(with: .scale(scale: 0.97))
             ))
-            .animation(
-                ProMotionSprings.staggered(index: index),
-                value: item.uuid
-            )
-            .onAppear { viewModel.markReadIfNeeded(item) }
-            .onTapGesture(count: 1) {
-                if NSEvent.modifierFlags.contains(.command) {
-                    viewModel.toggleSelection(for: item)
-                }
-            }
+            .animation(ProMotionSprings.staggered(index: min(index, 8)), value: item.uuid)
         }
     }
 
-    // MARK: - Batch Bar Overlay
+    // MARK: - Inspector
+
+    @ViewBuilder
+    private var inspectorOverlay: some View {
+        if viewModel.isInspectorOpen, let item = viewModel.focusedItem {
+            InboxInspector(item: item, viewModel: viewModel)
+                .padding(.trailing, DS.space16)
+                .padding(.top, 96)
+                .padding(.bottom, DS.space16)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
+    }
+
+    // MARK: - Batch bar & undo toast
 
     @ViewBuilder
     private var batchBarOverlay: some View {
@@ -257,71 +218,153 @@ struct InboxView: View {
     @ViewBuilder
     private var undoToastOverlay: some View {
         if viewModel.showUndoToast {
-            HStack(spacing: 10) {
-                Image(systemName: "arrow.uturn.backward.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(DS.accent)
-
-                Text(viewModel.undoToastMessage)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-
-                Spacer(minLength: 8)
-
-                Button("Undo") {
-                    Task { await viewModel.undoLastInboxAction() }
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .buttonStyle(.plain)
-                .foregroundStyle(DS.accent)
-
-                Button {
-                    viewModel.dismissUndoToast()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                    .stroke(DS.border, lineWidth: 1)
-            )
-            .padding(.horizontal, DS.space24)
-            .padding(.bottom, viewModel.isMultiSelectActive ? 92 : DS.space20)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            InboxUndoToast(viewModel: viewModel)
+                .padding(.horizontal, DS.space24)
+                .padding(.bottom, viewModel.isMultiSelectActive ? 92 : DS.space20)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 
-    // MARK: - Override Sheet
+    // MARK: - Override sheet
 
     @ViewBuilder
     private var overrideSheet: some View {
         if let item = viewModel.overrideItem {
-            InboxOverrideSheet(
-                item: item,
-                viewModel: viewModel
-            )
+            InboxOverrideSheet(item: item, viewModel: viewModel)
         }
     }
+}
 
-    // MARK: - Empty State
+// MARK: - Keyboard model
 
-    private var emptyState: some View {
+/// The whole queue is clearable without the mouse:
+/// ↑↓ move · ⏎ accept · ⌘⏎ place & go · ⌫ dismiss · space quick-look ·
+/// T task · A ask · I idea · C connect · esc close/deselect · ⌘A select all.
+private struct InboxKeyboardModel: ViewModifier {
+    let viewModel: InboxViewModel
+
+    func body(content: Content) -> some View {
+        content
+            .onKeyPress(.upArrow) {
+                guard !viewModel.isCaptureFieldFocused else { return .ignored }
+                viewModel.moveFocusUp()
+                return .handled
+            }
+            .onKeyPress(.downArrow) {
+                guard !viewModel.isCaptureFieldFocused else { return .ignored }
+                viewModel.moveFocusDown()
+                return .handled
+            }
+            .onKeyPress(.return) {
+                guard !viewModel.isCaptureFieldFocused, viewModel.focusedItem != nil else { return .ignored }
+                Task { await viewModel.acceptFocused() }
+                return .handled
+            }
+            .onKeyPress(.delete) {
+                guard !viewModel.isCaptureFieldFocused, viewModel.focusedItem != nil else { return .ignored }
+                Task { await viewModel.dismissFocused() }
+                return .handled
+            }
+            .onKeyPress(.space) {
+                guard !viewModel.isCaptureFieldFocused, viewModel.focusedItem != nil else { return .ignored }
+                viewModel.toggleInspectorForFocused()
+                return .handled
+            }
+            .onKeyPress(.escape) {
+                if viewModel.isInspectorOpen {
+                    viewModel.closeInspector()
+                } else {
+                    viewModel.deselectAll()
+                }
+                return .handled
+            }
+            .onKeyPress(KeyEquivalent("t")) { runVerb { await viewModel.makeTask($0) } }
+            .onKeyPress(KeyEquivalent("a")) { runVerb { await viewModel.askInDeepDive($0) } }
+            .onKeyPress(KeyEquivalent("i")) { runVerb { await viewModel.fileAsIdea($0) } }
+            .onKeyPress(KeyEquivalent("c")) { runVerb { await viewModel.connectCapture($0) } }
+            .background {
+                Button("") { viewModel.selectAll() }
+                    .keyboardShortcut("a", modifiers: .command)
+                    .hidden()
+                Button("") {
+                    if let item = viewModel.focusedItem {
+                        Task { await viewModel.placeAndGo(item) }
+                    }
+                }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .hidden()
+            }
+    }
+
+    private func runVerb(_ verb: @escaping (InboxItem) async -> Void) -> KeyPress.Result {
+        guard !viewModel.isCaptureFieldFocused, let item = viewModel.focusedItem else { return .ignored }
+        Task { await verb(item) }
+        viewModel.moveFocusDown()
+        return .handled
+    }
+}
+
+// MARK: - Undo toast
+
+private struct InboxUndoToast: View {
+    @Bindable var viewModel: InboxViewModel
+
+    var body: some View {
+        HStack(spacing: DS.space10) {
+            Image(systemName: "arrow.uturn.backward.circle.fill")
+                .font(DS.callout)
+                .foregroundStyle(DS.accent)
+                .accessibilityHidden(true)
+
+            Text(viewModel.undoToastMessage)
+                .font(DS.subheadline.weight(.medium))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+
+            Spacer(minLength: DS.space8)
+
+            Button("Undo") {
+                Task { await viewModel.undoLastInboxAction() }
+            }
+            .font(DS.subheadline.weight(.semibold))
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.accent)
+            .keyboardShortcut("z", modifiers: .command)
+
+            Button {
+                viewModel.dismissUndoToast()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(DS.caption2.weight(.medium))
+                    .foregroundStyle(DS.textMuted)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss notification")
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+        .frame(maxWidth: 420)
+        .glassEffect(.regular, in: .capsule)
+    }
+}
+
+// MARK: - Empty state
+
+private struct InboxEmptyState: View {
+    let viewModel: InboxViewModel
+
+    var body: some View {
         ScrollView {
             VStack(spacing: DS.space24) {
-                Spacer(minLength: DS.space32)
+                Spacer(minLength: DS.space48)
 
-                emptyStateIcon
-                emptyStateCopy
-                howToCaptureCard
+                if viewModel.triagedThisWeek > 0 {
+                    inboxZero
+                } else {
+                    firstRun
+                }
+
                 recentActivitySection
-                weeklyStats
 
                 Spacer(minLength: DS.space32)
             }
@@ -330,70 +373,41 @@ struct InboxView: View {
         }
     }
 
-    private var emptyStateIcon: some View {
-        Image(systemName: "tray")
-            .font(.system(size: 40, weight: .thin))
-            .foregroundStyle(DS.textMuted.opacity(0.5))
-    }
-
-    private var emptyStateCopy: some View {
+    private var inboxZero: some View {
         VStack(spacing: DS.space8) {
-            Text("Your inbox is clear")
+            Image(systemName: "tray")
+                .font(DS.displaySerif)
+                .foregroundStyle(DS.gilt)
+                .accessibilityHidden(true)
+
+            Text("Inbox zero")
                 .font(DS.title2)
                 .foregroundStyle(DS.text)
 
-            Text("Thoughts, ideas, and captures land here for triage.")
+            Text("\(viewModel.triagedThisWeek) capture\(viewModel.triagedThisWeek == 1 ? "" : "s") placed this week.")
                 .font(DS.callout)
-                .foregroundStyle(DS.textMuted)
-                .multilineTextAlignment(.center)
+                .foregroundStyle(DS.textSecondary)
+                .contentTransition(.numericText())
         }
     }
 
-    private var howToCaptureCard: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            Text("How to Capture")
-                .dsSmallCapsLabel()
+    private var firstRun: some View {
+        VStack(spacing: DS.space16) {
+            VStack(spacing: DS.space8) {
+                Image(systemName: "tray")
+                    .font(DS.displaySerif)
+                    .foregroundStyle(DS.textMuted.opacity(0.5))
+                    .accessibilityHidden(true)
 
-            captureMethodRow(
-                icon: "paperplane.fill",
-                label: "Telegram",
-                detail: "Send anything to your Cosmo bot"
-            )
-            captureMethodRow(
-                icon: "text.cursor",
-                label: "Prefix",
-                detail: "inbox: your thought here"
-            )
-            captureMethodRow(
-                icon: "plus.circle",
-                label: "Capture bar",
-                detail: "Type above to capture instantly"
-            )
-        }
-        .padding(DS.space16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .frame(maxWidth: 360)
-    }
-
-    private func captureMethodRow(icon: String, label: String, detail: String) -> some View {
-        HStack(spacing: DS.space10) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundStyle(DS.accent)
-                .frame(width: 24, height: 24)
-                .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 6))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label)
-                    .font(.system(size: 13, weight: .medium))
+                Text("Captures land here")
+                    .font(DS.title2)
                     .foregroundStyle(DS.text)
-                Text(detail)
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
+
+                Text("Send anything to your Telegram bot, prefix a message with “inbox:”, or type in the field above — then place each thought with a single keystroke.")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
             }
         }
     }
@@ -402,55 +416,33 @@ struct InboxView: View {
     private var recentActivitySection: some View {
         if !viewModel.recentHistory.isEmpty {
             VStack(alignment: .leading, spacing: DS.space8) {
-                Text("Recent Activity")
+                Text("Recently placed")
                     .dsSmallCapsLabel()
 
                 ForEach(viewModel.recentHistory) { item in
-                    recentHistoryRow(item)
+                    HStack(spacing: DS.space8) {
+                        Image(systemName: item.status == .actioned ? "checkmark.circle.fill" : "xmark.circle")
+                            .font(DS.caption)
+                            .foregroundStyle(item.status == .actioned ? DS.accent : DS.textMuted)
+                            .accessibilityHidden(true)
+
+                        Text(item.title ?? String(item.rawText.prefix(40)))
+                            .font(DS.callout)
+                            .foregroundStyle(DS.textSecondary)
+                            .lineLimit(1)
+
+                        Spacer()
+
+                        if item.status == .actioned, let destination = item.destinationPath ?? item.placeThinkspaceName {
+                            Text(destination)
+                                .font(DS.caption)
+                                .foregroundStyle(DS.textMuted)
+                                .lineLimit(1)
+                        }
+                    }
                 }
             }
-            .frame(maxWidth: 360, alignment: .leading)
+            .frame(maxWidth: 420, alignment: .leading)
         }
-    }
-
-    private func recentHistoryRow(_ item: InboxItem) -> some View {
-        HStack(spacing: DS.space8) {
-            Image(systemName: item.status == .actioned ? "checkmark.circle.fill" : "xmark.circle")
-                .font(.system(size: 12))
-                .foregroundStyle(item.status == .actioned ? DS.accent : DS.textMuted)
-
-            Text(item.title ?? String(item.rawText.prefix(40)))
-                .font(DS.callout)
-                .foregroundStyle(DS.textSecondary)
-                .lineLimit(1)
-
-            Spacer()
-
-            if let actionedAt = item.actionedAt {
-                Text(relativeTime(from: actionedAt))
-                    .font(DS.footnote)
-                    .foregroundStyle(DS.textMuted)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var weeklyStats: some View {
-        if viewModel.triagedThisWeek > 0 {
-            Text("This week: \(viewModel.triagedThisWeek) items triaged")
-                .font(DS.callout)
-                .foregroundStyle(DS.textMuted)
-                .contentTransition(.numericText())
-        }
-    }
-
-    // MARK: - Helpers
-
-    private func relativeTime(from dateStr: String) -> String {
-        guard let date = ISO8601.date(from: dateStr) else { return "" }
-        let interval = Date().timeIntervalSince(date)
-        if interval < 3600 { return "\(Int(interval / 60))m ago" }
-        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
-        return "\(Int(interval / 86400))d ago"
     }
 }

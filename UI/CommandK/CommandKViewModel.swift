@@ -1822,7 +1822,14 @@ public final class CommandKViewModel {
             // Warm the swipe/idea galleries so the first keystroke's unified
             // pass can match against them instead of waiting for enrichment.
             Task { @MainActor [weak self] in
-                await self?.preloadUnifiedSearchSupportData()
+                // When the index is already warm this preload is a background
+                // refinement — hold it past the open spring so its result
+                // application can't drop animation frames.
+                if self?.searchIndexLoaded == true {
+                    try? await Task.sleep(for: .milliseconds(320))
+                }
+                guard let self, self.isSurfaceActive else { return }
+                await self.preloadUnifiedSearchSupportData()
             }
         } else {
             searchTask?.cancel()
@@ -1863,8 +1870,8 @@ public final class CommandKViewModel {
         querySyncToken &+= 1
     }
 
-    private func prewarmSearchIndexIfNeeded(force: Bool = false) {
-        guard isSurfaceActive else { return }
+    private func prewarmSearchIndexIfNeeded(force: Bool = false, ignoringSurface: Bool = false) {
+        guard isSurfaceActive || ignoringSurface else { return }
         guard force || !searchIndexLoaded else { return }
 
         searchIndexTask?.cancel()
@@ -1876,13 +1883,13 @@ public final class CommandKViewModel {
             }
             do {
                 let atoms = try await AtomRepository.shared.fetchRecent(limit: 10_000)
-                guard !Task.isCancelled, self.isSurfaceActive else { return }
+                guard !Task.isCancelled, self.isSurfaceActive || ignoringSurface else { return }
                 // Normalizing 10k full-text bodies is too heavy for the main
                 // actor — build the entries on a background task.
                 let entries = await Task.detached(priority: .userInitiated) {
                     CommandKSearchIndex.entries(for: atoms)
                 }.value
-                guard !Task.isCancelled, self.isSurfaceActive else { return }
+                guard !Task.isCancelled, self.isSurfaceActive || ignoringSurface else { return }
                 self.searchIndex.replace(entries)
                 self.searchIndexLoaded = true
             } catch {
@@ -3117,8 +3124,8 @@ public final class CommandKViewModel {
     }
 
     /// Load recent atoms for compact mode display
-    public func loadRecentsForCompact() async {
-        guard isSurfaceActive else { return }
+    public func loadRecentsForCompact(ignoringSurface: Bool = false) async {
+        guard isSurfaceActive || ignoringSurface else { return }
         do {
             let openedAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 24)
             let opened = openedAtoms.map {
@@ -3170,6 +3177,10 @@ public final class CommandKViewModel {
     /// Cached total database atom count (loaded on init)
     public var databaseTotalCount: Int = 0
 
+    /// Whether recents/counts have completed at least one full load (launch
+    /// prewarm or a prior open), making the on-open reload a quiet refresh.
+    private var hasWarmDomainData = false
+
     /// Domain item counts for bubbles
     public var domainCounts: [CommandKTab: Int] {
         domainPresentation.counts
@@ -3195,26 +3206,26 @@ public final class CommandKViewModel {
     }
 
     /// Load the total database atom count for bubble display
-    private func loadDatabaseCount() async {
-        guard isSurfaceActive else { return }
+    private func loadDatabaseCount(ignoringSurface: Bool = false) async {
+        guard isSurfaceActive || ignoringSurface else { return }
         do {
             if ThinkspaceManager.shared.thinkspaces.isEmpty {
                 await ThinkspaceManager.shared.loadThinkspaces()
             }
-            async let atomsRequest = AtomRepository.shared.fetchAll(types: CommandKLibraryScope.databaseAtomTypes)
+            async let databaseAtomCountRequest = AtomRepository.shared.count(types: CommandKLibraryScope.databaseAtomTypes)
             async let swipeCountRequest = AtomRepository.shared.countSwipeFiles()
             async let ideaCountRequest = AtomRepository.shared.count(type: .idea)
             async let deepDiveRequest = InquiryRepository.shared.fetchAllDeepDives()
-            let (atoms, swipeCount, ideaCount, deepDives) = try await (
-                atomsRequest,
+            let (databaseAtomCount, swipeCount, ideaCount, deepDives) = try await (
+                databaseAtomCountRequest,
                 swipeCountRequest,
                 ideaCountRequest,
                 deepDiveRequest
             )
-            databaseTotalCount = CommandKLibraryScope.databaseItemCount(
-                atoms: atoms,
-                thinkspaceCount: ThinkspaceManager.shared.sidebarThinkspaces.count
-            )
+            // Swipe files are research atoms, so they're inside databaseAtomCount;
+            // the library bubble excludes them (they have their own domain tab).
+            databaseTotalCount = max(0, databaseAtomCount - swipeCount)
+                + ThinkspaceManager.shared.sidebarThinkspaces.count
             swipeTotalCount = swipeCount
             ideaTotalCount = ideaCount
             deepDiveTotalCount = deepDives.count
@@ -3237,11 +3248,32 @@ public final class CommandKViewModel {
         } else {
             cortexMode = .compact
             Task {
+                // Stale-while-revalidate: when warm data is already on screen
+                // (launch prewarm or a previous open), hold the refresh until
+                // the open spring has settled so no @Observable mutation —
+                // recents, counts, domain previews — lands mid-animation.
+                if hasWarmDomainData {
+                    try? await Task.sleep(for: .milliseconds(320))
+                    guard isSurfaceActive else { return }
+                }
                 async let recents: Void = loadRecentsForCompact()
                 async let counts: Void = loadDatabaseCount()
                 _ = await (recents, counts)
+                hasWarmDomainData = true
             }
         }
+    }
+
+    /// Warm the search index, recents, and domain counts once at app launch so
+    /// the first Command-K open animates over preloaded state instead of
+    /// running its initial queries during the open spring.
+    public func prewarmForAppLaunch() async {
+        guard !hasWarmDomainData else { return }
+        prewarmSearchIndexIfNeeded(ignoringSurface: true)
+        async let recents: Void = loadRecentsForCompact(ignoringSurface: true)
+        async let counts: Void = loadDatabaseCount(ignoringSurface: true)
+        _ = await (recents, counts)
+        hasWarmDomainData = true
     }
 
     /// Relative time string from stored access timestamps.

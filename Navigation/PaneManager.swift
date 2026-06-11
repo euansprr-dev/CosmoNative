@@ -98,12 +98,15 @@ class PaneManager: ObservableObject {
 
     // MARK: - Published State
 
-    /// Ordered list of open panes (right column, top to bottom)
+    /// Ordered list of open panes (right column deck, in opening order)
     @Published var panes: [PaneContent] = []
 
-    /// Proportional height for each pane in the right column.
-    /// Count always matches `panes.count`. Values sum to 1.0.
-    @Published var paneSizes: [CGFloat] = []
+    /// The pane expanded to full reading width. Every other pane collapses to a spine.
+    @Published var focusedPaneId: String? = nil
+
+    /// Optional second pane kept expanded beside the focused one (60/40 split).
+    /// Pinning the focused pane keeps it visible while focus moves elsewhere.
+    @Published var pinnedPaneId: String? = nil
 
     /// Horizontal split ratio between left (main content) and right (pane column).
     /// 1.0 = full width (no panes visible). Animates to 0.5 when first pane opens.
@@ -119,11 +122,8 @@ class PaneManager: ObservableObject {
 
     // MARK: - Constants
 
-    /// Maximum number of simultaneous panes in the right column
-    let maxPanes: Int = 4
-
-    /// Minimum proportional height per pane (prevents panes from being too small)
-    private let minPaneSize: CGFloat = 0.15
+    /// Maximum number of simultaneous panes in the deck (spines are cheap)
+    let maxPanes: Int = 6
 
     /// Minimum/maximum main split ratio
     private let minMainRatio: CGFloat = 0.25
@@ -201,7 +201,9 @@ class PaneManager: ObservableObject {
 
         let isFirst = panes.isEmpty
         panes.append(content)
-        redistributeSizes()
+
+        // New panes open focused; the previous focus collapses to a spine
+        focusedPaneId = content.id
 
         // Auto-activate the newly opened pane
         activePaneId = content.id
@@ -221,7 +223,14 @@ class PaneManager: ObservableObject {
         let closedPane = panes[index]
         let closedId = closedPane.id
         panes.remove(at: index)
-        redistributeSizes()
+
+        if pinnedPaneId == closedId {
+            pinnedPaneId = nil
+        }
+        if focusedPaneId == closedId {
+            // Focus falls back to the most recently opened remaining pane
+            focusedPaneId = panes.last?.id
+        }
 
         if closedId == "collaborator" {
             Task { @MainActor in
@@ -268,15 +277,63 @@ class PaneManager: ObservableObject {
         closePane(at: panes.count - 1)
     }
 
+    /// Close the focused pane (Esc). Falls back to the most recent pane.
+    func closeFocusedPane() {
+        if let focusedPaneId,
+           let index = panes.firstIndex(where: { $0.id == focusedPaneId }) {
+            closePane(at: index)
+        } else {
+            closeLastPane()
+        }
+    }
+
     /// Close all panes and reset state.
     func closeAllPanes() {
         panes.removeAll()
-        paneSizes.removeAll()
+        focusedPaneId = nil
+        pinnedPaneId = nil
         withAnimation(ProMotionSprings.snappy) {
             mainSplitRatio = 1.0
         }
         activePaneId = nil
         contextOwnerPaneId = nil
+    }
+
+    // MARK: - Focus & Pin (deck model)
+
+    /// Expand a pane to reading width; everything else collapses to spines.
+    func focusPane(_ id: String) {
+        guard panes.contains(where: { $0.id == id }) else { return }
+        focusedPaneId = id
+        activatePane(id)
+    }
+
+    /// Focus the pane at a deck position (Cmd+Ctrl+1…6).
+    func focusPane(atPosition index: Int) {
+        guard panes.indices.contains(index) else { return }
+        focusPane(panes[index].id)
+    }
+
+    /// Cycle focus through the deck in opening order (Cmd+Shift+] / [).
+    func cycleFocus(forward: Bool) {
+        guard !panes.isEmpty else { return }
+        guard let current = focusedPaneId ?? panes.last?.id,
+              let index = panes.firstIndex(where: { $0.id == current }) else {
+            focusPane(panes[0].id)
+            return
+        }
+        let next = forward
+            ? (index + 1) % panes.count
+            : (index - 1 + panes.count) % panes.count
+        focusPane(panes[next].id)
+    }
+
+    /// Pin (or unpin) a pane so it stays expanded beside the focused one.
+    /// With no id, toggles the focused pane.
+    func togglePin(_ id: String? = nil) {
+        guard let target = id ?? focusedPaneId,
+              panes.contains(where: { $0.id == target }) else { return }
+        pinnedPaneId = (pinnedPaneId == target) ? nil : target
     }
 
     // MARK: - Active Pane Management
@@ -303,6 +360,7 @@ class PaneManager: ObservableObject {
         if let existingIndex = panes.firstIndex(where: { $0.id == collaborator.id }) {
             panes[existingIndex] = collaborator
             activePaneId = collaborator.id
+            focusedPaneId = collaborator.id
         } else {
             guard panes.count < maxPanes else { return }
             let isFirst = panes.isEmpty
@@ -313,8 +371,8 @@ class PaneManager: ObservableObject {
             } else {
                 panes.append(collaborator)
             }
-            redistributeSizes()
             activePaneId = collaborator.id
+            focusedPaneId = collaborator.id
 
             if isFirst {
                 withAnimation(ProMotionSprings.snappy) {
@@ -331,14 +389,15 @@ class PaneManager: ObservableObject {
 
         if panes.contains(where: { $0.id == cosmoWindow.id }) {
             activePaneId = cosmoWindow.id
+            focusedPaneId = cosmoWindow.id
             return
         }
 
         guard panes.count < maxPanes else { return }
         let isFirst = panes.isEmpty
         panes.append(cosmoWindow)
-        redistributeSizes()
         activePaneId = cosmoWindow.id
+        focusedPaneId = cosmoWindow.id
 
         if isFirst {
             withAnimation(ProMotionSprings.snappy) {
@@ -352,14 +411,15 @@ class PaneManager: ObservableObject {
 
         if panes.contains(where: { $0.id == assistant.id }) {
             activePaneId = assistant.id
+            focusedPaneId = assistant.id
             return
         }
 
         guard panes.count < maxPanes else { return }
         let isFirst = panes.isEmpty
         panes.append(assistant)
-        redistributeSizes()
         activePaneId = assistant.id
+        focusedPaneId = assistant.id
 
         if isFirst {
             withAnimation(ProMotionSprings.snappy) {
@@ -408,33 +468,6 @@ class PaneManager: ObservableObject {
         mainSplitRatio = max(minMainRatio, min(maxMainRatio, newRatio))
     }
 
-    /// Update a vertical divider between pane at `index` and `index + 1`.
-    func updateDivider(at index: Int, delta: CGFloat, totalHeight: CGFloat) {
-        guard totalHeight > 0 else { return }
-        guard index < paneSizes.count - 1 else { return }
-
-        let deltaRatio = delta / totalHeight
-        let newTop = paneSizes[index] + deltaRatio
-        let newBottom = paneSizes[index + 1] - deltaRatio
-
-        // Enforce minimum sizes
-        guard newTop >= minPaneSize, newBottom >= minPaneSize else { return }
-
-        paneSizes[index] = newTop
-        paneSizes[index + 1] = newBottom
-    }
-
-    // MARK: - Internal
-
-    /// Redistribute pane sizes evenly after add/remove.
-    private func redistributeSizes() {
-        let count = panes.count
-        guard count > 0 else {
-            paneSizes = []
-            return
-        }
-        paneSizes = Array(repeating: 1.0 / CGFloat(count), count: count)
-    }
 }
 
 // MARK: - Safe Array Subscript

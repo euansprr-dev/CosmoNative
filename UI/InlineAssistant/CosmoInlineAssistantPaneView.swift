@@ -41,45 +41,87 @@ private struct CosmoInlineAssistantPaneHeader: View {
 
     var body: some View {
         HStack(spacing: DS.space8) {
-            Image(systemName: "sparkle")
-                .font(DS.callout.weight(.semibold))
-                .foregroundStyle(store.phase.isWorking ? DS.accent : DS.textSecondary)
-                .symbolEffect(.pulse, options: .repeating, isActive: store.phase.isWorking)
-                .frame(width: 24, height: 24)
-                .accessibilityHidden(true)
+            orb
+            titleBlock
+            Spacer()
+            closeButton
+        }
+        .padding(.horizontal, DS.space16)
+        .frame(height: 52)
+    }
 
+    /// The orb wears the phase — same symbol vocabulary as the floating bar.
+    private var orb: some View {
+        Image(systemName: store.phase.symbolName)
+            .font(DS.caption.weight(.semibold))
+            .foregroundStyle(store.phase.isWorking ? DS.accent : DS.textSecondary)
+            .frame(width: 26, height: 26)
+            .background(store.phase.isWorking ? AnyShapeStyle(DS.accentSoft) : AnyShapeStyle(Color.clear), in: Circle())
+            .symbolEffect(.pulse, options: .repeating, isActive: store.phase.isWorking)
+            .contentTransition(.symbolEffect(.replace))
+            .animation(ProMotionSprings.snappy, value: store.phase.symbolName)
+            .accessibilityHidden(true)
+    }
+
+    /// "Cosmo" plus what it's looking at — the pane names its scope.
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 0) {
             Text("Cosmo")
                 .font(DS.headline)
                 .foregroundStyle(DS.text)
 
-            Spacer()
-
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(isCloseHovered ? DS.text : DS.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(isCloseHovered ? AnyShapeStyle(DS.surfaceHover) : AnyShapeStyle(Color.clear), in: Circle())
-                    .contentShape(Circle())
+            if let surfaceTitle = store.activeSurfaceTitle {
+                Text(surfaceTitle)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .lineLimit(1)
+                    .transition(.opacity)
             }
-            .buttonStyle(.plain)
-            .cosmoClickCursor()
-            .onHover { hovering in
-                withAnimation(ProMotionSprings.snappy) { isCloseHovered = hovering }
-            }
-            .keyboardShortcut(.escape, modifiers: [])
-            .help("Close assistant pane (Esc)")
-            .accessibilityLabel("Close assistant pane")
         }
-        .padding(.horizontal, DS.space16)
-        .frame(height: 48)
+        .animation(ProMotionSprings.gentle, value: store.activeSurfaceTitle)
+    }
+
+    private var closeButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(isCloseHovered ? DS.text : DS.textMuted)
+                .frame(width: 28, height: 28)
+                .background(isCloseHovered ? AnyShapeStyle(DS.surfaceHover) : AnyShapeStyle(Color.clear), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.snappy) { isCloseHovered = hovering }
+        }
+        .keyboardShortcut(.escape, modifiers: [])
+        .help("Close assistant pane (Esc)")
+        .accessibilityLabel("Close assistant pane")
     }
 }
 
 // MARK: - Messages
 
+/// Resolves skill IDs to definitions once and remembers the answer — registry
+/// lookups read GRDB, and message rows re-render on every streamed delta.
+@MainActor
+final class CosmoInlineSkillResolver {
+    private var cache: [String: CosmoInlineSkillDefinition?] = [:]
+    private let registry = CosmoInlineSkillRegistry()
+
+    func skill(id: String?) -> CosmoInlineSkillDefinition? {
+        guard let id else { return nil }
+        if let cached = cache[id] { return cached }
+        let resolved = registry.skill(id: id)
+        cache[id] = resolved
+        return resolved
+    }
+}
+
 private struct CosmoInlineAssistantPaneMessages: View {
     @ObservedObject var store: CosmoInlineAssistantStore
+    @State private var skillResolver = CosmoInlineSkillResolver()
 
     private static let bottomAnchorID = "pane-bottom-anchor"
 
@@ -116,7 +158,7 @@ private struct CosmoInlineAssistantPaneMessages: View {
                 statusText: store.statusText
            ) {
             CosmoInlineAssistantPaneEmptyState(store: store)
-                .frame(maxWidth: .infinity, minHeight: 280)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
                 .padding(DS.space16)
         } else {
             conversation
@@ -134,8 +176,11 @@ private struct CosmoInlineAssistantPaneMessages: View {
                 isProcessing: store.isProcessing,
                 statusText: store.statusText
             ) {
-                CosmoInlineAssistantPaneThinkingRow(store: store)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                CosmoInlineAssistantActivityTimelineView(
+                    steps: store.currentRunSteps,
+                    phase: store.phase
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .padding(DS.space16)
@@ -148,12 +193,22 @@ private struct CosmoInlineAssistantPaneMessages: View {
         if let proposalID = message.proposalID,
            let proposal = store.proposal(id: proposalID) {
             CosmoInlineAssistantPaneProposalCard(store: store, proposal: proposal)
+        } else if let inquiryProposalID = message.inquiryProposalID,
+                  let inquiryProposal = store.inquiryProposal(id: inquiryProposalID) {
+            CosmoInlineAssistantPaneInquiryCard(store: store, proposal: inquiryProposal)
         } else {
             switch message.role {
             case .user:
-                CosmoInlineAssistantPaneUserRow(message: message)
+                CosmoInlineAssistantPaneUserRow(
+                    message: message,
+                    skill: skillResolver.skill(id: message.skillID)
+                )
             case .assistant:
-                CosmoInlineAssistantPaneAnswerRow(message: message)
+                CosmoInlineAssistantPaneAnswerRow(
+                    message: message,
+                    isStreaming: store.isStreamingMessage(message.id),
+                    streamingRefs: store.isStreamingMessage(message.id) ? store.currentStreamingSourceRefs : []
+                )
             case .system:
                 CosmoInlineAssistantPaneSectionLabel(text: message.content)
             }
@@ -161,167 +216,141 @@ private struct CosmoInlineAssistantPaneMessages: View {
     }
 }
 
-// MARK: - Empty state
-
-private struct CosmoInlineAssistantPaneEmptyState: View {
-    @ObservedObject var store: CosmoInlineAssistantStore
-
-    private static let starters: [(label: String, prompt: String)] = [
-        ("Review this draft", "Give me honest feedback on this draft — what's working, what's weak?"),
-        ("Search my brain", "What have I saved about "),
-        ("Synthesize", "/Synthesize ")
-    ]
-
-    var body: some View {
-        VStack(spacing: DS.space12) {
-            Image(systemName: "sparkle.magnifyingglass")
-                .font(DS.pageTitle)
-                .foregroundStyle(DS.textMuted)
-                .accessibilityHidden(true)
-
-            Text("Ask about the active workspace")
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
-
-            Text("Answers open here with their sources. Edit requests stage as reviewable diffs right in the document.")
-                .font(DS.subheadline)
-                .foregroundStyle(DS.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 280)
-
-            HStack(spacing: DS.space6) {
-                ForEach(Self.starters, id: \.label) { starter in
-                    CosmoInlineAssistantStarterChip(label: starter.label) {
-                        store.composerText = starter.prompt
-                    }
-                }
-            }
-            .padding(.top, DS.space4)
-        }
-        .accessibilityElement(children: .contain)
-    }
-}
-
-private struct CosmoInlineAssistantStarterChip: View {
-    let label: String
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(DS.caption.weight(.medium))
-                .foregroundStyle(isHovered ? DS.accent : DS.textSecondary)
-                .padding(.horizontal, DS.space12)
-                .padding(.vertical, DS.space6)
-                .background(isHovered ? AnyShapeStyle(DS.accentSoft) : AnyShapeStyle(DS.surface), in: Capsule())
-                .overlay {
-                    Capsule().strokeBorder(isHovered ? DS.accent.opacity(0.3) : DS.borderSubtle, lineWidth: 1)
-                }
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .cosmoClickCursor()
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.snappy) { isHovered = hovering }
-        }
-        .help("Start with this prompt")
-        .accessibilityLabel("Use starter prompt: \(label)")
-    }
-}
-
-// MARK: - Thinking row
-
-/// The phase made visible: same symbol vocabulary as the orb, narrated with the
-/// verb-first status grammar. One quiet row, no card weight.
-private struct CosmoInlineAssistantPaneThinkingRow: View {
-    @ObservedObject var store: CosmoInlineAssistantStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        HStack(spacing: DS.space8) {
-            Image(systemName: phaseSymbol)
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 26, height: 26)
-                .background(DS.accentSoft, in: Circle())
-                .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
-                .contentTransition(.symbolEffect(.replace))
-                .accessibilityHidden(true)
-
-            Text(statusLabel)
-                .font(DS.subheadline.weight(.medium))
-                .foregroundStyle(DS.textSecondary)
-                .contentTransition(.opacity)
-                .animation(ProMotionSprings.gentle, value: statusLabel)
-                .lineLimit(1)
-
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Cosmo is working: \(statusLabel)")
-    }
-
-    private var statusLabel: String {
-        CosmoInlineAssistantPaneProgressPolicy.statusLabel(
-            isProcessing: store.isProcessing,
-            statusText: store.statusText
-        )
-    }
-
-    private var phaseSymbol: String {
-        switch store.phase {
-        case .idle, .planning: return "sparkles"
-        case .gathering: return "magnifyingglass"
-        case .drafting: return "pencil.and.outline"
-        case .reviewing: return "checkmark.circle"
-        }
-    }
-}
-
 // MARK: - Message rows
 
-/// User prompts: a compact, warm chip — quiet context, never the hero.
+/// User prompts: a compact, warm chip — quiet context, never the hero. Runs
+/// handled by a skill wear it as a small route-tinted badge.
 private struct CosmoInlineAssistantPaneUserRow: View {
     let message: CosmoInlineAssistantPaneMessage
+    var skill: CosmoInlineSkillDefinition? = nil
 
     var body: some View {
-        Text(message.content)
-            .font(DS.callout)
-            .foregroundStyle(DS.text)
-            .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space8)
-            .background(DS.accentSoft, in: .rect(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(DS.accent.opacity(0.14), lineWidth: 1)
+        VStack(alignment: .leading, spacing: DS.space4) {
+            if let skill {
+                CosmoInlineAssistantSkillBadge(skill: skill)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel("You asked: \(message.content)")
+
+            Text(message.content)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space8)
+                .background(DS.accentSoft, in: .rect(cornerRadius: 12))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(DS.accent.opacity(0.14), lineWidth: 1)
+                }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        if let skill {
+            return "You asked with \(skill.name): \(message.content)"
+        }
+        return "You asked: \(message.content)"
+    }
+}
+
+/// The skill a run wore: icon + name + route, tinted by what it does (edits
+/// stage green, answers open blue) — same vocabulary as the slash menu.
+struct CosmoInlineAssistantSkillBadge: View {
+    let skill: CosmoInlineSkillDefinition
+
+    private var tint: Color {
+        skill.route == .action ? DS.green : DS.info
+    }
+
+    var body: some View {
+        HStack(spacing: DS.space4) {
+            Image(systemName: skill.icon)
+                .font(DS.caption2.weight(.semibold))
+                .accessibilityHidden(true)
+            Text(skill.name)
+                .font(DS.caption2.weight(.semibold))
+                .lineLimit(1)
+            Text(skill.route == .action ? "· Edits" : "· Answers")
+                .font(DS.caption2.weight(.medium))
+                .opacity(0.7)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, DS.space8)
+        .frame(height: 20)
+        .background(tint.opacity(0.10), in: Capsule())
+        .accessibilityLabel("Skill: \(skill.name), \(skill.route == .action ? "stages edits" : "answers")")
     }
 }
 
 /// Assistant answers: the hero. Plain prose on the page — no card, no border —
-/// with a reading measure and its source receipts underneath.
+/// with its work receipt above, inline document pills in the prose, and any
+/// sources it didn't cite inline as a quiet "Also read" row underneath.
 private struct CosmoInlineAssistantPaneAnswerRow: View {
     let message: CosmoInlineAssistantPaneMessage
+    let isStreaming: Bool
+    var streamingRefs: [CosmoAssistantSourceRef] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            Text(message.content)
-                .font(DS.body)
-                .foregroundStyle(DS.text)
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .frame(maxWidth: 620, alignment: .leading)
-
-            if let refs = message.sourceRefs, !refs.isEmpty {
-                CosmoInlineAssistantSourceChips(refs: refs)
+            if let steps = message.activitySteps, !steps.isEmpty {
+                CosmoInlineAssistantActivityReceiptView(
+                    steps: steps,
+                    sourceCount: message.sourceRefs?.count ?? 0
+                )
             }
+
+            answerBody
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var answerBody: some View {
+        if isStreaming {
+            streamingText
+        } else {
+            CosmoInlineAssistantFinalizedAnswerBody(message: message)
+                // The streaming→rich swap must not animate — same font,
+                // spacing, and measure on both sides keeps it invisible.
+                .transaction { $0.animation = nil }
+        }
+    }
+
+    private var streamingText: some View {
+        Text(CosmoAssistantProseParser.streamingDisplayText(for: message.content, sourceRefs: streamingRefs))
+            .font(DS.body)
+            .foregroundStyle(DS.text)
+            .lineSpacing(3)
+            .textSelection(.enabled)
+            .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
+    }
+}
+
+/// Finalized answers parse once into prose + pills; the TextKit view renders
+/// pills with the composer's own pill cell, so citations read as mentions.
+private struct CosmoInlineAssistantFinalizedAnswerBody: View {
+    let message: CosmoInlineAssistantPaneMessage
+
+    private var parsed: CosmoAssistantProseParseResult {
+        CosmoAssistantProseParser.parse(answer: message.content, sourceRefs: message.sourceRefs)
+    }
+
+    var body: some View {
+        let result = parsed
+        VStack(alignment: .leading, spacing: DS.space8) {
+            CosmoAssistantProseTextView(segments: result.segments)
+                .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
+
+            let remainder = (message.sourceRefs ?? []).filter { !result.linkedRefUUIDs.contains($0.uuid) }
+            if !remainder.isEmpty {
+                CosmoInlineAssistantSourceChips(
+                    refs: remainder,
+                    label: result.linkedRefUUIDs.isEmpty ? "Sources" : "Also read"
+                )
+            }
+        }
     }
 }
 
@@ -346,10 +375,11 @@ private struct CosmoInlineAssistantPaneSectionLabel: View {
 /// its receipts, and a click opens the atom for verification.
 private struct CosmoInlineAssistantSourceChips: View {
     let refs: [CosmoAssistantSourceRef]
+    var label = "Sources"
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space4) {
-            Text("Sources")
+            Text(label)
                 .font(DS.caption2.weight(.semibold))
                 .foregroundStyle(DS.textMuted)
                 .textCase(.uppercase)
@@ -358,7 +388,7 @@ private struct CosmoInlineAssistantSourceChips: View {
             FlexibleChipRows(refs: refs)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Sources Cosmo read: \(refs.map(\.title).joined(separator: ", "))")
+        .accessibilityLabel("\(label): \(refs.map(\.title).joined(separator: ", "))")
     }
 }
 
@@ -425,10 +455,33 @@ private struct SourceChip: View {
 
 // MARK: - Proposal card
 
+/// Maps a proposal's surface onto the entity tint vocabulary so the card wears
+/// the color of the document it edits, like every other chip in the app.
+enum CosmoInlineAssistantSurfaceTint {
+    static func color(forSurfaceID surfaceID: String) -> Color {
+        let prefix = surfaceID.split(separator: ":").first.map(String.init) ?? ""
+        let entity: EntityType
+        switch prefix {
+        case "note": entity = .note
+        case "idea": entity = .idea
+        case "content", "slide": entity = .content
+        case "connection": entity = .connection
+        case "canvas", "thinkspace": entity = .thinkspace
+        case "research": entity = .research
+        default: return DS.accent
+        }
+        return CosmoMentionColors.color(for: entity)
+    }
+}
+
 private struct CosmoInlineAssistantPaneProposalCard: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     let proposal: CosmoAssistantProposal
     @State private var isReviewExpanded = false
+
+    private var surfaceTint: Color {
+        CosmoInlineAssistantSurfaceTint.color(forSurfaceID: proposal.surfaceID)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -449,7 +502,7 @@ private struct CosmoInlineAssistantPaneProposalCard: View {
             RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(DS.borderSubtle, lineWidth: 1)
         }
-        .animation(ProMotionSprings.gentle, value: isReviewExpanded)
+        .animation(ProMotionSprings.focusTransition, value: isReviewExpanded)
         .accessibilityElement(children: .contain)
     }
 
@@ -457,9 +510,9 @@ private struct CosmoInlineAssistantPaneProposalCard: View {
         HStack(alignment: .center, spacing: DS.space12) {
             Image(systemName: "text.badge.checkmark")
                 .font(DS.callout.weight(.semibold))
-                .foregroundStyle(DS.accent)
+                .foregroundStyle(surfaceTint)
                 .frame(width: 32, height: 32)
-                .background(DS.accentSoft, in: .rect(cornerRadius: 9))
+                .background(surfaceTint.opacity(0.12), in: .rect(cornerRadius: 9))
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -559,6 +612,168 @@ private struct CosmoInlineAssistantPaneProposalCard: View {
     }
 }
 
+// MARK: - Inquiry question card
+
+/// The "open an inquiry?" confirmation card: when concept conversation hits a
+/// genuine unknown, the staged question renders here with its concrete
+/// destination. Confirming jumps straight into the deep-dive session; the card
+/// stays in the conversation as a receipt either way.
+private struct CosmoInlineAssistantPaneInquiryCard: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+    let proposal: CosmoAssistantInquiryQuestionProposal
+    @State private var isStarting = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            if let rationale = proposal.rationale, !rationale.isEmpty {
+                Divider().overlay(DS.borderSubtle)
+                rationaleRow(rationale)
+            }
+            Divider().overlay(DS.borderSubtle)
+            footer
+        }
+        .background(DS.surfaceCard, in: .rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(DS.borderSubtle, lineWidth: 1)
+        }
+        .animation(ProMotionSprings.gentle, value: proposal.status)
+        .animation(ProMotionSprings.gentle, value: isStarting)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: DS.space12) {
+            Image(systemName: "questionmark.bubble")
+                .font(DS.callout.weight(.semibold))
+                .foregroundStyle(CosmoMentionColors.color(for: .connection))
+                .frame(width: 32, height: 32)
+                .background(CosmoMentionColors.color(for: .connection).opacity(0.12), in: .rect(cornerRadius: 9))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: DS.space4) {
+                Text("Inquiry question")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .textCase(.uppercase)
+                    .kerning(0.4)
+
+                Text(proposal.question)
+                    .font(DS.headline)
+                    .foregroundStyle(DS.text)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(proposal.placementLabel)
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(DS.textSecondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(DS.space12)
+    }
+
+    private func rationaleRow(_ rationale: String) -> some View {
+        Text(rationale)
+            .font(DS.subheadline)
+            .foregroundStyle(DS.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8)
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        switch proposal.status {
+        case .pending:
+            if isStarting {
+                startingRow
+            } else {
+                decisionBar
+            }
+        case .started:
+            startedRow
+        case .dismissed:
+            dismissedRow
+        }
+    }
+
+    private var decisionBar: some View {
+        HStack(spacing: DS.space8) {
+            Text("Open a deep-dive session on this?")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+
+            Spacer()
+
+            CosmoPanePillButton(label: "Not now", icon: nil, help: "Keep developing the concept without opening an inquiry") {
+                store.dismissInquiry(proposalID: proposal.id)
+            }
+
+            CosmoPanePillButton(
+                label: "Start inquiry",
+                icon: "arrow.right",
+                help: "Open the inquiry session around this question",
+                isProminent: true
+            ) {
+                isStarting = true
+                Task {
+                    await store.startInquiry(proposalID: proposal.id)
+                    isStarting = false
+                }
+            }
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+    }
+
+    private var startingRow: some View {
+        HStack(spacing: DS.space8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Opening inquiry session…")
+                .font(DS.caption.weight(.medium))
+                .foregroundStyle(DS.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var startedRow: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.green)
+                .accessibilityHidden(true)
+
+            Text("Inquiry started")
+                .font(DS.caption.weight(.medium))
+                .foregroundStyle(DS.textSecondary)
+
+            Spacer()
+
+            CosmoPanePillButton(label: "Open session", icon: "arrow.up.right", help: "Jump back into this inquiry session") {
+                Task { await store.startInquiry(proposalID: proposal.id) }
+            }
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+    }
+
+    private var dismissedRow: some View {
+        Text("Skipped — ask again anytime.")
+            .font(DS.caption)
+            .foregroundStyle(DS.textMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8)
+    }
+}
+
 /// Quiet pill button for card actions: hover lift, press compress, optional
 /// prominent (accent) variant for the primary verb.
 private struct CosmoPanePillButton: View {
@@ -623,9 +838,16 @@ private struct CosmoInlineAssistantPaneOperationRow: View {
 
             Spacer()
 
-            Text(statusLabel)
-                .font(DS.caption.weight(.medium))
-                .foregroundStyle(statusColor)
+            HStack(spacing: DS.space4) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+                Text(statusLabel)
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(statusColor)
+            }
+            .animation(ProMotionSprings.snappy, value: operation.status)
 
             if operation.isRevertable {
                 Button {
@@ -705,62 +927,5 @@ private struct CosmoInlineAssistantPaneDiffHunkView: View {
     }
 }
 
-// MARK: - Composer
-
-private struct CosmoInlineAssistantPaneComposer: View {
-    @ObservedObject var store: CosmoInlineAssistantStore
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: DS.space8) {
-            TextField("Ask, or describe an edit", text: $store.composerText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(DS.callout)
-                .foregroundStyle(DS.text)
-                .lineLimit(1...4)
-                .focused($isFocused)
-                .onSubmit { submit() }
-
-            sendButton
-        }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space8)
-        .dsGlassInput(isFocused: isFocused, cornerRadius: 14)
-        .padding(DS.space16)
-        .animation(ProMotionSprings.snappy, value: isFocused)
-    }
-
-    private var sendButton: some View {
-        Button(action: submit) {
-            Image(systemName: store.isProcessing ? "stop.fill" : "arrow.up")
-                .font(DS.caption.weight(.bold))
-                .frame(width: 28, height: 28)
-                .background(sendFill, in: Circle())
-                .foregroundStyle(sendText)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .cosmoClickCursor()
-        .disabled(!canSubmit)
-        .keyboardShortcut(.return, modifiers: .command)
-        .help("Send (⏎)")
-        .accessibilityLabel("Send")
-    }
-
-    private func submit() {
-        guard canSubmit else { return }
-        Task { await store.submit() }
-    }
-
-    private var canSubmit: Bool {
-        !store.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.isProcessing
-    }
-
-    private var sendFill: Color {
-        canSubmit ? DS.accent : DS.borderSubtle
-    }
-
-    private var sendText: Color {
-        canSubmit ? DS.textOnAccent : DS.textMuted
-    }
-}
+// The composer lives in CosmoInlineAssistantPaneComposer.swift — the real
+// mention composer with pill @-mentions and the shared context picker.

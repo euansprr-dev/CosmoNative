@@ -158,7 +158,24 @@ struct CanvasView: View {
     @State private var scrollWheelMonitor: Any?
     @State private var keyMonitor: Any?
     @State private var isSpaceHeld = false
+    @State private var spaceDownAt: Date?
     @State private var spacePanOffset: CGSize = .zero
+
+    // Places — saved camera positions (Cmd+D capture, Cmd+Opt+1…9 jump)
+    @State private var canvasPlaces: [CanvasPlace] = []
+    @State private var showPlaceCapture = false
+    @State private var placeNameDraft = ""
+
+    // Portals — window blocks into other thinkspaces
+    @State private var showPortalPicker = false
+    @State private var portalDropPosition: CGPoint = .zero
+
+    // Flows — Living Workflows (drawn cluster→output behaviors)
+    @State private var canvasFlows: [CanvasFlow] = []
+    @State private var selectedFlowId: String?
+    @State private var flowVerbPickerClusterId: String?
+    @State private var runningFlowIds: Set<String> = []
+    @State private var firingFlowIds: Set<String> = []
     private let minScale: CGFloat = 0.25
     private let maxScale: CGFloat = 3.0
     private let zoomSensitivity: CGFloat = 0.012  // For scroll wheel
@@ -438,6 +455,9 @@ struct CanvasView: View {
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
+                if let tsId = thinkspaceId {
+                    ThinkspaceThumbnailService.shared.invalidate(tsId)
+                }
                 ThinkspaceCanvasSnapshotCache.shared.store(
                     blocks: spatialEngine.blocks,
                     zoomLevel: canvasScale,
@@ -854,6 +874,28 @@ struct CanvasView: View {
                 expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
             )
 
+            // Flows — ink lines from clusters to their outputs (Living Workflows)
+            FlowLineLayer(
+                flows: canvasFlows,
+                clusters: clusterEngine.allClusters,
+                firingFlowIds: firingFlowIds,
+                runningFlowIds: runningFlowIds,
+                onSelectFlow: { flow in
+                    withAnimation(ProMotionSprings.snappy) {
+                        selectedFlowId = flow.uuid
+                    }
+                },
+                onMoveFlowEnd: { flowUUID, end in
+                    moveFlowEnd(flowUUID, to: end)
+                },
+                onAcceptProposal: { flow in
+                    acceptFlowProposal(flow)
+                },
+                onDiscardProposal: { flow in
+                    discardFlowProposal(flow)
+                }
+            )
+
             canvasClusterDropPreviewLayer
             blocksLayer(snapshot: snapshot)
             inboxBlocksLayer
@@ -884,6 +926,7 @@ struct CanvasView: View {
                 fileIntoFolder: { fileLibraryItemIntoFolder(itemUUID: $0, clusterID: $1) },
                 removeFromFolder: { removeLibraryItemFromFolder(itemUUID: $0, clusterID: $1) },
                 renameFolder: { clusterEngine.renameUserCluster(id: $0, to: $1) },
+                recolorFolder: { clusterEngine.changeClusterColor(id: $0, colorIndex: $1) },
                 deleteFolder: { clusterEngine.removeUserCluster(id: $0) }
             )
         )
@@ -1162,6 +1205,7 @@ struct CanvasView: View {
             canvasScale = 1.0
             canvasOffset = .zero
         }
+        loadPlaces(for: thinkspaceId)
     }
 
     private func refreshLibraryInventoryForThinkspaceSwitch() {
@@ -1171,9 +1215,15 @@ struct CanvasView: View {
         }
     }
 
-    private func animateThinkspaceContentIn() {
+    private func animateThinkspaceContentIn() async {
         canvasContentScale = 0.97
         canvasContentBlur = 6
+
+        // Give freshly-swapped block views one frame to mount while content is
+        // still invisible, so the enter spring animates an already-built tree
+        // instead of paying view-creation cost on its first frame.
+        try? await Task.sleep(for: .milliseconds(17))
+        guard !Task.isCancelled else { return }
 
         withAnimation(reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.worldEnter) {
             canvasContentOpacity = 1.0
@@ -1232,6 +1282,16 @@ struct CanvasView: View {
                         // produce a visible snap/bounce in drawing overlays.
                         let newScale = canvasScale * value.magnification
                         canvasScale = min(max(newScale, minScale), maxScale)
+
+                        // Pinching out past the zoom floor keeps going — into the
+                        // Constellation. The canvas shrinks until it becomes a card
+                        // among all thinkspaces.
+                        if value.magnification < 1, newScale < minScale * 0.92 {
+                            NotificationCenter.default.post(
+                                name: CosmoNotification.Navigation.presentConstellation,
+                                object: nil
+                            )
+                        }
                     }
             )
     }
@@ -1321,6 +1381,7 @@ struct CanvasView: View {
                         canvasScale = CGFloat(ts.zoomLevel)
                         canvasOffset = ts.panOffset
                     }
+                    loadPlaces(for: thinkspaceId)
 
                     // Load user-created clusters
                     await clusterEngine.loadUserClusters(
@@ -1846,6 +1907,9 @@ struct CanvasView: View {
                 // MARK: - Scroll Wheel Zoom (Mouse)
                 // Set up scroll wheel event monitor for smooth mouse zoom
                 // Uses Option+scroll for zoom to avoid conflicting with normal scrolling
+                CanvasEscapeCoordinator.shared.register(id: "canvas-overlays") {
+                    dismissTopCanvasOverlay()
+                }
                 scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [self] event in
                     guard canvasIsActive else { return event }
                     let isOptionHeld = event.modifierFlags.contains(.option)
@@ -1889,6 +1953,48 @@ struct CanvasView: View {
                         let pressed = event.type == .keyDown
                         if pressed != isSpaceHeld {
                             isSpaceHeld = pressed
+                            if pressed { spaceDownAt = Date() }
+                        }
+                        // Quick tap (held space pans; a tap peeks) with a
+                        // selected block → Quick Look it.
+                        if !pressed,
+                           let downAt = spaceDownAt,
+                           Date().timeIntervalSince(downAt) < 0.3,
+                           let blockId = selectedBlockId,
+                           let block = spatialEngine.blocks.first(where: { $0.id == blockId }),
+                           block.entityId > 0,
+                           !isTextInputFocused(in: event.window),
+                           !appState.isCommandKVisible,
+                           appState.focusedEntity == nil {
+                            NotificationCenter.default.post(
+                                name: CosmoNotification.Navigation.peekEntity,
+                                object: nil,
+                                userInfo: ["type": block.entityType, "id": block.entityId]
+                            )
+                            return nil
+                        }
+                    }
+                    // Cmd+D — save the current view as a Place
+                    if event.type == .keyDown,
+                       event.keyCode == 2,  // D key
+                       event.modifierFlags.contains(.command),
+                       !event.modifierFlags.contains(.shift),
+                       !event.modifierFlags.contains(.option),
+                       !isTextInputFocused(in: event.window),
+                       !appState.isCommandKVisible,
+                       appState.focusedEntity == nil {
+                        presentPlaceCapture()
+                        return nil
+                    }
+                    // Cmd+Opt+1…9 — jump to a Place by recency
+                    if event.type == .keyDown,
+                       event.modifierFlags.contains(.command),
+                       event.modifierFlags.contains(.option),
+                       !isTextInputFocused(in: event.window) {
+                        let digitKeyCodes: [UInt16: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
+                        if let digit = digitKeyCodes[event.keyCode],
+                           jumpToPlace(atRecencyIndex: digit - 1) {
+                            return nil
                         }
                     }
                     return event
@@ -1905,6 +2011,7 @@ struct CanvasView: View {
                     keyMonitor = nil
                 }
                 isSpaceHeld = false
+                CanvasEscapeCoordinator.shared.unregister(id: "canvas-overlays")
                 removeCanvasObservers()
                 thinkspaceSwitchTask?.cancel()
                 thinkspaceSwitchTask = nil
@@ -1922,7 +2029,16 @@ struct CanvasView: View {
             }
             .onChange(of: thinkspaceId) { _, newId in
                 thinkspaceSwitchTask?.cancel()
-                guard newId != spatialEngine.currentThinkspaceId else { return }
+                guard newId != spatialEngine.currentThinkspaceId else {
+                    // Rapid revert (A→B→A before B applied): the loaded data is
+                    // already correct but the exit animation left content hidden.
+                    if canvasContentOpacity < 1 {
+                        thinkspaceSwitchTask = Task { @MainActor in
+                            await animateThinkspaceContentIn()
+                        }
+                    }
+                    return
+                }
 
                 // 1. Animate old content OUT (blocks still visible, receding into background)
                 withAnimation(reduceMotion ? .easeOut(duration: 0.1) : ProMotionSprings.worldExit) {
@@ -1931,8 +2047,13 @@ struct CanvasView: View {
                     canvasContentBlur = 6
                 }
 
-                // 2. After exit animation completes → warm snapshot first, authoritative load second
+                // 2. Overlap the authoritative fetch (DB + atom JSON decode, all
+                //    off-main) with the exit animation; warm snapshot applies the
+                //    instant the exit completes, fetched data right behind it.
                 thinkspaceSwitchTask = Task { @MainActor in
+                    async let prefetchedBlocks = spatialEngine.fetchBlocksSnapshot(
+                        for: "home", documentId: 0, thinkspaceId: newId
+                    )
                     try? await Task.sleep(for: .milliseconds(reduceMotion ? 100 : 180))
                     guard !Task.isCancelled else { return }
 
@@ -1943,14 +2064,17 @@ struct CanvasView: View {
                         CosmoUndoManager.shared.clearHistory()
                         CosmoWindowViewModel.shared.refreshContext()
                         refreshLibraryInventoryForThinkspaceSwitch()
-                        animateThinkspaceContentIn()
+                        await animateThinkspaceContentIn()
                     } else {
                         prepareEmptyThinkspaceSwitchState(for: newId)
                     }
 
-                    await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: newId)
-                    CosmoWindowViewModel.shared.refreshContext()
+                    let fetchedBlocks = await prefetchedBlocks
                     guard !Task.isCancelled else { return }
+                    spatialEngine.applyFetchedBlocks(
+                        fetchedBlocks, for: "home", documentId: 0, thinkspaceId: newId
+                    )
+                    CosmoWindowViewModel.shared.refreshContext()
 
                     if !cachedThinkspaceSnapshotApplied {
                         drawingState.loadDrawings(thinkspaceId: newId)
@@ -1975,12 +2099,47 @@ struct CanvasView: View {
 
                     if !cachedThinkspaceSnapshotApplied {
                         // 3. Animate new content IN (emerging from background)
-                        animateThinkspaceContentIn()
+                        await animateThinkspaceContentIn()
                     }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.createFlow)) { notification in
+                guard let clusterId = notification.userInfo?["clusterId"] as? String else { return }
+                withAnimation(ProMotionSprings.bouncy) {
+                    flowVerbPickerClusterId = clusterId
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.jumpToPlace)) { notification in
+                guard let placeUUID = notification.userInfo?["placeUUID"] as? String,
+                      let place = canvasPlaces.first(where: { $0.uuid == placeUUID }) else { return }
+                flyToPlace(place)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.flowDidRun)) { notification in
+                guard let tsId = notification.userInfo?["thinkspaceId"] as? String,
+                      tsId == thinkspaceId,
+                      let flowUUID = notification.userInfo?["flowUUID"] as? String else { return }
+                // Pick up the staged proposal and fire the bead once.
+                loadPlaces(for: thinkspaceId)
+                firingFlowIds.insert(flowUUID)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(700))
+                    firingFlowIds.remove(flowUUID)
                 }
             }
             // Keyboard handler for ESC to collapse expanded blocks / dismiss overlays
             .onKeyPress(.escape) {
+                if flowVerbPickerClusterId != nil {
+                    withAnimation(ProMotionSprings.snappy) { flowVerbPickerClusterId = nil }
+                    return .handled
+                }
+                if selectedFlowId != nil {
+                    withAnimation(ProMotionSprings.snappy) { selectedFlowId = nil }
+                    return .handled
+                }
+                if showPlaceCapture {
+                    dismissPlaceCapture()
+                    return .handled
+                }
                 if showMinimap {
                     withAnimation(ProMotionSprings.snappy) {
                         showMinimap = false
@@ -2054,7 +2213,105 @@ struct CanvasView: View {
                     minimapOverlay
                 }
             }
+            // Place capture card (Cmd+D)
+            .overlay(alignment: .top) {
+                if showPlaceCapture {
+                    PlaceCaptureCard(
+                        name: $placeNameDraft,
+                        onSave: { savePlaceFromDraft() },
+                        onCancel: { dismissPlaceCapture() }
+                    )
+                    .padding(.top, 64)
+                    .transition(.opacity)
+                    .zIndex(300)
+                }
+            }
+            // Flow verb picker — blooms beside the source cluster
+            .overlay {
+                if let clusterId = flowVerbPickerClusterId,
+                   let cluster = clusterEngine.allClusters.first(where: { $0.id.uuidString == clusterId }) {
+                    FlowVerbPicker(
+                        clusterName: cluster.name,
+                        onPick: { verb in
+                            withAnimation(ProMotionSprings.snappy) {
+                                flowVerbPickerClusterId = nil
+                            }
+                            createFlow(verb: verb, cluster: cluster)
+                        },
+                        onDismiss: {
+                            withAnimation(ProMotionSprings.snappy) {
+                                flowVerbPickerClusterId = nil
+                            }
+                        }
+                    )
+                    .position(clampedScreenPosition(
+                        forCanvasPoint: CGPoint(x: cluster.boundingRect.maxX + 170, y: cluster.boundingRect.midY),
+                        size: CGSize(width: 280, height: 170)
+                    ))
+                    .transition(.opacity)
+                    .zIndex(310)
+                }
+            }
+            // Flow inspector — the rule as a sentence, Run, ledger
+            .overlay {
+                if let flow = canvasFlows.first(where: { $0.uuid == selectedFlowId }),
+                   let cluster = clusterEngine.allClusters.first(where: { $0.id.uuidString == flow.sourceClusterId }) {
+                    FlowInspectorCard(
+                        flow: flow,
+                        clusterName: cluster.name,
+                        isRunning: runningFlowIds.contains(flow.uuid),
+                        onRun: { runFlow(flow) },
+                        onChangeRunMode: { mode in
+                            setFlowRunMode(flow, mode: mode, clusterName: cluster.name)
+                        },
+                        onDelete: { deleteFlow(flow) },
+                        onRevealOutput: { revealFlowOutput($0) },
+                        onDismiss: {
+                            withAnimation(ProMotionSprings.snappy) {
+                                selectedFlowId = nil
+                            }
+                        }
+                    )
+                    .position(clampedScreenPosition(
+                        forCanvasPoint: FlowGeometry(clusterRect: cluster.boundingRect, end: flow.endPoint).midpoint,
+                        size: CGSize(width: 340, height: 340)
+                    ))
+                    .transition(.opacity)
+                    .zIndex(310)
+                }
+            }
+            // Portal target picker
+            .overlay {
+                if showPortalPicker {
+                    PortalTargetPicker(
+                        excludeThinkspaceId: thinkspaceId,
+                        onPick: { target in
+                            withAnimation(ProMotionSprings.snappy) {
+                                showPortalPicker = false
+                            }
+                            createPortalBlock(to: target)
+                        },
+                        onDismiss: {
+                            withAnimation(ProMotionSprings.snappy) {
+                                showPortalPicker = false
+                            }
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(300)
+                }
+            }
         }
+    }
+
+    /// Create a portal block at the pending drop position.
+    private func createPortalBlock(to target: Thinkspace) {
+        let block = CanvasBlock.portalBlock(
+            position: portalDropPosition,
+            targetThinkspaceId: target.id,
+            targetName: target.name
+        )
+        Task { await spatialEngine.addBlock(block, persist: true) }
     }
 
     // MARK: - Synthesis Workspace
@@ -2194,6 +2451,13 @@ struct CanvasView: View {
                 withAnimation(ProMotionSprings.snappy) {
                     showMinimap = false
                 }
+            },
+            places: canvasPlaces,
+            onJumpToPlace: { place in
+                withAnimation(ProMotionSprings.snappy) {
+                    showMinimap = false
+                }
+                flyToPlace(place)
             }
         )
     }
@@ -2233,6 +2497,254 @@ struct CanvasView: View {
             }
         } else {
             canvasOffset = newOffset
+        }
+    }
+
+    // MARK: - Places (saved camera positions)
+
+    private func presentPlaceCapture() {
+        placeNameDraft = defaultPlaceName()
+        withAnimation(ProMotionSprings.bouncy) { showPlaceCapture = true }
+    }
+
+    private func dismissPlaceCapture() {
+        withAnimation(ProMotionSprings.snappy) { showPlaceCapture = false }
+        placeNameDraft = ""
+    }
+
+    /// Default name: the cluster nearest the viewport center, else "Place N".
+    private func defaultPlaceName() -> String {
+        let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        let center = viewportTransform.screenToCanvas(screenCenter)
+        let nearest = clusterEngine.allClusters.min { lhs, rhs in
+            hypot(lhs.boundingRect.midX - center.x, lhs.boundingRect.midY - center.y) <
+            hypot(rhs.boundingRect.midX - center.x, rhs.boundingRect.midY - center.y)
+        }
+        if let nearest,
+           hypot(nearest.boundingRect.midX - center.x, nearest.boundingRect.midY - center.y) < 900,
+           !nearest.name.isEmpty {
+            return nearest.name
+        }
+        return "Place \(canvasPlaces.count + 1)"
+    }
+
+    private func savePlaceFromDraft() {
+        let trimmed = placeNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        let center = viewportTransform.screenToCanvas(screenCenter)
+        let place = CanvasPlace(
+            name: trimmed.isEmpty ? defaultPlaceName() : trimmed,
+            center: center,
+            zoom: Double(canvasScale)
+        )
+        canvasPlaces.append(place)
+        dismissPlaceCapture()
+        persistPlaces()
+    }
+
+    private func persistPlaces() {
+        guard let tsId = thinkspaceId else { return }
+        let places = canvasPlaces
+        thinkspaceManager.updateCurrentPlaces(places)
+        Task { await thinkspaceManager.savePlaces(places, for: tsId) }
+    }
+
+    private func loadPlaces(for thinkspaceId: String?) {
+        guard let tsId = thinkspaceId else {
+            canvasPlaces = []
+            canvasFlows = []
+            thinkspaceManager.updateCurrentPlaces([])
+            return
+        }
+        Task { @MainActor in
+            canvasPlaces = await thinkspaceManager.places(for: tsId)
+            canvasFlows = await thinkspaceManager.flows(for: tsId)
+            thinkspaceManager.updateCurrentPlaces(canvasPlaces)
+        }
+    }
+
+    // MARK: - Flows (Living Workflows)
+
+    private func persistFlows() {
+        guard let tsId = thinkspaceId else { return }
+        let flows = canvasFlows
+        Task { await thinkspaceManager.saveFlows(flows, for: tsId) }
+    }
+
+    /// Create a flow with its end point placed beside the cluster; the line
+    /// draws itself in and the inspector opens so Run is one click away.
+    private func createFlow(verb: FlowVerb, cluster: CanvasCluster) {
+        let end = CGPoint(x: cluster.boundingRect.maxX + 320, y: cluster.boundingRect.midY)
+        let flow = CanvasFlow(verb: verb, sourceClusterId: cluster.id.uuidString, end: end)
+        withAnimation(ProMotionSprings.gentle) {
+            canvasFlows.append(flow)
+            selectedFlowId = flow.uuid
+        }
+        persistFlows()
+    }
+
+    private func moveFlowEnd(_ flowUUID: String, to end: CGPoint) {
+        guard let index = canvasFlows.firstIndex(where: { $0.uuid == flowUUID }) else { return }
+        canvasFlows[index].endPoint = end
+        persistFlows()
+    }
+
+    private func deleteFlow(_ flow: CanvasFlow) {
+        withAnimation(ProMotionSprings.snappy) {
+            canvasFlows.removeAll { $0.uuid == flow.uuid }
+            selectedFlowId = nil
+        }
+        persistFlows()
+        Task { await FlowCompiler.deleteRule(forFlowUUID: flow.uuid) }
+    }
+
+    /// Change how a flow fires — compiles to (or removes) its AutomationRule.
+    private func setFlowRunMode(_ flow: CanvasFlow, mode: FlowRunMode, clusterName: String) {
+        guard let index = canvasFlows.firstIndex(where: { $0.uuid == flow.uuid }) else { return }
+        withAnimation(ProMotionSprings.snappy) {
+            canvasFlows[index].runMode = mode
+        }
+        persistFlows()
+        guard let tsId = thinkspaceId else { return }
+        let updated = canvasFlows[index]
+        Task { await FlowCompiler.sync(updated, clusterName: clusterName, thinkspaceId: tsId) }
+    }
+
+    /// Accept an autonomous run's staged output — the block lands at the
+    /// flow's end and the dashed line inks back to solid.
+    private func acceptFlowProposal(_ flow: CanvasFlow) {
+        guard let index = canvasFlows.firstIndex(where: { $0.uuid == flow.uuid }),
+              let atomUUID = flow.pendingOutputAtomUUID else { return }
+        Task { @MainActor in
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                canvasFlows[index].pendingOutputAtomUUID = nil
+                persistFlows()
+                return
+            }
+            let block = CanvasBlock.fromAtom(atom, position: flow.endPoint)
+            await spatialEngine.addBlock(block, persist: true)
+            withAnimation(ProMotionSprings.gentle) {
+                canvasFlows[index].pendingOutputAtomUUID = nil
+            }
+            persistFlows()
+        }
+    }
+
+    /// Discard a staged output — the atom is deleted, the ledger keeps the record.
+    private func discardFlowProposal(_ flow: CanvasFlow) {
+        guard let index = canvasFlows.firstIndex(where: { $0.uuid == flow.uuid }),
+              let atomUUID = flow.pendingOutputAtomUUID else { return }
+        withAnimation(ProMotionSprings.snappy) {
+            canvasFlows[index].pendingOutputAtomUUID = nil
+        }
+        persistFlows()
+        Task { try? await AtomRepository.shared.delete(uuid: atomUUID) }
+    }
+
+    /// Run a flow: verb executes over the cluster's atoms, the bead travels
+    /// the line once, and the output lands as a block at the flow's end.
+    private func runFlow(_ flow: CanvasFlow) {
+        guard !runningFlowIds.contains(flow.uuid) else { return }
+        guard let cluster = clusterEngine.allClusters.first(where: { $0.id.uuidString == flow.sourceClusterId }) else { return }
+        runningFlowIds.insert(flow.uuid)
+
+        Task { @MainActor in
+            defer { runningFlowIds.remove(flow.uuid) }
+            do {
+                let result = try await FlowEngine.run(flow, cluster: cluster, thinkspaceId: thinkspaceId)
+
+                // The bead — the entire firing show
+                firingFlowIds.insert(flow.uuid)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(700))
+                    firingFlowIds.remove(flow.uuid)
+                }
+
+                // Land the output at the flow's end point
+                let block = CanvasBlock.fromAtom(result.outputAtom, position: flow.endPoint)
+                await spatialEngine.addBlock(block, persist: true)
+
+                if let index = canvasFlows.firstIndex(where: { $0.uuid == flow.uuid }) {
+                    canvasFlows[index].runCount += 1
+                    canvasFlows[index].lastRunAt = Date()
+                    persistFlows()
+                }
+            } catch {
+                print("❌ Flow run failed: \(error)")
+            }
+        }
+    }
+
+    private func revealFlowOutput(_ atomUUID: String) {
+        withAnimation(ProMotionSprings.snappy) { selectedFlowId = nil }
+        if let block = spatialEngine.blocks.first(where: { $0.entityUuid == atomUUID }) {
+            navigateTo(canvasPosition: block.position)
+        }
+    }
+
+    /// Dismiss the topmost canvas overlay for an Escape press.
+    /// Wired into CanvasEscapeCoordinator so MainView's global key monitor
+    /// gives these overlays priority over pane-closing / thinkspace-exit.
+    private func dismissTopCanvasOverlay() -> Bool {
+        if showPlaceCapture {
+            dismissPlaceCapture()
+            return true
+        }
+        if flowVerbPickerClusterId != nil {
+            withAnimation(ProMotionSprings.snappy) { flowVerbPickerClusterId = nil }
+            return true
+        }
+        if selectedFlowId != nil {
+            withAnimation(ProMotionSprings.snappy) { selectedFlowId = nil }
+            return true
+        }
+        if showPortalPicker {
+            withAnimation(ProMotionSprings.snappy) { showPortalPicker = false }
+            return true
+        }
+        return false
+    }
+
+    /// Convert a canvas point to a screen position clamped inside the canvas
+    /// bounds so floating cards never fall off the edge.
+    private func clampedScreenPosition(forCanvasPoint point: CGPoint, size: CGSize) -> CGPoint {
+        let screen = viewportTransform.canvasToScreen(point)
+        return CGPoint(
+            x: min(max(screen.x, size.width / 2 + 16), max(canvasSize.width - size.width / 2 - 16, size.width / 2 + 16)),
+            y: min(max(screen.y, size.height / 2 + 16), max(canvasSize.height - size.height / 2 - 16, size.height / 2 + 16))
+        )
+    }
+
+    @discardableResult
+    private func jumpToPlace(atRecencyIndex index: Int) -> Bool {
+        let ordered = canvasPlaces.sorted { $0.createdAt > $1.createdAt }
+        guard ordered.indices.contains(index) else { return false }
+        flyToPlace(ordered[index])
+        return true
+    }
+
+    /// The Place flight: a zoom arc — ease out slightly, travel, settle in.
+    /// A hard cut is disorienting; the arc keeps the jump spatial.
+    private func flyToPlace(_ place: CanvasPlace) {
+        let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        let targetOffset = CGSize(
+            width: screenCenter.x - place.center.x,
+            height: screenCenter.y - place.center.y
+        )
+        let targetScale = max(minScale, min(maxScale, CGFloat(place.zoom)))
+        if reduceMotion {
+            canvasScale = targetScale
+            canvasOffset = targetOffset
+            return
+        }
+        withAnimation(ProMotionSprings.gentle) {
+            canvasScale = min(canvasScale, targetScale) * 0.88
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            withAnimation(ProMotionSprings.modal) {
+                canvasScale = targetScale
+                canvasOffset = targetOffset
+            }
         }
     }
 
@@ -2795,6 +3307,12 @@ struct CanvasView: View {
             return
         case .deepDive:
             createDeepDiveBlock(at: position, prefillTitle: prefillTitle)
+            return
+        case .portal:
+            portalDropPosition = position
+            withAnimation(ProMotionSprings.menuAppear) {
+                showPortalPicker = true
+            }
             return
         case .note:
             createAtomBackedNoteBlock(at: position, prefillTitle: prefillTitle, prefillBody: prefillContent)
@@ -4821,6 +5339,8 @@ struct CanvasBlockStaticView: View, Equatable {
             TemplateBlockView(block: block)
         case .deepDive:
             DeepDivePortalBlockView(block: block)
+        case .portal:
+            PortalBlockView(block: block)
         default:
             FloatingBlockView(block: block)
         }

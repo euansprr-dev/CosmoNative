@@ -451,6 +451,7 @@ enum AutomationActionType: String, Codable, CaseIterable, Sendable {
     // AI actions
     case runAnalysis = "run_analysis"
     case askCosmo = "ask_cosmo"
+    case runFlow = "run_flow"            // Execute a canvas Flow (Living Workflows)
 
     // Pipeline actions
     case advancePipeline = "advance_pipeline"    // Move content to next phase
@@ -494,6 +495,7 @@ enum AutomationActionType: String, Codable, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
+        case .runFlow: return "Run flow"
         case .setStatus: return "Set status"
         case .setField: return "Set field"
         case .addTag: return "Add tag"

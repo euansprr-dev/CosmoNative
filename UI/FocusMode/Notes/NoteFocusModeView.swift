@@ -317,6 +317,7 @@ struct NoteFocusModeView: View {
     private var focusBorder: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveBorder : DS.documentBorder }
 
     @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
 
     enum SaveState: Equatable {
@@ -666,7 +667,7 @@ struct NoteFocusModeView: View {
                 accessibilityLabel: "Toggle graph view",
                 action: { toggleGraphOverlay() }
             )
-            if isPaneContext {
+            if isPaneContext, !isPeekContext {
                 chromeIconButton(
                     systemName: "xmark",
                     isActive: false,

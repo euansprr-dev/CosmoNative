@@ -75,7 +75,7 @@ struct CommandKActionPanel: View {
                     } else {
                         ForEach(filteredGroups, id: \.category.rawValue) { group in
                             CommandKSectionLabel(label: group.category.rawValue.uppercased())
-                            ForEach(group.actions) { action in
+                            ForEach(group.actions, id: \.uniqueActionId) { action in
                                 CommandKActionPanelRow(
                                     action: action,
                                     isSelected: selectedAction?.id == action.id,

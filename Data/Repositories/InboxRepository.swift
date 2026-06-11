@@ -191,6 +191,32 @@ class InboxRepository: ObservableObject {
         }
     }
 
+    /// Items still awaiting classification — drained by InboxIngestService's
+    /// queue on launch so "classifying" can never be a permanent state.
+    func fetchPending() async throws -> [InboxItem] {
+        try await database.asyncRead { db in
+            try InboxItem
+                .filter(Column("status") == InboxItemStatus.pending.rawValue)
+                .order(Column("createdAt").asc)
+                .fetchAll(db)
+        }
+    }
+
+    /// Honestly-unsorted items — candidates for the lazy LLM taxonomy pass
+    /// that runs when the inbox becomes visible.
+    func fetchUnsorted(limit: Int) async throws -> [InboxItem] {
+        try await database.asyncRead { db in
+            try InboxItem
+                .filter(Column("status") == InboxItemStatus.classified.rawValue)
+                .filter(Column("classification") == InboxClassification.unsorted.rawValue ||
+                        Column("classification") == InboxClassification.new.rawValue ||
+                        Column("classification") == nil)
+                .order(Column("createdAt").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
     func countUnread() async throws -> Int {
         try await database.asyncRead { db in
             try InboxItem

@@ -59,6 +59,15 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
         placeAtomType?.lowercased() == "task"
     }
 
+    /// True when the classifier produced a suggestion worth showing.
+    /// `.unsorted` and legacy `.new` rows render as plain captures with no pill.
+    var hasActionableSuggestion: Bool {
+        switch classification {
+        case .merge, .place: return true
+        case .new, .unsorted, .none: return false
+        }
+    }
+
     static func new(
         source: InboxSource,
         rawText: String,
@@ -106,7 +115,8 @@ enum InboxSource: String, Codable, Sendable {
 enum InboxClassification: String, Codable, Sendable {
     case merge
     case place
-    case new
+    case new        // Legacy: "create standalone atom" suggestion (pre-June 2026 rows)
+    case unsorted   // Honest abstain — classifier ran, nothing cleared the confidence bar
 }
 
 enum InboxItemStatus: String, Codable, Sendable {

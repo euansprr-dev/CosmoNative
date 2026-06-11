@@ -38,6 +38,9 @@ struct CosmoInlineAssistantAgentBridge {
         executor.onAssistantPaneAnswer = { title, answer in
             store.receivePaneAnswer(title: title, answer: answer, route: route)
         }
+        executor.onInquiryQuestionProposal = { proposal in
+            store.receive(inquiryProposal: proposal)
+        }
 
         let paneAnswerCount = store.paneMessages.filter {
             $0.role == .assistant && $0.proposalID == nil
@@ -46,6 +49,7 @@ struct CosmoInlineAssistantAgentBridge {
         defer {
             executor.onWorkspaceEditProposal = nil
             executor.onAssistantPaneAnswer = nil
+            executor.onInquiryQuestionProposal = nil
             executor.contextAtomUUIDs = []
             executor.contextSourceIDs = []
             executor.contextConversationID = nil

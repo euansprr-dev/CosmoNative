@@ -22,7 +22,6 @@ struct CosmoApp: App {
 
     @State private var voicePillWindow: VoicePillWindowController?
     @State private var voicePillHideWorkItem: DispatchWorkItem?
-    @State private var cosmoWindowController: CosmoWindowPanelController?
     // NOTE: Global floating dock removed - using in-app dock + spacebar voice overlay instead
 
     @State private var themeRefreshID = UUID()
@@ -79,6 +78,10 @@ struct CosmoApp: App {
             if APIKeys.hasTelegramBot {
                 await TelegramBridgeService.shared.start()
             }
+
+            // Inbox hygiene: drain stuck pending captures through the classifier
+            // queue and dismiss captures another system already consumed.
+            InboxIngestService.shared.reconcileOnLaunch()
         }
 
         // Observe system wake to process swipes captured while asleep
@@ -139,14 +142,13 @@ struct CosmoApp: App {
         }
         print("⌨️ Option-C hotkey registered for command bar typing")
 
-        // Setup system-wide Cosmo Window (floating NSPanel, Option+A)
-        cosmoWindowController = CosmoWindowPanelController.shared
+        // Option+A opens the inline assistant instead of the retired floating Cosmo Window.
         HotkeyManager.shared.registerCosmoWindowHotkey {
             Task { @MainActor in
-                CosmoWindowPanelController.shared.toggle()
+                CosmoAssistantHotkeyRouter.openFromOptionA()
             }
         }
-        print("🪟 Cosmo Window panel initialized (⌥A hotkey registered)")
+        print("⌨️ Inline assistant hotkey registered (⌥A)")
 
         // Initialize the floating Atom Window (⌥E)
         // Force singleton creation so its NSEvent monitors are active immediately
@@ -528,6 +530,7 @@ public enum EntityType: String, Codable, Sendable {
     case template                   // Smart templatable block (user-defined structured blocks)
     case deepDive = "deep_dive"     // Inquiry Workspace: Deep Dive portal block (mastery topic home)
     case inquirySession = "inquiry_session"  // Inquiry Workspace: live inquiry session (focus mode)
+    case portal                     // Window into another thinkspace (region miniature, travel on open)
 
     public var icon: String {
         switch self {
@@ -550,6 +553,7 @@ public enum EntityType: String, Codable, Sendable {
         case .template: return "rectangle.3.group.fill"
         case .deepDive: return "circle.hexagongrid.circle.fill"
         case .inquirySession: return "rectangle.split.3x1.fill"
+        case .portal: return "arrow.up.forward.app"
         }
     }
 
@@ -575,6 +579,7 @@ public enum EntityType: String, Codable, Sendable {
         case .template: return DS.accent
         case .deepDive: return DS.accent
         case .inquirySession: return DS.accent
+        case .portal: return DS.accent
         }
     }
 }
@@ -612,13 +617,18 @@ struct CosmoCommands: Commands {
 
             Divider()
 
+            Button("Capture to Inbox") {
+                NotificationCenter.default.post(name: CosmoNotification.Inbox.focusCaptureField, object: nil)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+
             Button("Command Palette") {
                 NotificationCenter.default.post(name: .showCommandPalette, object: nil)
             }
             .keyboardShortcut("k", modifiers: [.command])
 
             Button("Toggle Cosmo") {
-                NotificationCenter.default.post(name: CosmoNotification.CosmoWindow.toggle, object: nil)
+                CosmoAssistantHotkeyRouter.openFromOptionA()
             }
             .keyboardShortcut("a", modifiers: [.option])
         }

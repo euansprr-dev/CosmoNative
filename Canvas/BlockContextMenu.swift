@@ -39,6 +39,7 @@ struct BlockContextMenu: View {
         var items: [MenuItem] = []
         let focusTypes: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note, .template]
         if focusTypes.contains(block.entityType) {
+            items.append(MenuItem("peek", icon: "eye", label: "Peek"))
             items.append(MenuItem("focus", icon: "arrow.up.left.and.arrow.down.right", label: "Open Focus Mode", shortcut: "⏎"))
         }
         let paneTypes: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note, .template]
@@ -53,6 +54,9 @@ struct BlockContextMenu: View {
             return [MenuItem("duplicate", icon: "plus.square.on.square", label: "Duplicate", shortcut: "⌘D")]
         }
         var items: [MenuItem] = []
+        if block.entityType == .content {
+            items.append(MenuItem("compileSpokes", icon: "sparkles.rectangle.stack", label: "Compile Spokes"))
+        }
         items.append(MenuItem("connect", icon: "link", label: "Connect to..."))
         if selectedBlockIds.count >= 2 {
             items.append(MenuItem("createCluster", icon: "square.3.layers.3d", label: "Create Cluster"))
@@ -279,6 +283,18 @@ struct BlockContextMenu: View {
 
     private func handleAction(_ actionId: String) {
         switch actionId {
+        case "peek":
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.peekEntity,
+                object: nil,
+                userInfo: ["type": block.entityType, "id": block.entityId]
+            )
+        case "compileSpokes":
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.compileSpokes,
+                object: nil,
+                userInfo: ["id": block.entityId]
+            )
         case "focus":
             NotificationCenter.default.post(
                 name: .enterFocusMode,

@@ -98,10 +98,23 @@ class AutomationActionExecutor {
         return executed
     }
 
+    // MARK: - Flow Actions (Living Workflows)
+
+    /// Run a canvas Flow headlessly. The output is staged as a proposal on
+    /// the flow's line — autonomous runs never place blocks unapproved.
+    private func handleRunFlow(_ action: AutomationAction, context: AutomationContext) async throws {
+        guard let flowUUID = action.config["flowUUID"]?.stringValue,
+              let thinkspaceId = action.config["thinkspaceId"]?.stringValue else { return }
+        await FlowEngine.runHeadless(flowUUID: flowUUID, thinkspaceId: thinkspaceId)
+    }
+
     // MARK: - Action Handlers
 
     private func executeAction(_ action: AutomationAction, context: AutomationContext) async throws {
         switch action.type {
+        case .runFlow:
+            try await handleRunFlow(action, context: context)
+
         case .setStatus:
             try await handleSetStatus(action, context: context)
 

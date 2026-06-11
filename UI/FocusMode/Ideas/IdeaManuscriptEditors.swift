@@ -63,7 +63,9 @@ struct IdeaContextTextEditor: NSViewRepresentable {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
+        // .height keeps the text view tracking the host when SwiftUI resizes
+        // it (paired with the setFrameSize floor in IdeaContextTextView).
+        textView.autoresizingMask = [.width, .height]
         textView.applyManuscriptStyle()
         textView.string = text
         return textView
@@ -155,6 +157,20 @@ final class IdeaContextTextView: NSTextView {
 
     override var textContainerOrigin: NSPoint {
         NSPoint(x: textContainerInset.width, y: textContainerInset.height)
+    }
+
+    // AppKit clamps `minSize` down whenever a smaller frame is set, so the
+    // minimumHeight floor configured in makeNSView dies silently and the
+    // vertically-resizable text view shrinks itself to its content height
+    // (~32pt when empty). SwiftUI's platform-view host is NOT flipped, so the
+    // shorter child bottom-anchors inside the reserved frame: caret, typing,
+    // and clicks all land at the bottom while the top of the editor is dead
+    // space. Never let the view be shorter than the height SwiftUI reserved.
+    override func setFrameSize(_ newSize: NSSize) {
+        var size = newSize
+        let reserved = superview?.bounds.height ?? Self.minimumHeight
+        size.height = max(size.height, reserved, Self.minimumHeight)
+        super.setFrameSize(size)
     }
 
     override var intrinsicContentSize: NSSize {

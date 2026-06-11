@@ -418,6 +418,8 @@ extension EntityType {
             return [0.42, 0.43, 0.66, 1.0]  // Indigo (ideas)
         case .template:
             return [0.39, 0.40, 0.95, 1.0]  // Indigo (templates)
+        case .portal:
+            return [0.18, 0.42, 0.31, 1.0]  // Forest green (portal accent)
         case .deepDive:
             return [0.55, 0.42, 0.67, 1.0]  // Soft purple (mastery portal)
         case .inquirySession:

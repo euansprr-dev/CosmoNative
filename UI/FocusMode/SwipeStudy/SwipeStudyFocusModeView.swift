@@ -141,6 +141,7 @@ struct SwipeStudyFocusModeView: View {
 
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneActive) private var isPaneActive
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -391,7 +392,7 @@ struct SwipeStudyFocusModeView: View {
                 Text("This will permanently remove this swipe file and all its analysis data.")
             }
 
-            if isPaneContext {
+            if isPaneContext, !isPeekContext {
                 SwipeStudyIconControl(
                     systemName: "xmark",
                     label: "Close pane",

@@ -234,6 +234,7 @@ struct ThinkspaceLibraryActions {
     var fileIntoFolder: (String, UUID) -> Void
     var removeFromFolder: (String, UUID) -> Void
     var renameFolder: (UUID, String) -> Void
+    var recolorFolder: (UUID, Int) -> Void
     var deleteFolder: (UUID) -> Void
 }
 
@@ -343,6 +344,7 @@ struct ThinkspaceLibraryModeView: View {
             onOpen: { openFolder(folder) },
             onFileItem: { actions.fileIntoFolder($0, folder.id) },
             onRename: { actions.renameFolder(folder.id, $0) },
+            onRecolor: { actions.recolorFolder(folder.id, $0) },
             onDelete: { deleteFolder(folder) }
         )
     }
@@ -723,6 +725,7 @@ private struct ThinkspaceLibraryFolderTile: View {
     let onOpen: () -> Void
     let onFileItem: (String) -> Void
     let onRename: (String) -> Void
+    let onRecolor: (Int) -> Void
     let onDelete: () -> Void
 
     @State private var isHovered = false
@@ -761,7 +764,6 @@ private struct ThinkspaceLibraryFolderTile: View {
         .overlay(tileRing)
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .gesture(tapGestures)
-        .contextMenu { menuItems }
         .dropDestination(for: String.self) { items, _ in
             guard let uuid = items.first else { return false }
             onFileItem(uuid)
@@ -769,6 +771,9 @@ private struct ThinkspaceLibraryFolderTile: View {
         } isTargeted: { targeting in
             withAnimation(ProMotionSprings.bouncy) { isDropTarget = targeting }
         }
+        // contextMenu must wrap the drop destination — the other way round, the
+        // drop machinery swallows right-clicks and the menu never appears.
+        .contextMenu { menuItems }
         .help("Open \(folder.title)")
     }
 
@@ -837,8 +842,30 @@ private struct ThinkspaceLibraryFolderTile: View {
     private var menuItems: some View {
         Button("Open", systemImage: "folder") { onOpen() }
         Button("Rename…", systemImage: "pencil") { beginRename() }
+        colorMenu
         Divider()
         Button("Delete Folder", systemImage: "trash", role: .destructive) { onDelete() }
+    }
+
+    private var colorMenu: some View {
+        Menu("Color") {
+            ForEach(Array(CanvasCluster.palette.enumerated()), id: \.offset) { index, color in
+                Button {
+                    onRecolor(index)
+                } label: {
+                    Label {
+                        Text(LibraryFolderSwatch.name(at: index))
+                    } icon: {
+                        Image(nsImage: LibraryFolderSwatch.image(for: color, selected: index == normalizedColorIndex))
+                    }
+                }
+            }
+        }
+    }
+
+    private var normalizedColorIndex: Int {
+        let count = CanvasCluster.palette.count
+        return ((folder.colorIndex % count) + count) % count
     }
 
     private func beginRename() {
@@ -865,6 +892,40 @@ private struct ThinkspaceLibraryFolderTile: View {
     }
 }
 
+/// Color swatches for the folder context menu — pre-rendered NSImages so the
+/// menu shows real color (SwiftUI menus render SF Symbols as template/mono).
+private enum LibraryFolderSwatch {
+    // Mirrors CanvasCluster.paletteHexes order.
+    private static let paletteNames = ["Indigo", "Purple", "Pink", "Orange", "Green", "Cyan", "Blue", "Coral"]
+
+    static func name(at index: Int) -> String {
+        guard index >= 0, index < paletteNames.count else { return "Color \(index + 1)" }
+        return paletteNames[index]
+    }
+
+    static func image(for color: Color, selected: Bool) -> NSImage {
+        let size = NSSize(width: 16, height: 16)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor(color).setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1.5, dy: 1.5)).fill()
+            if selected {
+                NSColor.white.setStroke()
+                let check = NSBezierPath()
+                check.lineWidth = 1.6
+                check.lineCapStyle = .round
+                check.lineJoinStyle = .round
+                check.move(to: NSPoint(x: rect.midX - 3.4, y: rect.midY + 0.2))
+                check.line(to: NSPoint(x: rect.midX - 1.2, y: rect.midY - 2.4))
+                check.line(to: NSPoint(x: rect.midX + 3.6, y: rect.midY + 2.8))
+                check.stroke()
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+}
+
 // MARK: - Folder Icon (macOS-style)
 
 /// A faithful macOS folder silhouette: back panel with a top-left tab, paper
@@ -884,7 +945,10 @@ private struct LibraryFolderIcon: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
-        .shadow(color: color.opacity(0.28), radius: 9, y: 5)
+        // Premium, not gamey: a tight neutral contact shadow plus only a whisper
+        // of color cast directly below — never an all-around bloom.
+        .shadow(color: .black.opacity(0.10), radius: 2, y: 1)
+        .shadow(color: color.opacity(0.13), radius: 5, y: 4)
         .accessibilityHidden(true)
     }
 
@@ -922,21 +986,21 @@ private struct LibraryFolderIcon: View {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [.white.opacity(0.28), .white.opacity(0.03)],
+                            colors: [.white.opacity(0.16), .white.opacity(0.02)],
                             startPoint: .top, endPoint: .bottom
                         )
                     )
             )
             .overlay(alignment: .top) {
                 Capsule()
-                    .fill(Color.white.opacity(0.45))
+                    .fill(Color.white.opacity(0.30))
                     .frame(height: 1)
                     .padding(.horizontal, radius)
                     .padding(.top, 1.5)
             }
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.75)
+                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.75)
             )
             .frame(height: height)
     }

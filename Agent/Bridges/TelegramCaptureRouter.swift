@@ -347,8 +347,12 @@ final class TelegramCaptureRouter {
             "capturedItemUuid": captured.uuid,
             "reason": reason
         ])
-        let item = InboxItem.new(source: .telegramText, rawText: raw, metadata: metadata)
-        _ = try await inbox.create(item)
+        // The ingest service owns dedupe, the consumed-capture rule, and queued
+        // classification — this path previously created items that were never
+        // classified, leaving them stuck in "Needs your judgment" forever.
+        _ = await InboxIngestService.shared.ingest(
+            .init(source: .telegramText, rawText: raw, metadata: metadata)
+        )
         try await capturedItems.updateRouting(
             uuid: captured.uuid,
             destinationId: nil,
@@ -357,7 +361,6 @@ final class TelegramCaptureRouter {
             confidence: 0.2,
             status: .needsReview
         )
-        NotificationCenter.default.post(name: CosmoNotification.Inbox.itemAdded, object: nil)
     }
 
     private func postCaptureAdded(destinationId: String?) {

@@ -16,6 +16,7 @@ struct CosmoAIFocusModeView: View {
 
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneActive) private var isPaneActive
 
     init(atom: Atom, onClose: @escaping () -> Void) {
@@ -114,6 +115,8 @@ struct CosmoAIFocusModeView: View {
                     .background(Circle().fill(DS.border))
             }
             .buttonStyle(.plain)
+            .opacity(isPeekContext ? 0 : 1)
+            .allowsHitTesting(!isPeekContext)
 
             HStack(spacing: 6) {
                 Image(systemName: "brain")

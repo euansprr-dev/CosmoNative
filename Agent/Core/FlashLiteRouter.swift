@@ -344,58 +344,34 @@ final class FlashLiteRouter {
 
         let userTitle = arguments["title"] as? String
 
-        // Create inbox item
-        let item = InboxItem.new(
-            source: .telegramText,
-            rawText: text,
-            title: userTitle
+        // The ingest service owns dedupe + the consumed-capture rule. We await
+        // classification here so the Telegram reply can echo the suggestion.
+        let outcome = await InboxIngestService.shared.ingest(
+            .init(source: .telegramText, rawText: text, title: userTitle),
+            classifyImmediately: true
         )
 
-        do {
-            let saved = try await InboxRepository.shared.create(item)
-
-            // Classify asynchronously
-            let classification = await InboxClassificationEngine.shared.classify(
-                text: text,
-                source: .telegramText
-            )
-
-            try await InboxRepository.shared.updateClassification(
-                uuid: saved.uuid,
-                classification: classification.classification,
-                confidence: classification.confidence,
-                title: classification.title,
-                mergeTargetUuid: classification.mergeTarget?.atomUuid,
-                mergeTargetTitle: classification.mergeTarget?.atomTitle,
-                mergeTargetType: classification.mergeTarget?.atomType,
-                mergePreview: classification.mergeTarget?.preview,
-                placeThinkspaceId: classification.placeTarget?.thinkspaceId,
-                placeThinkspaceName: classification.placeTarget?.thinkspaceName,
-                placeAtomType: classification.placeTarget?.suggestedAtomType
-            )
-
-            // Build response
-            let title = classification.title
+        switch outcome {
+        case .consumed:
+            return ("📥 Already in your system — nothing new to capture.", "capture_to_inbox")
+        case .enqueued(let saved):
+            let title = saved.title ?? String(text.prefix(60))
             var response = "📥 *Captured to inbox*\n\"\(title)\""
-            switch classification.classification {
+            switch saved.classification {
             case .merge:
-                if let target = classification.mergeTarget {
-                    let pct = Int(classification.confidence * 100)
-                    response += "\n\nAI suggests: *Merge with* \"\(target.atomTitle)\" (\(pct)%)"
+                if let target = saved.mergeTargetTitle {
+                    response += "\n\nAI suggests: *Merge with* \"\(target)\""
                 }
             case .place:
-                if let target = classification.placeTarget {
-                    response += "\n\nAI suggests: *Place in* \(target.thinkspaceName)"
+                if let target = saved.placeThinkspaceName {
+                    response += "\n\nAI suggests: *Place in* \(target)"
                 }
-            case .new:
-                response += "\n\nAI suggests: *Create new*"
+            case .new, .unsorted, .none:
+                break  // Classifier abstained — no suggestion to surface
             }
             response += "\nOpen CosmoOS to confirm."
 
             return (response, "capture_to_inbox")
-        } catch {
-            print("⚠️ [FlashLiteRouter] Inbox capture failed: \(error)")
-            return ("Captured thought, but classification failed. Check inbox.", "capture_to_inbox")
         }
     }
 

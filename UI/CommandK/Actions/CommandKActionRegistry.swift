@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 struct CommandKActionRegistry {
     func actions(for context: CommandKActionContext) -> [CommandKContextualAction] {
         var actions: [CommandKContextualAction] = []
@@ -7,6 +8,52 @@ struct CommandKActionRegistry {
         actions.append(contentsOf: swipeActions(for: context))
         actions.append(contentsOf: inquiryActions(for: context))
         actions.append(contentsOf: commandCenterActions(for: context))
+        actions.append(contentsOf: workspaceActions(for: context))
+        return actions
+    }
+
+    // MARK: - Workspace (benches + places)
+
+    /// Workbenches and the current thinkspace's Places, as one action each.
+    private func workspaceActions(for context: CommandKActionContext) -> [CommandKContextualAction] {
+        var actions: [CommandKContextualAction] = []
+
+        for bench in WorkbenchStore.shared.workbenches.prefix(9) {
+            actions.append(CommandKContextualAction(
+                id: .applyWorkbench,
+                category: .workspace,
+                title: bench.name,
+                subtitle: "Workbench",
+                systemImage: bench.glyph,
+                shortcut: nil,
+                role: .normal,
+                availability: .enabled,
+                intent: .postNotification(
+                    name: CosmoNotification.Navigation.applyWorkbench,
+                    userInfo: ["uuid": bench.uuid]
+                ),
+                payloadKey: bench.uuid
+            ))
+        }
+
+        for place in ThinkspaceManager.shared.currentPlaces.prefix(9) {
+            actions.append(CommandKContextualAction(
+                id: .jumpToPlace,
+                category: .workspace,
+                title: place.name,
+                subtitle: "Place in this thinkspace",
+                systemImage: "mappin.and.ellipse",
+                shortcut: nil,
+                role: .normal,
+                availability: .enabled,
+                intent: .postNotification(
+                    name: CosmoNotification.Navigation.jumpToPlace,
+                    userInfo: ["placeUUID": place.uuid]
+                ),
+                payloadKey: place.uuid
+            ))
+        }
+
         return actions
     }
 
@@ -42,6 +89,20 @@ struct CommandKActionRegistry {
                 role: .normal,
                 availability: .enabled,
                 intent: .openAsPane(uuid: uuid)
+            ),
+            CommandKContextualAction(
+                id: .peekObject,
+                category: .object,
+                title: "Peek",
+                subtitle: "Quick look without opening",
+                systemImage: "eye",
+                shortcut: nil,
+                role: .normal,
+                availability: .enabled,
+                intent: .postNotification(
+                    name: CosmoNotification.Navigation.peekEntity,
+                    userInfo: ["uuid": uuid]
+                )
             ),
             CommandKContextualAction(
                 id: .addToCanvas,

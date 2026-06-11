@@ -150,6 +150,9 @@ struct MainView: View {
 
     // Navigation destination (Command Center is home)
     @State private var currentDestination: SidebarDestination = .commandCenter
+    @State private var showWorkbenchComposer = false
+    @State private var showConstellation = false
+    @State private var spokesPillar: Atom?
     @State private var inboxRoute: SidebarInboxRoute = .global
     @StateObject private var commandCenterViewModel = CommandCenterDashboardViewModel()
     @StateObject private var swipeLibraryViewModel = SwipeLibraryViewModel()
@@ -510,6 +513,17 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             presentCommandK()
         }
+        // ⌥⌘N — jump to the inbox with the capture field focused (InboxView
+        // focuses the field when it receives the same notification).
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.focusCaptureField)) { _ in
+            inboxRoute = .global
+            currentDestination = .inbox
+        }
+        // Command Center "to triage" chip and other deep links into the queue.
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.open)) { _ in
+            inboxRoute = .global
+            currentDestination = .inbox
+        }
         // NodeGraph Command-K atom opening handler
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.openAtomFromCommandK)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
@@ -527,9 +541,9 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.hideCommandK)) { _ in
             preserveCommandKBehindFocusMode()
         }
-        // Cosmo Window toggle (from menu bar, Telegram, or other sources)
+        // Legacy Cosmo toggle requests now open the inline assistant surface.
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.CosmoWindow.toggle)) { _ in
-            CosmoWindowPanelController.shared.toggle()
+            CosmoAssistantHotkeyRouter.openFromOptionA()
         }
         // Atom Window toggle + open (floating atom viewer)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.AtomWindow.toggle)) { _ in
@@ -565,6 +579,70 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .exitFocusMode)) { _ in
             withAnimation(.spring(response: 0.3)) {
                 appState.focusedEntity = nil
+            }
+        }
+        // MARK: - Workbenches
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.applyWorkbench)) { notification in
+            guard let uuid = notification.userInfo?["uuid"] as? String else { return }
+            Task { @MainActor in
+                await WorkbenchStore.shared.loadIfNeeded()
+                guard let bench = WorkbenchStore.shared.workbenches.first(where: { $0.uuid == uuid }) else { return }
+                applyWorkbench(bench)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.composeWorkbench)) { _ in
+            showWorkbenchComposer = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.presentConstellation)) { _ in
+            withAnimation(ProMotionSprings.modal) {
+                showConstellation = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.compileSpokes)) { notification in
+            guard let entityId = notification.userInfo?["id"] as? Int64 else { return }
+            Task { @MainActor in
+                guard let atom = try? await AtomRepository.shared.fetch(id: entityId) else { return }
+                withAnimation(ProMotionSprings.modal) {
+                    spokesPillar = atom
+                }
+            }
+        }
+        .sheet(isPresented: $showWorkbenchComposer) {
+            WorkbenchComposerView(
+                snapshot: WorkspaceSnapshot.capture(destination: currentDestination, paneManager: paneManager),
+                destinationName: trailDescriptor(for: currentDestination).title,
+                onSave: { name, glyph, tintHex in
+                    let snapshot = WorkspaceSnapshot.capture(destination: currentDestination, paneManager: paneManager)
+                    showWorkbenchComposer = false
+                    Task { await WorkbenchStore.shared.create(name: name, glyph: glyph, tintHex: tintHex, snapshot: snapshot) }
+                },
+                onCancel: { showWorkbenchComposer = false }
+            )
+        }
+        // MARK: - Peek
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.peekEntity)) { notification in
+            let anchor = (notification.userInfo?["anchor"] as? NSValue)?.rectValue
+
+            if let entityType = notification.userInfo?["type"] as? EntityType,
+               let entityId = notification.userInfo?["id"] as? Int64 {
+                PeekController.shared.peek(
+                    .entity(EntitySelection(id: entityId, type: entityType)),
+                    from: anchor
+                )
+                return
+            }
+
+            // String-payload variant (Command-K actions post [String: String])
+            if let uuid = notification.userInfo?["uuid"] as? String {
+                Task { @MainActor in
+                    guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
+                          let atomId = atom.id else { return }
+                    let entityType = mapAtomTypeToEntityType(atom.type)
+                    PeekController.shared.peek(
+                        .entity(EntitySelection(id: atomId, type: entityType)),
+                        from: anchor
+                    )
+                }
             }
         }
         // MARK: - Open as Pane
@@ -631,6 +709,11 @@ struct MainView: View {
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
             if let newValue {
+                recordTrailArrival(forFocus: newValue)
+            } else {
+                recordTrailArrival(for: currentDestination)
+            }
+            if let newValue {
                 recordFocusModeAccess(for: newValue)
                 cancelSidebarHoverClose()
                 isHoveringSidebarRevealTrigger = false
@@ -693,6 +776,7 @@ struct MainView: View {
             case .discover, .swipeFile:
                 vm.updateContextManually(type: .commandCenter)
             }
+            recordTrailArrival(for: newDest)
         }
         .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
@@ -921,6 +1005,82 @@ struct MainView: View {
                         .zIndex(10000)
                         .allowsHitTesting(false)
                 }
+
+                if appState.focusedEntity == nil {
+                    NavigationTrailChrome(
+                        onBack: { navigateTrailBack() },
+                        onForward: { navigateTrailForward() },
+                        onJump: { jumpTrail(to: $0) }
+                    )
+                    .padding(.top, 8)
+                    .padding(.leading, isSidebarVisible ? sidebarLayout.reservedWidth + 8 : 44)
+                    .zIndex(201)
+                    .transition(.opacity)
+                }
+
+                // The Constellation — zoom out into all thinkspaces
+                if showConstellation {
+                    ConstellationView(
+                        thinkspaces: thinkspaceManager.thinkspaces,
+                        originThinkspaceId: {
+                            if case .thinkspace(let id) = currentDestination { return id }
+                            return nil
+                        }(),
+                        onSelect: { thinkspaceId in
+                            withAnimation(ProMotionSprings.modal) {
+                                showConstellation = false
+                            }
+                            currentDestination = .thinkspace(id: thinkspaceId)
+                        },
+                        onDismiss: {
+                            withAnimation(ProMotionSprings.modal) {
+                                showConstellation = false
+                            }
+                        }
+                    )
+                    .zIndex(265)
+                    .transition(.opacity)
+                }
+
+                // Spokes Compiler — pillar → platform package staging board
+                if let pillar = spokesPillar {
+                    Color.black.opacity(0.06)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(ProMotionSprings.snappy) { spokesPillar = nil }
+                        }
+                        .zIndex(267)
+                        .transition(.opacity)
+
+                    SpokesCompilerView(
+                        pillar: pillar,
+                        onClose: {
+                            withAnimation(ProMotionSprings.snappy) { spokesPillar = nil }
+                        }
+                    )
+                    .frame(width: geo.size.width * 0.78, height: geo.size.height * 0.84)
+                    .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 24)
+                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                    .zIndex(268)
+                    .transition(.scale(scale: 0.96).combined(with: .opacity))
+                }
+
+                // Peek — Quick Look-style preview overlay (above panes, below Command-K)
+                PeekOverlayView(
+                    onOpenFocus: { entity in
+                        withAnimation(ProMotionSprings.snappy) {
+                            appState.focusedEntity = entity
+                        }
+                    },
+                    onOpenPane: { entity in
+                        guard paneManager.canOpen(entityId: entity.id, appState: appState) else { return }
+                        withAnimation(ProMotionSprings.focusTransition) {
+                            paneManager.openPane(.entity(entity))
+                        }
+                    }
+                )
+                .zIndex(295)
             }
             .background {
                 appSceneBackdrop
@@ -934,6 +1094,19 @@ struct MainView: View {
                 restoreSidebarState()
                 setupCrossThinkspaceDragCallbacks()
                 updateSidebarInteractionWidth(reservedWidth: sidebarLayout.reservedWidth)
+                recordTrailArrival(for: currentDestination)
+                Task { await WorkbenchStore.shared.loadIfNeeded() }
+            }
+            .task {
+                // Warm Command-K's search index, recents, and domain counts
+                // after launch settles, so the first ⌘K open animates over
+                // preloaded state instead of querying mid-spring.
+                try? await Task.sleep(for: .seconds(2))
+                for _ in 0..<16 where !database.isReady {
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                guard database.isReady else { return }
+                await commandKViewModel.prewarmForAppLaunch()
             }
             .onDisappear {
                 cancelSidebarHoverClose()
@@ -1504,6 +1677,119 @@ struct MainView: View {
         }
     }
 
+    // MARK: - Navigation Trail
+
+    private func trailDescriptor(for destination: SidebarDestination) -> (title: String, glyph: String) {
+        switch destination {
+        case .commandCenter: return ("Command Center", "square.grid.2x2")
+        case .inbox: return ("Inbox", "tray")
+        case .codex: return ("Codex", "books.vertical")
+        case .discover: return ("Discover", "safari")
+        case .swipeFile: return ("Swipe File", "bookmark")
+        case .thinkspace(let id):
+            let name = thinkspaceManager.thinkspaces.first(where: { $0.id == id })?.name
+            return (name ?? "Thinkspace", "rectangle.3.group")
+        }
+    }
+
+    private func recordTrailArrival(for destination: SidebarDestination) {
+        let descriptor = trailDescriptor(for: destination)
+        NavigationTrail.shared.recordArrival(
+            .sidebar(destination),
+            title: descriptor.title,
+            glyph: descriptor.glyph
+        )
+    }
+
+    private func recordTrailArrival(forFocus entity: EntitySelection) {
+        let fallbackTitle = entity.type.rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+        NavigationTrail.shared.recordArrival(
+            .focusMode(entity),
+            title: fallbackTitle,
+            glyph: entity.type.icon
+        )
+        Task { @MainActor in
+            guard let atom = try? await AtomRepository.shared.fetch(id: entity.id),
+                  let title = atom.title, !title.isEmpty else { return }
+            NavigationTrail.shared.refineTitle(title, for: .focusMode(entity))
+        }
+    }
+
+    private func navigateTrailBack() {
+        guard let moment = NavigationTrail.shared.stepBack() else { return }
+        applyTrailMoment(moment)
+    }
+
+    private func navigateTrailForward() {
+        guard let moment = NavigationTrail.shared.stepForward() else { return }
+        applyTrailMoment(moment)
+    }
+
+    private func jumpTrail(to moment: NavigationTrail.Moment) {
+        guard let landed = NavigationTrail.shared.jumpBack(to: moment.id) else { return }
+        applyTrailMoment(landed)
+    }
+
+    // MARK: - Workbenches
+
+    /// Restore a workbench: main content settles first, panes cascade in,
+    /// focus and pin land last. Whole choreography under ~600ms.
+    private func applyWorkbench(_ bench: Workbench) {
+        if appState.focusedEntity != nil {
+            withAnimation(ProMotionSprings.snappy) {
+                appState.focusedEntity = nil
+            }
+        }
+        currentDestination = bench.snapshot.sidebarDestination
+
+        paneManager.closeAllPanes()
+        Task { @MainActor in
+            let resolved = await bench.snapshot.resolvedPanes()
+            for (index, content) in resolved.contents.enumerated() {
+                try? await Task.sleep(for: .milliseconds(index == 0 ? 140 : 70))
+                withAnimation(ProMotionSprings.focusTransition) {
+                    paneManager.openPane(content)
+                }
+            }
+            withAnimation(ProMotionSprings.focusTransition) {
+                if let focusedId = resolved.focusedId {
+                    paneManager.focusPane(focusedId)
+                }
+                paneManager.pinnedPaneId = resolved.pinnedId
+            }
+            await WorkbenchStore.shared.markUsed(uuid: bench.uuid)
+        }
+    }
+
+    private func applyWorkbench(atPosition index: Int) {
+        Task { @MainActor in
+            await WorkbenchStore.shared.loadIfNeeded()
+            let benches = WorkbenchStore.shared.workbenches
+            guard benches.indices.contains(index) else { return }
+            applyWorkbench(benches[index])
+        }
+    }
+
+    /// Apply a trail moment by replaying the destination's own transition —
+    /// the trail never invents a new one.
+    private func applyTrailMoment(_ moment: NavigationTrail.Moment) {
+        NavigationTrail.shared.applyingJump {
+            switch moment.destination {
+            case .sidebar(let destination):
+                if appState.focusedEntity != nil {
+                    withAnimation(ProMotionSprings.snappy) {
+                        appState.focusedEntity = nil
+                    }
+                }
+                currentDestination = destination
+            case .focusMode(let entity):
+                appState.focusedEntity = entity
+            }
+        }
+    }
+
     private func handleOpenCollaboratorPane(atomUUID: String, presetId: String?) {
         Task { @MainActor in
             do {
@@ -1640,6 +1926,35 @@ struct MainView: View {
 
             // Escape to dismiss overlays (only on keyDown) — peels back one layer at a time
             if event.type == .keyDown, event.keyCode == 53 {  // Escape key
+                // 0. Peek overlay
+                if PeekController.shared.isPresented {
+                    withAnimation(ProMotionSprings.snappy) {
+                        PeekController.shared.dismiss()
+                    }
+                    return nil
+                }
+
+                // 0b. The Constellation
+                if showConstellation {
+                    withAnimation(ProMotionSprings.modal) {
+                        showConstellation = false
+                    }
+                    return nil
+                }
+
+                // 0c. Spokes Compiler
+                if spokesPillar != nil {
+                    withAnimation(ProMotionSprings.snappy) {
+                        spokesPillar = nil
+                    }
+                    return nil
+                }
+
+                // 0d. Deep canvas overlays (place capture, flow picker/inspector, portal picker)
+                if CanvasEscapeCoordinator.shared.dismissTopOverlay() {
+                    return nil
+                }
+
                 // 1. Instagram modal
                 if swipeFileEngine.showInstagramModal {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
@@ -1699,7 +2014,7 @@ struct MainView: View {
                 // 9. Close most recent pane
                 if paneManager.isActive {
                     withAnimation(ProMotionSprings.snappy) {
-                        paneManager.closeLastPane()
+                        paneManager.closeFocusedPane()
                     }
                     return nil
                 }
@@ -1717,6 +2032,103 @@ struct MainView: View {
                 }
 
                 // 12. On Command Center — no action (home state)
+            }
+
+            // Cmd+[ / Cmd+] — universal back/forward through the navigation trail
+            if event.type == .keyDown,
+               event.modifierFlags.contains(.command),
+               !event.modifierFlags.contains(.shift),
+               !event.modifierFlags.contains(.option),
+               !event.modifierFlags.contains(.control),
+               !isKeyboardInputReserved() {
+                if event.keyCode == 33 {  // [
+                    navigateTrailBack()
+                    return nil
+                }
+                if event.keyCode == 30 {  // ]
+                    navigateTrailForward()
+                    return nil
+                }
+            }
+
+            // Cmd+Shift+Space — toggle the Constellation
+            if event.type == .keyDown,
+               event.keyCode == 49,  // Space
+               event.modifierFlags.contains(.command),
+               event.modifierFlags.contains(.shift),
+               !isKeyboardInputReserved() {
+                withAnimation(ProMotionSprings.modal) {
+                    showConstellation.toggle()
+                }
+                return nil
+            }
+
+            // Space closes an open Peek (Quick Look parity)
+            if event.type == .keyDown,
+               event.keyCode == 49,
+               !event.modifierFlags.contains(.command),
+               PeekController.shared.isPresented,
+               !isKeyboardInputReserved() {
+                withAnimation(ProMotionSprings.snappy) {
+                    PeekController.shared.dismiss()
+                }
+                return nil
+            }
+
+            // Workbenches: Ctrl+1…9 apply, Cmd+Ctrl+B save current layout
+            if event.type == .keyDown,
+               !isKeyboardInputReserved() {
+                let benchFlags = event.modifierFlags
+                if benchFlags.contains(.control), !benchFlags.contains(.command),
+                   !benchFlags.contains(.option), !benchFlags.contains(.shift) {
+                    let digitKeyCodes: [UInt16: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
+                    if let digit = digitKeyCodes[event.keyCode] {
+                        applyWorkbench(atPosition: digit - 1)
+                        return nil
+                    }
+                }
+                if benchFlags.contains(.control), benchFlags.contains(.command),
+                   !benchFlags.contains(.option), !benchFlags.contains(.shift),
+                   event.keyCode == 11 {  // B
+                    showWorkbenchComposer = true
+                    return nil
+                }
+            }
+
+            // Pane deck: Cmd+Ctrl+1…6 focus by position, Cmd+Shift+[ / ] cycle, Cmd+Opt+P pin
+            if event.type == .keyDown,
+               paneManager.isActive,
+               !isKeyboardInputReserved() {
+                let flags = event.modifierFlags
+                if flags.contains(.command), flags.contains(.control), !flags.contains(.shift), !flags.contains(.option) {
+                    let digitKeyCodes: [UInt16: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6]
+                    if let digit = digitKeyCodes[event.keyCode] {
+                        withAnimation(ProMotionSprings.focusTransition) {
+                            paneManager.focusPane(atPosition: digit - 1)
+                        }
+                        return nil
+                    }
+                }
+                if flags.contains(.command), flags.contains(.shift), !flags.contains(.option), !flags.contains(.control) {
+                    if event.keyCode == 30 {  // ]
+                        withAnimation(ProMotionSprings.focusTransition) {
+                            paneManager.cycleFocus(forward: true)
+                        }
+                        return nil
+                    }
+                    if event.keyCode == 33 {  // [
+                        withAnimation(ProMotionSprings.focusTransition) {
+                            paneManager.cycleFocus(forward: false)
+                        }
+                        return nil
+                    }
+                }
+                if flags.contains(.command), flags.contains(.option), !flags.contains(.shift), event.keyCode == 35 {  // P
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        paneManager.togglePin()
+                    }
+                    return nil
+                }
             }
 
             // P key — navigate to Command Center (from anywhere)
@@ -1814,7 +2226,7 @@ struct MainView: View {
                 return nil  // Consume event
             }
 
-            // Option+A - now handled by system-wide HotkeyManager → CosmoWindowPanelController
+            // Option+A - now handled by system-wide HotkeyManager → inline assistant
 
             // Ctrl+Z / Ctrl+Shift+Z for undo/redo (fallback when not in text field)
             // Only handle when not typing in a text field (check first responder)
@@ -2014,6 +2426,8 @@ struct MainView: View {
         case .createTemplate:
             templateGalleryPosition = radialMenuPosition
             showTemplateGallery = true
+        case .createPortal:
+            createNewEntity(type: .portal, at: radialMenuPosition)
         }
     }
 
@@ -2185,21 +2599,17 @@ struct MainView: View {
                     guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
                 }
             } else {
-                inboxRoute = .global
-                currentDestination = .inbox
-                do {
-                    try await Task.sleep(for: .milliseconds(250))
+                // No thinkspace home — open the atom directly in focus mode.
+                // (The inbox shows only explicit captures now; it is not a
+                // browsing surface for unplaced database objects.)
+                if let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
                     guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
-
+                    let entityType = mapAtomTypeToEntityType(atom.type)
                     NotificationCenter.default.post(
-                        name: CosmoNotification.Inbox.focusDatabaseItem,
+                        name: .enterFocusMode,
                         object: nil,
-                        userInfo: ["uuid": atomUUID]
+                        userInfo: ["type": entityType, "id": atom.id ?? 0]
                     )
-                } catch is CancellationError {
-                    return
-                } catch {
-                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
                 }
             }
         }

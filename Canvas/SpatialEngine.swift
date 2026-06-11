@@ -38,6 +38,26 @@ class SpatialEngine: ObservableObject {
         currentDocumentId = documentId
         currentThinkspaceId = thinkspaceId
 
+        let deduped = await fetchBlocksSnapshot(for: documentType, documentId: documentId, thinkspaceId: thinkspaceId)
+
+        // Guard: don't apply results if the switch was cancelled or superseded.
+        guard let deduped, !Task.isCancelled, thinkspaceId == currentThinkspaceId else {
+            isLoading = false
+            CanvasPerformanceInstrumentation.signposter.endInterval("thinkspace-load-blocks", signpost)
+            return
+        }
+        self.blocks = deduped
+        isLoading = false
+        CanvasPerformanceInstrumentation.signposter.endInterval("thinkspace-load-blocks", signpost)
+        print("✅ Loaded \(deduped.count) canvas blocks for \(documentType)/\(documentId)")
+    }
+
+    /// Fetch and build the fully-enriched block array WITHOUT mutating engine
+    /// state, so a thinkspace switch can overlap this work with its exit
+    /// animation. DB reads run on the GRDB pool; the record→block conversion
+    /// (including per-atom metadata JSON decoding) runs off the main actor.
+    /// Returns nil on error so callers can preserve existing state.
+    func fetchBlocksSnapshot(for documentType: String = "home", documentId: Int64 = 0, thinkspaceId: String? = nil) async -> [CanvasBlock]? {
         do {
             let tsId = thinkspaceId  // Capture for closure
             let savedBlocks: [CanvasBlockRecord] = try await database.asyncRead { db in
@@ -57,9 +77,57 @@ class SpatialEngine: ObservableObject {
                 return try query.order(Column("z_index")).fetchAll(db)
             }
 
-            // Convert database records to CanvasBlocks
-            var loadedBlocks: [CanvasBlock] = []
-            for record in savedBlocks {
+            // Enrich rich block types with atom metadata in two batch reads instead
+            // of one DB round-trip per block during thinkspace switches.
+            let enrichableTypes: Set<String> = ["research", "image", "note", "template"]
+            let enrichableRecords = savedBlocks.filter { enrichableTypes.contains($0.entityType) }
+            let idsToFetch = enrichableRecords
+                .map { Int64($0.entityId) }
+                .filter { $0 > 0 }
+            let uuidsToFetch = enrichableRecords
+                .compactMap(\.entityUuid)
+                .filter { !$0.isEmpty }
+
+            async let atomsByIDTask = AtomRepository.shared.fetchBatch(ids: Array(Set(idsToFetch)))
+            async let atomsByUUIDTask = AtomRepository.shared.fetchBatch(uuids: Array(Set(uuidsToFetch)))
+            let fetchedAtomsByID = (try? await atomsByIDTask) ?? []
+            let fetchedAtomsByUUID = (try? await atomsByUUIDTask) ?? []
+
+            // Record→block conversion decodes atom metadata JSON per rich block —
+            // too heavy for the main actor during a switch animation.
+            return await Task.detached(priority: .userInitiated) {
+                Self.buildBlocks(
+                    records: savedBlocks,
+                    fetchedAtomsByID: fetchedAtomsByID,
+                    fetchedAtomsByUUID: fetchedAtomsByUUID
+                )
+            }.value
+        } catch {
+            print("❌ Failed to load canvas blocks: \(error)")
+            return nil
+        }
+    }
+
+    /// Apply a snapshot from fetchBlocksSnapshot as the current canvas state.
+    /// Cheap main-thread array swap; nil (fetch error) preserves existing blocks.
+    func applyFetchedBlocks(_ fetched: [CanvasBlock]?, for documentType: String = "home", documentId: Int64 = 0, thinkspaceId: String? = nil) {
+        currentDocumentType = documentType
+        currentDocumentId = documentId
+        currentThinkspaceId = thinkspaceId
+        guard let fetched else { return }
+        blocks = fetched
+        isLoading = false
+        print("✅ Loaded \(fetched.count) canvas blocks for \(documentType)/\(documentId)")
+    }
+
+    nonisolated private static func buildBlocks(
+        records savedBlocks: [CanvasBlockRecord],
+        fetchedAtomsByID: [Atom],
+        fetchedAtomsByUUID: [Atom]
+    ) -> [CanvasBlock] {
+        // Convert database records to CanvasBlocks
+        var loadedBlocks: [CanvasBlock] = []
+        for record in savedBlocks {
                 // Build metadata from database record
                 var metadata: [String: String] = [:]
 
@@ -97,27 +165,10 @@ class SpatialEngine: ObservableObject {
                 loadedBlocks.append(block)
             }
 
-            // Enrich rich block types with atom metadata in two batch reads instead
-            // of one DB round-trip per block during thinkspace switches.
-            let enrichableBlocks = loadedBlocks.filter {
-                $0.entityType == .research ||
-                $0.entityType == .image ||
-                $0.entityType == .note ||
-                $0.entityType == .template
-            }
-            let idsToFetch = enrichableBlocks
-                .map(\.entityId)
-                .filter { $0 > 0 }
-            let uuidsToFetch = enrichableBlocks
-                .map(\.entityUuid)
-                .filter { !$0.isEmpty }
-
-            async let atomsByIDTask = AtomRepository.shared.fetchBatch(ids: Array(Set(idsToFetch)))
-            async let atomsByUUIDTask = AtomRepository.shared.fetchBatch(uuids: Array(Set(uuidsToFetch)))
-            let atomsByID = Dictionary(uniqueKeysWithValues: ((try? await atomsByIDTask) ?? []).compactMap { atom in
+            let atomsByID = Dictionary(uniqueKeysWithValues: fetchedAtomsByID.compactMap { atom in
                 atom.id.map { ($0, atom) }
             })
-            let atomsByUUID = Dictionary(uniqueKeysWithValues: ((try? await atomsByUUIDTask) ?? []).map { ($0.uuid, $0) })
+            let atomsByUUID = Dictionary(uniqueKeysWithValues: fetchedAtomsByUUID.map { ($0.uuid, $0) })
 
             let enrichedBlocks = loadedBlocks.map { block -> CanvasBlock in
                 guard block.entityType == .research ||
@@ -159,22 +210,7 @@ class SpatialEngine: ObservableObject {
                 return true
             }
 
-            // Guard: don't apply results if the switch was cancelled or superseded.
-            guard !Task.isCancelled, thinkspaceId == currentThinkspaceId else {
-                isLoading = false
-                CanvasPerformanceInstrumentation.signposter.endInterval("thinkspace-load-blocks", signpost)
-                return
-            }
-            self.blocks = deduped
-            isLoading = false
-            CanvasPerformanceInstrumentation.signposter.endInterval("thinkspace-load-blocks", signpost)
-            print("✅ Loaded \(deduped.count) canvas blocks for \(documentType)/\(documentId) (\(enrichedBlocks.count - deduped.count) duplicates removed)")
-
-        } catch {
-            isLoading = false
-            CanvasPerformanceInstrumentation.signposter.endInterval("thinkspace-load-blocks", signpost)
-            print("❌ Failed to load canvas blocks: \(error)")
-        }
+            return deduped
     }
 
     // MARK: - Save Block to Database

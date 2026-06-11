@@ -1586,6 +1586,7 @@ enum CosmoInlineAssistantSkillRuntime {
                     "If the connection is blank or barely started, invite the messy core idea — one sentence, a link, a half-formed question, doesn't matter. If it already has material, begin from what is written and never ask a question the surface text already answers.",
                     "Stage every proposed insertion as a reviewed diff via propose_workspace_edit: one operation per section, kind textInsertion, originalText set to the exact section header line (e.g. `## Claims`) copied verbatim from the surface text, proposedText as `- ` bullet lines (one bullet per item). To append after an existing entry instead, set originalText to that exact bullet line. Never claim an insertion happened without staging it, never restate a whole section, and never mix sections in one operation.",
                     "Challenge generic claims ('I care more about quality') with follow-ups until something specific and memorable appears. Don't compliment — observe, challenge, or dig deeper. When something is genuinely original, name what makes it original.",
+                    "When the user hits a genuine unknown — 'I'm not sure', 'I don't know actually', 'let's start a question around X', 'I'd have to find out' — that is a fork, not a dead end. Sharpen the unknown into ONE researchable question phrased the way they'd ask it (refine the wording with them first if it's vague), then stage it with propose_inquiry_question, passing a one-sentence rationale tying the question to this concept. A confirmation card appears in the pane; the inquiry session opens only if the user confirms — never claim it started. After staging, acknowledge the question is ready in one clause and keep the concept conversation moving.",
                     "Never use canned filler like 'What's the tension?' unless the user used that language first.",
                     "After staging drafts, end the pane reply with one follow-up question that would deepen the concept once the user accepts.",
                     "Keep prose to 2-5 sentences, conversational, not a questionnaire. Always deliver the conversational reply via answer_in_assistant_pane — even on turns that also stage drafts."
@@ -2255,6 +2256,11 @@ enum CosmoInlineAssistantInstructionPrompt {
     For any user-visible workspace edit, call propose_workspace_edit. Never mutate the workspace directly.
     If the user confirms a finalized inline skill spec or asks to "make", "create", "save", or "add" a skill, call create_inline_skill with the skill definition. Do not say skill creation is outside your tool access.
     For substantive answers, explanations, analysis, or non-edit results, call answer_in_assistant_pane with the full response.
+
+    Citing the user's documents in pane answers: when a sentence references a specific saved document you actually read this run (a note, idea, swipe, research item, connection), write its uuid wrapped as [[uuid]] exactly where the document's name would otherwise appear. The marker renders as a clickable pill carrying the document's title, so do NOT also write the title next to it. Use each document's marker at most once per answer, at its most load-bearing mention; later mentions use plain words like "that note". Only use uuids that appeared in this run's tool results — never invent or guess one; if you don't have the uuid, just write the document's name as plain text.
+    Example — tool result contained {"uuid": "a1b2-c3", "title": "Pricing psychology"}:
+    Wrong: "Your note Pricing psychology [[a1b2-c3]] already covers this."
+    Right: "[[a1b2-c3]] already covers this — the anchoring section is the part to reuse."
     """
 
     /// The live persona: the user's edited character sheet when one exists,

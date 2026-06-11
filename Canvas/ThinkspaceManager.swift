@@ -30,9 +30,16 @@ struct ThinkspaceMetadata: Codable, Sendable {
     // Older Thinkspaces decode nil and resolve lazily on open.
     var deepDiveProfileUUID: String?
 
+    // Places — named saved camera positions (Cmd+D). Older Thinkspaces decode empty.
+    var places: [CanvasPlace] = []
+
+    // Flows — drawn cluster→output behaviors (Living Workflows). Older Thinkspaces decode empty.
+    var flows: [CanvasFlow] = []
+
     enum CodingKeys: String, CodingKey {
         case name, lastOpened, zoomLevel, panOffsetX, panOffsetY, blockIds
         case projectUuid, parentThinkspaceId, isRootThinkspace, accentColorHex, clusters, deepDiveProfileUUID
+        case places, flows
     }
 
     init(from decoder: Decoder) throws {
@@ -49,6 +56,8 @@ struct ThinkspaceMetadata: Codable, Sendable {
         accentColorHex = try container.decodeIfPresent(String.self, forKey: .accentColorHex)
         clusters = try container.decodeIfPresent([CodableCluster].self, forKey: .clusters) ?? []
         deepDiveProfileUUID = try container.decodeIfPresent(String.self, forKey: .deepDiveProfileUUID)
+        places = try container.decodeIfPresent([CanvasPlace].self, forKey: .places) ?? []
+        flows = try container.decodeIfPresent([CanvasFlow].self, forKey: .flows) ?? []
     }
 
     init(
@@ -63,7 +72,9 @@ struct ThinkspaceMetadata: Codable, Sendable {
         isRootThinkspace: Bool = false,
         accentColorHex: String? = nil,
         clusters: [CodableCluster] = [],
-        deepDiveProfileUUID: String? = nil
+        deepDiveProfileUUID: String? = nil,
+        places: [CanvasPlace] = [],
+        flows: [CanvasFlow] = []
     ) {
         self.name = name
         self.lastOpened = lastOpened
@@ -77,6 +88,8 @@ struct ThinkspaceMetadata: Codable, Sendable {
         self.accentColorHex = accentColorHex
         self.clusters = clusters
         self.deepDiveProfileUUID = deepDiveProfileUUID
+        self.places = places
+        self.flows = flows
     }
 }
 
@@ -649,6 +662,74 @@ class ThinkspaceManager: ObservableObject {
             print("💾 Saved Thinkspace state")
         } catch {
             print("❌ Failed to save Thinkspace state: \(error)")
+        }
+    }
+
+    // MARK: - Places (saved camera positions)
+
+    /// Synchronous cache of the open canvas's Places — lets Command-K offer
+    /// them without an async fetch. CanvasView refreshes it on load/save.
+    @Published private(set) var currentPlaces: [CanvasPlace] = []
+
+    func updateCurrentPlaces(_ places: [CanvasPlace]) {
+        currentPlaces = places
+    }
+
+    /// Load the saved Places for a thinkspace.
+    func places(for thinkspaceId: String) async -> [CanvasPlace] {
+        guard let atom = try? await repository.fetch(uuid: thinkspaceId),
+              let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else {
+            return []
+        }
+        return metadata.places
+    }
+
+    // MARK: - Flows (Living Workflows)
+
+    /// Load the saved Flows for a thinkspace.
+    func flows(for thinkspaceId: String) async -> [CanvasFlow] {
+        guard let atom = try? await repository.fetch(uuid: thinkspaceId),
+              let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else {
+            return []
+        }
+        return metadata.flows
+    }
+
+    /// Persist the full Flows list for a thinkspace (field-level metadata update).
+    func saveFlows(_ flows: [CanvasFlow], for thinkspaceId: String) async {
+        do {
+            guard let atom = try await repository.fetch(uuid: thinkspaceId) else { return }
+            var metadata = atom.metadataValue(as: ThinkspaceMetadata.self) ?? ThinkspaceMetadata()
+            metadata.flows = flows
+
+            guard let metadataJson = try? JSONEncoder().encode(metadata),
+                  let metadataString = String(data: metadataJson, encoding: .utf8) else { return }
+
+            try await repository.updateFields(
+                uuid: thinkspaceId,
+                columns: ["metadata": metadataString]
+            )
+        } catch {
+            print("❌ Failed to save Flows: \(error)")
+        }
+    }
+
+    /// Persist the full Places list for a thinkspace (field-level metadata update).
+    func savePlaces(_ places: [CanvasPlace], for thinkspaceId: String) async {
+        do {
+            guard let atom = try await repository.fetch(uuid: thinkspaceId) else { return }
+            var metadata = atom.metadataValue(as: ThinkspaceMetadata.self) ?? ThinkspaceMetadata()
+            metadata.places = places
+
+            guard let metadataJson = try? JSONEncoder().encode(metadata),
+                  let metadataString = String(data: metadataJson, encoding: .utf8) else { return }
+
+            try await repository.updateFields(
+                uuid: thinkspaceId,
+                columns: ["metadata": metadataString]
+            )
+        } catch {
+            print("❌ Failed to save Places: \(error)")
         }
     }
 

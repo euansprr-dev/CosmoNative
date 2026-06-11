@@ -54,78 +54,32 @@ enum InboxCaptureConverter {
 
         let title = atomData["title"] as? String
 
-        // Dedupe: we tag the InboxItem's metadata JSON with the source atom uuid.
-        // If one already exists for this atom, don't create a second InboxItem.
-        let dedupeNeedle = "\"sourceAtomUuid\":\"\(uuid)\""
-        let alreadyConverted = (try? await CosmoDatabase.shared.asyncRead { db in
-            try Row.fetchOne(
-                db,
-                sql: "SELECT 1 FROM inbox_items WHERE metadata LIKE ? LIMIT 1",
-                arguments: ["%\(dedupeNeedle)%"]
-            )
-        }) ?? nil
-        if alreadyConverted != nil {
-            // Make sure the transport atom is soft-deleted so future pulls skip it.
-            try? await CosmoDatabase.shared.asyncWrite { db in
-                try db.execute(
-                    sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                    arguments: [ISO8601.string(from: Date()), uuid]
-                )
-            }
-            return
-        }
-
         print("📥 InboxCaptureConverter: converting cloud inbox capture \(uuid)")
 
         await MainActor.run { () -> Void in
             Task {
-                let inboxMetadata = "{\"sourceAtomUuid\":\"\(uuid)\"}"
-                let item = InboxItem.new(
-                    source: .telegramText,
-                    rawText: rawText,
-                    title: title,
-                    metadata: inboxMetadata
+                // The ingest service owns dedupe (via sourceAtomUuid), the
+                // consumed-capture rule (an idea the cloud agent already created
+                // from this message never double-enters triage), and queued
+                // classification.
+                let outcome = await InboxIngestService.shared.ingest(
+                    .init(
+                        source: .telegramText,
+                        rawText: rawText,
+                        title: title,
+                        sourceAtomUuid: uuid,
+                        excludedAtomUUIDs: [uuid]
+                    )
                 )
 
-                do {
-                    let saved = try await InboxRepository.shared.create(item)
+                // Soft-delete the transport atom either way so future pulls skip it.
+                await softDeleteTransportAtom(uuid: uuid)
 
-                    try? await CosmoDatabase.shared.asyncWrite { db in
-                        try db.execute(
-                            sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                            arguments: [ISO8601.string(from: Date()), uuid]
-                        )
-                    }
-
-                    let classification = await InboxClassificationEngine.shared.classify(
-                        text: rawText,
-                        source: .telegramText,
-                        excludedAtomUUIDs: [uuid],
-                        preferredTitle: title
-                    )
-
-                    try await InboxRepository.shared.updateClassification(
-                        uuid: saved.uuid,
-                        classification: classification.classification,
-                        confidence: classification.confidence,
-                        title: classification.title,
-                        mergeTargetUuid: classification.mergeTarget?.atomUuid,
-                        mergeTargetTitle: classification.mergeTarget?.atomTitle,
-                        mergeTargetType: classification.mergeTarget?.atomType,
-                        mergePreview: classification.mergeTarget?.preview,
-                        placeThinkspaceId: classification.placeTarget?.thinkspaceId,
-                        placeThinkspaceName: classification.placeTarget?.thinkspaceName,
-                        placeAtomType: classification.placeTarget?.suggestedAtomType,
-                        recommendations: classification.recommendationBundle.encodedJSONString,
-                        primaryRouteKind: classification.recommendationBundle.primaryRecommendation?.kind.rawValue,
-                        destinationPath: classification.recommendationBundle.primaryRecommendation?.destinationPath,
-                        rationale: classification.recommendationBundle.primaryRecommendation?.rationale,
-                        placementPlanSummary: classification.recommendationBundle.primaryRecommendation?.placementPlan?.summary
-                    )
-
+                switch outcome {
+                case .enqueued(let saved):
                     print("📥 InboxCaptureConverter: InboxItem created from cloud capture — \(saved.uuid)")
-                } catch {
-                    print("⚠️ InboxCaptureConverter: Failed to create InboxItem from cloud capture: \(error)")
+                case .consumed(let reason):
+                    print("📥 InboxCaptureConverter: cloud capture \(uuid) consumed (\(reason))")
                 }
             }
         }
@@ -244,21 +198,23 @@ enum InboxCaptureConverter {
 
     @MainActor
     private static func convertLaneCaptureToInbox(sourceAtomUuid: String, rawText: String, title: String?, reason: String) async {
-        let inboxMetadata = "{\"sourceAtomUuid\":\"\(sourceAtomUuid)\",\"reason\":\"\(reason)\"}"
-        let item = InboxItem.new(
-            source: .telegramText,
-            rawText: rawText,
-            title: title,
-            metadata: inboxMetadata
+        let inboxMetadata = "{\"reason\":\"\(reason)\"}"
+        let outcome = await InboxIngestService.shared.ingest(
+            .init(
+                source: .telegramText,
+                rawText: rawText,
+                title: title,
+                metadata: inboxMetadata,
+                sourceAtomUuid: sourceAtomUuid,
+                excludedAtomUUIDs: [sourceAtomUuid]
+            )
         )
-
-        do {
-            _ = try await InboxRepository.shared.create(item)
-            await softDeleteTransportAtom(uuid: sourceAtomUuid)
-            NotificationCenter.default.post(name: CosmoNotification.Inbox.itemAdded, object: nil)
+        await softDeleteTransportAtom(uuid: sourceAtomUuid)
+        switch outcome {
+        case .enqueued:
             print("📥 InboxCaptureConverter: fallback inbox item created for cloud lane capture \(sourceAtomUuid)")
-        } catch {
-            print("⚠️ InboxCaptureConverter: Failed fallback inbox capture: \(error)")
+        case .consumed(let reason):
+            print("📥 InboxCaptureConverter: cloud lane capture \(sourceAtomUuid) consumed (\(reason))")
         }
     }
 

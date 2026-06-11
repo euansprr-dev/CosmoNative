@@ -28,7 +28,7 @@ final class InboxActionExecutor {
             guard let thinkspaceId = item.placeThinkspaceId else { return try await executeNew(item: item) }
             let atomType = AtomType(rawValue: item.placeAtomType ?? AtomType.connection.rawValue) ?? .connection
             return try await executePlace(item: item, thinkspaceId: thinkspaceId, atomType: atomType)
-        case .new, .none:
+        case .new, .unsorted, .none:
             return try await executeNew(item: item)
         }
     }
@@ -145,6 +145,49 @@ final class InboxActionExecutor {
 
         CosmoUndoManager.shared.register(
             InlineUndoAction(actionDescription: "Create Inbox Atom") { [weak self] in
+                guard let self else { return }
+                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
+                try? await self.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                guard let self else { return }
+                try? await self.restoreAtomSnapshot(createdAtom)
+                await self.reindex(atom: createdAtom)
+                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
+
+        return atom
+    }
+
+    /// Create a `.connection` atom from the capture and link it to the atoms
+    /// it bridges. A capture that strongly matches several existing objects is
+    /// a connection between them, not a duplicate of any one.
+    @discardableResult
+    func executeConnect(item: InboxItem, relatedAtomUUIDs: [String]) async throws -> Atom {
+        var atom = Atom.new(
+            type: .connection,
+            title: item.title ?? fallbackTitle(for: item),
+            body: item.rawText
+        )
+
+        for uuid in relatedAtomUUIDs {
+            guard let related = try? await atomRepo.fetch(uuid: uuid), !related.isDeleted else { continue }
+            atom = atom.appendingLink(AtomLink(
+                type: AtomLinkType.related.rawValue,
+                uuid: related.uuid,
+                entityType: related.type.rawValue
+            ))
+        }
+
+        atom = try await atomRepo.create(atom)
+        await reindex(atom: atom)
+        try await inboxRepo.markActioned(uuid: item.uuid)
+
+        let createdAtom = atom
+        let originalItem = item
+
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Connect Inbox Capture") { [weak self] in
                 guard let self else { return }
                 try? await self.atomRepo.delete(uuid: createdAtom.uuid)
                 try? await self.inboxRepo.restore(originalItem)
@@ -371,6 +414,8 @@ final class InboxActionExecutor {
             object: nil,
             userInfo: ["thinkspaceId": thinkspaceId]
         )
+        // Placement changed cluster membership — routing centroids are stale.
+        await InboxRoutingEngine.shared.invalidateCentroids()
     }
 
     private func resolveThinkspaceName(for thinkspaceId: String) async -> String? {

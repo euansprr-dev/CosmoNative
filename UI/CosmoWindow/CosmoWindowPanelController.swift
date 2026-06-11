@@ -1,6 +1,7 @@
 // CosmoOS/UI/CosmoWindow/CosmoWindowPanelController.swift
-// System-wide floating NSPanel for the Cosmo AI chat window
-// Accessible from any app via Option+A hotkey
+// System-wide floating NSPanel for the Cosmo AI chat window.
+// Option+A now routes to the inline assistant; this controller keeps fallback
+// monitors only to preserve that global routing if the old panel is instantiated.
 // March 2026
 
 import SwiftUI
@@ -221,7 +222,8 @@ final class CosmoWindowPanelController: NSWindowController {
                !event.modifierFlags.contains(.shift),
                !event.modifierFlags.contains(.control) {
                 Task { @MainActor in
-                    self?.toggle()
+                    self?.hide()
+                    CosmoAssistantHotkeyRouter.openFromOptionA()
                 }
             }
         }
@@ -234,10 +236,8 @@ final class CosmoWindowPanelController: NSWindowController {
                !event.modifierFlags.contains(.shift),
                !event.modifierFlags.contains(.control) {
                 Task { @MainActor in
-                    if ContentFocusWritingAIScope.shared.tryOpen() {
-                        return
-                    }
-                    self?.toggle()
+                    self?.hide()
+                    CosmoAssistantHotkeyRouter.openFromOptionA()
                 }
                 return nil // Consume the event
             }

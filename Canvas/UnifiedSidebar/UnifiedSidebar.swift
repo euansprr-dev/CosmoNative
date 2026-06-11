@@ -354,11 +354,14 @@ struct UnifiedSidebar: View {
                 sidebarHeader
 
                 ScrollView(.vertical) {
-                    Group {
-                        sidebarBody
+                    VStack(spacing: 0) {
+                        WorkbenchStripView()
+                        Group {
+                            sidebarBody
+                        }
+                        .id(activeContext)
+                        .transition(.opacity)
                     }
-                    .id(activeContext)
-                    .transition(.opacity)
                     .padding(.horizontal, outerPadding)
                     .padding(.vertical, UnifiedSidebarMetrics.contentVerticalPadding)
                 }

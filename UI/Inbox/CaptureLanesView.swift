@@ -1,5 +1,7 @@
 // CosmoOS/UI/Inbox/CaptureLanesView.swift
-// Custom Capture Lanes management and capture review surface.
+// Capture lanes as a destinations grid — Finder grammar (adaptive tiles,
+// folder iconography, counts), drill into a lane for its captures, with the
+// Telegram command registry beneath. June 2026 rebuild.
 
 import AppKit
 import SwiftUI
@@ -24,9 +26,6 @@ final class CaptureLanesViewModel {
 
     func refresh() async {
         destinations = (try? await destinationRepo.fetchActive()) ?? destinationRepo.destinations
-        if selectedDestinationId == nil {
-            selectedDestinationId = destinations.first?.uuid
-        }
         await loadItems()
     }
 
@@ -35,9 +34,10 @@ final class CaptureLanesViewModel {
         Task { await loadItems() }
     }
 
-    func selectDestination(id: String?) {
-        selectedDestinationId = id
-        Task { await loadItems() }
+    func clearSelection() {
+        selectedDestinationId = nil
+        selectedItems = []
+        attachmentsByItemId = [:]
     }
 
     func createLane() async {
@@ -61,7 +61,7 @@ final class CaptureLanesViewModel {
             try await destinationRepo.archive(uuid: destination.uuid)
             destinations = try await destinationRepo.fetchActive()
             if selectedDestinationId == destination.uuid {
-                selectedDestinationId = destinations.first?.uuid
+                clearSelection()
             }
             await loadItems()
         } catch {
@@ -70,6 +70,7 @@ final class CaptureLanesViewModel {
     }
 
     private func loadItems() async {
+        guard selectedDestinationId != nil else { return }
         selectedItems = (try? await capturedRepo.fetch(destinationId: selectedDestinationId)) ?? []
         var map: [String: [MediaAttachment]] = [:]
         for item in selectedItems {
@@ -99,14 +100,10 @@ struct CaptureLanesView: View {
         Group {
             if showsCommandRegistryOnly {
                 commandRegistryDetail
+            } else if viewModel.selectedDestination != nil {
+                laneDetail
             } else {
-                HStack(spacing: 0) {
-                    if showsLaneSidebar {
-                        laneSidebar
-                        Divider().foregroundStyle(DS.borderSubtle)
-                    }
-                    laneDetail
-                }
+                destinationsGrid
             }
         }
         .background(DS.bg)
@@ -121,219 +118,272 @@ struct CaptureLanesView: View {
             guard changedDestinationId == nil || changedDestinationId == viewModel.selectedDestinationId else { return }
             Task { await viewModel.refresh() }
         }
+        .animation(ProMotionSprings.gentle, value: viewModel.selectedDestinationId)
     }
 
-    private var laneSidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sidebarHeader
-            newLaneComposer
-            ScrollView {
-                LazyVStack(spacing: 6) {
+    // MARK: - Destinations grid (Finder grammar)
+
+    private var destinationsGrid: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.space24) {
+                newLaneComposer
+
+                LazyVGrid(columns: laneColumns, alignment: .leading, spacing: 14) {
                     ForEach(viewModel.destinations) { destination in
-                        CaptureLaneSidebarRow(
-                            destination: destination,
-                            isSelected: viewModel.selectedDestinationId == destination.uuid,
-                            onSelect: { viewModel.select(destination) },
-                            onDelete: { Task { await viewModel.deleteLane(destination) } }
-                        )
-                    }
-                }
-                .padding(.horizontal, DS.space12)
-                .padding(.vertical, DS.space8)
-            }
-            commandRegistry
-        }
-        .frame(width: 280)
-        .background(DS.surface)
-    }
-
-    private var sidebarHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Capture Lanes")
-                .font(DS.title2)
-                .foregroundStyle(DS.text)
-            Text("Telegram commands with durable homes")
-                .font(DS.subheadline)
-                .foregroundStyle(DS.textMuted)
-        }
-        .padding(.horizontal, DS.space16)
-        .padding(.top, DS.space16)
-        .padding(.bottom, DS.space12)
-    }
-
-    private var newLaneComposer: some View {
-        HStack(spacing: 8) {
-            TextField("New lane", text: $viewModel.newLaneName)
-                .textFieldStyle(.plain)
-                .font(DS.callout)
-                .foregroundStyle(DS.text)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(DS.surfaceElevated, in: .rect(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
-                )
-
-            Button {
-                Task { await viewModel.createLane() }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(DS.textOnAccent)
-            .background(DS.accent, in: .rect(cornerRadius: 8))
-            .disabled(viewModel.isCreatingLane)
-            .accessibilityLabel("Create capture lane")
-        }
-        .padding(.horizontal, DS.space16)
-        .padding(.bottom, DS.space8)
-    }
-
-    private var commandRegistry: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Telegram Commands")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .textCase(.uppercase)
-            ForEach(viewModel.destinations.prefix(5)) { destination in
-                HStack(spacing: 6) {
-                    Text("\(destination.aliases.first ?? destination.name.lowercased()):")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(DS.accent)
-                    Text("-> \(destination.name)")
-                        .font(DS.caption)
-                        .foregroundStyle(DS.textSecondary)
-                        .lineLimit(1)
-                }
-            }
-        }
-        .padding(DS.space16)
-        .overlay(alignment: .top) {
-            Divider().foregroundStyle(DS.borderSubtle)
-        }
-    }
-
-    private var commandRegistryDetail: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 34, height: 34)
-                    .background(DS.accentSoft, in: .rect(cornerRadius: 8))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Telegram Commands")
-                        .font(DS.title1)
-                        .foregroundStyle(DS.text)
-                    Text("Capture aliases mapped to durable lanes")
-                        .font(DS.callout)
-                        .foregroundStyle(DS.textMuted)
-                }
-
-                Spacer()
-            }
-            .padding(.horizontal, DS.space24)
-            .padding(.vertical, DS.space16)
-
-            Divider().foregroundStyle(DS.borderSubtle)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(viewModel.destinations) { destination in
-                        CaptureCommandRegistryRow(
+                        CaptureLaneTile(
                             destination: destination,
                             onOpen: { viewModel.select(destination) },
                             onDelete: { Task { await viewModel.deleteLane(destination) } }
                         )
                     }
                 }
-                .padding(DS.space24)
+
+                if !viewModel.destinations.isEmpty {
+                    commandRegistrySection
+                }
+
+                if viewModel.destinations.isEmpty {
+                    gridEmptyState
+                }
+            }
+            .padding(.horizontal, DS.space32)
+            .padding(.top, DS.space16)
+            .padding(.bottom, DS.space48)
+        }
+        .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    private var laneColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 148, maximum: 178), spacing: 14, alignment: .top)]
+    }
+
+    private var newLaneComposer: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "folder.badge.plus")
+                .font(DS.callout)
+                .foregroundStyle(DS.textMuted)
+                .accessibilityHidden(true)
+
+            TextField("New lane name…", text: $viewModel.newLaneName)
+                .textFieldStyle(.plain)
+                .font(DS.body)
+                .foregroundStyle(DS.text)
+                .onSubmit {
+                    Task { await viewModel.createLane() }
+                }
+
+            if !viewModel.newLaneName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    Task { await viewModel.createLane() }
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(DS.title3)
+                        .foregroundStyle(DS.accent)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isCreatingLane)
+                .help("Create lane (⏎)")
+                .accessibilityLabel("Create capture lane")
+                .transition(.scale.combined(with: .opacity))
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.bg)
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+        .dsGlassInput(cornerRadius: 14)
+        .frame(maxWidth: 420)
+        .animation(ProMotionSprings.snappy, value: viewModel.newLaneName.isEmpty)
     }
+
+    private var commandRegistrySection: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text("Telegram commands")
+                .dsSmallCapsLabel()
+
+            VStack(alignment: .leading, spacing: DS.space6) {
+                ForEach(viewModel.destinations) { destination in
+                    HStack(spacing: DS.space8) {
+                        Text("\(destination.aliases.first ?? destination.name.lowercased()):")
+                            .font(.system(.caption, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(DS.accent)
+                        Text(destination.name)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .padding(DS.space12)
+            .background(DS.glassSectionFill, in: .rect(cornerRadius: 14))
+        }
+        .frame(maxWidth: 420, alignment: .leading)
+    }
+
+    private var gridEmptyState: some View {
+        VStack(spacing: DS.space8) {
+            Image(systemName: "tray.and.arrow.down")
+                .font(DS.displaySerif)
+                .foregroundStyle(DS.textMuted.opacity(0.5))
+                .accessibilityHidden(true)
+            Text("Lanes give captures a precise home")
+                .font(DS.title2)
+                .foregroundStyle(DS.text)
+            Text("Create a lane above, then send “lane-name: your thought” from Telegram — it skips triage and files itself.")
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, DS.space48)
+    }
+
+    // MARK: - Command registry detail (manage-commands route)
+
+    private var commandRegistryDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.space10) {
+                ForEach(viewModel.destinations) { destination in
+                    CaptureCommandRegistryRow(
+                        destination: destination,
+                        onOpen: { viewModel.select(destination) },
+                        onDelete: { Task { await viewModel.deleteLane(destination) } }
+                    )
+                }
+            }
+            .padding(DS.space24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Lane detail (same queue grammar as the global inbox)
 
     private var laneDetail: some View {
         VStack(spacing: 0) {
             detailHeader
-            Divider().foregroundStyle(DS.borderSubtle)
             if viewModel.selectedItems.isEmpty {
                 emptyState
             } else {
-                captureList
+                captureLedger
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.bg)
     }
 
     @ViewBuilder
     private var detailHeader: some View {
         if let destination = viewModel.selectedDestination {
-            HStack(spacing: 12) {
+            HStack(spacing: DS.space12) {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        viewModel.clearSelection()
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(DS.subheadline.weight(.semibold))
+                        .foregroundStyle(DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DS.glassSectionFill, in: .circle)
+                }
+                .buttonStyle(.plain)
+                .help("All lanes (esc)")
+                .keyboardShortcut(.escape, modifiers: [])
+                .accessibilityLabel("Back to all lanes")
+
                 Image(systemName: destination.icon)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(DS.headline)
                     .foregroundStyle(DS.accent)
                     .frame(width: 34, height: 34)
-                    .background(DS.accentSoft, in: .rect(cornerRadius: 8))
+                    .background(DS.accentSoft, in: .rect(cornerRadius: 10))
+                    .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(destination.name)
-                        .font(DS.title1)
+                        .font(DS.title2)
                         .foregroundStyle(DS.text)
                     Text("\(destination.type.displayName) lane · \(destination.itemCount) captures")
-                        .font(DS.callout)
+                        .font(DS.caption)
                         .foregroundStyle(DS.textMuted)
                 }
 
                 Spacer()
 
                 Text((destination.aliases.first ?? destination.name.lowercased()) + ":")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
                     .foregroundStyle(DS.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(DS.accentSoft, in: .rect(cornerRadius: 8))
+                    .padding(.horizontal, DS.space10)
+                    .padding(.vertical, DS.space6)
+                    .background(DS.accentSoft, in: .capsule)
+                    .help("Prefix a Telegram message with this to file straight into the lane")
             }
-            .padding(.horizontal, DS.space24)
-            .padding(.vertical, DS.space16)
-        } else {
-            HStack {
-                Text("No Lane Selected")
-                    .font(DS.title1)
-                    .foregroundStyle(DS.text)
-                Spacer()
-            }
-            .padding(DS.space24)
+            .padding(.horizontal, DS.space32)
+            .padding(.vertical, DS.space12)
+
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 0.5)
+                .padding(.horizontal, DS.space32)
         }
     }
 
-    private var captureList: some View {
+    /// The same temporal ledger as the global inbox queue — pinned small-caps
+    /// section headers, ~56pt rows — scoped to this lane's captures.
+    private var captureLedger: some View {
         ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(viewModel.selectedItems) { item in
-                    CaptureLaneItemCard(
-                        item: item,
-                        attachments: viewModel.attachmentsByItemId[item.uuid] ?? []
-                    )
-                    .padding(.horizontal, DS.space24)
+            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                ForEach(temporalSections, id: \.id) { section in
+                    Section {
+                        ForEach(section.items) { item in
+                            CaptureLaneQueueRow(
+                                item: item,
+                                attachments: viewModel.attachmentsByItemId[item.uuid] ?? []
+                            )
+                        }
+                    } header: {
+                        InboxSectionHeader(title: section.title, itemCount: section.items.count)
+                    }
                 }
             }
-            .padding(.vertical, DS.space16)
+            .padding(.horizontal, DS.space24)
+            .padding(.bottom, DS.space24)
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    private var temporalSections: [(id: String, title: String, items: [CapturedItem])] {
+        let calendar = Calendar.current
+        let now = Date()
+
+        var today: [CapturedItem] = []
+        var yesterday: [CapturedItem] = []
+        var thisWeek: [CapturedItem] = []
+        var older: [CapturedItem] = []
+
+        for item in viewModel.selectedItems {
+            guard let date = ISO8601.date(from: item.createdAt) else {
+                older.append(item)
+                continue
+            }
+            if calendar.isDateInToday(date) { today.append(item) }
+            else if calendar.isDateInYesterday(date) { yesterday.append(item) }
+            else if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) { thisWeek.append(item) }
+            else { older.append(item) }
+        }
+
+        return [
+            today.isEmpty ? nil : (id: "today", title: "Today", items: today),
+            yesterday.isEmpty ? nil : (id: "yesterday", title: "Yesterday", items: yesterday),
+            thisWeek.isEmpty ? nil : (id: "thisWeek", title: "This Week", items: thisWeek),
+            older.isEmpty ? nil : (id: "older", title: "Older", items: older),
+        ].compactMap { $0 }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DS.space12) {
             Image(systemName: "tray.and.arrow.down")
-                .font(.system(size: 40))
-                .foregroundStyle(DS.textMuted)
-            Text(viewModel.selectedDestination == nil ? "Create a lane to start capturing" : "This lane is waiting")
+                .font(DS.displaySerif)
+                .foregroundStyle(DS.textMuted.opacity(0.5))
+                .accessibilityHidden(true)
+            Text("This lane is waiting")
                 .font(DS.headline)
                 .foregroundStyle(DS.text)
             Text(emptyStateSubtitle)
@@ -354,54 +404,62 @@ struct CaptureLanesView: View {
     }
 }
 
-private struct CaptureLaneSidebarRow: View {
+// MARK: - Lane tile (Finder grammar)
+
+private struct CaptureLaneTile: View {
     let destination: CaptureDestination
-    let isSelected: Bool
-    let onSelect: () -> Void
+    let onOpen: () -> Void
     let onDelete: () -> Void
 
+    @State private var isHovered = false
     @State private var showDeleteConfirm = false
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 10) {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: DS.space10) {
                 Image(systemName: destination.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(isSelected ? DS.textOnAccent : DS.textSecondary)
-                    .frame(width: 24, height: 24)
+                    .font(DS.title2)
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 40, height: 40)
+                    .background(DS.accentSoft, in: .rect(cornerRadius: 12))
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(destination.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(isSelected ? DS.textOnAccent : DS.text)
+                        .font(DS.headline)
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
-                    Text(destination.type.displayName)
+
+                    Text(countLine)
                         .font(DS.caption)
-                        .foregroundStyle(isSelected ? DS.textOnAccent.opacity(0.78) : DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
+                        .monospacedDigit()
                 }
 
-                Spacer()
-
-                if destination.itemCount > 0 {
-                    Text("\(destination.itemCount)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(isSelected ? DS.textOnAccent : DS.textMuted)
-                }
+                Text("\(destination.aliases.first ?? destination.name.lowercased()):")
+                    .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, DS.space6)
+                    .padding(.vertical, 2)
+                    .background(DS.glassSectionFill, in: .capsule)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background(isSelected ? DS.accent : DS.surfaceHover.opacity(0.001), in: .rect(cornerRadius: 8))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(DS.space12)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .glassCard(isHovered: isHovered, cornerRadius: 14)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help("Open \(destination.name)")
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
         .contextMenu {
-            Button {
-                onSelect()
-            } label: {
+            Button(action: onOpen) {
                 Label("Open", systemImage: "arrow.right.circle")
             }
-
             Divider()
-
             Button(role: .destructive) {
                 showDeleteConfirm = true
             } label: {
@@ -419,7 +477,13 @@ private struct CaptureLaneSidebarRow: View {
             Text("The lane and its Telegram command aliases will be hidden. Existing captures stay in the database.")
         }
     }
+
+    private var countLine: String {
+        destination.itemCount == 1 ? "1 capture" : "\(destination.itemCount) captures"
+    }
 }
+
+// MARK: - Command registry row (manage-commands route)
 
 private struct CaptureCommandRegistryRow: View {
     let destination: CaptureDestination
@@ -429,23 +493,24 @@ private struct CaptureCommandRegistryRow: View {
     @State private var showDeleteConfirm = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.space12) {
             Image(systemName: destination.icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.callout.weight(.semibold))
                 .foregroundStyle(DS.accent)
                 .frame(width: 28, height: 28)
                 .background(DS.accentSoft, in: .rect(cornerRadius: 7))
+                .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DS.space4) {
                 Text(destination.name)
                     .font(DS.headline)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
 
-                HStack(spacing: 6) {
+                HStack(spacing: DS.space6) {
                     ForEach(destination.aliases.prefix(4), id: \.self) { alias in
                         Text("\(alias):")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.system(.caption, design: .monospaced).weight(.semibold))
                             .foregroundStyle(DS.accent)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
@@ -460,21 +525,13 @@ private struct CaptureCommandRegistryRow: View {
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
         }
-        .padding(12)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
+        .padding(DS.space12)
+        .dsGlassCard(cornerRadius: 12)
         .contextMenu {
-            Button {
-                onOpen()
-            } label: {
+            Button(action: onOpen) {
                 Label("Open Lane", systemImage: "arrow.right.circle")
             }
-
             Divider()
-
             Button(role: .destructive) {
                 showDeleteConfirm = true
             } label: {
@@ -494,94 +551,137 @@ private struct CaptureCommandRegistryRow: View {
     }
 }
 
-private struct CaptureLaneItemCard: View {
+// MARK: - Lane queue row (same grammar as InboxQueueRow)
+
+/// One lane capture, one calm row — identical visual grammar to the global
+/// inbox queue. Lane captures already have a home, so the trailing area shows
+/// status/media instead of a suggestion pill. Click expands the full text.
+private struct CaptureLaneQueueRow: View {
     let item: CapturedItem
     let attachments: [MediaAttachment]
 
+    @State private var isHovered = false
+    @State private var isExpanded = false
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            mediaPreview
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(itemTitle)
-                        .font(DS.headline)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(2)
-                    Spacer()
-                    statusChip
-                }
-                if let detail = itemDetail {
-                    Text(detail)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.textSecondary)
-                        .lineLimit(3)
-                }
-                HStack(spacing: 10) {
-                    Label("Telegram", systemImage: "paperplane")
-                    Text(relativeDate)
-                    if !attachments.isEmpty {
-                        Text("\(attachments.count) attachment\(attachments.count == 1 ? "" : "s")")
-                    }
-                }
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-            }
+        Button {
+            withAnimation(ProMotionSprings.snappy) { isExpanded.toggle() }
+        } label: {
+            rowContent
         }
-        .padding(12)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .accessibilityElement(children: .combine)
+        .help(isExpanded ? "Collapse" : "Show the full capture")
     }
 
+    private var rowContent: some View {
+        HStack(alignment: isExpanded ? .top : .center, spacing: DS.space12) {
+            leadingPreview
+            titleColumn
+            Spacer(minLength: DS.space12)
+            trailingArea
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, isExpanded ? DS.space12 : 0)
+        .frame(minHeight: 56)
+        .contentShape(Rectangle())
+        .background(rowBackground)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 0.5)
+                .padding(.leading, DS.space16 + 7 + DS.space12)
+        }
+    }
+
+    // Real media preview when the capture carries attachments; the queue's
+    // status dot otherwise.
     @ViewBuilder
-    private var mediaPreview: some View {
+    private var leadingPreview: some View {
         if let thumbnail = attachments.compactMap(\.thumbnailPath).first,
            let image = NSImage(contentsOfFile: thumbnail) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 72, height: 72)
-                .clipShape(.rect(cornerRadius: 7))
+                .frame(width: 40, height: 40)
+                .clipShape(.rect(cornerRadius: 8))
+                .accessibilityLabel("Capture attachment preview")
         } else if let first = attachments.first {
             Image(systemName: icon(for: first.kind))
-                .font(.system(size: 22, weight: .medium))
+                .font(DS.callout)
                 .foregroundStyle(DS.accent)
-                .frame(width: 72, height: 72)
-                .background(DS.accentSoft, in: .rect(cornerRadius: 7))
+                .frame(width: 40, height: 40)
+                .background(DS.accentSoft, in: .rect(cornerRadius: 8))
+                .accessibilityHidden(true)
         } else {
-            Image(systemName: "text.alignleft")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(DS.textMuted)
-                .frame(width: 72, height: 72)
-                .background(DS.surface, in: .rect(cornerRadius: 7))
+            Circle()
+                .fill(item.status == .failed ? DS.red : DS.accent)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
         }
     }
 
-    private var statusChip: some View {
-        Text(item.status.rawValue.replacingOccurrences(of: "_", with: " "))
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(item.status == .failed ? DS.red : DS.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.surface, in: .rect(cornerRadius: 7))
+    private var titleColumn: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(itemTitle)
+                .font(DS.body)
+                .foregroundStyle(DS.text)
+                .lineLimit(isExpanded ? nil : 1)
+                .fixedSize(horizontal: false, vertical: isExpanded)
+
+            Text(metaLine)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private var trailingArea: some View {
+        if item.status == .failed {
+            Text("Failed")
+                .font(DS.caption.weight(.medium))
+                .foregroundStyle(DS.red)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space4 + 1)
+                .background(DS.redSoft, in: .capsule)
+        } else if attachments.count > 1 {
+            Text("\(attachments.count) attachments")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private var rowBackground: some View {
+        if isHovered || isExpanded {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DS.glassSectionFill)
+                .padding(.horizontal, DS.space6)
+        }
     }
 
     private var itemTitle: String {
         item.cleanText?.isEmpty == false ? item.cleanText! : item.caption ?? "Media capture"
     }
 
-    private var itemDetail: String? {
+    private var metaLine: String {
+        var parts = ["Telegram", relativeDate]
         if let first = attachments.first {
-            return "\(first.kind.displayName) · \(first.processingStatus.displayName)"
+            parts.append(first.kind.displayName)
         }
-        return item.parsedIntent
+        return parts.joined(separator: " · ")
     }
 
     private var relativeDate: String {
         guard let date = ISO8601.date(from: item.createdAt) else { return item.createdAt }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 { return "now" }
+        if interval < 3600 { return "\(Int(interval / 60))m ago" }
+        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
+        return "\(Int(interval / 86400))d ago"
     }
 
     private func icon(for kind: MediaAttachmentKind) -> String {

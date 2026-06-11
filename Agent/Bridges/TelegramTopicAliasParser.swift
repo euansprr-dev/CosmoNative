@@ -115,24 +115,20 @@ enum TelegramTopicRouter {
     // MARK: - Subroutes
 
     private static func routeAsTopicInbox(_ capture: TelegramTopicCapture, deepDive: Atom) async -> Outcome {
-        // Phase 6 V1: persist as InboxItem with placeThinkspaceId = deepDive.uuid so it shows in Topic Inbox.
-        do {
-            var item = InboxItem.new(source: .telegramText, rawText: capture.body)
-            item.placeThinkspaceId = deepDive.uuid
-            item.placeThinkspaceName = deepDive.title
-            item.classification = .place
-            item.confidence = 1.0
-            item.status = .classified
-            try await CosmoDatabase.shared.asyncWrite { db in
-                try item.insert(db)
-            }
-            NotificationCenter.default.post(
-                name: CosmoNotification.Inbox.itemAdded,
-                object: nil
+        // Pre-routed capture: it arrives already placed on the deep dive, so the
+        // ingest service stores it classified without queueing the classifier.
+        let outcome = await InboxIngestService.shared.ingest(
+            .init(
+                source: .telegramText,
+                rawText: capture.body,
+                preset: .init(thinkspaceId: deepDive.uuid, thinkspaceName: deepDive.title)
             )
+        )
+        switch outcome {
+        case .enqueued:
             return .routed(destination: "\(deepDive.title ?? "Deep Dive") → Topic Inbox", atomUUID: nil)
-        } catch {
-            return .failed(reason: "Inbox insert failed: \(error.localizedDescription)")
+        case .consumed(let reason):
+            return .failed(reason: "Inbox insert skipped: \(reason)")
         }
     }
 

@@ -248,19 +248,25 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertFalse(contentFocusView.contains("ContentOutlineSidebarContent"))
     }
 
-    func testInboxStatsCountsInSinglePass() throws {
+    func testInboxQueueStaysFreeOfDashboardChrome() throws {
+        // June 2026 rebuild: the stats bar, filter rows, and intelligence
+        // groups were retired with the old dashboard UI. Guard against them
+        // creeping back into the queue's supporting types.
         let inboxTypes = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/Inbox/InboxTypes.swift"),
             encoding: .utf8
         )
-        let statsInitializer = try XCTUnwrap(
-            inboxTypes.slice(
-                from: "init(items: [InboxItem])",
-                to: "}\n}\n\n// MARK: - Intelligence Grouping"
-            )
-        )
+        XCTAssertFalse(inboxTypes.contains("struct InboxStats"))
+        XCTAssertFalse(inboxTypes.contains("enum InboxSortOrder"))
+        XCTAssertFalse(inboxTypes.contains("struct InboxItemGroup"))
 
-        XCTAssertFalse(statsInitializer.contains("items.filter"))
+        // The view model owns the only derived count the masthead needs.
+        let viewModel = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/Inbox/InboxViewModel.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(viewModel.contains("var suggestedCount: Int"))
+        XCTAssertFalse(viewModel.contains("unplacedDatabaseItems"))
     }
 
     func testFocusModeSwipeAndBlueprintClicksOpenPaneWhenRequested() throws {
@@ -368,9 +374,12 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(goToObject.contains("let requestID = UUID()"))
         XCTAssertTrue(goToObject.contains("commandKNavigationRequestID = requestID"))
         XCTAssertTrue(goToObject.contains("try await Task.sleep(for: .milliseconds(350))"))
-        XCTAssertTrue(goToObject.contains("try await Task.sleep(for: .milliseconds(250))"))
         XCTAssertTrue(goToObject.contains("guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }"))
         XCTAssertFalse(goToObject.contains("DispatchQueue.main.asyncAfter"))
+        // June 2026: unplaced atoms open in focus mode — the inbox shows only
+        // explicit captures, never database objects.
+        XCTAssertTrue(goToObject.contains(".enterFocusMode"))
+        XCTAssertFalse(goToObject.contains("focusDatabaseItem"))
     }
 
     func testThinkspaceDestinationSwitchesCancelBeforePublishingStaleCanvasChanges() throws {
@@ -471,17 +480,19 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         let fastPath = try XCTUnwrap(
             switchHandler.slice(
                 from: "if cachedThinkspaceSnapshotApplied {",
-                to: "await spatialEngine.loadBlocks(for: \"home\", documentId: 0, thinkspaceId: newId)"
+                to: "spatialEngine.applyFetchedBlocks("
             )
         )
         XCTAssertTrue(fastPath.contains("animateThinkspaceContentIn()"))
         XCTAssertFalse(fastPath.contains("spatialEngine.blocks = []"))
 
-        let fastPathEntryRange = try XCTUnwrap(switchHandler.range(of: "animateThinkspaceContentIn()"))
-        let authoritativeLoadRange = try XCTUnwrap(
-            switchHandler.range(of: "await spatialEngine.loadBlocks(for: \"home\", documentId: 0, thinkspaceId: newId)")
+        let fastPathEntryRange = try XCTUnwrap(
+            switchHandler.range(of: "if cachedThinkspaceSnapshotApplied {")
         )
-        XCTAssertLessThan(fastPathEntryRange.lowerBound, authoritativeLoadRange.lowerBound)
+        let authoritativeApplyRange = try XCTUnwrap(
+            switchHandler.range(of: "spatialEngine.applyFetchedBlocks(")
+        )
+        XCTAssertLessThan(fastPathEntryRange.lowerBound, authoritativeApplyRange.lowerBound)
     }
 
     func testThinkspaceDrawingLoadsIgnoreStaleSwitchResults() throws {
@@ -513,7 +524,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             )
         )
 
-        let cancellationGuardRange = try XCTUnwrap(loadBlocks.range(of: "guard !Task.isCancelled, thinkspaceId == currentThinkspaceId else {"))
+        let cancellationGuardRange = try XCTUnwrap(loadBlocks.range(of: "guard let deduped, !Task.isCancelled, thinkspaceId == currentThinkspaceId else {"))
         let publishRange = try XCTUnwrap(loadBlocks.range(of: "self.blocks = deduped"))
         XCTAssertLessThan(cancellationGuardRange.lowerBound, publishRange.lowerBound)
     }

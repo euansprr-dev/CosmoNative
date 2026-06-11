@@ -218,6 +218,7 @@ struct ContentFocusModeView: View {
     @AppStorage("cosmoWindowEnabled") private var cosmoWindowEnabled = true
 
     @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
 
     // Responsive layout
@@ -902,7 +903,7 @@ struct ContentFocusModeView: View {
             Spacer(minLength: DS.space8)
             writingSurfaceControls
             ZenOrnament(isOn: $zenMode)
-            if isPaneContext {
+            if isPaneContext, !isPeekContext {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(DS.caption)

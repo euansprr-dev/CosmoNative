@@ -84,6 +84,11 @@ struct CosmicShimmer: View {
                     )
                 )
                 .onAppear {
+                    // Equal base/peak opacity renders identically at every phase
+                    // (e.g. CosmicAsyncImage's failure placeholder) — skip the
+                    // repeatForever animation so a static shimmer doesn't
+                    // invalidate the view tree every frame indefinitely.
+                    guard baseOpacity != peakOpacity else { return }
                     withAnimation(
                         .linear(duration: duration)
                         .repeatForever(autoreverses: false)

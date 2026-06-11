@@ -15,7 +15,6 @@ struct AutomationFlowLine: View {
     let isPulsing: Bool          // Rule just fired — show pulse
 
     @State private var pulseProgress: Double = 0
-    @State private var animationPhase: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let lineWidth: CGFloat = 1.2
@@ -60,9 +59,6 @@ struct AutomationFlowLine: View {
             guard !reduceMotion else { return }
             withAnimation(.linear(duration: 4).repeatForever(autoreverses: false)) {
                 pulseProgress = 1.0
-            }
-            withAnimation(.linear(duration: 6).repeatForever(autoreverses: false)) {
-                animationPhase = .pi * 2
             }
         }
     }

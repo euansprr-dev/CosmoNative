@@ -1,6 +1,7 @@
 // CosmoOS/UI/Inbox/InboxCaptureBar.swift
-// Always-visible quick capture field at the top of the inbox
-// March 2026
+// The hero of the inbox page: a single calm glass input. Type, ⏎, captured.
+// ⇧⏎ (or the expand control) opens a multiline editor for longer thoughts.
+// June 2026 — Inbox Revamp (INBOX_REVAMP_PLAN.md §3)
 
 import SwiftUI
 
@@ -9,31 +10,33 @@ struct InboxCaptureBar: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(spacing: DS.space8) {
+        HStack(alignment: viewModel.isCaptureExpanded ? .top : .center, spacing: DS.space10) {
             captureIcon
             captureField
             trailingActions
         }
         .padding(.horizontal, DS.space12)
         .padding(.vertical, viewModel.isCaptureExpanded ? DS.space10 : DS.space8)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .stroke(isFocused ? DS.accent.opacity(0.3) : DS.border, lineWidth: 1)
-        )
-        .dsRestingShadow()
+        .dsGlassInput(isFocused: isFocused, cornerRadius: 14)
         .animation(ProMotionSprings.snappy, value: isFocused)
         .animation(ProMotionSprings.snappy, value: viewModel.isCaptureExpanded)
+        .onChange(of: viewModel.captureFieldFocusRequest) {
+            isFocused = true
+        }
+        .onChange(of: isFocused) {
+            viewModel.isCaptureFieldFocused = isFocused
+        }
     }
 
     // MARK: - Subviews
 
     private var captureIcon: some View {
         Image(systemName: viewModel.showCaptureConfirmation ? "checkmark.circle.fill" : "plus.circle")
-            .font(.system(size: 16))
+            .font(DS.headline)
             .foregroundStyle(viewModel.showCaptureConfirmation ? DS.accent : DS.textMuted)
             .contentTransition(.symbolEffect(.replace))
-            .frame(width: 20)
+            .frame(width: 22, height: 22)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -46,11 +49,12 @@ struct InboxCaptureBar: View {
     }
 
     private var singleLineField: some View {
-        TextField("Capture a thought...", text: $viewModel.captureText)
+        TextField("Capture a thought…", text: $viewModel.captureText)
             .textFieldStyle(.plain)
             .font(DS.body)
             .foregroundStyle(DS.text)
             .focused($isFocused)
+            .frame(minHeight: 28)
             .onSubmit {
                 Task { await viewModel.submitCapture() }
             }
@@ -61,37 +65,40 @@ struct InboxCaptureBar: View {
             .font(DS.body)
             .foregroundStyle(DS.text)
             .scrollContentBackground(.hidden)
-            .frame(minHeight: 60, maxHeight: 100)
+            .frame(minHeight: 64, maxHeight: 120)
             .focused($isFocused)
     }
 
     private var trailingActions: some View {
         HStack(spacing: DS.space4) {
-            // Expand/collapse toggle
             Button {
                 withAnimation(ProMotionSprings.snappy) {
                     viewModel.isCaptureExpanded.toggle()
                 }
             } label: {
                 Image(systemName: viewModel.isCaptureExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 11))
+                    .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
-                    .frame(width: 24, height: 24)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(viewModel.isCaptureExpanded ? "Collapse" : "Expand")
+            .help(viewModel.isCaptureExpanded ? "Collapse" : "Write something longer")
+            .accessibilityLabel(viewModel.isCaptureExpanded ? "Collapse capture field" : "Expand capture field")
 
-            // Submit button (visible when there's text)
             if !viewModel.captureText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Button {
                     Task { await viewModel.submitCapture() }
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 18))
+                        .font(DS.title3)
                         .foregroundStyle(DS.accent)
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: .command)
                 .transition(.scale.combined(with: .opacity))
+                .help("Capture (⏎, or ⌘⏎ when expanded)")
+                .accessibilityLabel("Capture thought")
             }
         }
         .animation(ProMotionSprings.snappy, value: viewModel.captureText.isEmpty)

@@ -268,6 +268,7 @@ struct ClusterInspectorPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             automationSectionHeader
             automationSectionContent
+            createFlowButton
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -281,6 +282,33 @@ struct ClusterInspectorPanel: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.ruleUpdated)) { _ in
             loadClusterRules()
         }
+    }
+
+    /// Entry point for Living Workflows — draws a flow line from this cluster.
+    private var createFlowButton: some View {
+        Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Automation.createFlow,
+                object: nil,
+                userInfo: ["clusterId": cluster.id.uuidString]
+            )
+            onDismiss()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.trianglehead.turn.up.right.diamond")
+                    .font(DS.caption)
+                Text("Create Flow…")
+                    .font(DS.caption.weight(.semibold))
+            }
+            .foregroundStyle(DS.accent)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(DS.accentSoft))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Draw a flow from this cluster — distill or draft its contents")
+        .accessibilityLabel("Create flow from cluster")
     }
 
     private var automationSectionHeader: some View {

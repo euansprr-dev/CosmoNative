@@ -1,7 +1,38 @@
+import AppKit
 import XCTest
 @testable import CosmoOS
 
 final class IdeaFocusPersistenceRegressionTests: XCTestCase {
+    /// AppKit resets `minSize` whenever a smaller frame is set, after which the
+    /// vertically-resizable context editor shrinks to its content height. The
+    /// SwiftUI platform-view host is non-flipped, so the shorter view pins to
+    /// the BOTTOM of the reserved frame: the caret, typed text, and click
+    /// target all sit ~170pt below the "What's the angle?" placeholder, and
+    /// the top of the editor is dead space. The view must always fill the
+    /// height its host reserved for it.
+    @MainActor
+    func testContextTextViewNeverShrinksBelowHostHeightSoTypingStartsAtTop() {
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 632, height: 200))
+        let textView = IdeaContextTextView(frame: host.bounds)
+        host.addSubview(textView)
+
+        // Simulate AppKit's self-sizing pass collapsing the empty editor to
+        // its content height (this is what bottom-anchored it in production).
+        textView.setFrameSize(NSSize(width: 632, height: 32))
+        XCTAssertEqual(
+            textView.frame.height, 200,
+            "The context editor must keep filling the SwiftUI-reserved height; a shorter view bottom-anchors in the non-flipped host and typing lands at the bottom."
+        )
+
+        // Content taller than the reserved frame must still win, so the
+        // editor expands as the user writes more.
+        textView.setFrameSize(NSSize(width: 632, height: 329))
+        XCTAssertEqual(
+            textView.frame.height, 329,
+            "Content taller than the reserved frame must not be clamped down."
+        )
+    }
+
     func testOutlineSlideNoteEditsScheduleAutoSave() throws {
         let source = try ideaFocusViewSource()
 

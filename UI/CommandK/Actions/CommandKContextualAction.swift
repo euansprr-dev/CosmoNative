@@ -33,12 +33,16 @@ enum CommandKContextualActionID: String, Codable, Hashable, CaseIterable {
     case runMemoryClip
     case runSnippet
     case runRecipe
+    case peekObject
+    case applyWorkbench
+    case jumpToPlace
 }
 
 enum CommandKActionCategory: String, Codable, Equatable, CaseIterable {
     case primary = "Primary"
     case object = "Object"
     case capture = "Capture"
+    case workspace = "Workspace"
     case swipe = "Swipe"
     case inquiry = "Inquiry"
     case commandCenter = "Command Center"
@@ -107,6 +111,13 @@ struct CommandKContextualAction: Identifiable, Equatable {
     let role: CommandKActionRole
     let availability: CommandKActionAvailability
     let intent: CommandKActionIntent
+    /// Distinguishes dynamic actions sharing one id (benches, places).
+    var payloadKey: String? = nil
+
+    /// Stable identity for lists — dynamic actions append their payload.
+    var uniqueActionId: String {
+        payloadKey.map { "\(id.rawValue):\($0)" } ?? id.rawValue
+    }
 
     func withTitle(_ title: String) -> CommandKContextualAction {
         CommandKContextualAction(
@@ -118,7 +129,8 @@ struct CommandKContextualAction: Identifiable, Equatable {
             shortcut: shortcut,
             role: role,
             availability: availability,
-            intent: intent
+            intent: intent,
+            payloadKey: payloadKey
         )
     }
 }

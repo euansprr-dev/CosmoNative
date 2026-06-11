@@ -13,6 +13,7 @@ final class BlockRenderedSizeCache {
     static let shared = BlockRenderedSizeCache()
 
     private(set) var sizes: [String: CGSize] = [:]
+    private var changeNotificationScheduled = false
 
     /// Update the rendered size for a block. Posts notification if changed significantly.
     func update(blockId: String, size: CGSize) {
@@ -22,6 +23,19 @@ final class BlockRenderedSizeCache {
             || abs((old?.width ?? 0) - size.width) > threshold
             || abs((old?.height ?? 0) - size.height) > threshold {
             sizes[blockId] = size
+            scheduleChangeNotification()
+        }
+    }
+
+    /// Many blocks report new sizes within the same layout pass (e.g. while
+    /// resizing or after a thinkspace switch); observers only need one wake-up
+    /// per pass, so coalesce the posts instead of firing once per block.
+    private func scheduleChangeNotification() {
+        guard !changeNotificationScheduled else { return }
+        changeNotificationScheduled = true
+        Task { @MainActor in
+            await Task.yield()
+            changeNotificationScheduled = false
             NotificationCenter.default.post(
                 name: CosmoNotification.Canvas.blockRenderedSizeChanged,
                 object: nil

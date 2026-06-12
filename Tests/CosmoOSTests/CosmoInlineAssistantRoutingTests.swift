@@ -439,6 +439,60 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(store.paneMessages.map(\.content), ["Second answer"])
     }
 
+    func testSubmitKeepsOngoingConversationWhenAnotherSurfaceIsRegistered() async {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        store.activateSession(surfaceID: "note:original")
+        store.receivePaneAnswer(title: nil, answer: "Earlier answer", route: .answer)
+
+        // The user peeks at a source — its view registers as the active surface.
+        let peeked = RegisteringTestSurface(surfaceID: "note:peeked")
+        CosmoEditableSurfaceRegistry.shared.register(peeked)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:peeked") }
+
+        store.composerText = "And the follow-up?"
+        await store.submit()
+
+        // The ongoing conversation stays visible and the sent message lands in it —
+        // never swapped out because some other surface happens to be registered.
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:original")
+        XCTAssertEqual(store.paneMessages.map(\.content), ["Earlier answer", "And the follow-up?"])
+    }
+
+    func testSubmitBindsFreshConversationToActiveSurfaceAtomicallyWithMessage() async {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        let surface = RegisteringTestSurface(surfaceID: "note:fresh-bind")
+        CosmoEditableSurfaceRegistry.shared.register(surface)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:fresh-bind") }
+
+        store.composerText = "Hello there"
+        await store.submit()
+
+        // A fresh conversation binds to the surface being sent from, and the
+        // user message is visible in that same session — no possible gap where
+        // the message lands in one session while the answer streams into another.
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:fresh-bind")
+        XCTAssertEqual(store.paneMessages.map(\.content), ["Hello there"])
+    }
+
+    func testNavigationActivationNeverReplacesOngoingConversation() {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        // Idle and empty: navigation binds the session to the opened surface.
+        store.activateSessionIfIdle(surfaceID: "note:first")
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:first")
+
+        // With a conversation in progress, a view appearing must not retarget.
+        store.receivePaneAnswer(title: nil, answer: "Working answer", route: .answer)
+        store.activateSessionIfIdle(surfaceID: "note:second")
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:first")
+        XCTAssertEqual(store.paneMessages.map(\.content), ["Working answer"])
+    }
+
     func testSlashClearResetsOnlyActiveInlineSurfaceSession() async {
         let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
         let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
@@ -564,6 +618,50 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
             isProcessing: false,
             statusText: "Reading current context"
         ))
+    }
+
+    func testBottomBarEscapeLadderClosesMenusThenClearsDraftThenCollapses() {
+        // Collapsed bar never eats the key — Escape belongs to the surface behind it.
+        XCTAssertEqual(
+            CosmoInlineAssistantBarEscapePolicy.action(
+                isExpanded: false, isMenuVisible: false, hasComposerText: true, isProcessing: false
+            ),
+            .ignore
+        )
+
+        // An open inline menu is the closest thing to the user; it goes first.
+        XCTAssertEqual(
+            CosmoInlineAssistantBarEscapePolicy.action(
+                isExpanded: true, isMenuVisible: true, hasComposerText: true, isProcessing: false
+            ),
+            .dismissMenus
+        )
+
+        // Next press clears the draft (the Spotlight pattern) instead of
+        // destroying it together with the bar.
+        XCTAssertEqual(
+            CosmoInlineAssistantBarEscapePolicy.action(
+                isExpanded: true, isMenuVisible: false, hasComposerText: true, isProcessing: false
+            ),
+            .clearComposer
+        )
+
+        // Empty composer: Escape finally collapses the bar.
+        XCTAssertEqual(
+            CosmoInlineAssistantBarEscapePolicy.action(
+                isExpanded: true, isMenuVisible: false, hasComposerText: false, isProcessing: false
+            ),
+            .collapse
+        )
+
+        // While a run is in flight the bar can't visibly close — leave the key
+        // alone rather than half-acting (⌘. is the stop affordance).
+        XCTAssertEqual(
+            CosmoInlineAssistantBarEscapePolicy.action(
+                isExpanded: true, isMenuVisible: false, hasComposerText: false, isProcessing: true
+            ),
+            .ignore
+        )
     }
 
     func testBottomBarBlurPolicyOnlyBlursForOutsideClicks() {
@@ -1090,5 +1188,37 @@ final class ComposerMentionSerializerTests: XCTestCase {
         // Caret immediately after the pill: attributed 5 ↔ plain 16 (4 + 12).
         XCTAssertEqual(ComposerMentionSerializer.plainOffset(forAttributedOffset: 5, in: storage), 16)
         XCTAssertEqual(ComposerMentionSerializer.attributedOffset(forPlainOffset: 16, in: storage), 5)
+    }
+}
+
+/// Minimal editable surface for registry-interaction tests — registering it
+/// makes it the registry's `activeSurface`, like a focus-mode view appearing.
+private final class RegisteringTestSurface: CosmoEditableSurfaceProvider {
+    let surfaceID: String
+    let targetID: String
+
+    init(surfaceID: String) {
+        self.surfaceID = surfaceID
+        self.targetID = "\(surfaceID):body"
+    }
+
+    func editableSnapshot() -> CosmoEditableSourceSnapshot {
+        CosmoEditableSourceSnapshot(
+            surfaceID: surfaceID,
+            targetID: targetID,
+            kind: .text,
+            title: "Test Surface",
+            text: "Body",
+            sourceHash: CosmoEditableSurfaceHasher.hash("Body"),
+            anchors: []
+        )
+    }
+
+    func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
+        CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
+    }
+
+    func reject(operation: CosmoAssistantProposalOperation) async -> CosmoEditableOperationResult {
+        CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Rejected")
     }
 }

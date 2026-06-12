@@ -14,7 +14,6 @@ struct CortexMasterDetailView: View {
     @State private var actionSearchQuery = ""
     @State private var actionErrorMessage: String?
     @State private var cachedDetailSubject: CortexDetailSubject = .empty
-    @Binding var isActionPanelPresented: Bool
 
     var body: some View {
         let subject = visibleDetailSubject
@@ -53,7 +52,7 @@ struct CortexMasterDetailView: View {
             )
         }
         .overlay(alignment: .bottomTrailing) {
-            if isActionPanelPresented {
+            if viewModel.isActionPanelPresented {
                 actionPanel
                     .padding(.trailing, DS.space20)
                     .padding(.bottom, 58)
@@ -61,7 +60,7 @@ struct CortexMasterDetailView: View {
                     .zIndex(10)
             }
         }
-        .animation(ProMotionSprings.snappy, value: isActionPanelPresented)
+        .animation(ProMotionSprings.snappy, value: viewModel.isActionPanelPresented)
         .onAppear { syncCachedDetailSubject() }
         .onChange(of: detailSubject.renderSignature) { _, _ in syncCachedDetailSubject() }
         .onChange(of: viewModel.selectedNodeId) { _, _ in syncCachedDetailSubject() }
@@ -79,7 +78,7 @@ struct CortexMasterDetailView: View {
             groups: actionGroups,
             errorMessage: actionErrorMessage,
             execute: executeContextualAction,
-            dismiss: { isActionPanelPresented = false },
+            dismiss: { viewModel.isActionPanelPresented = false },
             searchQuery: $actionSearchQuery
         )
     }
@@ -256,7 +255,7 @@ struct CortexMasterDetailView: View {
         guard !contextualActions.isEmpty else { return }
         actionErrorMessage = nil
         actionSearchQuery = ""
-        isActionPanelPresented = true
+        viewModel.isActionPanelPresented = true
     }
 
     private func executeContextualAction(_ action: CommandKContextualAction) {
@@ -265,7 +264,7 @@ struct CortexMasterDetailView: View {
         Task { @MainActor in
             do {
                 try await CommandKActionExecutor().execute(action.intent)
-                isActionPanelPresented = false
+                viewModel.isActionPanelPresented = false
             } catch {
                 actionErrorMessage = error.localizedDescription
             }

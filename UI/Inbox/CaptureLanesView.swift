@@ -15,6 +15,9 @@ final class CaptureLanesViewModel {
     var attachmentsByItemId: [String: [MediaAttachment]] = [:]
     var newLaneName = ""
     var isCreatingLane = false
+    /// Stranded captures: nil destination with status captured/needsReview/failed.
+    /// No other view displays these rows — without this section they are invisible.
+    var needsReviewItems: [CapturedItem] = []
 
     private let destinationRepo = CaptureDestinationRepository.shared
     private let capturedRepo = CapturedItemRepository.shared
@@ -26,7 +29,54 @@ final class CaptureLanesViewModel {
 
     func refresh() async {
         destinations = (try? await destinationRepo.fetchActive()) ?? destinationRepo.destinations
+        await loadNeedsReview()
         await loadItems()
+    }
+
+    func loadNeedsReview() async {
+        let unrouted = (try? await capturedRepo.fetch(destinationId: nil, limit: 50)) ?? []
+        needsReviewItems = unrouted.filter {
+            $0.status == .captured || $0.status == .needsReview || $0.status == .failed
+        }
+    }
+
+    /// Put a stranded capture into the triage queue, then mark the row routed.
+    func reingestNeedsReview(_ item: CapturedItem) async {
+        let raw = item.cleanText?.isEmpty == false
+            ? item.cleanText!
+            : (item.caption ?? "Telegram media capture")
+        let outcome = await InboxIngestService.shared.ingest(
+            .init(source: .telegramText, rawText: raw)
+        )
+        switch outcome {
+        case .enqueued, .consumed:
+            await markNeedsReviewResolved(item, status: .routed, intent: "needs_review_reingest")
+        case .failed(let detail):
+            // Keep the row visible — the only durable copy must not disappear.
+            print("CaptureLanesViewModel.reingestNeedsReview ingest failed: \(detail)")
+            PersistenceHealth.note(.writeFailure, context: "CaptureLanesVM.reingestNeedsReview", detail: "\(item.uuid): \(detail)")
+        }
+    }
+
+    func dismissNeedsReview(_ item: CapturedItem) async {
+        await markNeedsReviewResolved(item, status: .archived, intent: "needs_review_dismissed")
+    }
+
+    private func markNeedsReviewResolved(_ item: CapturedItem, status: CapturedItemStatus, intent: String) async {
+        do {
+            try await capturedRepo.updateRouting(
+                uuid: item.uuid,
+                destinationId: nil,
+                parsedCommand: item.parsedCommand,
+                parsedIntent: intent,
+                confidence: item.routingConfidence,
+                status: status
+            )
+        } catch {
+            print("CaptureLanesViewModel.markNeedsReviewResolved failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "CaptureLanesVM.markNeedsReviewResolved", detail: "\(item.uuid): \(error.localizedDescription)")
+        }
+        await loadNeedsReview()
     }
 
     func select(_ destination: CaptureDestination?) {
@@ -53,6 +103,7 @@ final class CaptureLanesViewModel {
             await loadItems()
         } catch {
             print("CaptureLanesViewModel.createLane failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "CaptureLanesVM.createLane", detail: error.localizedDescription)
         }
     }
 
@@ -66,6 +117,7 @@ final class CaptureLanesViewModel {
             await loadItems()
         } catch {
             print("CaptureLanesViewModel.deleteLane failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "CaptureLanesVM.deleteLane", detail: error.localizedDescription)
         }
     }
 
@@ -127,6 +179,10 @@ struct CaptureLanesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space24) {
                 newLaneComposer
+
+                if !viewModel.needsReviewItems.isEmpty {
+                    needsReviewSection
+                }
 
                 LazyVGrid(columns: laneColumns, alignment: .leading, spacing: 14) {
                     ForEach(viewModel.destinations) { destination in
@@ -192,6 +248,31 @@ struct CaptureLanesView: View {
         .dsGlassInput(cornerRadius: 14)
         .frame(maxWidth: 420)
         .animation(ProMotionSprings.snappy, value: viewModel.newLaneName.isEmpty)
+    }
+
+    // MARK: - Needs review (stranded captures)
+
+    /// Captures that never reached a lane or the inbox — routing crashed or the
+    /// write failed. One row each: the raw text, a button to send it into the
+    /// triage queue, and a dismiss.
+    private var needsReviewSection: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text("Needs review")
+                .dsSmallCapsLabel()
+
+            VStack(alignment: .leading, spacing: DS.space6) {
+                ForEach(viewModel.needsReviewItems) { item in
+                    NeedsReviewRow(
+                        item: item,
+                        onReingest: { Task { await viewModel.reingestNeedsReview(item) } },
+                        onDismiss: { Task { await viewModel.dismissNeedsReview(item) } }
+                    )
+                }
+            }
+            .padding(DS.space12)
+            .background(DS.glassSectionFill, in: .rect(cornerRadius: 14))
+        }
+        .frame(maxWidth: 560, alignment: .leading)
     }
 
     private var commandRegistrySection: some View {
@@ -547,6 +628,75 @@ private struct CaptureCommandRegistryRow: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the lane from the sidebar and command registry.")
+        }
+    }
+}
+
+// MARK: - Needs review row
+
+/// One stranded capture: raw text, status, re-ingest into the triage queue, dismiss.
+private struct NeedsReviewRow: View {
+    let item: CapturedItem
+    let onReingest: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: DS.space8) {
+            Circle()
+                .fill(item.status == .failed ? DS.red : DS.accent)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(rawText)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
+                Text(metaLine)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            Spacer(minLength: DS.space8)
+
+            Button("To Inbox", action: onReingest)
+                .font(DS.caption.weight(.semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.accent)
+                .help("Send this capture into the triage queue")
+                .accessibilityLabel("Re-ingest capture into inbox")
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(DS.caption2.weight(.medium))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss without re-ingesting")
+            .accessibilityLabel("Dismiss stranded capture")
+        }
+        .padding(.vertical, DS.space4)
+    }
+
+    private var rawText: String {
+        item.cleanText?.isEmpty == false ? item.cleanText! : (item.caption ?? "Media capture")
+    }
+
+    private var metaLine: String {
+        var parts = ["Telegram", statusLabel]
+        if let date = ISO8601.date(from: item.createdAt) {
+            parts.append(date.formatted(.relative(presentation: .named)))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var statusLabel: String {
+        switch item.status {
+        case .failed: return "Processing failed"
+        case .needsReview: return "Routing incomplete"
+        default: return "Unrouted"
         }
     }
 }

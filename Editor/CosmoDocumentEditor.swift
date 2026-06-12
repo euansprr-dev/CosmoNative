@@ -63,7 +63,10 @@ enum EditorFontPolicy {
 enum EditorBoundaryCommand: Equatable {
     case moveToPreviousBlock
     case moveToNextBlock
-    case deleteBackwardAtStart
+    /// Backspace at the very start of a block row — delete or merge backward.
+    /// livePlainText is the text view's current truth (the document binding
+    /// can lag ~50ms), so just-deleted characters don't resurrect in a merge.
+    case deleteBackwardAtStart(livePlainText: String)
     case insertNewlineOnEmptyFinalLine
     /// Return in a block row — split the block at the caret (Notion model).
     /// The offset is measured from the END of the text view's content so list

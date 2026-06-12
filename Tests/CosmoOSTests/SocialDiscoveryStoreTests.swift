@@ -2,13 +2,13 @@ import XCTest
 @testable import CosmoOS
 
 final class SocialDiscoveryStoreTests: XCTestCase {
-    func testQueryDefaultsMatchHighSignalDiscoveryFeed() {
+    func testQueryDefaultsMatchUnfilteredRecentDiscoveryFeed() {
         let query = SocialDiscoveryQuery()
 
         XCTAssertTrue(query.platforms.isEmpty)
         XCTAssertTrue(query.languages.isEmpty)
         XCTAssertEqual(query.followerRange, .any)
-        XCTAssertEqual(query.minimumOutlierMultiplier, 10)
+        XCTAssertNil(query.minimumOutlierMultiplier)
         XCTAssertEqual(query.postedWindow, .lastThreeMonths)
         XCTAssertEqual(query.sort, .highestOutlier)
     }

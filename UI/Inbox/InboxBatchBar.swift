@@ -6,6 +6,7 @@ import SwiftUI
 
 struct InboxBatchBar: View {
     @Bindable var viewModel: InboxViewModel
+    @State private var showBulkDismissConfirm = false
 
     var body: some View {
         HStack(spacing: DS.space12) {
@@ -25,6 +26,18 @@ struct InboxBatchBar: View {
         .dsFloatingShadow()
         .padding(.horizontal, DS.space24)
         .padding(.bottom, DS.space16)
+        .confirmationDialog(
+            "Dismiss \(viewModel.selectedItemIds.count) captures?",
+            isPresented: $showBulkDismissConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Dismiss All", role: .destructive) {
+                Task { await viewModel.dismissAllSelected() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Dismissed captures move to History, where they can be restored.")
+        }
     }
 
     private var selectionCount: some View {
@@ -62,7 +75,13 @@ struct InboxBatchBar: View {
 
     private var dismissAllButton: some View {
         Button {
-            Task { await viewModel.dismissAllSelected() }
+            // Wiping more than a handful of captures at once needs explicit
+            // confirmation — ⌘A + Dismiss All used to clear the queue silently.
+            if viewModel.selectedItemIds.count > 5 {
+                showBulkDismissConfirm = true
+            } else {
+                Task { await viewModel.dismissAllSelected() }
+            }
         } label: {
             HStack(spacing: DS.space4) {
                 Image(systemName: "xmark")

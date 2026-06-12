@@ -345,10 +345,10 @@ enum WritingContentFormat: String, CaseIterable {
         switch self {
         case .instagramReel, .tiktokScript, .youtubeShort:
             return [.reel, .voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA]
-        case .instagramCarousel, .instagramStory:
+        case .instagramCarousel, .twitterThread:
             return [.carousel, .thread]
-        case .twitterThread:
-            return [.carousel, .thread]
+        case .instagramStory:
+            return [.carousel]
         case .twitterSingle:
             return [.tweet]
         case .linkedinPost, .staticPost:

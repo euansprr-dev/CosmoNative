@@ -1617,9 +1617,23 @@ final class CommandKSearchPipelineTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertTrue(source.contains("@State private var isActionPanelPresented = false"))
-        XCTAssertTrue(source.contains("if isActionPanelPresented {\n            isActionPanelPresented = false\n            return .handled\n        }"))
-        XCTAssertTrue(source.contains("guard !isActionPanelPresented else { return .ignored }"))
+        // Panel presentation lives on the view model so MainView's global escape
+        // monitor can peel the panel before closing the whole palette.
+        XCTAssertFalse(source.contains("@State private var isActionPanelPresented"))
+        XCTAssertTrue(source.contains("if viewModel.isActionPanelPresented {\n            viewModel.isActionPanelPresented = false\n            return .handled\n        }"))
+        XCTAssertTrue(source.contains("guard !viewModel.isActionPanelPresented else { return .ignored }"))
+        XCTAssertTrue(source.contains("guard !viewModel.isActionPanelPresented else { return }"))
+    }
+
+    func testMainViewEscapeMonitorPeelsActionPanelBeforeClosingCommandK() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
+            encoding: .utf8
+        )
+
+        // The NSEvent monitor consumes Escape before SwiftUI sees it, so the
+        // panel-first layering must live there too.
+        XCTAssertTrue(source.contains("if commandKViewModel.isActionPanelPresented {\n                        commandKViewModel.isActionPanelPresented = false\n                        return nil\n                    }\n                    closeCommandK()"))
     }
 
     @MainActor

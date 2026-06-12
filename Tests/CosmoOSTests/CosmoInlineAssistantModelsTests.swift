@@ -27,7 +27,8 @@ final class CosmoInlineAssistantModelsTests: XCTestCase {
         XCTAssertFalse(operation.marked(.accepted).canApply(against: source))
         // A stale hash still applies while the original text is locatable in the surface…
         XCTAssertTrue(operation.canApply(against: source.withSourceHash("hash-2")))
-        // …but once the targeted text is gone, it can no longer apply.
+        // …and even once the targeted text is gone it stays applicable — the edit
+        // falls back to an explicit trailing append instead of blocking.
         let movedSource = CosmoEditableSourceSnapshot(
             surfaceID: "note:abc",
             targetID: "note:abc:body",
@@ -37,7 +38,11 @@ final class CosmoInlineAssistantModelsTests: XCTestCase {
             sourceHash: "hash-2",
             anchors: []
         )
-        XCTAssertFalse(operation.canApply(against: movedSource))
+        XCTAssertTrue(operation.canApply(against: movedSource))
+        // Only a different target genuinely blocks.
+        var wrongTarget = movedSource
+        wrongTarget.targetID = "note:other:body"
+        XCTAssertFalse(operation.canApply(against: wrongTarget))
     }
 
     func testDiffEngineBuildsParagraphReplacementHunks() {
@@ -96,7 +101,7 @@ final class CosmoInlineAssistantModelsTests: XCTestCase {
         XCTAssertFalse(change.isConflicted)
     }
 
-    func testReviewBuilderMarksUnlocatableOperationsConflicted() {
+    func testReviewBuilderKeepsUnlocatableReplacementAcceptableAsTrailingAppend() {
         let source = "Only this text exists."
         let operation = CosmoAssistantProposalOperation.textReplacement(
             targetID: "t",
@@ -110,9 +115,20 @@ final class CosmoInlineAssistantModelsTests: XCTestCase {
         let segments = CosmoInlineDiffReviewBuilder.segments(sourceText: source, operations: [operation])
 
         guard case let .change(change) = segments.last else {
-            return XCTFail("Expected a trailing conflicted change block")
+            return XCTFail("Expected a trailing change block")
         }
-        XCTAssertTrue(change.isConflicted)
+        XCTAssertFalse(
+            change.isConflicted,
+            "A drifted original must never block — it appends at the end and stays acceptable"
+        )
+        XCTAssertEqual(change.removedLines, [])
+        XCTAssertEqual(change.addedLines, ["Replacement"])
+
+        let snapshot = CosmoEditableSourceSnapshot(
+            surfaceID: "s", targetID: "t", kind: .text, title: "T",
+            text: source, sourceHash: "live", anchors: []
+        )
+        XCTAssertTrue(operation.canApply(against: snapshot))
     }
 
     func testEmptyOriginalReplacementIsAdditiveNotConflicted() {

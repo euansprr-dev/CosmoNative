@@ -57,7 +57,24 @@ final class SocialDiscoveryStore: ObservableObject {
             return false
         }
 
+        if !matchesTopicTerms(post) {
+            return false
+        }
+
         return matchesSearchText(post)
+    }
+
+    /// Any-match over the pillar's term set — a topic scope, not a search.
+    private func matchesTopicTerms(_ post: SocialPostSnapshot) -> Bool {
+        guard !query.topicTerms.isEmpty else { return true }
+
+        let haystacks = [post.title, post.body]
+            .compactMap { $0?.lowercased() }
+        guard !haystacks.isEmpty else { return false }
+
+        return query.topicTerms.contains { term in
+            haystacks.contains { $0.localizedStandardContains(term) }
+        }
     }
 
     private func matchesFormat(_ post: SocialPostSnapshot) -> Bool {

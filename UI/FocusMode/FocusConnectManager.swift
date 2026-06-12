@@ -77,6 +77,19 @@ final class FocusConnectManager: ObservableObject {
                         return
                     }
 
+                    // Preflight both endpoints before writing either: addingLink
+                    // silently no-ops on a corrupt links column, so proceeding
+                    // would pretend the link exists (and half-link the pair).
+                    guard !sourceAtom.linksAreCorrupt, !targetAtom.linksAreCorrupt else {
+                        PersistenceHealth.note(
+                            .decodeFailure,
+                            context: "FocusConnect.completeConnection",
+                            detail: "links column corrupt on \(sourceAtom.linksAreCorrupt ? sourceUUID : targetUUID); connection not created (source \(sourceUUID), target \(targetUUID))"
+                        )
+                        cancel()
+                        return
+                    }
+
                     // Create bidirectional links (same pattern as DragToConnectManager)
                     if !sourceAtom.linksList.contains(where: { $0.uuid == targetUUID }) {
                         let newLink = AtomLink.related(targetUUID, entityType: AtomType(rawValue: targetAtom.type.rawValue))
@@ -84,10 +97,30 @@ final class FocusConnectManager: ObservableObject {
                         try await AtomRepository.shared.update(updatedSource)
                     }
 
+                    // Second endpoint: retry once on failure, then report both
+                    // uuids — the pair is half-linked at that point.
                     if !targetAtom.linksList.contains(where: { $0.uuid == sourceUUID }) {
                         let reverseLink = AtomLink.related(sourceUUID, entityType: AtomType(rawValue: sourceAtom.type.rawValue))
                         let updatedTarget = targetAtom.addingLink(reverseLink)
-                        try await AtomRepository.shared.update(updatedTarget)
+                        do {
+                            try await AtomRepository.shared.update(updatedTarget)
+                        } catch {
+                            do {
+                                guard var retryTarget = try await AtomRepository.shared.fetch(uuid: targetUUID),
+                                      !retryTarget.linksAreCorrupt else {
+                                    throw error
+                                }
+                                retryTarget = retryTarget.addingLink(reverseLink)
+                                try await AtomRepository.shared.update(retryTarget)
+                            } catch {
+                                PersistenceHealth.note(
+                                    .writeFailure,
+                                    context: "FocusConnect.completeConnection",
+                                    detail: "second endpoint write failed; pair half-linked (source \(sourceUUID), target \(targetUUID)): \(error.localizedDescription)"
+                                )
+                                throw error
+                            }
+                        }
                     }
 
                     try await Task.sleep(for: .milliseconds(400))

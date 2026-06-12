@@ -160,42 +160,66 @@ final class RecurringSeriesEngineTests: XCTestCase {
 
     // MARK: - Clean-slate migration (DB-backed)
 
-    func testCleanSlateMigrationPurgesInstancesAndReanchorsTemplates() async throws {
+    /// Data-safety contract (June 2026): the migration soft-deletes generated
+    /// instances (tombstoned for sync), re-anchors only CLEAN templates, and
+    /// NEVER touches a template whose completion/skip/override log is non-empty
+    /// — that's new-model history a re-run must not wipe.
+    func testCleanSlateMigrationSoftDeletesInstancesPreservesLogsAndReanchorsCleanTemplates() async throws {
         let today = day(2026, 6, 9, hour: 9)
         let pastStart = cal.date(byAdding: .day, value: -10, to: today)! // anchored 10 days ago @09:00
 
-        var templateMeta = TaskMetadata()
-        templateMeta.startTime = PlannerumFormatters.iso8601.string(from: pastStart)
-        templateMeta.focusDate = PlannerumFormatters.iso8601.string(from: pastStart)
-        templateMeta.dueDate = PlannerumFormatters.iso8601.string(from: pastStart)
-        templateMeta.recurrence = RecurrenceRule.daily().toJSON()
-        templateMeta.skippedOccurrences = ["2026-05-01"] // stray pre-migration log
-        let template = try await AtomRepository.shared.create(Atom.new(type: .task, title: "Daily").withMetadata(templateMeta))
-        createdUUIDs.append(template.uuid)
+        // Template already living on the new model (has a log) — must be untouched.
+        var loggedMeta = TaskMetadata()
+        loggedMeta.startTime = PlannerumFormatters.iso8601.string(from: pastStart)
+        loggedMeta.focusDate = PlannerumFormatters.iso8601.string(from: pastStart)
+        loggedMeta.dueDate = PlannerumFormatters.iso8601.string(from: pastStart)
+        loggedMeta.recurrence = RecurrenceRule.daily().toJSON()
+        loggedMeta.skippedOccurrences = ["2026-05-01"]
+        let loggedTemplate = try await AtomRepository.shared.create(Atom.new(type: .task, title: "Daily logged").withMetadata(loggedMeta))
+        createdUUIDs.append(loggedTemplate.uuid)
+
+        // Un-migrated template with no history — gets re-anchored to today.
+        var cleanMeta = TaskMetadata()
+        cleanMeta.startTime = PlannerumFormatters.iso8601.string(from: pastStart)
+        cleanMeta.focusDate = PlannerumFormatters.iso8601.string(from: pastStart)
+        cleanMeta.dueDate = PlannerumFormatters.iso8601.string(from: pastStart)
+        cleanMeta.recurrence = RecurrenceRule.daily().toJSON()
+        let cleanTemplate = try await AtomRepository.shared.create(Atom.new(type: .task, title: "Daily clean").withMetadata(cleanMeta))
+        createdUUIDs.append(cleanTemplate.uuid)
 
         var instanceMeta = TaskMetadata()
-        instanceMeta.recurrenceParentUUID = template.uuid
+        instanceMeta.recurrenceParentUUID = cleanTemplate.uuid
         instanceMeta.focusDate = PlannerumFormatters.iso8601.string(from: pastStart)
-        let instance = try await AtomRepository.shared.create(Atom.new(type: .task, title: "Daily").withMetadata(instanceMeta))
-        createdUUIDs.append(instance.uuid) // migration hard-deletes; tearDown tolerates a re-delete
+        let instance = try await AtomRepository.shared.create(Atom.new(type: .task, title: "Daily clean").withMetadata(instanceMeta))
+        createdUUIDs.append(instance.uuid)
 
         var plainMeta = TaskMetadata()
         plainMeta.dueDate = PlannerumFormatters.iso8601.string(from: pastStart)
         let plain = try await AtomRepository.shared.create(Atom.new(type: .task, title: "Plain").withMetadata(plainMeta))
         createdUUIDs.append(plain.uuid)
 
-        try await RecurringSeriesEngine().performCleanSlateMigration(now: today, calendar: cal)
+        let failures = await RecurringSeriesEngine().performCleanSlateMigration(now: today, calendar: cal)
+        XCTAssertEqual(failures, 0)
 
-        // Generated instance purged.
+        // Generated instance soft-deleted (tombstoned, not hard-deleted) — invisible to fetch.
         let fetchedInstance = try await AtomRepository.shared.fetch(uuid: instance.uuid)
         XCTAssertNil(fetchedInstance)
+        let instanceTombstone = try await CosmoDatabase.shared.asyncRead { [uuid = instance.uuid] db in
+            try Int.fetchOne(db, sql: "SELECT is_deleted FROM atoms WHERE uuid = ?", arguments: [uuid])
+        }
+        XCTAssertEqual(instanceTombstone, 1, "Instance must be tombstoned for sync, not hard-deleted")
 
-        // Template re-anchored to today, stray log cleared, live occurrence = today.
-        let fetchedTemplate = try await AtomRepository.shared.fetch(uuid: template.uuid)
-        let templateUpdated = try XCTUnwrap(fetchedTemplate)
-        let tMeta = try XCTUnwrap(templateUpdated.metadataValue(as: TaskMetadata.self))
-        XCTAssertNil(tMeta.skippedOccurrences)
-        let snapshot = try XCTUnwrap(RecurringSeriesEngine.makeSnapshot(from: templateUpdated, calendar: cal))
+        // Logged template untouched: history preserved, anchor NOT moved.
+        let fetchedLoggedOpt = try await AtomRepository.shared.fetch(uuid: loggedTemplate.uuid)
+        let fetchedLogged = try XCTUnwrap(fetchedLoggedOpt)
+        let lMeta = try XCTUnwrap(fetchedLogged.metadataValue(as: TaskMetadata.self))
+        XCTAssertEqual(lMeta.skippedOccurrences, ["2026-05-01"], "A template with logged history must never be wiped by the migration")
+        XCTAssertEqual(lMeta.focusDate, PlannerumFormatters.iso8601.string(from: pastStart))
+
+        // Clean template re-anchored to today; live occurrence = today.
+        let fetchedCleanOpt = try await AtomRepository.shared.fetch(uuid: cleanTemplate.uuid)
+        let fetchedClean = try XCTUnwrap(fetchedCleanOpt)
+        let snapshot = try XCTUnwrap(RecurringSeriesEngine.makeSnapshot(from: fetchedClean, calendar: cal))
         XCTAssertEqual(
             RecurringSeriesEngine.liveOccurrenceDay(for: snapshot, asOf: today, calendar: cal),
             cal.startOfDay(for: today)

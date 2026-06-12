@@ -25,6 +25,14 @@ final class RealtimeSyncService {
     private var atomsChannel: RealtimeChannelV2?
     private var listenTask: Task<Void, Never>?
 
+    /// UUIDs whose Realtime UPDATEs were skipped behind an editing lock.
+    /// Re-pulled and applied by `reconcileLockSkippedUpdates()` once the lock is
+    /// released — without this, the cloud edit was gone forever and the next
+    /// local autosave overwrote it (audit RC7).
+    private var pendingLockedUUIDs: Set<String> = []
+    private var reconcileTask: Task<Void, Never>?
+    private let reconcileInterval: TimeInterval = 60
+
     private let conflictResolver = ConflictResolver()
     private let database = CosmoDatabase.shared
 
@@ -43,11 +51,15 @@ final class RealtimeSyncService {
             guard let self else { return }
             await self.subscribeToChanges()
         }
+
+        startReconcileTimer()
     }
 
     func stopListening() {
         listenTask?.cancel()
         listenTask = nil
+        reconcileTask?.cancel()
+        reconcileTask = nil
 
         Task {
             if let channel = atomsChannel {
@@ -58,6 +70,19 @@ final class RealtimeSyncService {
         atomsChannel = nil
         isConnected = false
         print("🔌 Realtime sync disconnected")
+    }
+
+    /// Periodically retries UPDATEs that were skipped behind an editing lock.
+    private func startReconcileTimer() {
+        reconcileTask?.cancel()
+        reconcileTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(self?.reconcileInterval ?? 60))
+                guard let self else { return }
+                guard !self.isPaused else { continue }
+                await self.reconcileLockSkippedUpdates()
+            }
+        }
     }
 
     // MARK: - Subscribe
@@ -100,7 +125,13 @@ final class RealtimeSyncService {
             guard !isLocallyPending(uuid: uuid) else { print("[REALTIME] INSERT SKIPPED — localPending uuid=\(uuid)"); return }
             // FIX 3 [P0]: Match batch pull safety — check sync fence + editing lock
             guard !hasSyncFence(uuid: uuid) else { print("[REALTIME] INSERT SKIPPED — syncFence active uuid=\(uuid)"); return }
-            guard !AtomRepository.shared.isBeingEdited(uuid) else { print("[REALTIME] INSERT SKIPPED — editingLock active uuid=\(uuid)"); return }
+            guard !AtomRepository.shared.isBeingEdited(uuid) else {
+                // Queue for reconciliation after the lock is released — the
+                // change must not be lost to the next local autosave.
+                pendingLockedUUIDs.insert(uuid)
+                print("[REALTIME] INSERT SKIPPED — editingLock active uuid=\(uuid) (queued for reconcile)")
+                return
+            }
             let localData = convertJSONFieldsFromPostgres(data)
             print("[REALTIME] INSERT APPLYING — uuid=\(uuid) source=\(source)")
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
@@ -130,7 +161,13 @@ final class RealtimeSyncService {
             guard !isLocallyPending(uuid: uuid) else { print("[REALTIME] UPDATE SKIPPED — localPending uuid=\(uuid)"); return }
             // FIX 3 [P0]: Match batch pull safety — check sync fence + editing lock
             guard !hasSyncFence(uuid: uuid) else { print("[REALTIME] UPDATE SKIPPED — syncFence active uuid=\(uuid)"); return }
-            guard !AtomRepository.shared.isBeingEdited(uuid) else { print("[REALTIME] UPDATE SKIPPED — editingLock active uuid=\(uuid)"); return }
+            guard !AtomRepository.shared.isBeingEdited(uuid) else {
+                // Queue for reconciliation after the lock is released — the
+                // change must not be lost to the next local autosave.
+                pendingLockedUUIDs.insert(uuid)
+                print("[REALTIME] UPDATE SKIPPED — editingLock active uuid=\(uuid) (queued for reconcile)")
+                return
+            }
             let localData = convertJSONFieldsFromPostgres(data)
             print("[REALTIME] UPDATE APPLYING — uuid=\(uuid) source=\(source) bodyPreview=\"\((data["body"] as? String)?.prefix(80) ?? "nil")\"")
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
@@ -148,15 +185,41 @@ final class RealtimeSyncService {
         case .delete(let delete):
             let oldData = convertRecord(delete.oldRecord)
             guard let uuid = oldData["uuid"] as? String, !uuid.isEmpty else { return }
-            guard isFromCloud(oldData) else { return }
-            try? await database.asyncWrite { db in
-                try db.execute(
-                    sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                    arguments: [ISO8601.string(from: Date()), uuid]
-                )
+            // `oldRecord` usually carries only the primary key, so `_source` is
+            // absent. Deletes must still propagate: only skip when the event
+            // provably originated from this Mac (own echo). The shields below
+            // protect local edits either way.
+            if let source = oldData[SupabaseSyncTrafficPolicy.sourceColumn] as? String,
+               source == SupabaseSyncTrafficPolicy.localSource {
+                print("[REALTIME] DELETE SKIPPED — source=mac (own echo) uuid=\(uuid)")
+                return
             }
-            lastEventTime = Date()
-            print("📡 Realtime: cloud atom deleted — \(uuid)")
+            // Same three shields as INSERT/UPDATE: never delete over unpushed
+            // local edits — keep local and surface the conflict.
+            guard !isLocallyPending(uuid: uuid) else {
+                PersistenceHealth.note(.conflict, context: "RealtimeSync.delete(\(uuid.prefix(8)))", detail: "remote delete skipped — unpushed local edits; local row kept")
+                return
+            }
+            guard !hasSyncFence(uuid: uuid) else {
+                PersistenceHealth.note(.conflict, context: "RealtimeSync.delete(\(uuid.prefix(8)))", detail: "remote delete skipped — sync fence active; local row kept")
+                return
+            }
+            guard !AtomRepository.shared.isBeingEdited(uuid) else {
+                PersistenceHealth.note(.conflict, context: "RealtimeSync.delete(\(uuid.prefix(8)))", detail: "remote delete skipped — editing lock active; local row kept")
+                return
+            }
+            do {
+                try await database.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                        arguments: [ISO8601.string(from: Date()), uuid]
+                    )
+                }
+                lastEventTime = Date()
+                print("📡 Realtime: cloud atom deleted — \(uuid)")
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "RealtimeSync.delete(\(uuid.prefix(8)))", detail: String(describing: error))
+            }
         }
     }
 
@@ -171,29 +234,79 @@ final class RealtimeSyncService {
 
     /// Skip changes for atoms that have pending local modifications.
     /// The local version is authoritative until it's pushed and confirmed.
+    /// Fail safe: if the shield can't be verified, behave as if pending.
     private func isLocallyPending(uuid: String) -> Bool {
-        let hasPending = try? CosmoDatabase.shared.dbQueue.read { db in
-            try Row.fetchOne(
-                db,
-                sql: "SELECT _local_pending FROM atoms WHERE uuid = ? AND _local_pending = 1",
-                arguments: [uuid]
-            )
+        do {
+            let hasPending = try CosmoDatabase.shared.dbQueue.read { db in
+                try Row.fetchOne(
+                    db,
+                    sql: "SELECT _local_pending FROM atoms WHERE uuid = ? AND _local_pending = 1",
+                    arguments: [uuid]
+                )
+            }
+            return hasPending != nil
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "RealtimeSync.isLocallyPending(\(uuid.prefix(8)))", detail: String(describing: error))
+            return true
         }
-        return hasPending != nil
     }
 
     /// FIX 3: Check if a sync fence is active for this atom.
     /// Prevents Realtime from overwriting atoms we just pushed (echo loop protection).
+    /// Fail safe: if the shield can't be verified, behave as if fenced.
     private func hasSyncFence(uuid: String) -> Bool {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let fence = try? CosmoDatabase.shared.dbQueue.read { db in
-            try Row.fetchOne(
-                db,
-                sql: "SELECT expires_at FROM sync_fence WHERE uuid = ? AND expires_at > ?",
-                arguments: [uuid, now]
-            )
+        do {
+            let fence = try CosmoDatabase.shared.dbQueue.read { db in
+                try Row.fetchOne(
+                    db,
+                    sql: "SELECT expires_at FROM sync_fence WHERE uuid = ? AND expires_at > ?",
+                    arguments: [uuid, now]
+                )
+            }
+            return fence != nil
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "RealtimeSync.hasSyncFence(\(uuid.prefix(8)))", detail: String(describing: error))
+            return true
         }
-        return fence != nil
+    }
+
+    // MARK: - Lock-Skip Reconciliation
+
+    /// Re-pull atoms whose Realtime UPDATEs were skipped while an editing lock
+    /// was held, and run them through the normal apply path now that the lock
+    /// is gone. Still-shielded atoms stay queued for the next pass.
+    private func reconcileLockSkippedUpdates() async {
+        guard !pendingLockedUUIDs.isEmpty else { return }
+        guard let client = SupabaseClient.shared, client.isAuthenticated else { return }
+
+        for uuid in Array(pendingLockedUUIDs) {
+            // Still shielded — try again on the next pass.
+            guard !AtomRepository.shared.isBeingEdited(uuid),
+                  !isLocallyPending(uuid: uuid),
+                  !hasSyncFence(uuid: uuid) else { continue }
+
+            do {
+                guard let remote = try await client.fetchOne(table: "atoms", uuid: uuid) else {
+                    pendingLockedUUIDs.remove(uuid)
+                    continue
+                }
+                // If the newest server copy is our own write, the skipped event
+                // was superseded by our push — nothing to reconcile.
+                if (remote[SupabaseSyncTrafficPolicy.sourceColumn] as? String) == SupabaseSyncTrafficPolicy.localSource {
+                    pendingLockedUUIDs.remove(uuid)
+                    continue
+                }
+                let localData = convertJSONFieldsFromPostgres(remote)
+                await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
+                pendingLockedUUIDs.remove(uuid)
+                lastEventTime = Date()
+                print("📡 Realtime: reconciled lock-skipped update — \(uuid)")
+            } catch {
+                // Network/read failure — keep the uuid queued and retry next pass.
+                PersistenceHealth.note(.syncFailure, context: "RealtimeSync.reconcile(\(uuid.prefix(8)))", detail: String(describing: error))
+            }
+        }
     }
 
     // MARK: - Converters

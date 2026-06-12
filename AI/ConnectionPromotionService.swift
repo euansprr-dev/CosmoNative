@@ -171,8 +171,10 @@ final class ConnectionPromotionService {
                 existing.title = candidate.proposedTitle
             }
             existing.body = flattenedBody(sections: finalSections, notes: candidate.proposedNotes)
-            existing.structured = ConnectionStructuredData(sections: finalSections).toJSON()
-            existing.metadata = try encode(metadata)
+            // Key-merge both JSON columns: a wholesale replace dropped the rich
+            // title document (metadata) and legacy mental-model keys (structured).
+            existing = existing.mergingStructuredKeys(ConnectionStructuredData(sections: finalSections))
+            existing = existing.mergingMetadataKeys(metadata)
             existing = existing.withLinks(mergeLinks(existing.linksList, links))
             saved = try await atoms.update(existing)
         } else {
@@ -197,8 +199,12 @@ final class ConnectionPromotionService {
             )
         }
 
-        var state = ConnectionFocusModeState(atomUUID: saved.uuid)
+        // Load-then-mutate the existing UD state: recreating it from scratch
+        // reset the user's saved layout/viewport/insights on every promotion.
+        var state = ConnectionFocusModeState.load(atomUUID: saved.uuid)
+            ?? ConnectionFocusModeState(atomUUID: saved.uuid)
         state.sections = finalSections
+        state.lastModified = Date()
         state.save()
         return saved
     }

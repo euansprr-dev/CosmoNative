@@ -21,7 +21,6 @@ public struct CommandKView: View {
     @Namespace private var cortexNamespace
     @State private var searchText = ""
     @State private var isExpandedBrowserMounted = false
-    @State private var isActionPanelPresented = false
     @State private var domainTransitionTask: Task<Void, Never>?
     @State private var searchFocusTask: Task<Void, Never>?
 
@@ -86,10 +85,16 @@ public struct CommandKView: View {
                     searchFocusTask?.cancel()
                     isExpandedBrowserMounted = false
                     isSearchFocused = false
+                    viewModel.isActionPanelPresented = false
                 }
             }
             .onChange(of: searchFocusRequest) { _, _ in
                 requestSearchFocus()
+            }
+            .onChange(of: viewModel.isActionPanelPresented) { _, presented in
+                // The panel's own field takes focus while it is up; hand the
+                // keyboard back to the main search field once it dismisses.
+                if !presented { requestSearchFocus() }
             }
             .onChange(of: searchText) { _, newValue in
                 viewModel.updateQuery(newValue)
@@ -117,18 +122,18 @@ public struct CommandKView: View {
         }
         .onKeyPress(.escape) { handleEscape() }
         .onKeyPress(.downArrow) {
-            guard !isActionPanelPresented else { return .ignored }
+            guard !viewModel.isActionPanelPresented else { return .ignored }
             viewModel.selectNext()
             return .handled
         }
         .onKeyPress(.upArrow) {
-            guard !isActionPanelPresented else { return .ignored }
+            guard !viewModel.isActionPanelPresented else { return .ignored }
             viewModel.selectPrevious()
             return .handled
         }
         .onKeyPress { handleCommandReturn($0) }
         .onKeyPress(.return) {
-            guard !isActionPanelPresented else { return .ignored }
+            guard !viewModel.isActionPanelPresented else { return .ignored }
             viewModel.openSelected()
             return .handled
         }
@@ -327,8 +332,7 @@ public struct CommandKView: View {
         case .compact, .searchResults, .expandedDomain:
             CortexMasterDetailView(
                 viewModel: viewModel,
-                isDomainHydrated: isMasterDetailDomainHydrated,
-                isActionPanelPresented: $isActionPanelPresented
+                isDomainHydrated: isMasterDetailDomainHydrated
             )
                 .frame(height: contentPanelHeight(for: geometry))
                 .frame(width: panelWidth(for: geometry))
@@ -603,8 +607,8 @@ public struct CommandKView: View {
     // MARK: - Keyboard Handlers
 
     private func handleEscape() -> KeyPress.Result {
-        if isActionPanelPresented {
-            isActionPanelPresented = false
+        if viewModel.isActionPanelPresented {
+            viewModel.isActionPanelPresented = false
             return .handled
         }
 
@@ -627,12 +631,15 @@ public struct CommandKView: View {
 
     private func handleCommandReturn(_ press: KeyPress) -> KeyPress.Result {
         guard press.key == .return, press.modifiers.contains(.command) else { return .ignored }
-        guard !isActionPanelPresented else { return .ignored }
+        guard !viewModel.isActionPanelPresented else { return .ignored }
         openSelectedAsPaneFromShortcut()
         return .handled
     }
 
     private func submitSearchField() {
+        // Return belongs to the actions panel while it is up, even if the main
+        // field somehow kept focus — otherwise it opens the item underneath.
+        guard !viewModel.isActionPanelPresented else { return }
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers.contains(.command) {
             openSelectedAsPaneFromShortcut()
@@ -648,7 +655,7 @@ public struct CommandKView: View {
     }
 
     private func handleTab(_ press: KeyPress) -> KeyPress.Result {
-        guard !isActionPanelPresented else { return .ignored }
+        guard !viewModel.isActionPanelPresented else { return .ignored }
 
         let scopes = CortexScope.allCases
         let offset = press.modifiers.contains(.shift) ? -1 : 1

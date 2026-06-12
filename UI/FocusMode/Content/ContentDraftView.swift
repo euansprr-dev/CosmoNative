@@ -1,6 +1,10 @@
 // CosmoOS/UI/FocusMode/Content/ContentDraftView.swift
 // Step 2 of Content Focus Mode - Sidebar outline + rich text editor
 // February 2026 — Enhanced with inline AI action bar on text selection
+//
+// DEPRECATED (June 2026): the unified single-page editor in ContentFocusModeView
+// replaced this view. It still compiles and could be re-mounted, so its data
+// paths are kept safe (insert-only Continue Writing, flush-on-disappear).
 
 import SwiftUI
 import AppKit
@@ -110,7 +114,11 @@ struct ContentDraftView: View {
             }
         }
         .onDisappear {
+            // Flush, don't drop: cancelling the pending debounced save here lost the
+            // user's last ~1.5s of edits whenever the view was dismissed.
             autoSaveTask?.cancel()
+            state.lastModified = Date()
+            state.save()
         }
         // Keyboard shortcuts for inline AI
         .background(inlineAIKeyboardShortcuts)
@@ -858,7 +866,8 @@ struct ContentDraftView: View {
 
     @ViewBuilder
     private func inlineContinuationPreview(_ result: AIWritingResult) -> some View {
-        let continuation = String(result.suggestedText.dropFirst(result.originalText.count))
+        // suggestedText now carries ONLY the continuation (insert-only apply path).
+        let continuation = result.suggestedText
             .trimmingCharacters(in: .whitespacesAndNewlines)
         ScrollView {
             Text(continuation)
@@ -1113,8 +1122,21 @@ struct ContentDraftView: View {
 
         // Replace the selected text in the draft
         if result.action == .continueWriting {
-            // Continue appends — use the full suggested text
-            state.draftContent = replacement
+            // Insert ONLY the continuation below the selection — never replace the
+            // draft (suggestedText carries just the continuation now).
+            let nsString = state.draftContent as NSString
+            let range = selectionInfo.range
+            let insertionLocation: Int
+            if range.location != NSNotFound, range.location + range.length <= nsString.length {
+                insertionLocation = range.location + range.length
+            } else {
+                insertionLocation = nsString.length
+            }
+            let insertion = (insertionLocation == 0 ? "" : "\n\n") + replacement
+            state.draftContent = nsString.replacingCharacters(
+                in: NSRange(location: insertionLocation, length: 0),
+                with: insertion
+            )
         } else {
             // Replace selected portion
             let nsString = state.draftContent as NSString

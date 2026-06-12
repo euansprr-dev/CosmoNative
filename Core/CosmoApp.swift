@@ -82,6 +82,12 @@ struct CosmoApp: App {
             // Inbox hygiene: drain stuck pending captures through the classifier
             // queue and dismiss captures another system already consumed.
             InboxIngestService.shared.reconcileOnLaunch()
+
+            // Vector-index reconciliation: atoms whose embedding failed at write
+            // time (daemon down) are invisible to semantic recall until re-indexed.
+            // Deferred so it never competes with interactive startup.
+            try? await Task.sleep(for: .seconds(60))
+            _ = await VectorDatabase.shared.reindexMissing()
         }
 
         // Observe system wake to process swipes captured while asleep
@@ -102,7 +108,12 @@ struct CosmoApp: App {
             object: nil,
             queue: .main
         ) { _ in
-            // Give active focus modes a chance to flush pending saves synchronously
+            // Flush every registered dirty editing surface synchronously (canvas
+            // blocks, sticky notes, swipe study — anything with a debounced save),
+            // then give active focus modes their notification-based flush.
+            MainActor.assumeIsolated {
+                DirtyEditorRegistry.shared.flushAll()
+            }
             NotificationCenter.default.post(name: .cosmoAppWillTerminate, object: nil)
         }
 
@@ -392,60 +403,31 @@ class AppState: ObservableObject {
 
     /// When a block tries to enter focus mode with an invalid id (<=0),
     /// create the backing entity immediately and return its id.
+    ///
+    /// Routes through AtomRepository — the legacy ideas/content/tasks/research
+    /// tables stopped syncing or appearing in atom-based UI after
+    /// migrate_legacy_to_atoms; rows created there were stranded (invisible
+    /// everywhere = user content silently lost).
     @MainActor
     private static func createEntityForFocusMode(type: EntityType) async -> Int64? {
+        let atomType: AtomType?
+        let title: String
+        switch type {
+        case .idea: atomType = .idea; title = "New Idea"
+        case .content: atomType = .content; title = "New Content"
+        case .task: atomType = .task; title = "New Task"
+        case .research: atomType = .research; title = "New Research"
+        case .connection: atomType = .connection; title = "New Connection"
+        default: atomType = nil; title = ""
+        }
+        guard let atomType else { return nil }
+
         do {
-            switch type {
-            case .idea:
-                let createdIdea = try await CosmoDatabase.shared.asyncWrite { db -> Idea in
-                    var newIdea = Idea.new(title: "New Idea", content: "")
-                    try newIdea.insert(db)
-                    newIdea.id = db.lastInsertedRowID
-                    return newIdea
-                }
-                return createdIdea.id
-
-            case .content:
-                let createdContent = try await CosmoDatabase.shared.asyncWrite { db -> CosmoContent in
-                    var newContent = CosmoContent.new(title: "New Content", body: "")
-                    try newContent.insert(db)
-                    newContent.id = db.lastInsertedRowID
-                    return newContent
-                }
-                return createdContent.id
-
-            case .task:
-                let createdTask = try await CosmoDatabase.shared.asyncWrite { db -> CosmoTask in
-                    var newTask = CosmoTask.new(title: "New Task", status: "todo")
-                    try newTask.insert(db)
-                    newTask.id = db.lastInsertedRowID
-                    return newTask
-                }
-                return createdTask.id
-
-            case .research:
-                let createdResearch = try await CosmoDatabase.shared.asyncWrite { db -> Research in
-                    var newResearch = Research.new(title: "New Research", query: nil, url: nil, sourceType: .unknown)
-                    try newResearch.insert(db)
-                    newResearch.id = db.lastInsertedRowID
-                    return newResearch
-                }
-                return createdResearch.id
-
-            case .connection:
-                let createdConnection = try await CosmoDatabase.shared.asyncWrite { db -> Atom in
-                    var newConnection = Atom.new(type: .connection, title: "New Connection")
-                    try newConnection.insert(db)
-                    newConnection.id = db.lastInsertedRowID
-                    return newConnection
-                }
-                return createdConnection.id
-
-            default:
-                return nil
-            }
+            let created = try await AtomRepository.shared.create(Atom.new(type: atomType, title: title))
+            return created.id
         } catch {
             print("❌ Failed to create focus mode entity (\(type.rawValue)): \(error)")
+            PersistenceHealth.note(.writeFailure, context: "createEntityForFocusMode(\(type.rawValue))", detail: error.localizedDescription)
             return nil
         }
     }
@@ -635,6 +617,12 @@ struct CosmoCommands: Commands {
 
         // Native macOS View menu entries for the active Inquiry Workspace.
         CommandGroup(after: .toolbar) {
+            Divider()
+
+            Button("Trash…") {
+                NotificationCenter.default.post(name: .cosmoOpenTrash, object: nil)
+            }
+
             Divider()
 
             Button("Inquiry: Research") {

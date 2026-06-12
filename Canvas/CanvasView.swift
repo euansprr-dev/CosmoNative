@@ -25,6 +25,19 @@ enum CanvasKeyboardShortcutPolicy {
     }
 }
 
+enum CanvasScreenshotCapturePolicy {
+    static func shouldCaptureOutgoingThinkspaceOnSwitch(
+        currentThinkspaceId: String?,
+        newThinkspaceId: String?,
+        skipNextSwitchCapture: Bool
+    ) -> Bool {
+        guard !skipNextSwitchCapture,
+              let currentThinkspaceId,
+              let newThinkspaceId else { return false }
+        return currentThinkspaceId != newThinkspaceId
+    }
+}
+
 enum CanvasImageDropController {
     static let supportedTypes: [UTType] = [
         .fileURL,
@@ -169,6 +182,15 @@ struct CanvasView: View {
     // Portals — window blocks into other thinkspaces
     @State private var showPortalPicker = false
     @State private var portalDropPosition: CGPoint = .zero
+
+    // Real screenshot capture — anchor into the AppKit layer tree
+    @State private var snapshotAnchorView: NSView?
+    @State private var skipNextThinkspaceSwitchScreenshot = false
+
+    // Zoom-out-into-Constellation gesture tracking
+    @State private var didPrecaptureForConstellation = false
+    @State private var didRequestConstellationFromGesture = false
+    @State private var scrollZoomOutOverflow: CGFloat = 0
 
     // Flows — Living Workflows (drawn cluster→output behaviors)
     @State private var canvasFlows: [CanvasFlow] = []
@@ -1178,6 +1200,14 @@ struct CanvasView: View {
         }
 
         spatialEngine.blocks = cached.blocks
+        // The engine context must move WITH the displayed blocks. If it lags
+        // until the authoritative fetch lands, any save in the overlap window
+        // re-homes blocks into the previous thinkspace (they vanish from theirs).
+        // This also makes the rapid A→B→A revert guard compare against the
+        // actually-applied snapshot, not a stale context.
+        spatialEngine.currentDocumentType = "home"
+        spatialEngine.currentDocumentId = 0
+        spatialEngine.currentThinkspaceId = thinkspaceId
         clusterEngine.clusters = []
         clusterEngine.userClusters = cached.userClusters
         clusterEngine.selectedClusterId = nil
@@ -1189,6 +1219,11 @@ struct CanvasView: View {
 
     private func prepareEmptyThinkspaceSwitchState(for thinkspaceId: String?) {
         spatialEngine.blocks = []
+        // Keep the engine context in lockstep with the displayed (empty) state —
+        // see applyCachedThinkspaceSnapshot.
+        spatialEngine.currentDocumentType = "home"
+        spatialEngine.currentDocumentId = 0
+        spatialEngine.currentThinkspaceId = thinkspaceId
         clusterEngine.clusters = []
         clusterEngine.userClusters = []
         clusterEngine.selectedClusterId = nil
@@ -1276,6 +1311,9 @@ struct CanvasView: View {
                     .updating($magnificationState) { value, state, _ in
                         state = value.magnification
                     }
+                    .onChanged { value in
+                        handleZoomOutGestureProgress(rawScale: canvasScale * value.magnification)
+                    }
                     .onEnded { value in
                         // Commit pinch scale without extra animation. The gesture state's
                         // magnification resets to 1.0 at end; animating this commit can
@@ -1283,17 +1321,40 @@ struct CanvasView: View {
                         let newScale = canvasScale * value.magnification
                         canvasScale = min(max(newScale, minScale), maxScale)
 
-                        // Pinching out past the zoom floor keeps going — into the
-                        // Constellation. The canvas shrinks until it becomes a card
-                        // among all thinkspaces.
-                        if value.magnification < 1, newScale < minScale * 0.92 {
-                            NotificationCenter.default.post(
-                                name: CosmoNotification.Navigation.presentConstellation,
-                                object: nil
-                            )
-                        }
+                        // Catch a fast flick whose final update crossed the floor.
+                        handleZoomOutGestureProgress(rawScale: newScale)
+                        didPrecaptureForConstellation = false
+                        didRequestConstellationFromGesture = false
                     }
             )
+    }
+
+    /// Continuous zoom-out handling, called on every pinch update. Pinching
+    /// past the zoom floor keeps going — into the Constellation: the canvas
+    /// shrinks (rubber-banded by the viewport transform) until it becomes a
+    /// card among all thinkspaces. As the gesture approaches the floor the
+    /// outgoing screenshot is pre-captured, so by the time the threshold is
+    /// crossed presentation is pure animation — no capture hitch. Crossing
+    /// presents immediately, mid-gesture, not on release.
+    private func handleZoomOutGestureProgress(rawScale: CGFloat) {
+        if rawScale > minScale * 1.4 {
+            // Zoomed back up — re-arm so a later zoom-out in the same or a
+            // cancelled gesture can trigger again.
+            didPrecaptureForConstellation = false
+            didRequestConstellationFromGesture = false
+            return
+        }
+        if rawScale < minScale * 1.2, !didPrecaptureForConstellation {
+            didPrecaptureForConstellation = true
+            captureCanvasScreenshot()
+        }
+        if rawScale < minScale * 0.92, !didRequestConstellationFromGesture {
+            didRequestConstellationFromGesture = true
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.presentConstellation,
+                object: nil
+            )
+        }
     }
 
     // Computed property for effective zoom level during gesture
@@ -1366,9 +1427,13 @@ struct CanvasView: View {
 
                 // Load persisted blocks from database for this ThinkSpace
                 Task { @MainActor in
-                    applyCachedThinkspaceSnapshot(for: thinkspaceId)
+                    let cachedSnapshotApplied = applyCachedThinkspaceSnapshot(for: thinkspaceId)
 
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+                    if cachedSnapshotApplied {
+                        // Mounted editors may hold cached-snapshot text — re-sync from DB.
+                        NotificationCenter.default.post(name: .canvasBlocksDidResync, object: nil)
+                    }
                     CosmoWindowViewModel.shared.refreshContext()
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
@@ -1402,7 +1467,12 @@ struct CanvasView: View {
                 loadInboxBlockPositions()
 
                 // Register notification observers only once
-                guard !observersRegistered else { return }
+                guard !observersRegistered else {
+                    if isActive {
+                        CanvasPendingPlacementQueue.shared.markCanvasReady()
+                    }
+                    return
+                }
                 observersRegistered = true
 
                 // Listen for voice-driven placement commands
@@ -1668,9 +1738,7 @@ struct CanvasView: View {
                     activeOnly: true
                 ) { [self] _ in
                     if let blockId = selectedBlockId {
-                        Task {
-                            await spatialEngine.removeBlock(blockId)
-                        }
+                        removeBlockSafely(blockId)
                     }
                 }
 
@@ -1870,9 +1938,16 @@ struct CanvasView: View {
                     nonisolated(unsafe) let notification = notification
                     Task { @MainActor in
                         guard let targetThinkspaceId = notification.userInfo?["thinkspaceId"] as? String,
-                              let currentThinkspaceId = spatialEngine.currentThinkspaceId,
-                              targetThinkspaceId == currentThinkspaceId,
                               let blockId = notification.userInfo?["blockId"] as? String else { return }
+
+                        guard let currentThinkspaceId = spatialEngine.currentThinkspaceId,
+                              targetThinkspaceId == currentThinkspaceId else {
+                            // Source canvas: the row was re-homed in the DB — drop the
+                            // block from memory immediately so a save here can't act
+                            // on a block that now belongs to another thinkspace.
+                            spatialEngine.blocks.removeAll { $0.id == blockId }
+                            return
+                        }
 
                         let positionSpace = notification.userInfo?["positionSpace"] as? String
                         let screenPosition = notification.userInfo?["screenPosition"] as? CGPoint
@@ -1922,6 +1997,26 @@ struct CanvasView: View {
                             let newScale = canvasScale * zoomFactor
 
                             canvasScale = min(max(newScale, minScale), maxScale)
+
+                            // Scrolling out while pinned at the floor keeps
+                            // going — into the Constellation, same as pinching
+                            // past the floor.
+                            if newScale < minScale, delta < 0,
+                               !ConstellationPresentationState.shared.isOnScreen {
+                                if scrollZoomOutOverflow == 0 {
+                                    captureCanvasScreenshot()
+                                }
+                                scrollZoomOutOverflow += -delta
+                                if scrollZoomOutOverflow > 24 {
+                                    scrollZoomOutOverflow = 0
+                                    NotificationCenter.default.post(
+                                        name: CosmoNotification.Navigation.presentConstellation,
+                                        object: nil
+                                    )
+                                }
+                            } else {
+                                scrollZoomOutOverflow = 0
+                            }
 
                             // Consume the event when zooming
                             return nil
@@ -1999,8 +2094,15 @@ struct CanvasView: View {
                     }
                     return event
                 }
+
+                // Observers are live — consume any placements that were queued
+                // while the canvas wasn't mounted (replaces the 0.3s timer race).
+                if isActive {
+                    CanvasPendingPlacementQueue.shared.markCanvasReady()
+                }
             }
             .onDisappear {
+                captureCanvasScreenshot()
                 // Clean up event monitors
                 if let monitor = scrollWheelMonitor {
                     NSEvent.removeMonitor(monitor)
@@ -2012,6 +2114,7 @@ struct CanvasView: View {
                 }
                 isSpaceHeld = false
                 CanvasEscapeCoordinator.shared.unregister(id: "canvas-overlays")
+                CanvasPendingPlacementQueue.shared.markCanvasNotReady()
                 removeCanvasObservers()
                 thinkspaceSwitchTask?.cancel()
                 thinkspaceSwitchTask = nil
@@ -2026,10 +2129,17 @@ struct CanvasView: View {
                 if !newValue && isSpaceHeld {
                     isSpaceHeld = false
                 }
+                if newValue, observersRegistered {
+                    CanvasPendingPlacementQueue.shared.markCanvasReady()
+                } else if !newValue {
+                    CanvasPendingPlacementQueue.shared.markCanvasNotReady()
+                }
             }
             .onChange(of: thinkspaceId) { _, newId in
                 thinkspaceSwitchTask?.cancel()
+                let currentThinkspaceId = spatialEngine.currentThinkspaceId
                 guard newId != spatialEngine.currentThinkspaceId else {
+                    skipNextThinkspaceSwitchScreenshot = false
                     // Rapid revert (A→B→A before B applied): the loaded data is
                     // already correct but the exit animation left content hidden.
                     if canvasContentOpacity < 1 {
@@ -2038,6 +2148,19 @@ struct CanvasView: View {
                         }
                     }
                     return
+                }
+
+                // 0. Capture the real pixels of the outgoing thinkspace while
+                //    they're still on screen — this is what the Constellation
+                //    and portals show as its preview.
+                let shouldCaptureOutgoing = CanvasScreenshotCapturePolicy.shouldCaptureOutgoingThinkspaceOnSwitch(
+                    currentThinkspaceId: currentThinkspaceId,
+                    newThinkspaceId: newId,
+                    skipNextSwitchCapture: skipNextThinkspaceSwitchScreenshot
+                )
+                skipNextThinkspaceSwitchScreenshot = false
+                if shouldCaptureOutgoing {
+                    captureCanvasScreenshot(for: currentThinkspaceId)
                 }
 
                 // 1. Animate old content OUT (blocks still visible, receding into background)
@@ -2074,6 +2197,11 @@ struct CanvasView: View {
                     spatialEngine.applyFetchedBlocks(
                         fetchedBlocks, for: "home", documentId: 0, thinkspaceId: newId
                     )
+                    // The cached snapshot may have mounted stale sticky/note text —
+                    // tell mounted editors to re-sync now that authoritative data landed.
+                    if cachedThinkspaceSnapshotApplied, fetchedBlocks != nil {
+                        NotificationCenter.default.post(name: .canvasBlocksDidResync, object: nil)
+                    }
                     CosmoWindowViewModel.shared.refreshContext()
 
                     if !cachedThinkspaceSnapshotApplied {
@@ -2108,6 +2236,12 @@ struct CanvasView: View {
                 withAnimation(ProMotionSprings.bouncy) {
                     flowVerbPickerClusterId = clusterId
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.captureCurrentThinkspaceScreenshot)) { _ in
+                captureCanvasScreenshot()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.skipNextThinkspaceSwitchScreenshot)) { _ in
+                skipNextThinkspaceSwitchScreenshot = true
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.jumpToPlace)) { notification in
                 guard let placeUUID = notification.userInfo?["placeUUID"] as? String,
@@ -2206,6 +2340,13 @@ struct CanvasView: View {
                 if showClusterPopover {
                     clusterCreationOverlay
                 }
+            }
+            // Invisible anchor for real-pixel screenshot capture
+            .background {
+                CanvasSnapshotProxy { view in
+                    snapshotAnchorView = view
+                }
+                .allowsHitTesting(false)
             }
             // Minimap navigator overlay
             .overlay {
@@ -2682,6 +2823,34 @@ struct CanvasView: View {
         }
     }
 
+    /// Capture the canvas's real rendered pixels (blocks, zones, lines — the
+    /// actual thing) by snapshotting the window's layer tree cropped to the
+    /// canvas rect. Only the cacheDisplay render runs on the main thread;
+    /// encoding and the disk write happen off-main in the thumbnail service.
+    ///
+    /// The capture composites everything in the window above the canvas, so
+    /// it must never fire while a covering overlay (Constellation, focus mode)
+    /// is on screen — that would store the overlay's pixels as the
+    /// thinkspace's thumbnail. A stale thumbnail beats a corrupted one.
+    private func captureCanvasScreenshot(for thinkspaceIdOverride: String? = nil) {
+        guard isActive,
+              canvasIsActive,
+              appState.focusedEntity == nil,
+              !ConstellationPresentationState.shared.isOnScreen,
+              !CommandKPalettePresentationState.shared.isOnScreen,
+              !PaneDeckPresentationState.shared.isOnScreen,
+              let targetId = thinkspaceIdOverride ?? thinkspaceId,
+              let anchor = snapshotAnchorView,
+              let window = anchor.window,
+              let contentView = window.contentView else { return }
+
+        let rect = anchor.convert(anchor.bounds, to: contentView)
+        guard rect.width > 100, rect.height > 100 else { return }
+        guard let rep = contentView.bitmapImageRepForCachingDisplay(in: rect) else { return }
+        contentView.cacheDisplay(in: rect, to: rep)
+        ThinkspaceThumbnailService.shared.storeScreenshot(rep, for: targetId)
+    }
+
     /// Dismiss the topmost canvas overlay for an Escape press.
     /// Wired into CanvasEscapeCoordinator so MainView's global key monitor
     /// gives these overlays priority over pane-closing / thinkspace-exit.
@@ -2787,74 +2956,28 @@ struct CanvasView: View {
             let blockUuid = block.entityUuid
 
             do {
+                // Route ALL repairs through AtomRepository — the legacy
+                // ideas/content/tasks/research tables no longer sync or appear
+                // in atom-based UI; rows created there were stranded (content
+                // typed into a repaired block became invisible everywhere).
+                let atomType: AtomType?
+                let fallbackTitle: String
                 switch block.entityType {
-                case .idea:
-                    let savedIdea = try await CosmoDatabase.shared.asyncWrite { db -> Idea in
-                        var idea = Idea.new(
-                            title: blockTitle.isEmpty ? "New Idea" : blockTitle,
-                            content: ""
-                        )
-                        // Preserve the block UUID so future linking stays consistent
-                        if !blockUuid.isEmpty { idea.uuid = blockUuid }
-                        try idea.insert(db)
-                        return idea
-                    }
-                    block.entityId = savedIdea.id ?? -1
-                    block.entityUuid = savedIdea.uuid
+                case .idea: atomType = .idea; fallbackTitle = "New Idea"
+                case .content: atomType = .content; fallbackTitle = "New Content"
+                case .task: atomType = .task; fallbackTitle = "New Task"
+                case .research: atomType = .research; fallbackTitle = "New Research"
+                case .connection: atomType = .connection; fallbackTitle = "New Connection"
+                default: atomType = nil; fallbackTitle = ""
+                }
 
-                case .content:
-                    let savedContent = try await CosmoDatabase.shared.asyncWrite { db -> CosmoContent in
-                        var content = CosmoContent.new(
-                            title: blockTitle.isEmpty ? "New Content" : blockTitle,
-                            body: ""
-                        )
-                        if !blockUuid.isEmpty { content.uuid = blockUuid }
-                        try content.insert(db)
-                        return content
-                    }
-                    block.entityId = savedContent.id ?? -1
-                    block.entityUuid = savedContent.uuid
-
-                case .task:
-                    let savedTask = try await CosmoDatabase.shared.asyncWrite { db -> CosmoTask in
-                        var task = CosmoTask.new(
-                            title: blockTitle.isEmpty ? "New Task" : blockTitle,
-                            status: "todo"
-                        )
-                        if !blockUuid.isEmpty { task.uuid = blockUuid }
-                        try task.insert(db)
-                        return task
-                    }
-                    block.entityId = savedTask.id ?? -1
-                    block.entityUuid = savedTask.uuid
-
-                case .research:
-                    let savedResearch = try await CosmoDatabase.shared.asyncWrite { db -> Research in
-                        var research = Research.new(
-                            title: blockTitle.isEmpty ? "New Research" : blockTitle,
-                            query: nil,
-                            url: nil,
-                            sourceType: .unknown
-                        )
-                        if !blockUuid.isEmpty { research.uuid = blockUuid }
-                        try research.insert(db)
-                        return research
-                    }
-                    block.entityId = savedResearch.id ?? -1
-                    block.entityUuid = savedResearch.uuid
-
-                case .connection:
-                    let savedConnection = try await CosmoDatabase.shared.asyncWrite { db -> Atom in
-                        var connection = Atom.new(type: .connection, title: blockTitle.isEmpty ? "New Connection" : blockTitle)
-                        if !blockUuid.isEmpty { connection.uuid = blockUuid }
-                        try connection.insert(db)
-                        return connection
-                    }
-                    block.entityId = savedConnection.id ?? -1
-                    block.entityUuid = savedConnection.uuid
-
-                default:
-                    break
+                if let atomType {
+                    var atom = Atom.new(type: atomType, title: blockTitle.isEmpty ? fallbackTitle : blockTitle)
+                    // Preserve the block UUID so future linking stays consistent
+                    if !blockUuid.isEmpty { atom.uuid = blockUuid }
+                    let saved = try await AtomRepository.shared.create(atom)
+                    block.entityId = saved.id ?? -1
+                    block.entityUuid = saved.uuid
                 }
 
                 // Apply updates in-memory + persist to canvas_blocks
@@ -2963,6 +3086,10 @@ struct CanvasView: View {
         // Defer state mutation to next run loop to avoid "Modifying state during view update"
         Task { @MainActor in
             guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
+                // The block isn't in the current in-memory array (canvas switched or
+                // unmounted mid-save) — never drop the user's text silently. Write
+                // straight to canvas_blocks by block id instead.
+                await writeBlockContentDirectly(blockId: blockId, content: content, title: title)
                 return
             }
 
@@ -2976,6 +3103,7 @@ struct CanvasView: View {
                     spatialEngine.blocks[blockIndex].title = title.isEmpty ? defaultTitle : title
                 }
                 await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
+                storeThinkspaceSnapshotCache()
                 let blockTypeName = block.entityType == .note ? "note" : "content"
                 print("📝 Saved \(blockTypeName) to ThinkSpace")
                 return
@@ -2987,6 +3115,55 @@ struct CanvasView: View {
             } else if block.entityId != -1 {
                 await updateDatabaseEntry(block: block, content: content)
             }
+        }
+    }
+
+    /// Refresh the warm thinkspace snapshot cache after a content/metadata save so
+    /// returning to this thinkspace can never resurrect pre-edit text.
+    private func storeThinkspaceSnapshotCache() {
+        ThinkspaceCanvasSnapshotCache.shared.store(
+            blocks: spatialEngine.blocks,
+            zoomLevel: canvasScale,
+            panOffset: canvasOffset,
+            thinkspaceId: spatialEngine.currentThinkspaceId,
+            userClusters: clusterEngine.userClusters
+        )
+    }
+
+    /// Fallback for `.updateBlockContent` when the in-memory lookup fails:
+    /// persist note_content (and a flattened body document) directly by block id.
+    private func writeBlockContentDirectly(blockId: String, content: String, title: String?) async {
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                let existingJSON = try String.fetchOne(
+                    db,
+                    sql: "SELECT metadata FROM canvas_blocks WHERE id = ? AND is_deleted = 0",
+                    arguments: [blockId]
+                )
+                // Keep the metadata column coherent with note_content — a stale
+                // rich body document must not shadow the newer plain text on load.
+                var metadata = SpatialEngine.decodeBlockMetadataJSON(existingJSON) ?? [:]
+                metadata = RichDocumentPersistence.writeBlockDocument(
+                    RichDocument.migrateLegacy(content),
+                    key: RichDocumentMetadataKeys.bodyDocument,
+                    metadata: metadata
+                )
+                metadata["content"] = content
+                if let title { metadata["title"] = title }
+
+                try db.execute(
+                    sql: """
+                    UPDATE canvas_blocks
+                    SET note_content = ?, metadata = ?, entity_title = COALESCE(?, entity_title), updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND is_deleted = 0
+                    """,
+                    arguments: [content, SpatialEngine.encodeBlockMetadataJSON(metadata), title, blockId]
+                )
+            }
+            PersistenceHealth.note(.conflict, context: "canvas.updateBlockContent", detail: "block \(blockId) not in memory — wrote canvas_blocks directly")
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "canvas.updateBlockContent", detail: "fallback write failed for block \(blockId): \(error)")
+            print("❌ updateBlockContent fallback write failed: \(error)")
         }
     }
 
@@ -3012,13 +3189,52 @@ struct CanvasView: View {
                 blockIndex = nil
             }
 
-            guard let blockIndex else { return }
+            guard let blockIndex else {
+                // Block not in memory — merge the keys straight into the
+                // canvas_blocks metadata column instead of dropping the update.
+                await writeBlockMetadataDirectly(blockId: blockId, entityUuid: entityUuid, metadata: metadata)
+                return
+            }
 
             for (key, value) in metadata {
                 spatialEngine.blocks[blockIndex].metadata[key] = value
             }
 
             await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
+            storeThinkspaceSnapshotCache()
+        }
+    }
+
+    /// Fallback for `.updateBlockMetadata` when the in-memory lookup fails:
+    /// merge the provided keys into the persisted metadata column directly.
+    private func writeBlockMetadataDirectly(blockId: String?, entityUuid: String?, metadata: [String: String]) async {
+        let whereClause = blockId != nil ? "id = ?" : "entity_uuid = ?"
+        guard let identifier = blockId ?? entityUuid else { return }
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                let existingJSON = try String.fetchOne(
+                    db,
+                    sql: "SELECT metadata FROM canvas_blocks WHERE \(whereClause) AND is_deleted = 0",
+                    arguments: [identifier]
+                )
+                var merged = SpatialEngine.decodeBlockMetadataJSON(existingJSON) ?? [:]
+                for (key, value) in metadata {
+                    merged[key] = value
+                }
+                var sql = "UPDATE canvas_blocks SET metadata = ?, updated_at = CURRENT_TIMESTAMP"
+                var arguments: [DatabaseValueConvertible?] = [SpatialEngine.encodeBlockMetadataJSON(merged)]
+                if let content = metadata["content"] {
+                    sql += ", note_content = ?"
+                    arguments.append(content)
+                }
+                sql += " WHERE \(whereClause) AND is_deleted = 0"
+                arguments.append(identifier)
+                try db.execute(sql: sql, arguments: StatementArguments(arguments))
+            }
+            PersistenceHealth.note(.conflict, context: "canvas.updateBlockMetadata", detail: "block \(identifier) not in memory — wrote canvas_blocks directly")
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "canvas.updateBlockMetadata", detail: "fallback write failed for \(identifier): \(error)")
+            print("❌ updateBlockMetadata fallback write failed: \(error)")
         }
     }
 
@@ -3206,6 +3422,7 @@ struct CanvasView: View {
                 break
             }
         } catch {
+            PersistenceHealth.note(.writeFailure, context: "canvas.createDatabaseEntryForBlock", detail: "block \(block.id) (\(block.entityType.rawValue)): \(error)")
             print("❌ Failed to create database entry: \(error)")
         }
     }
@@ -3234,6 +3451,7 @@ struct CanvasView: View {
                 break
             }
         } catch {
+            PersistenceHealth.note(.writeFailure, context: "canvas.updateDatabaseEntry", detail: "block \(block.id) (\(block.entityType.rawValue)): \(error)")
             print("❌ Failed to update database entry: \(error)")
         }
     }
@@ -3366,6 +3584,7 @@ struct CanvasView: View {
                 await spatialEngine.addBlock(block, persist: true)
                 print("📝 Created atom-backed note block at \(position) with atom \(createdAtom.uuid)")
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.createNoteBlock", detail: "falling back to freeform block: \(error)")
                 let block = CanvasBlock.noteBlock(position: position, content: prefillBody ?? "")
                 await spatialEngine.addBlock(block, persist: true)
                 print("📝 Created note block at \(position) without backing atom: \(error)")
@@ -3956,22 +4175,87 @@ struct CanvasView: View {
     }
 
     // MARK: - Block Removal
+
+    /// Shared delete path for every block-removal entry point: registers undo and,
+    /// for freeform note/sticky blocks with no backing atom, materializes one first
+    /// so the text stays reachable after the canvas block is gone.
+    private func removeBlockSafely(_ blockId: String) {
+        guard let block = spatialEngine.blocks.first(where: { $0.id == blockId }) else {
+            Task {
+                await spatialEngine.removeBlock(blockId)
+            }
+            return
+        }
+
+        // Snapshot block before removal for undo
+        CosmoUndoManager.shared.register(
+            DeleteBlockAction(block: block, spatialEngine: spatialEngine)
+        )
+
+        Task { @MainActor in
+            await materializeBackingAtomIfNeeded(for: block)
+            await spatialEngine.removeBlock(blockId)
+        }
+    }
+
+    /// Atomless sticky/note blocks keep their only copy of the text in
+    /// canvas_blocks.note_content — soft-deleting the row would strand it.
+    /// Create a backing atom first (same flow StickyNoteBlockView uses when
+    /// opening focus mode) so the content remains reachable in the library.
+    private func materializeBackingAtomIfNeeded(for block: CanvasBlock) async {
+        guard block.entityType == .note || block.entityType == .stickyNote,
+              block.entityId <= 0 else { return }
+        let content = block.metadata["content"] ?? ""
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // A backing atom may already exist under this uuid (e.g. created on close)
+        if !block.entityUuid.isEmpty,
+           (try? await AtomRepository.shared.fetch(uuid: block.entityUuid)) != nil {
+            return
+        }
+
+        do {
+            var newAtom = Atom.new(
+                type: block.entityType == .stickyNote ? .stickyNote : .note,
+                title: block.metadata["title"],
+                body: content
+            )
+            let bodyDocument = RichDocumentPersistence.loadBlockDocument(
+                key: RichDocumentMetadataKeys.bodyDocument,
+                metadata: block.metadata,
+                fallbackPlainText: content
+            )
+            let fields = RichDocumentPersistence.writeAtomDocuments(
+                existingMetadata: newAtom.metadata,
+                titleDocument: nil,
+                bodyDocument: bodyDocument
+            )
+            newAtom.metadata = fields.metadata
+            if !block.entityUuid.isEmpty {
+                newAtom.uuid = block.entityUuid
+            }
+            let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
+                try newAtom.insert(db)
+                let insertedAtomId = db.lastInsertedRowID
+                try db.execute(
+                    sql: "UPDATE canvas_blocks SET entity_id = ?, entity_uuid = ? WHERE id = ?",
+                    arguments: [insertedAtomId, newAtom.uuid, block.id]
+                )
+                return insertedAtomId
+            }
+            print("🗂️ Materialized backing atom \(atomId) before deleting block \(block.id)")
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "canvas.deleteMaterialize", detail: "block \(block.id): \(error)")
+            print("❌ Failed to materialize backing atom before delete: \(error)")
+        }
+    }
+
     private func handleRemoveBlock(notification: Notification) {
         guard let userInfo = notification.userInfo,
               let blockId = userInfo["blockId"] as? String else {
             return
         }
 
-        // Snapshot block before removal for undo
-        if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
-            CosmoUndoManager.shared.register(
-                DeleteBlockAction(block: block, spatialEngine: spatialEngine)
-            )
-        }
-
-        Task {
-            await spatialEngine.removeBlock(blockId)
-        }
+        removeBlockSafely(blockId)
     }
 
     // MARK: - Inbox Block Handlers
@@ -4081,6 +4365,7 @@ struct CanvasView: View {
             let data = try JSONEncoder().encode(inboxBlocks)
             UserDefaults.standard.set(data, forKey: "inboxBlockPositions")
         } catch {
+            PersistenceHealth.note(.writeFailure, context: "canvas.saveInboxBlockPositions", detail: "\(error)")
             print("⚠️ Failed to save inbox block positions: \(error)")
         }
     }
@@ -4121,10 +4406,32 @@ struct CanvasView: View {
             return
         }
 
-        Task {
-            await spatialEngine.removeBlock(blockId)
-        }
+        removeBlockSafely(blockId)
         print("🗑️ Deleted block by ID: \(blockId)")
+    }
+
+    /// Rebuild a duplicate with a fresh block id (copying the source would make
+    /// saveBlock UPDATE the original row by id, moving it instead of duplicating).
+    /// Freeform note/sticky/content blocks also get a fresh entityUuid so the
+    /// duplicate-entity guards don't reject them; their content metadata rides along.
+    private func duplicatedBlock(from block: CanvasBlock) -> CanvasBlock {
+        let isFreeform = (block.entityType == .note || block.entityType == .stickyNote || block.entityType == .content)
+            && block.entityId <= 0
+        return CanvasBlock(
+            id: UUID().uuidString,
+            position: CGPoint(x: block.position.x + 50, y: block.position.y + 50),
+            size: block.size,
+            scale: block.scale,
+            rotation: block.rotation,
+            isPinned: false,
+            zIndex: block.zIndex,
+            entityType: block.entityType,
+            entityId: isFreeform ? -1 : block.entityId,
+            entityUuid: isFreeform ? UUID().uuidString : block.entityUuid,
+            title: block.title,
+            subtitle: block.subtitle,
+            metadata: block.metadata
+        )
     }
 
     private func handleDuplicateBlock(notification: Notification) {
@@ -4134,10 +4441,7 @@ struct CanvasView: View {
             return
         }
 
-        // Create duplicate with offset position
-        var newBlock = block
-        newBlock.position = CGPoint(x: block.position.x + 50, y: block.position.y + 50)
-
+        let newBlock = duplicatedBlock(from: block)
         Task {
             await spatialEngine.addBlock(newBlock, persist: true)
         }
@@ -4175,9 +4479,7 @@ struct CanvasView: View {
 
         // Find block matching search query
         if let matchingBlock = findBlockByContent(searchQuery, entityType: entityType) {
-            Task {
-                await spatialEngine.removeBlock(matchingBlock.id)
-            }
+            removeBlockSafely(matchingBlock.id)
             print("🗑️ Deleted block matching '\(searchQuery)'")
         } else {
             print("⚠️ No block found matching '\(searchQuery)'")
@@ -4194,9 +4496,7 @@ struct CanvasView: View {
 
         // Find and duplicate block matching search query
         if let matchingBlock = findBlockByContent(searchQuery, entityType: entityType) {
-            var newBlock = matchingBlock
-            newBlock.position = CGPoint(x: matchingBlock.position.x + 50, y: matchingBlock.position.y + 50)
-
+            let newBlock = duplicatedBlock(from: matchingBlock)
             Task {
                 await spatialEngine.addBlock(newBlock, persist: true)
             }
@@ -4347,6 +4647,7 @@ struct CanvasView: View {
                 await spatialEngine.addBlock(block, persist: true)
                 print("💡 Created idea block: ID \(savedIdea.id ?? -1)")
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.createIdeaBlock", detail: "\(error)")
                 print("❌ Failed to create idea in database: \(error)")
 
                 // Fallback: create block without database entry (temporary)
@@ -4378,6 +4679,7 @@ struct CanvasView: View {
                 await spatialEngine.addBlock(block, persist: true)
                 print("✅ Created content block: ID \(savedAtom.id ?? -1)")
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.createContentBlock", detail: "\(error)")
                 print("❌ Failed to create content atom: \(error)")
             }
         }
@@ -4401,6 +4703,7 @@ struct CanvasView: View {
                 await spatialEngine.addBlock(block, persist: true)
                 print("✅ Created task block: ID \(savedTask.id ?? -1)")
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.createTaskBlock", detail: "\(error)")
                 print("❌ Failed to create task in database: \(error)")
 
                 let fallbackBlock = CanvasBlock(
@@ -4436,6 +4739,7 @@ struct CanvasView: View {
                 await spatialEngine.addBlock(block, persist: true)
                 print("🔬 Created research block: ID \(savedResearch.id ?? -1)")
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.createResearchBlock", detail: "\(error)")
                 print("❌ Failed to create research in database: \(error)")
 
                 let fallbackBlock = CanvasBlock(
@@ -4489,6 +4793,7 @@ struct CanvasView: View {
                 print("🔗 Created connection block: ID \(savedConnection.id ?? -1)")
 
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.createConnectionBlock", detail: "\(error)")
                 print("❌ Failed to create connection in database: \(error)")
                 print("❌ Error details: \(error.localizedDescription)")
 
@@ -4531,6 +4836,7 @@ struct CanvasView: View {
                     userInfo: ["uuid": deepDive.uuid]
                 )
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.createDeepDiveBlock", detail: "\(error)")
                 print("❌ Failed to create Deep Dive: \(error)")
             }
         }
@@ -5525,6 +5831,48 @@ extension Notification.Name {
     static let createNoteBlock = Notification.Name("createNoteBlock")
     static let addSwipeToCanvas = Notification.Name("addSwipeToCanvas")
     static let canvasAtomProcessed = Notification.Name("canvasAtomProcessed")
+}
+
+// MARK: - Pending Placement Queue
+
+/// Holds canvas placement notifications (`.openEntityOnCanvas`,
+/// `createIdeaBoardBlock`, cross-thinkspace drops, …) until the canvas is
+/// mounted, active, and has its observers registered. Replaces the fixed
+/// 0.3s timers that raced canvas mount and silently dropped placements.
+/// When a canvas is already live, `enqueue` posts immediately — the
+/// notification path is unchanged for the mounted case.
+@MainActor
+final class CanvasPendingPlacementQueue {
+    static let shared = CanvasPendingPlacementQueue()
+
+    private var pending: [(name: Notification.Name, userInfo: [String: Any])] = []
+    private var isCanvasReady = false
+
+    private init() {}
+
+    func enqueue(name: Notification.Name, userInfo: [String: Any]) {
+        pending.append((name: name, userInfo: userInfo))
+        drainIfReady()
+    }
+
+    /// Called by CanvasView once its observers are registered and it is active.
+    func markCanvasReady() {
+        isCanvasReady = true
+        drainIfReady()
+    }
+
+    func markCanvasNotReady() {
+        isCanvasReady = false
+    }
+
+    private func drainIfReady() {
+        guard isCanvasReady, !pending.isEmpty else { return }
+        let items = pending
+        pending.removeAll()
+        for item in items {
+            NotificationCenter.default.post(name: item.name, object: nil, userInfo: item.userInfo)
+        }
+    }
 }
 
 // MARK: - Cosmo Context Provider

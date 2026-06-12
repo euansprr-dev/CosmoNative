@@ -46,8 +46,11 @@ final class TelegramCaptureRouter {
             return .notCaptureCommand
         }
 
+        // Stage 1: the durable raw-capture row. If THIS write fails nothing was
+        // saved — fall back to a raw inbox ingest and reply with the truth.
+        let captured: CapturedItem
         do {
-            let captured = try await createCapturedItem(
+            captured = try await createCapturedItem(
                 text: text,
                 media: media,
                 chatId: chatId,
@@ -55,17 +58,57 @@ final class TelegramCaptureRouter {
                 mediaGroupId: mediaGroupId,
                 sender: sender
             )
+        } catch {
+            print("[TelegramCaptureRouter] captured_items create failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "TelegramCaptureRouter.createCapturedItem", detail: error.localizedDescription)
+            return await fallbackRawIngest(text: text, media: media)
+        }
+
+        // Stage 2: routing. The captured row already exists, so a failure here
+        // must leave it visible (needsReview + inbox twin), never claim success.
+        do {
             let attachments = try await createMediaAttachments(for: captured.uuid, media: media)
 
             if let command {
                 return try await routeCommand(command, captured: captured, attachments: attachments)
             }
 
-            try await saveToGlobalInbox(captured: captured, reason: "Unprefixed media capture")
-            return .handled(reply: defaultMediaReply(for: attachments), capturedItemId: captured.uuid)
+            let saved = await saveToGlobalInbox(captured: captured, reason: "Unprefixed media capture")
+            if saved {
+                return .handled(reply: defaultMediaReply(for: attachments), capturedItemId: captured.uuid)
+            }
+            return .handled(reply: "⚠️ Couldn't file that into your inbox — it's parked in Needs review in Cosmo.", capturedItemId: captured.uuid)
         } catch {
-            print("[TelegramCaptureRouter] capture failed: \(error)")
-            return .handled(reply: "I saved this to Inbox, but routing failed. You can review it in Cosmo.", capturedItemId: "")
+            print("[TelegramCaptureRouter] routing failed after capture: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "TelegramCaptureRouter.routeCommand", detail: error.localizedDescription)
+            let saved = await saveToGlobalInbox(captured: captured, reason: "Routing failed: \(error.localizedDescription)")
+            if saved {
+                return .handled(reply: "Routing failed, but I saved this to your Inbox to review.", capturedItemId: captured.uuid)
+            }
+            return .handled(reply: "⚠️ Routing failed — your message is parked in Needs review in Cosmo.", capturedItemId: captured.uuid)
+        }
+    }
+
+    /// Last-resort path when even the captured_items row could not be written:
+    /// try a raw inbox ingest so the words survive somewhere, and never claim
+    /// a save that did not happen.
+    private func fallbackRawIngest(text: String?, media: [TelegramCapturedMedia]) async -> TelegramCaptureRouterOutcome {
+        let raw = text?.isEmpty == false
+            ? text!
+            : media.first?.caption ?? (media.isEmpty ? "" : "Telegram media capture")
+        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .handled(reply: "⚠️ Couldn't save that — please resend.", capturedItemId: "")
+        }
+        let outcome = await InboxIngestService.shared.ingest(
+            .init(source: .telegramText, rawText: raw)
+        )
+        switch outcome {
+        case .enqueued:
+            return .handled(reply: "Saved to your Inbox to review. (Lane routing wasn't possible.)", capturedItemId: "")
+        case .consumed:
+            return .handled(reply: "Already in your system — nothing new to capture.", capturedItemId: "")
+        case .failed:
+            return .handled(reply: "⚠️ Couldn't save that — please resend.", capturedItemId: "")
         }
     }
 
@@ -158,8 +201,11 @@ final class TelegramCaptureRouter {
                     )
                     return .handled(reply: currentInquiryReply(attachments: attachments), capturedItemId: captured.uuid)
                 }
-                try await saveToGlobalInbox(captured: captured, reason: "No active inquiry session")
-                return .handled(reply: "No current Inquiry is active. Saved to Inbox.", capturedItemId: captured.uuid)
+                let saved = await saveToGlobalInbox(captured: captured, reason: "No active inquiry session")
+                let reply = saved
+                    ? "No current Inquiry is active. Saved to Inbox."
+                    : "⚠️ No current Inquiry is active, and the inbox save failed — your message is parked in Needs review in Cosmo."
+                return .handled(reply: reply, capturedItemId: captured.uuid)
             }
 
             if let destination = try await destinations.resolveCommand(command.destinationName) {
@@ -193,11 +239,14 @@ final class TelegramCaptureRouter {
                 return .handled(reply: deepDiveReply(command: command, attachments: attachments), capturedItemId: captured.uuid)
             }
 
-            try await saveToGlobalInbox(captured: captured, reason: "Unknown capture destination: \(command.destinationName)")
+            let saved = await saveToGlobalInbox(captured: captured, reason: "Unknown capture destination: \(command.destinationName)")
+            let savedSuffix = saved
+                ? "Saved to Inbox for review."
+                : "⚠️ The inbox save failed — your message is parked in Needs review in Cosmo."
             if let suggestion = await destinations.closestAlias(to: command.destinationName) {
-                return .handled(reply: "I don’t have “\(command.destinationName).” Did you mean “\(suggestion)”? Saved to Inbox for review.", capturedItemId: captured.uuid)
+                return .handled(reply: "I don’t have “\(command.destinationName).” Did you mean “\(suggestion)”? \(savedSuffix)", capturedItemId: captured.uuid)
             }
-            return .handled(reply: "I don’t have “\(command.destinationName)” yet. Saved to Inbox.", capturedItemId: captured.uuid)
+            return .handled(reply: "I don’t have “\(command.destinationName)” yet. \(savedSuffix)", capturedItemId: captured.uuid)
         }
     }
 
@@ -341,7 +390,12 @@ final class TelegramCaptureRouter {
         return objectIds
     }
 
-    private func saveToGlobalInbox(captured: CapturedItem, reason: String) async throws {
+    /// Returns true when the capture is now visible in the inbox (enqueued, or
+    /// consumed because it already exists). False means the inbox write failed —
+    /// the captured_items row stays `needsReview` so the Needs-review surface
+    /// still shows it, but replies must not claim an inbox save.
+    @discardableResult
+    private func saveToGlobalInbox(captured: CapturedItem, reason: String) async -> Bool {
         let raw = captured.cleanText?.isEmpty == false ? captured.cleanText! : "Telegram media capture"
         let metadata = try? encodeJSON([
             "capturedItemUuid": captured.uuid,
@@ -350,17 +404,29 @@ final class TelegramCaptureRouter {
         // The ingest service owns dedupe, the consumed-capture rule, and queued
         // classification — this path previously created items that were never
         // classified, leaving them stuck in "Needs your judgment" forever.
-        _ = await InboxIngestService.shared.ingest(
+        let outcome = await InboxIngestService.shared.ingest(
             .init(source: .telegramText, rawText: raw, metadata: metadata)
         )
-        try await capturedItems.updateRouting(
-            uuid: captured.uuid,
-            destinationId: nil,
-            parsedCommand: nil,
-            parsedIntent: "global_inbox",
-            confidence: 0.2,
-            status: .needsReview
-        )
+        do {
+            try await capturedItems.updateRouting(
+                uuid: captured.uuid,
+                destinationId: nil,
+                parsedCommand: nil,
+                parsedIntent: "global_inbox",
+                confidence: 0.2,
+                status: .needsReview
+            )
+        } catch {
+            print("[TelegramCaptureRouter] needsReview status update failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "TelegramCaptureRouter.saveToGlobalInbox", detail: error.localizedDescription)
+        }
+        switch outcome {
+        case .enqueued, .consumed:
+            return true
+        case .failed(let detail):
+            PersistenceHealth.note(.writeFailure, context: "TelegramCaptureRouter.saveToGlobalInbox", detail: "inbox ingest failed for \(captured.uuid): \(detail)")
+            return false
+        }
     }
 
     private func postCaptureAdded(destinationId: String?) {

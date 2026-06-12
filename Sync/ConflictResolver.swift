@@ -64,6 +64,7 @@ class ConflictResolver {
 
         } catch {
             print("[SYNC-RESOLVE] ❌ error — uuid=\(uuid) error=\(error)")
+            PersistenceHealth.note(.syncFailure, context: "ConflictResolver.applyRemoteChange(\(uuid.prefix(8)))", detail: String(describing: error))
         }
     }
 
@@ -84,12 +85,12 @@ class ConflictResolver {
         // Fields that ALWAYS prefer remote (sync metadata)
         let remotePreferredFields: Set = ["synced_at", "updated_at", "_server_version", "_version"]
 
-        // Fields that ALWAYS prefer local (user content)
+        // Fields where the local user's copy wins outright. The discarded remote
+        // copy of body/title content is preserved as a conflict snapshot below —
+        // local wins, but the remote edit must never be unrecoverable.
         let localPreferredFields: Set = [
             "title", "content", "body", "description",
             "position_x", "position_y",
-            "structured",
-            "links",
         ]
 
         // Metadata conflict: cloud agent metadata status changes win,
@@ -109,10 +110,27 @@ class ConflictResolver {
                     remote: remoteValue,
                     strategy: metadataStrategy
                 )
+            } else if key == "structured" {
+                // Key-level merge: local keys win, remote-only keys survive
+                // (whole-blob local-wins silently dropped remote keys).
+                merged[key] = mergeJSONKeysPreferLocal(local: localData[key], remote: remoteValue)
+            } else if key == "links" {
+                // Union merge: relationships added by either side survive.
+                merged[key] = mergeLinksUnion(local: localData[key], remote: remoteValue)
             } else if merged[key] == nil {
                 merged[key] = remoteValue
             }
         }
+
+        // BEFORE the local-wins resolution lands, preserve any remote user content
+        // it discards so a multi-device edit is recoverable instead of vanishing.
+        await snapshotDiscardedRemote(
+            table: table,
+            uuid: uuid,
+            localData: localData,
+            remoteData: remoteData,
+            contentFields: ["title", "content", "body", "description"]
+        )
 
         // Update server version to remote
         merged["_server_version"] = remoteData["_version"] ?? remoteData["_server_version"] ?? remoteData["version"]
@@ -121,6 +139,107 @@ class ConflictResolver {
         await applyMergedData(table: table, uuid: uuid, data: merged)
 
         print("✅ Conflict resolved for \(table):\(uuid) (remote source: \(remoteSource))")
+    }
+
+    // MARK: - Conflict Snapshot
+
+    /// When local-wins resolution discards a differing remote body/title, save the
+    /// full remote payload as a `sync_queue` row (operation CONFLICT, status
+    /// 'conflict') so the remote copy stays recoverable, and record the conflict.
+    private func snapshotDiscardedRemote(
+        table: String,
+        uuid: String,
+        localData: [String: Any],
+        remoteData: [String: Any],
+        contentFields: [String]
+    ) async {
+        let discarded = contentFields.filter { key in
+            guard let remoteString = remoteData[key] as? String else { return false }
+            return remoteString != (localData[key] as? String)
+        }
+        guard !discarded.isEmpty else { return }
+
+        do {
+            let payload = sanitizeForJSON(remoteData)
+            let payloadData = try JSONSerialization.data(withJSONObject: payload)
+            let payloadString = String(data: payloadData, encoding: .utf8) ?? "{}"
+
+            try await database.asyncWrite { db in
+                // Don't pile up identical snapshots for the same remote payload.
+                let existing = try Row.fetchOne(
+                    db,
+                    sql: "SELECT 1 FROM sync_queue WHERE uuid = ? AND status = 'conflict' AND data = ?",
+                    arguments: [uuid, payloadString]
+                )
+                guard existing == nil else { return }
+                try db.execute(
+                    sql: """
+                    INSERT INTO sync_queue (uuid, table_name, operation, data, local_version, status)
+                    VALUES (?, ?, 'CONFLICT', ?, 0, 'conflict')
+                    """,
+                    arguments: [uuid, table, payloadString]
+                )
+            }
+            PersistenceHealth.note(.conflict, context: "ConflictResolver.handleConflict(\(uuid.prefix(8)))", detail: "local wins for \(discarded.joined(separator: ", ")); remote copy preserved as conflict snapshot")
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "ConflictResolver.conflictSnapshot(\(uuid.prefix(8)))", detail: String(describing: error))
+        }
+    }
+
+    /// JSONSerialization-safe copy of a payload (row values may include types
+    /// JSONSerialization rejects).
+    private func sanitizeForJSON(_ dict: [String: Any]) -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (key, value) in dict {
+            if value is String || value is NSNumber || value is NSNull || JSONSerialization.isValidJSONObject(value) {
+                out[key] = value
+            } else {
+                out[key] = String(describing: value)
+            }
+        }
+        return out
+    }
+
+    // MARK: - Structured / Links Conflict Merge
+
+    /// Key-level JSON merge for `structured`: local keys win, remote-only keys
+    /// survive. Falls back to local (previous behavior) when unparseable.
+    private func mergeJSONKeysPreferLocal(local: Any?, remote: Any?) -> Any {
+        guard let localVal = local, !(localVal is NSNull) else { return remote ?? NSNull() }
+        guard let remoteVal = remote, !(remoteVal is NSNull) else { return localVal }
+        guard var mergedDict = parseMetadataToDict(remoteVal),
+              let localDict = parseMetadataToDict(localVal) else {
+            return localVal
+        }
+        for (key, value) in localDict {
+            mergedDict[key] = value
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: mergedDict),
+           let jsonString = String(data: data, encoding: .utf8) {
+            return jsonString
+        }
+        return localVal
+    }
+
+    /// Union merge for `links`: relationships added by either writer survive.
+    /// Delegates to AtomRepository's shared helper (local/caller's choice wins
+    /// for single-value link types). Falls back to local when unparseable.
+    private func mergeLinksUnion(local: Any?, remote: Any?) -> Any {
+        guard let localString = jsonStringValue(local) else { return remote ?? NSNull() }
+        guard let remoteString = jsonStringValue(remote) else { return localString }
+        return AtomRepository.mergedLinks(fresh: remoteString, caller: localString) ?? localString
+    }
+
+    /// Normalize a column value to a JSON string (GRDB stores TEXT; defensive
+    /// dict handling for values that escaped Postgres conversion).
+    private func jsonStringValue(_ value: Any?) -> String? {
+        if let string = value as? String, !string.isEmpty { return string }
+        if let value, !(value is NSNull), JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value),
+           let string = String(data: data, encoding: .utf8) {
+            return string
+        }
+        return nil
     }
 
     // MARK: - Metadata Merge Strategy
@@ -257,6 +376,7 @@ class ConflictResolver {
             }
         } catch {
             print("❌ Remote insert failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "ConflictResolver.applyRemoteInsert(\((insertData["uuid"] as? String ?? "?").prefix(8)))", detail: String(describing: error))
         }
     }
 
@@ -301,6 +421,7 @@ class ConflictResolver {
             print("📥 Updated from remote: \(table):\(uuid)")
         } catch {
             print("❌ Remote update failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "ConflictResolver.applyRemoteUpdate(\(uuid.prefix(8)))", detail: String(describing: error))
         }
     }
 
@@ -361,7 +482,19 @@ func databaseValue(from any: Any?) -> DatabaseValue {
         return bool.databaseValue
     case let data as Data:
         return data.databaseValue
+    case is NSNull:
+        return .null
     default:
+        // Dictionaries/arrays that escaped convertJSONFieldsFromPostgres:
+        // serialize to JSON text instead of NULLing the local column, which
+        // silently wiped structured/metadata/links during remote applies.
+        if JSONSerialization.isValidJSONObject(value),
+           let jsonData = try? JSONSerialization.data(withJSONObject: value),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            PersistenceHealth.note(.decodeFailure, context: "databaseValue(from:)", detail: "unconverted JSON value (\(type(of: value))) serialized to text instead of NULL")
+            return jsonString.databaseValue
+        }
+        PersistenceHealth.note(.writeFailure, context: "databaseValue(from:)", detail: "unrepresentable value of type \(type(of: value)) written as NULL")
         return .null
     }
 }

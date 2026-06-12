@@ -489,6 +489,11 @@ final class IdeaInsightEngine: ObservableObject {
                 minSimilarity: Float(autoLinkThreshold)
             )
 
+            // Accumulate the swipe-side links and write them ONCE at the end —
+            // building each write from the original `swipeAtom` snapshot meant
+            // later iterations dropped the links added by earlier ones.
+            var swipeLinksToAdd: [AtomLink] = []
+
             for result in vectorResults {
                 guard let ideaUUID = result.entityUUID,
                       Double(result.similarity) >= autoLinkThreshold else {
@@ -507,10 +512,11 @@ final class IdeaInsightEngine: ObservableObject {
                     continue
                 }
 
-                // Create bidirectional links
+                // addingLink silently no-ops on a corrupt links column — skip
+                // this idea instead of pretending the link was created.
+                guard !ideaAtom.linksAreCorrupt else { continue }
+
                 ideaAtom = ideaAtom.addingLink(.ideaToSwipe(swipeAtom.uuid))
-                var updatedSwipe = swipeAtom
-                updatedSwipe = updatedSwipe.addingLink(.swipeToIdea(ideaAtom.uuid))
 
                 // Update matching swipe count in idea metadata
                 let currentCount = ideaAtom.ideaMetadata?.matchingSwipeCount ?? 0
@@ -518,11 +524,40 @@ final class IdeaInsightEngine: ObservableObject {
                     meta.matchingSwipeCount = currentCount + 1
                 }
 
-                // Persist both atoms
-                try? await AtomRepository.shared.update(ideaAtom)
-                try? await AtomRepository.shared.update(updatedSwipe)
+                do {
+                    try await AtomRepository.shared.update(ideaAtom)
+                    swipeLinksToAdd.append(.swipeToIdea(ideaAtom.uuid))
+                    print("IdeaInsightEngine: Auto-linked idea '\(ideaAtom.title ?? "Untitled")' to swipe '\(swipeAtom.title ?? "Untitled")' (similarity: \(String(format: "%.2f", result.similarity)))")
+                } catch {
+                    PersistenceHealth.note(
+                        .writeFailure,
+                        context: "IdeaInsightEngine.findIdeasForSwipe",
+                        detail: "idea link write failed (idea \(ideaAtom.uuid), swipe \(swipeAtom.uuid)): \(error.localizedDescription)"
+                    )
+                }
+            }
 
-                print("IdeaInsightEngine: Auto-linked idea '\(ideaAtom.title ?? "Untitled")' to swipe '\(swipeAtom.title ?? "Untitled")' (similarity: \(String(format: "%.2f", result.similarity)))")
+            // Single swipe-side write with all accumulated links, on a fresh copy.
+            if !swipeLinksToAdd.isEmpty {
+                guard var freshSwipe = try? await AtomRepository.shared.fetch(uuid: swipeAtom.uuid),
+                      !freshSwipe.linksAreCorrupt else {
+                    PersistenceHealth.note(
+                        .writeFailure,
+                        context: "IdeaInsightEngine.findIdeasForSwipe",
+                        detail: "swipe \(swipeAtom.uuid) unavailable or links corrupt; \(swipeLinksToAdd.count) swipe→idea link(s) not written (idea-side links exist)"
+                    )
+                    return
+                }
+                freshSwipe = freshSwipe.addingLinks(swipeLinksToAdd)
+                do {
+                    try await AtomRepository.shared.update(freshSwipe)
+                } catch {
+                    PersistenceHealth.note(
+                        .writeFailure,
+                        context: "IdeaInsightEngine.findIdeasForSwipe",
+                        detail: "swipe link write failed (swipe \(swipeAtom.uuid)): \(error.localizedDescription)"
+                    )
+                }
             }
         } catch {
             print("IdeaInsightEngine: findIdeasForSwipe failed: \(error.localizedDescription)")

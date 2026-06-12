@@ -13,6 +13,7 @@ struct CommandKActionPanel: View {
     @Binding var searchQuery: String
     @State private var selectedIndex = 0
     @FocusState private var isSearchFocused: Bool
+    @State private var searchFocusTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,8 +26,9 @@ struct CommandKActionPanel: View {
         .cosmoMenuChrome(cornerRadius: 18)
         .onAppear {
             clampSelection()
-            isSearchFocused = true
+            requestSearchFocus()
         }
+        .onDisappear { searchFocusTask?.cancel() }
         .onChange(of: searchQuery) { _, _ in clampSelection() }
         .onChange(of: flattenedActions.count) { _, _ in clampSelection() }
         .onKeyPress(.downArrow) { moveSelection(1); return .handled }
@@ -187,5 +189,22 @@ struct CommandKActionPanel: View {
     private func clampSelection() {
         let maxIndex = max(flattenedActions.count - 1, 0)
         selectedIndex = min(max(selectedIndex, 0), maxIndex)
+    }
+
+    /// The panel is inserted with an animated transition, which can drop the
+    /// first FocusState write before the field is attached — leaving arrow/return
+    /// keys with the main search field instead of this panel.
+    private func requestSearchFocus() {
+        searchFocusTask?.cancel()
+        isSearchFocused = true
+        searchFocusTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            isSearchFocused = true
+
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled else { return }
+            isSearchFocused = true
+        }
     }
 }

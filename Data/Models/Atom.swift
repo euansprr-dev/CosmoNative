@@ -1379,19 +1379,35 @@ extension Atom {
         linksList.filter { $0.entityType == entityType.rawValue }
     }
 
+    /// True when the links column holds data that fails to decode.
+    /// `linksList` returns [] in this state — mutating links from that empty list
+    /// would erase every relationship on the atom, so link writers must check this.
+    var linksAreCorrupt: Bool {
+        guard let links = links, !links.isEmpty else { return false }
+        guard let data = links.data(using: .utf8) else { return true }
+        return (try? JSONDecoder().decode([AtomLink].self, from: data)) == nil
+    }
+
     /// Create a copy with updated links
     func withLinks(_ links: [AtomLink]) -> Atom {
         var copy = self
         if links.isEmpty {
             copy.links = nil
+        } else if let encoded = try? String(data: JSONEncoder().encode(links), encoding: .utf8) {
+            copy.links = encoded
         } else {
-            copy.links = try? String(data: JSONEncoder().encode(links), encoding: .utf8)
+            // Encode failure must never wipe the column — keep what's there.
+            PersistenceHealth.note(.writeFailure, context: "Atom.withLinks(\(uuid.prefix(8)))", detail: "links encode failed; keeping existing column")
         }
         return copy
     }
 
     /// Add a link (uses typed system to determine if single-value)
     func addingLink(_ link: AtomLink) -> Atom {
+        guard !linksAreCorrupt else {
+            PersistenceHealth.note(.decodeFailure, context: "Atom.addingLink(\(uuid.prefix(8)))", detail: "links column undecodable; refusing rewrite that would drop existing links")
+            return self
+        }
         var current = linksList
         // Remove existing link of same type if it's a single-value relationship
         if link.isSingleValue {
@@ -1403,6 +1419,10 @@ extension Atom {
 
     /// Add multiple links at once
     func addingLinks(_ newLinks: [AtomLink]) -> Atom {
+        guard !linksAreCorrupt else {
+            PersistenceHealth.note(.decodeFailure, context: "Atom.addingLinks(\(uuid.prefix(8)))", detail: "links column undecodable; refusing rewrite that would drop existing links")
+            return self
+        }
         var current = linksList
         for link in newLinks {
             if link.isSingleValue {
@@ -1423,30 +1443,35 @@ extension Atom {
 
     /// Remove links of a type (string-based)
     func removingLinks(ofType type: String) -> Atom {
+        guard !linksAreCorrupt else { return self }
         let filtered = linksList.filter { $0.type != type }
         return withLinks(filtered)
     }
 
     /// Remove links of a typed link type
     func removingLinks(ofType type: AtomLinkType) -> Atom {
+        guard !linksAreCorrupt else { return self }
         let filtered = linksList.filter { $0.type != type.rawValue }
         return withLinks(filtered)
     }
 
     /// Remove a specific link by UUID
     func removingLink(toUUID uuid: String) -> Atom {
+        guard !linksAreCorrupt else { return self }
         let filtered = linksList.filter { $0.uuid != uuid }
         return withLinks(filtered)
     }
 
     /// Remove a specific link by type and UUID
     func removingLink(ofType type: AtomLinkType, toUUID uuid: String) -> Atom {
+        guard !linksAreCorrupt else { return self }
         let filtered = linksList.filter { !($0.type == type.rawValue && $0.uuid == uuid) }
         return withLinks(filtered)
     }
 
     /// Replace a link of a specific type with a new one
     func replacingLink(ofType type: AtomLinkType, with newLink: AtomLink) -> Atom {
+        guard !linksAreCorrupt else { return self }
         var current = linksList.filter { $0.type != type.rawValue }
         current.append(newLink)
         return withLinks(current)
@@ -1468,40 +1493,139 @@ extension Atom {
         return result
     }
 
-    // MARK: - Structured Data
+    // MARK: - JSON Decode State
 
-    /// Get structured data as decoded type
-    /// Get structured data as decoded type (silently returns nil on type mismatch)
-    func structuredData<T: Decodable>(as type: T.Type) -> T? {
-        guard let structured = structured,
-              let data = structured.data(using: .utf8) else {
+    /// Result of decoding a JSON column into a typed value, distinguishing
+    /// "the column is empty" from "the column holds data we failed to decode".
+    /// The distinction matters: callers that fall back to a default on `.corrupt`
+    /// and re-save will silently erase the real data.
+    enum JSONDecodeState<T> {
+        case absent
+        case value(T)
+        case corrupt(Error)
+
+        var value: T? {
+            if case .value(let v) = self { return v }
             return nil
         }
-        return try? JSONDecoder().decode(type, from: data)
+
+        var isCorrupt: Bool {
+            if case .corrupt = self { return true }
+            return false
+        }
     }
 
-    /// Create a copy with encoded structured data
+    // MARK: - Structured Data
+
+    /// Decode structured data with explicit corrupt-vs-absent state.
+    /// Mutating writers should refuse to overwrite when `.corrupt`.
+    func decodedStructured<T: Decodable>(as type: T.Type) -> JSONDecodeState<T> {
+        guard let structured = structured, !structured.isEmpty,
+              let data = structured.data(using: .utf8) else {
+            return .absent
+        }
+        do {
+            return .value(try JSONDecoder().decode(type, from: data))
+        } catch {
+            return .corrupt(error)
+        }
+    }
+
+    /// Get structured data as decoded type.
+    /// Returns nil BOTH when the column is empty and when decode fails —
+    /// prefer `decodedStructured(as:)` in write paths so corruption is never
+    /// papered over with a default that then gets saved back.
+    func structuredData<T: Decodable>(as type: T.Type) -> T? {
+        switch decodedStructured(as: type) {
+        case .absent:
+            return nil
+        case .value(let value):
+            return value
+        case .corrupt(let error):
+            PersistenceHealth.note(.decodeFailure, context: "Atom.structuredData(\(uuid.prefix(8)), \(T.self))", detail: error.localizedDescription)
+            return nil
+        }
+    }
+
+    /// Create a copy with encoded structured data.
+    /// Encode failure never wipes the column.
     func withStructured<T: Encodable>(_ value: T) -> Atom {
         var copy = self
-        copy.structured = try? String(data: JSONEncoder().encode(value), encoding: .utf8)
+        if let encoded = try? String(data: JSONEncoder().encode(value), encoding: .utf8) {
+            copy.structured = encoded
+        } else {
+            PersistenceHealth.note(.writeFailure, context: "Atom.withStructured(\(uuid.prefix(8)))", detail: "structured encode failed; keeping existing column")
+        }
+        return copy
+    }
+
+    /// Create a copy whose structured column merges `value`'s keys over the existing
+    /// JSON object, preserving sibling keys owned by other writers (e.g. swipeAnalysis
+    /// next to autoMetadata). Use this instead of `withStructured` whenever the typed
+    /// struct does not model the whole column.
+    func mergingStructuredKeys<T: Encodable>(_ value: T) -> Atom {
+        var copy = self
+        guard let merged = Atom.mergedJSONObjectString(existing: structured, overlay: value, context: "structured(\(uuid.prefix(8)))") else {
+            return copy
+        }
+        copy.structured = merged
         return copy
     }
 
     // MARK: - Metadata
 
-    /// Get metadata as decoded type (silently returns nil on type mismatch)
-    func metadataValue<T: Decodable>(as type: T.Type) -> T? {
-        guard let metadata = metadata,
+    /// Decode metadata with explicit corrupt-vs-absent state.
+    /// Mutating writers should refuse to overwrite when `.corrupt`.
+    func decodedMetadata<T: Decodable>(as type: T.Type) -> JSONDecodeState<T> {
+        guard let metadata = metadata, !metadata.isEmpty,
               let data = metadata.data(using: .utf8) else {
-            return nil
+            return .absent
         }
-        return try? JSONDecoder().decode(type, from: data)
+        do {
+            return .value(try JSONDecoder().decode(type, from: data))
+        } catch {
+            return .corrupt(error)
+        }
     }
 
-    /// Create a copy with encoded metadata
+    /// Get metadata as decoded type.
+    /// Returns nil BOTH when the column is empty and when decode fails —
+    /// prefer `decodedMetadata(as:)` in write paths so corruption is never
+    /// papered over with a default that then gets saved back.
+    func metadataValue<T: Decodable>(as type: T.Type) -> T? {
+        switch decodedMetadata(as: type) {
+        case .absent:
+            return nil
+        case .value(let value):
+            return value
+        case .corrupt(let error):
+            PersistenceHealth.note(.decodeFailure, context: "Atom.metadataValue(\(uuid.prefix(8)), \(T.self))", detail: error.localizedDescription)
+            return nil
+        }
+    }
+
+    /// Create a copy with encoded metadata.
+    /// Encode failure never wipes the column.
     func withMetadata<T: Encodable>(_ value: T) -> Atom {
         var copy = self
-        copy.metadata = try? String(data: JSONEncoder().encode(value), encoding: .utf8)
+        if let encoded = try? String(data: JSONEncoder().encode(value), encoding: .utf8) {
+            copy.metadata = encoded
+        } else {
+            PersistenceHealth.note(.writeFailure, context: "Atom.withMetadata(\(uuid.prefix(8)))", detail: "metadata encode failed; keeping existing column")
+        }
+        return copy
+    }
+
+    /// Create a copy whose metadata column merges `value`'s keys over the existing
+    /// JSON object, preserving sibling keys owned by other writers (e.g. rich-document
+    /// storage next to typed metadata). Use this instead of `withMetadata` whenever
+    /// the typed struct does not model the whole column.
+    func mergingMetadataKeys<T: Encodable>(_ value: T) -> Atom {
+        var copy = self
+        guard let merged = Atom.mergedJSONObjectString(existing: metadata, overlay: value, context: "metadata(\(uuid.prefix(8)))") else {
+            return copy
+        }
+        copy.metadata = merged
         return copy
     }
 
@@ -1513,6 +1637,38 @@ extension Atom {
             return nil
         }
         return dict
+    }
+
+    /// Merge an encodable value's keys over an existing JSON-object string.
+    /// Returns nil (refuse to write) when the existing column is non-empty but
+    /// unparseable, or when encoding fails — never destroys data it can't read.
+    static func mergedJSONObjectString<T: Encodable>(existing: String?, overlay: T, context: String) -> String? {
+        guard let overlayData = try? JSONEncoder().encode(overlay),
+              let overlayObject = try? JSONSerialization.jsonObject(with: overlayData) as? [String: Any] else {
+            PersistenceHealth.note(.writeFailure, context: "Atom.mergedJSONObjectString(\(context))", detail: "overlay encode failed; keeping existing column")
+            return nil
+        }
+
+        guard let existing = existing, !existing.isEmpty else {
+            return String(data: overlayData, encoding: .utf8)
+        }
+
+        guard let existingData = existing.data(using: .utf8),
+              var merged = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] else {
+            PersistenceHealth.note(.decodeFailure, context: "Atom.mergedJSONObjectString(\(context))", detail: "existing column unparseable; refusing overwrite that would drop its data")
+            return nil
+        }
+
+        for (key, value) in overlayObject {
+            merged[key] = value
+        }
+
+        guard let mergedData = try? JSONSerialization.data(withJSONObject: merged),
+              let mergedString = String(data: mergedData, encoding: .utf8) else {
+            PersistenceHealth.note(.writeFailure, context: "Atom.mergedJSONObjectString(\(context))", detail: "merged encode failed; keeping existing column")
+            return nil
+        }
+        return mergedString
     }
 }
 
@@ -2450,6 +2606,12 @@ struct TaskMetadata: Codable, Sendable {
     /// Per-day overrides for individual occurrences (rare per-day edits), keyed by
     /// day-key ("yyyy-MM-dd"). **Template-only**.
     var occurrenceOverrides: [String: TaskOccurrenceOverride]?
+
+    /// Timezone-safe series anchor: the day the series starts, as a date-only
+    /// "yyyy-MM-dd" key. Written whenever the anchor is set/re-anchored; projection
+    /// prefers it over instant-derived day keys (which shift when the timezone
+    /// changes). **Template-only**; nil for legacy rows.
+    var seriesAnchorDay: String?
 }
 
 // MARK: - Recurring Series Log Entries
@@ -2462,11 +2624,16 @@ public struct TaskOccurrenceCompletion: Codable, Equatable, Sendable {
     public var day: String
     public var completedAt: String
     public var trackedMinutes: Int?
+    /// Day-keys backfilled into `skippedOccurrences` when this completion collapsed an
+    /// overdue occurrence. Recorded so uncomplete can reverse exactly those days.
+    /// Optional so completion entries logged before this field still decode.
+    public var backfilledDays: [String]?
 
-    public init(day: String, completedAt: String, trackedMinutes: Int? = nil) {
+    public init(day: String, completedAt: String, trackedMinutes: Int? = nil, backfilledDays: [String]? = nil) {
         self.day = day
         self.completedAt = completedAt
         self.trackedMinutes = trackedMinutes
+        self.backfilledDays = backfilledDays
     }
 }
 
@@ -2914,11 +3081,24 @@ extension Atom {
         return SwipeHookType(rawValue: raw)
     }
 
-    /// Update idea metadata in-place, preserving existing fields
+    /// Update idea metadata in-place, preserving existing fields.
+    /// Refuses to write when the existing metadata is corrupt — mutating a
+    /// default-constructed IdeaMetadata and saving it back would erase the
+    /// real (still-recoverable) metadata. Key-merges so sibling JSON keys
+    /// (rich documents, analysis fields) survive.
     func withUpdatedIdeaMetadata(_ update: (inout IdeaMetadata) -> Void) -> Atom {
-        var meta = ideaMetadata ?? IdeaMetadata()
+        var meta: IdeaMetadata
+        switch decodedMetadata(as: IdeaMetadata.self) {
+        case .value(let existing):
+            meta = existing
+        case .absent:
+            meta = IdeaMetadata()
+        case .corrupt(let error):
+            PersistenceHealth.note(.decodeFailure, context: "Atom.withUpdatedIdeaMetadata(\(uuid.prefix(8)))", detail: "metadata undecodable (\(error.localizedDescription)); refusing default-overwrite")
+            return self
+        }
         update(&meta)
-        return withMetadata(meta)
+        return mergingMetadataKeys(meta)
     }
 
     /// Get parsed ClientMetadata (for clientProfile atoms)

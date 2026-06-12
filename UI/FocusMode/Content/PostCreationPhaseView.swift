@@ -24,6 +24,8 @@ struct PostCreationPhaseView: View {
     @State private var savesText: String = ""
     @State private var isSavingPerformance: Bool = false
     @State private var showArchivedContent: Bool = false
+    /// Suppresses the persist-on-change echo while loadPersistedSchedulingFields runs.
+    @State private var didLoadPersistedFields: Bool = false
 
     private let accentColor = CosmoMentionColors.content
 
@@ -36,6 +38,52 @@ struct PostCreationPhaseView: View {
             .padding(40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear(perform: loadPersistedSchedulingFields)
+        .onChange(of: scheduledDate) { _, newValue in
+            guard didLoadPersistedFields else { return }
+            persistMetadataValue("scheduledDate", ISO8601.string(from: newValue))
+        }
+        .onChange(of: postURL) { _, newValue in
+            guard didLoadPersistedFields else { return }
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            persistMetadataValue("postUrl", trimmed.isEmpty ? nil : trimmed)
+        }
+    }
+
+    /// Restore the persisted schedule date and post URL — these fields previously
+    /// lived only in transient @State and were lost on every view dismissal.
+    private func loadPersistedSchedulingFields() {
+        if let dict = atom.metadataDict {
+            if let dateStr = dict["scheduledDate"] as? String, let date = ISO8601.date(from: dateStr) {
+                scheduledDate = date
+            }
+            if let url = dict["postUrl"] as? String, !url.isEmpty {
+                postURL = url
+            }
+        }
+        // Arm persist-on-change on the next runloop turn so the restore above
+        // doesn't echo straight back into a no-op metadata write.
+        DispatchQueue.main.async { didLoadPersistedFields = true }
+    }
+
+    /// Persist a single metadata key. Re-fetches the atom inside the repository
+    /// update so concurrent writers' keys are never clobbered.
+    private func persistMetadataValue(_ key: String, _ value: Any?) {
+        Task {
+            do {
+                _ = try await AtomRepository.shared.update(uuid: atom.uuid) { fresh in
+                    var dict = fresh.metadataDict ?? [:]
+                    dict[key] = value
+                    if JSONSerialization.isValidJSONObject(dict),
+                       let data = try? JSONSerialization.data(withJSONObject: dict),
+                       let str = String(data: data, encoding: .utf8) {
+                        fresh.metadata = str
+                    }
+                }
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "PostCreationPhaseView.persist(\(key))", detail: error.localizedDescription)
+            }
+        }
     }
 
     @ViewBuilder
@@ -87,8 +135,9 @@ struct PostCreationPhaseView: View {
         // Action buttons
         HStack(spacing: 12) {
             Button {
-                // Schedule is informational — publish when ready
-                publishNow()
+                // Persist the scheduled date + keep the scheduled phase — this used
+                // to call publishNow(), publishing immediately and dropping the date.
+                scheduleContent()
             } label: {
                 scheduledButtonLabel(text: "Schedule", icon: "calendar.badge.clock", isPrimary: false)
             }
@@ -534,18 +583,23 @@ struct PostCreationPhaseView: View {
 
     func unarchiveContent() {
         Task {
-            var updatedAtom = atom
-            if let metaStr = updatedAtom.metadata,
-               let data = metaStr.data(using: .utf8),
-               var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                dict["currentStep"] = "draft"
-                dict["phase"] = "draft"
-                if let newData = try? JSONSerialization.data(withJSONObject: dict),
-                   let newStr = String(data: newData, encoding: .utf8) {
-                    updatedAtom.metadata = newStr
+            do {
+                // Re-fetch inside the repository update — building the metadata dict
+                // from the view's `atom` snapshot pushed a stale copy of EVERY key
+                // over whatever was saved since this view appeared.
+                _ = try await AtomRepository.shared.update(uuid: atom.uuid) { fresh in
+                    var dict = fresh.metadataDict ?? [:]
+                    dict["currentStep"] = "draft"
+                    dict["phase"] = "draft"
+                    if JSONSerialization.isValidJSONObject(dict),
+                       let newData = try? JSONSerialization.data(withJSONObject: dict),
+                       let newStr = String(data: newData, encoding: .utf8) {
+                        fresh.metadata = newStr
+                    }
                 }
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "PostCreationPhaseView.unarchive(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
             }
-            _ = try? await AtomRepository.shared.update(updatedAtom)
 
             NotificationCenter.default.post(
                 name: CosmoNotification.Navigation.openBlockInFocusMode,
@@ -715,21 +769,53 @@ struct PostCreationPhaseView: View {
         )
     }
 
+    /// Persist the scheduled date and remain in the scheduled phase.
+    private func scheduleContent() {
+        Task {
+            do {
+                let dateString = ISO8601.string(from: scheduledDate)
+                _ = try await AtomRepository.shared.update(uuid: atom.uuid) { fresh in
+                    var dict = fresh.metadataDict ?? [:]
+                    dict["scheduledDate"] = dateString
+                    dict["phase"] = ContentPhase.scheduled.rawValue
+                    if JSONSerialization.isValidJSONObject(dict),
+                       let data = try? JSONSerialization.data(withJSONObject: dict),
+                       let str = String(data: data, encoding: .utf8) {
+                        fresh.metadata = str
+                    }
+                }
+                await MainActor.run { notifyPhaseChanged() }
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "PostCreationPhaseView.schedule(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
+            }
+        }
+    }
+
     private func publishNow() {
+        let trimmedURL = postURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if let advance = onAdvancePhase {
+            // Persist the post URL before the parent advances the phase so the
+            // publish record's source metadata carries it.
+            if !trimmedURL.isEmpty {
+                persistMetadataValue("postUrl", trimmedURL)
+            }
             advance(.published)
         } else {
             Task {
                 do {
                     let service = ContentPipelineService()
+                    let wasScheduled = atom.metadataDict?["scheduledDate"] != nil
                     try await service.recordPublish(
                         contentUUID: atom.uuid,
                         platform: atom.metadataValue(as: ContentAtomMetadata.self)?.platform ?? .twitter,
-                        postId: UUID().uuidString
+                        postId: UUID().uuidString,
+                        postUrl: trimmedURL.isEmpty ? nil : trimmedURL,
+                        wasScheduled: wasScheduled
                     )
                     await MainActor.run { notifyPhaseChanged() }
                 } catch {
                     print("PostCreationPhaseView: publish failed: \(error)")
+                    PersistenceHealth.note(.writeFailure, context: "PostCreationPhaseView.publish(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
                 }
             }
         }

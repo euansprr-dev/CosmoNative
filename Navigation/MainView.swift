@@ -155,7 +155,8 @@ struct MainView: View {
     @State private var spokesPillar: Atom?
     @State private var inboxRoute: SidebarInboxRoute = .global
     @StateObject private var commandCenterViewModel = CommandCenterDashboardViewModel()
-    @StateObject private var swipeLibraryViewModel = SwipeLibraryViewModel()
+    @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
+    @State private var swipeDiscoverModel = SwipeDiscoverModel()
     // Simple sidebar state: closed/open. Open sidebar reserves layout space.
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @AppStorage("unifiedSidebarContext") private var activeSidebarContext: SidebarContext = .thinkspaces
@@ -234,6 +235,10 @@ struct MainView: View {
             }
             .zIndex(40)
 
+            // Data-safety guard rails: save-failure banner + Trash sheet.
+            PersistenceGuardRailsOverlay()
+                .zIndex(70)
+
             if CosmoInlineAssistantBarVisibilityPolicy.shouldShow(
                 isInlinePaneOpen: isInlineAssistantPaneOpen,
                 focusedEntityType: appState.focusedEntity?.type
@@ -266,6 +271,23 @@ struct MainView: View {
                 )
                     .opacity(showCommandK ? 1 : 0)
                     .allowsHitTesting(showCommandK)
+                    .background {
+                        // Mirrors the palette's visible lifetime: this tracker
+                        // is removed with the same fade as the opacity drop,
+                        // so its onDisappear marks the true end of the
+                        // fade-out — even when the palette itself stays
+                        // mounted at opacity 0 behind a focus mode. Guarded:
+                        // if a re-present interrupted the fade, a stale
+                        // instance's disappearance must not clear it.
+                        if showCommandK {
+                            Color.clear
+                                .onDisappear {
+                                    if !showCommandK {
+                                        CommandKPalettePresentationState.shared.setOnScreen(false)
+                                    }
+                                }
+                        }
+                    }
                     .transition(.opacity)
                     .zIndex(200)
                     .animation(.spring(response: 0.2), value: showCommandK)
@@ -500,7 +522,7 @@ struct MainView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showCommandK)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showRadialMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.75), value: showBlockContextMenu)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+        .animation(ProMotionSprings.focusTransition, value: appState.focusedEntity != nil)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
         .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
@@ -594,9 +616,7 @@ struct MainView: View {
             showWorkbenchComposer = true
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.presentConstellation)) { _ in
-            withAnimation(ProMotionSprings.modal) {
-                showConstellation = true
-            }
+            presentConstellation()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.compileSpokes)) { notification in
             guard let entityId = notification.userInfo?["id"] as? Int64 else { return }
@@ -784,13 +804,12 @@ struct MainView: View {
             closeCommandK()
 
             navigateToLastThinkspace()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                NotificationCenter.default.post(
-                    name: .openEntityOnCanvas,
-                    object: nil,
-                    userInfo: ["atomUUID": atomUUID]
-                )
-            }
+            // Queued placement: delivered the moment the canvas is mounted, active,
+            // and observing — posts immediately when it already is (no timer race).
+            CanvasPendingPlacementQueue.shared.enqueue(
+                name: .openEntityOnCanvas,
+                userInfo: ["atomUUID": atomUUID]
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("addIdeaToCanvas"))) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
@@ -798,13 +817,10 @@ struct MainView: View {
             closeCommandK()
 
             navigateToLastThinkspace()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                NotificationCenter.default.post(
-                    name: .openEntityOnCanvas,
-                    object: nil,
-                    userInfo: ["atomUUID": atomUUID]
-                )
-            }
+            CanvasPendingPlacementQueue.shared.enqueue(
+                name: .openEntityOnCanvas,
+                userInfo: ["atomUUID": atomUUID]
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("addIdeaBoardToCanvas"))) { notification in
             let clientUUID = notification.userInfo?["clientUUID"] as? String ?? ""
@@ -813,16 +829,13 @@ struct MainView: View {
             closeCommandK()
 
             navigateToLastThinkspace()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                NotificationCenter.default.post(
-                    name: Notification.Name("createIdeaBoardBlock"),
-                    object: nil,
-                    userInfo: [
-                        "clientUUID": clientUUID,
-                        "clientName": clientName
-                    ]
-                )
-            }
+            CanvasPendingPlacementQueue.shared.enqueue(
+                name: Notification.Name("createIdeaBoardBlock"),
+                userInfo: [
+                    "clientUUID": clientUUID,
+                    "clientName": clientName
+                ]
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addToCanvas)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
@@ -830,13 +843,10 @@ struct MainView: View {
             closeCommandK()
 
             navigateToLastThinkspace()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                NotificationCenter.default.post(
-                    name: .openEntityOnCanvas,
-                    object: nil,
-                    userInfo: ["atomUUID": atomUUID]
-                )
-            }
+            CanvasPendingPlacementQueue.shared.enqueue(
+                name: .openEntityOnCanvas,
+                userInfo: ["atomUUID": atomUUID]
+            )
         }
         // Cmd+K single-click: add item to current canvas (Thinkspace fallback)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
@@ -851,13 +861,10 @@ struct MainView: View {
                 if let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
                     let entityType = mapAtomTypeToEntityType(atom.type)
                     navigateToLastThinkspace()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        NotificationCenter.default.post(
-                            name: .openEntityOnCanvas,
-                            object: nil,
-                            userInfo: ["type": entityType, "id": atom.id ?? Int64(0)]
-                        )
-                    }
+                    CanvasPendingPlacementQueue.shared.enqueue(
+                        name: .openEntityOnCanvas,
+                        userInfo: ["type": entityType, "id": atom.id ?? Int64(0)]
+                    )
                 }
             }
         }
@@ -1027,19 +1034,23 @@ struct MainView: View {
                             return nil
                         }(),
                         onSelect: { thinkspaceId in
-                            withAnimation(ProMotionSprings.modal) {
-                                showConstellation = false
-                            }
-                            currentDestination = .thinkspace(id: thinkspaceId)
+                            selectConstellationThinkspace(thinkspaceId)
                         },
                         onDismiss: {
-                            withAnimation(ProMotionSprings.modal) {
-                                showConstellation = false
-                            }
+                            dismissConstellation()
                         }
                     )
                     .zIndex(265)
                     .transition(.opacity)
+                    .onDisappear {
+                        // Fires when the fade-out transition completes — the
+                        // overlay is truly off screen, captures are safe again.
+                        // Guarded: if a re-present interrupted the removal, a
+                        // stale instance's disappearance must not clear it.
+                        if !showConstellation {
+                            ConstellationPresentationState.shared.setOnScreen(false)
+                        }
+                    }
                 }
 
                 // Spokes Compiler — pillar → platform package staging board
@@ -1428,17 +1439,39 @@ struct MainView: View {
             // Move the block in the database
             let hasSwitched = crossDragManager.hasThinkspaceSwitched
             Task { @MainActor in
-                let engine = SpatialEngine()
-                // Persist a safe placeholder; the target canvas resolves window-space drops
-                // after its own zoom/pan state is active.
-                let finalPosition: CGPoint = .zero
-                await engine.moveBlockToThinkspace(
-                    block.id,
-                    newThinkspaceId: targetThinkspaceId,
-                    position: finalPosition
-                )
+                // Land the block at the target space's last-known viewport center
+                // (never a (0,0) placeholder — window-space drops refine it below).
+                let finalPosition: CGPoint
+                if let targetSpace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == targetThinkspaceId }) {
+                    let viewportSize = NSApp.keyWindow?.contentView?.bounds.size
+                        ?? NSApp.mainWindow?.contentView?.bounds.size
+                        ?? CGSize(width: 1200, height: 800)
+                    finalPosition = CGPoint(
+                        x: viewportSize.width / 2 - targetSpace.panOffset.width,
+                        y: viewportSize.height / 2 - targetSpace.panOffset.height
+                    )
+                } else {
+                    finalPosition = CGPoint(x: 200, y: 200)
+                }
 
-                // Post notification so the target CanvasView can reload
+                // Persist the move directly — a throwaway SpatialEngine carries the
+                // wrong context and previously stamped position (0,0).
+                do {
+                    try await SpatialEngine.persistCrossThinkspaceMove(
+                        blockId: block.id,
+                        targetThinkspaceId: targetThinkspaceId,
+                        position: finalPosition
+                    )
+                } catch {
+                    PersistenceHealth.note(.writeFailure, context: "canvas.crossThinkspaceDrop", detail: "block \(block.id) → \(targetThinkspaceId): \(error)")
+                    print("❌ Cross-thinkspace move failed: \(error)")
+                    return
+                }
+
+                // Notify the canvas: the source engine drops the block from memory
+                // immediately; the target reloads (and resolves window-space drops).
+                // Routed through the pending-placement queue so a not-yet-mounted
+                // canvas can't miss it.
                 var userInfo: [String: Any] = [
                     "blockId": block.id,
                     "entityUuid": block.entityUuid,
@@ -1450,9 +1483,8 @@ struct MainView: View {
                     userInfo["positionSpace"] = "screen"
                     userInfo["screenPosition"] = dropPosition
                 }
-                NotificationCenter.default.post(
+                CanvasPendingPlacementQueue.shared.enqueue(
                     name: CosmoNotification.Canvas.crossThinkspaceDropBlock,
-                    object: nil,
                     userInfo: userInfo
                 )
 
@@ -1525,13 +1557,27 @@ struct MainView: View {
                     .offset(x: contentPushOffset)
                     .transition(.opacity)
             } else if case .discover(let section) = currentDestination {
-                SwipeFileDiscoverView(section: section, swipeLibraryViewModel: swipeLibraryViewModel)
+                Group {
+                    if section == .creators {
+                        SwipeCreatorsPage(model: swipeDiscoverModel)
+                    } else {
+                        SwipeDiscoverPage(model: swipeDiscoverModel)
+                    }
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
                     .transition(.opacity)
             } else if case .swipeFile(let section) = currentDestination {
-                SwipeFileHomeView(viewModel: swipeLibraryViewModel, section: section)
+                Group {
+                    if section == .boards {
+                        SwipeBoardsHubPage(viewModel: swipeLibraryViewModel) { boardID in
+                            currentDestination = .swipeFile(section: .board(boardID))
+                        }
+                    } else {
+                        SwipeLibraryPage(viewModel: swipeLibraryViewModel, section: section)
+                    }
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
@@ -1854,6 +1900,44 @@ struct MainView: View {
         return false
     }
 
+    private func presentConstellation() {
+        guard !showConstellation else { return }
+        // The zoom gesture pre-captures as it approaches the floor; only
+        // capture here when presentation arrives cold (e.g. Cmd+Shift+Space).
+        if let id = activeCanvasThinkspaceId,
+           !ThinkspaceThumbnailService.shared.hasFreshScreenshot(for: id, within: 3) {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.captureCurrentThinkspaceScreenshot,
+                object: nil
+            )
+        }
+        // From here until the overlay's fade-out finishes (its onDisappear),
+        // canvas screenshot capture is suppressed — a capture would composite
+        // the Constellation grid into a thinkspace thumbnail.
+        ConstellationPresentationState.shared.setOnScreen(true)
+        withAnimation(ProMotionSprings.modal) {
+            showConstellation = true
+        }
+    }
+
+    private func dismissConstellation() {
+        withAnimation(ProMotionSprings.modal) {
+            showConstellation = false
+        }
+    }
+
+    private func selectConstellationThinkspace(_ thinkspaceId: String) {
+        if case .thinkspace(let currentId) = currentDestination,
+           currentId != thinkspaceId {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.skipNextThinkspaceSwitchScreenshot,
+                object: nil
+            )
+        }
+        dismissConstellation()
+        currentDestination = .thinkspace(id: thinkspaceId)
+    }
+
     /// Navigate to the last-used thinkspace (or the first available)
     private func navigateToLastThinkspace() {
         if let id = lastThinkspaceId {
@@ -1874,6 +1958,14 @@ struct MainView: View {
             searchFocusRequest: commandKSearchFocusRequest
         )
         state.apply(event)
+
+        // From here until the palette's fade-out finishes (the visibility
+        // tracker's onDisappear at the mount site), canvas screenshot capture
+        // is suppressed — a Command-K thinkspace jump would composite the
+        // fading palette into the outgoing thinkspace's thumbnail.
+        if state.isVisible {
+            CommandKPalettePresentationState.shared.setOnScreen(true)
+        }
 
         withAnimation(.spring(response: 0.2)) {
             showCommandK = state.isVisible
@@ -1980,8 +2072,12 @@ struct MainView: View {
                     return nil
                 }
 
-                // 5. Command-K
+                // 5. Command-K — peel the actions panel first, then the palette
                 if showCommandK {
+                    if commandKViewModel.isActionPanelPresented {
+                        commandKViewModel.isActionPanelPresented = false
+                        return nil
+                    }
                     closeCommandK()
                     return nil
                 }
@@ -2057,8 +2153,10 @@ struct MainView: View {
                event.modifierFlags.contains(.command),
                event.modifierFlags.contains(.shift),
                !isKeyboardInputReserved() {
-                withAnimation(ProMotionSprings.modal) {
-                    showConstellation.toggle()
+                if showConstellation {
+                    dismissConstellation()
+                } else {
+                    presentConstellation()
                 }
                 return nil
             }
@@ -2784,4 +2882,205 @@ struct ErrorView: View {
 #Preview("Error View") {
     ErrorView(message: "Something went wrong. Please try again.")
         .frame(width: 500, height: 400)
+}
+
+// MARK: - Persistence Guard Rails (Data-Safety Pass, June 2026)
+
+/// Notification that opens the Trash sheet (posted by the app menu command).
+extension Notification.Name {
+    static let cosmoOpenTrash = Notification.Name("com.cosmo.nav.openTrash")
+}
+
+/// Self-contained overlay hosting the save-failure banner and the Trash sheet.
+/// Lives in MainView's ZStack; everything it needs is observed internally so
+/// MainView itself stays unchanged.
+struct PersistenceGuardRailsOverlay: View {
+    @State private var bannerText: String?
+    @State private var bannerDismissTask: Task<Void, Never>?
+    @State private var showTrash = false
+
+    var body: some View {
+        VStack {
+            if let bannerText {
+                saveFailureBanner(bannerText)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            Spacer()
+        }
+        .sheet(isPresented: $showTrash) {
+            CosmoTrashView()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PersistenceHealth.incidentRecorded)) { notification in
+            handleIncident(notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cosmoOpenTrash)) { _ in
+            showTrash = true
+        }
+    }
+
+    private func saveFailureBanner(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityLabel("Save problem")
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.primary)
+            Button("Dismiss") {
+                withAnimation { bannerText = nil }
+            }
+            .buttonStyle(.plain)
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(minHeight: 44)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().stroke(.orange.opacity(0.35), lineWidth: 1))
+        .padding(.top, 14)
+    }
+
+    private func handleIncident(_ notification: Notification) {
+        guard let kind = notification.userInfo?["kind"] as? String,
+              kind == PersistenceHealth.IncidentKind.writeFailure.rawValue
+                  || kind == PersistenceHealth.IncidentKind.syncFailure.rawValue else { return }
+        let context = notification.userInfo?["context"] as? String ?? "a recent change"
+        withAnimation {
+            bannerText = kind == PersistenceHealth.IncidentKind.syncFailure.rawValue
+                ? "Cloud sync issue (\(context)) — changes are safe locally and will retry."
+                : "A save failed (\(context)) — recent changes may not be persisted."
+        }
+        bannerDismissTask?.cancel()
+        bannerDismissTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled else { return }
+            withAnimation { bannerText = nil }
+        }
+    }
+}
+
+/// Trash: every soft-deleted atom, restorable in one click. Backs the guarantee
+/// that nothing the user deletes is unrecoverable until they explicitly purge it.
+struct CosmoTrashView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var deleted: [Atom] = []
+    @State private var isLoading = true
+    @State private var purgeCandidate: Atom?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            trashHeader
+            Divider()
+            trashContent
+        }
+        .frame(width: 540, height: 480)
+        .task { await reload() }
+        .confirmationDialog(
+            "Permanently delete \"\(purgeCandidate?.title ?? "item")\"? This cannot be undone.",
+            isPresented: Binding(get: { purgeCandidate != nil }, set: { if !$0 { purgeCandidate = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Permanently", role: .destructive) {
+                if let atom = purgeCandidate {
+                    Task { await purge(atom) }
+                }
+            }
+            Button("Cancel", role: .cancel) { purgeCandidate = nil }
+        }
+    }
+
+    private var trashHeader: some View {
+        HStack {
+            Label("Trash", systemImage: "trash")
+                .font(.headline)
+            Spacer()
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+                .frame(minHeight: 44)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var trashContent: some View {
+        if isLoading {
+            Spacer()
+            ProgressView()
+            Spacer()
+        } else if deleted.isEmpty {
+            Spacer()
+            Text("Trash is empty")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+        } else {
+            List(deleted, id: \.uuid) { atom in
+                trashRow(atom)
+            }
+            .listStyle(.inset)
+        }
+    }
+
+    private func trashRow(_ atom: Atom) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayTitle(atom))
+                    .font(.callout)
+                    .lineLimit(1)
+                Text("\(atom.type.rawValue) · deleted \(atom.updatedAt)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button("Restore") {
+                Task { await restore(atom) }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .frame(minHeight: 44)
+            Button {
+                purgeCandidate = atom
+            } label: {
+                Image(systemName: "xmark.bin")
+                    .accessibilityLabel("Delete permanently")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .frame(minWidth: 44, minHeight: 44)
+        }
+    }
+
+    private func displayTitle(_ atom: Atom) -> String {
+        if let title = atom.title, !title.isEmpty { return title }
+        if let body = atom.body, !body.isEmpty { return String(body.prefix(60)) }
+        return "Untitled"
+    }
+
+    private func reload() async {
+        isLoading = true
+        deleted = (try? await AtomRepository.shared.fetchDeleted()) ?? []
+        isLoading = false
+    }
+
+    private func restore(_ atom: Atom) async {
+        do {
+            try await AtomRepository.shared.restore(uuid: atom.uuid)
+            deleted.removeAll { $0.uuid == atom.uuid }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "Trash.restore(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
+        }
+    }
+
+    private func purge(_ atom: Atom) async {
+        do {
+            try await AtomRepository.shared.hardDelete(uuid: atom.uuid, confirmed: true)
+            deleted.removeAll { $0.uuid == atom.uuid }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "Trash.purge(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
+        }
+        purgeCandidate = nil
+    }
 }

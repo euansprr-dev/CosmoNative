@@ -101,7 +101,7 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertFalse(draftEditorSource.contains("onContentHeightChange: { measuredHeight in"))
         XCTAssertFalse(draftEditorSource.contains("textContentHeight"))
         XCTAssertFalse(draftEditorSource.contains("estimatedDraftEditorHeight"))
-        XCTAssertTrue(draftEditorSource.contains("minHeight: max(400, height - 200)"))
+        XCTAssertTrue(draftEditorSource.contains("minHeight: max(400, height - manuscriptEditorHeightOffset)"))
     }
 
     func testMarginaliaLabelsUseSubtleFocusRulesInBlackMono() throws {

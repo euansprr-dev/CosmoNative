@@ -160,7 +160,8 @@ final class BlockOperationsTests: XCTestCase {
         XCTAssertEqual(result.document.blocks[0].id, firstID)
         XCTAssertEqual(result.document.blocks[0].plainInlineText, "Hello world")
         XCTAssertEqual(result.focusPath, .root(index: 0))
-        XCTAssertEqual(result.caretUTF16Offset, 11)
+        // Caret lands at the seam between the two merged texts (Notion behavior).
+        XCTAssertEqual(result.caretUTF16Offset, 5)
     }
 
     func testMoveRootBlockBeforeAnotherRootBlock() throws {

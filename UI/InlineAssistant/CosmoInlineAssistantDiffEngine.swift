@@ -57,9 +57,11 @@ enum CosmoInlineDiffLocator {
     /// 4. paragraph-anchored match (multi-line needles whose middle lines drifted)
     /// 5. bounded fuzzy line match — unique candidate only
     ///
-    /// Every stage either locates with confidence or returns nil so the operation
-    /// surfaces as conflicted. A diff that lands in the wrong place once costs more
-    /// trust than a hundred conflicts, so ambiguity always loses to conflict.
+    /// Every stage either locates with confidence or returns nil — a diff that lands
+    /// in the wrong place once costs more trust than a hundred misses, so ambiguity
+    /// never resolves to a mid-document guess. When the locator gives up, placement
+    /// falls back to an explicit append at the end of the document instead: always
+    /// applicable, and the review diff shows exactly where the text will land.
     static func range(of needle: String, in haystack: String) -> Range<String.Index>? {
         let trimmedNeedle = needle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedNeedle.isEmpty else { return nil }
@@ -312,6 +314,11 @@ struct CosmoInlineResolvedTextEdit {
 }
 
 enum CosmoInlineTextEditResolver {
+    /// Always resolves SOME placement for a text edit — precise location first, slide
+    /// header next, an explicit append at the end of the document as the last resort.
+    /// A reviewable best-effort beats a blocked "conflicted" state: the user sees in
+    /// the diff exactly where the text will land and decides there. Returns nil only
+    /// when there is genuinely nothing to apply (canvas plans, missing proposed text).
     static func placement(
         for operation: CosmoAssistantProposalOperation,
         in sourceText: String
@@ -321,46 +328,59 @@ enum CosmoInlineTextEditResolver {
             return nil
         }
 
+        let edit: CosmoInlineResolvedTextEdit
         switch operation.kind {
         case .textReplacement, .structuredFieldReplacement:
-            let original = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if shouldPreferSlideHeaderFallback(for: operation, proposed: proposed),
-               let fallback = slideHeaderFallback(for: operation, proposed: proposed, in: sourceText) {
-                return fallback
-            }
-            if !original.isEmpty,
-               let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: sourceText) {
-                return CosmoInlineResolvedTextEdit(range: range, replacementText: proposed)
-            }
-            if let fallback = slideHeaderFallback(for: operation, proposed: proposed, in: sourceText) {
-                return fallback
-            }
-            if original.isEmpty {
-                return appendPlacement(proposed, in: sourceText)
-            }
-            return nil
-
+            edit = replacementPlacement(for: operation, proposed: proposed, in: sourceText)
         case .textInsertion:
-            let anchor = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if shouldPreferSlideHeaderFallback(for: operation, proposed: proposed),
-               let fallback = slideHeaderFallback(for: operation, proposed: proposed, in: sourceText) {
-                return fallback
-            }
-            if !anchor.isEmpty,
-               let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: sourceText) {
-                return CosmoInlineResolvedTextEdit(
-                    range: range.upperBound..<range.upperBound,
-                    replacementText: insertionText(proposed)
-                )
-            }
-            if let fallback = slideHeaderFallback(for: operation, proposed: proposed, in: sourceText) {
-                return fallback
-            }
-            return appendPlacement(proposed, in: sourceText)
-
+            edit = insertionPlacement(for: operation, proposed: proposed, in: sourceText)
         case .canvasPlan:
             return nil
         }
+        return slideHeaderReconciled(edit, in: sourceText)
+    }
+
+    private static func replacementPlacement(
+        for operation: CosmoAssistantProposalOperation,
+        proposed: String,
+        in sourceText: String
+    ) -> CosmoInlineResolvedTextEdit {
+        let original = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if shouldPreferSlideHeaderFallback(for: operation, proposed: proposed),
+           let fallback = slideHeaderFallback(for: operation, proposed: proposed, in: sourceText) {
+            return fallback
+        }
+        if !original.isEmpty,
+           let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: sourceText) {
+            return CosmoInlineResolvedTextEdit(range: range, replacementText: proposed)
+        }
+        if let fallback = slideHeaderFallback(for: operation, proposed: proposed, in: sourceText) {
+            return fallback
+        }
+        return appendPlacement(proposed, in: sourceText)
+    }
+
+    private static func insertionPlacement(
+        for operation: CosmoAssistantProposalOperation,
+        proposed: String,
+        in sourceText: String
+    ) -> CosmoInlineResolvedTextEdit {
+        let anchor = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if shouldPreferSlideHeaderFallback(for: operation, proposed: proposed),
+           let fallback = slideHeaderFallback(for: operation, proposed: proposed, in: sourceText) {
+            return fallback
+        }
+        if !anchor.isEmpty,
+           let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: sourceText) {
+            return CosmoInlineResolvedTextEdit(
+                range: range.upperBound..<range.upperBound,
+                replacementText: insertionText(proposed)
+            )
+        }
+        if let fallback = slideHeaderFallback(for: operation, proposed: proposed, in: sourceText) {
+            return fallback
+        }
+        return appendPlacement(proposed, in: sourceText)
     }
 
     private static func shouldPreferSlideHeaderFallback(
@@ -392,6 +412,100 @@ enum CosmoInlineTextEditResolver {
             range: headerRange.upperBound..<headerRange.upperBound,
             replacementText: insertionText(proposed)
         )
+    }
+
+    // MARK: Slide-header reconciliation
+
+    /// State-based invariant applied to every resolved edit: applying a change never
+    /// deletes a slide header the proposal didn't explicitly rewrite, and never
+    /// duplicates the header that already governs the edit's position. Decided from
+    /// the document's actual state — not prompt keywords — so it holds for every
+    /// phrasing, every surface, and every apply path that shares this resolver.
+    private static func slideHeaderReconciled(
+        _ edit: CosmoInlineResolvedTextEdit,
+        in sourceText: String
+    ) -> CosmoInlineResolvedTextEdit {
+        let replacement = edit.replacementText
+        guard !replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return edit // an empty replacement is a deletion — never resurrect a header into it
+        }
+
+        let rangeHeader = leadingSlideHeaderLine(in: String(sourceText[edit.range]))
+        let replacementHeader = leadingSlideHeaderLine(in: replacement)
+
+        // The edit swallows "SLIDE N" but offers no header back — keep the document's own.
+        if let rangeHeader, replacementHeader == nil {
+            let separator = replacement.hasPrefix("\n") ? "" : "\n"
+            return CosmoInlineResolvedTextEdit(
+                range: edit.range,
+                replacementText: rangeHeader.line + separator + replacement
+            )
+        }
+
+        // The replacement re-states the header that already governs this position — drop it.
+        if rangeHeader == nil,
+           let replacementHeader,
+           governingSlideNumber(before: edit.range.lowerBound, in: sourceText) == replacementHeader.number {
+            return CosmoInlineResolvedTextEdit(
+                range: edit.range,
+                replacementText: strippedLeadingSlideHeader(from: replacement)
+            )
+        }
+
+        return edit
+    }
+
+    private struct SlideHeaderLine {
+        let line: String
+        let number: String
+    }
+
+    private static func leadingSlideHeaderLine(in text: String) -> SlideHeaderLine? {
+        let pattern = #"^\s*((?:-{2,}\s*)?SLIDE\s+(\d+))[ \t]*(?:\n|$)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(
+                in: text,
+                range: NSRange(location: 0, length: (text as NSString).length)
+              ),
+              match.numberOfRanges > 2 else {
+            return nil
+        }
+        let nsText = text as NSString
+        return SlideHeaderLine(
+            line: nsText.substring(with: match.range(at: 1)),
+            number: nsText.substring(with: match.range(at: 2))
+        )
+    }
+
+    /// Number of the nearest slide header at or above `position` — the slide that
+    /// owns that location in the document.
+    private static func governingSlideNumber(
+        before position: String.Index,
+        in sourceText: String
+    ) -> String? {
+        let prefix = String(sourceText[..<position])
+        let pattern = #"(?im)^\s*(?:-{2,}\s*)?SLIDE\s+(\d+)\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let matches = regex.matches(
+            in: prefix,
+            range: NSRange(location: 0, length: (prefix as NSString).length)
+        )
+        guard let last = matches.last, last.numberOfRanges > 1 else { return nil }
+        return (prefix as NSString).substring(with: last.range(at: 1))
+    }
+
+    private static func strippedLeadingSlideHeader(from text: String) -> String {
+        let hadLeadingNewline = text.hasPrefix("\n")
+        let pattern = #"^\s*(?:-{2,}\s*)?SLIDE\s+\d+[ \t]*(?:\n+)?"#
+        let stripped = text.replacingOccurrences(
+            of: pattern,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        // Insertions arrive with a leading newline separating them from their anchor —
+        // stripping the header must not glue the content onto the anchor line.
+        guard hadLeadingNewline, !stripped.hasPrefix("\n") else { return stripped }
+        return "\n" + stripped
     }
 
     private static func appendPlacement(_ proposed: String, in sourceText: String) -> CosmoInlineResolvedTextEdit {
@@ -469,7 +583,9 @@ struct CosmoInlineDiffChange: Identifiable, Equatable {
     let addedLines: [String]
     let rationale: String
     let status: CosmoProposalStatus
-    /// True when the original text could no longer be located — the edit is stale.
+    /// True only when there is genuinely nothing to apply on this surface (canvas
+    /// plans, empty proposals) — dismiss-only. Drifted text edits are never
+    /// conflicted: they relocate or append, and stay acceptable.
     let isConflicted: Bool
 }
 
@@ -496,22 +612,24 @@ enum CosmoInlineDiffReviewBuilder {
     ) -> [CosmoInlineDiffSegment] {
         let reviewable = operations.filter { $0.status == .pending || $0.status == .conflicted }
 
-        // Positioned edits are woven into the document at a real location. Trailing
-        // insertions have no anchor and append at the end. Conflicts are genuinely
-        // stale — a replacement whose original text no longer exists.
+        // Positioned edits are woven into the document at a real location — text edits
+        // always resolve (worst case as an explicit trailing append). Only operations
+        // with nothing to apply on a text surface (canvas plans, empty proposals)
+        // fall through as dismiss-only.
         var positioned: [PositionedChange] = []
-        var conflicts: [CosmoAssistantProposalOperation] = []
+        var overlapping: [CosmoAssistantProposalOperation] = []
+        var unplaceable: [CosmoAssistantProposalOperation] = []
 
         for operation in reviewable {
             if operation.kind == .canvasPlan {
-                conflicts.append(operation)
+                unplaceable.append(operation)
                 continue
             }
 
             if let edit = CosmoInlineTextEditResolver.placement(for: operation, in: sourceText) {
                 positioned.append(PositionedChange(operation: operation, edit: edit))
             } else {
-                conflicts.append(operation)
+                unplaceable.append(operation)
             }
         }
 
@@ -522,9 +640,10 @@ enum CosmoInlineDiffReviewBuilder {
 
         for change in positioned {
             let range = change.edit.range
-            // Skip an edit that collides with one already woven in.
+            // An edit colliding with one already woven in can't render inline, but it
+            // stays fully acceptable — accept re-resolves it against the live text.
             guard range.lowerBound >= cursor else {
-                conflicts.append(change.operation)
+                overlapping.append(change.operation)
                 continue
             }
             if range.lowerBound > cursor {
@@ -545,7 +664,18 @@ enum CosmoInlineDiffReviewBuilder {
             appendUnchanged(String(sourceText[cursor...]), to: &segments)
         }
 
-        for operation in conflicts {
+        for operation in overlapping {
+            segments.append(.change(CosmoInlineDiffChange(
+                id: operation.id,
+                removedLines: displayLines(operation.originalText ?? ""),
+                addedLines: displayLines(operation.proposedText ?? ""),
+                rationale: operation.rationale,
+                status: operation.status,
+                isConflicted: false
+            )))
+        }
+
+        for operation in unplaceable {
             segments.append(.change(CosmoInlineDiffChange(
                 id: operation.id,
                 removedLines: displayLines(operation.originalText ?? ""),

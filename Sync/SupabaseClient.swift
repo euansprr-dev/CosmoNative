@@ -187,7 +187,9 @@ final class SupabaseClient {
         table: String,
         since: Date?,
         userId: String? = nil,
-        excludeLocalSource: Bool = false
+        excludeLocalSource: Bool = false,
+        limit: Int = 100,
+        offset: Int = 0
     ) async throws -> [[String: Any]] {
         guard var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)") else {
             throw SupabaseError.invalidURL
@@ -196,7 +198,9 @@ final class SupabaseClient {
         urlComponents.queryItems = Self.fetchChangesQueryItems(
             since: since,
             userId: userId,
-            excludeLocalSource: excludeLocalSource
+            excludeLocalSource: excludeLocalSource,
+            limit: limit,
+            offset: offset
         )
 
         guard let url = urlComponents.url else {
@@ -224,9 +228,15 @@ final class SupabaseClient {
     nonisolated static func fetchChangesQueryItems(
         since: Date?,
         userId: String? = nil,
-        excludeLocalSource: Bool = false
+        excludeLocalSource: Bool = false,
+        limit: Int = 100,
+        offset: Int = 0
     ) -> [URLQueryItem] {
-        var queryItems = [URLQueryItem(name: "is_deleted", value: "eq.false")]
+        // NOTE: tombstones (is_deleted = true) are intentionally INCLUDED so
+        // remote deletions propagate to this device. Filtering them out meant
+        // deletes never arrived in batch pulls and a later local edit pushed
+        // is_deleted = false, resurrecting the atom everywhere (audit RC7).
+        var queryItems: [URLQueryItem] = []
 
         if let since = since {
             let sinceStr = ISO8601.string(from: since)
@@ -243,7 +253,10 @@ final class SupabaseClient {
         }
 
         queryItems.append(URLQueryItem(name: "order", value: "updated_at.asc"))
-        queryItems.append(URLQueryItem(name: "limit", value: "100"))
+        queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
+        if offset > 0 {
+            queryItems.append(URLQueryItem(name: "offset", value: "\(offset)"))
+        }
 
         return queryItems
     }

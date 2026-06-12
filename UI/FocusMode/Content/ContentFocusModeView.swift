@@ -165,7 +165,7 @@ struct ContentFocusModeView: View {
     @State private var hoveredSwipeUUID: String?
     @State private var showSwipeAttachmentEditor = false
 
-    enum DraftSaveState { case idle, saving, saved }
+    enum DraftSaveState { case idle, saving, saved, failed }
 
     enum ContentLayoutMode { case compact, regular, full }
 
@@ -225,6 +225,23 @@ struct ContentFocusModeView: View {
     @State private var layoutMode: ContentLayoutMode = .full
     @AppStorage("contentFocusWritingWidthMode") private var writingWidthModeRaw = WritingWidthMode.comfort.rawValue
     @AppStorage("contentFocusBandMode") private var focusBandModeRaw = WritingFocusBandMode.off.rawValue
+
+    // Document voice ("Aa" menu) — same controls as the Notes focus mode.
+    @AppStorage("contentFocusFontFamily") private var contentFontFamilyRaw = NoteDocumentStyle.FontFamily.sans.rawValue
+    @AppStorage("contentFocusTextSize") private var contentTextSizeRaw = NoteDocumentStyle.TextSize.standard.rawValue
+    @State private var styleMenuPresented = false
+
+    private var contentFontFamily: NoteDocumentStyle.FontFamily {
+        NoteDocumentStyle.FontFamily(rawValue: contentFontFamilyRaw) ?? .sans
+    }
+
+    private var contentTextSize: NoteDocumentStyle.TextSize {
+        NoteDocumentStyle.TextSize(rawValue: contentTextSizeRaw) ?? .standard
+    }
+
+    private var hasCustomDocumentStyle: Bool {
+        contentFontFamily != .sans || contentTextSize != .standard || writingWidthMode != .comfort
+    }
 
     private var editorMaxWidth: CGFloat {
         writingWidthMode.width
@@ -465,9 +482,11 @@ struct ContentFocusModeView: View {
             persistCurrentEditorSnapshot(reason: "onDisappear")
         }
         .onReceive(NotificationCenter.default.publisher(for: .unifiedEngineDraftUpdate)) { notification in
+            // Require an exact UUID match — an unscoped notification (nil UUID) from
+            // another session's engine must never be treated as ours.
             let targetUUID = notification.userInfo?["contentUUID"] as? String
                 ?? notification.userInfo?["uuid"] as? String
-            if let targetUUID, targetUUID != atom.uuid { return }
+            guard targetUUID == atom.uuid else { return }
 
             // Capture AI-generated draft as the baseline for lesson extraction
             if let content = notification.userInfo?["content"] as? String, !content.isEmpty {
@@ -496,7 +515,15 @@ struct ContentFocusModeView: View {
                 draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(newValue)
                 updateDraftHeadingOutline(from: draftDocument)
             } else if newValue != localDraftContent, draftEditedLocally {
+                // An external draft update arrived while the editor holds unsaved local
+                // edits. Keep the editor content, but record the conflict — the next
+                // autosave will persist the local text over the external update.
                 print("[FOCUS-CONTENT] onChange(vmDraftContent) SKIPPED — draftEditedLocally=true uuid=\(atom.uuid) vmLen=\(newValue.count) localLen=\(localDraftContent.count)")
+                PersistenceHealth.note(
+                    .conflict,
+                    context: "ContentFocusModeView.draftUpdate(\(atom.uuid.prefix(8)))",
+                    detail: "external draft update skipped — editor has unsaved local edits (externalLen=\(newValue.count) localLen=\(localDraftContent.count))"
+                )
             }
         }
         .onChange(of: viewModel.state.currentStep) { oldStep, newStep in
@@ -793,7 +820,8 @@ struct ContentFocusModeView: View {
             } else {
             CosmoDocumentEditor(
                 document: $draftDocument,
-                fontSize: 17,
+                fontSize: contentTextSize.pointSize,
+                fontDesign: contentFontFamily.design,
                 placeholder: "begin writing…",
                 darkMode: DS.usesImmersiveFocusAppearance,
                 overrideTextColor: NSColor(focusText),
@@ -951,72 +979,84 @@ struct ContentFocusModeView: View {
 
     private var writingSurfaceControls: some View {
         HStack(spacing: DS.space6) {
-            Button {
-                openWritingAI()
-            } label: {
-                Image(systemName: "sparkles")
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(showWritingAICard ? DS.gilt : focusTextMuted)
-                    .frame(width: 28, height: 28)
-                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(showWritingAICard ? DS.gilt.opacity(0.35) : DS.glassBorder, lineWidth: 0.5)
-                    )
-            }
-            .buttonStyle(.plain)
-            .help("Writing AI (Option+A)")
-            .accessibilityLabel("Open Writing AI")
-
-            Menu {
-                ForEach(WritingWidthMode.allCases) { mode in
-                    Button {
-                        writingWidthModeRaw = mode.rawValue
-                    } label: {
-                        Label(mode.label, systemImage: writingWidthMode == mode ? "checkmark" : "text.alignleft")
-                    }
-                }
-            } label: {
-                Image(systemName: "textformat.size")
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(focusTextMuted)
-                    .frame(width: 28, height: 28)
-                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DS.glassBorder, lineWidth: 0.5))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Writing width")
-
-            Menu {
-                ForEach(WritingFocusBandMode.allCases) { mode in
-                    Button {
-                        focusBandModeRaw = mode.rawValue
-                        updateFocusBand()
-                    } label: {
-                        Label(mode.label, systemImage: focusBandMode == mode ? "checkmark" : "scope")
-                    }
-                }
-                Divider()
-                Button {
-                    typewriterMode.toggle()
-                } label: {
-                    Label(typewriterMode || zenMode ? "Typewriter on" : "Typewriter off", systemImage: typewriterMode || zenMode ? "checkmark" : "arrow.down.to.line.compact")
-                }
-            } label: {
-                Image(systemName: "scope")
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(focusBandMode == .off ? focusTextMuted : DS.gilt)
-                    .frame(width: 28, height: 28)
-                    .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DS.glassBorder, lineWidth: 0.5))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Focus band")
+            writingAIButton
+            documentStyleButton
+            focusBandMenu
         }
+    }
+
+    private var writingAIButton: some View {
+        Button {
+            openWritingAI()
+        } label: {
+            surfaceControlIcon("sparkles", isActive: showWritingAICard)
+        }
+        .buttonStyle(.plain)
+        .help("Writing AI (Option+A)")
+        .accessibilityLabel("Open Writing AI")
+    }
+
+    /// "Aa" — the document's voice. Font family, text size, page width, and
+    /// typewriter mode live here, mirroring the Notes focus mode menu.
+    private var documentStyleButton: some View {
+        Button {
+            styleMenuPresented.toggle()
+        } label: {
+            surfaceControlIcon("textformat", isActive: styleMenuPresented || hasCustomDocumentStyle)
+        }
+        .buttonStyle(.plain)
+        .help("Document style")
+        .accessibilityLabel("Document style")
+        .popover(isPresented: $styleMenuPresented, arrowEdge: .bottom) {
+            DocumentStyleMenuView(
+                fontFamily: Binding(
+                    get: { contentFontFamily },
+                    set: { contentFontFamilyRaw = $0.rawValue }
+                ),
+                textSize: Binding(
+                    get: { contentTextSize },
+                    set: { contentTextSizeRaw = $0.rawValue }
+                ),
+                widthOptions: WritingWidthMode.allCases,
+                widthSelection: Binding(
+                    get: { writingWidthMode },
+                    set: { writingWidthModeRaw = $0.rawValue }
+                ),
+                widthLabel: { $0.label },
+                typewriterMode: $typewriterMode
+            )
+        }
+    }
+
+    private var focusBandMenu: some View {
+        Menu {
+            ForEach(WritingFocusBandMode.allCases) { mode in
+                Button {
+                    focusBandModeRaw = mode.rawValue
+                    updateFocusBand()
+                } label: {
+                    Label(mode.label, systemImage: focusBandMode == mode ? "checkmark" : "scope")
+                }
+            }
+        } label: {
+            surfaceControlIcon("scope", isActive: focusBandMode != .off)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Focus band")
+    }
+
+    private func surfaceControlIcon(_ systemName: String, isActive: Bool) -> some View {
+        Image(systemName: systemName)
+            .font(DS.caption.weight(.semibold))
+            .foregroundStyle(isActive ? DS.gilt : focusTextMuted)
+            .frame(width: 28, height: 28)
+            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(isActive ? DS.gilt.opacity(0.35) : DS.glassBorder, lineWidth: 0.5)
+            )
     }
 
     private var manuscriptTitleEditor: some View {
@@ -2050,7 +2090,8 @@ struct ContentFocusModeView: View {
 
             // Diff preview
             if result.action == .continueWriting {
-                let continuation = String(result.suggestedText.dropFirst(result.originalText.count))
+                // suggestedText now carries ONLY the continuation (insert-only apply path).
+                let continuation = result.suggestedText
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 ScrollView {
                     Text(continuation)
@@ -2105,11 +2146,13 @@ struct ContentFocusModeView: View {
 
     // MARK: - Inline AI Actions
 
+    // Typewriter scroll intentionally NOT scheduled here — clicking to move the
+    // caret must not recenter the page. The band engages on typing only, via
+    // onDocumentChange/onPlainTextChange (matching the Notes focus mode).
     private func handleSelectionChange(_ info: DraftSelectionInfo) {
         selectionInfo = info
         selectedText = info.text
         updateFocusBand()
-        scheduleTypewriterScroll()
     }
 
     private func openWritingAI() {
@@ -2457,14 +2500,17 @@ struct ContentFocusModeView: View {
         }
 
         if result.action == .continueWriting {
-            localDraftContent = replacement
-            draftDocument = RichDocument.migrateLegacy(replacement)
+            // Insert ONLY the continuation below the selection. Replacing the whole
+            // draft with `selection + continuation` destroyed everything outside the
+            // selection and then autosaved the loss.
+            draftDocument = draftDocumentByInsertingTextBelowSelection(replacement)
         } else {
             draftDocument = draftDocumentByReplacingSelection(with: replacement, originalText: result.originalText)
-            localDraftContent = draftDocument.plainText
         }
+        localDraftContent = draftDocument.plainText
         viewModel.state.richDraftDocument = draftDocument
         updateDraftHeadingOutline(from: draftDocument)
+        draftEditedLocally = true
 
         triggerAutoSave()
         dismissInlineAI()
@@ -2553,7 +2599,10 @@ struct ContentFocusModeView: View {
         }
 
         guard replacementRange.location != NSNotFound else {
-            return RichDocument.migrateLegacy(localDraftContent.replacingOccurrences(of: originalText, with: replacement))
+            // The original text no longer exists in the draft — applying anything would
+            // hit the wrong place. (The old `replacingOccurrences` fallback also flattened
+            // the rich document to plain text for what was always a no-op replacement.)
+            return draftDocument
         }
 
         let attributed = NSMutableAttributedString(
@@ -2561,7 +2610,11 @@ struct ContentFocusModeView: View {
         )
         let attributedPlainText = attributed.string as NSString
 
-        guard replacementRange.location + replacementRange.length <= attributedPlainText.length else {
+        // The range was computed on localDraftContent — splicing into the rendered rich
+        // document is only safe when the two are byte-identical (the rich serialization
+        // is debounced and can lag the live text).
+        guard attributed.string == localDraftContent,
+              replacementRange.location + replacementRange.length <= attributedPlainText.length else {
             return RichDocument.migrateLegacy(currentPlainText.replacingCharacters(in: replacementRange, with: replacement))
         }
 
@@ -2592,7 +2645,12 @@ struct ContentFocusModeView: View {
         )
         let attributedPlainText = attributed.string as NSString
 
-        guard nsRange.location != NSNotFound,
+        // The NSRange was computed on `plainText` — applying it to the rendered rich
+        // document is only valid when both strings are identical. If the debounced
+        // rich-document serialization lags the live plain text, splicing would land
+        // the replacement at the wrong offsets; fall back to a plain-text rebuild.
+        guard attributed.string == plainText,
+              nsRange.location != NSNotFound,
               nsRange.location + nsRange.length <= attributedPlainText.length else {
             let updated = (plainText as NSString).replacingCharacters(in: nsRange, with: replacement)
             return RichDocument.migrateLegacy(updated)
@@ -2756,11 +2814,25 @@ struct ContentFocusModeView: View {
                     viewModel.state.draftContent = localDraftContent
                     viewModel.state.richDraftDocument = draftDocument
                     viewModel.state.lastModified = Date()
-                    // Write directly to DB — skip the notification + ViewModel debounce (was adding 1.5s extra delay)
-                    viewModel.writeToAtom()
-                    withAnimation(ProMotionSprings.snappy) { saveState = .saved }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        withAnimation(ProMotionSprings.gentle) { saveState = .idle }
+                    let draftAtSave = localDraftContent
+                    // Write directly to DB — skip the notification + ViewModel debounce (was adding 1.5s extra delay).
+                    // "Saved" flips only after the write commits; flipping optimistically
+                    // showed "Saved" even when the write failed.
+                    viewModel.writeToAtom { success in
+                        withAnimation(ProMotionSprings.snappy) { saveState = success ? .saved : .failed }
+                        if success, localDraftContent == draftAtSave {
+                            // The editor matches what just hit disk — external draft updates
+                            // may apply again. (This flag previously never reset, permanently
+                            // blocking engine updates and then overwriting them.)
+                            draftEditedLocally = false
+                        }
+                        if success {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                withAnimation(ProMotionSprings.gentle) {
+                                    if saveState == .saved { saveState = .idle }
+                                }
+                            }
+                        }
                     }
                 }
             } catch {}
@@ -3005,6 +3077,12 @@ class ContentFocusModeViewModel: ObservableObject {
 
     // MARK: - State Observation
 
+    /// The content UUID an engine notification is scoped to. nil when unscoped.
+    private static func notificationTargetUUID(_ notification: Notification) -> String? {
+        notification.userInfo?["contentUUID"] as? String
+            ?? notification.userInfo?["uuid"] as? String
+    }
+
     /// Listen for save notifications from child views.
     /// Every child view calls state.save() which posts .contentFocusStateSaved.
     /// We debounce and write to the atom in the database.
@@ -3029,10 +3107,15 @@ class ContentFocusModeViewModel: ObservableObject {
         // (outline, hooks, description, draft) actually update the UI state.
         toolNotificationCancellables.removeAll()
 
+        // All engine-tool handlers require an exact contentUUID match. A nil UUID is
+        // NO match: unscoped notifications from a concurrent session (e.g. a Telegram
+        // writing session on different content) used to be applied AND persisted here,
+        // contaminating whatever content happened to be open.
         NotificationCenter.default.publisher(for: .unifiedEngineOutlineUpdate)
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
                 guard let self, !self.isClosed,
+                      Self.notificationTargetUUID(notification) == self.atom.uuid,
                       let items = notification.userInfo?["items"] as? [OutlineItem] else { return }
                 self.state.outline = items
                 self.state.isAISuggestedOutline = true
@@ -3045,6 +3128,7 @@ class ContentFocusModeViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
                 guard let self, !self.isClosed,
+                      Self.notificationTargetUUID(notification) == self.atom.uuid,
                       let hooks = notification.userInfo?["hooks"] as? [String] else { return }
                 self.state.hooks = hooks
                 self.state.lastModified = Date()
@@ -3056,6 +3140,7 @@ class ContentFocusModeViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
                 guard let self, !self.isClosed,
+                      Self.notificationTargetUUID(notification) == self.atom.uuid,
                       let description = notification.userInfo?["description"] as? String else { return }
                 self.state.contentDescription = description
                 self.state.lastModified = Date()
@@ -3067,10 +3152,15 @@ class ContentFocusModeViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
                 guard let self, !self.isClosed,
+                      Self.notificationTargetUUID(notification) == self.atom.uuid,
                       let content = notification.userInfo?["content"] as? String else { return }
-                let targetUUID = notification.userInfo?["contentUUID"] as? String
-                    ?? notification.userInfo?["uuid"] as? String
-                if let targetUUID, targetUUID != self.atom.uuid { return }
+                // Snapshot the previous draft before the AI replaces it — recoverable
+                // via the AI undo stack (the replacement used to be irreversible).
+                self.state.pushAIUndo(
+                    previousContent: self.state.draftContent,
+                    sectionIdentifier: nil,
+                    description: "AI draft update"
+                )
                 // Convert carousel/thread JSON to readable slide format for display.
                 // New tool paths already persist rendered content; this keeps older
                 // notifications safe if they still contain structured JSON.
@@ -3085,6 +3175,7 @@ class ContentFocusModeViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
                 guard let self, !self.isClosed,
+                      Self.notificationTargetUUID(notification) == self.atom.uuid,
                       let newContent = notification.userInfo?["newContent"] as? String else { return }
                 let sectionId = notification.userInfo?["sectionIdentifier"] as? String ?? ""
                 self.state.pushAIUndo(
@@ -3092,8 +3183,20 @@ class ContentFocusModeViewModel: ObservableObject {
                     sectionIdentifier: sectionId,
                     description: "AI edit: \(sectionId)"
                 )
-                self.state.draftContent = newContent
-                self.state.richDraftDocument = RichDocument.migrateLegacy(newContent)
+                // Scope the edit to the identified section when it can be located.
+                // Replacing the whole draft with `newContent` (old behavior) destroyed
+                // everything outside the section whenever the model sent only the
+                // replacement text for an inline edit.
+                let current = self.state.draftContent
+                let updated: String
+                if !sectionId.isEmpty,
+                   let range = CosmoInlineDiffLocator.range(of: sectionId, in: current) {
+                    updated = current.replacingCharacters(in: range, with: newContent)
+                } else {
+                    updated = newContent
+                }
+                self.state.draftContent = updated
+                self.state.richDraftDocument = RichDocument.migrateLegacy(updated)
                 self.state.lastModified = Date()
                 self.writeToAtom()
             }
@@ -3169,7 +3272,10 @@ class ContentFocusModeViewModel: ObservableObject {
     /// This is the ONLY save path — no UserDefaults.
     /// Uses a write sequence number so stale writes (from debounced handlers
     /// that fire after a step transition) are discarded.
-    func writeToAtom() {
+    /// - Parameter completion: called on the main actor once the write commits
+    ///   (`true`) or fails / is policy-skipped (`false`). NOT called when a newer
+    ///   queued write supersedes this one — the newer write reports instead.
+    func writeToAtom(completion: (@MainActor (Bool) -> Void)? = nil) {
         state.lastModified = Date()
         let stateCopy = state
         let atomUUID = atom.uuid
@@ -3186,6 +3292,7 @@ class ContentFocusModeViewModel: ObservableObject {
             }
 
             do {
+                var policySkipped = false
                 try await CosmoDatabase.shared.asyncWrite { db in
                     // Read existing metadata to preserve non-focus-state keys
                     var existingMetadata: String? = nil
@@ -3200,6 +3307,7 @@ class ContentFocusModeViewModel: ObservableObject {
                         snapshotLastModified: stateCopy.lastModified
                     ) else {
                         print("[FOCUS-CONTENT-VM] writeToAtom() SKIPPED stale metadata — uuid=\(atomUUID) seq=\(mySequence)")
+                        policySkipped = true
                         return
                     }
 
@@ -3222,6 +3330,11 @@ class ContentFocusModeViewModel: ObservableObject {
                     )
                     print("[FOCUS-CONTENT-VM] writeToAtom() DB write DONE — uuid=\(atomUUID) seq=\(mySequence) rows=\(db.changesCount)")
                 }
+                if policySkipped {
+                    PersistenceHealth.note(.conflict, context: "ContentFocusModeViewModel.writeToAtom(\(atomUUID.prefix(8)))", detail: "skipped — persisted metadata is newer than this snapshot")
+                    completion?(false)
+                    return
+                }
                 // Sync: queue for Supabase push so content drafts don't only live locally
                 if let updatedAtom = try? await CosmoDatabase.shared.asyncRead({ db in
                     try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
@@ -3229,8 +3342,11 @@ class ContentFocusModeViewModel: ObservableObject {
                     // skipVersionIncrement: raw SQL already did _local_version + 1
                     await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                 }
+                completion?(true)
             } catch {
                 print("[FOCUS-CONTENT-VM] writeToAtom() FAILED — uuid=\(atomUUID) error=\(error)")
+                PersistenceHealth.note(.writeFailure, context: "ContentFocusModeViewModel.writeToAtom(\(atomUUID.prefix(8)))", detail: error.localizedDescription)
+                completion?(false)
             }
         }
     }
@@ -3291,6 +3407,7 @@ class ContentFocusModeViewModel: ObservableObject {
             }
         } catch {
             print("[FOCUS-CONTENT-VM] writeToAtomSync() FAILED — uuid=\(atomUUID) error=\(error)")
+            PersistenceHealth.note(.writeFailure, context: "ContentFocusModeViewModel.writeToAtomSync(\(atomUUID.prefix(8)))", detail: error.localizedDescription)
         }
     }
 

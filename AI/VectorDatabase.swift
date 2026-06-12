@@ -283,6 +283,86 @@ public actor VectorDatabase {
         totalVectors += 1
     }
 
+    /// Reconciliation: index live atoms that have no vector rows — e.g. the
+    /// embedding daemon was down during a capture burst and the index calls
+    /// failed. Without this, those atoms stay invisible to semantic recall
+    /// forever. Returns the number of atoms re-indexed; stops early if the
+    /// daemon is still unavailable (the next pass retries).
+    public func reindexMissing(limit: Int = 200) async -> Int {
+        guard let dbPool else { return 0 }
+
+        // Snapshot which (entity_type, entity_id) pairs are already indexed.
+        let indexedKeys: Set<String>
+        do {
+            indexedKeys = try await dbPool.read { db in
+                let rows = try Row.fetchAll(db, sql: "SELECT DISTINCT entity_type, entity_id FROM vector_metadata")
+                return Set(rows.compactMap { row -> String? in
+                    guard let type: String = row["entity_type"], let id: Int64 = row["entity_id"] else { return nil }
+                    return "\(type)|\(id)"
+                })
+            }
+        } catch {
+            print("VectorDatabase: reindexMissing indexed-keys read failed: \(error)")
+            return 0
+        }
+
+        // Live atoms with content from the main database.
+        let candidates: [ReindexCandidate]
+        do {
+            candidates = try await CosmoDatabase.shared.asyncRead { db in
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT id, uuid, type, title, body FROM atoms
+                    WHERE is_deleted = 0
+                      AND ((body IS NOT NULL AND body != '') OR (title IS NOT NULL AND title != ''))
+                    ORDER BY updated_at DESC
+                    LIMIT 2000
+                    """)
+                return rows.compactMap { row -> ReindexCandidate? in
+                    guard let id: Int64 = row["id"],
+                          let uuid: String = row["uuid"],
+                          let type: String = row["type"] else { return nil }
+                    let title: String = row["title"] ?? ""
+                    let body: String = row["body"] ?? ""
+                    let text = [title, body].filter { !$0.isEmpty }.joined(separator: "\n")
+                    guard !text.isEmpty else { return nil }
+                    return ReindexCandidate(type: type, id: id, uuid: uuid, text: text)
+                }
+            }
+        } catch {
+            print("VectorDatabase: reindexMissing atom read failed: \(error)")
+            return 0
+        }
+
+        var reindexed = 0
+        for candidate in candidates where !indexedKeys.contains("\(candidate.type)|\(candidate.id)") {
+            guard reindexed < limit else { break }
+            do {
+                try await index(
+                    text: candidate.text,
+                    entityType: candidate.type,
+                    entityId: candidate.id,
+                    entityUUID: candidate.uuid
+                )
+                reindexed += 1
+            } catch {
+                // Daemon unavailable — stop; the next reconciliation pass retries.
+                print("VectorDatabase: reindexMissing stopped after \(reindexed) (daemon unavailable?): \(error)")
+                break
+            }
+        }
+        if reindexed > 0 {
+            print("VectorDatabase: reconciled \(reindexed) atoms missing from the vector index")
+        }
+        return reindexed
+    }
+
+    private struct ReindexCandidate: Sendable {
+        let type: String
+        let id: Int64
+        let uuid: String
+        let text: String
+    }
+
     /// Batch index multiple texts
     public func indexBatch(
         items: [(text: String, entityType: String, entityId: Int64, entityUUID: String?)]

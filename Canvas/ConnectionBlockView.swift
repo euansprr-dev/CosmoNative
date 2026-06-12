@@ -467,15 +467,13 @@ struct ConnectionBlockView: View {
     private func parseSections(from atom: Atom) {
         // 1. Try ConnectionFocusModeState from UserDefaults (fastest, most up-to-date)
         if let state = ConnectionFocusModeState.load(atomUUID: atom.uuid) {
-            let udItems = state.sections.flatMap(\.items).count
-            let dbItems: Int = {
-                guard let json = atom.structured, let data = ConnectionStructuredData.fromJSON(json) else { return 0 }
-                return data.sections.flatMap(\.items).count
-            }()
-            print("[BLOCK-CONN] parseSections — USING UserDefaults for uuid=\(atom.uuid) udSections=\(state.sections.count) udItems=\(udItems) dbStructuredLen=\(atom.structured?.count ?? 0) dbItems=\(dbItems)")
-            // If UserDefaults has FEWER items than DB, prefer DB (UserDefaults may be stale)
-            if udItems < dbItems, let json = atom.structured, let data = ConnectionStructuredData.fromJSON(json) {
-                print("[BLOCK-CONN] parseSections — ⚠️ UserDefaults STALE (udItems=\(udItems) < dbItems=\(dbItems)), falling through to DB")
+            print("[BLOCK-CONN] parseSections — USING UserDefaults for uuid=\(atom.uuid) udSections=\(state.sections.count) udLastModified=\(state.lastModified) dbUpdatedAt=\(atom.updatedAt)")
+            // Freshness compare: the DB wins when its row is newer than the UD
+            // blob. (The old count-based check preferred whichever store had
+            // more items, which let a stale blob resurrect deleted items.)
+            let atomUpdatedAt = ISO8601.date(from: atom.updatedAt) ?? .distantPast
+            if state.lastModified < atomUpdatedAt, let json = atom.structured, let data = ConnectionStructuredData.fromJSON(json) {
+                print("[BLOCK-CONN] parseSections — ⚠️ UserDefaults STALE (lastModified=\(state.lastModified) < updatedAt=\(atomUpdatedAt)), falling through to DB")
                 sections = data.sections
                     .sorted { $0.type.sortOrder < $1.type.sortOrder }
                     .map { section in
@@ -537,17 +535,18 @@ struct ConnectionBlockView: View {
         }
     }
 
-    /// Remove duplicate items that appear across multiple sections (keeps first occurrence).
+    /// Remove TRUE duplicates only — items sharing the same id (e.g. from a
+    /// double-applied merge). Never dedupe by text: identical wording in two
+    /// sections is intentional authoring, and the old normalized-text dedupe
+    /// deleted it at parse time and persisted the deletion on the next save.
     private func deduplicateItemsAcrossSections() {
-        var seenContent: Set<String> = []
+        var seenIDs: Set<UUID> = []
         for i in sections.indices {
             sections[i].items.removeAll { item in
-                let key = item.resolvedPlainText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                guard !key.isEmpty else { return false }
-                if seenContent.contains(key) {
-                    return true // duplicate — remove
+                if seenIDs.contains(item.id) {
+                    return true // same item appearing twice — remove
                 }
-                seenContent.insert(key)
+                seenIDs.insert(item.id)
                 return false
             }
         }
@@ -596,14 +595,35 @@ struct ConnectionBlockView: View {
         guard let atom = atom else { print("[BLOCK-CONN] saveChanges() SKIPPED DB — no atom loaded"); return }
         let atomUUID = atom.uuid
 
-        // 1. Write to atom.structured
+        // 1. Write to atom.structured — merging the sections key over the
+        // existing column so legacy mental-model keys survive (a whole-column
+        // write here destroyed them).
         Task {
             print("[BLOCK-CONN] saveChanges() async DB write starting — uuid=\(atomUUID)")
-            try? await CosmoDatabase.shared.asyncWrite { db in
-                try db.execute(
-                    sql: "UPDATE atoms SET structured = ?, body = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
-                    arguments: [json, flattenedBodyText, ISO8601.string(from: Date()), atomUUID]
+            do {
+                try await CosmoDatabase.shared.asyncWrite { db in
+                    let existing: String? = try Row.fetchOne(
+                        db,
+                        sql: "SELECT structured FROM atoms WHERE uuid = ?",
+                        arguments: [atomUUID]
+                    )?["structured"]
+                    guard let mergedStructured = Self.mergedSectionsJSON(existing: existing, sectionsJSON: json, atomUUID: atomUUID) else {
+                        // Existing column is non-empty but unparseable — refuse a
+                        // write that would drop whatever it holds.
+                        return
+                    }
+                    try db.execute(
+                        sql: "UPDATE atoms SET structured = ?, body = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
+                        arguments: [mergedStructured, flattenedBodyText, ISO8601.string(from: Date()), atomUUID]
+                    )
+                }
+            } catch {
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "ConnectionBlockView.saveChanges(\(atomUUID.prefix(8)))",
+                    detail: error.localizedDescription
                 )
+                return
             }
             print("[BLOCK-CONN] saveChanges() async DB write DONE — uuid=\(atomUUID)")
             // Sync: queue for Supabase push
@@ -620,6 +640,39 @@ struct ConnectionBlockView: View {
         focusState.lastModified = Date()
         focusState.save()
         print("[BLOCK-CONN] saveChanges() UserDefaults saved — uuid=\(atomUUID)")
+    }
+
+    /// Merge a sections-only JSON payload into an existing structured column,
+    /// preserving sibling keys (legacy mental-model data). Returns nil — refuse
+    /// to write — when the existing column is non-empty but unparseable.
+    /// nonisolated: runs inside the database write closure.
+    nonisolated static func mergedSectionsJSON(existing: String?, sectionsJSON: String, atomUUID: String) -> String? {
+        guard let sectionsData = sectionsJSON.data(using: .utf8),
+              let sectionsObj = (try? JSONSerialization.jsonObject(with: sectionsData)) as? [String: Any],
+              let sectionsValue = sectionsObj["sections"] else {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "ConnectionBlockView.mergedSectionsJSON(\(atomUUID.prefix(8)))",
+                detail: "sections payload encode failed; keeping existing column"
+            )
+            return nil
+        }
+        guard let existing, !existing.isEmpty else { return sectionsJSON }
+        guard let existingData = existing.data(using: .utf8),
+              var dict = (try? JSONSerialization.jsonObject(with: existingData)) as? [String: Any] else {
+            PersistenceHealth.note(
+                .decodeFailure,
+                context: "ConnectionBlockView.mergedSectionsJSON(\(atomUUID.prefix(8)))",
+                detail: "existing structured unparseable; refusing sections write that would drop its data"
+            )
+            return nil
+        }
+        dict["sections"] = sectionsValue
+        guard let merged = try? JSONSerialization.data(withJSONObject: dict),
+              let mergedStr = String(data: merged, encoding: .utf8) else {
+            return nil
+        }
+        return mergedStr
     }
 
     // MARK: - Title Editing

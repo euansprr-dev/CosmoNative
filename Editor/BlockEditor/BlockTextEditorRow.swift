@@ -135,8 +135,8 @@ struct BlockTextEditorRow: View {
             return focusCoordinator.focusPrevious()
         case .moveToNextBlock:
             return focusCoordinator.focusNext()
-        case .deleteBackwardAtStart:
-            return deleteOrMergeBackward()
+        case .deleteBackwardAtStart(let livePlainText):
+            return deleteOrMergeBackward(livePlainText: livePlainText)
         case .insertNewlineOnEmptyFinalLine:
             return exitEmptyListOrFinalRegion()
         case .splitBlock(let caretUTF16OffsetFromEnd, let livePlainText):
@@ -182,17 +182,38 @@ struct BlockTextEditorRow: View {
         return true
     }
 
-    private func deleteOrMergeBackward() -> Bool {
+    /// Backspace at block start — delete the empty block or merge into the
+    /// previous one. Reconciles the block with the text view's live string
+    /// first (the document binding lags by ~50ms) so characters deleted right
+    /// before the merge don't resurrect in the previous block.
+    private func deleteOrMergeBackward(livePlainText: String) -> Bool {
         guard let block = currentBlock,
               let currentPath else { return false }
+
+        var workingDocument = document
+        let liveContent = block.kind.strippedRenderPrefix(from: livePlainText)
+        if liveContent != block.plainInlineText {
+            var workingBlock = block
+            workingBlock.inlines = [.text(liveContent)]
+            guard let reconciled = try? BlockOperations.replaceBlock(
+                in: workingDocument,
+                at: currentPath,
+                with: workingBlock
+            ) else {
+                return false
+            }
+            workingDocument = reconciled.document
+        }
+
+        let isEmpty = liveContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let result: BlockOperationResult?
-        if block.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            result = try? BlockOperations.deleteEmptyBlockBackward(in: document, at: currentPath)
+        if isEmpty {
+            result = try? BlockOperations.deleteEmptyBlockBackward(in: workingDocument, at: currentPath)
         } else {
-            result = try? BlockOperations.mergeBackward(in: document, at: currentPath)
+            result = try? BlockOperations.mergeBackward(in: workingDocument, at: currentPath)
         }
         guard let result else { return false }
-        apply(result, undoActionName: block.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Delete Block" : "Merge Blocks")
+        apply(result, undoActionName: isEmpty ? "Delete Block" : "Merge Blocks")
         return true
     }
 

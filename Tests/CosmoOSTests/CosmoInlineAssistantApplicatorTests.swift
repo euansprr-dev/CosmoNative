@@ -65,7 +65,7 @@ final class CosmoInlineAssistantApplicatorTests: XCTestCase {
         XCTAssertNil(store.errorText)
     }
 
-    func testAcceptMarksConflictWhenSourceHashChanged() async {
+    func testAcceptAppendsWhenSourceHashChangedAndOriginalTextDrifted() async {
         let registry = CosmoEditableSurfaceRegistry()
         let surface = ApplyingEditableSurface(text: "Rent: $4,700/mo")
         registry.register(surface)
@@ -83,8 +83,11 @@ final class CosmoInlineAssistantApplicatorTests: XCTestCase {
 
         await store.accept(operationID: operation.id, registry: registry)
 
-        XCTAssertEqual(surface.text, "Rent: $4,700/mo")
-        XCTAssertEqual(store.proposals.first?.operations.first?.status, .conflicted)
+        // Accepting is never blocked: a drifted original lands as an explicit
+        // trailing append (shown that way in the review diff), never a conflict.
+        XCTAssertEqual(surface.text, "Rent: $4,700/mo\n\nRent: $5,000/mo")
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
+        XCTAssertNil(store.errorText)
     }
 
     func testAcceptAppliesStaleHashWhenExactOriginalTextStillExists() async {
@@ -164,6 +167,98 @@ final class CosmoInlineAssistantApplicatorTests: XCTestCase {
         XCTAssertTrue(surface.text.contains("SLIDE 5\nFirst, I found an owner-listed home on Zillow."))
         XCTAssertTrue(surface.text.contains("SLIDE 6\n--"))
         XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
+        XCTAssertNil(store.errorText)
+    }
+
+    func testAcceptPreservesSlideHeaderWhenProposalDropsIt() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: """
+        SLIDE 3
+        Old hook line.
+        --
+        SLIDE 4
+        Old body line.
+        """)
+        registry.register(surface)
+
+        let operation = CosmoAssistantProposalOperation(
+            kind: .textReplacement,
+            targetID: surface.targetID,
+            anchorID: "slide-3",
+            originalText: "SLIDE 3\nOld hook line.",
+            proposedText: "New hook line.",
+            sourceHash: "stale",
+            rationale: "Punch up the hook."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: surface.surfaceID))
+
+        await store.accept(operationID: operation.id, registry: registry)
+
+        XCTAssertTrue(
+            surface.text.contains("SLIDE 3\nNew hook line."),
+            "The document's own slide header must survive a headerless rewrite"
+        )
+        XCTAssertEqual(surface.text.components(separatedBy: "SLIDE 3").count - 1, 1)
+        XCTAssertTrue(surface.text.contains("SLIDE 4\nOld body line."))
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
+    }
+
+    func testAcceptStripsDuplicateSlideHeaderWhenSlideAlreadyNumbered() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: """
+        SLIDE 3
+        Old hook line.
+        --
+        SLIDE 4
+        """)
+        registry.register(surface)
+
+        let operation = CosmoAssistantProposalOperation(
+            kind: .textReplacement,
+            targetID: surface.targetID,
+            anchorID: "slide-3",
+            originalText: "Old hook line.",
+            proposedText: "SLIDE 3\nNew hook line.",
+            sourceHash: "stale",
+            rationale: "Punch up the hook."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: surface.surfaceID))
+
+        await store.accept(operationID: operation.id, registry: registry)
+
+        XCTAssertTrue(surface.text.contains("SLIDE 3\nNew hook line."))
+        XCTAssertEqual(
+            surface.text.components(separatedBy: "SLIDE 3").count - 1, 1,
+            "Re-stating the governing header must not duplicate it"
+        )
+        XCTAssertEqual(store.proposals.first?.operations.first?.status, .applied)
+    }
+
+    func testAcceptAppendsInsteadOfConflictingWhenOriginalTextVanished() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: "Completely unrelated text.")
+        registry.register(surface)
+
+        let operation = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "This text no longer exists anywhere",
+            proposedText: "Fresh closing paragraph.",
+            sourceHash: "stale",
+            rationale: "Add a closer."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receive(proposal: proposal(with: operation, surfaceID: surface.surfaceID))
+
+        await store.accept(operationID: operation.id, registry: registry)
+
+        XCTAssertEqual(surface.text, "Completely unrelated text.\n\nFresh closing paragraph.")
+        XCTAssertEqual(
+            store.proposals.first?.operations.first?.status, .applied,
+            "Accept must always be able to apply — a drifted original appends, never conflicts"
+        )
         XCTAssertNil(store.errorText)
     }
 

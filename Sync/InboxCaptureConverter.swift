@@ -72,14 +72,21 @@ enum InboxCaptureConverter {
                     )
                 )
 
-                // Soft-delete the transport atom either way so future pulls skip it.
-                await softDeleteTransportAtom(uuid: uuid)
-
+                // Soft-delete the transport atom ONLY when the capture provably
+                // exists locally. On failure it stays alive so the next pull retries —
+                // it is the only durable copy of the capture.
                 switch outcome {
                 case .enqueued(let saved):
+                    await softDeleteTransportAtom(uuid: uuid)
                     print("📥 InboxCaptureConverter: InboxItem created from cloud capture — \(saved.uuid)")
                 case .consumed(let reason):
+                    if consumedReasonMeansCaptureExistsLocally(reason) {
+                        await softDeleteTransportAtom(uuid: uuid)
+                    }
                     print("📥 InboxCaptureConverter: cloud capture \(uuid) consumed (\(reason))")
+                case .failed(let detail):
+                    print("⚠️ InboxCaptureConverter: local save FAILED for cloud capture \(uuid) — transport atom kept for retry (\(detail))")
+                    PersistenceHealth.note(.writeFailure, context: "InboxCaptureConverter.convertIfInboxCapture", detail: "ingest failed for transport atom \(uuid): \(detail)")
                 }
             }
         }
@@ -209,13 +216,28 @@ enum InboxCaptureConverter {
                 excludedAtomUUIDs: [sourceAtomUuid]
             )
         )
-        await softDeleteTransportAtom(uuid: sourceAtomUuid)
         switch outcome {
         case .enqueued:
+            await softDeleteTransportAtom(uuid: sourceAtomUuid)
             print("📥 InboxCaptureConverter: fallback inbox item created for cloud lane capture \(sourceAtomUuid)")
         case .consumed(let reason):
+            if consumedReasonMeansCaptureExistsLocally(reason) {
+                await softDeleteTransportAtom(uuid: sourceAtomUuid)
+            }
             print("📥 InboxCaptureConverter: cloud lane capture \(sourceAtomUuid) consumed (\(reason))")
+        case .failed(let detail):
+            // Keep the transport atom alive — it is the only durable copy.
+            print("⚠️ InboxCaptureConverter: fallback ingest FAILED for cloud lane capture \(sourceAtomUuid) — transport atom kept for retry (\(detail))")
+            PersistenceHealth.note(.writeFailure, context: "InboxCaptureConverter.convertLaneCaptureToInbox", detail: "ingest failed for transport atom \(sourceAtomUuid): \(detail)")
         }
+    }
+
+    /// True when a `.consumed` reason proves the capture already exists locally
+    /// (dedupe / already-converted / atom-already-created) — only then is it
+    /// safe to soft-delete the cloud transport atom. Reasons like "empty
+    /// capture" are not proof of local existence.
+    private static func consumedReasonMeansCaptureExistsLocally(_ reason: String) -> Bool {
+        reason.contains("already converted") || reason.contains("already created")
     }
 
     @MainActor
@@ -261,11 +283,16 @@ enum InboxCaptureConverter {
     }
 
     private static func softDeleteTransportAtom(uuid: String) async {
-        try? await CosmoDatabase.shared.asyncWrite { db in
-            try db.execute(
-                sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                arguments: [ISO8601.string(from: Date()), uuid]
-            )
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                    arguments: [ISO8601.string(from: Date()), uuid]
+                )
+            }
+        } catch {
+            print("⚠️ InboxCaptureConverter: transport atom soft-delete failed for \(uuid): \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxCaptureConverter.softDeleteTransportAtom", detail: "\(uuid): \(error.localizedDescription)")
         }
     }
 }

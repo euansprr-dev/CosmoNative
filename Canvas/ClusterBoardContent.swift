@@ -225,7 +225,11 @@ extension CanvasCluster {
     }
 
     func defaultBoardDropColumnValue(for block: CanvasBlock, among blocks: [CanvasBlock]) -> String {
-        switch boardGroupingStrategy(memberBlocks: boardMemberBlocks(from: blocks)) {
+        // An empty board has no members to infer a pipeline from — resolve the
+        // strategy as if the dropped block had already joined so it lands in the
+        // column the board will actually render.
+        let members = boardMemberBlocks(from: blocks)
+        switch boardGroupingStrategy(memberBlocks: members.isEmpty ? [block] : members) {
         case .byTaskStatus:
             return CanvasClusterEngine.canonicalTaskStatus(block.metadata["status"] ?? "todo")
         case .byContentPhase:

@@ -145,9 +145,11 @@ private func performWritingAPICall(
         print(
             "🌐 [WritingAPICall] Usage: prompt=\(promptTokens), uncached=\(uncachedPromptTokens), cached=\(cachedTokens), completion=\(completionTokens), cache_hit_rate=\(String(format: "%.1f", cacheHitRate))%"
         )
-        let inputCost = Double(uncachedPromptTokens) * 15.0 / 1_000_000
-            + Double(cachedTokens) * 1.5 / 1_000_000
-        let outputCost = Double(completionTokens) * 75.0 / 1_000_000
+        // Claude Opus pricing, June 2026: $5/M in, $25/M out, cache read ~0.1x.
+        // Keep in sync with CraftUsage in AI/Craft/CosmoCraftEngine.swift.
+        let inputCost = Double(uncachedPromptTokens) * 5.0 / 1_000_000
+            + Double(cachedTokens) * 0.5 / 1_000_000
+        let outputCost = Double(completionTokens) * 25.0 / 1_000_000
         print("💰 [WritingAPICall] Est. cost: $\(String(format: "%.4f", inputCost + outputCost)) (input: $\(String(format: "%.4f", inputCost)), output: $\(String(format: "%.4f", outputCost)))")
     }
 
@@ -1788,7 +1790,7 @@ final class UnifiedWritingEngine: ObservableObject {
                     isError = false
 
                 case "edit_section":
-                    resultContent = handleEditSection(call.input)
+                    resultContent = await handleEditSection(call.input)
                     isError = false
 
                 case "search_swipes":
@@ -1920,44 +1922,44 @@ final class UnifiedWritingEngine: ObservableObject {
             ))
         }
 
-        // Post notification for the view model to pick up
+        // Post notification for the view model to pick up — scoped by contentUUID so
+        // a concurrent session's open editor can't absorb another content's outline.
         NotificationCenter.default.post(
             name: .unifiedEngineOutlineUpdate,
             object: nil,
-            userInfo: ["items": outlineItems, "reasoning": reasoning]
+            userInfo: [
+                "items": outlineItems,
+                "reasoning": reasoning,
+                "contentUUID": contentAtom?.uuid ?? ""
+            ]
         )
 
         // Persist outline directly to atom metadata in GRDB
-        // This is critical for the agent/Telegram path where no UI observer exists
+        // This is critical for the agent/Telegram path where no UI observer exists.
+        // IMPORTANT: persist the encoded OutlineItems (id/sortOrder included) — the raw
+        // tool sections lacked both, so the UI's decoder silently failed and the next
+        // focus-mode save deleted the outline key.
         if let atomUUID = contentAtom?.uuid {
             do {
-                // Serialize to JSON Data on the main actor (Sendable-safe) before passing into the closure
-                let outlineData = try JSONSerialization.data(withJSONObject: sectionsArray)
-                let outlineJSONString = String(data: outlineData, encoding: .utf8)
-                try await database.asyncWrite { db in
-                    if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
-                        var meta = atom.metadataDict ?? [:]
-                        // Deserialize back inside the closure to avoid capturing non-Sendable [[String: Any]]
-                        if let jsonStr = outlineJSONString,
-                           let jsonData = jsonStr.data(using: .utf8),
-                           let outlineJSON = try? JSONSerialization.jsonObject(with: jsonData) {
-                            meta["outline"] = outlineJSON
-                        }
-                        if let metaData = try? JSONSerialization.data(withJSONObject: meta),
-                           let metaStr = String(data: metaData, encoding: .utf8) {
-                            atom.metadata = metaStr
-                        }
-                        atom.updatedAt = ISO8601.string(from: Date())
-                        try atom.update(db)
-                    }
+                let outlineData = try JSONEncoder().encode(outlineItems)
+                let outlineJSON = try JSONSerialization.jsonObject(with: outlineData)
+                guard var atom = try await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                    return "Error: content atom not found for outline persistence"
                 }
-                // Refresh in-memory contentAtom
-                contentAtom = try? await database.asyncRead { db in
-                    try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db)
+                var meta = atom.metadataDict ?? [:]
+                meta["outline"] = outlineJSON
+                if let metaData = try? JSONSerialization.data(withJSONObject: meta),
+                   let metaStr = String(data: metaData, encoding: .utf8) {
+                    atom.metadata = metaStr
                 }
+                // Route through the repository so the write bumps the optimistic-lock
+                // version, sets _local_pending, and is tracked for sync (the old raw
+                // atom.update(db) was invisible to both).
+                contentAtom = try await AtomRepository.shared.update(atom)
                 print("💾 [UnifiedWritingEngine] Persisted outline (\(outlineItems.count) sections) to atom \(atomUUID)")
             } catch {
                 print("❌ [UnifiedWritingEngine] Failed to persist outline: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "UnifiedWritingEngine.handleUpdateOutline(\(atomUUID.prefix(8)))", detail: error.localizedDescription)
             }
         }
 
@@ -1990,30 +1992,32 @@ final class UnifiedWritingEngine: ObservableObject {
         NotificationCenter.default.post(
             name: .unifiedEngineHooksUpdate,
             object: nil,
-            userInfo: ["hooks": hookTexts, "variants": hookVariants]
+            userInfo: [
+                "hooks": hookTexts,
+                "variants": hookVariants,
+                "contentUUID": contentAtom?.uuid ?? ""
+            ]
         )
 
         // Persist hooks directly to atom metadata in GRDB
         // This is critical for the agent/Telegram path where no UI observer exists
         if let atomUUID = contentAtom?.uuid {
             do {
-                // Capture immutable copy for Sendable closure
-                let hookTextsCopy = hookTexts
-                try await database.asyncWrite { db in
-                    if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
-                        var meta = atom.metadataDict ?? [:]
-                        meta["hooks"] = hookTextsCopy
-                        if let metaData = try? JSONSerialization.data(withJSONObject: meta),
-                           let metaStr = String(data: metaData, encoding: .utf8) {
-                            atom.metadata = metaStr
-                        }
-                        atom.updatedAt = ISO8601.string(from: Date())
-                        try atom.update(db)
-                    }
+                guard var atom = try await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                    return "Error: content atom not found for hooks persistence"
                 }
+                var meta = atom.metadataDict ?? [:]
+                meta["hooks"] = hookTexts
+                if let metaData = try? JSONSerialization.data(withJSONObject: meta),
+                   let metaStr = String(data: metaData, encoding: .utf8) {
+                    atom.metadata = metaStr
+                }
+                // Repository update: version bump + _local_pending + sync tracking.
+                contentAtom = try await AtomRepository.shared.update(atom)
                 print("💾 [UnifiedWritingEngine] Persisted \(hookTexts.count) hooks to atom \(atomUUID)")
             } catch {
                 print("❌ [UnifiedWritingEngine] Failed to persist hooks: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "UnifiedWritingEngine.handleAddHooks(\(atomUUID.prefix(8)))", detail: error.localizedDescription)
             }
         }
 
@@ -2027,16 +2031,14 @@ final class UnifiedWritingEngine: ObservableObject {
         // Persist title to atom in GRDB
         if let atomUUID = contentAtom?.uuid {
             do {
-                try await database.asyncWrite { db in
-                    if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
-                        atom.title = title
-                        atom.updatedAt = ISO8601.string(from: Date())
-                        try atom.update(db)
-                    }
-                }
+                // Repository update: version bump + _local_pending + sync tracking.
+                contentAtom = try await AtomRepository.shared.update(uuid: atomUUID) { atom in
+                    atom.title = title
+                } ?? contentAtom
                 print("💾 [UnifiedWritingEngine] Set title to '\(title)' on atom \(atomUUID)")
             } catch {
                 print("❌ [UnifiedWritingEngine] Failed to set title: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "UnifiedWritingEngine.handleSetTitle(\(atomUUID.prefix(8)))", detail: error.localizedDescription)
                 return "Error setting title: \(error.localizedDescription)"
             }
         }
@@ -2045,7 +2047,7 @@ final class UnifiedWritingEngine: ObservableObject {
         NotificationCenter.default.post(
             name: .unifiedEngineTitleUpdate,
             object: nil,
-            userInfo: ["title": title]
+            userInfo: ["title": title, "contentUUID": contentAtom?.uuid ?? ""]
         )
 
         return "Title set to: \(title)"
@@ -2057,27 +2059,25 @@ final class UnifiedWritingEngine: ObservableObject {
         NotificationCenter.default.post(
             name: .unifiedEngineDescriptionUpdate,
             object: nil,
-            userInfo: ["description": description]
+            userInfo: ["description": description, "contentUUID": contentAtom?.uuid ?? ""]
         )
 
         // Persist description to atom metadata in GRDB
         if let atomUUID = contentAtom?.uuid, !description.isEmpty {
             do {
-                try await database.asyncWrite { db in
-                    if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
-                        var meta = atom.metadataDict ?? [:]
-                        meta["contentDescription"] = description
-                        if let metaData = try? JSONSerialization.data(withJSONObject: meta),
-                           let metaStr = String(data: metaData, encoding: .utf8) {
-                            atom.metadata = metaStr
-                        }
-                        atom.updatedAt = ISO8601.string(from: Date())
-                        try atom.update(db)
+                // Repository update: version bump + _local_pending + sync tracking.
+                contentAtom = try await AtomRepository.shared.update(uuid: atomUUID) { atom in
+                    var meta = atom.metadataDict ?? [:]
+                    meta["contentDescription"] = description
+                    if let metaData = try? JSONSerialization.data(withJSONObject: meta),
+                       let metaStr = String(data: metaData, encoding: .utf8) {
+                        atom.metadata = metaStr
                     }
-                }
+                } ?? contentAtom
                 print("💾 [UnifiedWritingEngine] Persisted description to atom \(atomUUID)")
             } catch {
                 print("❌ [UnifiedWritingEngine] Failed to persist description: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "UnifiedWritingEngine.handleSetDescription(\(atomUUID.prefix(8)))", detail: error.localizedDescription)
             }
         }
 
@@ -2115,38 +2115,64 @@ final class UnifiedWritingEngine: ObservableObject {
         NotificationCenter.default.post(
             name: .unifiedEngineDraftUpdate,
             object: nil,
-            userInfo: ["content": renderedContent, "format": format.rawValue]
+            userInfo: [
+                "content": renderedContent,
+                "format": format.rawValue,
+                "contentUUID": contentAtom?.uuid ?? ""
+            ]
         )
 
         // Persist draft content directly to atom body in GRDB
         // This is critical for the agent/Telegram path where no UI observer exists
         if let atomUUID = contentAtom?.uuid, !content.isEmpty {
-            do {
-                try await database.asyncWrite { db in
-                    if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
-                        atom.body = renderedContent
-
-                        // Sync richDraftDocument in metadata so the UI sees the fresh draft.
-                        // The UI prefers richDraftDocument over atom.body — without this,
-                        // a stale rich document from a previous session overrides the fresh draft.
-                        let richDoc = RichDocument.migrateLegacy(renderedContent)
-                        atom.metadata = RichDocumentMetadataStorage.writeDocument(
-                            richDoc,
-                            into: atom.metadata,
-                            key: RichDocumentMetadataKeys.contentDraftDocument
-                        )
-
-                        atom.updatedAt = ISO8601.string(from: Date())
-                        try atom.update(db)
+            if AtomRepository.shared.isBeingEdited(atomUUID) {
+                // The user has this content open in an editor. The scoped notification
+                // above delivers the draft to that editor (which pushes an AI-undo
+                // snapshot and persists through its own write path) — overwriting the
+                // body here from underneath the open editor destroyed live keystrokes.
+                print("✋ [UnifiedWritingEngine] Skipping direct body write for \(atomUUID) — editing lock held; draft delivered via scoped notification")
+            } else {
+                do {
+                    guard var atom = try await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                        return "Error: content atom not found for draft persistence"
                     }
+
+                    // Snapshot the previous draft as a versioned .contentDraft atom so
+                    // an unwanted AI overwrite is always recoverable.
+                    if let previousBody = atom.body,
+                       !previousBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       previousBody != renderedContent {
+                        do {
+                            _ = try await ContentPipelineService().saveDraft(
+                                contentUUID: atomUUID,
+                                body: previousBody,
+                                authorNotes: "Auto-snapshot before AI write_draft"
+                            )
+                        } catch {
+                            print("⚠️ [UnifiedWritingEngine] Pre-write draft snapshot failed: \(error)")
+                        }
+                    }
+
+                    atom.body = renderedContent
+
+                    // Sync richDraftDocument in metadata so the UI sees the fresh draft.
+                    // The UI prefers richDraftDocument over atom.body — without this,
+                    // a stale rich document from a previous session overrides the fresh draft.
+                    let richDoc = RichDocument.migrateLegacy(renderedContent)
+                    atom.metadata = RichDocumentMetadataStorage.writeDocument(
+                        richDoc,
+                        into: atom.metadata,
+                        key: RichDocumentMetadataKeys.contentDraftDocument
+                    )
+
+                    // Repository update: optimistic-lock version bump + _local_pending +
+                    // sync tracking (the old raw atom.update(db) was invisible to both).
+                    contentAtom = try await AtomRepository.shared.update(atom)
+                    print("💾 [UnifiedWritingEngine] Persisted draft (\(wordCount) words) to atom \(atomUUID)")
+                } catch {
+                    print("❌ [UnifiedWritingEngine] Failed to persist draft: \(error)")
+                    PersistenceHealth.note(.writeFailure, context: "UnifiedWritingEngine.handleWriteDraft(\(atomUUID.prefix(8)))", detail: error.localizedDescription)
                 }
-                // Refresh the in-memory contentAtom so handleReadDraft sees the latest
-                contentAtom = try? await database.asyncRead { db in
-                    try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db)
-                }
-                print("💾 [UnifiedWritingEngine] Persisted draft (\(wordCount) words) to atom \(atomUUID)")
-            } catch {
-                print("❌ [UnifiedWritingEngine] Failed to persist draft: \(error)")
             }
         }
 
@@ -2315,7 +2341,7 @@ final class UnifiedWritingEngine: ObservableObject {
         return "\n\nVOICE COMPLIANCE CHECK (\(issues.count) issue\(issues.count == 1 ? "" : "s")):\n\(issueList)\nPlease address these voice issues in the draft."
     }
 
-    private func handleEditSection(_ input: [String: Any]) -> String {
+    private func handleEditSection(_ input: [String: Any]) async -> String {
         let sectionId = input["sectionIdentifier"] as? String ?? ""
         let newContent = input["newContent"] as? String ?? ""
         let reasoning = input["reasoning"] as? String ?? ""
@@ -2326,9 +2352,65 @@ final class UnifiedWritingEngine: ObservableObject {
             userInfo: [
                 "sectionIdentifier": sectionId,
                 "newContent": newContent,
-                "reasoning": reasoning
+                "reasoning": reasoning,
+                "contentUUID": contentAtom?.uuid ?? ""
             ]
         )
+
+        // Persist headless — the notification above only lands when a focus mode is
+        // open. For Telegram/agent sessions there is no observer: the edit was lost
+        // while the model reported success. Mirrors handleWriteDraft's safe path.
+        if let atomUUID = contentAtom?.uuid, !newContent.isEmpty {
+            if AtomRepository.shared.isBeingEdited(atomUUID) {
+                // Open editor receives the scoped notification and persists it itself.
+                print("✋ [UnifiedWritingEngine] Skipping headless section persist for \(atomUUID) — editing lock held")
+            } else {
+                do {
+                    guard var atom = try await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                        return "Error: content atom not found for section edit persistence"
+                    }
+                    let currentBody = atom.body ?? ""
+
+                    // Snapshot the previous draft before mutating (recoverable).
+                    if !currentBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        do {
+                            _ = try await ContentPipelineService().saveDraft(
+                                contentUUID: atomUUID,
+                                body: currentBody,
+                                authorNotes: "Auto-snapshot before AI edit_section (\(sectionId))"
+                            )
+                        } catch {
+                            print("⚠️ [UnifiedWritingEngine] Pre-edit draft snapshot failed: \(error)")
+                        }
+                    }
+
+                    // Locator-scoped replacement of the identified section; fall back to
+                    // whole-draft replacement only when the section can't be located
+                    // (mirrors the UI handler's fallback semantics).
+                    let updatedBody: String
+                    if !sectionId.isEmpty,
+                       let range = CosmoInlineDiffLocator.range(of: sectionId, in: currentBody) {
+                        updatedBody = currentBody.replacingCharacters(in: range, with: newContent)
+                    } else {
+                        updatedBody = newContent
+                    }
+
+                    atom.body = updatedBody
+                    let richDoc = RichDocument.migrateLegacy(updatedBody)
+                    atom.metadata = RichDocumentMetadataStorage.writeDocument(
+                        richDoc,
+                        into: atom.metadata,
+                        key: RichDocumentMetadataKeys.contentDraftDocument
+                    )
+                    contentAtom = try await AtomRepository.shared.update(atom)
+                    print("💾 [UnifiedWritingEngine] Persisted section edit '\(sectionId)' to atom \(atomUUID)")
+                } catch {
+                    print("❌ [UnifiedWritingEngine] Failed to persist section edit: \(error)")
+                    PersistenceHealth.note(.writeFailure, context: "UnifiedWritingEngine.handleEditSection(\(atomUUID.prefix(8)))", detail: error.localizedDescription)
+                    return "Error persisting section edit: \(error.localizedDescription)"
+                }
+            }
+        }
 
         return "Section '\(sectionId)' edited. Reasoning: \(reasoning)"
     }

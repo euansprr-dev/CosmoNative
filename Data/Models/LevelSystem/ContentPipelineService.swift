@@ -169,19 +169,37 @@ public final class ContentPipelineService: ObservableObject {
             return atom
         }
 
-        // Update content atom with new phase — merge into existing metadata
-        // to preserve focus state keys (hooks, contentDescription, outline, etc.)
+        // Update content atom with new phase — re-fetch INSIDE the write and update
+        // ONLY the metadata column (merged key-by-key). The previous version wrote
+        // every column from the atom fetched before the awaits above, clobbering any
+        // draft/body saved while the phase atom was being created.
         metadata.phase = nextPhase
         metadata.lastPhaseTransition = Date()
         metadata.createdPhaseAt = Date()
-
-        var updatedAtom = contentAtom
-        updatedAtom.metadata = mergedMetadataJSON(metadata, existing: contentAtom.metadata)
-        updatedAtom.updatedAt = ISO8601.string(from: Date())
-        let atomToUpdate = updatedAtom
+        let typedMetadata = metadata
 
         try await database.write { db in
-            try atomToUpdate.update(db)
+            guard let fresh = try Atom
+                .filter(Column("uuid") == contentUUID)
+                .filter(Column("type") == AtomType.content.rawValue)
+                .filter(Column("is_deleted") == false)
+                .fetchOne(db) else { return }
+            let mergedMetadata = Self.mergedMetadataJSON(typedMetadata, existing: fresh.metadata)
+            try db.execute(
+                sql: """
+                UPDATE atoms
+                SET metadata = COALESCE(?, metadata),
+                    updated_at = ?,
+                    _local_version = _local_version + 1,
+                    _local_pending = 1
+                WHERE uuid = ?
+                """,
+                arguments: [mergedMetadata, ISO8601.string(from: Date()), contentUUID]
+            )
+        }
+        // Queue for sync — the SQL above already bumped _local_version.
+        if let updatedAtom = try? await fetchContentAtom(uuid: contentUUID) {
+            await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
         }
 
         // Award XP for phase completion
@@ -619,7 +637,8 @@ public final class ContentPipelineService: ObservableObject {
     // MARK: - Private Helpers
 
     /// Merge typed metadata fields into existing metadata JSON, preserving untyped keys (e.g. focus state).
-    private func mergedMetadataJSON<T: Encodable>(_ typed: T, existing: String?) -> String? {
+    /// `nonisolated static` so it can run inside database-writer closures.
+    nonisolated static func mergedMetadataJSON<T: Encodable>(_ typed: T, existing: String?) -> String? {
         guard let existing,
               let existingData = existing.data(using: .utf8),
               var dict = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
@@ -629,6 +648,11 @@ public final class ContentPipelineService: ObservableObject {
         }
         for (key, value) in typedDict { dict[key] = value }
         return (try? JSONSerialization.data(withJSONObject: dict)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    /// Instance convenience for the static merge helper.
+    private func mergedMetadataJSON<T: Encodable>(_ typed: T, existing: String?) -> String? {
+        Self.mergedMetadataJSON(typed, existing: existing)
     }
 
     private func loadActiveContent() async {
@@ -743,7 +767,9 @@ public final class ContentPipelineService: ObservableObject {
                 meta.draftReady = true
                 meta.draftingNote = nil
             }
-            contentAtom.metadata = meta.toJSON()
+            // Merge — a whole-blob toJSON() replacement here wiped every metadata key
+            // the typed struct doesn't model (focus state, rich documents, hooks).
+            contentAtom.metadata = mergedMetadataJSON(meta, existing: contentAtom.metadata)
             contentAtom.updatedAt = ISO8601.string(from: Date())
             let atomToUpdate = contentAtom
             do {
@@ -789,10 +815,10 @@ public final class ContentPipelineService: ObservableObject {
                 contentAtom.structured = packageString
             }
 
-            // Record swipe reference UUIDs in metadata
+            // Record swipe reference UUIDs in metadata — merged, never whole-blob replaced.
             meta.inheritedSwipeUUIDs = draftPackage.swipeReferences.map(\.swipeUUID)
             meta.draftingNote = nil
-            contentAtom.metadata = meta.toJSON()
+            contentAtom.metadata = mergedMetadataJSON(meta, existing: contentAtom.metadata)
             contentAtom.updatedAt = ISO8601.string(from: Date())
 
             let atomToUpdate = contentAtom

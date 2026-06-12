@@ -56,7 +56,27 @@ final class InboxActionExecutor {
 
         let existingBody = targetAtom.body ?? ""
         let newText = item.rawText
-        let mergedBody = await blendMerge(existing: existingBody, newContext: newText, title: targetAtom.title ?? "Note")
+        // Long targets never go through the LLM: blendMerge only sees the first
+        // 3000 chars, so an LLM rewrite would silently amputate the tail.
+        // The lossless append fallback preserves every byte.
+        let mergedBody: String
+        if existingBody.count > 3000 {
+            mergedBody = fallbackMerge(existing: existingBody, newContext: newText)
+        } else {
+            mergedBody = await blendMerge(existing: existingBody, newContext: newText, title: targetAtom.title ?? "Note")
+        }
+
+        // Durable undo source: persist the pre-merge body on the inbox item
+        // BEFORE mutating the target, so the original text survives app restarts.
+        do {
+            try await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
+                "premergeBody": existingBody,
+                "premergeTargetUuid": targetAtomUuid
+            ])
+        } catch {
+            print("⚠️ [InboxAction] Failed to persist pre-merge snapshot: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxActionExecutor.executeMerge", detail: "pre-merge snapshot store failed for \(item.uuid): \(error.localizedDescription)")
+        }
 
         let updated = try await atomRepo.update(uuid: targetAtomUuid) { atom in
             atom.body = mergedBody
@@ -136,6 +156,7 @@ final class InboxActionExecutor {
             title: item.title ?? fallbackTitle(for: item),
             body: item.rawText
         )
+        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
         atom = try await atomRepo.create(atom)
         await reindex(atom: atom)
         try await inboxRepo.markActioned(uuid: item.uuid)
@@ -179,6 +200,7 @@ final class InboxActionExecutor {
             ))
         }
 
+        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
         atom = try await atomRepo.create(atom)
         await reindex(atom: atom)
         try await inboxRepo.markActioned(uuid: item.uuid)
@@ -228,6 +250,7 @@ final class InboxActionExecutor {
             title: item.title ?? fallbackTitle(for: item),
             body: item.rawText
         )
+        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
         atom = try await atomRepo.create(atom)
         await reindex(atom: atom)
 
@@ -433,15 +456,27 @@ final class InboxActionExecutor {
         item.title ?? String(item.rawText.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Provenance metadata stamped on every atom created from an inbox capture.
+    /// The launch reconciler uses `sourceCaptureUuid` to safely auto-dismiss
+    /// captures whose atoms already exist instead of guessing by text match.
+    private func captureProvenance(for item: InboxItem) -> [String: String] {
+        ["sourceCaptureUuid": item.uuid]
+    }
+
     private func reindex(atom: Atom) async {
         let text = [atom.title, atom.body].compactMap { $0 }.joined(separator: "\n\n")
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        try? await VectorDatabase.shared.index(
-            text: text,
-            entityType: atom.type.rawValue,
-            entityId: atom.id ?? 0,
-            entityUUID: atom.uuid
-        )
+        do {
+            try await VectorDatabase.shared.index(
+                text: text,
+                entityType: atom.type.rawValue,
+                entityId: atom.id ?? 0,
+                entityUUID: atom.uuid
+            )
+        } catch {
+            print("⚠️ [InboxAction] Vector reindex failed for \(atom.uuid): \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxActionExecutor.reindex", detail: "vector index failed for \(atom.uuid): \(error.localizedDescription)")
+        }
     }
 
     private func blendMerge(existing: String, newContext: String, title: String) async -> String {

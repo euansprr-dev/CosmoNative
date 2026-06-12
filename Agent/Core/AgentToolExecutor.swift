@@ -24,6 +24,29 @@ class AgentToolExecutor {
         let arguments: [String: Any]
         let description: String
         let createdAt: Date
+        /// Set ONLY by CosmoAgentService.confirmAction when the USER approves.
+        /// Destructive tools key off this — a model-supplied `_confirmed` flag is
+        /// ignored, so the model can never skip the confirmation step itself.
+        var userApproved: Bool = false
+
+        /// Confirmations expire after 5 minutes.
+        var isExpired: Bool {
+            Date().timeIntervalSince(createdAt) > 300
+        }
+    }
+
+    /// True when `args` carry a confirmation id matching a USER-approved, unexpired
+    /// pending confirmation for `toolName`. Consumes (removes) the confirmation.
+    private func consumeUserConfirmation(_ args: [String: Any], toolName: String) -> Bool {
+        guard let confirmationId = args["_confirmationId"] as? String,
+              let pending = pendingConfirmations[confirmationId],
+              pending.toolName == toolName,
+              pending.userApproved,
+              !pending.isExpired else {
+            return false
+        }
+        pendingConfirmations.removeValue(forKey: confirmationId)
+        return true
     }
 
     /// Pending module suggestions queued for user confirmation via Telegram.
@@ -500,6 +523,11 @@ class AgentToolExecutor {
         guard let uuid = args["uuid"] as? String else {
             return jsonError("Missing required parameter: uuid")
         }
+        // Never replace an idea's body underneath an open editor.
+        if args["body"] is String, atomRepo.isBeingEdited(uuid) {
+            PersistenceHealth.note(.conflict, context: "AgentToolExecutor.updateIdea(\(uuid.prefix(8)))", detail: "refused body overwrite — editing lock held")
+            return jsonError("Idea body was NOT updated: the user is actively editing this idea right now. Tell the user what you wanted to change, or retry after they finish editing.")
+        }
         guard let updated = try await atomRepo.update(uuid: uuid, updates: { atom in
             if let title = args["title"] as? String { atom.title = title }
             if let body = args["body"] as? String { atom.body = body }
@@ -529,6 +557,19 @@ class AgentToolExecutor {
         }
         guard let ideaAtom = try await atomRepo.fetch(uuid: uuid) else {
             return jsonError("Idea not found: \(uuid)")
+        }
+
+        // Idempotency: a retry after a partial failure must not create a duplicate
+        // content atom. If a content atom already points back at this idea, return it.
+        if let existingContent = try? await atomRepo.fetchAll(type: .content)
+            .first(where: { $0.metadataDict?["sourceIdeaUUID"] as? String == uuid }) {
+            return jsonEncode([
+                "success": true,
+                "ideaUUID": uuid,
+                "contentUUID": existingContent.uuid,
+                "alreadyActivated": true,
+                "message": "Idea was already activated — existing content atom: \(existingContent.title ?? existingContent.uuid)"
+            ] as [String: Any])
         }
 
         // Run full analysis to get swipe matches, hooks, framework recommendations.
@@ -609,15 +650,24 @@ class AgentToolExecutor {
             links: links
         )
 
-        // Update idea status to activated
-        _ = try await atomRepo.update(uuid: uuid, updates: { atom in
-            var metaDict = (atom.metadataDict ?? [:])
-            metaDict["ideaStatus"] = "activated"
-            if let data = try? JSONSerialization.data(withJSONObject: metaDict),
-               let json = String(data: data, encoding: .utf8) {
-                atom.metadata = json
-            }
-        })
+        // Update idea status to activated. If this second step fails, soft-delete the
+        // just-created content atom so the operation is atomic from the model's view —
+        // a retry then recreates both (the idempotency check above prevents duplicates
+        // when the content atom DID survive).
+        do {
+            _ = try await atomRepo.update(uuid: uuid, updates: { atom in
+                var metaDict = (atom.metadataDict ?? [:])
+                metaDict["ideaStatus"] = "activated"
+                if let data = try? JSONSerialization.data(withJSONObject: metaDict),
+                   let json = String(data: data, encoding: .utf8) {
+                    atom.metadata = json
+                }
+            })
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "AgentToolExecutor.activateIdea(\(uuid.prefix(8)))", detail: "idea status update failed after content creation: \(error.localizedDescription)")
+            try? await atomRepo.delete(uuid: contentAtom.uuid)
+            return jsonError("Activation failed while updating the idea (\(error.localizedDescription)). The partially created content atom was removed — retry activate_idea.")
+        }
 
         return jsonEncode([
             "success": true,
@@ -1265,12 +1315,17 @@ class AgentToolExecutor {
             if let hook = item.hook { textToEmbed += hook + " " }
             if let summary = item.summary { textToEmbed += summary }
             if !textToEmbed.isEmpty {
-                try? await VectorDatabase.shared.index(
-                    text: textToEmbed,
-                    entityType: "research",
-                    entityId: item.id ?? 0,
-                    entityUUID: item.uuid
-                )
+                do {
+                    try await VectorDatabase.shared.index(
+                        text: textToEmbed,
+                        entityType: "research",
+                        entityId: item.id ?? 0,
+                        entityUUID: item.uuid
+                    )
+                } catch {
+                    // Recoverable via VectorDatabase.reindexMissing — but visible.
+                    PersistenceHealth.note(.writeFailure, context: "VectorIndex.research(\(item.uuid.prefix(8)))", detail: error.localizedDescription)
+                }
             }
         }
 
@@ -1482,12 +1537,17 @@ class AgentToolExecutor {
         // 9. Generate embedding for the idea in background
         Task {
             let textToEmbed = [ideaTitle, ideaBody].joined(separator: " ")
-            try? await VectorDatabase.shared.index(
-                text: textToEmbed,
-                entityType: "idea",
-                entityId: ideaAtom.id ?? 0,
-                entityUUID: ideaAtom.uuid
-            )
+            do {
+                try await VectorDatabase.shared.index(
+                    text: textToEmbed,
+                    entityType: "idea",
+                    entityId: ideaAtom.id ?? 0,
+                    entityUUID: ideaAtom.uuid
+                )
+            } catch {
+                // Recoverable via VectorDatabase.reindexMissing — but visible.
+                PersistenceHealth.note(.writeFailure, context: "VectorIndex.idea(\(ideaAtom.uuid.prefix(8)))", detail: error.localizedDescription)
+            }
         }
 
         // Post notification for UI updates
@@ -1588,12 +1648,17 @@ class AgentToolExecutor {
         Task {
             let textToEmbed = [title, body ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
             if !textToEmbed.isEmpty {
-                try? await VectorDatabase.shared.index(
-                    text: textToEmbed,
-                    entityType: "research",
-                    entityId: item.id ?? 0,
-                    entityUUID: item.uuid
-                )
+                do {
+                    try await VectorDatabase.shared.index(
+                        text: textToEmbed,
+                        entityType: "research",
+                        entityId: item.id ?? 0,
+                        entityUUID: item.uuid
+                    )
+                } catch {
+                    // Recoverable via VectorDatabase.reindexMissing — but visible.
+                    PersistenceHealth.note(.writeFailure, context: "VectorIndex.research(\(item.uuid.prefix(8)))", detail: error.localizedDescription)
+                }
             }
         }
 
@@ -2606,9 +2671,9 @@ class AgentToolExecutor {
             return jsonError("Missing required parameter: uuid")
         }
 
-        // Check if this is a confirmed deletion
-        let isConfirmed = args["_confirmed"] as? Bool ?? false
-        if isConfirmed {
+        // Only a USER-approved confirmation (set by CosmoAgentService.confirmAction)
+        // can pass this gate — a model-supplied `_confirmed`/`_confirmationId` cannot.
+        if consumeUserConfirmation(args, toolName: "delete_block") {
             try await atomRepo.delete(uuid: uuid)
             return jsonEncode([
                 "success": true,
@@ -2624,7 +2689,7 @@ class AgentToolExecutor {
         let confirmationId = UUID().uuidString
         pendingConfirmations[confirmationId] = PendingConfirmation(
             toolName: "delete_block",
-            arguments: ["uuid": uuid, "_confirmed": true],
+            arguments: ["uuid": uuid],
             description: "Delete schedule block: \(blockTitle)",
             createdAt: Date()
         )
@@ -2996,6 +3061,9 @@ class AgentToolExecutor {
 
         // Check if content atom has a codex outline → single agentic session (Opus, adaptive thinking)
         let atom = try? await AtomRepository.shared.fetch(uuid: contentUUID)
+        // Capture body/version BEFORE the long cloud call — the persist step compares
+        // against this baseline so a user edit made mid-generation is never overwritten.
+        let generationBaseline = DraftGenerationBaseline(atom: atom)
         let hasCodexOutline: Bool = {
             guard let metadata = atom?.metadata,
                   let data = metadata.data(using: .utf8),
@@ -3031,11 +3099,20 @@ class AgentToolExecutor {
                     localMetadata: localMetadata
                 )
 
-                await persistGeneratedDraftLocally(
+                let persistWarning = await persistGeneratedDraftLocally(
                     contentUUID: contentUUID,
                     formattedDraft: result.formattedDraft,
-                    source: "single-session generate_draft"
+                    source: "single-session generate_draft",
+                    baseline: generationBaseline
                 )
+                if let persistWarning {
+                    return jsonEncode([
+                        "success": false,
+                        "contentUUID": contentUUID,
+                        "formattedDraft": result.formattedDraft ?? "",
+                        "message": persistWarning
+                    ] as [String: Any])
+                }
 
                 let encoder = JSONEncoder()
                 let data = try encoder.encode(result)
@@ -3062,11 +3139,20 @@ class AgentToolExecutor {
                 contentFormat: args["contentFormat"] as? String
             )
 
-            await persistGeneratedDraftLocally(
+            let persistWarning = await persistGeneratedDraftLocally(
                 contentUUID: contentUUID,
                 formattedDraft: result.formattedDraft,
-                source: "multi-phase generate_draft"
+                source: "multi-phase generate_draft",
+                baseline: generationBaseline
             )
+            if let persistWarning {
+                return jsonEncode([
+                    "success": false,
+                    "contentUUID": contentUUID,
+                    "formattedDraft": result.formattedDraft ?? "",
+                    "message": persistWarning
+                ] as [String: Any])
+            }
 
             let encoder = JSONEncoder()
             let data = try encoder.encode(result)
@@ -3211,19 +3297,74 @@ class AgentToolExecutor {
         ]
     }
 
+    /// Body + version captured before a long-running cloud generation, used to detect
+    /// user/concurrent edits made while the generation was in flight.
+    struct DraftGenerationBaseline {
+        let body: String?
+        let localVersion: Int64
+
+        init(atom: Atom?) {
+            self.body = atom?.body
+            self.localVersion = atom?.localVersion ?? 0
+        }
+    }
+
+    /// Persist a cloud-generated draft into the local atom — with staleness + editing
+    /// guards. Returns nil on success, or a warning message (for the model) when the
+    /// write was refused because the user is editing or the draft changed mid-flight.
     private func persistGeneratedDraftLocally(
         contentUUID: String,
         formattedDraft: String?,
-        source: String
-    ) async {
+        source: String,
+        baseline: DraftGenerationBaseline? = nil
+    ) async -> String? {
         guard let draft = Self.draftBodyForLocalPersistence(formattedDraft) else {
             print("☁️ [AgentToolExecutor] No draft to persist from \(source) for \(contentUUID)")
-            return
+            return nil
         }
 
         guard var atom = try? await atomRepo.fetch(uuid: contentUUID) else {
             print("⚠️ [AgentToolExecutor] Could not persist draft from \(source); content atom not found: \(contentUUID)")
-            return
+            return nil
+        }
+
+        // Already persisted (e.g. the cloud engine's write synced down mid-flight).
+        if atom.body == draft {
+            print("☁️ [AgentToolExecutor] Draft from \(source) already present on \(contentUUID) — skipping write")
+            return nil
+        }
+
+        // Guard 1: the user has this content open in an editor — never replace the
+        // body underneath live keystrokes. The draft text was still returned to the
+        // model/conversation, so nothing is lost; it just isn't force-applied.
+        if atomRepo.isBeingEdited(contentUUID) {
+            PersistenceHealth.note(.conflict, context: "AgentToolExecutor.persistDraft(\(contentUUID.prefix(8)))", detail: "refused overwrite from \(source) — editing lock held")
+            return "Draft was NOT saved to the content atom: the user is actively editing it right now. The generated draft is included in this result — share it with the user and let them apply it, or retry after they finish editing."
+        }
+
+        // Guard 2: the body changed since the generation started — a concurrent writer
+        // (user save, sync, another session) landed mid-flight. Overwriting would
+        // silently destroy that newer content. (Version-only drift is expected — the
+        // pipeline bumps versions for metadata writes — so only body changes block.)
+        if let baseline, baseline.body != atom.body {
+            PersistenceHealth.note(.conflict, context: "AgentToolExecutor.persistDraft(\(contentUUID.prefix(8)))", detail: "refused overwrite from \(source) — body changed during generation (baselineLen=\(baseline.body?.count ?? 0) currentLen=\(atom.body?.count ?? 0))")
+            return "Draft was NOT saved to the content atom: its body changed while the draft was being generated (another edit landed first). The generated draft is included in this result — confirm with the user before applying it via update_content."
+        }
+
+        // Snapshot the previous draft as a versioned .contentDraft atom so an unwanted
+        // AI overwrite is always recoverable.
+        if let previousBody = atom.body,
+           !previousBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           previousBody != draft {
+            do {
+                _ = try await ContentPipelineService().saveDraft(
+                    contentUUID: contentUUID,
+                    body: previousBody,
+                    authorNotes: "Auto-snapshot before AI draft (\(source))"
+                )
+            } catch {
+                print("⚠️ [AgentToolExecutor] Pre-write draft snapshot failed for \(contentUUID): \(error)")
+            }
         }
 
         atom.body = draft
@@ -3241,8 +3382,11 @@ class AgentToolExecutor {
                 userInfo: Self.draftUpdateNotificationUserInfo(contentUUID: contentUUID, content: draft)
             )
             print("☁️ [AgentToolExecutor] Draft persisted locally from \(source) (\(draft.count) chars) for \(contentUUID)")
+            return nil
         } catch {
             print("❌ [AgentToolExecutor] Failed to persist draft from \(source) for \(contentUUID): \(error)")
+            PersistenceHealth.note(.writeFailure, context: "AgentToolExecutor.persistDraft(\(contentUUID.prefix(8)))", detail: error.localizedDescription)
+            return "Draft was generated but FAILED to save locally: \(error.localizedDescription). The draft is included in this result — retry update_content to save it."
         }
     }
 
@@ -3257,6 +3401,11 @@ class AgentToolExecutor {
 
         print("☁️ [AgentToolExecutor] revise_draft → cloud engine for \(contentUUID)")
 
+        // Capture body/version BEFORE the long cloud call (staleness baseline).
+        let generationBaseline = DraftGenerationBaseline(
+            atom: try? await AtomRepository.shared.fetch(uuid: contentUUID)
+        )
+
         do {
             let sharedContext = await sharedWritingContextBlock(
                 contentUUID: contentUUID,
@@ -3270,11 +3419,20 @@ class AgentToolExecutor {
                 clientName: args["clientName"] as? String
             )
 
-            await persistGeneratedDraftLocally(
+            let persistWarning = await persistGeneratedDraftLocally(
                 contentUUID: contentUUID,
                 formattedDraft: result.formattedDraft,
-                source: "revise_draft"
+                source: "revise_draft",
+                baseline: generationBaseline
             )
+            if let persistWarning {
+                return jsonEncode([
+                    "success": false,
+                    "contentUUID": contentUUID,
+                    "formattedDraft": result.formattedDraft ?? "",
+                    "message": persistWarning
+                ] as [String: Any])
+            }
 
             let encoder = JSONEncoder()
             let data = try encoder.encode(result)
@@ -3317,6 +3475,30 @@ class AgentToolExecutor {
             return jsonError("Missing required parameter: uuid")
         }
         var draftUpdateContent: String?
+
+        // Body writes are guarded: never replace a draft underneath an open editor,
+        // and snapshot the previous body first so the overwrite is recoverable.
+        if let newBody = args["body"] as? String {
+            if atomRepo.isBeingEdited(uuid) {
+                PersistenceHealth.note(.conflict, context: "AgentToolExecutor.updateContent(\(uuid.prefix(8)))", detail: "refused body overwrite — editing lock held")
+                return jsonError("Content body was NOT updated: the user is actively editing this content right now. Tell the user what you wanted to change and let them apply it, or retry after they finish editing.")
+            }
+            if let current = try? await atomRepo.fetch(uuid: uuid),
+               let previousBody = current.body,
+               !previousBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               previousBody != Self.renderDraftForDisplay(newBody) {
+                do {
+                    _ = try await ContentPipelineService().saveDraft(
+                        contentUUID: uuid,
+                        body: previousBody,
+                        authorNotes: "Auto-snapshot before update_content body write"
+                    )
+                } catch {
+                    // Non-content atoms (no .content type) can't snapshot — proceed.
+                    print("⚠️ [AgentToolExecutor] Pre-update body snapshot failed for \(uuid): \(error)")
+                }
+            }
+        }
 
         // Resolve client if clientName provided
         var resolvedClientUUID: String?
@@ -4677,12 +4859,33 @@ class AgentToolExecutor {
             return jsonError("uuid is required")
         }
 
-        try await AutomationDispatcher.shared.deleteRule(uuid: uuid)
+        // Hard delete of a user-built rule — requires the same user-approved
+        // two-phase confirmation as delete_block. A model that misidentifies
+        // "delete that one" must never destroy an automation unprompted.
+        if consumeUserConfirmation(args, toolName: "delete_automation") {
+            try await AutomationDispatcher.shared.deleteRule(uuid: uuid)
+            return jsonEncode([
+                "success": true,
+                "uuid": uuid,
+                "message": "Automation deleted."
+            ] as [String: Any])
+        }
+
+        let ruleName = AutomationDispatcher.shared.ruleCacheLookup(uuid: uuid)?.name ?? uuid
+
+        let confirmationId = UUID().uuidString
+        pendingConfirmations[confirmationId] = PendingConfirmation(
+            toolName: "delete_automation",
+            arguments: ["uuid": uuid],
+            description: "Delete automation: \(ruleName)",
+            createdAt: Date()
+        )
 
         return jsonEncode([
-            "success": true,
-            "uuid": uuid,
-            "message": "Automation deleted."
+            "confirmation_required": true,
+            "confirmation_id": confirmationId,
+            "action": "delete_automation",
+            "description": "Delete automation: \(ruleName)"
         ] as [String: Any])
     }
 

@@ -99,6 +99,11 @@ struct NoteBlockView: View {
             trackedEntityUuid = block.entityUuid
             loadNote()
             startObservingAtom()
+            // Terminate-safe flush: the 1s debounce loses typing on ⌘Q without this.
+            // saveNoteSync is dirty-gated internally (no-op when clean).
+            DirtyEditorRegistry.shared.register(id: "noteblock-\(block.id)") {
+                saveNoteSync()
+            }
         }
         .onDisappear {
             print("[BLOCK-NOTE] onDisappear — uuid=\(trackedEntityUuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
@@ -111,6 +116,7 @@ struct NoteBlockView: View {
                 saveClosed = true
                 print("[BLOCK-NOTE] onDisappear(deferred) — saving uuid=\(trackedEntityUuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
                 saveNoteSync()
+                DirtyEditorRegistry.shared.unregister(id: "noteblock-\(block.id)")
             }
         }
         .onChange(of: isEditingTitle) { _, isEditing in
@@ -173,6 +179,17 @@ struct NoteBlockView: View {
             // Restart GRDB observation with the new UUID
             observationCancellable?.cancel()
             startObservingAtom()
+        }
+        // Authoritative blocks landed after a thinkspace switch — the mounted view
+        // may still hold text from a stale snapshot cache. Re-run the load when
+        // there's nothing local to lose.
+        .onReceive(NotificationCenter.default.publisher(for: .canvasBlocksDidResync)) { _ in
+            guard !isEditingBody, !isEditingTitle, !hasLocalEdits else { return }
+            isSyncingFromDB = true
+            loadNote()
+            DispatchQueue.main.async {
+                isSyncingFromDB = false
+            }
         }
     }
 
@@ -385,6 +402,13 @@ struct NoteBlockView: View {
 
                     if let atom {
                         await MainActor.run {
+                            // Entity linkage is always safe to refresh.
+                            trackedEntityId = atom.id ?? trackedEntityId
+                            trackedEntityUuid = atom.uuid
+                            // Don't clobber text the user typed (or is typing) while
+                            // the fetch was in flight — mirror the GRDB observation.
+                            guard !isEditingBody, !isEditingTitle, !hasLocalEdits else { return }
+                            isSyncingFromDB = true
                             noteTitleDocument = RichDocumentPersistence.loadAtomDocument(
                                 field: .title,
                                 metadata: atom.metadata,
@@ -398,11 +422,13 @@ struct NoteBlockView: View {
                             noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
                             noteText = noteBodyDocument.plainText
                             noteWordCount = Self.wordCount(in: noteText)
-                            trackedEntityId = atom.id ?? trackedEntityId
-                            trackedEntityUuid = atom.uuid
+                            DispatchQueue.main.async {
+                                isSyncingFromDB = false
+                            }
                         }
                     }
                 } catch {
+                    PersistenceHealth.note(.writeFailure, context: "noteBlock.loadAtom", detail: "uuid=\(trackedEntityUuid): \(error)")
                     print("NoteBlock: Failed to load atom: \(error)")
                 }
             }
@@ -732,6 +758,7 @@ struct NoteBlockView: View {
                             lastLocalSaveEchoBodyDocument = nil
                         }
                     }
+                    PersistenceHealth.note(.writeFailure, context: "noteBlock.autosave", detail: "uuid=\(uuid): \(error)")
                     print("NoteBlock: Failed to save to atom: \(error)")
                 }
             }
@@ -777,15 +804,17 @@ struct NoteBlockView: View {
             .writeBlockDocument(blockSnapshot.titleDocument, key: RichDocumentMetadataKeys.titleDocument, metadata: block.metadata)
         let bodyMetadata = RichDocumentPersistence
             .writeBlockDocument(blockSnapshot.bodyDocument, key: RichDocumentMetadataKeys.bodyDocument, metadata: updatedMetadata)
+        let mergedBlockMetadata = bodyMetadata.merging([
+            "title": blockSnapshot.titlePlainText,
+            "content": blockSnapshot.bodyPlainText
+        ]) { _, new in new }
+        let blockMetadataJSON = SpatialEngine.encodeBlockMetadataJSON(mergedBlockMetadata)
         NotificationCenter.default.post(
             name: .updateBlockMetadata,
             object: nil,
             userInfo: [
                 "blockId": block.id,
-                "metadata": bodyMetadata.merging([
-                    "title": blockSnapshot.titlePlainText,
-                    "content": blockSnapshot.bodyPlainText
-                ]) { _, new in new }
+                "metadata": mergedBlockMetadata
             ]
         )
 
@@ -803,6 +832,8 @@ struct NoteBlockView: View {
                 let now = ISO8601.string(from: Date())
 
                 if atomExists != nil {
+                    // _local_pending = 1 so cloud sync can't revert this
+                    // close-time edit (the async autosave path already sets it).
                     try db.execute(
                         sql: """
                         UPDATE atoms
@@ -810,7 +841,8 @@ struct NoteBlockView: View {
                             body = ?,
                             metadata = ?,
                             updated_at = ?,
-                            _local_version = _local_version + 1
+                            _local_version = _local_version + 1,
+                            _local_pending = 1
                         WHERE uuid = ?
                         """,
                         arguments: [
@@ -826,12 +858,14 @@ struct NoteBlockView: View {
                         UPDATE canvas_blocks
                         SET entity_title = ?,
                             note_content = ?,
+                            metadata = ?,
                             updated_at = ?
                         WHERE id = ?
                         """,
                         arguments: [
                             snapshot.titlePlainText.isEmpty ? "Note" : snapshot.titlePlainText,
                             snapshot.bodyPlainText,
+                            blockMetadataJSON,
                             now,
                             block.id
                         ]
@@ -841,8 +875,8 @@ struct NoteBlockView: View {
                     // Legacy freeform block — create atom on close
                     try db.execute(
                         sql: """
-                        INSERT INTO atoms (uuid, type, title, body, metadata, created_at, updated_at, is_deleted, _local_version, _server_version, _sync_version)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 0)
+                        INSERT INTO atoms (uuid, type, title, body, metadata, created_at, updated_at, is_deleted, _local_version, _server_version, _sync_version, _local_pending)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 0, 1)
                         """,
                         arguments: [
                             uuid,
@@ -861,6 +895,7 @@ struct NoteBlockView: View {
                         SET entity_id = ?,
                             entity_title = ?,
                             note_content = ?,
+                            metadata = ?,
                             updated_at = ?
                         WHERE entity_uuid = ?
                         """,
@@ -868,6 +903,7 @@ struct NoteBlockView: View {
                             atomId,
                             snapshot.titlePlainText.isEmpty ? "Note" : snapshot.titlePlainText,
                             snapshot.bodyPlainText,
+                            blockMetadataJSON,
                             now,
                             uuid
                         ]
@@ -893,6 +929,7 @@ struct NoteBlockView: View {
                 lastLocalSaveEchoBodyPlainText = nil
                 lastLocalSaveEchoBodyDocument = nil
             }
+            PersistenceHealth.note(.writeFailure, context: "noteBlock.closeSave", detail: "uuid=\(uuid): \(error)")
             print("NoteBlock: sync save failed: \(error)")
         }
     }
@@ -1021,6 +1058,7 @@ struct NoteBlockView: View {
                     )
                 }
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "noteBlock.createBackingAtom", detail: "uuid=\(trackedEntityUuid): \(error)")
                 print("NoteBlock: Failed to create backing atom: \(error)")
             }
         }
@@ -1055,6 +1093,9 @@ extension Notification.Name {
     static let contentPhaseChanged = Notification.Name("contentPhaseChanged")
     static let noteFocusStateDidChange = Notification.Name("noteFocusStateDidChange")
     static let updateBlockEntity = Notification.Name("updateBlockEntity")
+    /// Posted by CanvasView after an authoritative block fetch replaces a cached
+    /// thinkspace snapshot — mounted note/sticky views re-sync from DB when clean.
+    static let canvasBlocksDidResync = Notification.Name("canvasBlocksDidResync")
 }
 
 // MARK: - Preview

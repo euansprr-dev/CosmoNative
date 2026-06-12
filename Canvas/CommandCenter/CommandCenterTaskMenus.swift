@@ -112,6 +112,9 @@ struct CommandCenterComposerHost: View {
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
     let composer: CommandCenterComposerController
 
+    @State private var seriesDeleteTarget: TaskViewModel?
+    @State private var seriesDeleteCompletionCount = 0
+
     var body: some View {
         GeometryReader { proxy in
             if let route = composer.route {
@@ -146,6 +149,30 @@ struct CommandCenterComposerHost: View {
         .allowsHitTesting(composer.route != nil)
         .onExitCommand(perform: composer.dismiss)
         .zIndex(100)
+        .confirmationDialog(
+            "Delete \"\(seriesDeleteTarget?.title ?? "")\"?",
+            isPresented: Binding(
+                get: { seriesDeleteTarget != nil },
+                set: { if !$0 { seriesDeleteTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete series and \(seriesDeleteCompletionCount) logged completions", role: .destructive) {
+                guard let target = seriesDeleteTarget else { return }
+                seriesDeleteTarget = nil
+                Task { await viewModel.deleteTask(uuid: target.uuid) }
+            }
+            Button("Cancel", role: .cancel) { seriesDeleteTarget = nil }
+        } message: {
+            Text("This removes the repeating task and its entire completion history.")
+        }
+    }
+
+    private func requestSeriesDelete(_ task: TaskViewModel) {
+        Task {
+            seriesDeleteCompletionCount = await viewModel.seriesCompletionCount(templateUUID: task.uuid)
+            seriesDeleteTarget = task
+        }
     }
 
     @ViewBuilder
@@ -172,7 +199,7 @@ struct CommandCenterComposerHost: View {
                 loadRecurrenceRule: { await viewModel.recurrenceRule(for: task) },
                 onToggleCompletion: { toggleTaskCompletion(task) },
                 onSelectSchedule: { selection in
-                    applyTaskScheduleSelection(selection, taskUUID: task.uuid)
+                    applyTaskScheduleSelection(selection, task: task)
                 },
                 onApplyHabit: { habitUUID in
                     Task { await viewModel.applyHabit(habitUUID, to: task.uuid) }
@@ -182,8 +209,18 @@ struct CommandCenterComposerHost: View {
                 },
                 onDelete: {
                     composer.dismiss()
-                    Task { await viewModel.deleteTask(uuid: task.uuid) }
+                    if task.isOccurrence {
+                        // Occurrence rows carry the template uuid — deleting the atom would
+                        // take the whole series and its history with it.
+                        Task { _ = await viewModel.cancelOccurrence(task) }
+                    } else {
+                        Task { await viewModel.deleteTask(uuid: task.uuid) }
+                    }
                 },
+                onDeleteSeries: task.isOccurrence ? {
+                    composer.dismiss()
+                    requestSeriesDelete(task)
+                } : nil,
                 onDismiss: composer.dismiss
             )
         case let .taskDate(task, target, currentDate, _):
@@ -345,32 +382,43 @@ struct CommandCenterComposerHost: View {
     ) {
         switch target {
         case .dueDate:
-            applyTaskScheduleSelection(selection, taskUUID: task.uuid)
+            applyTaskScheduleSelection(selection, task: task)
         case .whenDate:
             guard case let .date(date) = selection else { return }
-            Task { await viewModel.setWhenDate(taskUUID: task.uuid, date: date) }
+            if task.isOccurrence {
+                // Date moves on an occurrence row are per-day overrides, never template rewrites.
+                Task { await viewModel.rescheduleTask(task, toDate: date) }
+            } else {
+                Task { await viewModel.setWhenDate(taskUUID: task.uuid, date: date) }
+            }
         case .deadline:
             guard case let .date(date) = selection else { return }
             Task { await viewModel.setDeadline(taskUUID: task.uuid, date: date) }
         }
     }
 
-    private func applyTaskScheduleSelection(_ selection: CommandCenterScheduleSelection, taskUUID: String) {
+    private func applyTaskScheduleSelection(_ selection: CommandCenterScheduleSelection, task: TaskViewModel) {
         switch selection {
         case let .date(date):
-            Task { await viewModel.rescheduleTask(uuid: taskUUID, toDate: date) }
+            Task { await viewModel.rescheduleTask(task, toDate: date) }
         case .someday:
-            Task { await viewModel.setSchedulingState(taskUUID: taskUUID, state: "someday") }
+            Task { await viewModel.setSchedulingState(taskUUID: task.uuid, state: "someday") }
         }
     }
 
     private func applyBatchScheduleSelection(_ selection: CommandCenterScheduleSelection, taskUUIDs: [String]) {
         switch selection {
         case let .date(date):
-            Task { await viewModel.rescheduleTasks(uuids: taskUUIDs, toDate: date) }
+            // Row ids: plain uuids reschedule the atom; "uuid#day" ids reschedule that
+            // single recurring occurrence via an override.
+            Task {
+                for id in taskUUIDs {
+                    await viewModel.rescheduleTaskRow(id: id, toDate: date)
+                }
+            }
         case .someday:
             Task {
-                for taskUUID in taskUUIDs {
+                for taskUUID in taskUUIDs where !taskUUID.contains("#") {
                     await viewModel.setSchedulingState(taskUUID: taskUUID, state: "someday")
                 }
             }
@@ -670,6 +718,9 @@ struct CommandCenterTaskActionComposer: View {
     let onApplyHabit: (String?) -> Void
     let onApplyRecurrence: (RecurrenceRule?) -> Void
     let onDelete: () -> Void
+    /// Present only for recurring occurrence rows: `onDelete` removes just that occurrence,
+    /// this offers deleting the whole series (behind a confirmation).
+    var onDeleteSeries: (() -> Void)? = nil
     let onDismiss: () -> Void
 
     @State private var activeTab: ActionTab = .schedule
@@ -723,8 +774,17 @@ struct CommandCenterTaskActionComposer: View {
 
             Spacer()
 
+            if let onDeleteSeries {
+                subtleActionButton(
+                    title: "Delete Series…",
+                    systemImage: "trash.slash",
+                    tint: DS.red.opacity(0.65),
+                    action: onDeleteSeries
+                )
+            }
+
             subtleActionButton(
-                title: "Delete",
+                title: onDeleteSeries != nil ? "Remove Occurrence" : "Delete",
                 systemImage: "trash",
                 tint: DS.red.opacity(0.8),
                 action: onDelete

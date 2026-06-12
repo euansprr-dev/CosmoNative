@@ -133,20 +133,43 @@ struct NoteDocumentStyle: Codable, Equatable {
 
 /// The "Aa" style popover for the Notes focus mode — the document's voice
 /// lives here: font family, text size, page width, typewriter mode.
-/// Rendered inside a native popover (already Liquid Glass), so inner elements
-/// use flat warm fills per the design system.
 struct NoteStyleMenuView: View {
     @Binding var style: NoteDocumentStyle
+    @Binding var typewriterMode: Bool
+
+    var body: some View {
+        DocumentStyleMenuView(
+            fontFamily: $style.fontFamily,
+            textSize: $style.textSize,
+            widthOptions: NoteDocumentStyle.PageWidth.allCases,
+            widthSelection: $style.pageWidth,
+            widthLabel: { $0.label },
+            typewriterMode: $typewriterMode
+        )
+    }
+}
+
+/// The shared "Aa" style popover body — one source of truth for the
+/// document-voice menu, so Notes and Content focus modes read identically.
+/// Page-width options are generic because each surface has its own widths.
+/// Rendered inside a native popover (already Liquid Glass), so inner elements
+/// use flat warm fills per the design system.
+struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
+    @Binding var fontFamily: NoteDocumentStyle.FontFamily
+    @Binding var textSize: NoteDocumentStyle.TextSize
+    let widthOptions: [WidthOption]
+    @Binding var widthSelection: WidthOption
+    let widthLabel: (WidthOption) -> String
     @Binding var typewriterMode: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             section("FONT") { fontFamilyGrid }
             section("TEXT SIZE") {
-                segmentedRow(NoteDocumentStyle.TextSize.allCases, selection: $style.textSize) { $0.label }
+                segmentedRow(NoteDocumentStyle.TextSize.allCases, selection: $textSize) { $0.label }
             }
             section("PAGE WIDTH") {
-                segmentedRow(NoteDocumentStyle.PageWidth.allCases, selection: $style.pageWidth) { $0.label }
+                segmentedRow(widthOptions, selection: $widthSelection, label: widthLabel)
             }
             Divider()
             typewriterRow
@@ -174,10 +197,10 @@ struct NoteStyleMenuView: View {
     }
 
     private func fontFamilyCard(_ family: NoteDocumentStyle.FontFamily) -> some View {
-        let isSelected = style.fontFamily == family
+        let isSelected = fontFamily == family
         return Button {
             withAnimation(ProMotionSprings.snappy) {
-                style.fontFamily = family
+                fontFamily = family
             }
         } label: {
             VStack(spacing: DS.space4) {

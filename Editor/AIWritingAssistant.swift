@@ -189,7 +189,10 @@ class AIWritingAssistant: ObservableObject {
 
             let result = AIWritingResult(
                 originalText: text,
-                suggestedText: text + "\n\n" + suggested,
+                // ONLY the continuation — the apply path inserts it below the selection.
+                // Composing `text + continuation` here made accept paths replace the
+                // whole draft with the selection plus the continuation.
+                suggestedText: suggested,
                 action: .continueWriting,
                 variants: nil
             )

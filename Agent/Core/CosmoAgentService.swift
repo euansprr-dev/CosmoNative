@@ -391,6 +391,9 @@ class CosmoAgentService: ObservableObject {
         activeSessionCount += 1
         isProcessing = true
         lastError = nil
+        // Stale destructive-action confirmations must not linger — a days-old
+        // "confirm" matching an old id should never fire.
+        cleanExpiredConfirmations()
         defer {
             activeSessionCount -= 1
             if activeSessionCount == 0 { isProcessing = false }
@@ -772,7 +775,12 @@ class CosmoAgentService: ObservableObject {
         let sessionToken = UUID()
         toolExecutor.setToolActivity(onToolActivity, token: sessionToken)
 
-        while iterations < iterationLimit {
+        // Tools that already ran this turn — surfaced when the loop exits
+        // abnormally (cancel/error/iteration limit) so persisted mutations are
+        // never silently half-done from the user's perspective.
+        var executedToolLabels: [String] = []
+
+        toolLoop: while iterations < iterationLimit {
             iterations += 1
 
             do {
@@ -814,6 +822,14 @@ class CosmoAgentService: ObservableObject {
 
                 let generationTools: Set<String> = ["generate_draft", "generate_outline", "generate_hooks", "write_draft"]
                 for toolCall in response.toolCalls {
+                    // User pressed Stop — do NOT execute the remaining tools of this
+                    // batch. Report what already ran so persisted mutations aren't
+                    // invisible half-done work.
+                    if Task.isCancelled {
+                        finalResponse = "Stopped." + Self.partialWorkSummary(executedToolLabels)
+                        break toolLoop
+                    }
+
                     // Emit tool activity started event
                     let flatArgs = flattenArguments(toolCall.arguments)
                     let displayLabel = toolDisplayLabel(for: toolCall.name, args: flatArgs)
@@ -826,6 +842,7 @@ class CosmoAgentService: ObservableObject {
                             toolName: toolCall.name,
                             arguments: toolCall.arguments
                         )
+                        executedToolLabels.append(displayLabel)
                     } catch {
                         result = "{\"error\": \"\(error.localizedDescription)\"}"
                     }
@@ -885,7 +902,12 @@ class CosmoAgentService: ObservableObject {
                    response.toolCalls.contains(where: {
                        $0.name == "propose_workspace_edit" || $0.name == "answer_in_assistant_pane"
                    }) {
-                    finalResponse = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let trailing = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    // The run SUCCEEDED — finalResponse must not stay empty here,
+                    // or the empty-response fallback below rewrites a successful
+                    // run into "I ran out of processing steps" (which the pane
+                    // then shows the user, and the conversation history keeps).
+                    finalResponse = trailing.isEmpty ? "Delivered to the workspace for review." : trailing
                     break
                 }
 
@@ -899,11 +921,29 @@ class CosmoAgentService: ObservableObject {
                 }
 
                 lastError = error.localizedDescription
-                finalResponse = "Sorry, I encountered an error: \(error.localizedDescription)"
+                finalResponse = "Sorry, I encountered an error: \(error.localizedDescription)" + Self.partialWorkSummary(executedToolLabels)
                 break
             }
         }
 
+        if finalResponse.isEmpty {
+            // The model spent every iteration calling tools without delivering.
+            // Force the deliverable: one tool-free turn must turn whatever it
+            // gathered into an answer — a partial answer beats a dead end.
+            do {
+                let salvage = try await completeWithOptionalStreaming(
+                    provider: provider,
+                    messages: llmMessages,
+                    tools: nil,
+                    tier: modelTier,
+                    systemPrompt: systemPromptForToolFreeRetry(from: activeSystemPrompt),
+                    onPaneAnswerDelta: onPaneAnswerDelta
+                )
+                finalResponse = salvage.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
         if finalResponse.isEmpty {
             finalResponse = "I ran out of processing steps. Please try a simpler request."
         }
@@ -959,6 +999,9 @@ class CosmoAgentService: ObservableObject {
         activeSessionCount += 1
         isProcessing = true
         lastError = nil
+        // Stale destructive-action confirmations must not linger — a days-old
+        // "confirm" matching an old id should never fire.
+        cleanExpiredConfirmations()
         defer {
             activeSessionCount -= 1
             if activeSessionCount == 0 { isProcessing = false }
@@ -1058,7 +1101,9 @@ class CosmoAgentService: ObservableObject {
             activeProvider = provider
         }
 
-        while iterations < iterationLimit {
+        var executedToolLabels: [String] = []
+
+        streamingToolLoop: while iterations < iterationLimit {
             iterations += 1
 
             do {
@@ -1102,6 +1147,13 @@ class CosmoAgentService: ObservableObject {
 
                 let generationTools: Set<String> = ["generate_draft", "generate_outline", "generate_hooks", "write_draft"]
                 for toolCall in response.toolCalls {
+                    // User cancelled — don't run the rest of the batch; report
+                    // what already persisted.
+                    if Task.isCancelled {
+                        finalResponse = "Stopped." + Self.partialWorkSummary(executedToolLabels)
+                        break streamingToolLoop
+                    }
+
                     let result: String
                     let perfToolStart = Date()
                     do {
@@ -1109,6 +1161,7 @@ class CosmoAgentService: ObservableObject {
                             toolName: toolCall.name,
                             arguments: toolCall.arguments
                         )
+                        executedToolLabels.append(toolDisplayLabel(for: toolCall.name, args: flattenArguments(toolCall.arguments)))
                     } catch {
                         result = "{\"error\": \"\(error.localizedDescription)\"}"
                     }
@@ -1141,13 +1194,13 @@ class CosmoAgentService: ObservableObject {
 
             } catch {
                 lastError = error.localizedDescription
-                finalResponse = "Sorry, I encountered an error: \(error.localizedDescription)"
+                finalResponse = "Sorry, I encountered an error: \(error.localizedDescription)" + Self.partialWorkSummary(executedToolLabels)
                 break
             }
         }
 
         if finalResponse.isEmpty {
-            finalResponse = "I ran out of processing steps. Please try a simpler request."
+            finalResponse = "I ran out of processing steps. Please try a simpler request." + Self.partialWorkSummary(executedToolLabels)
         }
 
         // Track failover in context trace for transparency
@@ -1775,18 +1828,39 @@ class CosmoAgentService: ObservableObject {
         return intent
     }
 
+    /// One-line summary of tools that already ran when a loop exits abnormally,
+    /// so persisted mutations are never invisible half-done work.
+    static func partialWorkSummary(_ executedToolLabels: [String]) -> String {
+        guard !executedToolLabels.isEmpty else { return "" }
+        let shown = executedToolLabels.prefix(8).joined(separator: ", ")
+        let suffix = executedToolLabels.count > 8 ? ", …" : ""
+        return "\nAlready completed before stopping: \(shown)\(suffix)."
+    }
+
     // MARK: - Confirm Action (Hard Tier)
 
     func confirmAction(confirmationId: String) async -> String {
-        guard let pending = toolExecutor.pendingConfirmations[confirmationId] else {
+        guard var pending = toolExecutor.pendingConfirmations[confirmationId] else {
             return "Confirmation expired or not found."
         }
-        toolExecutor.pendingConfirmations.removeValue(forKey: confirmationId)
+        guard !pending.isExpired else {
+            toolExecutor.pendingConfirmations.removeValue(forKey: confirmationId)
+            return "Confirmation expired — please ask again."
+        }
+
+        // Mark USER approval — destructive tools verify this via
+        // consumeUserConfirmation (which consumes the entry), so a model-supplied
+        // flag can never stand in for the user's click.
+        pending.userApproved = true
+        toolExecutor.pendingConfirmations[confirmationId] = pending
+
+        var arguments = pending.arguments
+        arguments["_confirmationId"] = confirmationId
 
         do {
             let result = try await toolExecutor.execute(
                 toolName: pending.toolName,
-                arguments: pending.arguments
+                arguments: arguments
             )
             return "Done! \(pending.description)\n\(result)"
         } catch {

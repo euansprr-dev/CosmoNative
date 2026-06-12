@@ -5,6 +5,17 @@ import XCTest
 final class ProjectDeprecationMigrationTests: XCTestCase {
     private var cleanupUUIDs: [String] = []
 
+    override func setUp() async throws {
+        try await super.setUp()
+        // The project migration is one-shot in production (gated by an app_flags
+        // row so it can never destructively re-run against an already-migrated
+        // or synced database). Tests exercise the migration directly, so clear
+        // the flag first.
+        try await CosmoDatabase.shared.asyncWrite { db in
+            try db.execute(sql: "DELETE FROM app_flags WHERE key = 'projectsMigratedToThinkspaces'")
+        }
+    }
+
     override func tearDown() async throws {
         let uuids = cleanupUUIDs.reversed()
         cleanupUUIDs.removeAll()

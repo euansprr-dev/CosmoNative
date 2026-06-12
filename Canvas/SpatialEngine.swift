@@ -21,6 +21,15 @@ class SpatialEngine: ObservableObject {
     var currentDocumentId: Int64 = 0
     var currentThinkspaceId: String? = nil
 
+    /// In-flight (debounced/fire-and-forget) geometry writes, flushed
+    /// synchronously at app termination so the last drag never loses its save.
+    private struct PendingGeometry {
+        var position: CGPoint
+        var size: CGSize?
+    }
+    private var pendingGeometryWrites: [String: PendingGeometry] = [:]
+    private let dirtyRegistryId = "spatial-engine-\(UUID().uuidString)"
+
     convenience init() {
         self.init(database: .shared, localLLM: .shared)
     }
@@ -28,6 +37,68 @@ class SpatialEngine: ObservableObject {
     init(database: CosmoDatabase, localLLM: LocalLLM) {
         self.database = database
         self.localLLM = localLLM
+        DirtyEditorRegistry.shared.register(id: dirtyRegistryId) { [weak self] in
+            self?.flushPendingGeometryWritesSync()
+        }
+    }
+
+    deinit {
+        let id = dirtyRegistryId
+        Task { @MainActor in
+            DirtyEditorRegistry.shared.unregister(id: id)
+        }
+    }
+
+    /// Synchronous, DB-only flush of any in-flight position/size writes.
+    /// Called by DirtyEditorRegistry at app termination.
+    private func flushPendingGeometryWritesSync() {
+        guard !pendingGeometryWrites.isEmpty else { return }
+        let writes = pendingGeometryWrites
+        pendingGeometryWrites.removeAll()
+        do {
+            try database.write { db in
+                for (blockId, geometry) in writes {
+                    if let size = geometry.size {
+                        try db.execute(
+                            sql: """
+                            UPDATE canvas_blocks
+                            SET position_x = ?, position_y = ?, width = ?, height = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            arguments: [
+                                Int(geometry.position.x), Int(geometry.position.y),
+                                Int(size.width), Int(size.height), blockId
+                            ]
+                        )
+                    } else {
+                        try db.execute(
+                            sql: "UPDATE canvas_blocks SET position_x = ?, position_y = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            arguments: [Int(geometry.position.x), Int(geometry.position.y), blockId]
+                        )
+                    }
+                }
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "spatialEngine.terminateFlush", detail: "\(writes.count) pending geometry write(s) lost: \(error)")
+            print("❌ Failed to flush pending geometry writes: \(error)")
+        }
+    }
+
+    /// Serialize a block's metadata dictionary for the canvas_blocks.metadata column.
+    nonisolated static func encodeBlockMetadataJSON(_ metadata: [String: String]) -> String? {
+        guard !metadata.isEmpty else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(metadata)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    nonisolated static func decodeBlockMetadataJSON(_ json: String?) -> [String: String]? {
+        guard let json, !json.isEmpty, let data = json.data(using: .utf8) else { return nil }
+        guard let decoded = try? JSONDecoder().decode([String: String].self, from: data) else {
+            PersistenceHealth.note(.decodeFailure, context: "canvasBlocks.metadata", detail: "undecodable metadata column JSON (\(json.count) chars)")
+            return nil
+        }
+        return decoded
     }
 
     // MARK: - Load Blocks from Database
@@ -60,7 +131,7 @@ class SpatialEngine: ObservableObject {
     func fetchBlocksSnapshot(for documentType: String = "home", documentId: Int64 = 0, thinkspaceId: String? = nil) async -> [CanvasBlock]? {
         do {
             let tsId = thinkspaceId  // Capture for closure
-            let savedBlocks: [CanvasBlockRecord] = try await database.asyncRead { db in
+            let (savedBlocks, metadataJSONByBlockId): ([CanvasBlockRecord], [String: String]) = try await database.asyncRead { db in
                 var query = CanvasBlockRecord
                     .filter(Column("document_type") == documentType)
                     .filter(Column("document_id") == documentId)
@@ -74,7 +145,25 @@ class SpatialEngine: ObservableObject {
                     query = query.filter(Column("thinkspace_id") == nil)
                 }
 
-                return try query.order(Column("z_index")).fetchAll(db)
+                let records = try query.order(Column("z_index")).fetchAll(db)
+
+                // The metadata column (sticky color, rich body document, …) is not
+                // part of CanvasBlockRecord — fetch it separately and key by block id.
+                var metadataById: [String: String] = [:]
+                let metadataRows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT id, metadata FROM canvas_blocks
+                        WHERE document_type = ? AND document_id = ? AND is_deleted = 0 AND thinkspace_id IS ?
+                    """,
+                    arguments: [documentType, documentId, tsId]
+                )
+                for row in metadataRows {
+                    if let id: String = row["id"], let json: String = row["metadata"] {
+                        metadataById[id] = json
+                    }
+                }
+                return (records, metadataById)
             }
 
             // Enrich rich block types with atom metadata in two batch reads instead
@@ -98,6 +187,7 @@ class SpatialEngine: ObservableObject {
             return await Task.detached(priority: .userInitiated) {
                 Self.buildBlocks(
                     records: savedBlocks,
+                    metadataJSONByBlockId: metadataJSONByBlockId,
                     fetchedAtomsByID: fetchedAtomsByID,
                     fetchedAtomsByUUID: fetchedAtomsByUUID
                 )
@@ -122,6 +212,7 @@ class SpatialEngine: ObservableObject {
 
     nonisolated private static func buildBlocks(
         records savedBlocks: [CanvasBlockRecord],
+        metadataJSONByBlockId: [String: String] = [:],
         fetchedAtomsByID: [Atom],
         fetchedAtomsByUUID: [Atom]
     ) -> [CanvasBlock] {
@@ -148,6 +239,15 @@ class SpatialEngine: ObservableObject {
                 // Restore created timestamp if available
                 if let createdAt = record.createdAt {
                     metadata["created"] = createdAt
+                }
+
+                // Merge the persisted metadata column (sticky color, rich body
+                // document, …). The DB column wins over note_content-derived keys —
+                // every writer updates both in the same transaction.
+                if let persisted = Self.decodeBlockMetadataJSON(metadataJSONByBlockId[record.id]) {
+                    for (key, value) in persisted {
+                        metadata[key] = value
+                    }
                 }
 
                 let block = CanvasBlock(
@@ -227,6 +327,7 @@ class SpatialEngine: ObservableObject {
                     : nil
 
                 let atomUUID: String? = block.entityType == .note ? block.entityUuid : nil
+                let metadataJSON = Self.encodeBlockMetadataJSON(block.metadata)
 
                 let existingBlockId = try String.fetchOne(
                     db,
@@ -239,19 +340,23 @@ class SpatialEngine: ObservableObject {
                 )
 
                 if existingBlockId != nil {
+                    // NOTE: deliberately does NOT rewrite thinkspace_id — during a
+                    // thinkspace-switch overlap window the engine context can lag,
+                    // and rewriting it here re-homed blocks into the wrong space.
+                    // Only the INSERT branch assigns a row's thinkspace.
                     try db.execute(
                         sql: """
                             UPDATE canvas_blocks
                             SET entity_type = ?, entity_id = ?, entity_uuid = ?, atom_uuid = ?, entity_title = ?,
                                 position_x = ?, position_y = ?, width = ?, height = ?,
-                                z_index = ?, note_content = ?, is_pinned = ?, thinkspace_id = ?, updated_at = CURRENT_TIMESTAMP
+                                z_index = ?, note_content = ?, metadata = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP
                             WHERE id = ?
                         """,
                         arguments: [
                             block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID, block.title,
                             Int(block.position.x), Int(block.position.y),
                             Int(block.size.width), Int(block.size.height),
-                            block.zIndex, noteContent, block.isPinned, tsId,
+                            block.zIndex, noteContent, metadataJSON, block.isPinned,
                             block.id
                         ]
                     )
@@ -276,14 +381,14 @@ class SpatialEngine: ObservableObject {
                                 UPDATE canvas_blocks
                                 SET entity_type = ?, entity_id = ?, entity_uuid = ?, atom_uuid = ?, entity_title = ?,
                                     position_x = ?, position_y = ?, width = ?, height = ?,
-                                    z_index = ?, note_content = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP
+                                    z_index = ?, note_content = ?, metadata = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP
                                 WHERE id = ?
                             """,
                             arguments: [
                                 block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID, block.title,
                                 Int(block.position.x), Int(block.position.y),
                                 Int(block.size.width), Int(block.size.height),
-                                block.zIndex, noteContent, block.isPinned,
+                                block.zIndex, noteContent, metadataJSON, block.isPinned,
                                 existingId
                             ]
                         )
@@ -296,8 +401,8 @@ class SpatialEngine: ObservableObject {
                     sql: """
                     INSERT OR REPLACE INTO canvas_blocks
                     (id, document_type, document_id, entity_type, entity_id, entity_uuid, atom_uuid, entity_title,
-                     position_x, position_y, width, height, z_index, note_content, is_pinned, thinkspace_id, is_deleted, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                     position_x, position_y, width, height, z_index, note_content, metadata, is_pinned, thinkspace_id, is_deleted, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """,
                     arguments: [
                         block.id,
@@ -314,6 +419,7 @@ class SpatialEngine: ObservableObject {
                         Int(block.size.height),
                         block.zIndex,
                         noteContent,
+                        metadataJSON,
                         block.isPinned,
                         tsId
                     ]
@@ -321,6 +427,7 @@ class SpatialEngine: ObservableObject {
             }
             print("💾 Saved block: \(block.title) to ThinkSpace: \(tsId ?? "none")")
         } catch {
+            PersistenceHealth.note(.writeFailure, context: "spatialEngine.saveBlock", detail: "block \(block.id) (\(block.entityType.rawValue)): \(error)")
             print("❌ Failed to save block: \(error)")
         }
     }
@@ -332,9 +439,12 @@ class SpatialEngine: ObservableObject {
             blocks[index].position = position
         }
 
+        // Track as in-flight so the terminate flush can persist it synchronously.
+        pendingGeometryWrites[blockId] = PendingGeometry(position: position, size: nil)
+
         // Fire-and-forget database update
         let db = database
-        Task.detached(priority: .background) {
+        Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try await db.asyncWrite { database in
                     try database.execute(
@@ -342,7 +452,9 @@ class SpatialEngine: ObservableObject {
                         arguments: [Int(position.x), Int(position.y), blockId]
                     )
                 }
+                await self?.clearPendingGeometryWrite(blockId, ifPosition: position, size: nil)
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "spatialEngine.updateBlockPosition", detail: "block \(blockId): \(error)")
                 print("❌ Failed to update block position: \(error)")
             }
         }
@@ -354,8 +466,10 @@ class SpatialEngine: ObservableObject {
             blocks[index].size = size
         }
 
+        pendingGeometryWrites[blockId] = PendingGeometry(position: position, size: size)
+
         let db = database
-        Task.detached(priority: .background) {
+        Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try await db.asyncWrite { database in
                     try database.execute(
@@ -367,13 +481,40 @@ class SpatialEngine: ObservableObject {
                         arguments: [Int(position.x), Int(position.y), Int(size.width), Int(size.height), blockId]
                     )
                 }
+                await self?.clearPendingGeometryWrite(blockId, ifPosition: position, size: size)
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "spatialEngine.updateBlockGeometry", detail: "block \(blockId): \(error)")
                 print("❌ Failed to update block geometry: \(error)")
             }
         }
     }
 
+    /// Clear an in-flight geometry write once it has landed — but only if no
+    /// newer write for the same block superseded it in the meantime.
+    private func clearPendingGeometryWrite(_ blockId: String, ifPosition position: CGPoint, size: CGSize?) {
+        guard let pending = pendingGeometryWrites[blockId],
+              pending.position == position,
+              pending.size == size else { return }
+        pendingGeometryWrites.removeValue(forKey: blockId)
+    }
+
     // MARK: - Move Block to Another Thinkspace
+
+    /// Persist a cross-thinkspace move directly, without needing an engine whose
+    /// in-memory context matches the source space (MainView's drop handler has none).
+    static func persistCrossThinkspaceMove(blockId: String, targetThinkspaceId: String, position: CGPoint) async throws {
+        try await CosmoDatabase.shared.asyncWrite { db in
+            try db.execute(
+                sql: """
+                UPDATE canvas_blocks
+                SET thinkspace_id = ?, position_x = ?, position_y = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                arguments: [targetThinkspaceId, Int(position.x), Int(position.y), blockId]
+            )
+        }
+    }
+
     func moveBlockToThinkspace(_ blockId: String, newThinkspaceId: String, position: CGPoint) async {
         // Remove from in-memory array (it belongs to the new thinkspace now)
         withAnimation(.easeOut(duration: 0.15)) {
@@ -394,6 +535,7 @@ class SpatialEngine: ObservableObject {
             }
             print("📦 Moved block \(blockId) to thinkspace \(newThinkspaceId)")
         } catch {
+            PersistenceHealth.note(.writeFailure, context: "spatialEngine.moveBlockToThinkspace", detail: "block \(blockId) → \(newThinkspaceId): \(error)")
             print("❌ Failed to move block to thinkspace: \(error)")
         }
     }
@@ -417,6 +559,7 @@ class SpatialEngine: ObservableObject {
                 }
                 print("🗑️ Removed block: \(blockId)")
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "spatialEngine.removeBlock", detail: "block \(blockId): \(error)")
                 print("❌ Failed to remove block: \(error)")
             }
         }
@@ -437,6 +580,7 @@ class SpatialEngine: ObservableObject {
                     )
                 }
             } catch {
+                PersistenceHealth.note(.writeFailure, context: "spatialEngine.restoreBlock", detail: "block \(block.id): \(error)")
                 print("❌ Failed to restore block: \(error)")
             }
         }
@@ -452,9 +596,19 @@ class SpatialEngine: ObservableObject {
         }
 
         // Database-level check (catches duplicates after app restart when memory is empty)
-        if !block.entityUuid.isEmpty, await entityExistsInDb(block.entityUuid) {
-            print("⚠️ addBlock: entity \(block.entityUuid) already in DB, skipping")
-            return
+        if !block.entityUuid.isEmpty {
+            switch await entityExistsInDb(block.entityUuid) {
+            case true?:
+                print("⚠️ addBlock: entity \(block.entityUuid) already in DB, skipping")
+                return
+            case nil:
+                // Unknown (DB error) — creating anyway could produce a duplicate row.
+                PersistenceHealth.note(.writeFailure, context: "spatialEngine.addBlock", detail: "duplicate check failed for \(block.entityUuid); skipping create")
+                print("⚠️ addBlock: duplicate check failed for \(block.entityUuid), skipping create")
+                return
+            case false?:
+                break
+            }
         }
 
         blocks.append(block)
@@ -467,7 +621,9 @@ class SpatialEngine: ObservableObject {
     }
 
     /// Check if an entity already has a canvas_block row in the current thinkspace/document.
-    private func entityExistsInDb(_ entityUuid: String) async -> Bool {
+    /// Returns nil when the check itself failed (unknown) — callers must NOT
+    /// treat unknown as "doesn't exist" or they can create duplicate rows.
+    private func entityExistsInDb(_ entityUuid: String) async -> Bool? {
         let docType = currentDocumentType
         let docId = currentDocumentId
         let tsId = currentThinkspaceId
@@ -483,7 +639,8 @@ class SpatialEngine: ObservableObject {
                 return count > 0
             }
         } catch {
-            return false
+            print("❌ entityExistsInDb failed for \(entityUuid): \(error)")
+            return nil
         }
     }
 
@@ -529,9 +686,10 @@ class SpatialEngine: ObservableObject {
             }
         }
 
-        // Add to canvas with animation
+        // Add to canvas with animation — route through addBlock so voice
+        // placements are persisted (and deduplicated) like every other add.
         for block in newBlocks {
-            blocks.append(block)
+            await addBlock(block, persist: true)
         }
 
         print("✅ Placed \(newBlocks.count) blocks on canvas")

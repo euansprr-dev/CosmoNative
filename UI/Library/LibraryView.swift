@@ -930,7 +930,16 @@ final class LibraryViewModel: ObservableObject {
             let thinkspacesByID = Dictionary(uniqueKeysWithValues: thinkspaces.map { ($0.id, $0) })
             let memberships = try await AtomRepository.shared.fetchThinkspaceMembership(for: atoms.map(\.uuid))
 
-            projectOwnedAtomUUIDs = []
+            // Atoms still carrying legacy `.project` links are project-owned, not
+            // standalone. This used to be enforced as a side effect of the (now
+            // one-shot) project→thinkspace migration rewriting links on every
+            // launch; the filter must hold on its own for links that arrive via
+            // sync after the migration epoch.
+            projectOwnedAtomUUIDs = Set(
+                atoms
+                    .filter { !$0.isDeleted && $0.link(ofType: .project) != nil }
+                    .map(\.uuid)
+            )
             projectChildCounts = [:]
 
             let atomItems = atoms

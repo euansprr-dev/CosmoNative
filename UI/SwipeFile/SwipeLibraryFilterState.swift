@@ -62,6 +62,7 @@ enum SwipeLibrarySectionSelection: Equatable, Hashable {
     case recentlyAdded
     case highHookScore
     case unstudied
+    case boards
     case board(String)
 
     var title: String {
@@ -70,6 +71,7 @@ enum SwipeLibrarySectionSelection: Equatable, Hashable {
         case .recentlyAdded: return "Recently Added"
         case .highHookScore: return "High Hook Score"
         case .unstudied: return "Unstudied"
+        case .boards: return "Boards"
         case .board(let name): return name
         }
     }
@@ -225,7 +227,6 @@ struct SwipeLibraryFilterState: Equatable {
     var onlyStudied = false
     var onlyUnstudied = false
     var minimumHookScore: Double?
-    var boardID: String?
 
     var hasActiveFilters: Bool {
         smartPreset != .all ||
@@ -238,8 +239,7 @@ struct SwipeLibraryFilterState: Equatable {
         niche != nil ||
         onlyStudied ||
         onlyUnstudied ||
-        minimumHookScore != nil ||
-        boardID != nil
+        minimumHookScore != nil
     }
 
     mutating func reset() {

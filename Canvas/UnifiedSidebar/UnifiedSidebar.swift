@@ -1128,7 +1128,6 @@ private struct SidebarSwipeFileContext: View {
     @Binding var currentDestination: SidebarDestination
     var onNavigate: () -> Void = {}
 
-    @State private var localBoards: [SidebarSwipeBoard] = SidebarSwipeBoard.defaultBoards
     @State private var isCreatingBoard = false
     @State private var draftBoardName = ""
     @FocusState private var isBoardNameFocused: Bool
@@ -1149,7 +1148,7 @@ private struct SidebarSwipeFileContext: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    SidebarContextLabel(title: "Custom Boards")
+                    SidebarContextLabel(title: "Boards")
                     Spacer(minLength: 6)
                     Button("New board", systemImage: "plus") {
                         beginCreatingBoard()
@@ -1160,19 +1159,28 @@ private struct SidebarSwipeFileContext: View {
                     .frame(width: 24, height: 24)
                     .background(DS.accentSoft, in: .rect(cornerRadius: 8))
                     .buttonStyle(.plain)
-                    .help("New Custom Board")
+                    .help("New Board")
                 }
+
+                sectionRow(.boards, icon: "square.grid.2x2", subtitle: "All collections")
 
                 if isCreatingBoard {
                     newBoardRow
                 }
 
-                ForEach(localBoards) { board in
+                ForEach(SwipeBoardStore.shared.boards) { board in
                     boardRow(board)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task {
+            await SwipeBoardStore.shared.loadIfNeeded()
+            await SwipeBoardStore.shared.refreshCountsFromDatabase()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.libraryDidChange)) { _ in
+            Task { await SwipeBoardStore.shared.refreshCountsFromDatabase() }
+        }
     }
 
     private func discoveryRow(
@@ -1207,16 +1215,16 @@ private struct SidebarSwipeFileContext: View {
         }
     }
 
-    private func boardRow(_ board: SidebarSwipeBoard) -> some View {
+    private func boardRow(_ board: SwipeBoard) -> some View {
         SidebarContextRow(
             title: board.name,
             icon: board.icon,
-            count: board.count,
-            subtitle: board.subtitle,
-            isActive: currentDestination == .swipeFile(section: .board(board.id)),
-            tint: board.tint
+            count: SwipeBoardStore.shared.counts[board.uuid],
+            subtitle: nil,
+            isActive: currentDestination == .swipeFile(section: .board(board.uuid)),
+            tint: DS.textSecondary
         ) {
-            open(.board(board.id))
+            open(.board(board.uuid))
         }
     }
 
@@ -1270,18 +1278,13 @@ private struct SidebarSwipeFileContext: View {
         guard !trimmed.isEmpty else { return }
 
         withAnimation(ProMotionSprings.snappy) {
-            let board = SidebarSwipeBoard(
-                id: trimmed.lowercased().replacingOccurrences(of: " ", with: "-"),
-                name: trimmed,
-                icon: "rectangle.stack",
-                subtitle: "Custom swipe file",
-                count: nil,
-                tint: DS.textSecondary
-            )
-            localBoards.append(board)
             draftBoardName = ""
             isCreatingBoard = false
-            open(.board(board.id))
+        }
+        Task {
+            if let board = await SwipeBoardStore.shared.create(name: trimmed) {
+                open(.board(board.uuid))
+            }
         }
     }
 
@@ -1298,42 +1301,6 @@ private struct SidebarSwipeFileContext: View {
         }
         onNavigate()
     }
-}
-
-private struct SidebarSwipeBoard: Identifiable {
-    let id: String
-    let name: String
-    let icon: String
-    let subtitle: String?
-    let count: Int?
-    let tint: Color
-
-    static let defaultBoards: [SidebarSwipeBoard] = [
-        SidebarSwipeBoard(
-            id: "thread-hooks",
-            name: "Thread Hooks",
-            icon: "text.alignleft",
-            subtitle: "Long-form openers",
-            count: 12,
-            tint: DS.textSecondary
-        ),
-        SidebarSwipeBoard(
-            id: "reel-ideas",
-            name: "Reel Ideas",
-            icon: "play.rectangle",
-            subtitle: "Short-form angles",
-            count: 8,
-            tint: DS.textSecondary
-        ),
-        SidebarSwipeBoard(
-            id: "client-proof",
-            name: "Client Proof",
-            icon: "checkmark.seal",
-            subtitle: "Trust builders",
-            count: nil,
-            tint: DS.textSecondary
-        )
-    ]
 }
 
 // MARK: - Search Context

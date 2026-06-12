@@ -1,5 +1,12 @@
 # CosmoOS Data-Safety Audit — June 11, 2026
 
+> **STATUS: ALL 8 PHASES IMPLEMENTED (same day).** Build green; `DataSafetyRegressionTests`
+> + note/migration/connection regression suites green. Key invariants and APIs are recorded
+> in the project memory (`data_safety_audit.md`). Remaining follow-ups (tracked separately):
+> pre-existing stale tests from the same-day UI/swipe rework (InstagramAutoTranscriber,
+> cluster palette/board, social discovery, swipe families), and a review UI for the
+> conflict snapshots preserved in `sync_queue` with `status='conflict'`.
+
 Seven parallel deep audits covering: core persistence (GRDB/AtomRepository/Sync), notes (block + focus mode), content (block + focus mode + pipeline), sticky notes + canvas placements, tasks + recurrence + calendar, inbox (capture → triage → route), connections + swipe files, and all AI/agent write paths.
 
 **Verdict: the app has ~120 distinct data-safety defects. 12 are CRITICAL (data loss in normal daily use), ~30 HIGH. They cluster into 8 systemic root causes. Fixing the root causes eliminates the majority of individual findings.**

@@ -94,6 +94,12 @@ struct StickyNoteBlockView: View {
     @State private var autoSaveTask: Task<Void, Never>?
     @State private var saveClosed = false
 
+    // Guards against stale writes: only save if the user actually edited this block.
+    // Without this, onDisappear would write back whatever was loaded from DB,
+    // which could be an old version if a GRDB observation update was blocked by
+    // isEditingBody (the same bug NoteBlockView fixed; see its saveNoteSync).
+    @State private var hasLocalEdits = false
+
     // Prevents GRDB observation updates from triggering auto-save
     @State private var isSyncingFromDB = false
 
@@ -140,7 +146,10 @@ struct StickyNoteBlockView: View {
             onDocumentChange: { _, plainText in
                 print("[BLOCK-STICKY] onDocumentChange — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(block.entityUuid)")
                 noteText = plainText
-                if !isSyncingFromDB { scheduleAutoSave() }
+                if !isSyncingFromDB {
+                    hasLocalEdits = true
+                    scheduleAutoSave()
+                }
             },
             onActivate: { isEditingBody = true }
         )
@@ -225,6 +234,11 @@ struct StickyNoteBlockView: View {
             loadNote()
             loadColor()
             startObservingAtom()
+            // Terminate-safe flush: the 1s debounce loses typing on ⌘Q without this.
+            // The flush is dirty-gated inside saveNoteSync (no-op when clean).
+            DirtyEditorRegistry.shared.register(id: "stickyblock-\(block.id)") {
+                saveNoteSync()
+            }
             withAnimation(ProMotionSprings.cardEntrance) {
                 hasAppeared = true
             }
@@ -239,6 +253,7 @@ struct StickyNoteBlockView: View {
                 saveClosed = true
                 print("[BLOCK-STICKY] onDisappear(deferred) — saving uuid=\(block.entityUuid) bodyLen=\(noteText.count)")
                 saveNoteSync()
+                DirtyEditorRegistry.shared.unregister(id: "stickyblock-\(block.id)")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
@@ -248,9 +263,26 @@ struct StickyNoteBlockView: View {
             if let uuid = notification.userInfo?["atomUUID"] as? String,
                uuid == block.entityUuid {
                 if let body = notification.userInfo?["body"] as? String {
+                    isSyncingFromDB = true
                     noteText = body
                     noteBodyDocument = RichDocument.migrateLegacy(body)
+                    hasLocalEdits = false
+                    DispatchQueue.main.async {
+                        isSyncingFromDB = false
+                    }
                 }
+            }
+        }
+        // Authoritative blocks landed after a thinkspace switch — the mounted view
+        // may still hold text from a stale snapshot cache. Re-run the load when
+        // there's nothing local to lose.
+        .onReceive(NotificationCenter.default.publisher(for: .canvasBlocksDidResync)) { _ in
+            guard !isEditingBody, !hasLocalEdits else { return }
+            isSyncingFromDB = true
+            loadNote()
+            loadColor()
+            DispatchQueue.main.async {
+                isSyncingFromDB = false
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.changeStickyColor)) { notification in
@@ -311,16 +343,52 @@ struct StickyNoteBlockView: View {
                 do {
                     if let atom = try await AtomRepository.shared.fetch(id: block.entityId) {
                         await MainActor.run {
+                            // Don't clobber text the user typed (or is typing) while
+                            // the fetch was in flight — mirror the GRDB observation.
+                            guard !isEditingBody, !hasLocalEdits else { return }
+                            isSyncingFromDB = true
                             noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
                                 field: .body,
                                 metadata: atom.metadata,
                                 fallbackPlainText: atom.body
                             )
                             noteText = noteBodyDocument.plainText
+                            DispatchQueue.main.async {
+                                isSyncingFromDB = false
+                            }
                         }
                     }
                 } catch {
+                    PersistenceHealth.note(.writeFailure, context: "stickyNote.loadAtom", detail: "uuid=\(block.entityUuid): \(error)")
                     print("StickyNote: Failed to load atom: \(error)")
+                }
+            }
+        } else {
+            // Atomless sticky: canvas_blocks.note_content is the source of truth.
+            // The snapshot-cache copy in block.metadata can be stale — re-read it.
+            let blockId = block.id
+            Task {
+                do {
+                    let noteContent: String? = try await CosmoDatabase.shared.asyncRead { db in
+                        try String.fetchOne(
+                            db,
+                            sql: "SELECT note_content FROM canvas_blocks WHERE id = ? AND is_deleted = 0",
+                            arguments: [blockId]
+                        )
+                    }
+                    guard let noteContent else { return }
+                    await MainActor.run {
+                        guard !isEditingBody, !hasLocalEdits, noteContent != noteText else { return }
+                        isSyncingFromDB = true
+                        noteText = noteContent
+                        noteBodyDocument = RichDocument.migrateLegacy(noteContent)
+                        DispatchQueue.main.async {
+                            isSyncingFromDB = false
+                        }
+                    }
+                } catch {
+                    PersistenceHealth.note(.writeFailure, context: "stickyNote.loadNoteContent", detail: "block=\(blockId): \(error)")
+                    print("StickyNote: Failed to load note_content: \(error)")
                 }
             }
         }
@@ -354,13 +422,18 @@ struct StickyNoteBlockView: View {
                     )
                     let newBody = newBodyDocument.plainText
                     let bodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument
-                    print("[BLOCK-STICKY] 🔔 GRDB observation fired — uuid=\(uuid) isEditingBody=\(isEditingBody) bodyChanged=\(bodyChanged) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbPreview=\"\(String(newBody.prefix(60)))\"")
-                    // Only overwrite body from DB when NOT actively editing —
-                    // otherwise the observation echo from auto-save overwrites
-                    // text the user typed since the save was initiated.
-                    guard !isEditingBody, bodyChanged else {
-                        if isEditingBody, bodyChanged {
-                            print("[BLOCK-STICKY] 🔔 observation SKIPPED body (editing) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
+                    print("[BLOCK-STICKY] 🔔 GRDB observation fired — uuid=\(uuid) isEditingBody=\(isEditingBody) hasLocalEdits=\(hasLocalEdits) bodyChanged=\(bodyChanged) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbPreview=\"\(String(newBody.prefix(60)))\"")
+                    // Only overwrite body from DB when NOT actively editing and
+                    // there are no unsaved local edits — otherwise the observation
+                    // echo from auto-save overwrites text the user typed since the
+                    // save was initiated.
+                    guard NoteWritePolicy.shouldApplyObservedBody(
+                        isEditingBody: isEditingBody,
+                        hasLocalEdits: hasLocalEdits,
+                        observedBodyChanged: bodyChanged
+                    ) else {
+                        if bodyChanged {
+                            print("[BLOCK-STICKY] 🔔 observation SKIPPED body (editing/local) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
                         }
                         return
                     }
@@ -368,6 +441,7 @@ struct StickyNoteBlockView: View {
                     isSyncingFromDB = true
                     noteBodyDocument = newBodyDocument
                     noteText = newBody
+                    hasLocalEdits = false
                     DispatchQueue.main.async {
                         isSyncingFromDB = false
                     }
@@ -426,6 +500,7 @@ struct StickyNoteBlockView: View {
                     print("[BLOCK-STICKY] saveNote() async SKIPPED — saveClosed=true uuid=\(uuid)")
                     return
                 }
+                let savedBodyText = noteText
                 print("[BLOCK-STICKY] saveNote() async DB write starting — uuid=\(uuid)")
                 do {
                     try await CosmoDatabase.shared.asyncWrite { db in
@@ -462,11 +537,22 @@ struct StickyNoteBlockView: View {
                     }
                     print("[BLOCK-STICKY] saveNote() async DB write DONE — uuid=\(uuid)")
                     // Sync to Supabase via ChangeTracker
+                    var atomWasUpdated = false
                     if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                        atomWasUpdated = true
                         // skipVersionIncrement: raw SQL already did _local_version + 1
                         await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                     }
+                    await MainActor.run {
+                        // Atomless stickies persist via the .updateBlockContent
+                        // notification round-trip — keep the dirty flag so the
+                        // close/terminate sync write remains their safety net.
+                        if atomWasUpdated, noteText == savedBodyText {
+                            hasLocalEdits = false
+                        }
+                    }
                 } catch {
+                    PersistenceHealth.note(.writeFailure, context: "stickyNote.autosave", detail: "uuid=\(uuid): \(error)")
                     print("[BLOCK-STICKY] saveNote() async DB write FAILED — uuid=\(uuid) error=\(error)")
                 }
             }
@@ -477,53 +563,84 @@ struct StickyNoteBlockView: View {
     /// Used on close to guarantee data is persisted before the block exits.
     private func saveNoteSync() {
         let uuid = block.entityUuid
-        print("[BLOCK-STICKY] saveNoteSync() — uuid=\(uuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(80)))\"")
+        print("[BLOCK-STICKY] saveNoteSync() — uuid=\(uuid) bodyLen=\(noteText.count) hasLocalEdits=\(hasLocalEdits) bodyPreview=\"\(String(noteText.prefix(80)))\"")
         guard !uuid.isEmpty else { print("[BLOCK-STICKY] saveNoteSync() SKIPPED — empty uuid"); return }
+        // Only write if the user actually made edits in this block. Without this
+        // guard, onDisappear would write back stale state (e.g. focus mode saved
+        // newer text while isEditingBody blocked the GRDB observation, then this
+        // close save resurrected the old version over it).
+        guard hasLocalEdits else {
+            print("[BLOCK-STICKY] saveNoteSync() SKIPPED — no local edits, avoiding stale overwrite uuid=\(uuid)")
+            return
+        }
+
+        // Canonicalize: noteBodyDocument's serialization can lag the per-keystroke
+        // noteText by ~150ms — never persist a metadata document that diverges
+        // from the body text being written.
+        let currentBodyDoc = noteBodyDocument.plainText == noteText
+            ? noteBodyDocument
+            : RichDocument.migrateLegacy(noteText)
+        let blockMetadata = RichDocumentPersistence
+            .writeBlockDocument(currentBodyDoc, key: RichDocumentMetadataKeys.bodyDocument, metadata: block.metadata)
+            .merging(["content": noteText]) { _, new in new }
+        let blockMetadataJSON = SpatialEngine.encodeBlockMetadataJSON(blockMetadata)
 
         do {
-            try CosmoDatabase.shared.write { db in
-                // Always persist to canvas_blocks.note_content — this is the primary
-                // storage path for sticky notes (which may not have a backing atom row).
+            let atomExisted = try CosmoDatabase.shared.write { db -> Bool in
+                // Always persist to canvas_blocks — this is the primary storage
+                // path for sticky notes (which may not have a backing atom row).
+                // note_content and the metadata column move together so neither
+                // can resurrect stale text over the other on the next load.
                 try db.execute(
                     sql: """
                     UPDATE canvas_blocks
-                    SET note_content = ?, updated_at = CURRENT_TIMESTAMP
+                    SET note_content = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE entity_uuid = ? AND is_deleted = 0
                     """,
-                    arguments: [noteText, uuid]
+                    arguments: [noteText, blockMetadataJSON, uuid]
                 )
 
-                // Also update the atom if one exists
-                var existingMetadata: String?
-                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
-                    existingMetadata = row["metadata"]
-                }
-                if existingMetadata != nil {
-                    let fields = RichDocumentPersistence.writeAtomDocuments(
-                        existingMetadata: existingMetadata,
-                        titleDocument: nil,
-                        bodyDocument: noteBodyDocument
-                    )
-                    try db.execute(
-                        sql: """
-                        UPDATE atoms
-                        SET body = ?,
-                            metadata = ?,
-                            updated_at = ?,
-                            _local_version = _local_version + 1,
-                            _local_pending = 1
-                        WHERE uuid = ?
-                        """,
-                        arguments: [
-                            noteText,
-                            fields.metadata,
-                            ISO8601.string(from: Date()),
-                            uuid
-                        ]
-                    )
+                // Also update the atom row whenever one exists (its metadata may
+                // legitimately be NULL — that must not skip the body update).
+                let atomRow = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid])
+                guard let atomRow else { return false }
+                let existingMetadata: String? = atomRow["metadata"]
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: existingMetadata,
+                    titleDocument: nil,
+                    bodyDocument: currentBodyDoc
+                )
+                try db.execute(
+                    sql: """
+                    UPDATE atoms
+                    SET body = ?,
+                        metadata = ?,
+                        updated_at = ?,
+                        _local_version = _local_version + 1,
+                        _local_pending = 1
+                    WHERE uuid = ?
+                    """,
+                    arguments: [
+                        noteText,
+                        fields.metadata,
+                        ISO8601.string(from: Date()),
+                        uuid
+                    ]
+                )
+                return true
+            }
+            hasLocalEdits = false
+            if atomExisted {
+                // Queue for Supabase push so the close-time edit reaches the cloud.
+                Task {
+                    if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                        // skipVersionIncrement: raw SQL already did _local_version + 1
+                        await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
+                    }
                 }
             }
         } catch {
+            PersistenceHealth.note(.writeFailure, context: "stickyNote.closeSave", detail: "uuid=\(uuid): \(error)")
             print("StickyNote: sync save failed: \(error)")
         }
     }
@@ -582,6 +699,7 @@ struct StickyNoteBlockView: View {
                         )
                     }
                 } catch {
+                    PersistenceHealth.note(.writeFailure, context: "stickyNote.createBackingAtom", detail: "block=\(block.id): \(error)")
                     print("StickyNote: Failed to create backing atom: \(error)")
                 }
             }

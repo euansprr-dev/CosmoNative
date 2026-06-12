@@ -1217,6 +1217,7 @@ extension AnthropicProvider: StreamingLLMProvider {
         var outputTokens = 0
         var cacheReadTokens = 0
         var cacheWriteTokens = 0
+        var stopReason: String?
 
         // Per-block accumulation: Anthropic streams tool_use input as raw partial
         // JSON via input_json_delta, keyed by content block index.
@@ -1277,6 +1278,10 @@ extension AnthropicProvider: StreamingLLMProvider {
                 if let usage = json["usage"] as? [String: Any] {
                     outputTokens = usage["output_tokens"] as? Int ?? outputTokens
                 }
+                if let delta = json["delta"] as? [String: Any],
+                   let reason = delta["stop_reason"] as? String {
+                    stopReason = reason
+                }
 
             case "message_stop":
                 break
@@ -1288,6 +1293,19 @@ extension AnthropicProvider: StreamingLLMProvider {
 
         let toolCalls = partialToolUses.keys.sorted().compactMap { index -> AgentToolCall? in
             guard let partial = partialToolUses[index] else { return nil }
+            // A max_tokens cutoff mid-stream leaves tool-call JSON truncated; the
+            // arguments parser would degrade it to `[:]` and the tool would execute
+            // with empty/default parameters. Drop unparseable calls instead and
+            // let the loop surface the failure.
+            if stopReason == "max_tokens", !partial.argumentsJSON.isEmpty {
+                let parses = (try? JSONSerialization.jsonObject(
+                    with: Data(partial.argumentsJSON.utf8)
+                )) != nil
+                if !parses {
+                    print("⚠️ [LLMProviderAdapter] Dropping tool call \(partial.name) — arguments truncated at max_tokens")
+                    return nil
+                }
+            }
             return AgentToolCall(
                 id: partial.id,
                 name: partial.name,

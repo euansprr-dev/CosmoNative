@@ -188,7 +188,7 @@ enum CosmoInlineAssistantPhase: Equatable, Sendable {
     /// header, timeline) — the bar and pane previously disagreed on idle.
     var symbolName: String {
         switch self {
-        case .idle: return "sparkle"
+        case .idle: return "sparkles"
         case .planning: return "sparkles"
         case .gathering: return "magnifyingglass"
         case .drafting: return "pencil.and.outline"
@@ -546,6 +546,25 @@ final class CosmoInlineAssistantStore: ObservableObject {
         if Self.isClearCommand(rawPrompt) {
             await clearActiveSession()
             return
+        }
+
+        // A fresh conversation binds to the surface the user is sending from —
+        // resolved HERE, before the message is appended, so the message and its
+        // answer always land in the same session. An ongoing conversation stays
+        // put: nothing downstream of submit may retarget a chat with content
+        // (that exact mid-run retarget used to make sent messages vanish).
+        if paneMessages.isEmpty, proposals.isEmpty,
+           let liveSurfaceID = CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID {
+            let previousSessionID = activeSessionSurfaceID
+            let pickedSkillID = selectedSkillID
+            let pickedContexts = selectedContextAtoms
+            activateSession(surfaceID: liveSurfaceID)
+            if activeSessionSurfaceID != previousSessionID {
+                // Explicit composer picks (skill chip, @mentions) belong to the
+                // message being sent — they survive the session bind.
+                if pickedSkillID != nil { selectedSkillID = pickedSkillID }
+                if !pickedContexts.isEmpty { selectedContextAtoms = pickedContexts }
+            }
         }
 
         let skillRegistry = CosmoInlineSkillRegistry()
@@ -1144,6 +1163,22 @@ final class CosmoInlineAssistantStore: ObservableObject {
         activeSessionSurfaceID = surfaceID
         restoreSession(for: surfaceID)
         refreshActiveSurfaceTitle()
+    }
+
+    /// Navigation binding: a view registering its surface may pull the assistant
+    /// to it ONLY while nothing is going on. A conversation in progress —
+    /// messages, staged proposals, or an in-flight run — is never swapped out
+    /// from under the user just because a view appeared (that hijack is what
+    /// made the chat "disappear" after peeking at a source).
+    func activateSessionIfIdle(surfaceID rawSurfaceID: String?) {
+        guard paneMessages.isEmpty,
+              proposals.isEmpty,
+              inquiryQuestionProposals.isEmpty,
+              !isProcessing,
+              activeRunTask == nil else {
+            return
+        }
+        activateSession(surfaceID: rawSurfaceID)
     }
 
     /// Names the surface the session is scoped to, so the pane header can say

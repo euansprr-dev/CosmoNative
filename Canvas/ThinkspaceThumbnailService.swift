@@ -8,6 +8,65 @@ import SwiftUI
 import AppKit
 import GRDB
 
+// MARK: - Snapshot Proxy
+
+/// An invisible NSView embedded in the canvas so the real rendered pixels can
+/// be captured (SwiftUI's ImageRenderer can't see NSViewRepresentable content;
+/// snapshotting the window's layer tree can).
+struct CanvasSnapshotProxy: NSViewRepresentable {
+    let onReady: (NSView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onReady(view) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// Tracks whether the Constellation overlay is anywhere on screen — including
+/// its fade-out transition after a dismiss or a dive. Canvas screenshot capture
+/// consults this because captures composite the window's full layer tree:
+/// a capture taken while the Constellation is still visible (even mid-fade)
+/// would store the Constellation grid itself as a thinkspace's thumbnail.
+@MainActor
+final class ConstellationPresentationState {
+    static let shared = ConstellationPresentationState()
+    private(set) var isOnScreen = false
+    func setOnScreen(_ onScreen: Bool) { isOnScreen = onScreen }
+}
+
+/// Tracks whether the Command-K palette is visibly on screen — including its
+/// fade-out transition. The palette outlives its `showCommandK` flag two ways:
+/// the dismiss fade is still running, or the view stays mounted at opacity 0
+/// behind a focus mode for state preservation (visibility, not mount state, is
+/// what matters for capture safety). Without this, a Command-K thinkspace jump
+/// composites the fading palette into the outgoing thinkspace's thumbnail.
+@MainActor
+final class CommandKPalettePresentationState {
+    static let shared = CommandKPalettePresentationState()
+    private(set) var isOnScreen = false
+    func setOnScreen(_ onScreen: Bool) { isOnScreen = onScreen }
+}
+
+/// Tracks whether the workspace pane deck is anywhere on screen — including
+/// its slide-out transition after the last pane closes. While the deck is up
+/// (or mid-transition) the canvas rect is squeezed or overlapped, so a capture
+/// would store a deck-contaminated frame as the thinkspace's thumbnail.
+/// A stale thumbnail beats a corrupted one.
+@MainActor
+final class PaneDeckPresentationState {
+    static let shared = PaneDeckPresentationState()
+    private(set) var isOnScreen = false
+    func setOnScreen(_ onScreen: Bool) { isOnScreen = onScreen }
+}
+
+/// CGImage is immutable and thread-safe; this carries one across actor hops.
+private struct PixelPayload: @unchecked Sendable {
+    let image: CGImage
+}
+
 @MainActor
 final class ThinkspaceThumbnailService {
 
@@ -23,15 +82,141 @@ final class ThinkspaceThumbnailService {
 
     private let freshness: TimeInterval = 60
 
+    // MARK: - Real screenshots (preferred)
+    // Captured from the actual rendered canvas when you leave a thinkspace —
+    // what the Constellation and portals show is what the space really looks
+    // like. The vector map below is only the fallback for never-opened spaces.
+
+    private var screenshotCache: [String: NSImage] = [:]
+    private var screenshotCapturedAt: [String: Date] = [:]
+    private var screenshotGeneration = 0
+    private var screenshotGenerationById: [String: Int] = [:]
+    private var diskProbedIds: Set<String> = []
+
+    nonisolated private static var screenshotDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return base.appendingPathComponent("CosmoOS/ThinkspaceScreenshots", isDirectory: true)
+    }
+
+    /// Store a freshly captured canvas bitmap. The full-resolution image is
+    /// usable from memory immediately (the Constellation's entrance dissolve
+    /// reads it on the next frame); downscaling, PNG encoding, and the disk
+    /// write all run off the main thread, and the memory cache is swapped to
+    /// the downscaled copy once it's ready so retained screenshots stay small.
+    func storeScreenshot(_ rep: NSBitmapImageRep, for thinkspaceId: String) {
+        let immediate = NSImage(size: rep.size)
+        immediate.addRepresentation(rep)
+        screenshotCache[thinkspaceId] = immediate
+        screenshotCapturedAt[thinkspaceId] = Date()
+        diskProbedIds.insert(thinkspaceId)
+
+        guard let cgImage = rep.cgImage else { return }
+        screenshotGeneration += 1
+        let generation = screenshotGeneration
+        screenshotGenerationById[thinkspaceId] = generation
+        let payload = PixelPayload(image: cgImage)
+        let url = Self.screenshotDirectory.appendingPathComponent("\(thinkspaceId).png")
+        Task.detached(priority: .utility) {
+            let scaled = Self.downscale(payload.image, maxWidth: 1200)
+            let outRep = NSBitmapImageRep(cgImage: scaled)
+            if let png = outRep.representation(using: .png, properties: [:]) {
+                try? FileManager.default.createDirectory(
+                    at: Self.screenshotDirectory,
+                    withIntermediateDirectories: true
+                )
+                try? png.write(to: url)
+            }
+            let scaledPayload = PixelPayload(image: scaled)
+            await MainActor.run {
+                ThinkspaceThumbnailService.shared.finishScreenshotStore(
+                    scaledPayload, for: thinkspaceId, generation: generation
+                )
+            }
+        }
+    }
+
+    /// Swap the transient full-resolution capture for its downscaled copy —
+    /// unless a newer capture for this thinkspace superseded it in the meantime.
+    private func finishScreenshotStore(
+        _ payload: PixelPayload,
+        for thinkspaceId: String,
+        generation: Int
+    ) {
+        guard screenshotGenerationById[thinkspaceId] == generation else { return }
+        let pointSize = NSSize(
+            width: CGFloat(payload.image.width) / 2,
+            height: CGFloat(payload.image.height) / 2
+        )
+        screenshotCache[thinkspaceId] = NSImage(cgImage: payload.image, size: pointSize)
+    }
+
+    /// Whether a screenshot for this thinkspace was captured within `interval`.
+    /// Presentation paths use this to skip a redundant capture when the zoom
+    /// gesture already pre-captured on its way past the floor.
+    func hasFreshScreenshot(for thinkspaceId: String, within interval: TimeInterval) -> Bool {
+        guard let capturedAt = screenshotCapturedAt[thinkspaceId] else { return false }
+        return Date().timeIntervalSince(capturedAt) < interval
+    }
+
+    /// The real screenshot for a thinkspace, if one was ever captured.
+    func screenshot(for thinkspaceId: String) -> NSImage? {
+        if let cached = screenshotCache[thinkspaceId] { return cached }
+        guard !diskProbedIds.contains(thinkspaceId) else { return nil }
+        diskProbedIds.insert(thinkspaceId)
+        let url = Self.screenshotDirectory.appendingPathComponent("\(thinkspaceId).png")
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        screenshotCache[thinkspaceId] = image
+        return image
+    }
+
+    nonisolated private static func downscale(_ image: CGImage, maxWidth: CGFloat) -> CGImage {
+        let width = CGFloat(image.width)
+        guard width > maxWidth,
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return image }
+        let scale = maxWidth / width
+        let targetWidth = Int(maxWidth)
+        let targetHeight = Int(CGFloat(image.height) * scale)
+        guard let context = CGContext(
+            data: nil,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+        return context.makeImage() ?? image
+    }
+
     // MARK: - Public
 
     /// Cached thumbnail if one exists (any age) — for instant first paint.
+    /// Real screenshots win over vector maps.
     func cachedThumbnail(for thinkspaceId: String) -> NSImage? {
-        cache[thinkspaceId]?.image
+        screenshot(for: thinkspaceId) ?? cache[thinkspaceId]?.image
     }
 
-    /// Render (or return fresh-cached) thumbnail for a thinkspace.
+    /// Best available thumbnail: the real screenshot when one exists,
+    /// otherwise the rendered vector map. Disk reads happen off-main here —
+    /// the sync `screenshot(for:)` probe is reserved for callers that need
+    /// an answer this frame.
     func thumbnail(for thinkspaceId: String, size: CGSize) async -> NSImage? {
+        if let shot = screenshotCache[thinkspaceId] {
+            return shot
+        }
+        if !diskProbedIds.contains(thinkspaceId) {
+            diskProbedIds.insert(thinkspaceId)
+            let url = Self.screenshotDirectory.appendingPathComponent("\(thinkspaceId).png")
+            let data = await Task.detached(priority: .userInitiated) {
+                try? Data(contentsOf: url)
+            }.value
+            if let data, let image = NSImage(data: data) {
+                screenshotCache[thinkspaceId] = image
+                return image
+            }
+        }
         if let cached = cache[thinkspaceId],
            Date().timeIntervalSince(cached.generatedAt) < freshness {
             return cached.image

@@ -883,4 +883,49 @@ final class RichDocumentTests: XCTestCase {
 
         XCTAssertEqual(sorted.map(\.atomUUID), ["newer", "older"])
     }
+
+    // MARK: - Soft line breaks (Shift+Return)
+
+    func testSoftLineBreakRoundTripsInsideOneBlock() {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("Live in one room\u{2028}Rent the other")])
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document)
+        let parsed = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(parsed.blocks.count, 1)
+        XCTAssertEqual(parsed.blocks.first?.plainInlineText, "Live in one room\u{2028}Rent the other")
+    }
+
+    func testSoftLineBreakInListBlockKeepsSingleBlock() {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .bulletList, inlines: [.text("first line\u{2028}second line")])
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document)
+        let parsed = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(parsed.blocks.map(\.kind), [.bulletList])
+        XCTAssertEqual(parsed.blocks.first?.plainInlineText, "first line\u{2028}second line")
+    }
+
+    func testHardNewlinesStillSplitBlocks() {
+        let attributed = NSAttributedString(string: "first block\nsecond block")
+
+        let parsed = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(parsed.blocks.count, 2)
+        XCTAssertEqual(parsed.blocks.map(\.plainInlineText), ["first block", "second block"])
+    }
+
+    func testTrailingHardNewlineProducesEmptyFinalBlock() {
+        let attributed = NSAttributedString(string: "only block\n")
+
+        let parsed = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(parsed.blocks.count, 2)
+        XCTAssertEqual(parsed.blocks.first?.plainInlineText, "only block")
+        XCTAssertEqual(parsed.blocks.last?.plainInlineText, "")
+    }
 }

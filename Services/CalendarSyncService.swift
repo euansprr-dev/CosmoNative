@@ -91,6 +91,9 @@ public class CalendarSyncService: ObservableObject {
 
     private let eventStore = EKEventStore()
     private var cosmoCalendar: EKCalendar?
+    /// In-flight find-or-create of the CosmoOS calendar, so first event creations can
+    /// await resolution instead of racing it (and throwing `.noCalendar`).
+    private var calendarResolution: Task<Void, Never>?
     private var refreshTimer: AnyCancellable?
     private var currentDateRange: DateInterval?
 
@@ -111,7 +114,7 @@ public class CalendarSyncService: ObservableObject {
         hasCalendarAccess = (status == .fullAccess)
 
         if hasCalendarAccess {
-            findOrCreateCosmoCalendar()
+            Task { _ = await resolveCosmoCalendar() }
         }
     }
 
@@ -128,7 +131,7 @@ public class CalendarSyncService: ObservableObject {
             hasCalendarAccess = granted
 
             if granted {
-                findOrCreateCosmoCalendar()
+                _ = await resolveCosmoCalendar()
             }
         } catch {
             lastError = "Calendar access request failed: \(error.localizedDescription)"
@@ -138,41 +141,56 @@ public class CalendarSyncService: ObservableObject {
 
     // MARK: - CosmoOS Calendar Management
 
-    /// Find or create the dedicated "CosmoOS" calendar (runs EventKit work off main thread)
-    private func findOrCreateCosmoCalendar() {
-        let store = self.eventStore
-        let calendarTitle = Self.cosmoCalendarTitle
-        Task.detached(priority: .userInitiated) {
-            // Look for existing CosmoOS calendar
-            let calendars = store.calendars(for: .event)
-            if let existing = calendars.first(where: { $0.title == calendarTitle }) {
-                await MainActor.run { self.cosmoCalendar = existing }
-                return
-            }
+    /// Find or create the dedicated "CosmoOS" calendar, awaitable so first event creations
+    /// don't race the setup. Concurrent callers share one in-flight task; EventKit work runs
+    /// off the main thread.
+    private func resolveCosmoCalendar() async -> EKCalendar? {
+        if let cosmoCalendar { return cosmoCalendar }
 
-            // Create a new CosmoOS calendar
-            let newCalendar = EKCalendar(for: .event, eventStore: store)
-            newCalendar.title = calendarTitle
-            newCalendar.cgColor = NSColor(red: 139/255, green: 92/255, blue: 246/255, alpha: 1.0).cgColor  // Plannerum violet
+        let resolution: Task<Void, Never>
+        if let inFlight = calendarResolution {
+            resolution = inFlight
+        } else {
+            let store = self.eventStore
+            let calendarTitle = Self.cosmoCalendarTitle
+            resolution = Task.detached(priority: .userInitiated) {
+                // Look for existing CosmoOS calendar
+                let calendars = store.calendars(for: .event)
+                if let existing = calendars.first(where: { $0.title == calendarTitle }) {
+                    await MainActor.run { self.cosmoCalendar = existing }
+                    return
+                }
 
-            // Use the default calendar source
-            if let defaultSource = store.defaultCalendarForNewEvents?.source {
-                newCalendar.source = defaultSource
-            } else if let localSource = store.sources.first(where: { $0.sourceType == .local }) {
-                newCalendar.source = localSource
-            } else if let firstSource = store.sources.first {
-                newCalendar.source = firstSource
-            }
+                // Create a new CosmoOS calendar
+                let newCalendar = EKCalendar(for: .event, eventStore: store)
+                newCalendar.title = calendarTitle
+                newCalendar.cgColor = NSColor(red: 139/255, green: 92/255, blue: 246/255, alpha: 1.0).cgColor  // Plannerum violet
 
-            do {
-                try store.saveCalendar(newCalendar, commit: true)
-                await MainActor.run { self.cosmoCalendar = newCalendar }
-            } catch {
-                await MainActor.run {
-                    self.lastError = "Failed to create CosmoOS calendar: \(error.localizedDescription)"
+                // Use the default calendar source
+                if let defaultSource = store.defaultCalendarForNewEvents?.source {
+                    newCalendar.source = defaultSource
+                } else if let localSource = store.sources.first(where: { $0.sourceType == .local }) {
+                    newCalendar.source = localSource
+                } else if let firstSource = store.sources.first {
+                    newCalendar.source = firstSource
+                }
+
+                do {
+                    try store.saveCalendar(newCalendar, commit: true)
+                    await MainActor.run { self.cosmoCalendar = newCalendar }
+                } catch {
+                    PersistenceHealth.note(.syncFailure, context: "CalendarSyncService.resolveCosmoCalendar", detail: error.localizedDescription)
+                    await MainActor.run {
+                        self.lastError = "Failed to create CosmoOS calendar: \(error.localizedDescription)"
+                    }
                 }
             }
+            calendarResolution = resolution
         }
+
+        await resolution.value
+        calendarResolution = nil
+        return cosmoCalendar
     }
 
     // MARK: - Read Sync (External Events)
@@ -234,12 +252,10 @@ public class CalendarSyncService: ObservableObject {
             throw CalendarSyncError.noAccess
         }
 
-        guard let calendar = cosmoCalendar else {
-            findOrCreateCosmoCalendar()
-            guard let calendar = cosmoCalendar else {
-                throw CalendarSyncError.noCalendar
-            }
-            return try await createEventInCalendar(title: title, start: start, end: end, calendar: calendar)
+        // Await calendar resolution so the first creation after launch/grant doesn't
+        // race the find-or-create and throw `.noCalendar`.
+        guard let calendar = await resolveCosmoCalendar() else {
+            throw CalendarSyncError.noCalendar
         }
 
         return try await createEventInCalendar(title: title, start: start, end: end, calendar: calendar)

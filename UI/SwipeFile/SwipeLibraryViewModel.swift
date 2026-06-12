@@ -2,53 +2,62 @@ import Foundation
 import SwiftUI
 
 @MainActor
-final class SwipeLibraryViewModel: ObservableObject {
-    @Published private(set) var allItems: [SwipeGalleryItem] = []
-    @Published private(set) var visibleItems: [SwipeGalleryItem] = []
-    @Published private(set) var visibleItemsIdentity = SwipeLibraryVisibleItemsIdentity(items: [])
-    @Published private(set) var shelves: [SwipeLibraryShelf] = []
-    @Published private(set) var summary = SwipeLibraryFacetSummary(
-        totalCount: 0,
-        filteredCount: 0,
-        highScoreCount: 0,
-        unstudiedCount: 0,
-        averageHookScore: nil
-    )
-    @Published private(set) var availableCreators: [String] = []
-    @Published private(set) var availableNiches: [String] = []
-    @Published private(set) var availablePlatforms: [String] = []
-    @Published private(set) var isLoading = false
-    @Published var errorMessage: String?
-    @Published var selectedItem: SwipeGalleryItem?
+@Observable
+final class SwipeLibraryViewModel {
+    private(set) var allItems: [SwipeGalleryItem] = []
+    private(set) var visibleItems: [SwipeGalleryItem] = []
+    /// Card display models aligned 1:1 with `visibleItems` — adapters (date parsing,
+    /// URL building) run once per recompute, never on the render path.
+    private(set) var visibleCardModels: [SwipeCardModel] = []
+    private(set) var cardModelsByID: [String: SwipeCardModel] = [:]
+    private(set) var visibleItemsIdentity = SwipeLibraryVisibleItemsIdentity(items: [])
+    /// Date-bucketed sections, populated only for the Recently Added scope.
+    private(set) var recentBuckets: [SwipeLibraryDateBucket] = []
+    private(set) var shelves: [SwipeLibraryShelf] = []
+    private(set) var summary = SwipeLibraryFacetSummary.empty
+    private(set) var availableCreators: [String] = []
+    private(set) var availableNiches: [String] = []
+    private(set) var availablePlatforms: [String] = []
+    private(set) var isLoading = false
+    var errorMessage: String?
+    var selectedItem: SwipeGalleryItem?
+    /// Transient toast text for board membership changes.
+    var boardMessage: String?
 
-    @Published var query = "" {
+    /// Structural pre-filter set by navigation (sidebar section / board detail).
+    /// Independent of `filterState` — switching scope never touches user filters.
+    private(set) var scope: SwipeLibrarySectionSelection = .all
+
+    var query = "" {
         didSet { recomputeIfNeeded(oldValue != query) }
     }
 
-    @Published var filterState = SwipeLibraryFilterState() {
+    var filterState = SwipeLibraryFilterState() {
         didSet { recomputeIfNeeded(oldValue != filterState) }
     }
 
-    @Published var sortMode: SwipeSortMode = .recent {
+    var sortMode: SwipeSortMode = .recent {
         didSet { recomputeIfNeeded(oldValue != sortMode) }
     }
 
-    @Published var displayMode: SwipeLibraryMode = .grid
+    var displayMode: SwipeLibraryMode = .grid
 
     private var hasLoaded = false
-    private var activeSection: SwipeLibrarySectionSelection = .all
 
     func loadIfNeeded(section: SwipeLibrarySectionSelection) async {
-        activeSection = section
-        applySection(section)
-
+        setScope(section)
         guard !hasLoaded else { return }
         await reload()
     }
 
     func setSection(_ section: SwipeLibrarySectionSelection) {
-        activeSection = section
-        applySection(section)
+        setScope(section)
+    }
+
+    func setScope(_ newScope: SwipeLibrarySectionSelection) {
+        guard scope != newScope else { return }
+        scope = newScope
+        recompute()
     }
 
     func reload() async {
@@ -145,44 +154,37 @@ final class SwipeLibraryViewModel: ObservableObject {
         )
     }
 
+    /// Toggles a swipe's membership in a board. Persists on the atom, reloads, and
+    /// notifies every other library instance + the sidebar counts.
+    func toggleBoard(_ board: SwipeBoard, itemID: String) {
+        Task {
+            do {
+                guard var atom = try await AtomRepository.shared.fetch(uuid: itemID) else { return }
+                var ids = Set(atom.swipeBoardIDs ?? [])
+                let adding = !ids.contains(board.uuid)
+                if adding {
+                    ids.insert(board.uuid)
+                } else {
+                    ids.remove(board.uuid)
+                }
+                atom.swipeBoardIDs = Array(ids).sorted()
+                _ = try await AtomRepository.shared.update(atom)
+                boardMessage = adding ? "Saved to \(board.name)" : "Removed from \(board.name)"
+                await reload()
+                SwipeBoardStore.shared.refreshCounts(from: allItems)
+                NotificationCenter.default.post(name: CosmoNotification.SwipeFile.libraryDidChange, object: nil)
+            } catch {
+                boardMessage = "Board update failed"
+            }
+        }
+    }
+
     func addToCanvas(_ item: SwipeGalleryItem) {
         NotificationCenter.default.post(
             name: .addSwipeToCanvas,
             object: nil,
             userInfo: ["atomUUID": item.atomUUID]
         )
-    }
-
-    private func applySection(_ section: SwipeLibrarySectionSelection) {
-        var next = filterState
-        let sectionFilters = SwipeLibraryFiltering.sectionFilters(for: section)
-
-        switch section {
-        case .all:
-            next.onlyStudied = false
-            next.onlyUnstudied = false
-            next.minimumHookScore = nil
-        case .recentlyAdded:
-            next.onlyStudied = false
-            next.onlyUnstudied = false
-            sortMode = .recent
-        case .highHookScore:
-            next.minimumHookScore = sectionFilters.minimumHookScore
-        case .unstudied:
-            next.onlyStudied = false
-            next.onlyUnstudied = true
-        case .board(let id):
-            if id == "fear-hooks" {
-                next.smartPreset = .fearHooks
-                next.narratives = [.fearMongering]
-                next.hookTypes = [.controversy, .contrarian, .boldClaim]
-            } else if id == "curiosity-gaps" {
-                next.smartPreset = .curiosity
-                next.hookTypes = [.curiosityGap, .question, .hiddenGem]
-            }
-        }
-
-        filterState = next
     }
 
     private func recomputeIfNeeded(_ shouldRecompute: Bool) {
@@ -193,6 +195,7 @@ final class SwipeLibraryViewModel: ObservableObject {
     private func recompute() {
         let items = SwipeLibraryFiltering.filteredItems(
             from: allItems,
+            scope: scope,
             filters: filterState,
             query: query,
             sortMode: sortMode
@@ -202,6 +205,11 @@ final class SwipeLibraryViewModel: ObservableObject {
             visibleItemsIdentity = nextIdentity
         }
         visibleItems = items
+        visibleCardModels = items.map(SwipeCardModel.init(item:))
+        cardModelsByID = Dictionary(zip(items.map(\.id), visibleCardModels), uniquingKeysWith: { first, _ in first })
+        recentBuckets = scope == .recentlyAdded
+            ? SwipeLibraryDateBucket.buckets(items: items, models: visibleCardModels)
+            : []
         shelves = SwipeLibraryFiltering.shelves(from: items)
         summary = SwipeLibraryFiltering.facetSummary(allItems: allItems, filteredItems: items)
 

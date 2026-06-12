@@ -30,6 +30,7 @@ struct CommandKActionExecutor {
                 object: nil,
                 userInfo: ["atomUUID": uuid]
             )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
 
         case .goToObject(let uuid):
             NotificationCenter.default.post(
@@ -50,7 +51,10 @@ struct CommandKActionExecutor {
             try await executeTool(name: name, arguments: arguments)
 
         case .postNotification(let name, let userInfo):
+            // These intents hand off to another surface (Peek, places, workbenches,
+            // gallery, inquiry) — the palette's job is done once the post is out.
             NotificationCenter.default.post(name: name, object: nil, userInfo: userInfo)
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
 
         case .startInquiry(let anchorUUID, let anchorType):
             NotificationCenter.default.post(
@@ -164,13 +168,45 @@ struct CommandKActionExecutor {
     }
 
     private func completeTask(uuid: String) async throws {
+        guard let atom = try await AtomRepository.shared.fetch(uuid: uuid) else { return }
+
+        // Recurring series template → log today's occurrence in the completion log instead
+        // of flagging the template itself completed (which would freeze the whole series).
+        if let meta = atom.metadataValue(as: TaskMetadata.self),
+           meta.recurrence != nil, meta.recurrenceParentUUID == nil {
+            let today = Date()
+            let occurrenceDay: Date
+            if let snapshot = RecurringSeriesEngine.makeSnapshot(from: atom),
+               let liveDay = RecurringSeriesEngine.liveOccurrenceDay(for: snapshot, asOf: today) {
+                occurrenceDay = liveDay
+            } else {
+                occurrenceDay = Calendar.current.startOfDay(for: today)
+            }
+            try await RecurringSeriesEngine.shared.complete(templateUUID: uuid, occurrenceDay: occurrenceDay)
+
+            NotificationCenter.default.post(
+                name: CosmoNotification.Gamification.taskCompleted,
+                object: nil,
+                userInfo: ["taskUUID": uuid]
+            )
+            NotificationCenter.default.post(
+                name: CosmoNotification.Entity.updated,
+                object: nil,
+                userInfo: ["uuid": uuid, "type": "task"]
+            )
+            return
+        }
+
         let completedAt = PlannerumFormatters.iso8601.string(from: Date())
+        var applied = false
         guard let task = try await AtomRepository.shared.update(uuid: uuid, updates: { atom in
-            var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard var metadata = taskMetadataForCommandKWrite(atom, context: "CommandK.completeTask") else { return }
             metadata.isCompleted = true
             metadata.completedAt = completedAt
-            atom = atom.withMetadata(metadata)
-        }) else { return }
+            guard let merged = atom.mergingTaskMetadata(metadata, context: "CommandK.completeTask(\(uuid.prefix(8)))") else { return }
+            atom = merged
+            applied = true
+        }), applied else { return }
 
         NotificationCenter.default.post(
             name: CosmoNotification.Gamification.taskCompleted,
@@ -191,15 +227,22 @@ struct CommandKActionExecutor {
             to: Calendar.current.startOfDay(for: Date())
         ) ?? Date()
         let dateString = PlannerumFormatters.iso8601.string(from: targetDate)
+        var applied = false
         guard let task = try await AtomRepository.shared.update(uuid: uuid, updates: { atom in
-            var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard var metadata = taskMetadataForCommandKWrite(atom, context: "CommandK.scheduleTask") else { return }
             metadata.dueDate = dateString
             metadata.focusDate = dateString
             metadata.whenDate = dateString
             metadata.schedulingState = nil
             metadata.isUnscheduled = false
-            atom = atom.withMetadata(metadata)
-        }) else { return }
+            if metadata.recurrence != nil, metadata.recurrenceParentUUID == nil {
+                // Deliberate template move: keep the timezone-safe anchor day in step.
+                metadata.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: targetDate)
+            }
+            guard let merged = atom.mergingTaskMetadata(metadata, context: "CommandK.scheduleTask(\(uuid.prefix(8)))") else { return }
+            atom = merged
+            applied = true
+        }), applied else { return }
 
         NotificationCenter.default.post(
             name: CosmoNotification.Entity.updated,
@@ -211,5 +254,20 @@ struct CommandKActionExecutor {
     private func encodeMetadata<T: Encodable>(_ value: T) -> String? {
         guard let data = try? JSONEncoder().encode(value) else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+}
+
+/// Decode-state guard for Command-K task writes: absent → fresh metadata, corrupt → nil
+/// (reported via PersistenceHealth). Callers must bail out of the write when this returns
+/// nil so a corrupt column is never overwritten with defaults.
+private func taskMetadataForCommandKWrite(_ atom: Atom, context: String) -> TaskMetadata? {
+    switch atom.decodedMetadata(as: TaskMetadata.self) {
+    case .absent:
+        return TaskMetadata()
+    case .value(let metadata):
+        return metadata
+    case .corrupt(let error):
+        PersistenceHealth.note(.decodeFailure, context: "\(context)(\(atom.uuid.prefix(8)))", detail: "task metadata undecodable; refusing write (\(error.localizedDescription))")
+        return nil
     }
 }

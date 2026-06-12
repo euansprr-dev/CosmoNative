@@ -1,6 +1,7 @@
 import XCTest
 @testable import CosmoOS
 
+@MainActor
 final class CommandKActionRegistryTests: XCTestCase {
     func testSwipeContextExposesSwipeSelectionAndActiveState() {
         let subject = CortexDetailSubject.swipe(

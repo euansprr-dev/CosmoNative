@@ -640,7 +640,9 @@ extension TaskViewModel {
     /// Project this *series template* VM onto a computed occurrence. Dates are shifted onto the
     /// occurrence day/time and the occurrence identity/status is stamped. `uuid` stays the
     /// template's; `id` becomes occurrence-unique so SwiftUI tracks each occurrence separately.
-    func makingOccurrence(_ occ: RecurringSeriesEngine.VirtualOccurrence) -> TaskViewModel {
+    /// `completedAt` carries the wall-clock completion time from the completion log (Logbook
+    /// grouping/sorting); it defaults to the occurrence day for completed occurrences.
+    func makingOccurrence(_ occ: RecurringSeriesEngine.VirtualOccurrence, completedAt: Date? = nil) -> TaskViewModel {
         let completed = occ.status == .completed
         return TaskViewModel(
             id: occ.id,
@@ -656,7 +658,7 @@ extension TaskViewModel {
             estimatedMinutes: estimatedMinutes,
             priority: priority,
             isCompleted: completed,
-            completedAt: completed ? occ.day : nil,
+            completedAt: completed ? (completedAt ?? occ.day) : nil,
             intent: intent,
             intentUUID: intentUUID,
             habitUUID: habitUUID,

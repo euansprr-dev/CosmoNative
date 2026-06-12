@@ -53,6 +53,34 @@ final class CommandKActionExecutorTests: XCTestCase {
     }
 
     @MainActor
+    func testPostNotificationIntentClosesCommandK() async throws {
+        let peekRecorder = NotificationRecorder(name: CosmoNotification.Navigation.peekEntity)
+        let closeRecorder = NotificationRecorder(name: CosmoNotification.NodeGraph.closeCommandK)
+        let executor = CommandKActionExecutor()
+
+        try await executor.execute(.postNotification(
+            name: CosmoNotification.Navigation.peekEntity,
+            userInfo: ["uuid": "atom-1"]
+        ))
+
+        XCTAssertEqual(peekRecorder.notifications.count, 1)
+        XCTAssertEqual(peekRecorder.notifications.first?.userInfo?["uuid"] as? String, "atom-1")
+        XCTAssertEqual(closeRecorder.notifications.count, 1)
+    }
+
+    @MainActor
+    func testAddToCanvasIntentClosesCommandK() async throws {
+        let addRecorder = NotificationRecorder(name: CosmoNotification.NodeGraph.addToCanvas)
+        let closeRecorder = NotificationRecorder(name: CosmoNotification.NodeGraph.closeCommandK)
+        let executor = CommandKActionExecutor()
+
+        try await executor.execute(.addToCanvas(uuid: "atom-1"))
+
+        XCTAssertEqual(addRecorder.notifications.count, 1)
+        XCTAssertEqual(closeRecorder.notifications.count, 1)
+    }
+
+    @MainActor
     func testOpenSwipeGalleryAsPanePostsPanePayload() async throws {
         let paneRecorder = NotificationRecorder(name: CosmoNotification.Navigation.openAsPane)
         let closeRecorder = NotificationRecorder(name: CosmoNotification.NodeGraph.closeCommandK)

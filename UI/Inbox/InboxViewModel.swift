@@ -53,6 +53,9 @@ final class InboxViewModel {
     var captureText: String = ""
     var isCaptureExpanded: Bool = false
     var showCaptureConfirmation: Bool = false
+    /// Set when the ingest write failed — rendered as an error line under the
+    /// capture bar. The text stays in the field so nothing is lost.
+    var captureError: String?
     var captureFieldFocusRequest: Int = 0
     /// True while the capture field owns keyboard focus — letter-key verbs
     /// (T/A/I/C) must not fire while the user is typing a thought.
@@ -77,6 +80,8 @@ final class InboxViewModel {
 
     var showUndoToast: Bool = false
     var undoToastMessage: String = ""
+    /// True when the toast reports a failure — no Undo button, warning styling.
+    var undoToastIsError: Bool = false
 
     // MARK: - Private
 
@@ -177,19 +182,30 @@ final class InboxViewModel {
         let text = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        captureText = ""
-        isCaptureExpanded = false
+        captureError = nil
 
         // All ingestion goes through the choke point — it owns dedupe, the
-        // consumed-capture rule, and queued classification.
-        _ = await InboxIngestService.shared.ingest(
+        // consumed-capture rule, and queued classification. The field is NOT
+        // cleared until the write outcome is known: a failed save must never
+        // eat the user's words behind a success checkmark.
+        let outcome = await InboxIngestService.shared.ingest(
             .init(source: .quickCapture, rawText: text)
         )
 
-        showCaptureConfirmation = true
-        Task {
-            try? await Task.sleep(for: .seconds(1.5))
-            showCaptureConfirmation = false
+        switch outcome {
+        case .failed:
+            if captureText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                captureText = text
+            }
+            captureError = "Couldn't save that capture — your text is still here. Try again."
+        case .enqueued, .consumed:
+            captureText = ""
+            isCaptureExpanded = false
+            showCaptureConfirmation = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                showCaptureConfirmation = false
+            }
         }
     }
 
@@ -204,10 +220,15 @@ final class InboxViewModel {
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            _ = try await executor.executePrimaryRecommendation(item: item)
-            presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+            if try await executor.executePrimaryRecommendation(item: item) != nil {
+                presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+            } else {
+                await recoverFromNilExecution(for: item)
+            }
         } catch {
             print("⚠️ [InboxVM] Action failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.acceptSuggestion", detail: error.localizedDescription)
+            presentErrorToast("Couldn't file that capture — it's still in your inbox.")
         }
     }
 
@@ -224,18 +245,50 @@ final class InboxViewModel {
 
         do {
             let final = adjustedPosition.map { recommendation.overridingBlockPosition($0) } ?? recommendation
-            _ = try await executor.executeRecommendation(item: item, recommendation: final)
-            presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+            if try await executor.executeRecommendation(item: item, recommendation: final) != nil {
+                presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+            } else {
+                await recoverFromNilExecution(for: item)
+            }
         } catch {
             print("⚠️ [InboxVM] Place failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.place", detail: error.localizedDescription)
+            presentErrorToast("Couldn't place that capture — it's still in your inbox.")
         }
+    }
+
+    /// The executor returned nil: the merge target was deleted or the
+    /// destination thinkspace couldn't be created. A permanently-missing merge
+    /// target falls back to a standalone atom so the item is never stuck;
+    /// anything else surfaces an honest error instead of a success toast.
+    private func recoverFromNilExecution(for item: InboxItem) async {
+        let mergeTargetUuid = item.mergeTargetUuid ?? item.primaryRecommendationValue?.mergeTargetUuid
+        if let mergeTargetUuid {
+            let target = try? await atomRepo.fetch(uuid: mergeTargetUuid)
+            if target == nil || target?.isDeleted == true {
+                do {
+                    _ = try await executor.executeNew(item: item)
+                    presentUndoToast(for: item, verb: "Merge target was deleted — filed as new")
+                    return
+                } catch {
+                    print("⚠️ [InboxVM] Merge fallback failed: \(error)")
+                    PersistenceHealth.note(.writeFailure, context: "InboxVM.recoverFromNilExecution", detail: error.localizedDescription)
+                }
+            }
+        }
+        presentErrorToast("Couldn't complete that suggestion — the capture is still in your inbox.")
     }
 
     func dismiss(item: InboxItem) async {
         do {
             try await inboxRepo.dismiss(uuid: item.uuid)
+            registerDismissUndo(for: [item])
+            presentUndoToast(message: "Dismissed \(item.title ?? String(item.rawText.prefix(40)))")
+            loadEmptyStateData()
         } catch {
             print("⚠️ [InboxVM] Dismiss failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.dismiss", detail: error.localizedDescription)
+            presentErrorToast("Couldn't dismiss that capture.")
         }
     }
 
@@ -244,7 +297,10 @@ final class InboxViewModel {
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            guard let atom = try await executor.executePrimaryRecommendation(item: item) else { return }
+            guard let atom = try await executor.executePrimaryRecommendation(item: item) else {
+                await recoverFromNilExecution(for: item)
+                return
+            }
             presentUndoToast(for: item, destination: item.spatialDestinationTitle)
             let targetThinkspaceId = item.primaryRecommendationValue?.thinkspaceId
                 ?? item.primaryRecommendationValue?.placementPlan?.targetThinkspaceId
@@ -264,6 +320,8 @@ final class InboxViewModel {
             }
         } catch {
             print("⚠️ [InboxVM] Place & Go failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.placeAndGo", detail: error.localizedDescription)
+            presentErrorToast("Couldn't place that capture — it's still in your inbox.")
         }
     }
 
@@ -279,6 +337,8 @@ final class InboxViewModel {
             presentUndoToast(for: item, verb: "Task created")
         } catch {
             print("⚠️ [InboxVM] Make task failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.makeTask", detail: error.localizedDescription)
+            presentErrorToast("Couldn't create the task — the capture is still in your inbox.")
         }
     }
 
@@ -293,6 +353,8 @@ final class InboxViewModel {
             Task { await IdeaInsightEngine.shared.quickEnrich(atom: atom) }
         } catch {
             print("⚠️ [InboxVM] File as idea failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.fileAsIdea", detail: error.localizedDescription)
+            presentErrorToast("Couldn't file the idea — the capture is still in your inbox.")
         }
     }
 
@@ -330,6 +392,8 @@ final class InboxViewModel {
             presentUndoToast(for: item, verb: "Asked in \(destination)")
         } catch {
             print("⚠️ [InboxVM] Ask in deep dive failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.askInDeepDive", detail: error.localizedDescription)
+            presentErrorToast("Couldn't create the question — the capture is still in your inbox.")
         }
     }
 
@@ -344,6 +408,8 @@ final class InboxViewModel {
             presentUndoToast(for: item, verb: "Connected")
         } catch {
             print("⚠️ [InboxVM] Connect failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.connectCapture", detail: error.localizedDescription)
+            presentErrorToast("Couldn't create the connection — the capture is still in your inbox.")
         }
     }
 
@@ -357,10 +423,30 @@ final class InboxViewModel {
         selectedItemIds.removeAll()
     }
 
+    /// Bulk dismiss registers ONE undo action restoring every item and shows
+    /// one toast. (The >5-item confirmation lives in InboxBatchBar.)
     func dismissAllSelected() async {
         let selectedItems = items.filter { selectedItemIds.contains($0.uuid) }
+        guard !selectedItems.isEmpty else { return }
+
+        var dismissed: [InboxItem] = []
         for item in selectedItems {
-            await dismiss(item: item)
+            do {
+                try await inboxRepo.dismiss(uuid: item.uuid)
+                dismissed.append(item)
+            } catch {
+                print("⚠️ [InboxVM] Bulk dismiss failed for \(item.uuid): \(error)")
+                PersistenceHealth.note(.writeFailure, context: "InboxVM.dismissAllSelected", detail: error.localizedDescription)
+            }
+        }
+
+        if !dismissed.isEmpty {
+            registerDismissUndo(for: dismissed)
+            presentUndoToast(message: "Dismissed \(dismissed.count) capture\(dismissed.count == 1 ? "" : "s")")
+            loadEmptyStateData()
+        }
+        if dismissed.count < selectedItems.count {
+            presentErrorToast("Couldn't dismiss \(selectedItems.count - dismissed.count) capture(s).")
         }
         selectedItemIds.removeAll()
     }
@@ -453,11 +539,16 @@ final class InboxViewModel {
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            _ = try await executor.executeMerge(item: item, targetAtomUuid: targetUuid)
-            presentUndoToast(for: item)
-            showOverrideSheet = false
+            if try await executor.executeMerge(item: item, targetAtomUuid: targetUuid) != nil {
+                presentUndoToast(for: item)
+                showOverrideSheet = false
+            } else {
+                presentErrorToast("That merge target no longer exists — pick another destination.")
+            }
         } catch {
             print("⚠️ [InboxVM] Override merge failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.overrideMerge", detail: error.localizedDescription)
+            presentErrorToast("Couldn't merge — the capture is still in your inbox.")
         }
     }
 
@@ -471,6 +562,8 @@ final class InboxViewModel {
             showOverrideSheet = false
         } catch {
             print("⚠️ [InboxVM] Override place failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.overridePlace", detail: error.localizedDescription)
+            presentErrorToast("Couldn't place — the capture is still in your inbox.")
         }
     }
 
@@ -484,6 +577,8 @@ final class InboxViewModel {
             showOverrideSheet = false
         } catch {
             print("⚠️ [InboxVM] Override new failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.overrideNew", detail: error.localizedDescription)
+            presentErrorToast("Couldn't create — the capture is still in your inbox.")
         }
     }
 
@@ -562,16 +657,33 @@ final class InboxViewModel {
     }
 
     private func presentUndoToast(for item: InboxItem, destination: String? = nil, verb: String? = nil) {
-        undoToastTask?.cancel()
+        let message: String
         if let verb {
-            undoToastMessage = verb
+            message = verb
         } else if let destination, item.classification == .place {
-            undoToastMessage = "Placed in \(destination)"
+            message = "Placed in \(destination)"
         } else if item.classification == .merge, let target = item.mergeTargetTitle {
-            undoToastMessage = "Merged into \(target)"
+            message = "Merged into \(target)"
         } else {
-            undoToastMessage = "Filed \(item.title ?? String(item.rawText.prefix(40)))"
+            message = "Filed \(item.title ?? String(item.rawText.prefix(40)))"
         }
+        presentUndoToast(message: message)
+    }
+
+    private func presentUndoToast(message: String) {
+        presentToast(message: message, isError: false)
+    }
+
+    /// Failure variant — no Undo button, warning styling. Nil results and
+    /// caught write errors must never masquerade as success.
+    private func presentErrorToast(_ message: String) {
+        presentToast(message: message, isError: true)
+    }
+
+    private func presentToast(message: String, isError: Bool) {
+        undoToastTask?.cancel()
+        undoToastMessage = message
+        undoToastIsError = isError
         withAnimation(.easeOut(duration: 0.2)) {
             showUndoToast = true
         }
@@ -582,6 +694,45 @@ final class InboxViewModel {
             withAnimation(.easeOut(duration: 0.2)) {
                 self.showUndoToast = false
             }
+        }
+    }
+
+    // MARK: - Dismiss Undo & History Restore
+
+    /// Dismiss gets the same undo treatment as every accept verb — one
+    /// registration covers single and bulk dismissals.
+    private func registerDismissUndo(for dismissedItems: [InboxItem]) {
+        let originals = dismissedItems
+        let repo = inboxRepo
+        let description = originals.count == 1
+            ? "Dismiss Inbox Capture"
+            : "Dismiss \(originals.count) Inbox Captures"
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: description) {
+                for item in originals {
+                    try? await repo.restore(item)
+                }
+            } redo: {
+                for item in originals {
+                    try? await repo.dismiss(uuid: item.uuid)
+                }
+            }
+        )
+    }
+
+    /// Restore a dismissed/actioned item from the history list back into the
+    /// active queue. (InboxRepository.restore upserts the row as given.)
+    func restoreFromHistory(_ item: InboxItem) async {
+        var restored = item
+        restored.status = item.classification != nil ? .classified : .pending
+        restored.actionedAt = nil
+        do {
+            try await inboxRepo.restore(restored)
+            loadEmptyStateData()
+        } catch {
+            print("⚠️ [InboxVM] Restore failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.restoreFromHistory", detail: error.localizedDescription)
+            presentErrorToast("Couldn't restore that capture.")
         }
     }
 }

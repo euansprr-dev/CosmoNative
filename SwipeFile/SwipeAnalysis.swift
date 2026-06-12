@@ -75,6 +75,11 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     public var transcriptionQuality: TranscriptionQuality?
     public var transcriptionWarnings: [String]?
 
+    /// Set when the user manually edits slides in Swipe Study. Terminal:
+    /// auto-transcription must never re-run for a swipe with this flag —
+    /// it would overwrite deliberate edits (e.g. user-pruned carousels).
+    public var transcriptEditedByUser: Bool?
+
     // Extraction retry tracking (auto-retry on app launch, capped at 3)
     public var extractionRetryCount: Int?
 
@@ -209,6 +214,65 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         var copy = self
         copy.userHookScore = score
         return copy
+    }
+
+    /// Merge curated / user-owned fields from an existing analysis into this
+    /// (freshly generated) one. EVERY persist after re-analysis must call this:
+    /// a fresh SwipeAnalysis knows nothing about engagement metrics, study
+    /// state, comments, or manual taxonomy overrides, and would silently wipe
+    /// them otherwise.
+    public func preservingCuratedFields(from existing: SwipeAnalysis?) -> SwipeAnalysis {
+        guard let existing else { return self }
+        var merged = self
+
+        // Engagement block — only ever set at import; analysis never produces it.
+        merged.likesCount = merged.likesCount ?? existing.likesCount
+        merged.viewsCount = merged.viewsCount ?? existing.viewsCount
+        merged.commentsCount = merged.commentsCount ?? existing.commentsCount
+        merged.sharesCount = merged.sharesCount ?? existing.sharesCount
+        merged.engagementRate = merged.engagementRate ?? existing.engagementRate
+        merged.publishedAt = merged.publishedAt ?? existing.publishedAt
+        merged.postShortcode = merged.postShortcode ?? existing.postShortcode
+
+        // Study state + user inputs
+        merged.studiedAt = merged.studiedAt ?? existing.studiedAt
+        merged.practiceAttempts = merged.practiceAttempts ?? existing.practiceAttempts
+        merged.userHookScore = merged.userHookScore ?? existing.userHookScore
+        merged.clientAdaptations = merged.clientAdaptations ?? existing.clientAdaptations
+        merged.extractionRetryCount = merged.extractionRetryCount ?? existing.extractionRetryCount
+        merged.transcriptEditedByUser = merged.transcriptEditedByUser ?? existing.transcriptEditedByUser
+
+        // Transcript artifacts — keep existing when the fresh analysis has none.
+        if merged.transcriptComments?.isEmpty != false {
+            merged.transcriptComments = existing.transcriptComments
+        }
+        if merged.transcriptSlides?.isEmpty != false {
+            merged.transcriptSlides = existing.transcriptSlides
+        }
+        if merged.rawTranscriptSlides?.isEmpty != false {
+            merged.rawTranscriptSlides = existing.rawTranscriptSlides
+        }
+        if merged.transcriptSpeechSegments?.isEmpty != false {
+            merged.transcriptSpeechSegments = existing.transcriptSpeechSegments
+        }
+        merged.transcriptionQuality = merged.transcriptionQuality ?? existing.transcriptionQuality
+        if merged.transcriptionWarnings?.isEmpty != false {
+            merged.transcriptionWarnings = existing.transcriptionWarnings
+        }
+
+        // A manual taxonomy override beats a fresh AI classification.
+        if existing.classificationSource == .aiOverridden,
+           merged.classificationSource != .aiOverridden {
+            merged.primaryNarrative = existing.primaryNarrative
+            merged.secondaryNarrative = existing.secondaryNarrative
+            merged.swipeContentFormat = existing.swipeContentFormat
+            merged.niche = existing.niche
+            merged.classificationSource = existing.classificationSource
+            merged.classifiedAt = existing.classifiedAt
+            merged.classificationConfidence = existing.classificationConfidence
+        }
+
+        return merged
     }
 
     /// Check if analysis is stale (older version)
@@ -889,38 +953,98 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
 
 extension Atom {
 
-    /// Decode SwipeAnalysis from this atom's structured JSON
-    public var swipeAnalysis: SwipeAnalysis? {
-        guard type == .research else { return nil }
-        guard let structuredStr = structured,
-              let data = structuredStr.data(using: .utf8) else { return nil }
+    /// Decode state of the swipeAnalysis key, distinguishing "absent" from
+    /// "present but undecodable". Persist paths must refuse to write a default
+    /// over `.corrupt` — that's how curated analyses get silently erased.
+    var decodedSwipeAnalysis: JSONDecodeState<SwipeAnalysis> {
+        guard type == .research else { return .absent }
+        guard let structuredStr = structured, !structuredStr.isEmpty,
+              let data = structuredStr.data(using: .utf8) else { return .absent }
 
-        // Try to decode a wrapper that contains swipeAnalysis
-        if let wrapper = try? JSONDecoder().decode(SwipeAnalysisWrapper.self, from: data) {
-            return wrapper.swipeAnalysis
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let dict = object as? [String: Any] else {
+            return .corrupt(SwipeAnalysisDecodeError.structuredNotAnObject)
         }
-        return nil
+        guard dict["swipeAnalysis"] != nil else { return .absent }
+        do {
+            let wrapper = try JSONDecoder().decode(SwipeAnalysisWrapper.self, from: data)
+            guard let analysis = wrapper.swipeAnalysis else { return .absent }
+            return .value(analysis)
+        } catch {
+            return .corrupt(error)
+        }
+    }
+
+    /// Decode SwipeAnalysis from this atom's structured JSON.
+    /// Returns nil BOTH when the key is absent and when it is corrupt —
+    /// writers must check `swipeAnalysisIsCorrupt` before persisting a
+    /// `swipeAnalysis ?? SwipeAnalysis()` default.
+    public var swipeAnalysis: SwipeAnalysis? {
+        switch decodedSwipeAnalysis {
+        case .absent:
+            return nil
+        case .value(let analysis):
+            return analysis
+        case .corrupt(let error):
+            PersistenceHealth.note(
+                .decodeFailure,
+                context: "Atom.swipeAnalysis(\(uuid.prefix(8)))",
+                detail: error.localizedDescription
+            )
+            return nil
+        }
+    }
+
+    /// True when the swipeAnalysis key (or the whole structured column) holds
+    /// data that fails to decode. `swipeAnalysis` returns nil in this state.
+    public var swipeAnalysisIsCorrupt: Bool {
+        decodedSwipeAnalysis.isCorrupt
     }
 
     /// Return a new atom with the SwipeAnalysis merged into structured JSON.
     /// Uses raw JSON dictionary to preserve sibling keys (autoMetadata, transcriptComments, etc.)
     /// that would otherwise be lost by typed Codable encoding.
+    /// REFUSES to write (returns self + logs) when the existing column is
+    /// non-empty but unparseable, or the existing swipeAnalysis key is corrupt —
+    /// proceeding from an empty dict wiped every sibling key, and overwriting a
+    /// corrupt key destroyed the only copy of the curated analysis.
     public func withSwipeAnalysis(_ analysis: SwipeAnalysis) -> Atom {
         var copy = self
 
         // Parse existing structured as raw dictionary to preserve all keys
         var dict: [String: Any] = [:]
-        if let structuredStr = structured,
-           let data = structuredStr.data(using: .utf8),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        if let structuredStr = structured, !structuredStr.isEmpty {
+            guard let data = structuredStr.data(using: .utf8),
+                  let existing = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                PersistenceHealth.note(
+                    .decodeFailure,
+                    context: "Atom.withSwipeAnalysis(\(uuid.prefix(8)))",
+                    detail: "existing structured unparseable; refusing overwrite that would drop its data"
+                )
+                return copy
+            }
+            if existing["swipeAnalysis"] != nil, decodedSwipeAnalysis.isCorrupt {
+                PersistenceHealth.note(
+                    .decodeFailure,
+                    context: "Atom.withSwipeAnalysis(\(uuid.prefix(8)))",
+                    detail: "existing swipeAnalysis key undecodable; refusing to replace it with a fresh analysis"
+                )
+                return copy
+            }
             dict = existing
         }
 
         // Update only the swipeAnalysis key
-        if let analysisData = try? JSONEncoder().encode(analysis),
-           let analysisObj = try? JSONSerialization.jsonObject(with: analysisData) {
-            dict["swipeAnalysis"] = analysisObj
+        guard let analysisData = try? JSONEncoder().encode(analysis),
+              let analysisObj = try? JSONSerialization.jsonObject(with: analysisData) else {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "Atom.withSwipeAnalysis(\(uuid.prefix(8)))",
+                detail: "analysis encode failed; keeping existing column"
+            )
+            return copy
         }
+        dict["swipeAnalysis"] = analysisObj
 
         // Re-encode preserving all keys
         if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
@@ -1119,6 +1243,18 @@ public struct TranscriptComment: Codable, Identifiable, Sendable, Equatable {
 }
 
 // MARK: - Private Helpers
+
+/// Decode failures for the swipeAnalysis structured key.
+enum SwipeAnalysisDecodeError: Error, LocalizedError {
+    case structuredNotAnObject
+
+    var errorDescription: String? {
+        switch self {
+        case .structuredNotAnObject:
+            return "structured column is not a JSON object"
+        }
+    }
+}
 
 /// Wrapper to embed SwipeAnalysis alongside existing structured data
 private struct SwipeAnalysisWrapper: Codable {

@@ -10,7 +10,7 @@ struct PaneContentView: View {
     let onClose: () -> Void
 
     @State private var loadedAtom: Atom?
-    @StateObject private var swipeLibraryViewModel = SwipeLibraryViewModel()
+    @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -62,7 +62,7 @@ struct PaneContentView: View {
                 .environment(\.isPaneContextOwner, isContextOwner)
 
         case .swipeGallery:
-            SwipeFileHomeView(viewModel: swipeLibraryViewModel, section: .all)
+            SwipeLibraryPage(viewModel: swipeLibraryViewModel, section: .all)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)

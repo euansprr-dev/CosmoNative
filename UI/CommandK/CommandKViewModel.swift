@@ -1349,6 +1349,11 @@ public final class CommandKViewModel {
     /// Selected result/node UUID
     public var selectedNodeId: String?
 
+    /// Whether the contextual actions panel (second ⌘K) is showing. Lives here
+    /// rather than in the view so MainView's global escape monitor can peel the
+    /// panel before closing the whole palette.
+    public var isActionPanelPresented = false
+
     /// Current search phase. Kept out of observation tracking so background
     /// phase changes do not invalidate the Command-K surface.
     @ObservationIgnored public private(set) var currentPhase: SearchPhase = .idle
@@ -4418,6 +4423,7 @@ public final class CommandKViewModel {
         unfilteredResults = []
         filterCounts = [:]
         selectedNodeId = nil
+        isActionPanelPresented = false
         setCurrentPhase(.idle)
         errorMessage = nil
         selectedTypeFilters.removeAll()

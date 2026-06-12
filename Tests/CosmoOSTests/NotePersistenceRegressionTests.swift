@@ -517,3 +517,218 @@ final class NotePersistenceRegressionTests: XCTestCase {
         ))
     }
 }
+
+// MARK: - Data-Safety Regression Tests (June 2026 audit)
+
+/// Regression coverage for the data-safety pass: optimistic locking, conflict
+/// merging, decode-corruption guards, NULL handling, restore behavior, and
+/// recurrence end-condition counting. Each test pins an invariant whose
+/// violation previously caused silent data loss.
+@MainActor
+final class DataSafetyRegressionTests: XCTestCase {
+    private var cleanupUUIDs: [String] = []
+
+    override func tearDown() async throws {
+        let uuids = cleanupUUIDs.reversed()
+        cleanupUUIDs.removeAll()
+        for uuid in uuids {
+            try? await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
+        }
+        try await super.tearDown()
+    }
+
+    private func makeAtom(title: String = "Data-safety fixture", metadata: String? = nil, structured: String? = nil) async throws -> Atom {
+        var atom = Atom.new(type: .note, title: "\(title) \(UUID().uuidString)")
+        atom.metadata = metadata
+        atom.structured = structured
+        let created = try await AtomRepository.shared.create(atom)
+        cleanupUUIDs.append(created.uuid)
+        return created
+    }
+
+    /// RC1: ChangeTracker used to bump _local_version a second time after
+    /// update()'s SQL already had, so every consecutive save with the returned
+    /// atom failed the optimistic lock and fell into the lossy merge path.
+    func testConsecutiveUpdatesKeepReturnedVersionInSyncWithDatabase() async throws {
+        let created = try await makeAtom()
+
+        var first = created
+        first.body = "first edit"
+        let afterFirst = try await AtomRepository.shared.update(first)
+
+        let fetchedAfterFirst = try await AtomRepository.shared.fetch(uuid: created.uuid)
+        XCTAssertEqual(fetchedAfterFirst?.localVersion, afterFirst.localVersion,
+                       "DB version must match the returned atom — a mismatch resurrects the double-bump bug")
+
+        var second = afterFirst
+        second.body = "second edit"
+        let afterSecond = try await AtomRepository.shared.update(second)
+
+        XCTAssertEqual(afterSecond.localVersion, afterFirst.localVersion + 1,
+                       "A clean consecutive save must increment exactly once (no conflict-path detour)")
+        let fetchedAfterSecond = try await AtomRepository.shared.fetch(uuid: created.uuid)
+        XCTAssertEqual(fetchedAfterSecond?.body, "second edit")
+        XCTAssertEqual(fetchedAfterSecond?.localVersion, afterSecond.localVersion)
+    }
+
+    /// RC1: the conflict auto-merge replaced the whole metadata blob with the
+    /// stale caller's copy, erasing the concurrent writer's keys.
+    func testConflictMergePreservesBothWritersMetadataKeys() async throws {
+        let created = try await makeAtom(metadata: #"{"a":"original"}"#)
+
+        // Writer B lands first (bumps the version).
+        var writerB = created
+        writerB.metadata = #"{"a":"original","fromB":"b"}"#
+        _ = try await AtomRepository.shared.update(writerB)
+
+        // Writer A holds the STALE version and writes a different key.
+        var writerA = created
+        writerA.metadata = #"{"a":"updatedByA","fromA":"a"}"#
+        _ = try await AtomRepository.shared.update(writerA)
+
+        let final = try await AtomRepository.shared.fetch(uuid: created.uuid)
+        let dict = final?.metadataDict
+        XCTAssertEqual(dict?["fromB"] as? String, "b", "Concurrent writer's key must survive the conflict merge")
+        XCTAssertEqual(dict?["fromA"] as? String, "a", "Stale caller's new key must be applied")
+        XCTAssertEqual(dict?["a"] as? String, "updatedByA", "Caller wins for keys both writers touched")
+    }
+
+    /// RC2 aggravator: updateFields wrote "" instead of SQL NULL, manufacturing
+    /// undecodable JSON columns that later fed the decode-default-resave wipe.
+    func testUpdateFieldsNilWritesRealNull() async throws {
+        let created = try await makeAtom(structured: #"{"x":1}"#)
+
+        _ = try await AtomRepository.shared.updateFields(uuid: created.uuid, columns: ["structured": nil])
+
+        let fetched = try await AtomRepository.shared.fetch(uuid: created.uuid)
+        XCTAssertNil(fetched?.structured, "Nil column values must persist as SQL NULL, never as empty string")
+    }
+
+    /// RC6/RC7: updateSync (the quit-time save) used to skip sync tracking, so
+    /// the final edit of a session never reached the cloud.
+    func testUpdateSyncQueuesPendingSyncRow() async throws {
+        let created = try await makeAtom()
+
+        var edited = created
+        edited.body = "close-save edit"
+        let saved = try AtomRepository.shared.updateSync(edited)
+
+        let (queued, pendingFlag): (Int, Int?) = try await CosmoDatabase.shared.asyncRead { db in
+            let count = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = ? AND status = 'pending'",
+                arguments: [saved.uuid]
+            ) ?? 0
+            let pending = try Int.fetchOne(
+                db,
+                sql: "SELECT _local_pending FROM atoms WHERE uuid = ?",
+                arguments: [saved.uuid]
+            )
+            return (count, pending)
+        }
+        XCTAssertEqual(queued, 1, "updateSync must queue the change for sync in the same transaction")
+        XCTAssertEqual(pendingFlag, 1, "updateSync must raise the _local_pending shield")
+        XCTAssertEqual(saved.body, "close-save edit")
+    }
+
+    /// RC1: links used to be whole-blob last-write-wins on conflict, erasing
+    /// relationships the other writer had just created.
+    func testMergedLinksUnionsBothWriters() throws {
+        let fresh = #"[{"type":"reference","uuid":"AAA","entityType":"note"}]"#
+        let caller = #"[{"type":"reference","uuid":"BBB","entityType":"note"}]"#
+
+        let merged = AtomRepository.mergedLinks(fresh: fresh, caller: caller)
+        let data = try XCTUnwrap(merged?.data(using: .utf8))
+        let array = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        let uuids = Set(array.compactMap { $0["uuid"] as? String })
+        XCTAssertEqual(uuids, ["AAA", "BBB"], "Conflict-merged links must union both writers' relationships")
+    }
+
+    /// RC2: a corrupt metadata column must never be overwritten by a
+    /// default-constructed struct (decode-fail → default → re-save wipe).
+    func testCorruptMetadataRefusesDefaultOverwrite() async throws {
+        let corrupt = "not valid json {{{"
+        var atom = Atom.new(type: .idea, title: "Corrupt metadata fixture")
+        atom.metadata = corrupt
+
+        XCTAssertTrue(atom.decodedMetadata(as: IdeaMetadata.self).isCorrupt)
+
+        let afterMutation = atom.withUpdatedIdeaMetadata { _ in }
+        XCTAssertEqual(afterMutation.metadata, corrupt,
+                       "Mutating through a failed decode must refuse the write, preserving the recoverable payload")
+
+        struct Patch: Codable { let mine: String }
+        let afterMerge = atom.mergingMetadataKeys(Patch(mine: "value"))
+        XCTAssertEqual(afterMerge.metadata, corrupt,
+                       "Key-merge must refuse to overwrite an unparseable column")
+    }
+
+    /// RC3: typed-struct round-trips used to drop sibling JSON keys owned by
+    /// other writers.
+    func testMergingMetadataKeysPreservesSiblingKeys() throws {
+        struct Patch: Codable { let mine: String }
+        var atom = Atom.new(type: .note, title: "Sibling keys fixture")
+        atom.metadata = #"{"keep":"me","nested":{"x":1}}"#
+
+        let merged = atom.mergingMetadataKeys(Patch(mine: "value"))
+        let dict = try XCTUnwrap(merged.metadataDict)
+        XCTAssertEqual(dict["keep"] as? String, "me")
+        XCTAssertNotNil(dict["nested"], "Sibling keys the struct doesn't model must survive")
+        XCTAssertEqual(dict["mine"] as? String, "value")
+    }
+
+    /// Deleting an atom soft-deletes its canvas placements; restore must bring
+    /// BOTH back, or the restored atom stays invisible on every canvas.
+    func testRestoreResurrectsCanvasBlocks() async throws {
+        let created = try await makeAtom()
+        let blockId = UUID().uuidString
+
+        try await CosmoDatabase.shared.asyncWrite { [uuid = created.uuid] db in
+            try db.execute(
+                sql: """
+                INSERT INTO canvas_blocks
+                    (id, document_type, document_id, entity_id, entity_uuid, entity_type,
+                     position_x, position_y, is_deleted)
+                VALUES (?, 'home', 0, ?, ?, 'note', 100, 100, 0)
+                """,
+                arguments: [blockId, created.id ?? 0, uuid]
+            )
+        }
+
+        try await AtomRepository.shared.delete(uuid: created.uuid)
+        let deletedFlag = try await CosmoDatabase.shared.asyncRead { db in
+            try Int.fetchOne(db, sql: "SELECT is_deleted FROM canvas_blocks WHERE id = ?", arguments: [blockId])
+        }
+        XCTAssertEqual(deletedFlag, 1, "Soft delete must cascade to canvas placements")
+
+        try await AtomRepository.shared.restore(uuid: created.uuid)
+        let restoredAtom = try await AtomRepository.shared.fetch(uuid: created.uuid)
+        XCTAssertEqual(restoredAtom?.isDeleted, false)
+        let restoredFlag = try await CosmoDatabase.shared.asyncRead { db in
+            try Int.fetchOne(db, sql: "SELECT is_deleted FROM canvas_blocks WHERE id = ?", arguments: [blockId])
+        }
+        XCTAssertEqual(restoredFlag, 0, "Restore must also resurrect the atom's canvas placements")
+    }
+
+    /// "End after N occurrences" is a property of the series, not of each query
+    /// window — the old per-window counter emitted N occurrences per window,
+    /// resurrecting ghost occurrences forever.
+    func testAfterOccurrencesEndsSeriesAcrossQueryWindows() throws {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: Date())
+        let rule = RecurrenceRule.daily(every: 1, endCondition: .afterOccurrences(3))
+
+        let firstWindow = DateInterval(
+            start: start,
+            end: calendar.date(byAdding: .day, value: 4, to: start)!
+        )
+        XCTAssertEqual(rule.occurrenceDates(in: firstWindow, startingFrom: start, calendar: calendar).count, 3)
+
+        let laterWindow = DateInterval(
+            start: calendar.date(byAdding: .day, value: 5, to: start)!,
+            end: calendar.date(byAdding: .day, value: 12, to: start)!
+        )
+        XCTAssertTrue(rule.occurrenceDates(in: laterWindow, startingFrom: start, calendar: calendar).isEmpty,
+                      "A series ended by afterOccurrences must emit nothing in later windows")
+    }
+}

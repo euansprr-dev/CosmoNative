@@ -64,6 +64,8 @@ enum CosmoNotification {
         static let placeBlocksOnCanvas = Notification.Name("com.cosmo.canvas.placeBlocksOnCanvas")
         static let placeEntityOnCanvas = Notification.Name("com.cosmo.canvas.placeEntityOnCanvas")
         static let moveCanvasBlocks = Notification.Name("com.cosmo.canvas.moveBlocks")
+        static let captureCurrentThinkspaceScreenshot = Notification.Name("com.cosmo.canvas.captureCurrentThinkspaceScreenshot")
+        static let skipNextThinkspaceSwitchScreenshot = Notification.Name("com.cosmo.canvas.skipNextThinkspaceSwitchScreenshot")
 
         // Block creation
         static let createNoteBlock = Notification.Name("com.cosmo.canvas.createNoteBlock")
@@ -431,6 +433,10 @@ enum CosmoNotification {
         /// Fired when creator data changes (new creator saved, posts saved, stats updated).
         /// userInfo: ["creatorUUID": String] (optional — nil means reload all)
         static let creatorDataChanged = Notification.Name("com.cosmo.swipefile.creatorDataChanged")
+
+        /// Fired after any swipe library mutation (board membership, saves) so every
+        /// library instance and the sidebar counts stay consistent.
+        static let libraryDidChange = Notification.Name("com.cosmo.swipefile.libraryDidChange")
     }
 
     // MARK: - Automation Notifications
@@ -870,6 +876,114 @@ public struct XPAwardHelper {
                 "colors": dimensionColors
             ]
         )
+    }
+}
+
+// MARK: - Persistence Health
+
+/// Central, app-wide channel for persistence failures, decode corruption, and write conflicts.
+/// Write paths report here instead of swallowing errors with `try?`/print-only catches,
+/// so the UI can surface "save failed" instead of silently losing data.
+@MainActor
+@Observable
+final class PersistenceHealth {
+    static let shared = PersistenceHealth()
+
+    enum IncidentKind: String {
+        case writeFailure
+        case decodeFailure
+        case conflict
+        case syncFailure
+    }
+
+    struct Incident: Identifiable {
+        let id = UUID()
+        let kind: IncidentKind
+        let context: String
+        let detail: String
+        let date = Date()
+    }
+
+    /// Posted whenever an incident is recorded. userInfo: ["kind": String, "context": String]
+    static let incidentRecorded = Notification.Name("com.cosmo.persistence.incidentRecorded")
+
+    private(set) var incidents: [Incident] = []
+    private(set) var counts: [IncidentKind.RawValue: Int] = [:]
+
+    /// Dedupe window: identical kind+context incidents within this interval are
+    /// counted but not re-logged/re-notified, so a corrupt atom rendered in a
+    /// list can't flood the log or the UI.
+    private var lastSeen: [String: Date] = [:]
+    private let dedupeWindow: TimeInterval = 10
+
+    /// Most recent write failure — drives the save-failure banner.
+    var latestWriteFailure: Incident? {
+        incidents.last { $0.kind == .writeFailure || $0.kind == .syncFailure }
+    }
+
+    private init() {}
+
+    func record(_ kind: IncidentKind, context: String, detail: String) {
+        counts[kind.rawValue, default: 0] += 1
+
+        let dedupeKey = "\(kind.rawValue)|\(context)"
+        let now = Date()
+        if let last = lastSeen[dedupeKey], now.timeIntervalSince(last) < dedupeWindow {
+            return
+        }
+        lastSeen[dedupeKey] = now
+
+        let incident = Incident(kind: kind, context: context, detail: detail)
+        incidents.append(incident)
+        if incidents.count > 200 { incidents.removeFirst(incidents.count - 200) }
+        print("🛑 [PersistenceHealth] \(kind.rawValue) — \(context): \(detail)")
+        NotificationCenter.default.post(
+            name: Self.incidentRecorded,
+            object: nil,
+            userInfo: ["kind": kind.rawValue, "context": context]
+        )
+    }
+
+    /// Report from any isolation context — hops to the main actor.
+    nonisolated static func note(_ kind: IncidentKind, context: String, detail: String) {
+        Task { @MainActor in
+            PersistenceHealth.shared.record(kind, context: context, detail: detail)
+        }
+    }
+}
+
+// MARK: - Dirty Editor Registry
+
+/// Registry of synchronous flush closures for surfaces holding unsaved (debounced) edits.
+/// Each editing surface registers on appear and unregisters on disappear; the app's
+/// willTerminate handler calls `flushAll()` synchronously so debounced edits are never
+/// lost on quit. Flush closures must be synchronous and DB-only (no network).
+@MainActor
+final class DirtyEditorRegistry {
+    static let shared = DirtyEditorRegistry()
+
+    private var flushers: [String: () -> Void] = [:]
+
+    private init() {}
+
+    /// Register a synchronous flush closure for an editing surface.
+    /// `id` should be stable per surface instance (e.g. "sticky-<blockId>", "note-<uuid>").
+    func register(id: String, flush: @escaping () -> Void) {
+        flushers[id] = flush
+    }
+
+    func unregister(id: String) {
+        flushers.removeValue(forKey: id)
+    }
+
+    /// Flush every registered surface synchronously. Called at app termination
+    /// (before `.cosmoAppWillTerminate` is posted) and safe to call at any time.
+    func flushAll() {
+        guard !flushers.isEmpty else { return }
+        print("💾 [DirtyEditorRegistry] flushing \(flushers.count) surface(s)")
+        for (_, flush) in flushers {
+            flush()
+        }
     }
 }
 

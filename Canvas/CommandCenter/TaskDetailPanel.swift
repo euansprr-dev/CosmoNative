@@ -30,6 +30,9 @@ struct TaskDetailPanel: View {
     @State private var recurrenceDays: Set<DayOfWeek> = []
     @State private var recurrenceHasLoaded = false
 
+    @State private var showDeleteConfirmation = false
+    @State private var seriesCompletionCount = 0
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: DS.space16) {
@@ -70,6 +73,7 @@ struct TaskDetailPanel: View {
 
                 // Delete
                 deleteSection
+                deleteSeriesButton
             }
             .padding(DS.space16)
         }
@@ -498,21 +502,69 @@ struct TaskDetailPanel: View {
 
     private var deleteSection: some View {
         Button(role: .destructive) {
-            let scope: RecurringTaskTitleEditScope = task.isRecurring ? .currentAndFuture : .currentOnly
-            onDeleted(task.uuid)
-            Task {
-                await viewModel.deleteTask(uuid: task.uuid, recurrenceScope: scope)
+            if task.isOccurrence {
+                // Occurrence rows carry the series template's uuid — default delete removes
+                // just this occurrence; deleting the series needs explicit confirmation.
+                onDeleted(task.uuid)
+                Task { _ = await viewModel.cancelOccurrence(task) }
+            } else if task.isRecurring && task.recurrenceParentUUID == nil {
+                // Series template: deleting it takes the completion history — confirm first.
+                Task {
+                    seriesCompletionCount = await viewModel.seriesCompletionCount(templateUUID: task.uuid)
+                    showDeleteConfirmation = true
+                }
+            } else {
+                let scope: RecurringTaskTitleEditScope = task.isRecurring ? .currentAndFuture : .currentOnly
+                onDeleted(task.uuid)
+                Task {
+                    await viewModel.deleteTask(uuid: task.uuid, recurrenceScope: scope)
+                }
             }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "trash")
                     .font(DS.footnote)
-                Text("Delete Task")
+                Text(task.isOccurrence ? "Remove This Occurrence" : "Delete Task")
                     .font(DS.buttonText)
             }
             .foregroundStyle(DS.red.opacity(0.8))
         }
         .buttonStyle(.plain)
+        .confirmationDialog(
+            "Delete \"\(task.title)\"?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete series and \(seriesCompletionCount) logged completions", role: .destructive) {
+                onDeleted(task.uuid)
+                Task { await viewModel.deleteTask(uuid: task.uuid) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the repeating task and its entire completion history.")
+        }
+    }
+
+    /// Occurrence rows get a second, explicit path to delete the whole series.
+    @ViewBuilder
+    private var deleteSeriesButton: some View {
+        if task.isOccurrence {
+            Button(role: .destructive) {
+                Task {
+                    seriesCompletionCount = await viewModel.seriesCompletionCount(templateUUID: task.uuid)
+                    showDeleteConfirmation = true
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash.slash")
+                        .font(DS.footnote)
+                    Text("Delete Series…")
+                        .font(DS.buttonText)
+                }
+                .foregroundStyle(DS.red.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     // MARK: - Helpers
@@ -549,14 +601,20 @@ struct TaskDetailPanel: View {
     private func saveChecklist() {
         Task {
             do {
-                guard var atom = try await AtomRepository.shared.fetch(uuid: task.uuid) else { return }
-                var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-                let encoded = try JSONEncoder().encode(editedChecklist)
-                meta.checklist = String(data: encoded, encoding: .utf8)
-                atom = atom.withMetadata(meta)
-                try await AtomRepository.shared.update(atom)
+                var applied = false
+                _ = try await AtomRepository.shared.update(uuid: task.uuid) { atom in
+                    guard var meta = atom.decodedTaskMetadataForDetailWrite(context: "TaskDetailPanel.saveChecklist") else { return }
+                    guard let encoded = try? JSONEncoder().encode(editedChecklist) else { return }
+                    meta.checklist = String(data: encoded, encoding: .utf8)
+                    guard let merged = atom.mergingTaskMetadata(meta, context: "TaskDetailPanel.saveChecklist(\(task.uuid.prefix(8)))") else { return }
+                    atom = merged
+                    applied = true
+                }
+                if !applied {
+                    PersistenceHealth.note(.writeFailure, context: "TaskDetailPanel.saveChecklist(\(task.uuid.prefix(8)))", detail: "write refused")
+                }
             } catch {
-                print("❌ TaskDetailPanel: Failed to save checklist: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "TaskDetailPanel.saveChecklist(\(task.uuid.prefix(8)))", detail: error.localizedDescription)
             }
         }
     }
@@ -564,15 +622,16 @@ struct TaskDetailPanel: View {
     private func saveLinkedAtoms() {
         Task {
             do {
-                guard var atom = try await AtomRepository.shared.fetch(uuid: task.uuid) else { return }
-                var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-                let encoded = try JSONEncoder().encode(editedLinkedAtoms)
-                meta.linkedAtoms = String(data: encoded, encoding: .utf8)
-                atom = atom.withMetadata(meta)
-                try await AtomRepository.shared.update(atom)
+                _ = try await AtomRepository.shared.update(uuid: task.uuid) { atom in
+                    guard var meta = atom.decodedTaskMetadataForDetailWrite(context: "TaskDetailPanel.saveLinkedAtoms") else { return }
+                    guard let encoded = try? JSONEncoder().encode(editedLinkedAtoms) else { return }
+                    meta.linkedAtoms = String(data: encoded, encoding: .utf8)
+                    guard let merged = atom.mergingTaskMetadata(meta, context: "TaskDetailPanel.saveLinkedAtoms(\(task.uuid.prefix(8)))") else { return }
+                    atom = merged
+                }
                 await viewModel.refreshTasks()
             } catch {
-                print("❌ TaskDetailPanel: Failed to save linked atoms: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "TaskDetailPanel.saveLinkedAtoms(\(task.uuid.prefix(8)))", detail: error.localizedDescription)
             }
         }
     }
@@ -580,15 +639,16 @@ struct TaskDetailPanel: View {
     private func saveTitleMentions() {
         Task {
             do {
-                guard var atom = try await AtomRepository.shared.fetch(uuid: task.uuid) else { return }
-                var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-                let encoded = try JSONEncoder().encode(editedTitleMentions)
-                meta.titleMentions = String(data: encoded, encoding: .utf8)
-                atom = atom.withMetadata(meta)
-                try await AtomRepository.shared.update(atom)
+                _ = try await AtomRepository.shared.update(uuid: task.uuid) { atom in
+                    guard var meta = atom.decodedTaskMetadataForDetailWrite(context: "TaskDetailPanel.saveTitleMentions") else { return }
+                    guard let encoded = try? JSONEncoder().encode(editedTitleMentions) else { return }
+                    meta.titleMentions = String(data: encoded, encoding: .utf8)
+                    guard let merged = atom.mergingTaskMetadata(meta, context: "TaskDetailPanel.saveTitleMentions(\(task.uuid.prefix(8)))") else { return }
+                    atom = merged
+                }
                 await viewModel.refreshTasks()
             } catch {
-                print("❌ TaskDetailPanel: Failed to save title mentions: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "TaskDetailPanel.saveTitleMentions(\(task.uuid.prefix(8)))", detail: error.localizedDescription)
             }
         }
     }
@@ -760,6 +820,25 @@ struct TaskDetailPanel: View {
                 monthOfYear: nil,
                 endCondition: .never
             )
+        }
+    }
+}
+
+// MARK: - Write Guard
+
+private extension Atom {
+    /// Decode-state guard for detail-panel writes: absent → fresh metadata, corrupt → nil
+    /// (reported via PersistenceHealth). Callers must bail out of the write when this
+    /// returns nil so a corrupt column is never overwritten with defaults.
+    func decodedTaskMetadataForDetailWrite(context: String) -> TaskMetadata? {
+        switch decodedMetadata(as: TaskMetadata.self) {
+        case .absent:
+            return TaskMetadata()
+        case .value(let metadata):
+            return metadata
+        case .corrupt(let error):
+            PersistenceHealth.note(.decodeFailure, context: "\(context)(\(uuid.prefix(8)))", detail: "task metadata undecodable; refusing write (\(error.localizedDescription))")
+            return nil
         }
     }
 }

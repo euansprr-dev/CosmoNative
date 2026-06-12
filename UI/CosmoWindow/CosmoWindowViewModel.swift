@@ -442,7 +442,11 @@ final class CosmoWindowViewModel: ObservableObject {
         contextProvider = provider
         if let editableProvider = provider as? any CosmoEditableSurfaceProvider {
             CosmoEditableSurfaceRegistry.shared.register(editableProvider)
-            CosmoInlineAssistantStore.shared.activateSession(surfaceID: editableProvider.surfaceID)
+            // Binding the assistant session here is gated on idleness: a view
+            // appearing (opening a source, switching panes) must never replace
+            // a conversation the user is in the middle of. Ongoing chats bind
+            // at submit time instead.
+            CosmoInlineAssistantStore.shared.activateSessionIfIdle(surfaceID: editableProvider.surfaceID)
         }
 
         activeContext = CosmoActiveContext(

@@ -331,25 +331,15 @@ class CosmoCore: ObservableObject {
 
             researchProgress = 0.7
 
-            // Save research to database
-            let initialResearch = Research.new(
-                title: "Research: \(query)",
-                query: query,
-                url: nil,
-                sourceType: .website
-            )
-            let research = try await database.asyncWrite { db -> Research in
-                var mutableResearch = initialResearch
-                if let findingsData = try? JSONEncoder().encode(results.findings) {
-                    mutableResearch.findings = String(data: findingsData, encoding: .utf8)
-                } else {
-                    mutableResearch.findings = nil
-                }
-                mutableResearch.summary = results.summary
-                mutableResearch.processingStatus = "completed"
-                try mutableResearch.insert(db)
-                return mutableResearch
+            // Save research as an Atom — the legacy research table no longer
+            // syncs or appears in atom-based UI (rows there were stranded).
+            var researchAtom = Atom.new(type: .research, title: "Research: \(query)")
+            researchAtom.body = results.summary
+            if let findingsData = try? JSONEncoder().encode(results.findings),
+               let findingsJSON = String(data: findingsData, encoding: .utf8) {
+                researchAtom.structured = findingsJSON
             }
+            let research = try await AtomRepository.shared.create(researchAtom)
 
             researchProgress = 1.0
 
@@ -403,45 +393,24 @@ class CosmoCore: ObservableObject {
             var entityId: Int64 = -1
             var entityTitle = ""
 
+            // Route through AtomRepository — legacy ideas/tasks/content tables
+            // no longer sync or appear in atom-based UI (rows were stranded).
+            let atomType: AtomType?
             switch type {
-            case .idea:
-                let idea = try await database.asyncWrite { db -> Idea in
-                    var newIdea = Idea.new(
-                        title: parsed.title,
-                        content: parsed.content ?? details
-                    )
-                    try newIdea.insert(db)
-                    newIdea.id = db.lastInsertedRowID
-                    return newIdea
-                }
-                entityId = idea.id ?? -1
-                entityTitle = idea.title ?? "New Idea"
+            case .idea: atomType = .idea
+            case .task: atomType = .task
+            case .content: atomType = .content
+            default: atomType = nil
+            }
 
-            case .task:
-                let task = try await database.asyncWrite { db -> CosmoTask in
-                    var newTask = CosmoTask.new(title: parsed.title, status: "todo")
-                    try newTask.insert(db)
-                    newTask.id = db.lastInsertedRowID
-                    return newTask
+            if let atomType {
+                var atom = Atom.new(type: atomType, title: parsed.title)
+                if atomType != .task {
+                    atom.body = parsed.content ?? details
                 }
-                entityId = task.id ?? -1
-                entityTitle = task.title ?? "New Task"
-
-            case .content:
-                let content = try await database.asyncWrite { db -> CosmoContent in
-                    var newContent = CosmoContent.new(
-                        title: parsed.title,
-                        body: parsed.content ?? details
-                    )
-                    try newContent.insert(db)
-                    newContent.id = db.lastInsertedRowID
-                    return newContent
-                }
-                entityId = content.id ?? -1
-                entityTitle = content.title ?? "New Content"
-
-            default:
-                break
+                let created = try await AtomRepository.shared.create(atom)
+                entityId = created.id ?? -1
+                entityTitle = created.title ?? parsed.title
             }
 
             return CosmoResponse(

@@ -234,6 +234,7 @@ struct NoteFocusModeView: View {
         self._titlePlainText = State(initialValue: initialDocuments.titlePlainText)
         self._plainContent = State(initialValue: initialDocuments.plainContent)
         self._tags = State(initialValue: initialDocuments.tags)
+        self._lastPersistedTags = State(initialValue: initialDocuments.tags)
         self._createdAt = State(initialValue: initialDocuments.createdAt)
         self._noteStyle = State(initialValue: NoteDocumentStyle.load(fromMetadata: atom.metadata))
     }
@@ -259,6 +260,13 @@ struct NoteFocusModeView: View {
     @State private var observationCancellable: AnyCancellable?
     @State private var isInitialLoad = true
     @State private var hasLocalBodyEdits = false
+    /// Title/tags/style edits since load — gates the close save together with
+    /// hasLocalBodyEdits so a zero-edit session never writes its stale
+    /// open-time snapshot over newer external writes.
+    @State private var hasLocalMetaEdits = false
+    /// Tags as last loaded from / written to the DB — lets the observation tell
+    /// an echo apart from clobbering unsaved local tag edits.
+    @State private var lastPersistedTags: [String] = []
 
     // Sidebar state
     @State private var sidebarVisible = false
@@ -413,6 +421,7 @@ struct NoteFocusModeView: View {
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             startEditingLockRefresh()
+            restoreDeadLetterIfNeeded()
             startObservingAtom()
             loadLinkedAtoms()
             listenForAtomPicker()
@@ -501,6 +510,15 @@ struct NoteFocusModeView: View {
         }
         .onChange(of: noteStyle) { _, _ in
             guard !isInitialLoad else { return }
+            hasLocalMetaEdits = true
+            triggerAutoSave()
+        }
+        .onChange(of: tags) { _, newTags in
+            // Tag edits were never autosaved — they only reached the DB if some
+            // other field happened to save afterwards. Skip the echo case where
+            // the observation just applied the persisted tags.
+            guard !isInitialLoad, newTags != lastPersistedTags else { return }
+            hasLocalMetaEdits = true
             triggerAutoSave()
         }
         .onChange(of: isEditingTitle) { _, isEditing in
@@ -1345,6 +1363,7 @@ struct NoteFocusModeView: View {
                                 titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
                             }
                             if changed {
+                                hasLocalMetaEdits = true
                                 triggerAutoSave()
                             }
                         },
@@ -1669,7 +1688,15 @@ struct NoteFocusModeView: View {
                         NoteFocusLog.debug("[FOCUS-NOTE] 🔔 observation SKIPPED body (not initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count) localLen=\(plainContent.count) ⚠️ DIVERGED=\(nextBodyPlainText != plainContent)")
                     }
 
-                    tags = fetchedAtom.tagsList
+                    // Tags: only apply observed values when the editor isn't open and
+                    // local tags don't diverge from the last persisted snapshot —
+                    // otherwise the observation echo reverts an in-progress edit.
+                    if !showTagEditor, tags == lastPersistedTags, fetchedAtom.tagsList != tags {
+                        lastPersistedTags = fetchedAtom.tagsList
+                        tags = fetchedAtom.tagsList
+                    } else if tags == fetchedAtom.tagsList {
+                        lastPersistedTags = fetchedAtom.tagsList
+                    }
                     if let date = ISO8601.date(from: fetchedAtom.createdAt) {
                         createdAt = date
                     }
@@ -1783,7 +1810,15 @@ struct NoteFocusModeView: View {
     /// Immediate synchronous save (used on close) — blocks until DB write completes.
     /// Guarantees data is persisted before the view/app exits.
     private func saveAtomImmediately() {
-        NoteFocusLog.debug("[FOCUS-NOTE] saveAtomImmediately() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+        NoteFocusLog.debug("[FOCUS-NOTE] saveAtomImmediately() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) hasLocalBodyEdits=\(hasLocalBodyEdits) hasLocalMetaEdits=\(hasLocalMetaEdits) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+        // Dirty gate: a session with zero local edits must not write its stale
+        // open-time snapshot over newer external writes (agent edits, another
+        // device, a canvas block save). Body edits, title/tags/style edits each
+        // set their flag; autosaves clear them once persisted.
+        guard hasLocalBodyEdits || hasLocalMetaEdits else {
+            NoteFocusLog.debug("[FOCUS-NOTE] saveAtomImmediately() SKIPPED — no local edits, avoiding stale overwrite uuid=\(atom.uuid)")
+            return
+        }
         let titleDocumentCopy = titleDocument
         let bodyDocumentCopy = bodyDocument
         let plainContentCopy = plainContent
@@ -1841,6 +1876,10 @@ struct NoteFocusModeView: View {
             if plainContent == plainContentCopy {
                 hasLocalBodyEdits = false
             }
+            if tags == tagsCopy && titleDocument == titleDocumentCopy && noteStyle == noteStyleCopy {
+                hasLocalMetaEdits = false
+            }
+            lastPersistedTags = tagsCopy
             lastRichCheckpointAt = Date()
             postNoteFocusState(snapshot: snapshot, atomUUID: uuid, notifyRichDocumentObservers: false)
             // Sync: queue for Supabase push
@@ -1853,8 +1892,107 @@ struct NoteFocusModeView: View {
                 }
             }
         } catch {
+            // The close/termination save is the LAST chance to persist this
+            // session — dead-letter the snapshot so the next open can restore it.
+            // (The intentional empty-overwrite rejection is not a loss — skip it.)
+            if !(error is NoteSaveError) {
+                stashDeadLetter(
+                    uuid: uuid,
+                    body: plainContentCopy,
+                    title: RichDocumentPersistence.titlePlainText(from: titleDocumentCopy),
+                    tags: tagsCopy,
+                    bodyDocument: bodyDocumentCopy,
+                    titleDocument: titleDocumentCopy
+                )
+            }
+            PersistenceHealth.note(.writeFailure, context: "noteFocus.closeSave", detail: "uuid=\(uuid): \(error)")
             print("Failed to save note (sync): \(error)")
         }
+    }
+
+    // MARK: - Dead Letter (failed close save)
+
+    private struct NoteSaveDeadLetter: Codable {
+        var body: String
+        var title: String
+        var tags: [String]
+        var bodyDocumentJSON: String?
+        var titleDocumentJSON: String?
+        var savedAt: Date
+    }
+
+    private static func deadLetterKey(forAtomUUID uuid: String) -> String {
+        "noteSaveDeadLetter.\(uuid)"
+    }
+
+    private func stashDeadLetter(
+        uuid: String,
+        body: String,
+        title: String,
+        tags: [String],
+        bodyDocument: RichDocument,
+        titleDocument: RichDocument
+    ) {
+        let encoder = JSONEncoder()
+        let letter = NoteSaveDeadLetter(
+            body: body,
+            title: title,
+            tags: tags,
+            bodyDocumentJSON: (try? encoder.encode(bodyDocument)).flatMap { String(data: $0, encoding: .utf8) },
+            titleDocumentJSON: (try? encoder.encode(titleDocument)).flatMap { String(data: $0, encoding: .utf8) },
+            savedAt: Date()
+        )
+        guard let data = try? encoder.encode(letter) else { return }
+        UserDefaults.standard.set(data, forKey: Self.deadLetterKey(forAtomUUID: uuid))
+        NoteFocusLog.debug("[FOCUS-NOTE] stashed dead letter — uuid=\(uuid) bodyLen=\(body.count)")
+    }
+
+    /// If a previous session's close save failed, its snapshot was dead-lettered.
+    /// When the DB body still differs, restore the snapshot as the editor content
+    /// and persist it; either way the key is cleared.
+    private func restoreDeadLetterIfNeeded() {
+        let key = Self.deadLetterKey(forAtomUUID: atom.uuid)
+        guard let data = UserDefaults.standard.data(forKey: key) else { return }
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        guard let letter = try? JSONDecoder().decode(NoteSaveDeadLetter.self, from: data) else { return }
+
+        let restoredBody = letter.body
+        guard !restoredBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              restoredBody != plainContent else {
+            return
+        }
+
+        if let json = letter.bodyDocumentJSON,
+           let docData = json.data(using: .utf8),
+           let doc = try? JSONDecoder().decode(RichDocument.self, from: docData) {
+            bodyDocument = doc
+        } else {
+            bodyDocument = RichDocument.migrateLegacy(restoredBody)
+        }
+        plainContent = bodyDocument.plainText
+        if let json = letter.titleDocumentJSON,
+           let docData = json.data(using: .utf8),
+           let doc = try? JSONDecoder().decode(RichDocument.self, from: docData) {
+            titleDocument = doc
+            titlePlainText = RichDocumentPersistence.titlePlainText(from: doc)
+        } else if !letter.title.isEmpty {
+            titleDocument = RichDocument.migrateLegacy(letter.title)
+            titlePlainText = letter.title
+        }
+        if !letter.tags.isEmpty {
+            tags = letter.tags
+        }
+        updateBodyHeadingOutline(from: bodyDocument)
+        updateTextAnalysisImmediately(for: plainContent)
+
+        // Mark dirty + leave initial-load mode so the GRDB observation's
+        // initial fire can't clobber the restored content, then persist it.
+        hasLocalBodyEdits = true
+        hasLocalMetaEdits = true
+        isInitialLoad = false
+        saveAtomImmediately()
+        PersistenceHealth.note(.conflict, context: "noteFocus.deadLetter", detail: "restored unsaved close snapshot for \(atom.uuid) (\(restoredBody.count) chars)")
+        print("📨 Restored dead-lettered note snapshot for \(atom.uuid)")
     }
 
     /// Async save with completion callback (used for debounced auto-save during editing)
@@ -1902,6 +2040,13 @@ struct NoteFocusModeView: View {
                         )
                     }.value
 
+                    // Re-check right before the write: the close save may have run
+                    // (saveClosed) or a newer autosave superseded this generation
+                    // while the snapshot was being prepared.
+                    guard await MainActor.run(body: { !saveClosed && saveGeneration == generation }) else {
+                        return
+                    }
+
                     try await database.asyncWrite { db in
                         guard NoteWritePolicy.allowsBodyWrite(
                             existingBody: existingBodyForWrite,
@@ -1937,6 +2082,10 @@ struct NoteFocusModeView: View {
                         if plainContent == contentCopy {
                             hasLocalBodyEdits = false
                         }
+                        if tags == tagsCopy && titlePlainText == titleCopy && noteStyle == noteStyleCopy {
+                            hasLocalMetaEdits = false
+                        }
+                        lastPersistedTags = tagsCopy
                         postNoteFocusState(snapshot: snapshot, atomUUID: uuid)
                     }
 
@@ -2001,6 +2150,10 @@ struct NoteFocusModeView: View {
                         if plainContent == contentCopy {
                             hasLocalBodyEdits = false
                         }
+                        if tags == tagsCopy && titlePlainText == titleCopy && noteStyle == noteStyleCopy {
+                            hasLocalMetaEdits = false
+                        }
+                        lastPersistedTags = tagsCopy
                         lastRichCheckpointAt = requestedAt
                         postNoteFocusState(snapshot: snapshot, atomUUID: uuid)
                     }
@@ -2017,6 +2170,9 @@ struct NoteFocusModeView: View {
                     await MainActor.run { completion(true) }
                 }
             } catch {
+                if !(error is NoteSaveError) {
+                    PersistenceHealth.note(.writeFailure, context: "noteFocus.autosave", detail: "uuid=\(uuid): \(error)")
+                }
                 print("Failed to save note: \(error)")
                 if let completion {
                     await MainActor.run { completion(false) }

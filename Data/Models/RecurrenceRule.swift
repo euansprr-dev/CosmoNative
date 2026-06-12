@@ -443,28 +443,36 @@ extension RecurrenceRule {
         var cursor = calendar.startOfDay(for: startDate)
         let endDay = calendar.startOfDay(for: interval.end)
         let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: startDate)
+        // Counts every occurrence of the series from startDate — including ones BEFORE
+        // the queried interval — so "end after N" is a property of the series, not of
+        // each query window (the old per-window count emitted N occurrences per window).
         var occurrenceIndex = 0
 
         while cursor < interval.end && cursor <= endDay {
             let candidate = merge(date: cursor, timeComponents: timeComponents, calendar: calendar)
 
             if candidate >= startDate,
-               candidate >= interval.start,
-               candidate < interval.end,
                includes(candidate, startingFrom: startDate, calendar: calendar) {
+                let withinEndCondition: Bool
                 switch endCondition {
                 case .never:
-                    dates.append(candidate)
+                    withinEndCondition = true
                 case .onDate(let endDate):
-                    if calendar.startOfDay(for: candidate) <= calendar.startOfDay(for: endDate) {
-                        dates.append(candidate)
-                    }
+                    withinEndCondition = calendar.startOfDay(for: candidate) <= calendar.startOfDay(for: endDate)
                 case .afterOccurrences(let max):
-                    if occurrenceIndex < max {
-                        dates.append(candidate)
-                    }
+                    withinEndCondition = occurrenceIndex < max
+                }
+
+                if withinEndCondition,
+                   candidate >= interval.start,
+                   candidate < interval.end {
+                    dates.append(candidate)
                 }
                 occurrenceIndex += 1
+
+                if case .afterOccurrences(let max) = endCondition, occurrenceIndex >= max {
+                    break
+                }
             }
 
             guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }

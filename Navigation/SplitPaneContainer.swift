@@ -53,12 +53,25 @@ struct SplitPaneContainer<MainContent: View>: View {
                     .frame(width: paneColumnWidth, height: geo.size.height)
                     .clipped()
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .onDisappear {
+                        // Fires when the slide-out transition completes — the
+                        // deck is truly off screen, canvas captures are safe
+                        // again. Guarded: if a pane reopened mid-transition, a
+                        // stale instance's disappearance must not clear it.
+                        if !paneManager.isActive {
+                            PaneDeckPresentationState.shared.setOnScreen(false)
+                        }
+                    }
             }
         }
     }
 }
 
 // MARK: - Pane Deck
+
+/// Width of a collapsed pane spine. Shared by the deck layout and the slot so
+/// the spine never stretches to fill a slot that is mid-collapse.
+private let paneSpineWidth: CGFloat = 44
 
 /// The focus + spine deck. Spines keep their opening-order position so they
 /// don't shuffle when focus moves; only widths animate.
@@ -67,7 +80,7 @@ struct PaneDeckView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let spineWidth: CGFloat = 44
+    private let spineWidth: CGFloat = paneSpineWidth
     private let slotSpacing: CGFloat = 6
 
     var body: some View {
@@ -83,7 +96,7 @@ struct PaneDeckView: View {
                         isPinned: paneManager.pinnedPaneId == pane.id,
                         isActive: paneManager.activePaneId == pane.id,
                         isContextOwner: paneManager.contextOwnerPaneId == pane.id,
-                        expandedWidth: layout.focusedWidth,
+                        expandedWidth: layout.contentWidths[pane.id] ?? slotWidth,
                         position: index + 1,
                         onFocus: {
                             withAnimation(deckSpring) {
@@ -120,13 +133,17 @@ struct PaneDeckView: View {
     private struct DeckLayout {
         var widths: [String: CGFloat]
         var expandedIds: Set<String>
-        var focusedWidth: CGFloat
+        /// Per-pane width the content body lays out at: a pane's own expanded
+        /// target width. Collapsed spines pre-lay their content at the focused
+        /// width (what they'd get when focused) so expansion never reflows;
+        /// a pinned pane lays out at its 40% slot, not the focused pane's 60%.
+        var contentWidths: [String: CGFloat]
     }
 
     private func deckLayout(columnWidth: CGFloat) -> DeckLayout {
         let panes = paneManager.panes
         guard !panes.isEmpty else {
-            return DeckLayout(widths: [:], expandedIds: [], focusedWidth: 0)
+            return DeckLayout(widths: [:], expandedIds: [], contentWidths: [:])
         }
 
         // There is always exactly one focused pane when panes exist.
@@ -162,7 +179,14 @@ struct PaneDeckView: View {
             }
         }
 
-        return DeckLayout(widths: widths, expandedIds: expanded, focusedWidth: focusedWidth)
+        var contentWidths: [String: CGFloat] = [:]
+        for pane in panes {
+            contentWidths[pane.id] = expanded.contains(pane.id)
+                ? (widths[pane.id] ?? focusedWidth)
+                : focusedWidth
+        }
+
+        return DeckLayout(widths: widths, expandedIds: expanded, contentWidths: contentWidths)
     }
 }
 
@@ -199,17 +223,24 @@ private struct PaneSlotView: View {
             .opacity(isExpanded ? 1 : 0)
             .allowsHitTesting(isExpanded)
             .accessibilityHidden(!isExpanded)
-            .animation(.easeOut(duration: 0.1), value: isExpanded)
+            // Collapsing content must outlive the width spring (~0.3s) — a fast
+            // fade leaves the still-wide slot as a blank veil mid-slide.
+            .animation(.easeOut(duration: isExpanded ? 0.12 : 0.3), value: isExpanded)
 
             PaneSpineView(
                 pane: pane,
                 position: position,
+                isInteractive: !isExpanded,
                 onFocus: onFocus,
                 onClose: onClose
             )
+            // Fixed spine width: the slot is wider than 44pt for most of the
+            // collapse spring, and a maxWidth-infinity spine would stretch
+            // across it as a half-screen glass sheet.
+            .frame(width: paneSpineWidth)
             .opacity(isExpanded ? 0 : 1)
             .allowsHitTesting(!isExpanded)
-            .animation(.easeOut(duration: 0.1), value: isExpanded)
+            .animation(.easeOut(duration: 0.15).delay(isExpanded ? 0 : 0.15), value: isExpanded)
         }
         .overlay(alignment: .topLeading) {
             if isPinned && isExpanded {
@@ -239,6 +270,9 @@ private struct PaneSlotView: View {
 private struct PaneSpineView: View {
     let pane: PaneContent
     let position: Int
+    /// False while the slot is expanded — the spine is then an invisible
+    /// crossfade layer and must never react to hover or schedule dwell focus.
+    let isInteractive: Bool
     let onFocus: () -> Void
     let onClose: () -> Void
 
@@ -267,6 +301,15 @@ private struct PaneSpineView: View {
         .accessibilityAddTraits(.isButton)
         .task(id: pane.id) {
             title = await PaneSpineInfo.title(for: pane)
+        }
+        .onChange(of: isInteractive) { _, interactive in
+            // The slot expanded under the pointer — hover-exit won't fire for
+            // the now-hidden spine, so clear the dwell and hover state manually.
+            if !interactive {
+                dwellTask?.cancel()
+                dwellTask = nil
+                isHovered = false
+            }
         }
         .onDisappear {
             dwellTask?.cancel()
@@ -302,6 +345,11 @@ private struct PaneSpineView: View {
     }
 
     private var verticalTitle: some View {
+        // The text lays out 168pt wide and is only VISUALLY rotated —
+        // rotationEffect does not rotate its hit-test frame, so without the
+        // hit-testing kill below the title is a 168pt-wide horizontal hover
+        // strip poking ~70pt past each side of the 44pt spine (it reached the
+        // neighboring document's scrollbar and triggered dwell focus).
         Text(title.isEmpty ? PaneSpineInfo.fallbackTitle(for: pane) : title)
             .font(DS.subheadline.weight(.medium))
             .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
@@ -310,6 +358,8 @@ private struct PaneSpineView: View {
             .frame(width: 168, alignment: .leading)
             .rotationEffect(.degrees(90), anchor: .center)
             .frame(width: 28, height: 176)
+            .clipped()
+            .allowsHitTesting(false)
     }
 
     private var tintRule: some View {
@@ -334,11 +384,15 @@ private struct PaneSpineView: View {
     /// Resting the pointer on a spine for a beat focuses it — reading the deck
     /// becomes pure pointer travel, no clicks. (Click still works instantly.)
     private func handleHover(_ hovering: Bool) {
+        // Hover can fire for the hidden spine layer of an expanded slot
+        // (allowsHitTesting doesn't tear down hover tracking) — never let it
+        // schedule a dwell there or the deck refocuses under a resting pointer.
+        let active = hovering && isInteractive
         withAnimation(reduceMotion ? nil : ProMotionSprings.hover) {
-            isHovered = hovering
+            isHovered = active
         }
         dwellTask?.cancel()
-        guard hovering else {
+        guard active else {
             dwellTask = nil
             return
         }

@@ -632,18 +632,30 @@ enum RichDocumentSerializer {
         var lines: [ParsedAttributedLine] = []
         var lineStart = 0
 
+        // Blocks are delimited by hard newlines only (\n, \r, \r\n). U+2028
+        // line separators are soft breaks within a block (Shift+Return) and
+        // must survive the round trip as inline content.
         while lineStart < string.length {
-            let lineRange = string.lineRange(for: NSRange(location: min(lineStart, max(0, string.length - 1)), length: 0))
-            if lineRange.location + lineRange.length > attributedString.length {
-                break
+            var lineEnd = lineStart
+            while lineEnd < string.length {
+                let character = string.character(at: lineEnd)
+                if character == 0x0A || character == 0x0D { break }
+                lineEnd += 1
             }
 
-            let rawLine = attributedString.attributedSubstring(from: lineRange)
-            let trimmedLine = trimTrailingNewline(from: rawLine)
-            lines.append(parsedLine(from: trimmedLine))
+            let rawLine = attributedString.attributedSubstring(
+                from: NSRange(location: lineStart, length: lineEnd - lineStart)
+            )
+            lines.append(parsedLine(from: rawLine))
 
-            lineStart = lineRange.location + lineRange.length
-            if lineStart >= string.length { break }
+            if lineEnd < string.length {
+                let terminator = string.character(at: lineEnd)
+                lineEnd += 1
+                if terminator == 0x0D, lineEnd < string.length, string.character(at: lineEnd) == 0x0A {
+                    lineEnd += 1
+                }
+            }
+            lineStart = lineEnd
         }
 
         if string.length > 0 {
@@ -709,20 +721,6 @@ enum RichDocumentSerializer {
         }
 
         return blocks
-    }
-
-    private static func trimTrailingNewline(from attributedString: NSAttributedString) -> NSAttributedString {
-        let mutable = NSMutableAttributedString(attributedString: attributedString)
-        while mutable.length > 0 {
-            let lastRange = NSRange(location: mutable.length - 1, length: 1)
-            let char = (mutable.string as NSString).substring(with: lastRange)
-            if char == "\n" || char == "\r" {
-                mutable.deleteCharacters(in: lastRange)
-            } else {
-                break
-            }
-        }
-        return mutable
     }
 
     private static func block(from line: NSAttributedString) -> RichBlock {

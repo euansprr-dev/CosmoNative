@@ -12,7 +12,7 @@ enum CreatorImportState: Equatable {
     case awaitingConfirmation(ImportCostEstimate)
     case fetchingPosts(fetched: Int, total: Int)
     case saving(saved: Int, total: Int)
-    case complete(saved: Int, enriched: Int)
+    case complete(saved: Int, enriched: Int, failed: Int)
     case error(String)
 
     static func == (lhs: CreatorImportState, rhs: CreatorImportState) -> Bool {
@@ -22,7 +22,7 @@ enum CreatorImportState: Equatable {
         case (.awaitingConfirmation(let a), .awaitingConfirmation(let b)): return a == b
         case (.fetchingPosts(let a1, let a2), .fetchingPosts(let b1, let b2)): return a1 == b1 && a2 == b2
         case (.saving(let a1, let a2), .saving(let b1, let b2)): return a1 == b1 && a2 == b2
-        case (.complete(let a1, let a2), .complete(let b1, let b2)): return a1 == b1 && a2 == b2
+        case (.complete(let a1, let a2, let a3), .complete(let b1, let b2, let b3)): return a1 == b1 && a2 == b2 && a3 == b3
         case (.error(let a), .error(let b)): return a == b
         default: return false
         }
@@ -218,11 +218,16 @@ final class CreatorImportEngine {
         var savedCount = 0
         var savedAtomUUIDs: [String] = []
         var transcribableUUIDs: [String] = []
+        // Track which posts ACTUALLY saved — marking `prefix(savedCount)` as
+        // existing mislabeled posts when a failure happened mid-batch.
+        var savedShortcodes: [String] = []
+        var failedShortcodes: [String] = []
 
         for post in postsToSave {
             do {
                 let atom = try await savePostAsSwipe(post, creatorAtom: creatorAtom)
                 savedAtomUUIDs.append(atom.uuid)
+                savedShortcodes.append(post.shortcode)
                 savedCount += 1
                 importState = .saving(saved: savedCount, total: postsToSave.count)
 
@@ -231,7 +236,13 @@ final class CreatorImportEngine {
                     transcribableUUIDs.append(atom.uuid)
                 }
             } catch {
+                failedShortcodes.append(post.shortcode)
                 print("[CreatorImport] Failed to save post \(post.shortcode): \(error)")
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "CreatorImportEngine.saveSelectedPosts",
+                    detail: "post \(post.shortcode) failed to save: \(error.localizedDescription)"
+                )
             }
         }
 
@@ -244,13 +255,16 @@ final class CreatorImportEngine {
         let enrichedCount = await enrichExistingSwipes(creatorUUID: creatorAtom.uuid)
         await updateCreatorStats(creatorAtom)
 
-        // Add saved shortcodes to existing set
-        for post in postsToSave.prefix(savedCount) {
-            existingShortcodes.insert(post.shortcode)
+        // Add the ACTUALLY-saved shortcodes to the existing set
+        for shortcode in savedShortcodes {
+            existingShortcodes.insert(shortcode)
         }
         selectedPostIds.removeAll()
 
-        importState = .complete(saved: savedCount, enriched: enrichedCount)
+        if !failedShortcodes.isEmpty {
+            print("[CreatorImport] \(failedShortcodes.count) post(s) failed to save: \(failedShortcodes.joined(separator: ", "))")
+        }
+        importState = .complete(saved: savedCount, enriched: enrichedCount, failed: failedShortcodes.count)
 
         // Notify views to refresh
         NotificationCenter.default.post(

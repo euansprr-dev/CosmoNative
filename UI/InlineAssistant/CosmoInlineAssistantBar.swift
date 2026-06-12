@@ -28,6 +28,32 @@ enum CosmoInlineAssistantBarPresentationPolicy {
     }
 }
 
+enum CosmoInlineAssistantBarEscapeAction: Equatable {
+    case dismissMenus
+    case clearComposer
+    case collapse
+    case ignore
+}
+
+/// Spotlight's Escape ladder: first Esc closes an open inline menu, the next
+/// clears the draft, the next collapses the bar. While a run is in flight
+/// Escape is left alone — ⌘. is the stop affordance, and silently eating the
+/// key while nothing visibly changes would read as a dead control.
+enum CosmoInlineAssistantBarEscapePolicy {
+    static func action(
+        isExpanded: Bool,
+        isMenuVisible: Bool,
+        hasComposerText: Bool,
+        isProcessing: Bool
+    ) -> CosmoInlineAssistantBarEscapeAction {
+        guard isExpanded else { return .ignore }
+        if isMenuVisible { return .dismissMenus }
+        guard !isProcessing else { return .ignore }
+        if hasComposerText { return .clearComposer }
+        return .collapse
+    }
+}
+
 enum CosmoInlineAssistantBarProcessingPolicy {
     static func leadingText(isProcessing: Bool) -> String {
         isProcessing ? "Working..." : ""
@@ -108,6 +134,7 @@ struct CosmoInlineAssistantBar: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     let onOpenPane: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isComposerFocused = false
     @State private var isHovering = false
     @State private var isStudioPresented = false
@@ -121,6 +148,11 @@ struct CosmoInlineAssistantBar: View {
     @State private var contextMenuFrame: CGRect = .zero
     @State private var availableWidth: CGFloat = 0
     @State private var mouseDownMonitor: Any?
+    @State private var keyDownMonitor: Any?
+    // Set when Escape collapses the bar while the cursor is still parked on it,
+    // so hover doesn't instantly re-expand what the user just dismissed.
+    // Cleared the moment the pointer leaves or the pill is clicked.
+    @State private var isHoverSuppressed = false
     private let skillRegistry = CosmoInlineSkillRegistry()
 
     var body: some View {
@@ -140,6 +172,7 @@ struct CosmoInlineAssistantBar: View {
                     // first real request streams from a warm cache.
                     CosmoInlineAssistantCacheWarmer.warmIfNeeded()
                 } else {
+                    isHoverSuppressed = false
                     collapseIfIdle()
                 }
             }
@@ -156,8 +189,14 @@ struct CosmoInlineAssistantBar: View {
                 syncComposerMenus(text: text)
                 store.refreshSkillSuggestion()
             }
-            .onAppear { installMouseDownMonitorIfNeeded() }
-            .onDisappear { removeMouseDownMonitor() }
+            .onAppear {
+                installMouseDownMonitorIfNeeded()
+                installKeyDownMonitorIfNeeded()
+            }
+            .onDisappear {
+                removeMouseDownMonitor()
+                removeKeyDownMonitor()
+            }
             .sheet(isPresented: $isStudioPresented) {
                 CosmoAssistantStudioView { isStudioPresented = false }
             }
@@ -166,24 +205,24 @@ struct CosmoInlineAssistantBar: View {
 
     // MARK: - Morphing container
 
-    // A single persistent surface that grows from a compact orb into the full
-    // composer. The container width animates explicitly (the "bubble"), the
-    // background/shadow live behind the clip so the bar reveals as it stretches,
-    // and the trailing controls materialise a beat later — the Spotlight feel.
+    // A single persistent surface that stretches from a small empty pill into the
+    // full composer. Content is laid out at its final size and the animating clip
+    // window reveals it (the Dynamic Island move) — width, height, corner radius,
+    // and shadow all ride one spring so the bar reads as a single object
+    // stretching, never parts assembling.
     private var morphingBar: some View {
         barContent
-            .frame(width: expandedWidth, alignment: .leading)
-            .frame(width: barWidth, alignment: .leading)
-            .frame(minHeight: 52)
+            .frame(width: expandedWidth, height: barHeight, alignment: .leading)
+            .frame(width: barWidth, height: barHeight, alignment: .leading)
             .clipShape(barShape)
             .background {
                 barShape
-                    .fill(DS.surfaceCard.opacity(0.96))
+                    .fill(DS.surfaceCard.opacity(isExpanded ? 0.96 : 1.0))
                     .shadow(
-                        color: Color.black.opacity(isExpanded ? 0.14 : 0.10),
-                        radius: isExpanded ? 22 : 14,
+                        color: Color.black.opacity(isExpanded ? 0.14 : 0.08),
+                        radius: isExpanded ? 22 : 10,
                         x: 0,
-                        y: isExpanded ? 10 : 7
+                        y: isExpanded ? 10 : 4
                     )
             }
             .background(frameReader)
@@ -192,30 +231,36 @@ struct CosmoInlineAssistantBar: View {
             .animation(morphAnimation, value: isExpanded)
     }
 
+    // Everything inside — sparkles, chips, composer, buttons — fades in as ONE
+    // unit while the clip stretches over it, so nothing pops in out of order.
+    // The offset rides the same spring as the container, keeping the content
+    // physically attached to the surface; collapse drops it instantly so the
+    // pill is already clean while the surface is still shrinking.
     private var barContent: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             iconView
             trailingControls
-                .opacity(isExpanded ? 1 : 0)
-                .blur(radius: isExpanded ? 0 : 4)
-                .scaleEffect(isExpanded ? 1 : 0.92, anchor: .leading)
-                .offset(x: isExpanded ? 0 : -10)
-                .disabled(!isExpanded)
-                .animation(revealAnimation, value: isExpanded)
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
+        .padding(.leading, 10)
+        .padding(.trailing, 5)
+        .padding(.vertical, 5)
+        .disabled(!isExpanded)
+        .opacity(isExpanded ? 1 : 0)
+        .animation(contentFade, value: isExpanded)
+        .offset(x: isExpanded ? 0 : -8)
+        .animation(morphAnimation, value: isExpanded)
     }
 
-    /// The orb wears the assistant's state: each phase gets its own symbol and
-    /// motion so progress reads as character, not a generic spinner.
+    /// Only visible once the bar opens — the collapsed pill stays clean. Wears
+    /// the assistant's state: each phase gets its own symbol and motion so
+    /// progress reads as character, not a generic spinner.
     private var iconView: some View {
         Image(systemName: phaseSymbolName)
-            .font(DS.title2)
+            .font(DS.callout.weight(.semibold))
             .foregroundStyle(phaseIconColor)
-            .frame(width: 28, height: 28)
+            .frame(width: compactControlSize, height: compactControlSize)
             .symbolEffect(.pulse, options: .repeating, isActive: store.phase.isWorking)
+            .symbolEffect(.bounce, options: .nonRepeating, value: reduceMotion ? false : isExpanded)
             .contentTransition(.symbolEffect(.replace))
             .animation(ProMotionSprings.snappy, value: phaseSymbolName)
             .accessibilityHidden(true)
@@ -235,7 +280,7 @@ struct CosmoInlineAssistantBar: View {
     }
 
     private var controlsRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             activeSkillChip
             skillSuggestionChip
             if store.isProcessing {
@@ -277,8 +322,8 @@ struct CosmoInlineAssistantBar: View {
 
             Button(action: onOpenPane) {
                 Image(systemName: "sidebar.right")
-                    .font(DS.callout.weight(.medium))
-                    .frame(width: 32, height: 32)
+                    .font(DS.footnote.weight(.semibold))
+                    .frame(width: compactControlSize, height: compactControlSize)
             }
             .buttonStyle(.plain)
             .cosmoClickCursor()
@@ -288,8 +333,8 @@ struct CosmoInlineAssistantBar: View {
 
             Button(action: submitOrStop) {
                 Image(systemName: store.isProcessing ? "stop.fill" : "arrow.up")
-                    .font(DS.callout.weight(.bold))
-                    .frame(width: 34, height: 34)
+                    .font(DS.footnote.weight(.bold))
+                    .frame(width: compactControlSize, height: compactControlSize)
                     .background(sendFill, in: Circle())
                     .foregroundStyle(sendText)
             }
@@ -373,7 +418,7 @@ struct CosmoInlineAssistantBar: View {
             )
             .frame(width: min(max(expandedWidth * 0.62, 360), 460))
             .background(contextMenuFrameReader)
-            .offset(x: 16, y: -64)
+            .offset(x: 16, y: menuVerticalOffset)
             .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
             .zIndex(10)
         }
@@ -406,7 +451,7 @@ struct CosmoInlineAssistantBar: View {
             )
             .frame(width: min(max(expandedWidth * 0.58, 340), 430))
             .background(contextMenuFrameReader)
-            .offset(x: 16, y: -64)
+            .offset(x: 16, y: menuVerticalOffset)
             .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
             .zIndex(11)
         }
@@ -457,8 +502,10 @@ struct CosmoInlineAssistantBar: View {
 
     // MARK: - Derived presentation
 
+    // Capsule in both states: height matches the canvas bottom controls, while
+    // width, shadow, and content fade keep the original Dynamic Island morph.
     private var barShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
+        RoundedRectangle(cornerRadius: barHeight / 2, style: .continuous)
     }
 
     private var promptText: String {
@@ -476,7 +523,7 @@ struct CosmoInlineAssistantBar: View {
 
     private var isExpanded: Bool {
         isPinnedOpen || CosmoInlineAssistantBarPresentationPolicy.isExpanded(
-            isHovering: isHovering,
+            isHovering: isHovering && !isHoverSuppressed,
             isFocused: isComposerFocused,
             hasComposerText: !trimmedComposerText.isEmpty,
             isProcessing: store.isProcessing || store.statusText != nil || isContextMenuVisible || isSkillMenuVisible
@@ -484,6 +531,12 @@ struct CosmoInlineAssistantBar: View {
     }
 
     private var collapsedWidth: CGFloat { 56 }
+
+    private var barHeight: CGFloat { 34 }
+
+    private var compactControlSize: CGFloat { 24 }
+
+    private var menuVerticalOffset: CGFloat { -(barHeight + 12) }
 
     private var expandedWidth: CGFloat {
         guard availableWidth > 120 else { return 600 }
@@ -506,19 +559,22 @@ struct CosmoInlineAssistantBar: View {
         isComposerFocused ? DS.accent.opacity(0.36) : DS.borderSubtle
     }
 
-    // Bubbly on the way out (slight overshoot), crisp on the way back in.
+    // One spring per direction, shared by every animating attribute (width,
+    // height, radius, shadow, content offset): confident with a whisper of life
+    // on the way open, crisp and damped on the way closed.
     private var morphAnimation: Animation {
-        isExpanded
-            ? .spring(response: 0.42, dampingFraction: 0.68)
-            : .spring(response: 0.26, dampingFraction: 0.90)
+        if reduceMotion { return .easeOut(duration: 0.16) }
+        return isExpanded ? ProMotionSprings.modal : ProMotionSprings.sidebar
     }
 
-    // Controls fade in a beat behind the container so the bar reads as "settling
-    // into what it is" rather than appearing fully formed.
-    private var revealAnimation: Animation {
-        isExpanded
-            ? .spring(response: 0.34, dampingFraction: 0.82).delay(0.07)
-            : .easeOut(duration: 0.12)
+    // The content's only independent channel — a short fade that lands while the
+    // clip is mid-stretch, so the bar reveals its contents rather than growing
+    // empty and filling up afterwards.
+    private var contentFade: Animation {
+        if reduceMotion { return .easeOut(duration: 0.12) }
+        return isExpanded
+            ? .easeOut(duration: 0.18).delay(0.05)
+            : .easeOut(duration: 0.08)
     }
 
     // MARK: - Behavior
@@ -682,6 +738,7 @@ struct CosmoInlineAssistantBar: View {
     }
 
     private func expandAndFocus() {
+        isHoverSuppressed = false
         isPinnedOpen = true
         focusComposerSoon()
     }
@@ -719,6 +776,57 @@ struct CosmoInlineAssistantBar: View {
             NSEvent.removeMonitor(mouseDownMonitor)
         }
         self.mouseDownMonitor = nil
+    }
+
+    // The composer's NSTextView forwards Escape up the responder chain, and a
+    // hover-opened bar has no first responder at all — a local monitor is the
+    // one place that reliably sees the key in both states.
+    private func installKeyDownMonitorIfNeeded() {
+        guard keyDownMonitor == nil else { return }
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53 else { return event }
+            return handleEscape() ? nil : event
+        }
+    }
+
+    private func removeKeyDownMonitor() {
+        if let keyDownMonitor {
+            NSEvent.removeMonitor(keyDownMonitor)
+        }
+        self.keyDownMonitor = nil
+    }
+
+    /// Returns true when the event was consumed; false lets Escape fall through
+    /// to whatever surface is behind the bar.
+    private func handleEscape() -> Bool {
+        guard !isStudioPresented else { return false }
+
+        switch CosmoInlineAssistantBarEscapePolicy.action(
+            isExpanded: isExpanded,
+            isMenuVisible: isContextMenuVisible || isSkillMenuVisible,
+            hasComposerText: !trimmedComposerText.isEmpty,
+            isProcessing: store.isProcessing
+        ) {
+        case .dismissMenus:
+            dismissInlineMenus(trimActiveQuery: true)
+            return true
+        case .clearComposer:
+            store.composerText = ""
+            composerSelectionRange = NSRange(location: 0, length: 0)
+            return true
+        case .collapse:
+            collapseBar()
+            return true
+        case .ignore:
+            return false
+        }
+    }
+
+    private func collapseBar() {
+        isComposerFocused = false
+        isPinnedOpen = false
+        isHoverSuppressed = true
+        NSApp.keyWindow?.makeFirstResponder(nil)
     }
 
     private func handleMouseDown(_ event: NSEvent) {
@@ -1119,4 +1227,3 @@ private struct CosmoInlineAssistantWorkingStatusView: View {
         .accessibilityLabel("\(leadingText) \(trailingText ?? "")")
     }
 }
-

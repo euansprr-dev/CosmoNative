@@ -56,6 +56,19 @@ final class DragToConnectManager: ObservableObject {
                     return
                 }
 
+                // Preflight both endpoints before writing either: addingLink
+                // silently no-ops on a corrupt links column, so proceeding would
+                // pretend the link exists (and half-link the pair).
+                guard !sourceAtom.linksAreCorrupt, !targetAtom.linksAreCorrupt else {
+                    PersistenceHealth.note(
+                        .decodeFailure,
+                        context: "DragToConnect.completeConnection",
+                        detail: "links column corrupt on \(sourceAtom.linksAreCorrupt ? sourceAtom.uuid : targetAtom.uuid); connection not created (source \(sourceAtom.uuid), target \(targetAtom.uuid))"
+                    )
+                    cancel()
+                    return
+                }
+
                 // Add related link on source atom (if not already linked)
                 var finalSource = sourceAtom
                 if !sourceAtom.linksList.contains(where: { $0.uuid == targetAtom.uuid }) {
@@ -64,12 +77,33 @@ final class DragToConnectManager: ObservableObject {
                     try await AtomRepository.shared.update(finalSource)
                 }
 
-                // Add related link on target atom (if not already linked)
+                // Add related link on target atom (if not already linked).
+                // If this second endpoint write fails the pair is half-linked —
+                // retry once on a fresh copy, then report both uuids.
                 var finalTarget = targetAtom
                 if !targetAtom.linksList.contains(where: { $0.uuid == sourceAtom.uuid }) {
                     let reverseLink = AtomLink.related(sourceAtom.uuid, entityType: AtomType(rawValue: sourceBlock.entityType.rawValue))
                     finalTarget = targetAtom.addingLink(reverseLink)
-                    try await AtomRepository.shared.update(finalTarget)
+                    do {
+                        try await AtomRepository.shared.update(finalTarget)
+                    } catch {
+                        do {
+                            guard var retryTarget = try await AtomRepository.shared.fetch(uuid: targetAtom.uuid),
+                                  !retryTarget.linksAreCorrupt else {
+                                throw error
+                            }
+                            retryTarget = retryTarget.addingLink(reverseLink)
+                            try await AtomRepository.shared.update(retryTarget)
+                            finalTarget = retryTarget
+                        } catch {
+                            PersistenceHealth.note(
+                                .writeFailure,
+                                context: "DragToConnect.completeConnection",
+                                detail: "second endpoint write failed; pair half-linked (source \(sourceAtom.uuid), target \(targetAtom.uuid)): \(error.localizedDescription)"
+                            )
+                            throw error
+                        }
+                    }
                 }
 
                 // Tell NodeGraphEngine to reconcile edges (creates graph_edges rows)

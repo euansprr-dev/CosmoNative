@@ -93,6 +93,9 @@ struct SwipeStudyFocusModeView: View {
     // Instagram transcript state
     @State private var instagramTranscript: String = ""
     @State private var transcriptSaveTask: Task<Void, Never>?
+    /// Latest transcript text awaiting a debounced save — flushed synchronously
+    /// on swipe switch / close / app quit so the edit can't be lost.
+    @State private var pendingTranscriptText: String?
     @State private var showDeleteConfirmation = false
 
     // Slide-based transcript state (Instagram)
@@ -104,6 +107,13 @@ struct SwipeStudyFocusModeView: View {
     @State private var transcriptDisplayMode: TranscriptDisplayMode = .cleaned
     @State private var slidesSaveTask: Task<Void, Never>?
     @State private var slideFocusRequestID: UUID?
+    /// Debounce-dirty tracking: the generation increments on every edit and the
+    /// async save clears the pending flag only when no newer edit superseded it.
+    /// Drives the synchronous flush on swipe switch / close / app quit.
+    @State private var slideEditGeneration = 0
+    @State private var hasPendingSlideEdits = false
+    @State private var commentEditGeneration = 0
+    @State private var hasPendingCommentEdits = false
 
     // Auto-transcription state
     @State private var isAutoTranscribing = false
@@ -121,7 +131,6 @@ struct SwipeStudyFocusModeView: View {
 
     // Personal notes (legacy — retained for backward compat, loaded as first comment)
     @State private var personalNotes: String = ""
-    @State private var notesSaveTask: Task<Void, Never>?
 
     // Edit Transcript sheet state
     @State private var showEditTranscript = false
@@ -196,6 +205,9 @@ struct SwipeStudyFocusModeView: View {
             }
         }
         .onDisappear {
+            // Flush pending debounced edits and unregister the dirty-editor
+            // flush before giving up the editing lock.
+            flushPendingDebouncedSavesSync()
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
         }
         .onReceive(NotificationCenter.default.publisher(for: .contentPhysicsExtractionComplete)) { notification in
@@ -1594,10 +1606,13 @@ struct SwipeStudyFocusModeView: View {
         let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
         let needsInitialTranscription = !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing
 
-        // Check 2: More slides discovered than currently transcribed (incomplete carousel)
+        // Check 2: More slides discovered than currently transcribed (incomplete carousel).
+        // A user-edited transcript is terminal — never auto re-transcribe over it
+        // (e.g. a carousel whose slide count the user reduced on purpose).
+        let userEditedTranscript = (currentAtom ?? atom).swipeAnalysis?.transcriptEditedByUser == true
         let hasMoreSlides = items.count > existingSlideCount && existingSlideCount > 0
         let isDegraded = (currentAtom ?? atom).swipeAnalysis?.transcriptionQuality == .degraded
-        let needsReTranscription = (hasMoreSlides || isDegraded) && !isBackgroundProcessing
+        let needsReTranscription = (hasMoreSlides || isDegraded) && !isBackgroundProcessing && !userEditedTranscript
 
         if needsInitialTranscription || needsReTranscription {
             guard isViewingAtom(uuid: expectedUUID) else { return }
@@ -2541,29 +2556,57 @@ struct SwipeStudyFocusModeView: View {
 
     private func debounceSaveComments() {
         commentsSaveTask?.cancel()
+        commentEditGeneration += 1
+        hasPendingCommentEdits = true
+        registerDirtyFlush()
         commentsSaveTask = Task {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled, var current = currentAtom else { return }
+            let generation = commentEditGeneration
 
-            // Store comments in structured JSON
-            if let data = try? JSONEncoder().encode(transcriptComments),
-               let jsonStr = String(data: data, encoding: .utf8) {
-                // Merge with existing structured data if present
-                var structuredDict: [String: Any] = [:]
-                if let existingStr = current.structured,
-                   let existingData = existingStr.data(using: .utf8),
-                   let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-                    structuredDict = existing
+            applyCommentEdits(to: &current)
+
+            do {
+                let saved = try await AtomRepository.shared.update(current)
+                currentAtom = saved
+                if commentEditGeneration == generation {
+                    hasPendingCommentEdits = false
+                    unregisterDirtyFlushIfIdle()
                 }
-                structuredDict["transcriptComments"] = jsonStr
-                if let merged = try? JSONSerialization.data(withJSONObject: structuredDict),
-                   let mergedStr = String(data: merged, encoding: .utf8) {
-                    current.structured = mergedStr
-                }
+            } catch {
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "SwipeStudy.saveComments(\(current.uuid.prefix(8)))",
+                    detail: error.localizedDescription
+                )
             }
+        }
+    }
 
-            try? await AtomRepository.shared.update(current)
-            currentAtom = current
+    /// Apply pending inline-comment edits onto `current` the same way the
+    /// debounced save does (top-level structured key, read by loadCommentsFromAtom).
+    /// Refuses — keeping the column — when existing structured is non-empty but
+    /// unparseable: proceeding from an empty dict wiped autoMetadata/swipeAnalysis.
+    private func applyCommentEdits(to current: inout Atom) {
+        guard let data = try? JSONEncoder().encode(transcriptComments),
+              let jsonStr = String(data: data, encoding: .utf8) else { return }
+        var structuredDict: [String: Any] = [:]
+        if let existingStr = current.structured, !existingStr.isEmpty {
+            guard let existingData = existingStr.data(using: .utf8),
+                  let existing = (try? JSONSerialization.jsonObject(with: existingData)) as? [String: Any] else {
+                PersistenceHealth.note(
+                    .decodeFailure,
+                    context: "SwipeStudy.saveComments(\(current.uuid.prefix(8)))",
+                    detail: "existing structured unparseable; refusing comment write that would drop its data"
+                )
+                return
+            }
+            structuredDict = existing
+        }
+        structuredDict["transcriptComments"] = jsonStr
+        if let merged = try? JSONSerialization.data(withJSONObject: structuredDict),
+           let mergedStr = String(data: merged, encoding: .utf8) {
+            current.structured = mergedStr
         }
     }
 
@@ -2596,6 +2639,9 @@ struct SwipeStudyFocusModeView: View {
 
     private func debounceSaveSlides() {
         slidesSaveTask?.cancel()
+        slideEditGeneration += 1
+        hasPendingSlideEdits = true
+        registerDirtyFlush()
         slidesSaveTask = Task {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
@@ -2603,12 +2649,11 @@ struct SwipeStudyFocusModeView: View {
         }
     }
 
-    /// Awaitable save — used from autoTranscribe to guarantee write completes before analysis starts.
-    private func saveSlideTranscriptAsync() async {
-        guard var current = currentAtom else {
-            print("SwipeStudy: saveSlideTranscript — currentAtom is nil, cannot save")
-            return
-        }
+    /// Apply the current slide/transcript/comment editor state onto `current`.
+    /// Shared by the async saves and the synchronous flush so they can't drift.
+    /// `markUserEdited` is set ONLY by the manual-edit path: the flag is terminal
+    /// and tells auto-transcription to never re-run for this swipe.
+    private func applySlideTranscriptEdits(to current: inout Atom, markUserEdited: Bool) {
         let combined = slidesTranscriptText
         current.body = combined
         var richContent = current.richContent ?? ResearchRichContent()
@@ -2633,7 +2678,21 @@ struct SwipeStudyFocusModeView: View {
         sa.transcriptionQuality = transcriptionQuality
         sa.transcriptionWarnings = transcriptionWarnings
         sa.transcriptComments = transcriptComments
+        if markUserEdited {
+            sa.transcriptEditedByUser = true
+        }
         current = current.withSwipeAnalysis(sa)
+    }
+
+    /// Awaitable save — used from autoTranscribe to guarantee write completes before analysis starts.
+    private func saveSlideTranscriptAsync() async {
+        guard var current = currentAtom else {
+            print("SwipeStudy: saveSlideTranscript — currentAtom is nil, cannot save")
+            return
+        }
+        // Machine path (auto-transcription) — does not mark the transcript user-edited.
+        applySlideTranscriptEdits(to: &current, markUserEdited: false)
+        let combined = slidesTranscriptText
 
         transcriptText = combined
         instagramTranscript = combined
@@ -2645,6 +2704,11 @@ struct SwipeStudyFocusModeView: View {
             print("SwipeStudy: Transcript saved (\(combined.count) chars, \(transcriptSlides.count) slides, body: \(saved.body?.count ?? 0) chars)")
         } catch {
             print("SwipeStudy: ERROR saving transcript: \(error)")
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "SwipeStudy.saveSlideTranscriptAsync(\(current.uuid.prefix(8)))",
+                detail: error.localizedDescription
+            )
         }
     }
 
@@ -2663,7 +2727,15 @@ struct SwipeStudyFocusModeView: View {
         current.setRichContent(richContent)
         currentAtom = current
         Task {
-            try? await AtomRepository.shared.update(current)
+            do {
+                currentAtom = try await AtomRepository.shared.update(current)
+            } catch {
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "SwipeStudy.persistCaption(\(current.uuid.prefix(8)))",
+                    detail: error.localizedDescription
+                )
+            }
         }
     }
 
@@ -2682,7 +2754,18 @@ struct SwipeStudyFocusModeView: View {
         currentAtom = current
         Task {
             guard currentAtom?.uuid == expectedAtomUUID else { return }
-            try? await AtomRepository.shared.update(current)
+            do {
+                let saved = try await AtomRepository.shared.update(current)
+                if currentAtom?.uuid == expectedAtomUUID {
+                    currentAtom = saved
+                }
+            } catch {
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "SwipeStudy.persistCaption(\(current.uuid.prefix(8)))",
+                    detail: error.localizedDescription
+                )
+            }
         }
     }
 
@@ -2791,33 +2874,12 @@ struct SwipeStudyFocusModeView: View {
     }
 
     /// Fire-and-forget save — used from debounced manual edits.
+    /// Marks the transcript user-edited (terminal for auto-transcription).
     private func saveSlideTranscript() {
         guard var current = currentAtom else { return }
+        applySlideTranscriptEdits(to: &current, markUserEdited: true)
         let combined = slidesTranscriptText
-        current.body = combined
-        var richContent = current.richContent ?? ResearchRichContent()
-        richContent.transcript = combined
-        richContent.transcriptStatus = "available"
-        if let hook = canonicalHookFromSlides() {
-            current.hook = String(hook.prefix(200))
-            current.title = String(hook.prefix(120))
-            richContent.title = String(hook.prefix(120))
-        }
-        current.setRichContent(richContent)
-
-        // Persist slides + comments into swipeAnalysis so they survive analysis rewrites
-        var sa = current.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
-        // Sync hookText with the canonical hook from slides
-        if let hook = canonicalHookFromSlides() {
-            sa.hookText = String(hook.prefix(500))
-        }
-        sa.transcriptSlides = transcriptSlides
-        sa.rawTranscriptSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
-        sa.transcriptSpeechSegments = transcriptSpeechSegments
-        sa.transcriptionQuality = transcriptionQuality
-        sa.transcriptionWarnings = transcriptionWarnings
-        sa.transcriptComments = transcriptComments
-        current = current.withSwipeAnalysis(sa)
+        let generation = slideEditGeneration
 
         transcriptText = combined
         instagramTranscript = combined
@@ -2826,8 +2888,17 @@ struct SwipeStudyFocusModeView: View {
             do {
                 let saved = try await AtomRepository.shared.update(current)
                 currentAtom = saved
+                if slideEditGeneration == generation {
+                    hasPendingSlideEdits = false
+                    unregisterDirtyFlushIfIdle()
+                }
             } catch {
                 print("SwipeStudy: ERROR saving transcript (debounced): \(error)")
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "SwipeStudy.saveSlideTranscript(\(current.uuid.prefix(8)))",
+                    detail: error.localizedDescription
+                )
             }
         }
     }
@@ -2849,6 +2920,8 @@ struct SwipeStudyFocusModeView: View {
 
     private func debounceSaveTranscript(_ transcript: String) {
         transcriptSaveTask?.cancel()
+        pendingTranscriptText = transcript
+        registerDirtyFlush()
         transcriptSaveTask = Task {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled, var current = currentAtom else { return }
@@ -2861,8 +2934,89 @@ struct SwipeStudyFocusModeView: View {
                 current.body = transcript
             }
 
-            try? await AtomRepository.shared.update(current)
-            currentAtom = current
+            do {
+                let saved = try await AtomRepository.shared.update(current)
+                currentAtom = saved
+                if pendingTranscriptText == transcript {
+                    pendingTranscriptText = nil
+                    unregisterDirtyFlushIfIdle()
+                }
+            } catch {
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "SwipeStudy.saveTranscript(\(current.uuid.prefix(8)))",
+                    detail: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    // MARK: - Pending-Save Flush (DirtyEditorRegistry)
+
+    /// Stable per-surface id for the dirty-editor registry.
+    private var dirtyEditorID: String { "swipestudy-\(atom.uuid)" }
+
+    /// True while any debounced edit has not been confirmed written.
+    private var hasPendingDebouncedSaves: Bool {
+        hasPendingSlideEdits || hasPendingCommentEdits || pendingTranscriptText != nil
+    }
+
+    /// Register a synchronous flush so debounced edits survive app termination.
+    /// Called whenever a debounce is scheduled; unregistered on clean close.
+    private func registerDirtyFlush() {
+        DirtyEditorRegistry.shared.register(id: dirtyEditorID) {
+            flushPendingDebouncedSavesSync()
+        }
+    }
+
+    private func unregisterDirtyFlushIfIdle() {
+        guard !hasPendingDebouncedSaves else { return }
+        DirtyEditorRegistry.shared.unregister(id: dirtyEditorID)
+    }
+
+    /// Cancel pending debounce tasks and write their content NOW, synchronously
+    /// (DB-only via updateSync). Runs on swipe switch, view close, and app quit —
+    /// cancelling without flushing silently dropped up to 2s of edits.
+    private func flushPendingDebouncedSavesSync() {
+        transcriptSaveTask?.cancel()
+        slidesSaveTask?.cancel()
+        commentsSaveTask?.cancel()
+        transcriptSaveTask = nil
+        slidesSaveTask = nil
+        commentsSaveTask = nil
+        defer { DirtyEditorRegistry.shared.unregister(id: dirtyEditorID) }
+        guard hasPendingDebouncedSaves, var current = currentAtom else { return }
+
+        if hasPendingSlideEdits {
+            applySlideTranscriptEdits(to: &current, markUserEdited: true)
+            transcriptText = slidesTranscriptText
+            instagramTranscript = slidesTranscriptText
+        }
+        if let pending = pendingTranscriptText {
+            var richContent = current.richContent ?? ResearchRichContent()
+            richContent.transcript = pending
+            current.setRichContent(richContent)
+            if !pending.isEmpty {
+                current.body = pending
+            }
+        }
+        if hasPendingCommentEdits, !hasPendingSlideEdits {
+            // Slide saves already carry comments inside swipeAnalysis; this
+            // covers the comments-only case (top-level structured key).
+            applyCommentEdits(to: &current)
+        }
+
+        do {
+            currentAtom = try AtomRepository.shared.updateSync(current)
+            hasPendingSlideEdits = false
+            hasPendingCommentEdits = false
+            pendingTranscriptText = nil
+        } catch {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "SwipeStudy.flushPendingSaves(\(current.uuid.prefix(8)))",
+                detail: error.localizedDescription
+            )
         }
     }
 
@@ -2930,6 +3084,37 @@ struct SwipeStudyFocusModeView: View {
     }
 
     /// Trigger NLP + AI classification on whatever text is currently available
+    /// Stamp the CURRENT MainActor transcript editor state onto an analysis just
+    /// before persisting. Deep-analysis awaits can take many seconds; captures
+    /// taken before the await used to clobber slide/comment edits made while
+    /// the analysis ran.
+    private func applyingLiveTranscriptState(to analysis: SwipeAnalysis) -> SwipeAnalysis {
+        var copy = analysis
+        copy.transcriptSlides = transcriptSlides
+        copy.rawTranscriptSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
+        copy.transcriptSpeechSegments = transcriptSpeechSegments
+        copy.transcriptionQuality = transcriptionQuality
+        copy.transcriptionWarnings = transcriptionWarnings
+        copy.transcriptComments = transcriptComments
+        return copy
+    }
+
+    /// Persist an analysis onto the current atom with error surfacing, keeping
+    /// `currentAtom` pointed at the returned (version-bumped) row.
+    private func persistAnalysisToCurrentAtom(_ analysisToSave: SwipeAnalysis, context: String) async {
+        let base = currentAtom ?? atom
+        let updated = base.withSwipeAnalysis(analysisToSave)
+        do {
+            currentAtom = try await AtomRepository.shared.update(updated)
+        } catch {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "SwipeStudy.\(context)(\(base.uuid.prefix(8)))",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
     private func triggerManualAnalysis() {
         // Determine the best available text, prioritizing current slide transcript.
         let text: String = {
@@ -2946,6 +3131,7 @@ struct SwipeStudyFocusModeView: View {
 
         Task {
             var atomForAnalysis = currentAtom ?? atom
+            let existingAnalysis = atomForAnalysis.swipeAnalysis
             atomForAnalysis.body = text
             atomForAnalysis.processingStatus = "complete"
 
@@ -2958,33 +3144,29 @@ struct SwipeStudyFocusModeView: View {
                 richContent.title = String(hook.prefix(120))
             }
             atomForAnalysis.setRichContent(richContent)
-            try? await AtomRepository.shared.update(atomForAnalysis)
-            currentAtom = atomForAnalysis
-
-            // Capture current slides/comments so analysis writes don't discard them
-            let savedSlides = transcriptSlides
-            let savedRawSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
-            let savedSpeechSegments = transcriptSpeechSegments
-            let savedTranscriptionQuality = transcriptionQuality
-            let savedTranscriptionWarnings = transcriptionWarnings
-            let savedComments = transcriptComments
+            do {
+                currentAtom = try await AtomRepository.shared.update(atomForAnalysis)
+            } catch {
+                currentAtom = atomForAnalysis
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "SwipeStudy.triggerManualAnalysis(\(atomForAnalysis.uuid.prefix(8)))",
+                    detail: error.localizedDescription
+                )
+            }
 
             // Phase 1: Run NLP on current atom
             isAnalyzing = true
             var nlpResult = await SwipeAnalyzer.shared.analyze(atom: atomForAnalysis)
-            nlpResult.transcriptSlides = savedSlides
-            nlpResult.rawTranscriptSlides = savedRawSlides
-            nlpResult.transcriptSpeechSegments = savedSpeechSegments
-            nlpResult.transcriptionQuality = savedTranscriptionQuality
-            nlpResult.transcriptionWarnings = savedTranscriptionWarnings
-            nlpResult.transcriptComments = savedComments
+            // Stamp LIVE editor state (not a pre-await capture) and carry over
+            // curated fields a fresh analysis knows nothing about.
+            nlpResult = applyingLiveTranscriptState(to: nlpResult)
+                .preservingCuratedFields(from: existingAnalysis)
             analysis = nlpResult
             isAnalyzing = false
 
             // Save NLP results (with slides preserved)
-            let updated = atomForAnalysis.withSwipeAnalysis(nlpResult)
-            try? await AtomRepository.shared.update(updated)
-            currentAtom = updated
+            await persistAnalysisToCurrentAtom(nlpResult, context: "manualAnalysis.nlp")
 
             // Phase 2: AI classification + deep analysis (single Claude call)
             isDeepAnalyzing = true
@@ -2997,18 +3179,14 @@ struct SwipeStudyFocusModeView: View {
                 var enriched = SwipeClassificationEngine.shared.mergeClassification(
                     classifiedResult, into: nlpResult
                 )
-                enriched.transcriptSlides = savedSlides
-                enriched.rawTranscriptSlides = savedRawSlides
-                enriched.transcriptSpeechSegments = savedSpeechSegments
-                enriched.transcriptionQuality = savedTranscriptionQuality
-                enriched.transcriptionWarnings = savedTranscriptionWarnings
-                enriched.transcriptComments = savedComments
+                // Re-read live state AFTER the long Claude await — the user may
+                // have edited slides/comments while it ran.
+                enriched = applyingLiveTranscriptState(to: enriched)
+                    .preservingCuratedFields(from: existingAnalysis)
                 withAnimation(ProMotionSprings.snappy) {
                     analysis = enriched
                 }
-                let updated2 = (currentAtom ?? atom).withSwipeAnalysis(enriched)
-                try? await AtomRepository.shared.update(updated2)
-                currentAtom = updated2
+                await persistAnalysisToCurrentAtom(enriched, context: "manualAnalysis.deep")
             }
             isDeepAnalyzing = false
 
@@ -3992,12 +4170,10 @@ struct SwipeStudyFocusModeView: View {
 
             // Mark as studied if not already
             if cached.studiedAt == nil {
-                var studied = cached.markingStudied()
+                let studied = cached.markingStudied()
                 analysis = studied
-                let updated = atom.withSwipeAnalysis(studied)
                 Task {
-                    try? await AtomRepository.shared.update(updated)
-                    currentAtom = updated
+                    await persistAnalysisToCurrentAtom(studied, context: "markStudied")
                 }
             }
 
@@ -4040,27 +4216,17 @@ struct SwipeStudyFocusModeView: View {
                 || transcriptFetched
                 || existingIsSparse
 
-            // Capture slides/comments so analysis writes don't discard them
-            let savedSlides = transcriptSlides
-            let savedRawSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
-            let savedSpeechSegments = transcriptSpeechSegments
-            let savedTranscriptionQuality = transcriptionQuality
-            let savedTranscriptionWarnings = transcriptionWarnings
-            let savedComments = transcriptComments
-
             var currentAnalysis: SwipeAnalysis
             if shouldRunLocalNLP {
                 currentAnalysis = await SwipeAnalyzer.shared.analyze(atom: atomForAnalysis)
+                // A fresh analysis knows nothing about engagement metrics, study
+                // state, comments, or manual taxonomy — carry them over.
+                currentAnalysis = currentAnalysis.preservingCuratedFields(from: existingAnalysis)
             } else {
                 currentAnalysis = existingAnalysis!
             }
-            // Always carry slides/comments through
-            currentAnalysis.transcriptSlides = savedSlides
-            currentAnalysis.rawTranscriptSlides = savedRawSlides
-            currentAnalysis.transcriptSpeechSegments = savedSpeechSegments
-            currentAnalysis.transcriptionQuality = savedTranscriptionQuality
-            currentAnalysis.transcriptionWarnings = savedTranscriptionWarnings
-            currentAnalysis.transcriptComments = savedComments
+            // Always stamp the LIVE editor state (not a pre-await capture)
+            currentAnalysis = applyingLiveTranscriptState(to: currentAnalysis)
 
             // Enforce minimum shimmer duration for polish (600ms)
             let elapsed = ContinuousClock.now - loadStart
@@ -4084,9 +4250,7 @@ struct SwipeStudyFocusModeView: View {
 
             // Save NLP results
             if shouldRunLocalNLP {
-                let updated = (currentAtom ?? atom).withSwipeAnalysis(currentAnalysis)
-                try? await AtomRepository.shared.update(updated)
-                currentAtom = updated
+                await persistAnalysisToCurrentAtom(currentAnalysis, context: "loadAtom.nlp")
             }
 
             // Phase 4: AI classification + deep analysis via SwipeClassificationEngine
@@ -4105,20 +4269,17 @@ struct SwipeStudyFocusModeView: View {
                     var enriched = SwipeClassificationEngine.shared.mergeClassification(
                         classifiedResult, into: currentAnalysis
                     )
-                    enriched.transcriptSlides = savedSlides
-                    enriched.rawTranscriptSlides = savedRawSlides
-                    enriched.transcriptSpeechSegments = savedSpeechSegments
-                    enriched.transcriptionQuality = savedTranscriptionQuality
-                    enriched.transcriptionWarnings = savedTranscriptionWarnings
-                    enriched.transcriptComments = savedComments
+                    // Re-read live state AFTER the long Claude await — the user
+                    // may have edited slides/comments while it ran — and keep
+                    // curated fields a fresh classification would wipe.
+                    enriched = applyingLiveTranscriptState(to: enriched)
+                        .preservingCuratedFields(from: existingAnalysis)
                     withAnimation(ProMotionSprings.snappy) {
                         analysis = enriched
                     }
 
                     // Persist enriched analysis
-                    let updated = (currentAtom ?? atom).withSwipeAnalysis(enriched)
-                    try? await AtomRepository.shared.update(updated)
-                    currentAtom = updated
+                    await persistAnalysisToCurrentAtom(enriched, context: "loadAtom.deep")
                 }
 
                 isDeepAnalyzing = false
@@ -4127,18 +4288,19 @@ struct SwipeStudyFocusModeView: View {
                 let fp = StructuralFingerprint.from(analysis: currentAnalysis)
                 currentAnalysis.fingerprint = fp
                 analysis = currentAnalysis
-                let updated = (currentAtom ?? atom).withSwipeAnalysis(currentAnalysis)
-                try? await AtomRepository.shared.update(updated)
-                currentAtom = updated
+                await persistAnalysisToCurrentAtom(currentAnalysis, context: "loadAtom.fingerprint")
             }
         }
     }
 
     private func resetLoadedAtomState() {
-        transcriptSaveTask?.cancel()
-        slidesSaveTask?.cancel()
-        commentsSaveTask?.cancel()
-        notesSaveTask?.cancel()
+        // Flush debounced edits BEFORE tearing the state down — cancelling the
+        // save tasks without flushing dropped up to 2s of slide/comment/
+        // transcript edits on every swipe switch.
+        flushPendingDebouncedSavesSync()
+        hasPendingSlideEdits = false
+        hasPendingCommentEdits = false
+        pendingTranscriptText = nil
 
         analysis = nil
         isAnalyzing = false
@@ -4208,8 +4370,16 @@ struct SwipeStudyFocusModeView: View {
             current.body = segments.jsonString
             current.processingStatus = "complete"
 
-            try? await AtomRepository.shared.update(current)
-            currentAtom = current
+            do {
+                currentAtom = try await AtomRepository.shared.update(current)
+            } catch {
+                currentAtom = current
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "SwipeStudy.fetchTranscript(\(current.uuid.prefix(8)))",
+                    detail: error.localizedDescription
+                )
+            }
         } else {
             print("SwipeStudy: yt-dlp caption fetch returned nil for \(videoId)")
             transcriptFetchFailed = true
@@ -4243,14 +4413,16 @@ struct SwipeStudyFocusModeView: View {
 
             // Run NLP analysis
             let atomForAnalysis = currentAtom ?? atom
-            let result = await SwipeAnalyzer.shared.analyze(atom: atomForAnalysis)
+            let existingAnalysis = atomForAnalysis.swipeAnalysis
+            var result = await SwipeAnalyzer.shared.analyze(atom: atomForAnalysis)
+            // Fresh analysis — carry over curated fields and live editor state.
+            result = applyingLiveTranscriptState(to: result)
+                .preservingCuratedFields(from: existingAnalysis)
             analysis = result
             isAnalyzing = false
 
             // Save
-            let updated = atomForAnalysis.withSwipeAnalysis(result)
-            try? await AtomRepository.shared.update(updated)
-            currentAtom = updated
+            await persistAnalysisToCurrentAtom(result, context: "retryAnalysis.nlp")
 
             // AI classification + deep analysis if we got a transcript
             if !transcriptText.isEmpty {
@@ -4261,15 +4433,15 @@ struct SwipeStudyFocusModeView: View {
                 )
 
                 if classifiedResult.isFullyAnalyzed {
-                    let enriched = SwipeClassificationEngine.shared.mergeClassification(
+                    var enriched = SwipeClassificationEngine.shared.mergeClassification(
                         classifiedResult, into: result
                     )
+                    enriched = applyingLiveTranscriptState(to: enriched)
+                        .preservingCuratedFields(from: existingAnalysis)
                     withAnimation(ProMotionSprings.snappy) {
                         analysis = enriched
                     }
-                    let updated2 = (currentAtom ?? atom).withSwipeAnalysis(enriched)
-                    try? await AtomRepository.shared.update(updated2)
-                    currentAtom = updated2
+                    await persistAnalysisToCurrentAtom(enriched, context: "retryAnalysis.deep")
                 }
                 isDeepAnalyzing = false
             }
@@ -4361,8 +4533,16 @@ struct SwipeStudyFocusModeView: View {
             richContent.transcript = newTranscript
             richContent.transcriptStatus = "available"
             current.setRichContent(richContent)
-            try? await AtomRepository.shared.update(current)
-            currentAtom = current
+            do {
+                currentAtom = try await AtomRepository.shared.update(current)
+            } catch {
+                currentAtom = current
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "SwipeStudy.saveEditedTranscript(\(current.uuid.prefix(8)))",
+                    detail: error.localizedDescription
+                )
+            }
 
             // Re-run analysis
             triggerManualAnalysis()
@@ -4389,13 +4569,14 @@ struct SwipeStudyFocusModeView: View {
         guard let suggestion = reclassifySuggestion,
               let current = analysis else { return }
 
+        // User explicitly accepted this classification — taxonomy intentionally
+        // replaces any previous override, but engagement/study/comments come
+        // from `current` via the merge.
         let merged = SwipeClassificationEngine.shared.mergeClassification(suggestion, into: current)
         analysis = merged
 
-        let updated = (currentAtom ?? atom).withSwipeAnalysis(merged)
         Task {
-            try? await AtomRepository.shared.update(updated)
-            currentAtom = updated
+            await persistAnalysisToCurrentAtom(merged, context: "acceptReclassification")
         }
 
         reclassifySuggestion = nil
@@ -4411,10 +4592,8 @@ struct SwipeStudyFocusModeView: View {
         current.classifiedAt = Date()
         analysis = current
 
-        let updated = (currentAtom ?? atom).withSwipeAnalysis(current)
         Task {
-            try? await AtomRepository.shared.update(updated)
-            currentAtom = updated
+            await persistAnalysisToCurrentAtom(current, context: "taxonomyOverride")
         }
     }
 
@@ -4465,30 +4644,9 @@ struct SwipeStudyFocusModeView: View {
         return meta.tags
     }
 
-    private func debounceSaveNotes(_ notes: String) {
-        notesSaveTask?.cancel()
-        notesSaveTask = Task {
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled, var current = currentAtom else { return }
-
-            var meta: ResearchMetadata
-            if let metadataStr = current.metadata,
-               let data = metadataStr.data(using: .utf8),
-               let existing = try? JSONDecoder().decode(ResearchMetadata.self, from: data) {
-                meta = existing
-            } else {
-                meta = ResearchMetadata()
-            }
-            meta.personalNotes = notes
-
-            if let encoded = try? JSONEncoder().encode(meta),
-               let jsonStr = String(data: encoded, encoding: .utf8) {
-                current.metadata = jsonStr
-                try? await AtomRepository.shared.update(current)
-                currentAtom = current
-            }
-        }
-    }
+    // debounceSaveNotes removed (June 2026 data-safety pass): it was dead code
+    // and rebuilt the whole ResearchMetadata from a possibly-failed decode —
+    // one corrupt field would have erased every metadata key on save.
 }
 
 // MARK: - Atelier Shell Components
@@ -4671,34 +4829,22 @@ private struct ShimmerCircle: View {
 /// Phase sweeps from -0.3 → 1.3 so the highlight enters and exits smoothly.
 /// All gradient stop locations are clamped to [0, 1] to avoid SwiftUI warnings.
 private struct ShimmerEffect: ViewModifier {
-    @State private var phase: CGFloat = -0.3
-
+    // Static highlight — the old repeatForever sweep re-rendered the gradient at
+    // 120Hz for every skeleton row (June 2026 ProMotion pass).
     func body(content: Content) -> some View {
-        let leading  = max(0, min(1, phase - 0.15))
-        let center   = max(0, min(1, phase))
-        let trailing = max(0, min(1, phase + 0.15))
-
         content
             .overlay(
                 LinearGradient(
                     stops: [
-                        .init(color: .clear, location: leading),
-                        .init(color: Color.white.opacity(0.1), location: center),
-                        .init(color: .clear, location: trailing)
+                        .init(color: .clear, location: 0.35),
+                        .init(color: Color.white.opacity(0.08), location: 0.5),
+                        .init(color: .clear, location: 0.65)
                     ],
                     startPoint: .leading,
                     endPoint: .trailing
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 4))
             )
-            .onAppear {
-                withAnimation(
-                    .linear(duration: 1.5)
-                    .repeatForever(autoreverses: false)
-                ) {
-                    phase = 1.3
-                }
-            }
     }
 }
 

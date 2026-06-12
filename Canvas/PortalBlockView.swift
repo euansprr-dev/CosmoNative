@@ -130,9 +130,13 @@ struct PortalBlockView: View {
     private var windowBody: some View {
         ZStack {
             if let thumbnail {
-                Image(nsImage: thumbnail)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                Color.clear
+                    .overlay(
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .scaledToFill()
+                    )
+                    .clipped()
                     .opacity(isHovered ? 1 : 0.96)
             } else {
                 emptyState

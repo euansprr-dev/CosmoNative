@@ -78,8 +78,18 @@ struct OutlineItem: Identifiable, Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        sortOrder = try container.decode(Int.self, forKey: .sortOrder)
+        // Tolerant decoding: external writers (AI engine tool payloads, older
+        // saves) may omit id/sortOrder. Requiring them made the whole outline
+        // array fail to decode silently — and the next save deleted the outline
+        // key. Default id to a fresh UUID and sortOrder to the array position.
+        if let decodedID = ((try? container.decodeIfPresent(UUID.self, forKey: .id)) ?? nil) {
+            id = decodedID
+        } else {
+            id = UUID()
+        }
+        sortOrder = ((try? container.decodeIfPresent(Int.self, forKey: .sortOrder)) ?? nil)
+            ?? decoder.codingPath.last?.intValue
+            ?? 0
         isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
         estimatedSeconds = try container.decodeIfPresent(Int.self, forKey: .estimatedSeconds)
 
@@ -438,6 +448,11 @@ struct ContentFocusModeState: Codable {
     var showUndoToast: Bool = false
     var undoToastMessage: String = ""
 
+    /// Metadata keys whose stored value existed but failed to decode in `from(atom:)`.
+    /// `toAtomFields` must leave these keys untouched — writing the empty default
+    /// back would silently erase the real (recoverable) data. Transient, not persisted.
+    var failedDecodeKeys: Set<String> = []
+
     // Exclude transient fields from Codable synthesis
     enum CodingKeys: String, CodingKey {
         case atomUUID, currentStep, coreIdea, hooks, contentDescription, outline, relatedAtoms
@@ -658,8 +673,23 @@ extension ContentFocusModeState {
             from: atom.metadata,
             key: RichDocumentMetadataKeys.contentDraftDocument
         )
-        state.richDraftDocument = richDraftDocument
-        state.draftContent = richDraftDocument?.plainText ?? (atom.body ?? "")
+        let body = atom.body ?? ""
+        if let doc = richDraftDocument, doc.plainText != body, !body.isEmpty,
+           !richDocumentIsFresher(dict: dict, atom: atom) {
+            // Body-only writers (engine tools, agent updates, sync) update atom.body
+            // without refreshing the rich document. Loading the stale rich doc here
+            // and saving it back used to silently revert the newer body.
+            PersistenceHealth.note(
+                .conflict,
+                context: "ContentFocusModeState.from(\(atom.uuid.prefix(8)))",
+                detail: "richDraftDocument is stale vs body — rebuilding from body (docLen=\(doc.plainText.count) bodyLen=\(body.count))"
+            )
+            state.richDraftDocument = RichDocument.migrateLegacy(body)
+            state.draftContent = body
+        } else {
+            state.richDraftDocument = richDraftDocument
+            state.draftContent = richDraftDocument?.plainText ?? body
+        }
         state.polishSystemPrompt = dict["polishSystemPrompt"] as? String ?? ""
         state.isContextPanelVisible = dict["isContextPanelVisible"] as? Bool ?? true
         state.isAISuggestedOutline = dict["isAISuggestedOutline"] as? Bool ?? false
@@ -669,6 +699,9 @@ extension ContentFocusModeState {
             if let outlineJSON = try? JSONSerialization.data(withJSONObject: outlineData),
                let items = try? JSONDecoder().decode([OutlineItem].self, from: outlineJSON) {
                 state.outline = items
+            } else {
+                state.failedDecodeKeys.insert("outline")
+                PersistenceHealth.note(.decodeFailure, context: "ContentFocusModeState.from(\(atom.uuid.prefix(8)))", detail: "outline present but undecodable — preserving stored value")
             }
         }
 
@@ -685,6 +718,9 @@ extension ContentFocusModeState {
             if let historyJSON = try? JSONSerialization.data(withJSONObject: historyData),
                let records = try? JSONDecoder().decode([GenerationRecord].self, from: historyJSON) {
                 state.generationHistory = records
+            } else {
+                state.failedDecodeKeys.insert("generationHistory")
+                PersistenceHealth.note(.decodeFailure, context: "ContentFocusModeState.from(\(atom.uuid.prefix(8)))", detail: "generationHistory present but undecodable — preserving stored value")
             }
         }
 
@@ -693,6 +729,9 @@ extension ContentFocusModeState {
             if let conversationJSON = try? JSONSerialization.data(withJSONObject: conversationData),
                let messages = try? JSONDecoder().decode([WritingMessage].self, from: conversationJSON) {
                 state.conversationHistory = messages
+            } else {
+                state.failedDecodeKeys.insert("conversationHistory")
+                PersistenceHealth.note(.decodeFailure, context: "ContentFocusModeState.from(\(atom.uuid.prefix(8)))", detail: "conversationHistory present but undecodable — preserving stored value")
             }
         }
 
@@ -720,6 +759,27 @@ extension ContentFocusModeState {
             ?? decodeJSONField(dict, key: "inheritedCodexOutline")
 
         return state
+    }
+
+    /// Whether the metadata-stored rich document is at least as fresh as the row itself.
+    /// `lastModifiedUnix`/`lastModified` are written by focus-mode saves together with
+    /// `updated_at`; body-only writers bump `updated_at` alone, so a row updated well
+    /// after the last metadata save means the body is the newer draft.
+    private static func richDocumentIsFresher(dict: [String: Any], atom: Atom) -> Bool {
+        let metaModified: Date?
+        if let unix = dict["lastModifiedUnix"] as? TimeInterval {
+            metaModified = Date(timeIntervalSince1970: unix)
+        } else if let modifiedStr = dict["lastModified"] as? String {
+            metaModified = ISO8601.date(from: modifiedStr)
+        } else {
+            metaModified = nil
+        }
+        guard let metaModified, let rowUpdated = ISO8601.date(from: atom.updatedAt) else {
+            // No comparable timestamps — assume the body (the canonical column) wins.
+            return false
+        }
+        // 2s grace: a focus-mode save stamps lastModified just before updated_at.
+        return metaModified.timeIntervalSince(rowUpdated) >= -2
     }
 
     /// Safely decode a JSON field that may be stored as a JSON object or a JSON-encoded string.
@@ -766,12 +826,14 @@ extension ContentFocusModeState {
         metadataDict["lastModified"] = ISO8601.string(from: lastModified)
         metadataDict["lastModifiedUnix"] = lastModified.timeIntervalSince1970
 
-        // Encode outline as JSON array
+        // Encode outline as JSON array.
+        // When the stored value failed to decode at load (failedDecodeKeys), leave it
+        // untouched — nil-ing the key here would erase data we never managed to read.
         if !outline.isEmpty,
            let outlineData = try? JSONEncoder().encode(outline),
            let outlineArray = try? JSONSerialization.jsonObject(with: outlineData) {
             metadataDict["outline"] = outlineArray
-        } else {
+        } else if !failedDecodeKeys.contains("outline") {
             metadataDict["outline"] = nil
         }
 
@@ -788,7 +850,7 @@ extension ContentFocusModeState {
            let historyData = try? JSONEncoder().encode(recentHistory),
            let historyArray = try? JSONSerialization.jsonObject(with: historyData) {
             metadataDict["generationHistory"] = historyArray
-        } else {
+        } else if !failedDecodeKeys.contains("generationHistory") {
             metadataDict["generationHistory"] = nil
         }
 
@@ -799,7 +861,7 @@ extension ContentFocusModeState {
            let conversationData = try? JSONEncoder().encode(recentConversation),
            let conversationArray = try? JSONSerialization.jsonObject(with: conversationData) {
             metadataDict["conversationHistory"] = conversationArray
-        } else {
+        } else if !failedDecodeKeys.contains("conversationHistory") {
             metadataDict["conversationHistory"] = nil
         }
 

@@ -39,6 +39,12 @@ class SyncEngine: ObservableObject {
     private let maxRetries = 3
     private let fenceExpiryMs: Int64 = 30_000
     private let extendedFenceExpiryMs: Int64 = 120_000
+    private let pullPageLimit = 100
+    /// Overlap subtracted from the pull cursor so rows committed in the same
+    /// second as the last pulled row are never skipped.
+    private let pullCursorOverlap: TimeInterval = 2
+    /// Failed pushes are re-queued for retry after this cool-down (slow cadence, indefinite).
+    private let failedPushRequeueDelay: TimeInterval = 600 // 10 minutes
 
     // MARK: - Sync Tables (unified)
     // Push: atoms + canvas_blocks go UP to Supabase
@@ -121,6 +127,8 @@ class SyncEngine: ObservableObject {
         let key = "inboxCatchupMigrationRan_v2"
         if UserDefaults.standard.bool(forKey: key) { return }
 
+        // Only rows the converter can actually act on: it permanently skips
+        // empty captures, so those must not hold the flag open forever.
         let rows: [[String: Any]]? = try? await database.asyncRead { db in
             let rows = try Row.fetchAll(
                 db,
@@ -132,6 +140,7 @@ class SyncEngine: ObservableObject {
                     metadata LIKE '%"isInboxCapture":true%'
                     OR metadata LIKE '%"isCaptureLaneCapture":true%'
                   )
+                  AND (TRIM(COALESCE(body, '')) <> '' OR TRIM(COALESCE(title, '')) <> '')
                 """
             )
             return rows.map { row -> [String: Any] in
@@ -144,15 +153,25 @@ class SyncEngine: ObservableObject {
             }
         }
 
-        if let rows, !rows.isEmpty {
-            print("📥 SyncEngine: inbox catch-up migration processing \(rows.count) stuck capture(s)")
-            for row in rows {
-                guard let uuid = row["uuid"] as? String else { continue }
-                await InboxCaptureConverter.convertIfInboxCapture(uuid: uuid, atomData: row)
-            }
+        // Read failed — don't claim the migration ran.
+        guard let rows else { return }
+
+        if rows.isEmpty {
+            // Nothing left to convert — the catch-up genuinely completed.
+            UserDefaults.standard.set(true, forKey: key)
+            return
         }
 
-        UserDefaults.standard.set(true, forKey: key)
+        print("📥 SyncEngine: inbox catch-up migration processing \(rows.count) stuck capture(s)")
+        for row in rows {
+            guard let uuid = row["uuid"] as? String else { continue }
+            await InboxCaptureConverter.convertIfInboxCapture(uuid: uuid, atomData: row)
+        }
+
+        // The converter soft-deletes each transport atom it consumed, so successes
+        // drop out of the query above. The one-shot flag is deliberately NOT set
+        // here: the next sync cycle re-checks, and only an empty result marks
+        // completion — failed conversions keep retrying instead of being orphaned.
     }
 
     // MARK: - Push Local Changes (Invisible)
@@ -163,6 +182,10 @@ class SyncEngine: ObservableObject {
             print("⏸️ Sync push paused — Supabase auth unavailable")
             return
         }
+
+        // Give permanently-failed pushes another chance at a slow cadence —
+        // they must never silently orphan local edits.
+        await requeueStaleFailedPushes()
 
         let pendingItems = try? await database.asyncRead { db in
             try SyncQueueItem
@@ -184,11 +207,18 @@ class SyncEngine: ObservableObject {
             do {
                 try await pushChange(item)
 
-                try await database.asyncWrite { db in
-                    try db.execute(
-                        sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE id = ?",
-                        arguments: [ISO8601.string(from: Date()), item.id]
-                    )
+                // Scope to the pushed local_version (mirrors ChangeTracker.immediatePush):
+                // queueChange bumps the same row in place when an edit lands mid-flight,
+                // so an unscoped update would claim the newer edit was synced.
+                do {
+                    try await database.asyncWrite { db in
+                        try db.execute(
+                            sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE id = ? AND local_version <= ?",
+                            arguments: [ISO8601.string(from: Date()), item.id, item.localVersion]
+                        )
+                    }
+                } catch {
+                    PersistenceHealth.note(.syncFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "post-push queue bookkeeping failed: \(error)")
                 }
 
                 pendingChanges -= 1
@@ -200,21 +230,34 @@ class SyncEngine: ObservableObject {
                     error: error
                 )
 
-                try? await database.asyncWrite { db in
-                    try db.execute(
-                        sql: "UPDATE sync_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
-                        arguments: [resolution.status, resolution.retryCount, error.localizedDescription, item.id]
-                    )
-
-                    // FIX 2 [P0]: If permanently failed, unblock remote updates.
-                    // Without this, _local_pending stays 1 forever and ALL future
-                    // Realtime/pull updates for this atom are silently dropped.
-                    if resolution.shouldClearLocalPending {
+                do {
+                    try await database.asyncWrite { db in
                         try db.execute(
-                            sql: "UPDATE \(item.tableName) SET _local_pending = 0 WHERE uuid = ?",
-                            arguments: [item.uuid]
+                            sql: "UPDATE sync_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
+                            arguments: [resolution.status, resolution.retryCount, error.localizedDescription, item.id]
                         )
+
+                        // Stamp the failure time so requeueStaleFailedPushes can
+                        // re-queue this row after a cool-down.
+                        if resolution.status == "failed" {
+                            try db.execute(
+                                sql: "UPDATE sync_queue SET created_at = ? WHERE id = ?",
+                                arguments: [Int64(Date().timeIntervalSince1970 * 1000), item.id]
+                            )
+                        }
+
+                        // NOTE: _local_pending is deliberately NOT cleared on permanent
+                        // failure. The shield must stay up — clearing it let every future
+                        // remote change route into handleConflict and silently discard
+                        // the unpushed local edit (audit RC7). The row is re-queued for
+                        // slow-cadence retry by requeueStaleFailedPushes() instead.
                     }
+                } catch {
+                    PersistenceHealth.note(.writeFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "failed to record push failure: \(error)")
+                }
+
+                if resolution.status == "failed" {
+                    PersistenceHealth.note(.syncFailure, context: "SyncEngine.pushChange(\(item.uuid.prefix(8)))", detail: "push failed after \(resolution.retryCount) attempts (will keep retrying every \(Int(failedPushRequeueDelay / 60)) min): \(error.localizedDescription)")
                 }
 
                 if resolution.shouldPauseFurtherAttempts {
@@ -232,6 +275,33 @@ class SyncEngine: ObservableObject {
         }
     }
 
+    /// Re-queue permanently-failed pushes after a cool-down so they keep retrying
+    /// indefinitely at a slow cadence instead of orphaning local edits forever.
+    /// retry_count is reset to maxRetries - 1, granting exactly one fresh attempt
+    /// per cool-down window before the row returns to 'failed'.
+    private func requeueStaleFailedPushes() async {
+        let cutoff = Int64((Date().timeIntervalSince1970 - failedPushRequeueDelay) * 1000)
+        let retryFloor = maxRetries - 1
+        do {
+            let requeued = try await database.asyncWrite { db -> Int in
+                try db.execute(
+                    sql: """
+                    UPDATE sync_queue
+                    SET status = 'pending', retry_count = ?
+                    WHERE status = 'failed' AND created_at < ?
+                    """,
+                    arguments: [retryFloor, cutoff]
+                )
+                return db.changesCount
+            }
+            if requeued > 0 {
+                print("🔁 Re-queued \(requeued) failed push(es) for slow-cadence retry")
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "SyncEngine.requeueStaleFailedPushes", detail: String(describing: error))
+        }
+    }
+
     private func pushChange(_ item: SyncQueueItem) async throws {
         guard let client = supabaseClient else {
             throw SyncError.noClient
@@ -243,34 +313,40 @@ class SyncEngine: ObservableObject {
         // Set sync fence to prevent remote from overwriting
         try await setSyncFence(uuid: item.uuid)
 
-        // Parse the data payload
-        guard let data = item.data,
-              let jsonData = data.data(using: .utf8),
-              var payload = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-            throw SyncError.invalidPayload
-        }
+        // Parse the data payload. DELETE rows are queued with no payload
+        // (soft delete by uuid) — requiring one made every batch-retried
+        // delete throw invalidPayload, so offline deletes never propagated.
+        var payload: [String: Any] = [:]
+        var serverVersion = 0
+        if item.operation != "DELETE" {
+            guard let data = item.data,
+                  let jsonData = data.data(using: .utf8),
+                  let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                throw SyncError.invalidPayload
+            }
+            payload = parsed
+            serverVersion = payload["_server_version"] as? Int ?? 0
 
-        let serverVersion = payload["_server_version"] as? Int ?? 0
+            // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
+            payload.removeValue(forKey: "id")
+            payload.removeValue(forKey: "_local_version")
+            payload.removeValue(forKey: "_server_version")
+            payload.removeValue(forKey: "_sync_version")
+            payload.removeValue(forKey: "_local_pending")
 
-        // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
-        payload.removeValue(forKey: "id")
-        payload.removeValue(forKey: "_local_version")
-        payload.removeValue(forKey: "_server_version")
-        payload.removeValue(forKey: "_sync_version")
-        payload.removeValue(forKey: "_local_pending")
+            // Add user_id for RLS compliance
+            if let userId = client.currentUserId {
+                payload["user_id"] = userId
+            }
 
-        // Add user_id for RLS compliance
-        if let userId = client.currentUserId {
-            payload["user_id"] = userId
-        }
+            // Add source tracking
+            payload["_source"] = "mac"
 
-        // Add source tracking
-        payload["_source"] = "mac"
-
-        // For the unified atoms table, convert TEXT JSON fields to parsed objects
-        // so Postgres can store them as JSONB
-        if item.tableName == "atoms" {
-            payload = convertJSONFieldsForPostgres(payload)
+            // For the unified atoms table, convert TEXT JSON fields to parsed objects
+            // so Postgres can store them as JSONB
+            if item.tableName == "atoms" {
+                payload = convertJSONFieldsForPostgres(payload)
+            }
         }
 
         let writeDisposition: SyncWriteDisposition
@@ -301,17 +377,26 @@ class SyncEngine: ObservableObject {
             throw SyncError.unknownOperation
         }
 
-        // Update local server version
-        try await database.asyncWrite { db in
-            try db.execute(
-                sql: """
-                UPDATE \(item.tableName)
-                SET _server_version = _local_version,
-                    _local_pending = 0
-                WHERE uuid = ?
-                """,
-                arguments: [item.uuid]
-            )
+        // Update local server version — scoped to the version actually pushed
+        // (mirrors ChangeTracker.immediatePush). An edit made while this push
+        // was in flight keeps `_local_pending = 1` and gets its own push instead
+        // of being silently claimed as synced.
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: """
+                    UPDATE \(item.tableName)
+                    SET _server_version = MAX(_server_version, ?),
+                        _local_pending = CASE WHEN _local_version > ? THEN _local_pending ELSE 0 END
+                    WHERE uuid = ?
+                    """,
+                    arguments: [item.localVersion, item.localVersion, item.uuid]
+                )
+            }
+        } catch {
+            // Push succeeded but bookkeeping failed — shield stays up, the row
+            // stays pending and is retried (idempotent upsert). Must be visible.
+            PersistenceHealth.note(.syncFailure, context: "SyncEngine.pushChange(\(item.uuid.prefix(8)))", detail: "post-push version bookkeeping failed: \(error)")
         }
     }
 
@@ -336,33 +421,62 @@ class SyncEngine: ObservableObject {
         var pulledAtomUUIDs: [String] = []
 
         for table in pullTables {
+            let lastSync = await getLastPullTime(for: table)
+            // Honest cursor: track the max updated_at actually pulled. Stamping
+            // wall-clock `Date()` skipped anything beyond the first page forever.
+            var maxPulledUpdatedAt: Date?
+            var offset = 0
+
             do {
-                let lastSync = await getLastPullTime(for: table)
-                let remoteChanges = try await client.fetchChanges(
-                    table: table,
-                    since: lastSync,
-                    excludeLocalSource: table == "atoms"
-                )
+                // Paginate until a page comes back short — a single 100-row page
+                // silently dropped everything past it after a week offline.
+                while true {
+                    let page = try await client.fetchChanges(
+                        table: table,
+                        since: lastSync,
+                        excludeLocalSource: table == "atoms",
+                        limit: pullPageLimit,
+                        offset: offset
+                    )
 
-                for change in remoteChanges {
-                    await applyRemoteChange(table: table, data: change)
+                    for change in page {
+                        await applyRemoteChange(table: table, data: change)
 
-                    // Track pulled atom UUIDs for automation catch-up
-                    if table == "atoms", let uuid = change["uuid"] as? String {
-                        let source = change["_source"] as? String ?? "mac"
-                        if source != "mac" {
-                            pulledAtomUUIDs.append(uuid)
-                            // Cloud inbox captures that arrived while this Mac was offline
-                            // never hit Realtime — convert them here so they reach the Inbox UI.
-                            await InboxCaptureConverter.convertIfInboxCapture(uuid: uuid, atomData: change)
+                        if let updatedStr = change["updated_at"] as? String,
+                           let updated = ISO8601.date(from: ISO8601.normalize(updatedStr)) {
+                            if maxPulledUpdatedAt.map({ updated > $0 }) ?? true {
+                                maxPulledUpdatedAt = updated
+                            }
+                        }
+
+                        // Track pulled atom UUIDs for automation catch-up
+                        if table == "atoms", let uuid = change["uuid"] as? String {
+                            let source = change["_source"] as? String ?? "mac"
+                            if source != "mac", !Self.isRemoteDeleted(change) {
+                                pulledAtomUUIDs.append(uuid)
+                                // Cloud inbox captures that arrived while this Mac was offline
+                                // never hit Realtime — convert them here so they reach the Inbox UI.
+                                await InboxCaptureConverter.convertIfInboxCapture(uuid: uuid, atomData: change)
+                            }
                         }
                     }
-                }
 
-                await updateLastPullTime(for: table)
+                    if page.count < pullPageLimit { break }
+                    offset += page.count
+                }
 
             } catch {
                 print("⚠️ Pull failed for \(table): \(error)")
+                PersistenceHealth.note(.syncFailure, context: "SyncEngine.pullRemoteChanges(\(table))", detail: String(describing: error))
+            }
+
+            // Cursor = max pulled updated_at minus a small overlap (never wall-clock now).
+            // Zero rows pulled = cursor unchanged. Mid-pagination failures still advance
+            // only as far as what was actually applied.
+            if let maxPulled = maxPulledUpdatedAt {
+                var newCursor = maxPulled.addingTimeInterval(-pullCursorOverlap)
+                if let lastSync, newCursor < lastSync { newCursor = lastSync }
+                await updateLastPullTime(for: table, to: newCursor)
             }
         }
 
@@ -390,29 +504,54 @@ class SyncEngine: ObservableObject {
             return
         }
 
+        let isRemoteTombstone = Self.isRemoteDeleted(data)
+
         // Check sync fence
         if await hasSyncFence(uuid: uuid) {
+            if isRemoteTombstone {
+                PersistenceHealth.note(.conflict, context: "SyncEngine.applyRemoteChange(\(uuid.prefix(8)))", detail: "remote delete skipped — sync fence active; local row kept")
+            }
             print("🛡️ Sync fence active for \(uuid), skipping remote change")
             return
         }
 
         // Check editing lock
         if AtomRepository.shared.isBeingEdited(uuid) {
+            if isRemoteTombstone {
+                PersistenceHealth.note(.conflict, context: "SyncEngine.applyRemoteChange(\(uuid.prefix(8)))", detail: "remote delete skipped — editing lock active; local row kept")
+            }
             print("🛡️ Editing lock active for \(uuid), skipping remote change")
             return
         }
 
-        // Check for local pending changes
-        let hasPending = try? await database.asyncRead { db in
-            try Row.fetchOne(
-                db,
-                sql: "SELECT _local_pending FROM \(table) WHERE uuid = ? AND _local_pending = 1",
-                arguments: [uuid]
-            )
+        // Check for local pending changes. If the check itself fails, fail safe:
+        // skip the remote apply rather than risk overwriting unpushed local edits.
+        let hasPending: Bool
+        do {
+            let row = try await database.asyncRead { db in
+                try Row.fetchOne(
+                    db,
+                    sql: "SELECT _local_pending FROM \(table) WHERE uuid = ? AND _local_pending = 1",
+                    arguments: [uuid]
+                )
+            }
+            hasPending = row != nil
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "SyncEngine.applyRemoteChange(\(uuid.prefix(8)))", detail: "pending-shield check failed, remote change skipped: \(error)")
+            return
         }
 
-        if hasPending != nil {
+        if hasPending {
+            if isRemoteTombstone {
+                PersistenceHealth.note(.conflict, context: "SyncEngine.applyRemoteChange(\(uuid.prefix(8)))", detail: "remote delete skipped — unpushed local edits; local row kept")
+            }
             print("🛡️ Local pending change for \(uuid), skipping remote update")
+            return
+        }
+
+        // Remote tombstone past all shields → apply as a LOCAL SOFT-DELETE.
+        if isRemoteTombstone {
+            await applyRemoteTombstone(table: table, uuid: uuid, data: data)
             return
         }
 
@@ -424,6 +563,38 @@ class SyncEngine: ObservableObject {
 
         // Apply with conflict resolution
         await conflictResolver.applyRemoteChange(table: table, uuid: uuid, data: localData)
+    }
+
+    /// True when a remote row is a tombstone (`is_deleted` true/1).
+    private nonisolated static func isRemoteDeleted(_ data: [String: Any]) -> Bool {
+        if let flag = data["is_deleted"] as? Bool { return flag }
+        if let flag = data["is_deleted"] as? Int { return flag == 1 }
+        return false
+    }
+
+    /// Apply a remote deletion as a local SOFT-delete (is_deleted = 1 — never a
+    /// hard delete). Shields (fence, editing lock, _local_pending) were already
+    /// checked by the caller; rows with unpushed local edits never reach here.
+    private func applyRemoteTombstone(table: String, uuid: String, data: [String: Any]) async {
+        let remoteVersion = data["_version"] as? Int ?? data["_server_version"] as? Int ?? data["version"] as? Int ?? 0
+        let updatedAt = (data["updated_at"] as? String).map(ISO8601.normalize) ?? ISO8601.string(from: Date())
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: """
+                    UPDATE \(table)
+                    SET is_deleted = 1,
+                        updated_at = ?,
+                        _server_version = MAX(_server_version, ?)
+                    WHERE uuid = ? AND is_deleted = 0
+                    """,
+                    arguments: [updatedAt, remoteVersion, uuid]
+                )
+            }
+            print("🗑️ Applied remote tombstone: \(table):\(uuid)")
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "SyncEngine.applyRemoteTombstone(\(uuid.prefix(8)))", detail: String(describing: error))
+        }
     }
 
     /// Convert JSONB objects from Postgres back to TEXT strings for GRDB storage
@@ -464,36 +635,50 @@ class SyncEngine: ObservableObject {
 
     func setExtendedFence(uuid: String) async {
         let expiresAt = Date().timeIntervalSince1970 * 1000 + Double(extendedFenceExpiryMs)
-        try? await database.asyncWrite { db in
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_fence (uuid, expires_at) VALUES (?, ?)",
-                arguments: [uuid, Int64(expiresAt)]
-            )
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO sync_fence (uuid, expires_at) VALUES (?, ?)",
+                    arguments: [uuid, Int64(expiresAt)]
+                )
+            }
+        } catch {
+            // A missing fence lets a remote echo overwrite the row being protected.
+            PersistenceHealth.note(.writeFailure, context: "SyncEngine.setExtendedFence(\(uuid.prefix(8)))", detail: String(describing: error))
         }
     }
 
     private func hasSyncFence(uuid: String) async -> Bool {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
-        let fence = try? await database.asyncRead { db in
-            try Row.fetchOne(
-                db,
-                sql: "SELECT expires_at FROM sync_fence WHERE uuid = ? AND expires_at > ?",
-                arguments: [uuid, now]
-            )
+        do {
+            let fence = try await database.asyncRead { db in
+                try Row.fetchOne(
+                    db,
+                    sql: "SELECT expires_at FROM sync_fence WHERE uuid = ? AND expires_at > ?",
+                    arguments: [uuid, now]
+                )
+            }
+            return fence != nil
+        } catch {
+            // Fail safe: if the shield can't be verified, behave as if fenced.
+            PersistenceHealth.note(.syncFailure, context: "SyncEngine.hasSyncFence(\(uuid.prefix(8)))", detail: String(describing: error))
+            return true
         }
-
-        return fence != nil
     }
 
     private func cleanupExpiredFences() async {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
-        try? await database.asyncWrite { db in
-            try db.execute(
-                sql: "DELETE FROM sync_fence WHERE expires_at < ?",
-                arguments: [now]
-            )
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "DELETE FROM sync_fence WHERE expires_at < ?",
+                    arguments: [now]
+                )
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "SyncEngine.cleanupExpiredFences", detail: String(describing: error))
         }
     }
 
@@ -514,17 +699,26 @@ class SyncEngine: ObservableObject {
         return nil
     }
 
-    private func updateLastPullTime(for table: String) async {
-        let now = ISO8601.string(from: Date())
+    /// Persist the pull cursor. `date` must be derived from the max `updated_at`
+    /// actually pulled (minus overlap) — never wall-clock now, which would skip
+    /// any rows beyond the last fetched page forever.
+    private func updateLastPullTime(for table: String, to date: Date) async {
+        let cursor = ISO8601.string(from: date)
 
-        try? await database.asyncWrite { db in
-            try db.execute(
-                sql: """
-                INSERT OR REPLACE INTO user_settings (key, value)
-                VALUES (?, ?)
-                """,
-                arguments: ["last_pull_\(table)", now]
-            )
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: """
+                    INSERT OR REPLACE INTO user_settings (key, value)
+                    VALUES (?, ?)
+                    """,
+                    arguments: ["last_pull_\(table)", cursor]
+                )
+            }
+        } catch {
+            // A stale cursor only causes re-pulls (safe direction), but the
+            // failure itself signals DB trouble — surface it.
+            PersistenceHealth.note(.writeFailure, context: "SyncEngine.updateLastPullTime(\(table))", detail: String(describing: error))
         }
     }
 

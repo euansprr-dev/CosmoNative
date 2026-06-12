@@ -354,6 +354,9 @@ final class FlashLiteRouter {
         switch outcome {
         case .consumed:
             return ("📥 Already in your system — nothing new to capture.", "capture_to_inbox")
+        case .failed:
+            // The write failed — never claim the capture was saved.
+            return ("⚠️ Couldn't save that — please resend.", "capture_to_inbox")
         case .enqueued(let saved):
             let title = saved.title ?? String(text.prefix(60))
             var response = "📥 *Captured to inbox*\n\"\(title)\""
@@ -397,33 +400,37 @@ final class FlashLiteRouter {
 
         guard hasClientOrMetadata else { return }
 
-        _ = try? await repo.update(uuid: uuid) { atom in
-            // Add client link
-            if let clientAtom = resolvedClientAtom {
-                let link = AtomLink(type: AtomLinkType.ideaToClient.rawValue, uuid: clientAtom.uuid, entityType: "clientProfile")
-                let updated = atom.addingLink(link)
-                atom.links = updated.links
-            }
+        do {
+            _ = try await repo.update(uuid: uuid) { atom in
+                // Add client link
+                if let clientAtom = resolvedClientAtom {
+                    let link = AtomLink(type: AtomLinkType.ideaToClient.rawValue, uuid: clientAtom.uuid, entityType: "clientProfile")
+                    let updated = atom.addingLink(link)
+                    atom.links = updated.links
+                }
 
-            // Set metadata: clientUUID + format + platform
-            var ideaMeta = atom.ideaMetadata ?? IdeaMetadata()
-            ideaMeta.ideaStatus = ideaMeta.ideaStatus ?? .spark
-            if let clientAtom = resolvedClientAtom {
-                ideaMeta.clientUUID = clientAtom.uuid
-                ideaMeta.clientName = clientAtom.title ?? clientName
-            } else if let clientName, !clientName.isEmpty {
-                ideaMeta.clientName = clientName
+                // Set metadata: clientUUID + format + platform.
+                // withUpdatedIdeaMetadata key-merges, so sibling JSON keys
+                // survive, and refuses to overwrite corrupt metadata.
+                atom = atom.withUpdatedIdeaMetadata { ideaMeta in
+                    ideaMeta.ideaStatus = ideaMeta.ideaStatus ?? .spark
+                    if let clientAtom = resolvedClientAtom {
+                        ideaMeta.clientUUID = clientAtom.uuid
+                        ideaMeta.clientName = clientAtom.title ?? clientName
+                    } else if let clientName, !clientName.isEmpty {
+                        ideaMeta.clientName = clientName
+                    }
+                    if let f = formatStr {
+                        ideaMeta.contentFormat = ContentFormat(rawValue: f)
+                    }
+                    if let p = platformStr {
+                        ideaMeta.platform = IdeaPlatform(rawValue: p)
+                    }
+                }
             }
-            if let f = formatStr {
-                ideaMeta.contentFormat = ContentFormat(rawValue: f)
-            }
-            if let p = platformStr {
-                ideaMeta.platform = IdeaPlatform(rawValue: p)
-            }
-            if let encoded = try? JSONEncoder().encode(ideaMeta),
-               let str = String(data: encoded, encoding: .utf8) {
-                atom.metadata = str
-            }
+        } catch {
+            print("[FlashLiteRouter] postProcessIdea update failed for \(uuid): \(error)")
+            PersistenceHealth.note(.writeFailure, context: "FlashLiteRouter.postProcessIdea", detail: "\(uuid): \(error.localizedDescription)")
         }
     }
 

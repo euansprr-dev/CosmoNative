@@ -80,6 +80,7 @@ struct InboxView: View {
 
                 Spacer()
 
+                historyMenu
                 lanesButton
             }
 
@@ -111,6 +112,41 @@ struct InboxView: View {
             line += " · \(suggested) with suggested homes"
         }
         return line
+    }
+
+    /// Recently triaged captures — reachable even when the queue is non-empty,
+    /// so a mistaken dismiss is always recoverable.
+    private var historyMenu: some View {
+        Menu {
+            if viewModel.recentHistory.isEmpty {
+                Text("Nothing triaged recently")
+            } else {
+                ForEach(viewModel.recentHistory) { item in
+                    if item.status == .dismissed {
+                        Button {
+                            Task { await viewModel.restoreFromHistory(item) }
+                        } label: {
+                            Label("Restore “\(item.title ?? String(item.rawText.prefix(40)))”", systemImage: "arrow.uturn.backward")
+                        }
+                    } else {
+                        Text("Placed: \(item.title ?? String(item.rawText.prefix(40)))")
+                    }
+                }
+            }
+        } label: {
+            Label("History", systemImage: "clock.arrow.circlepath")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space6)
+                .background(DS.glassSectionFill, in: .capsule)
+                .overlay(Capsule().strokeBorder(DS.borderSubtle, lineWidth: 0.5))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Recently placed and dismissed captures — restore a dismissed one")
     }
 
     private var lanesButton: some View {
@@ -311,9 +347,9 @@ private struct InboxUndoToast: View {
 
     var body: some View {
         HStack(spacing: DS.space10) {
-            Image(systemName: "arrow.uturn.backward.circle.fill")
+            Image(systemName: viewModel.undoToastIsError ? "exclamationmark.triangle.fill" : "arrow.uturn.backward.circle.fill")
                 .font(DS.callout)
-                .foregroundStyle(DS.accent)
+                .foregroundStyle(viewModel.undoToastIsError ? DS.red : DS.accent)
                 .accessibilityHidden(true)
 
             Text(viewModel.undoToastMessage)
@@ -323,13 +359,15 @@ private struct InboxUndoToast: View {
 
             Spacer(minLength: DS.space8)
 
-            Button("Undo") {
-                Task { await viewModel.undoLastInboxAction() }
+            if !viewModel.undoToastIsError {
+                Button("Undo") {
+                    Task { await viewModel.undoLastInboxAction() }
+                }
+                .font(DS.subheadline.weight(.semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.accent)
+                .keyboardShortcut("z", modifiers: .command)
             }
-            .font(DS.subheadline.weight(.semibold))
-            .buttonStyle(.plain)
-            .foregroundStyle(DS.accent)
-            .keyboardShortcut("z", modifiers: .command)
 
             Button {
                 viewModel.dismissUndoToast()
@@ -420,29 +458,42 @@ private struct InboxEmptyState: View {
                     .dsSmallCapsLabel()
 
                 ForEach(viewModel.recentHistory) { item in
-                    HStack(spacing: DS.space8) {
-                        Image(systemName: item.status == .actioned ? "checkmark.circle.fill" : "xmark.circle")
-                            .font(DS.caption)
-                            .foregroundStyle(item.status == .actioned ? DS.accent : DS.textMuted)
-                            .accessibilityHidden(true)
-
-                        Text(item.title ?? String(item.rawText.prefix(40)))
-                            .font(DS.callout)
-                            .foregroundStyle(DS.textSecondary)
-                            .lineLimit(1)
-
-                        Spacer()
-
-                        if item.status == .actioned, let destination = item.destinationPath ?? item.placeThinkspaceName {
-                            Text(destination)
-                                .font(DS.caption)
-                                .foregroundStyle(DS.textMuted)
-                                .lineLimit(1)
-                        }
-                    }
+                    historyRow(item)
                 }
             }
             .frame(maxWidth: 420, alignment: .leading)
+        }
+    }
+
+    private func historyRow(_ item: InboxItem) -> some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: item.status == .actioned ? "checkmark.circle.fill" : "xmark.circle")
+                .font(DS.caption)
+                .foregroundStyle(item.status == .actioned ? DS.accent : DS.textMuted)
+                .accessibilityHidden(true)
+
+            Text(item.title ?? String(item.rawText.prefix(40)))
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(1)
+
+            Spacer()
+
+            if item.status == .actioned, let destination = item.destinationPath ?? item.placeThinkspaceName {
+                Text(destination)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .lineLimit(1)
+            } else if item.status == .dismissed {
+                Button("Restore") {
+                    Task { await viewModel.restoreFromHistory(item) }
+                }
+                .font(DS.caption.weight(.semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.accent)
+                .help("Put this capture back in the queue")
+                .accessibilityLabel("Restore dismissed capture")
+            }
         }
     }
 }

@@ -29,6 +29,20 @@ struct CosmoInlineAssistantAgentBridge {
     ) async throws -> Void
 
     static let live = CosmoInlineAssistantAgentBridge { prompt, route, store in
+        // Craft skills (/review, /riff) bypass the agent tool loop entirely:
+        // comparables and stats are computed in Swift, then ONE structured
+        // engine call delivers the result — evidence-grounded and ~10x cheaper
+        // than running these skills through the 95-tool agent loop.
+        if route == .answer,
+           let craftSkillID = CosmoCraftSkillRunner.resolveCraftSkillID(
+               selectedSkillID: store.activeSubmissionSkillID,
+               prompt: prompt,
+               surfaceKind: CosmoEditableSurfaceRegistry.shared.activeSurface?.editableSnapshot().kind
+           ) {
+            try await CosmoCraftSkillRunner.shared.run(prompt: prompt, skillID: craftSkillID, store: store)
+            return
+        }
+
         let perfStart = Date()
         let executor = AgentToolExecutor.shared
         executor.resetSessionSourceRefs()
@@ -57,9 +71,12 @@ struct CosmoInlineAssistantAgentBridge {
             store.sourceRefsProvider = nil
         }
 
+        // The session was already bound by submit(), atomically with the user's
+        // message — retargeting it here (after the message was appended) is what
+        // used to make sent messages vanish from the pane. The snapshot is for
+        // edit targeting and context only.
         let activeSurface = CosmoEditableSurfaceRegistry.shared.activeSurface
         let snapshot = activeSurface?.editableSnapshot()
-        store.activateSession(surfaceID: snapshot?.surfaceID)
 
         // Chips show what was actually read: tool-read refs plus the prefetched
         // ambient pack (which the model is told to use without re-searching).
@@ -79,13 +96,17 @@ struct CosmoInlineAssistantAgentBridge {
             args: [:]
         ))
 
-        let preparedRequest = await CosmoWindowViewModel.shared.prepareInlineAssistantAgentRequest(
+        var preparedRequest = await CosmoWindowViewModel.shared.prepareInlineAssistantAgentRequest(
             prompt: prompt,
             route: route,
             snapshot: snapshot,
             inlineContextAtoms: store.selectedContextAtoms,
             selectedSkillID: store.activeSubmissionSkillID
         )
+        // The agent's memory thread follows the conversation the user can SEE
+        // (the store's active session), not whichever surface happens to be
+        // registered — otherwise follow-ups lose the chat history behind them.
+        preparedRequest.conversationID = store.activeConversationID
         let perfPrepareMs = Int(Date().timeIntervalSince(perfStart) * 1000)
         print("[AGENT-PERF] inline prepare (retrieval+memory+context-pack)=\(perfPrepareMs)ms forcedBundles=\(preparedRequest.forcedToolBundles.map(\.rawValue).sorted())")
 

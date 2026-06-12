@@ -2,6 +2,36 @@ import XCTest
 @testable import CosmoOS
 
 final class CanvasRenderSnapshotTests: XCTestCase {
+    func testConstellationDiveSuppressesOutgoingWindowScreenshotOnce() {
+        XCTAssertFalse(
+            CanvasScreenshotCapturePolicy.shouldCaptureOutgoingThinkspaceOnSwitch(
+                currentThinkspaceId: "ben",
+                newThinkspaceId: "goals",
+                skipNextSwitchCapture: true
+            )
+        )
+    }
+
+    func testRegularThinkspaceSwitchCapturesOutgoingWindowScreenshot() {
+        XCTAssertTrue(
+            CanvasScreenshotCapturePolicy.shouldCaptureOutgoingThinkspaceOnSwitch(
+                currentThinkspaceId: "ben",
+                newThinkspaceId: "goals",
+                skipNextSwitchCapture: false
+            )
+        )
+    }
+
+    func testUnchangedThinkspaceDoesNotCaptureOutgoingWindowScreenshot() {
+        XCTAssertFalse(
+            CanvasScreenshotCapturePolicy.shouldCaptureOutgoingThinkspaceOnSwitch(
+                currentThinkspaceId: "ben",
+                newThinkspaceId: "ben",
+                skipNextSwitchCapture: false
+            )
+        )
+    }
+
     func testCompositorTransformMatchesViewportScreenMapping() {
         let transform = CanvasViewportTransform(
             viewportSize: CGSize(width: 1_200, height: 800),

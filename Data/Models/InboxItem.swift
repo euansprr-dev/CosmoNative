@@ -105,11 +105,19 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
 }
 
 // MARK: - Enums
+// All three decode tolerantly: one row with an unknown rawValue (newer app
+// version, manual edit, sync drift) must not poison every fetch and blank the
+// whole inbox. Each fallback renders safely in the existing UI.
 
 enum InboxSource: String, Codable, Sendable {
     case telegramVoice = "telegram_voice"
     case telegramText = "telegram_text"
     case quickCapture = "quick_capture"
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InboxSource(rawValue: raw) ?? .quickCapture
+    }
 }
 
 enum InboxClassification: String, Codable, Sendable {
@@ -117,6 +125,11 @@ enum InboxClassification: String, Codable, Sendable {
     case place
     case new        // Legacy: "create standalone atom" suggestion (pre-June 2026 rows)
     case unsorted   // Honest abstain — classifier ran, nothing cleared the confidence bar
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InboxClassification(rawValue: raw) ?? .unsorted
+    }
 }
 
 enum InboxItemStatus: String, Codable, Sendable {
@@ -124,4 +137,9 @@ enum InboxItemStatus: String, Codable, Sendable {
     case classified    // AI has suggested an action
     case actioned      // User confirmed and action completed
     case dismissed     // User dismissed without action
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InboxItemStatus(rawValue: raw) ?? .pending
+    }
 }

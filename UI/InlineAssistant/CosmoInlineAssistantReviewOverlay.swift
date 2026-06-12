@@ -95,7 +95,7 @@ private struct CosmoInlineDiffChangeRow: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 if change.isConflicted {
-                    Label("Outdated — the text moved since this was drafted", systemImage: "exclamationmark.triangle.fill")
+                    Label("Nothing to apply on this document — dismiss to clear", systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(DS.orange)
                 } else if !change.rationale.isEmpty {

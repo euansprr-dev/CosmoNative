@@ -594,12 +594,27 @@ final class SwipeClassificationEngine: ObservableObject {
     // MARK: - Persistence
 
     private func persistAnalysis(_ analysis: SwipeAnalysis, to atom: Atom) async {
+        // Re-fetch the live row: the passed `atom` was captured before a long
+        // Claude call, and writing its structured column back would clobber
+        // anything saved during the call (slide edits, comments, engagement).
+        let fresh = (try? await AtomRepository.shared.fetch(uuid: atom.uuid)) ?? atom
+        // `analysis` is freshly built — carry over curated fields (engagement,
+        // study state, comments, slides, manual taxonomy) before persisting.
+        let merged = analysis.preservingCuratedFields(from: fresh.swipeAnalysis)
+        let updated = fresh.withSwipeAnalysis(merged)
         // Use field-level update to only write structured (where swipeAnalysis lives)
         // This prevents overwriting user edits to body/title/metadata
-        let updated = atom.withSwipeAnalysis(analysis)
-        _ = try? await AtomRepository.shared.updateFields(uuid: atom.uuid, columns: [
-            "structured": updated.structured,
-        ])
+        do {
+            _ = try await AtomRepository.shared.updateFields(uuid: atom.uuid, columns: [
+                "structured": updated.structured,
+            ])
+        } catch {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "SwipeClassificationEngine.persistAnalysis(\(atom.uuid.prefix(8)))",
+                detail: error.localizedDescription
+            )
+        }
     }
 
     // MARK: - Text Extraction

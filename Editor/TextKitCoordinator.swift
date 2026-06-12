@@ -1012,6 +1012,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         context.coordinator.lastAppliedContentToken = externalContentToken
+        // The text view is being aligned with the binding — it's authoritative
+        // again, so stale-write-back suppression can lift.
+        context.coordinator.awaitingExternalContent = false
         if !textView.attributedString().isEqual(to: attributedText) {
             let selectedRange = textView.selectedRange()
             textView.textStorage?.setAttributedString(attributedText)
@@ -1056,7 +1059,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             // syncBindings() debounces attributedText writes by 50ms — if the user
             // blurs before the deferred sync fires, flushPendingSync reads a stale
             // attributedText and the final keystrokes are lost.
-            if let coordinator, let tv = coordinator.textViewReference {
+            // Skipped while awaiting external content: after a split/merge the
+            // text view is the stale side, and flushing it here would write
+            // pre-split text back over the rebuilt block (duplication bug).
+            if let coordinator, let tv = coordinator.textViewReference,
+               !coordinator.awaitingExternalContent {
                 coordinator.deferredSyncWorkItem?.cancel()
                 coordinator.parent.attributedText = tv.attributedString()
                 coordinator.isUpdatingFromTextView = false
@@ -1266,6 +1273,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         /// Last externalContentToken whose content this view has applied —
         /// a mismatch forces application even while first responder.
         var lastAppliedContentToken = 0
+        /// True after a handled boundary command (split/merge/delete) rebuilt
+        /// this row's content in the document — the text view is stale until
+        /// updateNSView applies the fresh content or the user edits again.
+        /// While set, stale write-backs (resign-flush, deferred attributedText
+        /// sync) are suppressed so they can't resurrect pre-edit text.
+        var awaitingExternalContent = false
         /// Last consumed one-shot caret request token.
         var lastAppliedCaretToken = 0
         private var lastReportedHeight: CGFloat = 0
@@ -1484,6 +1497,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             guard !isApplyingStructuralEdit else {
                 return
             }
+
+            // A real edit landed in the text view — it's authoritative again.
+            awaitingExternalContent = false
 
             normalizeSingleLineViewport(for: textView)
             syncBindings(from: textView)
@@ -1784,12 +1800,23 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             if commandSelector == #selector(NSResponder.deleteBackward(_:)),
                selectionIsAtDocumentStart(in: textView),
-               parent.onBoundaryCommand?(.deleteBackwardAtStart) == true {
+               parent.onBoundaryCommand?(.deleteBackwardAtStart(livePlainText: textView.string)) == true {
+                beginAwaitingExternalContent()
                 return true
             }
 
             // Shift+Enter — always continue current block
             if commandSelector == #selector(NSResponder.insertLineBreak(_:)) {
+                // Block rows: a soft break (U+2028) stays inside the block.
+                // The serializer only splits blocks on hard newlines, and
+                // paragraph spacing doesn't apply at a line separator, so the
+                // continuation renders with tight line spacing.
+                if parent.splitsOnReturn, parent.menusVisible?() != true {
+                    textView.insertText("\u{2028}", replacementRange: textView.selectedRange())
+                    syncBindings(from: textView)
+                    scheduleAncestorTypewriterScroll(for: textView)
+                    return true
+                }
                 if activeBlockMode != .none, let prefix = continuationPrefix(for: textView) {
                     textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
                     syncBindings(from: textView)
@@ -1828,6 +1855,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                         caretUTF16OffsetFromEnd: caretOffsetFromEnd,
                         livePlainText: textView.string
                     )) == true {
+                        beginAwaitingExternalContent()
                         dismissMenus()
                         return true
                     }
@@ -3222,6 +3250,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             textViewReference
         }
 
+        /// A handled boundary command rebuilt this row's document externally —
+        /// the text view's content is stale until the rebuild lands. Cancel
+        /// any pending write-back so it can't push pre-edit text over the
+        /// freshly edited document (the Enter-at-block-start duplication bug).
+        func beginAwaitingExternalContent() {
+            awaitingExternalContent = true
+            deferredSyncWorkItem?.cancel()
+            isUpdatingFromTextView = false
+        }
+
         private func syncBindings(from textView: NSTextView) {
             // Lightweight per-keystroke sync: plain text + cursor position only
             let currentString = plainTextForBinding(from: textView)
@@ -3245,6 +3283,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             isUpdatingFromTextView = true
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self else { return }
+                guard !self.awaitingExternalContent else {
+                    DispatchQueue.main.async { self.isUpdatingFromTextView = false }
+                    return
+                }
                 self.parent.attributedText = textView.attributedString()
                 self.notifyContentHeightChange(for: textView)
                 DispatchQueue.main.async { self.isUpdatingFromTextView = false }

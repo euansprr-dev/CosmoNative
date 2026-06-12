@@ -113,10 +113,19 @@ private struct ReelModalityEvidence: Sendable {
         if speechWordCount == 0 { return false }
         if visualWordCount == 0 { return true }
 
-        // Burned captions or subtitles mirroring substantial speech.
-        if subtitleOverlapRatio >= 0.58 && speechWordCount >= 18 && speechCoverageRatio >= 0.25 {
-            return lyricRisk < 4 || voiceoverScore > textScore
+        // On-screen text mirrors the speech (burned captions or subtitles).
+        if subtitleOverlapRatio >= 0.58 && speechCoverageRatio >= 0.25 {
+            if speechWordCount >= 18 {
+                return lyricRisk < 4 || voiceoverScore > textScore
+            }
+            // Mirrored speech too short to be real narration is a lyric or
+            // music overlay — the slides carry the content, not the audio.
+            return false
         }
+
+        // Slides whose text is distinct from the speech are authored content;
+        // never discard them just because the speech channel is strong.
+        if distinctVisualRatio >= 0.75 && visualWordCount >= 12 { return false }
 
         return voiceoverScore >= textScore + 2 && lyricRisk < 4
     }
@@ -124,6 +133,9 @@ private struct ReelModalityEvidence: Sendable {
     var shouldTreatAsTextOnly: Bool {
         if visualWordCount == 0 { return false }
         if speechWordCount == 0 { return true }
+        // Short speech that merely mirrors the on-screen text (lyric or music
+        // overlay) adds nothing — the slides already carry all of the content.
+        if subtitleOverlapRatio >= 0.7 && speechWordCount < 18 { return true }
         if lyricRisk >= 3 && textScore >= voiceoverScore { return true }
         return textScore >= voiceoverScore + 2 && !(speechWordCount >= 18 && subtitleOverlapRatio >= 0.4)
     }
@@ -1876,7 +1888,7 @@ final class InstagramAutoTranscriber: Sendable {
 
         if let braceStart = trimmed.range(of: "{"),
            let braceEnd = trimmed.range(of: "}", options: .backwards) {
-            let jsonString = String(trimmed[braceStart.lowerBound...braceEnd.upperBound])
+            let jsonString = String(trimmed[braceStart.lowerBound..<braceEnd.upperBound])
             if let parsed = decodeCleanedSlidesPayload(jsonString, expectedCount: expectedCount) {
                 return parsed
             }
@@ -1884,7 +1896,7 @@ final class InstagramAutoTranscriber: Sendable {
 
         if let arrayStart = trimmed.range(of: "["),
            let arrayEnd = trimmed.range(of: "]", options: .backwards) {
-            let jsonString = String(trimmed[arrayStart.lowerBound...arrayEnd.upperBound])
+            let jsonString = String(trimmed[arrayStart.lowerBound..<arrayEnd.upperBound])
             if let parsed = decodeCleanedSlidesPayload(jsonString, expectedCount: expectedCount) {
                 return parsed
             }
@@ -2100,6 +2112,12 @@ final class InstagramAutoTranscriber: Sendable {
         let bulletPattern = #"^[→▸►•·\-\*\+]\s"#
         if next.range(of: bulletPattern, options: .regularExpression) != nil ||
             previous.range(of: bulletPattern, options: .regularExpression) != nil {
+            return false
+        }
+        // A line that is purely a number (year header, big stat) is intentional
+        // slide layout — never fold it into surrounding text.
+        if (!previous.isEmpty && previous.allSatisfy(\.isNumber)) ||
+            (!next.isEmpty && next.allSatisfy(\.isNumber)) {
             return false
         }
         // For carousels: don't join after colon-ending lines (introduces a list or section)

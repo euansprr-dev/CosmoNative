@@ -134,6 +134,10 @@ class ChangeTracker: ObservableObject {
             }
 
             let serverVersion = payload["_server_version"] as? Int ?? 0
+            // The exact local version this push carries. Bookkeeping below is scoped
+            // to it so an edit made while this push is in flight stays pending and
+            // gets its own push, instead of being silently marked synced.
+            let pushedLocalVersion = payload["_local_version"] as? Int ?? 0
 
             // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
             payload.removeValue(forKey: "id")
@@ -178,18 +182,29 @@ class ChangeTracker: ObservableObject {
                     try await client.update(table: table, uuid: uuid, data: payload)
                 }
 
-                // Mark synced in queue + update server version
-                try? await CosmoDatabase.shared.asyncWrite { db in
-                    try db.execute(
-                        sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND status = 'pending'",
-                        arguments: [ISO8601.string(from: Date()), uuid]
-                    )
-                    try db.execute(
-                        sql: "UPDATE \(table) SET _server_version = _local_version, _local_pending = 0 WHERE uuid = ?",
-                        arguments: [uuid]
-                    )
+                // Mark synced in queue + update server version — scoped to the version
+                // actually pushed. A newer local edit (higher local_version) keeps its
+                // pending row and pending flag so it is never claimed as synced.
+                do {
+                    try await CosmoDatabase.shared.asyncWrite { db in
+                        try db.execute(
+                            sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND status = 'pending' AND local_version <= ?",
+                            arguments: [ISO8601.string(from: Date()), uuid, pushedLocalVersion]
+                        )
+                        try db.execute(
+                            sql: """
+                                UPDATE \(table)
+                                SET _server_version = MAX(_server_version, ?),
+                                    _local_pending = CASE WHEN _local_version > ? THEN _local_pending ELSE 0 END
+                                WHERE uuid = ?
+                                """,
+                            arguments: [pushedLocalVersion, pushedLocalVersion, uuid]
+                        )
+                    }
+                } catch {
+                    PersistenceHealth.note(.syncFailure, context: "ChangeTracker.immediatePush(\(uuid.prefix(8)))", detail: "post-push bookkeeping failed: \(error)")
                 }
-                print("[SYNC] immediatePush SUCCESS — table=\(table) uuid=\(uuid) op=\(operation)")
+                print("[SYNC] immediatePush SUCCESS — table=\(table) uuid=\(uuid) op=\(operation) pushedVersion=\(pushedLocalVersion)")
             } catch {
                 print("[SYNC] ⚠️ immediatePush FAILED — table=\(table) uuid=\(uuid) op=\(operation) error=\(error)")
                 // sync_queue entry remains for batch retry by SyncEngine
@@ -257,11 +272,17 @@ class ChangeTracker: ObservableObject {
     // MARK: - Mark as Pending
     private func markAsPending(table: String, uuid: String) async {
         print("[SYNC] markAsPending — table=\(table) uuid=\(uuid)")
-        try? await database.asyncWrite { db in
-            try db.execute(
-                sql: "UPDATE \(table) SET _local_pending = 1 WHERE uuid = ?",
-                arguments: [uuid]
-            )
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE \(table) SET _local_pending = 1 WHERE uuid = ?",
+                    arguments: [uuid]
+                )
+            }
+        } catch {
+            // If the pending shield doesn't get set, an inbound remote change can
+            // immediately overwrite the just-edited row — this must be visible.
+            PersistenceHealth.note(.syncFailure, context: "ChangeTracker.markAsPending(\(uuid.prefix(8)))", detail: String(describing: error))
         }
     }
 

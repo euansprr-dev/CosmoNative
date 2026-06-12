@@ -16,7 +16,16 @@ struct CanvasViewportTransform: Equatable {
     }
 
     var effectiveScale: CGFloat {
-        min(max(committedScale * gestureMagnification, minScale), maxScale)
+        let raw = committedScale * gestureMagnification
+        if raw >= minScale { return min(raw, maxScale) }
+        // Below the zoom floor the canvas keeps shrinking with square-root
+        // resistance instead of pinning — live feedback that the gesture is
+        // carrying through (into the Constellation) rather than hitting a
+        // wall. Commits still clamp to minScale, so this only shows during
+        // a live gesture.
+        guard minScale > 0, raw > 0 else { return minScale }
+        let resisted = minScale * pow(raw / minScale, 0.45)
+        return max(resisted, minScale * 0.6)
     }
 
     /// Gesture pan is collected in screen space and converted back into canvas space.

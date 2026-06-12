@@ -67,8 +67,17 @@ class CosmoDatabase: ObservableObject {
             let directory = dbPath.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-            // Create/open database
-            dbQueue = try DatabaseQueue(path: dbPath.path)
+            // Create/open database.
+            // busyMode: the file is shared with CosmoVoiceDaemon / the web app —
+            // without a busy timeout, cross-process write contention surfaces as
+            // instant SQLITE_BUSY errors that the many `try?` call sites swallow
+            // as silent save failures.
+            var config = Configuration()
+            config.busyMode = .timeout(5.0)
+            dbQueue = try DatabaseQueue(path: dbPath.path, configuration: config)
+
+            // Daily safety backup BEFORE migrations touch the file.
+            Self.performDailyBackupIfNeeded(dbPath: dbPath)
 
             // Configure PRAGMA settings - ALL must be outside transactions
             // These settings modify the database behavior and can't be changed mid-transaction
@@ -94,6 +103,42 @@ class CosmoDatabase: ObservableObject {
         } catch {
             self.error = "Database initialization failed: \(error.localizedDescription)"
             print("❌ Database error: \(error)")
+        }
+    }
+
+    // MARK: - Backups
+
+    /// Copy the database into Cosmo/backups/ at most once per day, keeping the
+    /// last 3 copies. Runs before migrations so a bad migration is recoverable.
+    /// Uses SQLite's online backup (via GRDB) so a hot WAL doesn't corrupt the copy.
+    private static func performDailyBackupIfNeeded(dbPath: URL) {
+        guard !isRunningTests, FileManager.default.fileExists(atPath: dbPath.path) else { return }
+
+        let backupDir = dbPath.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("backups")
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let stamp = formatter.string(from: Date())
+        let backupURL = backupDir.appendingPathComponent("Databases-\(stamp).db")
+
+        guard !FileManager.default.fileExists(atPath: backupURL.path) else { return }
+
+        do {
+            try FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
+            let source = try DatabaseQueue(path: dbPath.path)
+            let destination = try DatabaseQueue(path: backupURL.path)
+            try source.backup(to: destination)
+            print("💾 Database backed up to \(backupURL.lastPathComponent)")
+
+            // Prune to the 3 newest backups
+            let backups = (try? FileManager.default.contentsOfDirectory(at: backupDir, includingPropertiesForKeys: nil))?
+                .filter { $0.lastPathComponent.hasPrefix("Databases-") && $0.pathExtension == "db" }
+                .sorted { $0.lastPathComponent > $1.lastPathComponent } ?? []
+            for stale in backups.dropFirst(3) {
+                try? FileManager.default.removeItem(at: stale)
+            }
+        } catch {
+            print("⚠️ Database backup failed (continuing): \(error)")
         }
     }
 
@@ -1888,6 +1933,71 @@ class CosmoDatabase: ObservableObject {
                 );
             """)
             print("✅ workbenches table created")
+        }
+
+        migrator.registerMigration("create_swipe_boards") { db in
+            print("🔨 Creating swipe_boards table...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS swipe_boards (
+                    uuid TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    icon TEXT NOT NULL,
+                    tintToken TEXT,
+                    sortOrder INTEGER NOT NULL DEFAULT 0,
+                    isArchived INTEGER NOT NULL DEFAULT 0,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_swipe_boards_active
+                    ON swipe_boards(isArchived, sortOrder);
+            """)
+
+            // Seed the legacy sidebar boards with their historical slug ids so any
+            // swipeBoardIDs already persisted on atoms keep resolving.
+            let now = ISO8601DateFormatter().string(from: Date())
+            let seeds: [(uuid: String, name: String, icon: String, order: Int)] = [
+                ("thread-hooks", "Thread Hooks", "text.alignleft", 0),
+                ("reel-ideas", "Reel Ideas", "play.rectangle", 1),
+                ("client-proof", "Client Proof", "checkmark.seal", 2)
+            ]
+            for seed in seeds {
+                try db.execute(
+                    sql: """
+                        INSERT OR IGNORE INTO swipe_boards
+                            (uuid, name, icon, sortOrder, isArchived, createdAt, updatedAt)
+                        VALUES (?, ?, ?, ?, 0, ?, ?)
+                    """,
+                    arguments: [seed.uuid, seed.name, seed.icon, seed.order, now, now]
+                )
+            }
+            print("✅ swipe_boards table created")
+        }
+
+        migrator.registerMigration("create_app_flags") { db in
+            // Durable key-value flags that must live in the DATABASE, not
+            // UserDefaults — one-shot destructive migrations are gated here so a
+            // reinstall or second device can never re-run them against an
+            // already-migrated database.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS app_flags (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    value TEXT NOT NULL,
+                    updated_at TEXT
+                );
+            """)
+            print("✅ app_flags table created")
+        }
+
+        migrator.registerMigration("add_canvas_blocks_metadata") { db in
+            // Round-trip storage for block metadata (sticky color, rich body
+            // document, etc.) — previously only note_content survived a restart.
+            do {
+                try db.execute(sql: "ALTER TABLE canvas_blocks ADD COLUMN metadata TEXT")
+            } catch {
+                // Column already exists on databases that pre-created it
+            }
+            print("✅ canvas_blocks.metadata column ensured")
         }
 
         return migrator

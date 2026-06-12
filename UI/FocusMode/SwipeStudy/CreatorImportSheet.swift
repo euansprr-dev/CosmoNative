@@ -845,17 +845,17 @@ struct CreatorImportSheet: View {
 
     @ViewBuilder
     private var completionSection: some View {
-        if case .complete(let saved, let enriched) = engine.importState {
-            completionCard(saved: saved, enriched: enriched)
+        if case .complete(let saved, let enriched, let failed) = engine.importState {
+            completionCard(saved: saved, enriched: enriched, failed: failed)
                 .onAppear { triggerCompletionAnimation() }
         }
     }
 
     @ViewBuilder
-    private func completionCard(saved: Int, enriched: Int) -> some View {
+    private func completionCard(saved: Int, enriched: Int, failed: Int) -> some View {
         VStack(spacing: 12) {
             completionCheckmark
-            completionInfo(saved: saved, enriched: enriched)
+            completionInfo(saved: saved, enriched: enriched, failed: failed)
             completionActions
         }
         .frame(maxWidth: .infinity)
@@ -875,7 +875,7 @@ struct CreatorImportSheet: View {
     }
 
     @ViewBuilder
-    private func completionInfo(saved: Int, enriched: Int) -> some View {
+    private func completionInfo(saved: Int, enriched: Int, failed: Int) -> some View {
         VStack(spacing: 6) {
             Text("Import Complete")
                 .font(DS.title2)
@@ -886,6 +886,15 @@ struct CreatorImportSheet: View {
                 if enriched > 0 {
                     completionStatPill(value: "\(enriched)", label: "enriched")
                 }
+                if failed > 0 {
+                    completionStatPill(value: "\(failed)", label: "failed")
+                }
+            }
+
+            if failed > 0 {
+                Text("Failed posts stay selectable — run the import again to retry them.")
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }

@@ -129,6 +129,8 @@ enum TelegramTopicRouter {
             return .routed(destination: "\(deepDive.title ?? "Deep Dive") → Topic Inbox", atomUUID: nil)
         case .consumed(let reason):
             return .failed(reason: "Inbox insert skipped: \(reason)")
+        case .failed(let detail):
+            return .failed(reason: "Inbox save failed — please resend. (\(detail))")
         }
     }
 

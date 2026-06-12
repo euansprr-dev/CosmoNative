@@ -1412,7 +1412,7 @@ enum CosmoInlineAssistantSkillRuntime {
                 tokenBudget: 2200,
                 requiresReviewedDiff: false,
                 icon: "text.badge.checkmark",
-                summary: "Reviews the current draft against client voice, strategy, swipes, and performance patterns.",
+                summary: "Reviews the open draft against real swipe transcripts and their engagement numbers — performance read, slide notes, top moves.",
                 triggerPhrases: ["review", "feedback", "critique", "content feedback"],
                 preferredModelTier: .strategist,
                 panePolicy: .openForAnswer
@@ -1436,8 +1436,8 @@ enum CosmoInlineAssistantSkillRuntime {
                 tokenBudget: 1800,
                 requiresReviewedDiff: false,
                 icon: "quote.bubble",
-                summary: "Creates multiple options in a selected client or creator voice.",
-                triggerPhrases: ["variations", "voice", "rewrite options", "versions"],
+                summary: "Riffs 5–7 variations on one beat you're stuck on, each borrowing a pattern from a real comparable — reply `apply N` to stage one.",
+                triggerPhrases: ["riff", "vary", "variations", "voice", "rewrite options", "versions"],
                 preferredModelTier: .strategist,
                 panePolicy: .openForAnswer
             )

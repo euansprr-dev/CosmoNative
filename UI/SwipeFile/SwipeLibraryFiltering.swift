@@ -9,6 +9,39 @@ struct SwipeLibraryVisibleItemsIdentity: Equatable {
 }
 
 enum SwipeLibraryFiltering {
+    /// Scope-composed filtering: `scope ∧ filters ∧ query`. Scope is the structural
+    /// pre-filter owned by navigation; user filters never encode it.
+    static func filteredItems(
+        from items: [SwipeGalleryItem],
+        scope: SwipeLibrarySectionSelection,
+        filters: SwipeLibraryFilterState,
+        query: String,
+        sortMode: SwipeSortMode
+    ) -> [SwipeGalleryItem] {
+        let inScope: [SwipeGalleryItem]
+        switch scope {
+        case .all, .recentlyAdded, .boards:
+            inScope = items
+        default:
+            let predicate = scopePredicate(scope)
+            inScope = items.filter(predicate)
+        }
+        return filteredItems(from: inScope, filters: filters, query: query, sortMode: sortMode)
+    }
+
+    static func scopePredicate(_ scope: SwipeLibrarySectionSelection) -> (SwipeGalleryItem) -> Bool {
+        switch scope {
+        case .all, .recentlyAdded, .boards:
+            return { _ in true }
+        case .highHookScore:
+            return { ($0.hookScore ?? 0) >= 7.5 }
+        case .unstudied:
+            return { !$0.isStudied }
+        case .board(let boardID):
+            return { $0.boardIDs.contains(boardID) }
+        }
+    }
+
     static func filteredItems(
         from items: [SwipeGalleryItem],
         filters: SwipeLibraryFilterState,
@@ -84,30 +117,6 @@ enum SwipeLibraryFiltering {
         Array(Set(items.compactMap(\.niche).filter { !$0.isEmpty })).sorted()
     }
 
-    static func sectionFilters(for selection: SwipeLibrarySectionSelection) -> SwipeLibraryFilterState {
-        var filters = SwipeLibraryFilterState()
-        switch selection {
-        case .all:
-            break
-        case .recentlyAdded:
-            break
-        case .highHookScore:
-            filters.smartPreset = .highScore
-        case .unstudied:
-            filters.onlyUnstudied = true
-        case .board(let boardName):
-            if !boardName.isEmpty {
-                filters.boardID = boardName
-            }
-            if boardName.localizedCaseInsensitiveContains("fear") {
-                filters.smartPreset = .fearHooks
-            } else if boardName.localizedCaseInsensitiveContains("thread") {
-                filters.smartPreset = .threads
-            }
-        }
-        return filters
-    }
-
     private static func matchesQuery(_ item: SwipeGalleryItem, normalizedQuery: String) -> Bool {
         guard !normalizedQuery.isEmpty else { return true }
         return CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, inNormalizedText: item.searchableText)
@@ -173,10 +182,6 @@ enum SwipeLibraryFiltering {
         }
 
         if let minimumHookScore = filters.minimumHookScore, (item.hookScore ?? 0) < minimumHookScore {
-            return false
-        }
-
-        if let boardID = filters.boardID, !item.boardIDs.contains(boardID) {
             return false
         }
 

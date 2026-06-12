@@ -183,6 +183,9 @@ struct ConnectionFocusModeView: View {
         }
         registerContextProvider()
         Task {
+            // Sections come from a FRESH DB fetch — never from the UserDefaults
+            // blob or the (possibly stale) open-time atom snapshot.
+            await viewModel.refreshSectionsFromDatabase()
             await viewModel.generateGhostSuggestions()
             await loadSources()
             await refreshInsightsIfStale()
@@ -357,6 +360,17 @@ struct ConnectionFocusModeView: View {
 
     @MainActor
     private func linkSourceToConnection(_ source: Atom) async {
+        // Preflight both endpoints: addingLink silently no-ops on a corrupt
+        // links column, so proceeding would pretend the link was created.
+        guard !source.linksAreCorrupt else {
+            PersistenceHealth.note(
+                .decodeFailure,
+                context: "ConnectionFocusMode.linkSource",
+                detail: "source \(source.uuid) links column corrupt; link not created (connection \(atom.uuid))"
+            )
+            return
+        }
+
         var updatedSource = source
         let hasConnectionLink = updatedSource.linksList.contains {
             $0.uuid == atom.uuid &&
@@ -367,14 +381,49 @@ struct ConnectionFocusModeView: View {
 
         if !hasConnectionLink {
             updatedSource = updatedSource.addingLink(.related(atom.uuid, entityType: .connection))
-            try? await AtomRepository.shared.update(updatedSource)
+            do {
+                try await AtomRepository.shared.update(updatedSource)
+            } catch {
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "ConnectionFocusMode.linkSource",
+                    detail: "source endpoint write failed (source \(source.uuid), connection \(atom.uuid)): \(error.localizedDescription)"
+                )
+                return
+            }
         }
 
         if var updatedConnection = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
             let hasSourceLink = updatedConnection.linksList.contains { $0.uuid == source.uuid }
             if !hasSourceLink {
-                updatedConnection = updatedConnection.addingLink(.related(source.uuid, entityType: source.type))
-                try? await AtomRepository.shared.update(updatedConnection)
+                if updatedConnection.linksAreCorrupt {
+                    PersistenceHealth.note(
+                        .decodeFailure,
+                        context: "ConnectionFocusMode.linkSource",
+                        detail: "connection \(atom.uuid) links column corrupt; pair half-linked (source \(source.uuid) already written)"
+                    )
+                } else {
+                    updatedConnection = updatedConnection.addingLink(.related(source.uuid, entityType: source.type))
+                    do {
+                        try await AtomRepository.shared.update(updatedConnection)
+                    } catch {
+                        // Second endpoint failed — retry once on a fresh copy
+                        // before reporting the half-linked pair.
+                        do {
+                            if var retryConnection = try await AtomRepository.shared.fetch(uuid: atom.uuid),
+                               !retryConnection.linksAreCorrupt {
+                                retryConnection = retryConnection.addingLink(.related(source.uuid, entityType: source.type))
+                                try await AtomRepository.shared.update(retryConnection)
+                            }
+                        } catch {
+                            PersistenceHealth.note(
+                                .writeFailure,
+                                context: "ConnectionFocusMode.linkSource",
+                                detail: "second endpoint write failed; pair half-linked (source \(source.uuid), connection \(atom.uuid)): \(error.localizedDescription)"
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -463,9 +512,23 @@ final class ConnectionFocusModeViewModel {
     // MARK: - State Management
 
     func loadState() {
+        // The UserDefaults blob carries ONLY layout/viewport/insights/view-mode.
+        // Sections are owned by the DB (atom.structured): applying the blob's
+        // sections here used to clobber fresher DB sections with last session's
+        // snapshot, and the next save persisted the regression (RC6).
         if let savedState = ConnectionFocusModeState.load(atomUUID: atom.uuid) {
+            let liveSections = state.sections
             state = savedState
+            state.sections = liveSections
         }
+    }
+
+    /// Replaces in-memory sections with a fresh decode of the atom's structured
+    /// column. Called on appear so sections never come from a stale snapshot.
+    @MainActor
+    func refreshSectionsFromDatabase() async {
+        guard let fresh = try? await AtomRepository.shared.fetch(uuid: atom.uuid) else { return }
+        applySections(fromStructured: fresh.structured)
     }
 
     func saveState() {
@@ -562,7 +625,11 @@ final class ConnectionFocusModeViewModel {
     // MARK: - Atom persistence
 
     private func parseAtomStructuredData() {
-        guard let structured = atom.structured,
+        applySections(fromStructured: atom.structured)
+    }
+
+    private func applySections(fromStructured structured: String?) {
+        guard let structured,
               let data = ConnectionStructuredData.fromJSON(structured) else {
             return
         }
@@ -581,16 +648,27 @@ final class ConnectionFocusModeViewModel {
         // sections that were edited in the canvas block view.
         guard sectionsModifiedInFocusMode else { return }
         let structuredData = ConnectionStructuredData(sections: state.sections)
-        if let json = structuredData.toJSON() {
-            var updatedAtom = atom
-            updatedAtom.structured = json
+        let atomUUID = atom.uuid
+        do {
+            // Re-fetch the live row (synchronously — this also runs from the
+            // app-termination sink). Saving from the immutable open-time `atom`
+            // snapshot reverted title/metadata/links to open-time values.
+            let fresh = try CosmoDatabase.shared.read { db in
+                try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
+            } ?? atom
+            // Merge the sections key over existing structured so legacy
+            // mental-model keys survive the round-trip.
+            var updatedAtom = fresh.mergingStructuredKeys(structuredData)
             updatedAtom.body = state.flattenedBodyText
-            if let saved = try? AtomRepository.shared.updateSync(updatedAtom) {
-                // Sync: queue for Supabase push
-                Task {
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: saved)
-                }
-            }
+            // updateSync is versioned, merge-on-conflict, and queues the sync
+            // row in the same transaction — no separate ChangeTracker call.
+            _ = try AtomRepository.shared.updateSync(updatedAtom)
+        } catch {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "ConnectionFocusMode.saveToAtom(\(atomUUID.prefix(8)))",
+                detail: error.localizedDescription
+            )
         }
     }
 

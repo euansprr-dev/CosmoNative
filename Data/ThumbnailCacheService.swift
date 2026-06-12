@@ -6,12 +6,18 @@
 import AppKit
 import CryptoKit
 import Foundation
+import ImageIO
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - ThumbnailCacheService
 
 actor ThumbnailCacheService {
     static let shared = ThumbnailCacheService()
+
+    /// Cards render at ≤ ~272pt; 600px covers 2× retina with margin. Disk keeps
+    /// full quality, so a future larger display size only changes this constant.
+    nonisolated static let displayMaxPixelSize: CGFloat = 600
 
     private let memoryCache = NSCache<NSString, NSImage>()
     private var inflightTasks: [String: Task<NSImage?, Never>] = [:]
@@ -22,7 +28,73 @@ actor ThumbnailCacheService {
     }
 
     private init() {
-        memoryCache.countLimit = 200
+        memoryCache.countLimit = 400
+        // Decoded bitmaps are charged by pixel cost; without this the cache could
+        // hold gigabytes of full-frame textures.
+        memoryCache.totalCostLimit = 128 * 1024 * 1024
+    }
+
+    // MARK: - Downsampled decode
+
+    /// Decode an image already sized for card display. Decoding happens here
+    /// (ShouldCacheImmediately), never lazily on the render path.
+    nonisolated static func downsampledImage(
+        data: Data,
+        maxPixelSize: CGFloat = ThumbnailCacheService.displayMaxPixelSize
+    ) -> NSImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
+        return downsample(from: source, maxPixelSize: maxPixelSize)
+    }
+
+    nonisolated static func downsampledImage(
+        contentsOf url: URL,
+        maxPixelSize: CGFloat = ThumbnailCacheService.displayMaxPixelSize
+    ) -> NSImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        if let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions),
+           let image = downsample(from: source, maxPixelSize: maxPixelSize) {
+            return image
+        }
+        // ImageIO's thumbnailer rejects some valid images (e.g. 1×1 JPEGs it
+        // wrote itself) — fall back to a plain decode before giving up.
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return NSImage(data: data)
+    }
+
+    private nonisolated static func downsample(from source: CGImageSource, maxPixelSize: CGFloat) -> NSImage? {
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ] as CFDictionary
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+
+    /// Persist as JPEG without the NSImage→TIFF→bitmap roundtrip. Already-JPEG
+    /// payloads are written as-is; other formats transcode straight from the source.
+    private nonisolated static func writeJPEG(from source: CGImageSource, to url: URL, originalData: Data) {
+        if let type = CGImageSourceGetType(source) as String?, type == UTType.jpeg.identifier {
+            try? originalData.write(to: url)
+            return
+        }
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return }
+        let options = [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary
+        CGImageDestinationAddImageFromSource(destination, source, 0, options)
+        CGImageDestinationFinalize(destination)
+    }
+
+    private nonisolated static func cacheCost(of image: NSImage) -> Int {
+        let rep = image.representations.first
+        let width = rep?.pixelsWide ?? Int(image.size.width)
+        let height = rep?.pixelsHigh ?? Int(image.size.height)
+        return max(width * height * 4, 1)
+    }
+
+    private func store(_ image: NSImage, forKey key: String) {
+        memoryCache.setObject(image, forKey: key as NSString, cost: Self.cacheCost(of: image))
     }
 
     // MARK: - Cache Key
@@ -66,11 +138,11 @@ actor ThumbnailCacheService {
         // 1. Memory
         if let cached = memoryCache.object(forKey: key as NSString) { return cached }
 
-        // 2. Disk
+        // 2. Disk — decode downsampled, never at full resolution
         let diskPath = cacheDirectory.appendingPathComponent("thumb-\(key).jpg")
         if FileManager.default.fileExists(atPath: diskPath.path),
-           let diskImage = NSImage(contentsOf: diskPath) {
-            memoryCache.setObject(diskImage, forKey: key as NSString)
+           let diskImage = Self.downsampledImage(contentsOf: diskPath) {
+            store(diskImage, forKey: key)
             return diskImage
         }
 
@@ -91,17 +163,17 @@ actor ThumbnailCacheService {
                     request = genericRequest
                 }
                 let (data, _) = try await URLSession.shared.data(for: request)
-                guard let image = NSImage(data: data) else { return nil }
-
-                // Persist to disk as JPEG
-                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                if let tiff = image.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiff),
-                   let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) {
-                    try? jpeg.write(to: diskPath)
+                let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+                guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions),
+                      let image = Self.downsample(from: source, maxPixelSize: Self.displayMaxPixelSize) else {
+                    return nil
                 }
 
-                self.memoryCache.setObject(image, forKey: key as NSString)
+                // Persist full quality to disk; memory only ever holds the downsample
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                Self.writeJPEG(from: source, to: diskPath, originalData: data)
+
+                await self.store(image, forKey: key)
                 return image
             } catch {
                 return nil
@@ -113,7 +185,7 @@ actor ThumbnailCacheService {
         if let result { return result }
 
         if let fallbackImage {
-            memoryCache.setObject(fallbackImage, forKey: key as NSString)
+            store(fallbackImage, forKey: key)
             return fallbackImage
         }
 
@@ -303,7 +375,7 @@ enum InstagramCarouselImageCache {
 
     static func fallbackImage(forStableKey stableKey: String) -> NSImage? {
         guard let fallbackURL = fallbackFileURL(forStableKey: stableKey) else { return nil }
-        return NSImage(contentsOf: fallbackURL)
+        return ThumbnailCacheService.downsampledImage(contentsOf: fallbackURL)
     }
 
     private static func cachePath(for stableKey: String) -> URL {
@@ -344,10 +416,14 @@ enum InstagramCarouselImageCache {
     }
 
     private static func jpegData(from image: NSImage) -> Data? {
-        guard let tiffData = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData) else {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
             return nil
         }
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.88])
+        let options = [kCGImageDestinationLossyCompressionQuality: 0.88] as CFDictionary
+        CGImageDestinationAddImage(destination, cgImage, options)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
     }
 }

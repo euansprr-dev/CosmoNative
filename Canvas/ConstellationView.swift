@@ -27,6 +27,7 @@ struct ConstellationView: View {
     @State private var zoomImage: NSImage?
     @State private var zoomCardId: String?
     @State private var zoomExpanded = false
+    @State private var hasPlayedEntrance = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -56,13 +57,17 @@ struct ConstellationView: View {
 
     /// On entry from a canvas: its thumbnail starts full-window and shrinks
     /// into its own card — the canvas visibly *becomes* a card in the field.
+    /// Plays at most once per presentation: card frames keep changing on
+    /// hover, and replaying would read as zoom spam.
     private func beginEntranceDissolveIfReady(in size: CGSize) {
         guard !reduceMotion,
+              !hasPlayedEntrance,
               zoomCardId == nil,
               let origin = originThinkspaceId,
               cardFrames[origin] != nil,
               let image = ThinkspaceThumbnailService.shared.cachedThumbnail(for: origin) else { return }
 
+        hasPlayedEntrance = true
         zoomImage = image
         zoomCardId = origin
         zoomExpanded = true
@@ -314,9 +319,16 @@ private struct ConstellationCard: View {
                 .fill(DS.surfaceElevated)
 
             if let thumbnail {
-                Image(nsImage: thumbnail)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                // Color.clear drives layout; the fill image only paints —
+                // a bare .fill image would force the card wider than its
+                // grid cell and make neighbors overlap.
+                Color.clear
+                    .overlay(
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .scaledToFill()
+                    )
+                    .clipped()
             } else {
                 Image(systemName: "rectangle.3.group")
                     .font(DS.title2)

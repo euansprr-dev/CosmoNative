@@ -263,6 +263,18 @@ final class SwipeProcessingService {
             return nil
         }
 
+        // Step 1b: A transcript the user edited by hand is terminal — background
+        // transcription must never re-run over deliberate edits (including
+        // carousels whose slide count the user reduced on purpose).
+        if atom.swipeAnalysis?.transcriptEditedByUser == true {
+            print("SwipeProcessingService: Transcript for \(uuid) was edited by the user — auto-transcription is terminal")
+            if atom.processingStatus != "complete" {
+                atom.processingStatus = "complete"
+                _ = try? await AtomRepository.shared.update(atom)
+            }
+            return nil
+        }
+
         // Step 2a: Bail if extraction has been retried too many times
         let retryCount = atom.swipeAnalysis?.extractionRetryCount ?? 0
         if retryCount >= 3 {
@@ -535,6 +547,19 @@ final class SwipeProcessingService {
             print("SwipeProcessingService: Atom \(uuid) is being edited, preserving user's body/title")
         }
 
+        // The editing lock covers body + slides too, not just title/hook: while
+        // the user has this swipe open, a background transcription result must
+        // not clobber their transcript. Only write transcript fields when there
+        // is nothing user-visible to lose.
+        let existingAnalysis = atom.swipeAnalysis
+        let hasStoredTranscript = (existingAnalysis?.transcriptSlides?.contains {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } ?? false) || !(atom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let skipTranscriptWrite = userIsEditing && hasStoredTranscript
+        if skipTranscriptWrite {
+            print("SwipeProcessingService: Atom \(uuid) is being edited with an existing transcript — preserving user's body/slides")
+        }
+
         // Ensure sourceType + thumbnail are correct if carousel items were used
         if let items = carouselItems, !items.isEmpty {
             var rc = atom.richContent ?? ResearchRichContent()
@@ -558,11 +583,15 @@ final class SwipeProcessingService {
             }
         }
 
-        // Build in-memory atom with transcript (needed as analyzer input)
-        atom.body = combined
+        // Build in-memory atom with transcript (needed as analyzer input).
+        // When the user's transcript is protected, the analyzer runs on the
+        // user's existing body instead of the fresh auto-transcript.
         var richContent = atom.richContent ?? ResearchRichContent()
-        richContent.transcript = combined
-        richContent.transcriptStatus = "available"
+        if !skipTranscriptWrite {
+            atom.body = combined
+            richContent.transcript = combined
+            richContent.transcriptStatus = "available"
+        }
 
         if let expectedCount = mediaData.expectedCarouselItemCount {
             var igData = richContent.instagramData ?? InstagramData(
@@ -607,6 +636,7 @@ final class SwipeProcessingService {
 
         // Set hook/title from first slide (skip if user is editing AND has a real title)
         let hasPlaceholderTitle = ["Instagram Post", "Instagram Reel", "Instagram", "YouTube Video", "X Post", "Threads Post", "Saved Content", "Saved Text"].contains(atom.title ?? "")
+        var didSetHookTitle = false
         if (!userIsEditing || hasPlaceholderTitle),
            let firstText = finalSlides.first(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?.text {
             let hook = firstText
@@ -616,29 +646,37 @@ final class SwipeProcessingService {
             atom.hook = String(hook.prefix(500))
             atom.title = String(hook.prefix(120))
             richContent.title = String(hook.prefix(120))
+            didSetHookTitle = true
         }
 
         atom.setRichContent(richContent)
 
-        // Save slides into swipeAnalysis
-        var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
-        sa.transcriptSlides = finalSlides
-        sa.rawTranscriptSlides = rawSlides
-        sa.transcriptSpeechSegments = speechSegments
-        sa.transcriptionQuality = transcriptionQuality
-        sa.transcriptionWarnings = transcriptionWarnings
-        atom = atom.withSwipeAnalysis(sa)
+        // Save slides into swipeAnalysis (unless the user's transcript is protected)
+        if !skipTranscriptWrite {
+            var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+            sa.transcriptSlides = finalSlides
+            sa.rawTranscriptSlides = rawSlides
+            sa.transcriptSpeechSegments = speechSegments
+            sa.transcriptionQuality = transcriptionQuality
+            sa.transcriptionWarnings = transcriptionWarnings
+            atom = atom.withSwipeAnalysis(sa)
+        }
 
         atom.processingStatus = "analyzing"
 
         // Run NLP analysis (in-memory only — no DB write yet)
         print("SwipeProcessingService: Running analysis for \(uuid)")
         var nlpResult = await SwipeAnalyzer.shared.analyze(atom: atom)
-        nlpResult.transcriptSlides = finalSlides
-        nlpResult.rawTranscriptSlides = rawSlides
-        nlpResult.transcriptSpeechSegments = speechSegments
-        nlpResult.transcriptionQuality = transcriptionQuality
-        nlpResult.transcriptionWarnings = transcriptionWarnings
+        if !skipTranscriptWrite {
+            nlpResult.transcriptSlides = finalSlides
+            nlpResult.rawTranscriptSlides = rawSlides
+            nlpResult.transcriptSpeechSegments = speechSegments
+            nlpResult.transcriptionQuality = transcriptionQuality
+            nlpResult.transcriptionWarnings = transcriptionWarnings
+        }
+        // A fresh analysis knows nothing about engagement metrics, study state,
+        // comments, or manual taxonomy overrides — carry them over before persisting.
+        nlpResult = nlpResult.preservingCuratedFields(from: existingAnalysis)
         atom = atom.withSwipeAnalysis(nlpResult)
 
         // Deep analysis via Claude (in-memory only — no DB write yet)
@@ -648,18 +686,22 @@ final class SwipeProcessingService {
         )
         if classifiedResult.isFullyAnalyzed {
             var enriched = SwipeClassificationEngine.shared.mergeClassification(classifiedResult, into: nlpResult)
-            enriched.transcriptSlides = finalSlides
-            enriched.rawTranscriptSlides = rawSlides
-            enriched.transcriptSpeechSegments = speechSegments
-            enriched.transcriptionQuality = transcriptionQuality
-            enriched.transcriptionWarnings = transcriptionWarnings
+            if !skipTranscriptWrite {
+                enriched.transcriptSlides = finalSlides
+                enriched.rawTranscriptSlides = rawSlides
+                enriched.transcriptSpeechSegments = speechSegments
+                enriched.transcriptionQuality = transcriptionQuality
+                enriched.transcriptionWarnings = transcriptionWarnings
+            }
+            enriched = enriched.preservingCuratedFields(from: existingAnalysis)
             atom = atom.withSwipeAnalysis(enriched)
         }
 
-        // Re-index embedding with transcript text
+        // Re-index embedding with transcript text (the user's body when their
+        // transcript was protected, the fresh auto-transcript otherwise)
         var textToEmbed = ""
         if let hook = atom.hook { textToEmbed += hook + " " }
-        textToEmbed += combined
+        textToEmbed += skipTranscriptWrite ? (atom.body ?? "") : combined
         if !textToEmbed.isEmpty {
             try? await VectorDatabase.shared.index(
                 text: String(textToEmbed.prefix(2000)),
@@ -687,14 +729,20 @@ final class SwipeProcessingService {
         } catch let error as AtomRepositoryError where error.isVersionConflict {
             print("SwipeProcessingService: Version conflict for \(uuid), retrying with latest version")
             if var latest = try? await AtomRepository.shared.fetch(uuid: uuid) {
-                // Merge analysis results onto the latest version
-                latest.body = atom.body
-                latest.title = atom.title
-                latest.hook = atom.hook
+                // Merge analysis results onto the latest version — only the
+                // fields this pass actually produced, preserving anything the
+                // concurrent writer (or the user) changed in the meantime.
+                if !skipTranscriptWrite {
+                    latest.body = atom.body
+                }
+                if didSetHookTitle {
+                    latest.title = atom.title
+                    latest.hook = atom.hook
+                }
                 latest.processingStatus = stillIncomplete ? "partial" : "complete"
                 latest.setRichContent(atom.richContent ?? ResearchRichContent())
                 if let sa = atom.swipeAnalysis {
-                    latest = latest.withSwipeAnalysis(sa)
+                    latest = latest.withSwipeAnalysis(sa.preservingCuratedFields(from: latest.swipeAnalysis))
                 }
                 do {
                     _ = try await AtomRepository.shared.update(latest)

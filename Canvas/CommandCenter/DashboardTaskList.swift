@@ -18,34 +18,89 @@ struct DashboardTaskList: View {
     @State private var hoveredTaskUUID: String?
     @State private var draggedTaskUUID: String?
     @State private var dropTargetTaskUUID: String?
+    @State private var seriesDeleteTarget: TaskViewModel?
+    @State private var seriesDeleteCompletionCount = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if viewModel.viewMode == .upcoming {
-            upcomingView
-        } else {
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                    switch viewModel.viewMode {
-                    case .today:
-                        todayView
-                    case .upcoming:
-                        EmptyView()
-                    case .logbook:
-                        completedView
-                    case .anytime:
-                        anytimeView
-                    case .someday:
-                        somedayView
-                    case .project:
-                        projectView
-                    case .area:
-                        EmptyView()
+        Group {
+            if viewModel.viewMode == .upcoming {
+                upcomingView
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        switch viewModel.viewMode {
+                        case .today:
+                            todayView
+                        case .upcoming:
+                            EmptyView()
+                        case .logbook:
+                            completedView
+                        case .anytime:
+                            anytimeView
+                        case .someday:
+                            somedayView
+                        case .project:
+                            projectView
+                        case .area:
+                            EmptyView()
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollIndicators(.never)
             }
-            .scrollIndicators(.never)
+        }
+        .confirmationDialog(
+            "Delete \"\(seriesDeleteTarget?.title ?? "")\"?",
+            isPresented: Binding(
+                get: { seriesDeleteTarget != nil },
+                set: { if !$0 { seriesDeleteTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete series and \(seriesDeleteCompletionCount) logged completions", role: .destructive) {
+                guard let target = seriesDeleteTarget else { return }
+                seriesDeleteTarget = nil
+                Task { await viewModel.deleteTask(uuid: target.uuid) }
+            }
+            Button("Cancel", role: .cancel) { seriesDeleteTarget = nil }
+        } message: {
+            Text("This removes the repeating task and its entire completion history.")
+        }
+    }
+
+    // MARK: - Delete Routing
+
+    /// Default delete for an occurrence row cancels just that occurrence; deleting the
+    /// whole series goes through the confirmation dialog above.
+    private func requestSeriesDelete(_ task: TaskViewModel) {
+        Task {
+            seriesDeleteCompletionCount = await viewModel.seriesCompletionCount(templateUUID: task.uuid)
+            seriesDeleteTarget = task
+        }
+    }
+
+    /// Batch delete that understands recurring occurrences: occurrence rows are canceled
+    /// individually (never soft-deleting the series template they share a uuid with).
+    private func deleteSelectedTasks(_ uuids: Set<String>) {
+        let visible = viewModel.currentVisibleTasks
+        var plainUUIDs = Set<String>()
+        var occurrenceTasks: [TaskViewModel] = []
+        for uuid in uuids {
+            if let match = visible.first(where: { $0.uuid == uuid }), match.isOccurrence {
+                occurrenceTasks.append(match)
+            } else {
+                plainUUIDs.insert(uuid)
+            }
+        }
+        Task {
+            for occurrence in occurrenceTasks {
+                _ = await viewModel.cancelOccurrence(occurrence)
+            }
+            if !plainUUIDs.isEmpty {
+                await viewModel.deleteMultipleTasks(uuids: plainUUIDs)
+            }
         }
     }
 
@@ -363,9 +418,11 @@ struct DashboardTaskList: View {
 
             if showReschedule {
                 CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
+                    // Row ids ("uuid" or "uuid#day") so recurring occurrences reschedule via
+                    // per-day overrides instead of rewriting their template's anchor.
                     .batchSchedule(
                         title: "Reschedule overdue tasks",
-                        taskUUIDs: viewModel.overdueTasks.map(\.uuid),
+                        taskUUIDs: viewModel.overdueTasks.map(\.id),
                         anchor: anchor
                     )
                 } label: {
@@ -473,18 +530,31 @@ struct DashboardTaskList: View {
 
             Divider()
 
-            Button(role: .destructive) {
-                if selectedTaskUUIDs.contains(task.uuid) {
+            if selectedTaskUUIDs.contains(task.uuid) && selectedTaskUUIDs.count > 1 {
+                Button(role: .destructive) {
                     let toDelete = selectedTaskUUIDs
                     selectedTaskUUIDs.removeAll()
-                    Task { await viewModel.deleteMultipleTasks(uuids: toDelete) }
-                } else {
-                    Task { await viewModel.deleteTask(uuid: task.uuid) }
-                }
-            } label: {
-                if selectedTaskUUIDs.contains(task.uuid) && selectedTaskUUIDs.count > 1 {
+                    deleteSelectedTasks(toDelete)
+                } label: {
                     Label("Delete \(selectedTaskUUIDs.count) Tasks", systemImage: "trash")
-                } else {
+                }
+            } else if task.isOccurrence {
+                // Occurrence rows share the series template's uuid — a plain delete would
+                // soft-delete the whole series and its completion history.
+                Button(role: .destructive) {
+                    Task { _ = await viewModel.cancelOccurrence(task) }
+                } label: {
+                    Label("Remove This Occurrence", systemImage: "trash")
+                }
+                Button(role: .destructive) {
+                    requestSeriesDelete(task)
+                } label: {
+                    Label("Delete Series…", systemImage: "trash.slash")
+                }
+            } else {
+                Button(role: .destructive) {
+                    Task { await viewModel.deleteTask(uuid: task.uuid) }
+                } label: {
                     Label("Delete", systemImage: "trash")
                 }
             }
@@ -504,7 +574,7 @@ struct DashboardTaskList: View {
             Button {
                 let toDelete = selectedTaskUUIDs
                 selectedTaskUUIDs.removeAll()
-                Task { await viewModel.deleteMultipleTasks(uuids: toDelete) }
+                deleteSelectedTasks(toDelete)
             } label: {
                 HStack(spacing: DS.space4) {
                     Image(systemName: "trash")
@@ -896,10 +966,21 @@ struct DashboardTaskList: View {
 
             try? await Task.sleep(nanoseconds: timings.fadeDuration.nanoseconds)
             let completed = await viewModel.completeTask(task)
-            completionStates.removeValue(forKey: task.uuid)
 
             if completed {
+                completionStates.removeValue(forKey: task.uuid)
                 viewModel.notifyCompletedTaskArrival()
+            } else {
+                // Persistence failed — reverse the optimistic animation so the row comes
+                // back instead of silently vanishing while the task stays incomplete.
+                // Habit/XP credit was withheld inside completeTask.
+                withAnimation(.easeOut(duration: 0.2)) {
+                    updateCompletionState(for: task.uuid) { state in
+                        state = .initial
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                completionStates.removeValue(forKey: task.uuid)
             }
         }
     }

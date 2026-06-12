@@ -776,12 +776,26 @@ class TelegramBridgeService: ObservableObject {
                 await sendMessage(chatId: chatIdStr, text: "✓ Saved to \(destination).")
                 return
             case .unknownAlias(let alias, let suggestion):
-                if let s = suggestion {
-                    await sendMessage(chatId: chatIdStr, text: "? No alias '\(alias)' — did you mean '\(s)'? I'll save to Inbox for now.")
-                } else {
-                    await sendMessage(chatId: chatIdStr, text: "? No Deep Dive alias '\(alias)'. Saving to Inbox.")
+                // Save to the inbox NOW — the old fall-through promised an
+                // inbox save but handed the text to routers that might never save it.
+                let ingestOutcome = await InboxIngestService.shared.ingest(
+                    .init(source: .telegramText, rawText: text)
+                )
+                let savedLine: String
+                switch ingestOutcome {
+                case .enqueued:
+                    savedLine = "Saved to Inbox."
+                case .consumed:
+                    savedLine = "Already in your system — nothing new to capture."
+                case .failed:
+                    savedLine = "⚠️ Couldn't save it — please resend."
                 }
-                // Fall through to normal inbox flow below
+                if let s = suggestion {
+                    await sendMessage(chatId: chatIdStr, text: "? No alias '\(alias)' — did you mean '\(s)'? \(savedLine)")
+                } else {
+                    await sendMessage(chatId: chatIdStr, text: "? No Deep Dive alias '\(alias)'. \(savedLine)")
+                }
+                return
             case .failed(let reason):
                 await sendMessage(chatId: chatIdStr, text: "✗ Couldn't route: \(reason)")
                 return
@@ -1508,6 +1522,26 @@ class TelegramBridgeService: ObservableObject {
         // Show typing indicator while processing voice
         await sendChatAction(chatId: chatId, action: "typing")
 
+        // Durable row FIRST: the Telegram file_id is the only handle to the
+        // audio, so it must survive download/transcription failures.
+        let voiceMetadata = "{\"telegramVoiceFileId\":\"\(fileId)\"}"
+        var capturedRowUuid: String?
+        do {
+            let row = try await CapturedItemRepository.shared.create(
+                .makeTelegram(
+                    rawText: nil,
+                    caption: "Voice message (transcription pending)",
+                    chatId: chatId,
+                    messageId: nil,
+                    metadata: voiceMetadata
+                )
+            )
+            capturedRowUuid = row.uuid
+        } catch {
+            print("[Telegram] Voice captured_items create failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "TelegramBridgeService.handleVoiceMessage", detail: "captured item create failed: \(error.localizedDescription)")
+        }
+
         do {
             // 1. Get file path from Telegram
             let filePath = try await getFilePath(fileId: fileId)
@@ -1517,6 +1551,12 @@ class TelegramBridgeService: ObservableObject {
 
             // 3. Transcribe via Whisper
             let text = try await WhisperTranscriptionService.shared.transcribe(audioData: audioData, format: .ogg)
+
+            // Transcription succeeded — close out the durable row so it
+            // doesn't linger in Needs review.
+            if let capturedRowUuid {
+                await markVoiceCaptureRow(uuid: capturedRowUuid, transcript: text, status: .routed)
+            }
 
             // 4. Send transcription preview
             await sendMessage(chatId: chatId, text: "*Heard:* \(text)", parseMode: "Markdown")
@@ -1570,7 +1610,30 @@ class TelegramBridgeService: ObservableObject {
             }
 
         } catch {
-            await sendMessage(chatId: chatId, text: "Couldn't process voice message: \(error.localizedDescription)")
+            if let capturedRowUuid {
+                await markVoiceCaptureRow(uuid: capturedRowUuid, transcript: nil, status: .failed)
+                await sendMessage(chatId: chatId, text: "⚠️ Couldn't process that voice message (\(error.localizedDescription)). It's saved in Cosmo's Needs review for retry.")
+            } else {
+                await sendMessage(chatId: chatId, text: "⚠️ Couldn't process or save that voice message — please resend it.")
+            }
+        }
+    }
+
+    /// Update the durable voice-capture row's lifecycle status. `.failed` rows
+    /// surface in the inbox Needs-review section; `.routed` rows are done.
+    private func markVoiceCaptureRow(uuid: String, transcript: String?, status: CapturedItemStatus) async {
+        do {
+            try await CapturedItemRepository.shared.updateRouting(
+                uuid: uuid,
+                destinationId: nil,
+                parsedCommand: nil,
+                parsedIntent: transcript != nil ? "voice_transcribed" : "voice_failed",
+                confidence: transcript != nil ? 1.0 : 0,
+                status: status
+            )
+        } catch {
+            print("[Telegram] Voice capture row status update failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "TelegramBridgeService.markVoiceCaptureRow", detail: "\(uuid): \(error.localizedDescription)")
         }
     }
 

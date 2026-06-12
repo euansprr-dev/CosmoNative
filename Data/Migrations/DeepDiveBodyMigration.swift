@@ -58,7 +58,18 @@ enum DeepDiveBodyMigration {
     @MainActor
     static func migrateIfNeeded(_ atom: Atom) async throws -> Atom {
         guard atom.type == .deepDive else { return atom }
-        var metadata = atom.deepDiveMetadata ?? DeepDiveMetadata()
+
+        // Refuse to migrate when either JSON column holds data we can't decode —
+        // proceeding with defaults would overwrite the real (still-recoverable)
+        // payload with an empty struct.
+        let metadataState = atom.decodedMetadata(as: DeepDiveMetadata.self)
+        let structuredState = atom.decodedStructured(as: DeepDiveStructured.self)
+        if metadataState.isCorrupt || structuredState.isCorrupt {
+            PersistenceHealth.note(.decodeFailure, context: "DeepDiveBodyMigration(\(atom.uuid.prefix(8)))", detail: "metadata/structured undecodable; skipping migration to avoid wiping it")
+            return atom
+        }
+
+        var metadata = metadataState.value ?? DeepDiveMetadata()
         guard metadata.bodyMigratedAt == nil else { return atom }
         guard let body = atom.body, body.contains("_Appended from Inquiry Session") else {
             return atom
@@ -67,7 +78,7 @@ enum DeepDiveBodyMigration {
         let (cleanBody, blocks) = parseAppendedBlocks(from: body)
         guard !blocks.isEmpty else { return atom }
 
-        var structured = atom.deepDiveStructured ?? DeepDiveStructured()
+        var structured = structuredState.value ?? DeepDiveStructured()
         for block in blocks {
             structured.currentUnderstanding.recordNarrativeRevision(
                 UnderstandingNarrativeRevision(
@@ -88,8 +99,9 @@ enum DeepDiveBodyMigration {
 
         var copy = atom
         copy.body = cleanBody.isEmpty ? nil : cleanBody
-        copy = copy.withStructured(structured)
-        copy = copy.withMetadata(metadata)
+        // Key-merge so sibling JSON keys owned by other writers survive.
+        copy = copy.mergingStructuredKeys(structured)
+        copy = copy.mergingMetadataKeys(metadata)
         return try await AtomRepository.shared.update(copy)
     }
 }

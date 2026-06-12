@@ -540,6 +540,11 @@ class AutomationDispatcher: ObservableObject {
 
     // MARK: - Public API
 
+    /// Look up a cached rule by uuid (used for confirmation descriptions).
+    func ruleCacheLookup(uuid: String) -> AutomationRule? {
+        ruleCache.values.flatMap { $0 }.first { $0.uuid == uuid }
+    }
+
     /// Get rules scoped to a specific cluster
     func rules(for clusterId: String) -> [AutomationRule] {
         let allRules = ruleCache.values.flatMap { $0 }

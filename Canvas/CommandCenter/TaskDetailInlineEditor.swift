@@ -19,6 +19,7 @@ struct TaskDetailInlineEditor: View {
     @State private var availableHabits: [HabitDefinition]
     @State private var showDatePicker: Bool = false
     @State private var showDeleteConfirm: Bool = false
+    @State private var seriesCompletionCount = 0
     @FocusState private var titleFocused: Bool
     private let initialResolvedHabitUUID: String?
 
@@ -204,18 +205,42 @@ struct TaskDetailInlineEditor: View {
             // Actions
             HStack {
                 Button(role: .destructive) {
-                    showDeleteConfirm = true
+                    if task.isOccurrence {
+                        Task {
+                            seriesCompletionCount = await viewModel.seriesCompletionCount(templateUUID: task.uuid)
+                            showDeleteConfirm = true
+                        }
+                    } else {
+                        showDeleteConfirm = true
+                    }
                 } label: {
                     Label("Delete", systemImage: "trash")
                         .font(DS.footnote)
                         .foregroundColor(DS.red)
                 }
                 .buttonStyle(.plain)
-                .alert("Delete task?", isPresented: $showDeleteConfirm) {
-                    Button("Delete", role: .destructive) {
-                        Task {
-                            await viewModel.deleteTask(uuid: task.uuid)
-                            onDismiss()
+                .confirmationDialog("Delete task?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                    if task.isOccurrence {
+                        // Occurrence rows carry the series template's uuid — a plain delete
+                        // would soft-delete the whole series and its completion history.
+                        Button("Remove This Occurrence", role: .destructive) {
+                            Task {
+                                _ = await viewModel.cancelOccurrence(task)
+                                onDismiss()
+                            }
+                        }
+                        Button("Delete series and \(seriesCompletionCount) logged completions", role: .destructive) {
+                            Task {
+                                await viewModel.deleteTask(uuid: task.uuid)
+                                onDismiss()
+                            }
+                        }
+                    } else {
+                        Button("Delete", role: .destructive) {
+                            Task {
+                                await viewModel.deleteTask(uuid: task.uuid)
+                                onDismiss()
+                            }
                         }
                     }
                     Button("Cancel", role: .cancel) {}
@@ -307,11 +332,15 @@ struct TaskDetailInlineEditor: View {
 
     private func save() {
         Task {
+            // Only pass a changed due date — occurrence rows carry the series template's
+            // uuid, and an unchanged passthrough would re-anchor the whole series.
+            let dueDateChanged = editDueDate.map { Calendar.current.startOfDay(for: $0) }
+                != task.dueDate.map { Calendar.current.startOfDay(for: $0) }
             await viewModel.updateTask(
                 uuid: task.uuid,
                 title: editTitle.isEmpty ? nil : editTitle,
                 priority: editPriority != task.priority ? editPriority : nil,
-                dueDate: editDueDate,
+                dueDate: dueDateChanged ? editDueDate : nil,
                 intentUUID: editIntentUUID != task.intentUUID ? editIntentUUID : nil,
                 body: editNotes.isEmpty ? nil : editNotes
             )

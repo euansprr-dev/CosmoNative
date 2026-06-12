@@ -651,12 +651,18 @@ extension Atom {
             .joined(separator: " ")
     }
 
-    /// Set mental model for connection
+    /// Set mental model for connection.
+    /// Merges the model's keys over the existing structured JSON instead of
+    /// replacing the column — the old whole-blob write obliterated the V2
+    /// `sections` data. Only reachable from the legacy ConnectionEditorView
+    /// path (dead UI), but defused in case it is ever resurrected.
     mutating func setMentalModel(_ model: ConnectionMentalModel) {
-        if let encoded = try? JSONEncoder().encode(model),
-           let jsonString = String(data: encoded, encoding: .utf8) {
-            self.structured = jsonString
-        }
+        guard let merged = Atom.mergedJSONObjectString(
+            existing: structured,
+            overlay: model,
+            context: "setMentalModel(\(uuid.prefix(8)))"
+        ) else { return }
+        self.structured = merged
     }
 
     /// Get linked knowledge items

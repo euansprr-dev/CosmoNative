@@ -460,36 +460,13 @@ class AtomRepository: ObservableObject {
                 throw AtomRepositoryError.versionConflict(uuid: atom.uuid, expectedVersion: expectedVersion)
             }
 
-            // Merge: apply the caller's non-nil field changes onto the fresh atom
-            var merged = fresh
-            if atom.title != nil { merged.title = atom.title }
-            if atom.body != nil && atom.body != fresh.body { merged.body = atom.body }
-            if atom.structured != nil && atom.structured != fresh.structured {
-                // For structured, merge JSON keys rather than overwrite — the cloud agent may have
-                // added codexProfile while the local app is saving transcriptSlides
-                if let freshJSON = fresh.structured?.data(using: .utf8),
-                   let callerJSON = atom.structured?.data(using: .utf8),
-                   var freshDict = try? JSONSerialization.jsonObject(with: freshJSON) as? [String: Any],
-                   let callerDict = try? JSONSerialization.jsonObject(with: callerJSON) as? [String: Any] {
-                    // Caller's keys win for anything they explicitly set
-                    for (key, value) in callerDict {
-                        freshDict[key] = value
-                    }
-                    if let mergedData = try? JSONSerialization.data(withJSONObject: freshDict),
-                       let mergedStr = String(data: mergedData, encoding: .utf8) {
-                        merged.structured = mergedStr
-                    }
-                } else {
-                    merged.structured = atom.structured
-                }
-            }
-            if atom.metadata != nil { merged.metadata = atom.metadata }
-            if atom.links != nil { merged.links = atom.links }
-            if atom.isDeleted {
-                merged.isDeleted = true
-            }
-            merged.updatedAt = ISO8601.string(from: Date())
-            merged.localVersion += 1
+            // Merge: apply the caller's field changes onto the fresh atom.
+            // structured AND metadata merge at the JSON-key level and links are unioned,
+            // so the concurrent writer's changes survive; the caller wins where both wrote.
+            // (Whole-blob metadata/links replacement here used to silently erase the
+            // other writer's keys — the single worst data-loss vector in the app.)
+            let merged = Self.mergedForConflict(caller: atom, fresh: fresh)
+            PersistenceHealth.note(.conflict, context: "AtomRepository.update(\(atom.uuid.prefix(8)))", detail: "version conflict auto-merged (expected \(expectedVersion), fresh \(fresh.localVersion))")
 
             let retryVersion = fresh.localVersion
             let retryAtom = merged
@@ -529,8 +506,12 @@ class AtomRepository: ObservableObject {
             print("[PERSIST] ✅ VERSION CONFLICT resolved — uuid=\(atom.uuid) merged fresh version \(retryVersion) → \(retryAtom.localVersion)")
             updatedAtom = retryAtom
 
-            // Track + sync the merged version
-            await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: retryAtom)
+            // Track + sync the merged version.
+            // skipVersionIncrement: the versioned UPDATE above already bumped
+            // _local_version. A second bump here would desync the DB (caller+2)
+            // from the returned atom (caller+1), forcing EVERY consecutive save
+            // through this conflict path.
+            await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: retryAtom, skipVersionIncrement: true)
             refreshEditingLock(uuid: atom.uuid)
             do {
                 try await NodeGraphEngine.shared.handleAtomUpdated(retryAtom, changedFields: ["title", "body", "links", "metadata"])
@@ -540,8 +521,11 @@ class AtomRepository: ObservableObject {
             return retryAtom
         }
 
-        // Track for sync
-        await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updatedAtom)
+        // Track for sync.
+        // skipVersionIncrement: the versioned UPDATE above already bumped
+        // _local_version; bumping again would defeat the optimistic lock for
+        // every caller that saves the returned atom.
+        await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updatedAtom, skipVersionIncrement: true)
 
         // Refresh editing lock if user is actively editing
         refreshEditingLock(uuid: atom.uuid)
@@ -558,20 +542,97 @@ class AtomRepository: ObservableObject {
 
     /// Synchronous update — blocks until the write completes.
     /// Use this in save-on-close paths where the app may terminate before an async write finishes.
+    ///
+    /// Uses the same optimistic-lock + merge policy as `update()` (the old whole-row
+    /// `save(db)` silently clobbered concurrent writes with the closing view's stale
+    /// snapshot), and queues the change for sync in the same transaction so a
+    /// quit-time edit still reaches the cloud on next launch.
     @discardableResult
     func updateSync(_ atom: Atom) throws -> Atom {
         print("[PERSIST] updateSync() called — uuid=\(atom.uuid) version=\(atom.localVersion) bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"")
-        var updatedAtom = atom
-        updatedAtom.updatedAt = ISO8601.string(from: Date())
-        updatedAtom.localVersion += 1
+        var candidate = atom
+        candidate.updatedAt = ISO8601.string(from: Date())
+        candidate.localVersion += 1
 
-        let atomToUpdate = updatedAtom
-        try database.write { db in
-            try atomToUpdate.save(db)
+        let expectedVersion = atom.localVersion
+        let candidateAtom = candidate
+        var conflicted = false
+
+        let saved: Atom = try database.write { db in
+            func apply(_ row: Atom, expecting expected: Int64) throws -> Bool {
+                try db.execute(
+                    sql: """
+                        UPDATE atoms SET
+                            type = ?, title = ?, body = ?, structured = ?, metadata = ?, links = ?,
+                            updated_at = ?, is_deleted = ?,
+                            _local_version = ?, _server_version = ?, _sync_version = ?, _local_pending = 1
+                        WHERE uuid = ? AND _local_version = ?
+                        """,
+                    arguments: [
+                        row.type.rawValue,
+                        row.title,
+                        row.body,
+                        row.structured,
+                        row.metadata,
+                        row.links,
+                        row.updatedAt,
+                        row.isDeleted,
+                        row.localVersion,
+                        row.serverVersion,
+                        row.syncVersion,
+                        row.uuid,
+                        expected,
+                    ]
+                )
+                return db.changesCount > 0
+            }
+
+            var result = candidateAtom
+            if try !apply(candidateAtom, expecting: expectedVersion) {
+                // Version conflict — merge our fields over the fresh row instead of
+                // clobbering whatever the other writer saved (same policy as update()).
+                conflicted = true
+                guard let fresh = try Atom.filter(Column("uuid") == atom.uuid).fetchOne(db) else {
+                    throw AtomRepositoryError.versionConflict(uuid: atom.uuid, expectedVersion: expectedVersion)
+                }
+                let merged = Self.mergedForConflict(caller: atom, fresh: fresh)
+                guard try apply(merged, expecting: fresh.localVersion) else {
+                    throw AtomRepositoryError.versionConflict(uuid: atom.uuid, expectedVersion: fresh.localVersion)
+                }
+                result = merged
+            }
+
+            // Queue the change for sync in the SAME transaction so a quit-time save
+            // still reaches Supabase on next launch.
+            let dataJson = (try? JSONEncoder().encode(result)).flatMap { String(data: $0, encoding: .utf8) }
+            let existing = try Row.fetchOne(
+                db,
+                sql: "SELECT id FROM sync_queue WHERE uuid = ? AND status = 'pending'",
+                arguments: [atom.uuid]
+            )
+            if let existingId = existing?["id"] as? Int64 {
+                try db.execute(
+                    sql: "UPDATE sync_queue SET operation = 'UPDATE', data = ?, local_version = ?, created_at = ? WHERE id = ?",
+                    arguments: [dataJson, result.localVersion, Int64(Date().timeIntervalSince1970 * 1000), existingId]
+                )
+            } else {
+                try db.execute(
+                    sql: """
+                        INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
+                        VALUES (?, ?, ?, 'UPDATE', ?, ?, 'pending')
+                        """,
+                    arguments: [atom.uuid, Atom.databaseTableName, result.id, dataJson, result.localVersion]
+                )
+            }
+            return result
         }
-        print("[PERSIST] updateSync() DONE — uuid=\(atom.uuid) newVersion=\(updatedAtom.localVersion)")
 
-        return updatedAtom
+        if conflicted {
+            PersistenceHealth.note(.conflict, context: "AtomRepository.updateSync(\(atom.uuid.prefix(8)))", detail: "version conflict auto-merged at close-save")
+        }
+        print("[PERSIST] updateSync() DONE — uuid=\(atom.uuid) newVersion=\(saved.localVersion)")
+
+        return saved
     }
 
     /// Update specific fields of an atom by UUID
@@ -610,7 +671,9 @@ class AtomRepository: ObservableObject {
             if let v = value {
                 arguments.append(v)
             } else {
-                arguments.append("" as String) // NULL fallback
+                // A real SQL NULL — writing "" here used to manufacture undecodable
+                // JSON columns, which then fed the decode-fail→default→re-save wipe.
+                arguments.append(DatabaseValue.null)
             }
         }
 
@@ -630,10 +693,84 @@ class AtomRepository: ObservableObject {
             throw AtomRepositoryError.notFound(uuid)
         }
 
-        // Track for sync
-        await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updated)
+        // Track for sync — the SQL above already bumped _local_version.
+        await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updated, skipVersionIncrement: true)
 
         return updated
+    }
+
+    // MARK: - Conflict Merge Helpers
+
+    /// Shared conflict merge used by update() and updateSync(): apply the caller's
+    /// changes onto the fresh row without destroying the concurrent writer's work.
+    static func mergedForConflict(caller atom: Atom, fresh: Atom) -> Atom {
+        var merged = fresh
+        if atom.title != nil { merged.title = atom.title }
+        if atom.body != nil && atom.body != fresh.body { merged.body = atom.body }
+        if atom.structured != nil && atom.structured != fresh.structured {
+            merged.structured = mergedJSONKeys(fresh: fresh.structured, caller: atom.structured)
+        }
+        if atom.metadata != nil && atom.metadata != fresh.metadata {
+            merged.metadata = mergedJSONKeys(fresh: fresh.metadata, caller: atom.metadata)
+        }
+        if atom.links != nil && atom.links != fresh.links {
+            merged.links = mergedLinks(fresh: fresh.links, caller: atom.links)
+        }
+        if atom.isDeleted {
+            merged.isDeleted = true
+        }
+        merged.updatedAt = ISO8601.string(from: Date())
+        merged.localVersion += 1
+        return merged
+    }
+
+    /// Key-level JSON merge for conflict resolution: the caller's keys win,
+    /// the fresh row's other keys survive. Falls back to the caller's payload
+    /// when either side is unparseable (previous behavior).
+    static func mergedJSONKeys(fresh: String?, caller: String?) -> String? {
+        guard let caller, !caller.isEmpty else { return fresh }
+        guard let fresh, !fresh.isEmpty, fresh != caller else { return caller }
+        guard let freshData = fresh.data(using: .utf8),
+              let callerData = caller.data(using: .utf8),
+              var merged = (try? JSONSerialization.jsonObject(with: freshData)) as? [String: Any],
+              let callerDict = (try? JSONSerialization.jsonObject(with: callerData)) as? [String: Any] else {
+            return caller
+        }
+        for (key, value) in callerDict {
+            merged[key] = value
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: merged),
+              let result = String(data: data, encoding: .utf8) else {
+            return caller
+        }
+        return result
+    }
+
+    /// Union merge for links on conflict: relationships added by either writer
+    /// survive. Single-value link types dedupe by type with the caller's choice
+    /// winning; multi-value types dedupe by (type, target uuid).
+    static func mergedLinks(fresh: String?, caller: String?) -> String? {
+        guard let caller, !caller.isEmpty else { return fresh }
+        guard let fresh, !fresh.isEmpty, fresh != caller else { return caller }
+        guard let freshData = fresh.data(using: .utf8),
+              let callerData = caller.data(using: .utf8),
+              let freshLinks = try? JSONDecoder().decode([AtomLink].self, from: freshData),
+              let callerLinks = try? JSONDecoder().decode([AtomLink].self, from: callerData) else {
+            return caller
+        }
+        var seen = Set<String>()
+        var union: [AtomLink] = []
+        for link in callerLinks + freshLinks {
+            let key = link.isSingleValue ? link.type : "\(link.type)|\(link.uuid)"
+            if seen.insert(key).inserted {
+                union.append(link)
+            }
+        }
+        guard let data = try? JSONEncoder().encode(union),
+              let result = String(data: data, encoding: .utf8) else {
+            return caller
+        }
+        return result
     }
 
     // MARK: - Editing Locks
@@ -746,8 +883,10 @@ class AtomRepository: ObservableObject {
         try await delete(uuid: uuid)
     }
 
-    /// Restore a soft-deleted project
-    func restoreProject(_ uuid: String) async throws {
+    /// Restore any soft-deleted atom, including its canvas placements
+    /// (delete() soft-deletes both; restoring only the atom left its blocks
+    /// permanently invisible).
+    func restore(uuid: String) async throws {
         try await database.asyncWrite { db in
             try db.execute(
                 sql: """
@@ -757,12 +896,40 @@ class AtomRepository: ObservableObject {
                 """,
                 arguments: [ISO8601.string(from: Date()), uuid]
             )
+            try db.execute(
+                sql: "UPDATE canvas_blocks SET is_deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE entity_uuid = ?",
+                arguments: [uuid]
+            )
         }
 
         // Track for sync - fetch the updated atom to track properly
         if let restoredAtom = try? await fetch(uuid: uuid) {
-            await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: restoredAtom)
+            await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: restoredAtom, skipVersionIncrement: true)
         }
+
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+                object: nil
+            )
+            NotificationCenter.default.post(name: .atomsDidChange, object: nil)
+        }
+    }
+
+    /// Soft-deleted atoms, newest deletions first — backs the Trash UI.
+    func fetchDeleted(limit: Int = 200) async throws -> [Atom] {
+        try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.isDeleted == true)
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
+    /// Restore a soft-deleted project
+    func restoreProject(_ uuid: String) async throws {
+        try await restore(uuid: uuid)
     }
 
     /// Permanently delete a project (hard delete)
@@ -801,21 +968,59 @@ class AtomRepository: ObservableObject {
         return savedAtoms
     }
 
-    /// Update multiple atoms in a single transaction
+    /// Update multiple atoms in a single transaction.
+    /// Rows whose _local_version no longer matches the caller's snapshot are
+    /// skipped (and reported) instead of being clobbered with stale data.
     func updateBatch(_ atoms: [Atom]) async throws {
         let now = ISO8601.string(from: Date())
 
-        try await database.asyncWrite { db in
+        let (written, conflicted): ([Atom], [String]) = try await database.asyncWrite { db in
+            var written: [Atom] = []
+            var conflicted: [String] = []
             for var atom in atoms {
+                let expected = atom.localVersion
                 atom.updatedAt = now
                 atom.localVersion += 1
-                try atom.update(db)
+                try db.execute(
+                    sql: """
+                        UPDATE atoms SET
+                            type = ?, title = ?, body = ?, structured = ?, metadata = ?, links = ?,
+                            updated_at = ?, is_deleted = ?,
+                            _local_version = ?, _server_version = ?, _sync_version = ?
+                        WHERE uuid = ? AND _local_version = ?
+                        """,
+                    arguments: [
+                        atom.type.rawValue,
+                        atom.title,
+                        atom.body,
+                        atom.structured,
+                        atom.metadata,
+                        atom.links,
+                        atom.updatedAt,
+                        atom.isDeleted,
+                        atom.localVersion,
+                        atom.serverVersion,
+                        atom.syncVersion,
+                        atom.uuid,
+                        expected,
+                    ]
+                )
+                if db.changesCount > 0 {
+                    written.append(atom)
+                } else {
+                    conflicted.append(atom.uuid)
+                }
             }
+            return (written, conflicted)
         }
 
-        // Track for sync
-        for atom in atoms {
-            await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: atom)
+        if !conflicted.isEmpty {
+            PersistenceHealth.note(.conflict, context: "AtomRepository.updateBatch", detail: "skipped \(conflicted.count) row(s) modified since fetch: \(conflicted.prefix(5).joined(separator: ", "))")
+        }
+
+        // Track for sync — versions already bumped by the SQL above.
+        for atom in written {
+            await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: atom, skipVersionIncrement: true)
         }
     }
 
@@ -1116,9 +1321,33 @@ extension AtomRepository {
     /// One-way compatibility migration from the old Project container model to Thinkspace ownership.
     /// Project atoms are soft-deleted after their root Thinkspace receives the project's color
     /// and all explicit `.project` links are rewritten to `.thinkspace(rootThinkspaceUUID)`.
+    ///
+    /// One-shot: gated by a flag stored in the DATABASE (not UserDefaults), so this
+    /// destructive migration can never re-run against an already-migrated database
+    /// and can never delete `.project` atoms that arrive later via sync.
     func migrateProjectsToThinkspaces() async throws {
+        let flagKey = "projectsMigratedToThinkspaces"
+        let alreadyRan = try await database.asyncRead { db in
+            try Row.fetchOne(db, sql: "SELECT value FROM app_flags WHERE key = ?", arguments: [flagKey]) != nil
+        }
+        if alreadyRan {
+            return
+        }
+
+        func markDone() async throws {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                    arguments: [flagKey, ISO8601.string(from: Date())]
+                )
+            }
+        }
+
         let projects = try await fetchAll(type: .project)
-        guard !projects.isEmpty else { return }
+        guard !projects.isEmpty else {
+            try await markDone()
+            return
+        }
 
         var thinkspaceAtoms = try await fetchAll(type: .thinkspace)
         var updatesByUUID: [String: Atom] = [:]
@@ -1172,6 +1401,8 @@ extension AtomRepository {
         }
 
         try await deleteBatch(uuids: projects.map(\.uuid))
+
+        try await markDone()
 
         NotificationCenter.default.post(name: .atomsDidChange, object: nil)
         await ThinkspaceManager.shared.loadThinkspaces()
@@ -1507,17 +1738,23 @@ extension AtomRepository {
         }
     }
 
+    /// Parse a metadata column for read-modify-write, refusing to proceed when the
+    /// column holds data that fails to parse — defaulting to [:] and re-saving
+    /// would erase the real (still-recoverable) metadata.
+    private func parsedMetadataForMutation(_ atom: Atom, context: String) -> [String: Any]? {
+        guard let existing = atom.metadata, !existing.isEmpty else { return [:] }
+        guard let data = existing.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            PersistenceHealth.note(.decodeFailure, context: context, detail: "metadata unparseable; refusing mutation that would erase it")
+            return nil
+        }
+        return parsed
+    }
+
     /// Archive an uncommitted item
     func archiveUncommittedItem(uuid: String) async throws {
         guard var atom = try await fetch(uuid: uuid) else { return }
-
-        // Parse existing metadata or create new
-        var metadata: [String: Any] = [:]
-        if let existingMetadata = atom.metadata,
-           let data = existingMetadata.data(using: .utf8),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            metadata = parsed
-        }
+        guard var metadata = parsedMetadataForMutation(atom, context: "archiveUncommittedItem(\(uuid.prefix(8)))") else { return }
 
         metadata["isArchived"] = true
 
@@ -1532,14 +1769,7 @@ extension AtomRepository {
     /// Promote an uncommitted item (archive and link to new entity)
     func promoteUncommittedItem(uuid: String, toType: AtomType, entityUuid: String) async throws {
         guard var atom = try await fetch(uuid: uuid) else { return }
-
-        // Parse existing metadata
-        var metadata: [String: Any] = [:]
-        if let existingMetadata = atom.metadata,
-           let data = existingMetadata.data(using: .utf8),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            metadata = parsed
-        }
+        guard var metadata = parsedMetadataForMutation(atom, context: "promoteUncommittedItem(\(uuid.prefix(8)))") else { return }
 
         metadata["isArchived"] = true
         metadata["promotedTo"] = toType.rawValue
@@ -1556,14 +1786,7 @@ extension AtomRepository {
     /// Restore an archived uncommitted item
     func restoreUncommittedItem(uuid: String) async throws {
         guard var atom = try await fetch(uuid: uuid) else { return }
-
-        // Parse existing metadata
-        var metadata: [String: Any] = [:]
-        if let existingMetadata = atom.metadata,
-           let data = existingMetadata.data(using: .utf8),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            metadata = parsed
-        }
+        guard var metadata = parsedMetadataForMutation(atom, context: "restoreUncommittedItem(\(uuid.prefix(8)))") else { return }
 
         // Remove archived state
         metadata["isArchived"] = false
@@ -1582,37 +1805,32 @@ extension AtomRepository {
     /// Update assignment status for uncommitted item
     func updateUncommittedAssignmentStatus(uuid: String, status: String, projectUuid: String?) async throws {
         guard var atom = try await fetch(uuid: uuid) else { return }
-
-        // Parse existing metadata
-        var metadata: [String: Any] = [:]
-        if let existingMetadata = atom.metadata,
-           let data = existingMetadata.data(using: .utf8),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            metadata = parsed
-        }
+        guard var metadata = parsedMetadataForMutation(atom, context: "updateUncommittedAssignmentStatus(\(uuid.prefix(8)))") else { return }
 
         metadata["assignmentStatus"] = status
         if let projectUuid = projectUuid {
             metadata["projectUuid"] = projectUuid
         }
 
-        // Update atom with new metadata
+        // Apply metadata + links in a single update so the second write can't
+        // race the first one's version bump.
         if let jsonData = try? JSONSerialization.data(withJSONObject: metadata),
            let jsonString = String(data: jsonData, encoding: .utf8) {
             atom.metadata = jsonString
-            _ = try await update(atom)
         }
 
-        // Also update links if project assigned
-        if let projectUuid = projectUuid {
+        if let projectUuid = projectUuid, !atom.linksAreCorrupt {
             var links = atom.linksList
             // Remove existing project links
             links.removeAll { $0.type == "project" }
             // Add new project link
             links.append(AtomLink.project(projectUuid))
-            atom.links = try? String(data: JSONEncoder().encode(links), encoding: .utf8)
-            _ = try await update(atom)
+            if let encoded = try? String(data: JSONEncoder().encode(links), encoding: .utf8) {
+                atom.links = encoded
+            }
         }
+
+        _ = try await update(atom)
     }
 
     /// Count uncommitted items by assignment status

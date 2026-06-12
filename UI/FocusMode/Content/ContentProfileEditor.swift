@@ -64,6 +64,9 @@ struct ContentProfileEditor: View {
     @State private var autoFillError: String?
 
     @State private var isSaving = false
+    /// Save refusal/failure surfaced next to the save button (e.g. corrupt stored
+    /// metadata that saving would otherwise erase).
+    @State private var saveError: String?
 
     private func performClose() {
         if let onClose { onClose() } else { dismiss() }
@@ -803,6 +806,18 @@ struct ContentProfileEditor: View {
                 .buttonStyle(.plain)
             }
 
+            if let saveError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(DS.footnote)
+                        .foregroundStyle(.orange)
+                    Text(saveError)
+                        .font(DS.footnote)
+                        .foregroundStyle(.orange.opacity(0.9))
+                        .lineLimit(2)
+                }
+            }
+
             Spacer()
 
             Button(action: { Task { await save() } }) {
@@ -1328,6 +1343,7 @@ struct ContentProfileEditor: View {
     private func save() async {
         isSaving = true
         defer { isSaving = false }
+        saveError = nil
 
         let trimmedName = clientName.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
@@ -1342,8 +1358,21 @@ struct ContentProfileEditor: View {
             !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
 
-        // Preserve any non-performance documents from existing metadata
-        let existingMeta = existingAtom?.metadataValue(as: ClientProfileMetadata.self)
+        // Decode the existing profile with explicit corrupt detection — saving a
+        // fresh struct over metadata we can't read would erase the real data.
+        var existingMeta: ClientProfileMetadata?
+        if let existing = existingAtom {
+            switch existing.decodedMetadata(as: ClientProfileMetadata.self) {
+            case .value(let meta):
+                existingMeta = meta
+            case .absent:
+                existingMeta = nil
+            case .corrupt(let error):
+                PersistenceHealth.note(.decodeFailure, context: "ContentProfileEditor.save(\(existing.uuid.prefix(8)))", detail: error.localizedDescription)
+                saveError = "This profile's stored data can't be read — saving would erase it. Nothing was saved."
+                return
+            }
+        }
         if let existingDocs = existingMeta?.documents {
             for doc in existingDocs where !doc.category.hasMetrics {
                 if !allDocuments.contains(where: { $0.id == doc.id }) {
@@ -1370,11 +1399,21 @@ struct ContentProfileEditor: View {
             .filter { $0.category.isHighPerformer && !$0.content.isEmpty }
             .map { $0.content }
 
+        // Carry EVERY unedited field through from the existing metadata. Constructing
+        // a fresh struct here used to silently reset stats (totalReach, contentCount),
+        // clientSince, voice intelligence (topPerformingPosts, extractedVoicePatterns,
+        // preferredBeatPatterns) and other fields the editor doesn't expose.
         let metadata = ClientProfileMetadata(
             clientId: existingMeta?.clientId ?? UUID().uuidString,
             clientName: trimmedName,
             platforms: Array(selectedPlatforms),
-            activeStatus: true,
+            totalReach: existingMeta?.totalReach ?? 0,
+            avgEngagementRate: existingMeta?.avgEngagementRate ?? 0,
+            contentCount: existingMeta?.contentCount ?? 0,
+            viralPostCount: existingMeta?.viralPostCount ?? 0,
+            activeStatus: existingMeta?.activeStatus ?? true,
+            clientSince: existingMeta?.clientSince ?? Date(),
+            lastContentDate: existingMeta?.lastContentDate,
             notes: notes.isEmpty ? nil : notes,
             industry: industry.isEmpty ? nil : industry,
             targetAudience: targetAudience.isEmpty ? nil : targetAudience,
@@ -1383,6 +1422,7 @@ struct ContentProfileEditor: View {
             coreBeliefs: coreBeliefs.isEmpty ? nil : coreBeliefs,
             voiceNotes: voiceNotes.isEmpty ? nil : voiceNotes,
             uniqueAngle: uniqueAngle.isEmpty ? nil : uniqueAngle,
+            topPerformingPostIds: existingMeta?.topPerformingPostIds,
             topPerformingTranscripts: legacyTranscripts.isEmpty ? nil : legacyTranscripts,
             bestFormats: bestFormats.isEmpty ? nil : Array(bestFormats),
             postingFrequency: postingFrequency.isEmpty ? nil : postingFrequency,
@@ -1392,14 +1432,21 @@ struct ContentProfileEditor: View {
             isPersonalBrand: isPersonalBrand,
             signaturePhrases: signaturePhrases.isEmpty ? nil : signaturePhrases,
             intelligenceModel: existingMeta?.intelligenceModel,
-            documents: allDocuments.isEmpty ? nil : allDocuments
+            documents: allDocuments.isEmpty ? nil : allDocuments,
+            primaryPlatform: existingMeta?.primaryPlatform,
+            legacyFields: existingMeta?.legacyFields,
+            topPerformingPosts: existingMeta?.topPerformingPosts,
+            extractedVoicePatterns: existingMeta?.extractedVoicePatterns,
+            preferredBeatPatterns: existingMeta?.preferredBeatPatterns
         )
 
         do {
             if var existing = existingAtom {
                 existing.title = trimmedName
                 existing.body = notes.isEmpty ? nil : notes
-                existing.metadata = metadata.toJSON()
+                // Key-merge over the existing column so sibling keys owned by other
+                // writers survive (whole-blob toJSON() replacement wiped them).
+                existing = existing.mergingMetadataKeys(metadata)
                 let saved = try await AtomRepository.shared.update(existing)
                 onSave(saved)
             } else {
@@ -1411,6 +1458,8 @@ struct ContentProfileEditor: View {
             performClose()
         } catch {
             print("ContentProfileEditor: Save failed: \(error.localizedDescription)")
+            PersistenceHealth.note(.writeFailure, context: "ContentProfileEditor.save", detail: error.localizedDescription)
+            saveError = "Save failed: \(error.localizedDescription)"
         }
     }
 }

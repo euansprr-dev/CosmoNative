@@ -15,7 +15,12 @@ class InboxRepository: ObservableObject {
     @Published var items: [InboxItem] = []
     @Published var unreadCount: Int = 0
 
-    private var cancellables = Set<AnyCancellable>()
+    private var itemsObservationCancellable: AnyCancellable?
+    private var unreadObservationCancellable: AnyCancellable?
+
+    /// Re-subscription backoff after a ValueObservation completes with failure —
+    /// one decode error must not permanently freeze the inbox.
+    private let observationRetryBackoffs: [TimeInterval] = [1, 5, 30]
 
     private init() {
         observeItems()
@@ -24,15 +29,15 @@ class InboxRepository: ObservableObject {
 
     // MARK: - Observation
 
-    private func observeItems() {
+    private func observeItems(retryAttempt: Int = 0) {
         guard database.isReady else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.observeItems()
+                self?.observeItems(retryAttempt: retryAttempt)
             }
             return
         }
 
-        database.observe { db in
+        itemsObservationCancellable = database.observe { db in
             try InboxItem
                 .filter(Column("status") == InboxItemStatus.pending.rawValue ||
                         Column("status") == InboxItemStatus.classified.rawValue)
@@ -41,27 +46,30 @@ class InboxRepository: ObservableObject {
         }
         .receive(on: DispatchQueue.main)
         .sink(
-            receiveCompletion: { completion in
+            receiveCompletion: { [weak self] completion in
                 if case .failure(let error) = completion {
                     print("⚠️ [InboxRepository] Observation failed: \(error)")
+                    PersistenceHealth.note(.decodeFailure, context: "InboxRepository.observeItems", detail: error.localizedDescription)
+                    self?.scheduleObservationRetry(retryAttempt: retryAttempt) { repo, attempt in
+                        repo.observeItems(retryAttempt: attempt)
+                    }
                 }
             },
             receiveValue: { [weak self] items in
                 self?.items = items
             }
         )
-        .store(in: &cancellables)
     }
 
-    private func observeUnreadCount() {
+    private func observeUnreadCount(retryAttempt: Int = 0) {
         guard database.isReady else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.observeUnreadCount()
+                self?.observeUnreadCount(retryAttempt: retryAttempt)
             }
             return
         }
 
-        database.observe { db in
+        unreadObservationCancellable = database.observe { db in
             try InboxItem
                 .filter(Column("isRead") == false)
                 .filter(Column("status") == InboxItemStatus.pending.rawValue ||
@@ -70,12 +78,25 @@ class InboxRepository: ObservableObject {
         }
         .receive(on: DispatchQueue.main)
         .sink(
-            receiveCompletion: { _ in },
+            receiveCompletion: { [weak self] completion in
+                if case .failure = completion {
+                    self?.scheduleObservationRetry(retryAttempt: retryAttempt) { repo, attempt in
+                        repo.observeUnreadCount(retryAttempt: attempt)
+                    }
+                }
+            },
             receiveValue: { [weak self] count in
                 self?.unreadCount = count
             }
         )
-        .store(in: &cancellables)
+    }
+
+    private func scheduleObservationRetry(retryAttempt: Int, resubscribe: @escaping @MainActor (InboxRepository, Int) -> Void) {
+        let backoff = observationRetryBackoffs[min(retryAttempt, observationRetryBackoffs.count - 1)]
+        DispatchQueue.main.asyncAfter(deadline: .now() + backoff) { [weak self] in
+            guard let self else { return }
+            resubscribe(self, retryAttempt + 1)
+        }
     }
 
     // MARK: - Create
@@ -111,6 +132,9 @@ class InboxRepository: ObservableObject {
     ) async throws {
         try await database.asyncWrite { db in
             guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
+            // Never resurrect a dismissed/actioned item — a slow classifier
+            // result landing after the user triaged must not clobber status.
+            guard item.status == .pending || item.status == .classified else { return }
             item.classification = classification
             item.confidence = confidence
             item.title = title ?? item.title
@@ -157,6 +181,28 @@ class InboxRepository: ObservableObject {
             guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
             item.isRead = true
             try item.update(db)
+        }
+    }
+
+    /// Merge keys into the item's JSON metadata column — used to persist a
+    /// durable undo source (e.g. the pre-merge target body) before a merge.
+    func updateMetadata(uuid: String, merging fields: [String: String]) async throws {
+        try await database.asyncWrite { db in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
+            var dict: [String: Any] = [:]
+            if let existing = item.metadata,
+               let data = existing.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                dict = parsed
+            }
+            for (key, value) in fields {
+                dict[key] = value
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: dict),
+               let merged = String(data: data, encoding: .utf8) {
+                item.metadata = merged
+                try item.update(db)
+            }
         }
     }
 
@@ -252,16 +298,43 @@ class InboxRepository: ObservableObject {
         }
     }
 
-    /// Delete old actioned/dismissed items (housekeeping)
+    /// Archive old actioned/dismissed items (housekeeping).
+    ///
+    /// Data-safety pass, June 2026: this used to hard-DELETE rows — inbox items
+    /// aren't synced, so pruning was permanent and unrecoverable. It now exports
+    /// the rows to a JSON archive on disk BEFORE deleting, so housekeeping can
+    /// never destroy the only copy of a capture. (Currently has no callers.)
     func pruneOldItems(olderThanDays days: Int = 30) async throws {
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
         let cutoffStr = ISO8601.string(from: cutoff)
-        try await database.asyncWrite { db in
+
+        let prunable = try await database.asyncRead { db in
             try InboxItem
                 .filter(Column("status") == InboxItemStatus.actioned.rawValue ||
                         Column("status") == InboxItemStatus.dismissed.rawValue)
                 .filter(Column("actionedAt") < cutoffStr)
+                .fetchAll(db)
+        }
+        guard !prunable.isEmpty else { return }
+
+        // Archive first — refuse to delete anything that didn't make it to disk.
+        let archiveDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Cosmo")
+            .appendingPathComponent("inbox-archive")
+        try FileManager.default.createDirectory(at: archiveDir, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let archiveURL = archiveDir.appendingPathComponent("inbox-pruned-\(formatter.string(from: Date())).json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(prunable).write(to: archiveURL)
+
+        let archivedUuids = prunable.map(\.uuid)
+        try await database.asyncWrite { db in
+            try InboxItem
+                .filter(archivedUuids.contains(Column("uuid")))
                 .deleteAll(db)
         }
+        print("🗄️ Inbox pruning archived \(prunable.count) item(s) to \(archiveURL.lastPathComponent)")
     }
 }

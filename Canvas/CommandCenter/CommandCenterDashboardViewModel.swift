@@ -42,24 +42,60 @@ class PlannerumViewModel: ObservableObject {
         }
     }
 
-    func completeTask(taskId: String) async {
+    /// Returns false when the completion did NOT persist (missing atom, corrupt metadata,
+    /// or write failure) so callers can reverse optimistic UI and withhold habit/XP credit.
+    @discardableResult
+    func completeTask(taskId: String) async -> Bool {
         do {
-            _ = try await AtomRepository.shared.update(uuid: taskId) { atom in
-                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            var applied = false
+            let result = try await AtomRepository.shared.update(uuid: taskId) { atom in
+                guard var metadata = taskMetadataForWrite(atom, context: "PlannerumViewModel.completeTask(\(taskId.prefix(8)))") else { return }
                 metadata.isCompleted = true
                 metadata.completedAt = ISO8601.string(from: Date())
-                atom = atom.withMetadata(metadata)
+                guard let merged = atom.mergingTaskMetadata(metadata, context: "PlannerumViewModel.completeTask(\(taskId.prefix(8)))") else { return }
+                atom = merged
+                applied = true
             }
+            guard applied, result != nil else { return false }
             await loadTodayTasks()
+            return true
         } catch {
-            print("[PlannerumViewModel stub] Failed to complete task: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "PlannerumViewModel.completeTask(\(taskId.prefix(8)))", detail: error.localizedDescription)
+            return false
         }
     }
 
-    func quickAddTask(title: String) async {
-        let atom = Atom.new(type: .task, title: title)
-        _ = try? await AtomRepository.shared.create(atom)
-        await loadTodayTasks()
+    /// Returns the created atom, or nil when creation failed — callers must surface the
+    /// failure instead of pretending the task exists.
+    @discardableResult
+    func quickAddTask(title: String) async -> Atom? {
+        do {
+            let atom = Atom.new(type: .task, title: title)
+            let created = try await AtomRepository.shared.create(atom)
+            await loadTodayTasks()
+            return created
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "PlannerumViewModel.quickAddTask", detail: error.localizedDescription)
+            return nil
+        }
+    }
+}
+
+// MARK: - Task Metadata Write Guard
+
+/// Decode-state guard for every task write: absent → fresh metadata, corrupt → nil
+/// (reported via PersistenceHealth). Callers MUST bail out of the write when this
+/// returns nil so a corrupt column is never overwritten by a default-derived re-encode
+/// (the "one completion tap erases the recurrence rule + completion log" failure mode).
+private func taskMetadataForWrite(_ atom: Atom, context: String) -> TaskMetadata? {
+    switch atom.decodedMetadata(as: TaskMetadata.self) {
+    case .absent:
+        return TaskMetadata()
+    case .value(let metadata):
+        return metadata
+    case .corrupt(let error):
+        PersistenceHealth.note(.decodeFailure, context: context, detail: "task metadata undecodable; refusing write (\(error.localizedDescription))")
+        return nil
     }
 }
 
@@ -1014,41 +1050,100 @@ class CommandCenterDashboardViewModel: ObservableObject {
             for (index, task) in tasks.enumerated() {
                 do {
                     _ = try await AtomRepository.shared.update(uuid: task.uuid) { atom in
-                        var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                        guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.persistSortOrder(\(task.uuid.prefix(8)))") else { return }
                         metadata.manualSortOrder = index
-                        atom = atom.withMetadata(metadata)
+                        guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.persistSortOrder(\(task.uuid.prefix(8)))") else { return }
+                        atom = merged
                     }
                 } catch {
-                    print("❌ Dashboard: Failed to persist sort order: \(error)")
+                    PersistenceHealth.note(.writeFailure, context: "Dashboard.persistSortOrder(\(task.uuid.prefix(8)))", detail: error.localizedDescription)
                 }
             }
+        }
+    }
+
+    /// Split a row id of the form "templateUUID#yyyy-MM-dd" (a virtual recurring
+    /// occurrence) into its components. Returns nil for plain task uuids.
+    static func occurrenceComponents(ofRowID id: String) -> (templateUUID: String, dayKey: String)? {
+        guard let hash = id.firstIndex(of: "#") else { return nil }
+        let uuid = String(id[..<hash])
+        let dayKey = String(id[id.index(after: hash)...])
+        guard !uuid.isEmpty, !dayKey.isEmpty else { return nil }
+        return (uuid, dayKey)
+    }
+
+    /// Reschedule entry point that understands recurring occurrences. Occurrence rows are
+    /// rescheduled via a per-day override; only plain tasks (and deliberate template moves)
+    /// rewrite atom dates.
+    func rescheduleTask(_ task: TaskViewModel, toDate: Date?) async {
+        if let occurrenceDay = task.occurrenceDay {
+            guard let toDate else {
+                // Clearing the date of a single occurrence has no occurrence-level meaning;
+                // falling through would clear the TEMPLATE anchor and orphan the series.
+                PersistenceHealth.note(.writeFailure, context: "Dashboard.rescheduleTask", detail: "ignored clear-date on recurring occurrence \(task.id)")
+                return
+            }
+            await rescheduleOccurrence(templateUUID: task.uuid, dayKey: RecurringSeriesEngine.dayKey(for: occurrenceDay), toDate: toDate)
+            return
+        }
+        await rescheduleTask(uuid: task.uuid, toDate: toDate)
+    }
+
+    /// Row-id variant for batch surfaces that only carry ids ("uuid" or "uuid#day").
+    func rescheduleTaskRow(id: String, toDate: Date?) async {
+        if let occurrence = Self.occurrenceComponents(ofRowID: id) {
+            guard let toDate else {
+                PersistenceHealth.note(.writeFailure, context: "Dashboard.rescheduleTaskRow", detail: "ignored clear-date on recurring occurrence \(id)")
+                return
+            }
+            await rescheduleOccurrence(templateUUID: occurrence.templateUUID, dayKey: occurrence.dayKey, toDate: toDate)
+            return
+        }
+        await rescheduleTask(uuid: id, toDate: toDate)
+    }
+
+    private func rescheduleOccurrence(templateUUID: String, dayKey: String, toDate: Date) async {
+        do {
+            try await RecurringSeriesEngine.shared.rescheduleOccurrence(
+                templateUUID: templateUUID,
+                dayKey: dayKey,
+                to: toDate
+            )
+            await refreshTaskCollectionsAfterMutation()
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.rescheduleOccurrence(\(templateUUID.prefix(8))#\(dayKey))", detail: error.localizedDescription)
         }
     }
 
     func rescheduleTask(uuid: String, toDate: Date?) async {
         do {
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
-                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.rescheduleTask(\(uuid.prefix(8)))") else { return }
+
+                let isSeriesTemplate = metadata.recurrence != nil && metadata.recurrenceParentUUID == nil
+                if toDate == nil, isSeriesTemplate {
+                    // Clearing the anchor date of a recurring template makes the entire
+                    // series — and its completion history — unprojectable. Refuse.
+                    PersistenceHealth.note(.writeFailure, context: "Dashboard.rescheduleTask(\(uuid.prefix(8)))", detail: "blocked clearing the anchor date of a recurring series")
+                    return
+                }
+
                 CommandCenterTaskScheduling.reschedule(&metadata, toDate: toDate)
-                atom = atom.withMetadata(metadata)
+                if let toDate, isSeriesTemplate {
+                    metadata.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: toDate)
+                }
+                guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.rescheduleTask(\(uuid.prefix(8)))") else { return }
+                atom = merged
             }
             await refreshTaskCollectionsAfterMutation()
         } catch {
-            print("❌ Dashboard: Failed to reschedule task: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.rescheduleTask(\(uuid.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
     func rescheduleTasks(uuids: [String], toDate: Date?) async {
         for uuid in uuids {
-            do {
-                _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
-                    var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-                    CommandCenterTaskScheduling.reschedule(&metadata, toDate: toDate)
-                    atom = atom.withMetadata(metadata)
-                }
-            } catch {
-                print("❌ Dashboard: Failed to reschedule task: \(error)")
-            }
+            await rescheduleTaskRow(id: uuid, toDate: toDate)
         }
         await refreshTaskCollectionsAfterMutation()
     }
@@ -1179,12 +1274,37 @@ class CommandCenterDashboardViewModel: ObservableObject {
             let calendar = Calendar.current
             let todayStart = calendar.startOfDay(for: Date())
 
-            // Collect ALL completed tasks
-            let allCompleted = atoms.compactMap { atom -> TaskViewModel? in
+            // Plain completed tasks
+            var allCompleted = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 guard vm.isCompleted else { return nil }
                 guard vm.completedAt != nil else { return nil }
                 return vm
+            }
+
+            // Recurring series → project the completion log into the Logbook. Each logged
+            // occurrence becomes a completed row on the day it was checked off.
+            for atom in atoms {
+                guard let meta = atom.metadataValue(as: TaskMetadata.self),
+                      meta.recurrence != nil,
+                      meta.recurrenceParentUUID == nil,
+                      let entries = meta.completedOccurrences, !entries.isEmpty,
+                      let templateVM = TaskViewModel.from(atom: atom) else { continue }
+
+                for entry in entries {
+                    guard let occurrenceDay = RecurringSeriesEngine.day(fromKey: entry.day, calendar: calendar) else { continue }
+                    let completedAt = PlannerumFormatters.iso8601.date(from: entry.completedAt) ?? occurrenceDay
+                    let override = meta.occurrenceOverrides?[entry.day]
+                    let occurrence = RecurringSeriesEngine.VirtualOccurrence(
+                        templateUUID: atom.uuid,
+                        title: override?.title ?? templateVM.title,
+                        day: occurrenceDay,
+                        start: nil,
+                        end: nil,
+                        status: .completed
+                    )
+                    allCompleted.append(templateVM.makingOccurrence(occurrence, completedAt: completedAt))
+                }
             }
 
             // Today's completed (for badge count)
@@ -1317,8 +1437,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func setWhenDate(taskUUID: String, date: Date?) async {
         do {
-            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
-            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard let atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            guard var meta = taskMetadataForWrite(atom, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))") else { return }
             if let date = date {
                 let day = Calendar.current.startOfDay(for: date)
                 let dateString = PlannerumFormatters.iso8601.string(from: day)
@@ -1328,59 +1448,73 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 meta.focusDate = dateString  // Keep backward compat
                 meta.dueDate = deadline
                 meta.schedulingState = nil  // Scheduled tasks have no scheduling state
+                if meta.recurrence != nil, meta.recurrenceParentUUID == nil {
+                    meta.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: day)
+                }
             } else {
+                if meta.recurrence != nil, meta.recurrenceParentUUID == nil {
+                    // Clearing the when date of a recurring template can orphan the series.
+                    PersistenceHealth.note(.writeFailure, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))", detail: "blocked clearing the when date of a recurring series")
+                    return
+                }
                 meta.whenDate = nil
                 meta.focusDate = nil
             }
-            atom = atom.withMetadata(meta)
-            try await AtomRepository.shared.update(atom)
+            guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))") else { return }
+            try await AtomRepository.shared.update(merged)
             await refreshTasks()
         } catch {
-            print("❌ Dashboard: Failed to set when date: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
     func setDeadline(taskUUID: String, date: Date?) async {
         do {
-            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
-            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard let atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            guard var meta = taskMetadataForWrite(atom, context: "Dashboard.setDeadline(\(taskUUID.prefix(8)))") else { return }
             meta.dueDate = date.map { PlannerumFormatters.iso8601.string(from: $0) }
-            atom = atom.withMetadata(meta)
-            try await AtomRepository.shared.update(atom)
+            guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.setDeadline(\(taskUUID.prefix(8)))") else { return }
+            try await AtomRepository.shared.update(merged)
             await refreshTasks()
         } catch {
-            print("❌ Dashboard: Failed to set deadline: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.setDeadline(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
     func setTimeOfDay(taskUUID: String, value: String?) async {
         do {
-            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
-            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard let atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            guard var meta = taskMetadataForWrite(atom, context: "Dashboard.setTimeOfDay(\(taskUUID.prefix(8)))") else { return }
             meta.timeOfDay = value
-            atom = atom.withMetadata(meta)
-            try await AtomRepository.shared.update(atom)
+            guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.setTimeOfDay(\(taskUUID.prefix(8)))") else { return }
+            try await AtomRepository.shared.update(merged)
             await refreshTasks()
         } catch {
-            print("❌ Dashboard: Failed to set time of day: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.setTimeOfDay(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
     func setSchedulingState(taskUUID: String, state: String?) async {
         do {
-            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
-            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard let atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            guard var meta = taskMetadataForWrite(atom, context: "Dashboard.setSchedulingState(\(taskUUID.prefix(8)))") else { return }
             meta.schedulingState = state
             if state != nil {
+                if meta.recurrence != nil, meta.recurrenceParentUUID == nil {
+                    // Anytime/someday clears the when date — for a recurring template that
+                    // can orphan the series and its history.
+                    PersistenceHealth.note(.writeFailure, context: "Dashboard.setSchedulingState(\(taskUUID.prefix(8)))", detail: "blocked moving a recurring series to \(state ?? "")")
+                    return
+                }
                 // Moving to anytime/someday clears the when date
                 meta.whenDate = nil
                 meta.focusDate = nil
             }
-            atom = atom.withMetadata(meta)
-            try await AtomRepository.shared.update(atom)
+            guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.setSchedulingState(\(taskUUID.prefix(8)))") else { return }
+            try await AtomRepository.shared.update(merged)
             await refreshTasks()
         } catch {
-            print("❌ Dashboard: Failed to set scheduling state: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.setSchedulingState(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
@@ -1392,28 +1526,28 @@ class CommandCenterDashboardViewModel: ObservableObject {
             // Add new project link
             atom = atom.addingLink(.project(projectUUID))
             // Clear heading (headings are project-specific)
-            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard var meta = taskMetadataForWrite(atom, context: "Dashboard.moveTaskToProject(\(taskUUID.prefix(8)))") else { return }
             meta.headingUUID = nil
-            atom = atom.withMetadata(meta)
-            try await AtomRepository.shared.update(atom)
+            guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.moveTaskToProject(\(taskUUID.prefix(8)))") else { return }
+            try await AtomRepository.shared.update(merged)
             await refreshTasks()
         } catch {
-            print("❌ Dashboard: Failed to move task to project: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.moveTaskToProject(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
     func moveTaskToHeading(taskUUID: String, headingUUID: String?) async {
         do {
-            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
-            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard let atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            guard var meta = taskMetadataForWrite(atom, context: "Dashboard.moveTaskToHeading(\(taskUUID.prefix(8)))") else { return }
             meta.headingUUID = headingUUID
-            atom = atom.withMetadata(meta)
-            try await AtomRepository.shared.update(atom)
+            guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.moveTaskToHeading(\(taskUUID.prefix(8)))") else { return }
+            try await AtomRepository.shared.update(merged)
             if let projectUUID = selectedProjectUUID {
                 await loadProjectTasks(projectUUID: projectUUID)
             }
         } catch {
-            print("❌ Dashboard: Failed to move task to heading: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.moveTaskToHeading(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
@@ -1497,14 +1631,12 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
             // Clear headingUUID from tasks that referenced this heading
             let tasks = try await AtomRepository.shared.fetchAll(type: .task)
-            for var task in tasks {
-                let taskMeta = task.metadataValue(as: TaskMetadata.self)
-                if taskMeta?.headingUUID == headingUUID {
-                    var updatedMeta = taskMeta ?? TaskMetadata()
-                    updatedMeta.headingUUID = nil
-                    task = task.withMetadata(updatedMeta)
-                    try await AtomRepository.shared.update(task)
-                }
+            for task in tasks {
+                guard var updatedMeta = taskMetadataForWrite(task, context: "Dashboard.deleteHeading(\(task.uuid.prefix(8)))"),
+                      updatedMeta.headingUUID == headingUUID else { continue }
+                updatedMeta.headingUUID = nil
+                guard let merged = task.mergingTaskMetadata(updatedMeta, context: "Dashboard.deleteHeading(\(task.uuid.prefix(8)))") else { continue }
+                try await AtomRepository.shared.update(merged)
             }
 
             await loadProjectTasks(projectUUID: projectUUID)
@@ -1762,153 +1894,37 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     func completeTask(uuid: String) async -> Bool {
-        // Check if this is a recurring task before completing it
-        var isRecurringInstance = false
-        var templateUUID: String?
-        if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
-            let meta = atom.metadataValue(as: TaskMetadata.self)
-            if let parentUUID = meta?.recurrenceParentUUID {
-                isRecurringInstance = true
-                templateUUID = parentUUID
-            }
-        }
+        // Legacy materialized instances (recurrenceParentUUID set) just complete as plain
+        // atoms now — occurrences are projected by RecurringSeriesEngine, so spawning a
+        // "next instance" atom would re-introduce the mixed-model duplicate mess.
+        let persisted = await plannerum.completeTask(taskId: uuid)
+        guard persisted else { return false }
 
-        await plannerum.completeTask(taskId: uuid)
+        // Habit credit only after the completion actually persisted.
         await habitEngine.recordTaskCompletion(taskUUID: uuid)
-
-        // For recurring tasks: generate next instance immediately
-        if isRecurringInstance, let parentUUID = templateUUID {
-            await generateNextRecurringInstance(templateUUID: parentUUID)
-        }
-
         await refreshTaskCollectionsAfterMutation()
         await loadHabits()
         return true
     }
 
-    /// Generate the next instance for a recurring template after completion
-    private func generateNextRecurringInstance(templateUUID: String) async {
-        do {
-            guard let template = try await AtomRepository.shared.fetch(uuid: templateUUID),
-                  let metadata = template.metadataValue(as: TaskMetadata.self),
-                  let recurrenceJSON = metadata.recurrence,
-                  let rule = RecurrenceRule.fromJSON(recurrenceJSON) else { return }
-
-            // One-active-instance invariant: bail if another incomplete
-            // instance of this template already exists.
-            let activeTemplates = try await TaskRecurrenceEngine.shared.batchTemplatesWithActiveInstance()
-            if activeTemplates.contains(templateUUID) { return }
-
-            let calendar = Calendar.current
-            let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
-
-            // Find the next valid occurrence starting from tomorrow
-            var candidate = tomorrow
-            var attempts = 0
-            while attempts < 365 {
-                if isValidOccurrence(rule: rule, date: candidate) {
-                    let exists = try await TaskRecurrenceEngine.shared.instanceExists(
-                        templateUUID: templateUUID, date: candidate
-                    )
-                    if !exists { break }
-                }
-                candidate = calendar.date(byAdding: .day, value: 1, to: candidate)!
-                attempts += 1
-            }
-
-            guard attempts < 365 else { return }
-
-            // Build instance metadata — copy from template + reset completion state
-            var instanceMetadata = TaskMetadata()
-            instanceMetadata.status = metadata.status ?? "todo"
-            instanceMetadata.priority = metadata.priority
-            instanceMetadata.color = metadata.color
-            instanceMetadata.durationMinutes = metadata.durationMinutes
-            instanceMetadata.focusDate = PlannerumFormatters.iso8601.string(from: candidate)
-            instanceMetadata.dueDate = PlannerumFormatters.iso8601.string(from: candidate)
-            instanceMetadata.whenDate = PlannerumFormatters.iso8601.string(from: candidate)
-            instanceMetadata.isCompleted = false
-            instanceMetadata.recurrenceParentUUID = templateUUID
-            instanceMetadata.description = metadata.description
-            instanceMetadata.intent = metadata.intent
-            instanceMetadata.intentUUID = metadata.intentUUID
-            instanceMetadata.habitUUID = metadata.habitUUID
-            instanceMetadata.habitAssignmentSource = metadata.habitAssignmentSource
-            instanceMetadata.linkedAtomUUID = metadata.linkedAtomUUID
-            instanceMetadata.startTime = metadata.startTime
-            instanceMetadata.energyLevel = metadata.energyLevel
-            instanceMetadata.cognitiveLoad = metadata.cognitiveLoad
-            instanceMetadata.taskType = metadata.taskType
-            instanceMetadata.estimatedFocusMinutes = metadata.estimatedFocusMinutes
-            instanceMetadata.headingUUID = metadata.headingUUID
-            instanceMetadata.titleMentions = metadata.titleMentions
-            copyCalendarTime(from: metadata, to: &instanceMetadata, on: candidate)
-
-            // Copy checklist from template with all items unchecked
-            if let checklistJSON = metadata.checklist,
-               let data = checklistJSON.data(using: .utf8),
-               var items = try? JSONDecoder().decode([ChecklistItem].self, from: data) {
-                items = items.map { item in
-                    ChecklistItem(id: UUID().uuidString, title: item.title, isCompleted: false, sortOrder: item.sortOrder)
-                }
-                if let encoded = try? JSONEncoder().encode(items),
-                   let json = String(data: encoded, encoding: .utf8) {
-                    instanceMetadata.checklist = json
-                }
-            }
-
-            guard let metaData = try? JSONEncoder().encode(instanceMetadata),
-                  let metaString = String(data: metaData, encoding: .utf8) else { return }
-
-            let templateLinks = template.linksList.filter { $0.type == "project" }
-            let instance = Atom.new(
-                type: .task,
-                title: template.title,
-                body: template.body,
-                metadata: metaString,
-                links: templateLinks.isEmpty ? nil : templateLinks
-            )
-            try await AtomRepository.shared.create(instance)
-        } catch {
-            print("❌ Dashboard: Failed to generate next recurring instance: \(error)")
-        }
-    }
-
-    private func isValidOccurrence(rule: RecurrenceRule, date: Date) -> Bool {
-        let calendar = Calendar.current
-        let weekday = calendar.component(.weekday, from: date)
-
-        switch rule.frequency {
-        case .daily: return true
-        case .weekdays: return weekday >= 2 && weekday <= 6
-        case .weekly, .biweekly, .custom:
-            if let days = rule.daysOfWeek, !days.isEmpty {
-                return days.contains { $0.rawValue == weekday }
-            }
-            return true
-        case .monthly:
-            if let day = rule.dayOfMonth {
-                return calendar.component(.day, from: date) == day
-            }
-            return true
-        case .yearly: return true
-        }
-    }
-
     func uncompleteTask(uuid: String) async -> Bool {
         do {
-            _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
-                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            var applied = false
+            let result = try await AtomRepository.shared.update(uuid: uuid) { atom in
+                guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.uncompleteTask(\(uuid.prefix(8)))") else { return }
                 metadata.isCompleted = false
                 metadata.completedAt = nil
-                atom = atom.withMetadata(metadata)
+                guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.uncompleteTask(\(uuid.prefix(8)))") else { return }
+                atom = merged
+                applied = true
             }
+            guard applied, result != nil else { return false }
             await habitEngine.reverseTaskCompletion(taskUUID: uuid)
             await refreshTaskCollectionsAfterMutation()
             await loadHabits()
             return true
         } catch {
-            print("❌ Dashboard: Failed to uncomplete task: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.uncompleteTask(\(uuid.prefix(8)))", detail: error.localizedDescription)
             return false
         }
     }
@@ -1919,120 +1935,125 @@ class CommandCenterDashboardViewModel: ObservableObject {
         newTaskTitle = ""
         // Parse and create with metadata
         let parsed = TaskInputParser.parse(title)
-        await smartAddTask(parsed)
+        let created = await smartAddTask(parsed)
+        if !created {
+            // Creation failed — restore the input so the capture isn't silently lost.
+            newTaskTitle = title
+        }
     }
 
-    func smartAddTask(_ parsed: ParsedTaskInput) async {
+    /// Returns false when task creation failed. On failure the capture text is restored to
+    /// `newTaskTitle` so the user's input is never silently discarded; PersistenceHealth
+    /// surfaces the failure.
+    @discardableResult
+    func smartAddTask(_ parsed: ParsedTaskInput) async -> Bool {
         let title = parsed.title.isEmpty ? "Untitled Task" : parsed.title
-        await plannerum.quickAddTask(title: title)
+        guard let createdAtom = await plannerum.quickAddTask(title: title) else {
+            if newTaskTitle.isEmpty, !parsed.title.isEmpty {
+                newTaskTitle = parsed.title
+            }
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.smartAddTask", detail: "task creation failed for \"\(title)\"")
+            return false
+        }
 
-        // Apply parsed metadata to the newly created task
-        // Find the most recently created task with this title
+        // Enrich the created task by its returned UUID — never by title re-find, which can
+        // grab an unrelated task with the same title.
+        let atom = createdAtom
         do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
-            let recent = atoms
-                .filter { $0.title == title }
-                .sorted { $0.createdAt > $1.createdAt }
-                .first
+            _ = try await AtomRepository.shared.update(uuid: atom.uuid) { a in
+                guard var metadata = taskMetadataForWrite(a, context: "Dashboard.smartAddTask(\(atom.uuid.prefix(8)))") else { return }
 
-            if let atom = recent {
-                _ = try await AtomRepository.shared.update(uuid: atom.uuid) { a in
-                    var metadata = a.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-
-                    if let priority = parsed.priority {
-                        metadata.priority = priority.rawValue
-                    }
-                    if let dueDate = parsed.dueDate ?? pendingTaskDate {
-                        let dateStr = PlannerumFormatters.iso8601.string(from: dueDate)
-                        metadata.dueDate = dateStr
-                        metadata.focusDate = dateStr  // Keep focusDate in sync so task appears on the correct day
-                    } else if viewMode == .today {
-                        metadata.schedulingState = "anytime"
-                    }
-                    if let time = parsed.scheduledTime {
-                        let date = parsed.dueDate ?? pendingTaskDate ?? Date()
-                        let scheduledStart = merge(date: date, time: time)
-                        let scheduledEnd = Calendar.current.date(
-                            byAdding: .minute,
-                            value: metadata.durationMinutes ?? metadata.estimatedFocusMinutes ?? 30,
-                            to: scheduledStart
-                        ) ?? scheduledStart.addingTimeInterval(1_800)
-                        applyCalendarTimeRange(start: scheduledStart, end: scheduledEnd, to: &metadata)
-                    }
-                    if let intent = parsed.intent {
-                        metadata.intent = intent.rawValue
-                    }
-                    if let intentUUID = parsed.intentUUID {
-                        metadata.intentUUID = intentUUID
-                    }
-                    if let habitUUID = parsed.habitUUID {
-                        metadata.habitUUID = habitUUID
-                        metadata.habitAssignmentSource = parsed.habitAssignmentSource?.rawValue
-                    } else if let derived = habitEngine.resolveHabit(title: title, intent: parsed.intent) {
-                        metadata.habitUUID = derived.definition.id
-                        metadata.habitAssignmentSource = derived.source.rawValue
-                        if metadata.intentUUID == nil {
-                            metadata.intentUUID = derived.definition.defaultIntentUUID
-                        }
-                    }
-
-                    // Things 3 scheduling fields
-                    if let timeOfDay = parsed.timeOfDay {
-                        metadata.timeOfDay = timeOfDay
-                    }
-                    if let schedulingState = parsed.schedulingState {
-                        metadata.schedulingState = schedulingState
-                        // Someday/Anytime tasks don't get a date
-                        metadata.dueDate = nil
-                        metadata.focusDate = nil
-                        metadata.whenDate = nil
-                    }
-                    if let deadline = parsed.deadline {
-                        metadata.dueDate = PlannerumFormatters.iso8601.string(from: deadline)
-                    }
-
-                    // Set whenDate from dueDate if we have one (new semantic)
-                    if metadata.schedulingState == nil, let focusDate = metadata.focusDate {
-                        metadata.whenDate = focusDate
-                    }
-
-                    a = a.withMetadata(metadata)
-
-                    // Project assignment — context (from project view) or #tag (from parser)
-                    if let contextProject = parsed.contextProjectUUID {
-                        a = a.addingLink(.project(contextProject))
-                    } else if let projectName = parsed.projectName {
-                        let matchingProject = projects.first { ($0.title ?? "").lowercased() == projectName.lowercased() }
-                        if let project = matchingProject {
-                            a = a.addingLink(.project(project.uuid))
-                        }
-                    } else if viewMode == .project, let selectedProject = selectedProjectUUID {
-                        // Auto-link when in project view with no explicit project
-                        a = a.addingLink(.project(selectedProject))
-                    }
-
-                    // Heading assignment from context
-                    if let headingUUID = parsed.contextHeadingUUID {
-                        metadata.headingUUID = headingUUID
-                        a = a.withMetadata(metadata)
-                    }
-
-                    // Title mentions from @ picker
-                    if !parsed.mentions.isEmpty {
-                        if let encoded = try? JSONEncoder().encode(parsed.mentions),
-                           let json = String(data: encoded, encoding: .utf8) {
-                            metadata.titleMentions = json
-                            a = a.withMetadata(metadata)
-                        }
+                if let priority = parsed.priority {
+                    metadata.priority = priority.rawValue
+                }
+                if let dueDate = parsed.dueDate ?? pendingTaskDate {
+                    let dateStr = PlannerumFormatters.iso8601.string(from: dueDate)
+                    metadata.dueDate = dateStr
+                    metadata.focusDate = dateStr  // Keep focusDate in sync so task appears on the correct day
+                } else if viewMode == .today {
+                    metadata.schedulingState = "anytime"
+                }
+                if let time = parsed.scheduledTime {
+                    let date = parsed.dueDate ?? pendingTaskDate ?? Date()
+                    let scheduledStart = merge(date: date, time: time)
+                    let scheduledEnd = Calendar.current.date(
+                        byAdding: .minute,
+                        value: metadata.durationMinutes ?? metadata.estimatedFocusMinutes ?? 30,
+                        to: scheduledStart
+                    ) ?? scheduledStart.addingTimeInterval(1_800)
+                    applyCalendarTimeRange(start: scheduledStart, end: scheduledEnd, to: &metadata)
+                }
+                if let intent = parsed.intent {
+                    metadata.intent = intent.rawValue
+                }
+                if let intentUUID = parsed.intentUUID {
+                    metadata.intentUUID = intentUUID
+                }
+                if let habitUUID = parsed.habitUUID {
+                    metadata.habitUUID = habitUUID
+                    metadata.habitAssignmentSource = parsed.habitAssignmentSource?.rawValue
+                } else if let derived = habitEngine.resolveHabit(title: title, intent: parsed.intent) {
+                    metadata.habitUUID = derived.definition.id
+                    metadata.habitAssignmentSource = derived.source.rawValue
+                    if metadata.intentUUID == nil {
+                        metadata.intentUUID = derived.definition.defaultIntentUUID
                     }
                 }
 
-                if let recurrenceRule = parsed.recurrenceRule {
-                    await setTaskRecurrence(uuid: atom.uuid, rule: recurrenceRule)
+                // Things 3 scheduling fields
+                if let timeOfDay = parsed.timeOfDay {
+                    metadata.timeOfDay = timeOfDay
+                }
+                if let schedulingState = parsed.schedulingState {
+                    metadata.schedulingState = schedulingState
+                    // Someday/Anytime tasks don't get a date
+                    metadata.dueDate = nil
+                    metadata.focusDate = nil
+                    metadata.whenDate = nil
+                }
+                if let deadline = parsed.deadline {
+                    metadata.dueDate = PlannerumFormatters.iso8601.string(from: deadline)
+                }
+
+                // Set whenDate from dueDate if we have one (new semantic)
+                if metadata.schedulingState == nil, let focusDate = metadata.focusDate {
+                    metadata.whenDate = focusDate
+                }
+
+                // Heading assignment from context
+                if let headingUUID = parsed.contextHeadingUUID {
+                    metadata.headingUUID = headingUUID
+                }
+
+                // Title mentions from @ picker
+                if !parsed.mentions.isEmpty,
+                   let encoded = try? JSONEncoder().encode(parsed.mentions),
+                   let json = String(data: encoded, encoding: .utf8) {
+                    metadata.titleMentions = json
+                }
+
+                guard let merged = a.mergingTaskMetadata(metadata, context: "Dashboard.smartAddTask(\(atom.uuid.prefix(8)))") else { return }
+                a = merged
+
+                // Project assignment — context (from project view) or #tag (from parser)
+                if let contextProject = parsed.contextProjectUUID {
+                    a = a.addingLink(.project(contextProject))
+                } else if let projectName = parsed.projectName {
+                    let matchingProject = projects.first { ($0.title ?? "").lowercased() == projectName.lowercased() }
+                    if let project = matchingProject {
+                        a = a.addingLink(.project(project.uuid))
+                    }
+                } else if viewMode == .project, let selectedProject = selectedProjectUUID {
+                    // Auto-link when in project view with no explicit project
+                    a = a.addingLink(.project(selectedProject))
                 }
             }
+
+            if let recurrenceRule = parsed.recurrenceRule {
+                await setTaskRecurrence(uuid: atom.uuid, rule: recurrenceRule)
+            }
         } catch {
-            print("❌ Dashboard: Failed to enrich new task: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.smartAddTask(\(atom.uuid.prefix(8)))", detail: "task created but enrichment failed: \(error.localizedDescription)")
         }
 
         pendingTaskDate = nil
@@ -2046,6 +2067,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             await loadAnytimeTasks()
         }
         await loadHabits()
+        return true
     }
 
     func updateTask(
@@ -2060,7 +2082,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     ) async {
         do {
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
-                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.updateTask(\(uuid.prefix(8)))") else { return }
                 let previousAssignmentSource = HabitAssignmentSource(rawValue: metadata.habitAssignmentSource ?? "")
 
                 if let title = title { atom.title = title }
@@ -2070,6 +2092,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     let dateString = PlannerumFormatters.iso8601.string(from: dueDate)
                     metadata.dueDate = dateString
                     metadata.focusDate = dateString
+                    if metadata.recurrence != nil, metadata.recurrenceParentUUID == nil {
+                        metadata.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: dueDate)
+                    }
                 }
                 if let time = scheduledTime {
                     metadata.startTime = PlannerumFormatters.iso8601.string(from: time)
@@ -2097,12 +2122,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     }
                 }
 
-                atom = atom.withMetadata(metadata)
+                guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.updateTask(\(uuid.prefix(8)))") else { return }
+                atom = merged
             }
             await refreshTasks()
             await loadHabits()
         } catch {
-            print("❌ Dashboard: Failed to update task: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.updateTask(\(uuid.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
@@ -2136,9 +2162,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 calendar: calendar
             ) {
                 _ = try await AtomRepository.shared.update(uuid: candidate.uuid) { atom in
-                    var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.updateRecurringTaskTitle(\(candidate.uuid.prefix(8)))") else { return }
                     applyRecurringTitle(title, to: &atom, metadata: &metadata)
-                    atom = atom.withMetadata(metadata)
+                    guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.updateRecurringTaskTitle(\(candidate.uuid.prefix(8)))") else { return }
+                    atom = merged
                 }
             }
 
@@ -2226,13 +2253,16 @@ class CommandCenterDashboardViewModel: ObservableObject {
             var metadata = TaskMetadata()
             applyCalendarTimeRange(start: normalized.start, end: normalized.end, to: &metadata)
 
-            if calendarService.hasCalendarAccess,
-               let eventId = try? await calendarService.createCosmoEvent(
-                title: title.isEmpty ? "New Event" : title,
-                start: normalized.start,
-                end: normalized.end
-               ) {
-                metadata.calendarEventId = eventId
+            if calendarService.hasCalendarAccess {
+                do {
+                    metadata.calendarEventId = try await calendarService.createCosmoEvent(
+                        title: title.isEmpty ? "New Event" : title,
+                        start: normalized.start,
+                        end: normalized.end
+                    )
+                } catch {
+                    PersistenceHealth.note(.syncFailure, context: "Dashboard.createCalendarTimeBlock", detail: "EK event creation failed: \(error.localizedDescription)")
+                }
             }
 
             let metadataString = encodeTaskMetadata(metadata)
@@ -2291,13 +2321,14 @@ class CommandCenterDashboardViewModel: ObservableObject {
             var calendarEventId: String?
 
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
-                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.updateCalendarTimeBlock(\(uuid.prefix(8)))") else { return }
                 applyCalendarTimeRange(start: normalized.start, end: normalized.end, to: &metadata)
 
                 if let title { atom.title = title.isEmpty ? "New Event" : title }
                 if let body { atom.body = body.isEmpty ? nil : body }
                 calendarEventId = metadata.calendarEventId
-                atom = atom.withMetadata(metadata)
+                guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.updateCalendarTimeBlock(\(uuid.prefix(8)))") else { return }
+                atom = merged
             }
 
             if calendarService.hasCalendarAccess {
@@ -2308,38 +2339,45 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     resolvedTitle = try await AtomRepository.shared.fetch(uuid: uuid)?.title ?? "New Event"
                 }
 
-                if let calendarEventId {
-                    try? await calendarService.updateCosmoEvent(
-                        eventId: calendarEventId,
-                        title: resolvedTitle,
-                        start: normalized.start,
-                        end: normalized.end
-                    )
-                } else if let newEventId = try? await calendarService.createCosmoEvent(
-                    title: resolvedTitle,
-                    start: normalized.start,
-                    end: normalized.end
-                ) {
-                    _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
-                        var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-                        metadata.calendarEventId = newEventId
-                        atom = atom.withMetadata(metadata)
+                do {
+                    if let calendarEventId {
+                        try await calendarService.updateCosmoEvent(
+                            eventId: calendarEventId,
+                            title: resolvedTitle,
+                            start: normalized.start,
+                            end: normalized.end
+                        )
+                    } else {
+                        let newEventId = try await calendarService.createCosmoEvent(
+                            title: resolvedTitle,
+                            start: normalized.start,
+                            end: normalized.end
+                        )
+                        _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
+                            guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.updateCalendarTimeBlock(\(uuid.prefix(8)))") else { return }
+                            metadata.calendarEventId = newEventId
+                            guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.updateCalendarTimeBlock(\(uuid.prefix(8)))") else { return }
+                            atom = merged
+                        }
                     }
+                } catch {
+                    PersistenceHealth.note(.syncFailure, context: "Dashboard.updateCalendarTimeBlock(\(uuid.prefix(8)))", detail: "EK event sync failed: \(error.localizedDescription)")
                 }
             }
 
             await refreshTaskCollectionsAfterMutation()
             await loadHabits()
         } catch {
-            print("❌ Dashboard: Failed to update calendar time block: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.updateCalendarTimeBlock(\(uuid.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
     func updateAllDayTask(uuid: String, title: String? = nil, body: String? = nil, date: Date) async {
         do {
             let day = Calendar.current.startOfDay(for: date)
+            var staleCalendarEventId: String?
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
-                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.updateAllDayTask(\(uuid.prefix(8)))") else { return }
                 let dateString = PlannerumFormatters.iso8601.string(from: day)
                 metadata.dueDate = dateString
                 metadata.focusDate = dateString
@@ -2350,15 +2388,32 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 metadata.scheduledStart = nil
                 metadata.scheduledEnd = nil
                 metadata.schedulingState = nil
+                // Becoming all-day removes the time block — take the linked EK event with it
+                // instead of leaving a stale event on the old time slot.
+                staleCalendarEventId = metadata.calendarEventId
+                metadata.calendarEventId = nil
+                if metadata.recurrence != nil, metadata.recurrenceParentUUID == nil {
+                    metadata.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: day)
+                }
 
                 if let title { atom.title = title.isEmpty ? "New Event" : title }
                 if let body { atom.body = body.isEmpty ? nil : body }
-                atom = atom.withMetadata(metadata)
+                guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.updateAllDayTask(\(uuid.prefix(8)))") else { return }
+                atom = merged
             }
+
+            if calendarService.hasCalendarAccess, let staleCalendarEventId {
+                do {
+                    try await calendarService.deleteCosmoEvent(eventId: staleCalendarEventId)
+                } catch {
+                    PersistenceHealth.note(.syncFailure, context: "Dashboard.updateAllDayTask(\(uuid.prefix(8)))", detail: "stale EK event removal failed: \(error.localizedDescription)")
+                }
+            }
+
             await refreshTaskCollectionsAfterMutation()
             await loadHabits()
         } catch {
-            print("❌ Dashboard: Failed to update all-day task: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.updateAllDayTask(\(uuid.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
@@ -2366,7 +2421,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         do {
             var calendarEventId: String?
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
-                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.clearCalendarTimeBlock(\(uuid.prefix(8)))") else { return }
                 calendarEventId = metadata.calendarEventId
                 metadata.startTime = nil
                 metadata.endTime = nil
@@ -2374,16 +2429,21 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 metadata.scheduledStart = nil
                 metadata.scheduledEnd = nil
                 metadata.calendarEventId = nil
-                atom = atom.withMetadata(metadata)
+                guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.clearCalendarTimeBlock(\(uuid.prefix(8)))") else { return }
+                atom = merged
             }
 
             if calendarService.hasCalendarAccess, let calendarEventId {
-                try? await calendarService.deleteCosmoEvent(eventId: calendarEventId)
+                do {
+                    try await calendarService.deleteCosmoEvent(eventId: calendarEventId)
+                } catch {
+                    PersistenceHealth.note(.syncFailure, context: "Dashboard.clearCalendarTimeBlock(\(uuid.prefix(8)))", detail: "EK event removal failed: \(error.localizedDescription)")
+                }
             }
 
             await refreshTaskCollectionsAfterMutation()
         } catch {
-            print("❌ Dashboard: Failed to clear calendar time block: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.clearCalendarTimeBlock(\(uuid.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
@@ -2406,23 +2466,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
         merged.minute = timeComponents.minute
         merged.second = timeComponents.second ?? 0
         return calendar.date(from: merged) ?? date
-    }
-
-    private func copyCalendarTime(from source: TaskMetadata, to destination: inout TaskMetadata, on date: Date) {
-        let startSource = source.scheduledStart ?? source.startTime
-        guard let startSource, let sourceStart = PlannerumFormatters.iso8601.date(from: startSource) else { return }
-
-        let endSource = source.scheduledEnd ?? source.endTime
-        let sourceEnd = endSource.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
-        let duration = sourceEnd.map { max(15, Int($0.timeIntervalSince(sourceStart) / 60)) }
-            ?? source.durationMinutes
-            ?? source.estimatedFocusMinutes
-            ?? 30
-
-        let start = merge(date: date, time: sourceStart)
-        let end = Calendar.current.date(byAdding: .minute, value: duration, to: start)
-            ?? start.addingTimeInterval(TimeInterval(duration * 60))
-        applyCalendarTimeRange(start: start, end: end, to: &destination)
     }
 
     private func applyCalendarTimeRange(start: Date, end: Date, to metadata: inout TaskMetadata) {
@@ -2479,42 +2522,48 @@ class CommandCenterDashboardViewModel: ObservableObject {
             if let parentUUID = metadata.recurrenceParentUUID {
                 if let recurrenceJSON {
                     _ = try await AtomRepository.shared.update(uuid: parentUUID) { parent in
-                        var parentMetadata = parent.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                        guard var parentMetadata = taskMetadataForWrite(parent, context: "Dashboard.setTaskRecurrence(\(parentUUID.prefix(8)))") else { return }
                         parentMetadata.recurrence = recurrenceJSON
-                        parent = parent.withMetadata(parentMetadata)
+                        guard let merged = parent.mergingTaskMetadata(parentMetadata, context: "Dashboard.setTaskRecurrence(\(parentUUID.prefix(8)))") else { return }
+                        parent = merged
                     }
                 } else {
                     try await AtomRepository.shared.delete(uuid: parentUUID)
                     _ = try await AtomRepository.shared.update(uuid: uuid) { current in
-                        var currentMetadata = current.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                        guard var currentMetadata = taskMetadataForWrite(current, context: "Dashboard.setTaskRecurrence(\(uuid.prefix(8)))") else { return }
                         currentMetadata.recurrenceParentUUID = nil
-                        current = current.withMetadata(currentMetadata)
+                        guard let merged = current.mergingTaskMetadata(currentMetadata, context: "Dashboard.setTaskRecurrence(\(uuid.prefix(8)))") else { return }
+                        current = merged
                     }
                 }
             } else if metadata.recurrence != nil {
                 _ = try await AtomRepository.shared.update(uuid: uuid) { current in
-                    var currentMetadata = current.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    guard var currentMetadata = taskMetadataForWrite(current, context: "Dashboard.setTaskRecurrence(\(uuid.prefix(8)))") else { return }
                     currentMetadata.recurrence = recurrenceJSON
-                    current = current.withMetadata(currentMetadata)
+                    guard let merged = current.mergingTaskMetadata(currentMetadata, context: "Dashboard.setTaskRecurrence(\(uuid.prefix(8)))") else { return }
+                    current = merged
                 }
             } else if let recurrenceJSON {
                 let template = try await createRecurringTemplate(from: atom, recurrenceJSON: recurrenceJSON)
                 _ = try await AtomRepository.shared.update(uuid: uuid) { current in
-                    var currentMetadata = current.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    guard var currentMetadata = taskMetadataForWrite(current, context: "Dashboard.setTaskRecurrence(\(uuid.prefix(8)))") else { return }
                     currentMetadata.recurrence = nil
                     currentMetadata.recurrenceParentUUID = template.uuid
-                    current = current.withMetadata(currentMetadata)
+                    guard let merged = current.mergingTaskMetadata(currentMetadata, context: "Dashboard.setTaskRecurrence(\(uuid.prefix(8)))") else { return }
+                    current = merged
                 }
             }
 
             await refreshTaskCollectionsAfterMutation()
         } catch {
-            print("❌ Dashboard: Failed to update recurrence: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.setTaskRecurrence(\(uuid.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
     private func createRecurringTemplate(from atom: Atom, recurrenceJSON: String) async throws -> Atom {
-        var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+        guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.createRecurringTemplate(\(atom.uuid.prefix(8)))") else {
+            throw AtomRepositoryError.notFound(atom.uuid)
+        }
         metadata.recurrence = recurrenceJSON
         metadata.recurrenceParentUUID = nil
         metadata.isCompleted = false
@@ -2526,15 +2575,46 @@ class CommandCenterDashboardViewModel: ObservableObject {
             metadata.focusDate = today
         }
 
+        // Timezone-safe anchor day, derived from the anchor date being persisted.
+        let anchorDate = metadata.dueDate.flatMap { PlannerumFormatters.iso8601.date(from: $0) } ?? Date()
+        metadata.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: anchorDate)
+
         let template = Atom.new(
             type: .task,
             title: atom.title,
             body: atom.body,
-            metadata: atom.withMetadata(metadata).metadata,
+            metadata: (atom.mergingTaskMetadata(metadata, context: "Dashboard.createRecurringTemplate(\(atom.uuid.prefix(8)))") ?? atom.withMetadata(metadata)).metadata,
             links: atom.linksList.isEmpty ? nil : atom.linksList
         )
 
         return try await AtomRepository.shared.create(template)
+    }
+
+    /// Cancel a single recurring occurrence — the default "delete" for occurrence rows.
+    /// Writes a per-day override on the template; the series, its rule, and its completion
+    /// history are untouched.
+    @discardableResult
+    func cancelOccurrence(_ task: TaskViewModel) async -> Bool {
+        guard let occurrenceDay = task.occurrenceDay else { return false }
+        do {
+            try await RecurringSeriesEngine.shared.cancelOccurrence(
+                templateUUID: task.uuid,
+                dayKey: RecurringSeriesEngine.dayKey(for: occurrenceDay)
+            )
+            await refreshTaskCollectionsAfterMutation()
+            return true
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.cancelOccurrence(\(task.id))", detail: error.localizedDescription)
+            return false
+        }
+    }
+
+    /// Number of logged completions on a recurring series template — surfaced by the
+    /// "Delete series and N logged completions?" confirmation.
+    func seriesCompletionCount(templateUUID: String) async -> Int {
+        guard let atom = try? await AtomRepository.shared.fetch(uuid: templateUUID),
+              let meta = atom.metadataValue(as: TaskMetadata.self) else { return 0 }
+        return meta.completedOccurrences?.count ?? 0
     }
 
     func deleteTask(
@@ -2554,7 +2634,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             try await deleteTasksAndCalendarEvents(targets)
             await refreshTaskCollectionsAfterMutation()
         } catch {
-            print("❌ Dashboard: Failed to delete task: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.deleteTask(\(uuid.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
@@ -2639,9 +2719,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
         )
 
         _ = try await AtomRepository.shared.update(uuid: parentUUID) { atom in
-            var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.truncateRecurringTemplate(\(parentUUID.prefix(8)))") else { return }
             metadata.recurrence = truncatedRule.toJSON()
-            atom = atom.withMetadata(metadata)
+            guard let merged = atom.mergingTaskMetadata(metadata, context: "Dashboard.truncateRecurringTemplate(\(parentUUID.prefix(8)))") else { return }
+            atom = merged
         }
     }
 
@@ -2650,7 +2731,11 @@ class CommandCenterDashboardViewModel: ObservableObject {
             try await AtomRepository.shared.delete(uuid: atom.uuid)
             if calendarService.hasCalendarAccess,
                let calendarEventId = atom.metadataValue(as: TaskMetadata.self)?.calendarEventId {
-                try? await calendarService.deleteCosmoEvent(eventId: calendarEventId)
+                do {
+                    try await calendarService.deleteCosmoEvent(eventId: calendarEventId)
+                } catch {
+                    PersistenceHealth.note(.syncFailure, context: "Dashboard.deleteTasksAndCalendarEvents(\(atom.uuid.prefix(8)))", detail: "EK event removal failed: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -2660,7 +2745,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             do {
                 try await AtomRepository.shared.delete(uuid: uuid)
             } catch {
-                print("❌ Dashboard: Failed to delete task \(uuid): \(error)")
+                PersistenceHealth.note(.writeFailure, context: "Dashboard.deleteMultipleTasks(\(uuid.prefix(8)))", detail: error.localizedDescription)
             }
         }
         await refreshTaskCollectionsAfterMutation()

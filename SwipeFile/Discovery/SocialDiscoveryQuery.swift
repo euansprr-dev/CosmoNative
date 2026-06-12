@@ -2,6 +2,9 @@ import Foundation
 
 struct SocialDiscoveryQuery: Equatable, Sendable {
     var searchText: String
+    /// Topic scope terms (from the Discover pillar row) — a post matches when ANY
+    /// term appears in its text. Applied client-side, independent of `searchText`.
+    var topicTerms: [String]
     var platforms: Set<SocialPlatform>
     var languages: Set<String>
     var youtubeFormat: YouTubeFormatFilter
@@ -15,6 +18,7 @@ struct SocialDiscoveryQuery: Equatable, Sendable {
 
     init(
         searchText: String = "",
+        topicTerms: [String] = [],
         platforms: Set<SocialPlatform> = [],
         languages: Set<String> = [],
         youtubeFormat: YouTubeFormatFilter = .all,
@@ -27,6 +31,7 @@ struct SocialDiscoveryQuery: Equatable, Sendable {
         limit: Int = 1_000
     ) {
         self.searchText = searchText
+        self.topicTerms = topicTerms.map { $0.lowercased() }
         self.platforms = platforms
         self.languages = Set(languages.map { $0.lowercased() })
         self.youtubeFormat = youtubeFormat

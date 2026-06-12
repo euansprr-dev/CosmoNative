@@ -10,6 +10,25 @@ struct InboxCaptureBar: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            inputRow
+            captureErrorLine
+        }
+        .animation(ProMotionSprings.snappy, value: viewModel.captureError)
+        .onChange(of: viewModel.captureFieldFocusRequest) {
+            isFocused = true
+        }
+        .onChange(of: isFocused) {
+            viewModel.isCaptureFieldFocused = isFocused
+        }
+        .onChange(of: viewModel.captureText) {
+            if viewModel.captureError != nil { viewModel.captureError = nil }
+        }
+    }
+
+    // MARK: - Subviews
+
+    private var inputRow: some View {
         HStack(alignment: viewModel.isCaptureExpanded ? .top : .center, spacing: DS.space10) {
             captureIcon
             captureField
@@ -20,15 +39,25 @@ struct InboxCaptureBar: View {
         .dsGlassInput(isFocused: isFocused, cornerRadius: 14)
         .animation(ProMotionSprings.snappy, value: isFocused)
         .animation(ProMotionSprings.snappy, value: viewModel.isCaptureExpanded)
-        .onChange(of: viewModel.captureFieldFocusRequest) {
-            isFocused = true
-        }
-        .onChange(of: isFocused) {
-            viewModel.isCaptureFieldFocused = isFocused
-        }
     }
 
-    // MARK: - Subviews
+    /// Honest failure line — the save failed, the text is still in the field.
+    @ViewBuilder
+    private var captureErrorLine: some View {
+        if let error = viewModel.captureError {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.red)
+                    .accessibilityHidden(true)
+                Text(error)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.red)
+            }
+            .padding(.horizontal, DS.space4)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
 
     private var captureIcon: some View {
         Image(systemName: viewModel.showCaptureConfirmation ? "checkmark.circle.fill" : "plus.circle")

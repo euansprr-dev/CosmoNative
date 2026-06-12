@@ -68,6 +68,9 @@ final class InboxIngestService {
         case consumed(reason: String)
         /// The capture is in the inbox awaiting (or carrying) a classification.
         case enqueued(InboxItem)
+        /// The DB write failed after retries — the capture was NOT saved.
+        /// Callers must report this honestly and preserve their copy of the text.
+        case failed(String)
     }
 
     /// Ingest a capture. When `classifyImmediately` is true the call awaits
@@ -87,7 +90,12 @@ final class InboxIngestService {
         // Consumed rule: if an atom with this exact content was just created,
         // another flow (agent idea creation, lane routing) already acted on the
         // message — triage would be second-guessing a decision already made.
+        // Quick-capture is exempt (the user is looking at the inbox; nothing
+        // else could have consumed it), and short phrases are exempt (title-only
+        // matches on a few tokens kill real captures).
         if capture.preset == nil,
+           capture.source != .quickCapture,
+           Self.normalized(text).split(separator: " ").count >= 6,
            let existing = await matchingAtom(forText: text, title: capture.title, within: consumedWindowAtIngest) {
             return .consumed(reason: "atom \(existing.uuid) already created from this capture")
         }
@@ -113,25 +121,54 @@ final class InboxIngestService {
             item.status = .classified
         }
 
+        // Bounded retry: a transient SQLITE_BUSY must not lose a capture.
+        let saved: InboxItem
         do {
-            let saved = try await inboxRepo.create(item)
-            NotificationCenter.default.post(name: CosmoNotification.Inbox.itemAdded, object: nil)
-
-            if capture.preset != nil {
-                return .enqueued(saved)
-            }
-
-            if classifyImmediately {
-                await classifyAndStore(item: saved, excludedAtomUUIDs: capture.excludedAtomUUIDs)
-                let refreshed = (try? await inboxRepo.fetch(uuid: saved.uuid)) ?? saved
-                return .enqueued(refreshed)
-            }
-
-            enqueueForClassification(saved.uuid)
-            return .enqueued(saved)
+            saved = try await createWithRetry(item)
         } catch {
-            print("⚠️ [InboxIngest] Failed to create inbox item: \(error)")
-            return .consumed(reason: "create failed")
+            print("⚠️ [InboxIngest] Failed to create inbox item after retries: \(error)")
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "InboxIngestService.ingest",
+                detail: "inbox item create failed after retries (\(capture.source.rawValue)): \(error.localizedDescription)"
+            )
+            return .failed(error.localizedDescription)
+        }
+
+        NotificationCenter.default.post(name: CosmoNotification.Inbox.itemAdded, object: nil)
+
+        if capture.preset != nil {
+            return .enqueued(saved)
+        }
+
+        if classifyImmediately {
+            await classifyAndStore(item: saved, excludedAtomUUIDs: capture.excludedAtomUUIDs)
+            let refreshed = (try? await inboxRepo.fetch(uuid: saved.uuid)) ?? saved
+            return .enqueued(refreshed)
+        }
+
+        enqueueForClassification(saved.uuid)
+        return .enqueued(saved)
+    }
+
+    /// Initial attempt plus three retries with short backoff (200ms/500ms/1s)
+    /// before surfacing failure — a transient SQLITE_BUSY must not lose a capture.
+    private func createWithRetry(_ item: InboxItem) async throws -> InboxItem {
+        let backoffs: [Duration] = [.milliseconds(200), .milliseconds(500), .seconds(1)]
+        do {
+            return try await inboxRepo.create(item)
+        } catch {
+            var lastError = error
+            for backoff in backoffs {
+                try? await Task.sleep(for: backoff)
+                do {
+                    return try await inboxRepo.create(item)
+                } catch {
+                    lastError = error
+                    print("⚠️ [InboxIngest] create retry failed: \(error)")
+                }
+            }
+            throw lastError
         }
     }
 
@@ -197,6 +234,7 @@ final class InboxIngestService {
             )
         } catch {
             print("⚠️ [InboxIngest] Failed to store classification for \(item.uuid): \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxIngestService.classifyAndStore", detail: "classification store failed for \(item.uuid): \(error.localizedDescription)")
         }
     }
 
@@ -205,6 +243,11 @@ final class InboxIngestService {
     /// Run once at startup: drain stuck `pending` items through the queue and
     /// dismiss captures that another system already turned into atoms (the
     /// client-idea double-entries). "Classifying" can no longer be permanent.
+    ///
+    /// Auto-dismissal requires either provenance (`sourceCaptureUuid` in the
+    /// atom's metadata pointing back at this capture) or an exact normalized
+    /// match with ≥ 6 tokens on an atom created within the last 7 days —
+    /// the old any-text/14-day rule false-positively killed real captures.
     func reconcileOnLaunch() {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -213,19 +256,19 @@ final class InboxIngestService {
                 guard !active.isEmpty else { return }
 
                 let recentAtoms = await self.recentUserAtoms(within: self.consumedWindowAtReconcile)
-                let normalizedAtoms = Set(recentAtoms.flatMap { atom -> [String] in
-                    var keys: [String] = []
-                    if let body = atom.body { keys.append(Self.normalized(body)) }
-                    if let title = atom.title { keys.append(Self.normalized(title)) }
-                    return keys.filter { !$0.isEmpty }
-                })
+                let textMatchCutoff = Date().addingTimeInterval(-7 * 24 * 3600)
 
                 var dismissed = 0
                 for item in active {
-                    let key = Self.normalized(item.rawText)
-                    if !key.isEmpty, normalizedAtoms.contains(key) {
-                        try? await self.inboxRepo.dismiss(uuid: item.uuid)
-                        dismissed += 1
+                    if let match = Self.reconcileMatch(for: item, in: recentAtoms, textMatchCutoff: textMatchCutoff) {
+                        do {
+                            try await self.inboxRepo.dismiss(uuid: item.uuid)
+                            dismissed += 1
+                            print("📥 [InboxIngest] Reconcile.autoDismiss: capture \(item.uuid) → atom \(match.atom.uuid) (\(match.reason)); restorable from Recently dismissed")
+                        } catch {
+                            print("⚠️ [InboxIngest] Reconcile dismiss failed for \(item.uuid): \(error)")
+                            PersistenceHealth.note(.writeFailure, context: "InboxIngestService.reconcileOnLaunch", detail: "dismiss failed: \(error.localizedDescription)")
+                        }
                         continue
                     }
                     if item.status == .pending {
@@ -239,6 +282,31 @@ final class InboxIngestService {
                 print("⚠️ [InboxIngest] Reconcile failed: \(error)")
             }
         }
+    }
+
+    /// An atom that proves this capture was already consumed. Provenance wins;
+    /// otherwise an exact normalized text match needs ≥ 6 tokens and a young atom.
+    private static func reconcileMatch(
+        for item: InboxItem,
+        in atoms: [Atom],
+        textMatchCutoff: Date
+    ) -> (atom: Atom, reason: String)? {
+        // (a) Provenance: the atom records which capture it was created from.
+        let provenanceNeedle = "\"sourceCaptureUuid\":\"\(item.uuid)\""
+        if let provenanced = atoms.first(where: { $0.metadata?.contains(provenanceNeedle) == true }) {
+            return (provenanced, "provenance")
+        }
+
+        // (b) Exact normalized text match — long enough to be unambiguous, recent enough to be causal.
+        let key = normalized(item.rawText)
+        guard key.split(separator: " ").count >= 6 else { return nil }
+        let match = atoms.first { atom in
+            guard let created = ISO8601.date(from: atom.createdAt), created >= textMatchCutoff else { return false }
+            if let body = atom.body, normalized(body) == key { return true }
+            if let title = atom.title, normalized(title) == key { return true }
+            return false
+        }
+        return match.map { ($0, "text match") }
     }
 
     // MARK: - Lazy taxonomy pass (Stage 3)
@@ -266,17 +334,22 @@ final class InboxIngestService {
                     guard let item = itemsByUuid[assignment.itemUuid] else { continue }
                     let destinationPath = assignment.clusterName.map { "\(assignment.thinkspaceName) › \($0)" }
                         ?? assignment.thinkspaceName
-                    try? await self.inboxRepo.updateClassification(
-                        uuid: item.uuid,
-                        classification: .place,
-                        confidence: self.config.taxonomyPassConfidence,
-                        title: item.title,
-                        placeThinkspaceId: assignment.thinkspaceId,
-                        placeThinkspaceName: assignment.thinkspaceName,
-                        placeAtomType: AtomType.note.rawValue,
-                        destinationPath: destinationPath,
-                        rationale: "Filed by the taxonomy pass — it reads each destination's actual contents before assigning."
-                    )
+                    do {
+                        try await self.inboxRepo.updateClassification(
+                            uuid: item.uuid,
+                            classification: .place,
+                            confidence: self.config.taxonomyPassConfidence,
+                            title: item.title,
+                            placeThinkspaceId: assignment.thinkspaceId,
+                            placeThinkspaceName: assignment.thinkspaceName,
+                            placeAtomType: AtomType.note.rawValue,
+                            destinationPath: destinationPath,
+                            rationale: "Filed by the taxonomy pass — it reads each destination's actual contents before assigning."
+                        )
+                    } catch {
+                        print("⚠️ [InboxIngest] Taxonomy pass store failed for \(item.uuid): \(error)")
+                        PersistenceHealth.note(.writeFailure, context: "InboxIngestService.taxonomyPass", detail: "classification store failed for \(item.uuid): \(error.localizedDescription)")
+                    }
                 }
                 print("📥 [InboxIngest] Taxonomy pass placed \(assignments.count)/\(unsorted.count) unsorted item(s)")
             } catch {

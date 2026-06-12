@@ -49,8 +49,10 @@ final class DataMigrationService {
 
         // Step 1: Migrate atoms
         if !progress.atomsComplete {
-            try await migrateAtoms(client: client, userId: userId, onProgress: onProgress)
+            let failedUuids = try await migrateAtoms(client: client, userId: userId, onProgress: onProgress)
             progress.atomsComplete = true
+            // Persist failures so a resumed migration still excludes them from markAllSynced.
+            progress.failedAtomUuids = failedUuids.isEmpty ? nil : failedUuids
             saveProgress(progress)
         }
 
@@ -68,8 +70,10 @@ final class DataMigrationService {
             saveProgress(progress)
         }
 
-        // Step 4: Mark all local atoms as synced
-        try await markAllSynced()
+        // Step 4: Mark local atoms as synced — EXCLUDING ones whose upload failed.
+        // Stamping those would claim their content reached the cloud when it never
+        // did; they stay un-stamped so sync keeps treating them as unpushed.
+        try await markAllSynced(excluding: migrationProgress.failedAtomUuids ?? [])
 
         // Done
         UserDefaults.standard.set(true, forKey: migrationCompleteKey)
@@ -78,11 +82,13 @@ final class DataMigrationService {
 
     // MARK: - Atoms Migration
 
+    /// Returns the uuids of atoms whose upload permanently failed — these must
+    /// be excluded from `markAllSynced` so they aren't stamped as synced.
     private func migrateAtoms(
         client: SupabaseClient,
         userId: String,
         onProgress: @escaping (String, Int, Int) -> Void
-    ) async throws {
+    ) async throws -> [String] {
         // Count total atoms
         let totalCount = try await database.asyncRead { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM atoms WHERE is_deleted = 0") ?? 0
@@ -90,6 +96,7 @@ final class DataMigrationService {
 
         onProgress("Migrating atoms...", 0, totalCount)
 
+        var failedUuids: [String] = []
         var offset = 0
         while true {
             // Fetch batch of atoms
@@ -114,13 +121,15 @@ final class DataMigrationService {
             } catch {
                 print("❌ Migration batch failed at offset \(offset): \(error)")
                 // Try individual upserts as fallback to identify the problematic row
-                for (i, payload) in payloads.enumerated() {
+                for payload in payloads {
                     do {
                         try await client.upsert(table: "atoms", data: payload, onConflict: "uuid")
                     } catch {
                         let uuid = payload["uuid"] as? String ?? "unknown"
                         print("❌ Failed to upsert atom \(uuid): \(error)")
-                        // Skip this atom and continue
+                        // Skip and continue — collected so markAllSynced excludes it.
+                        failedUuids.append(uuid)
+                        PersistenceHealth.note(.syncFailure, context: "DataMigration.atom(\(uuid.prefix(8)))", detail: String(describing: error))
                     }
                 }
             }
@@ -128,6 +137,8 @@ final class DataMigrationService {
             offset += atoms.count
             onProgress("Migrating atoms...", offset, totalCount)
         }
+
+        return failedUuids
     }
 
     // MARK: - Graph Edges Migration
@@ -164,6 +175,7 @@ final class DataMigrationService {
                 try await client.batchUpsert(table: "graph_edges", records: payloads, onConflict: "source_uuid,target_uuid,edge_type,user_id")
             } catch {
                 print("❌ Edge migration batch failed at offset \(offset): \(error)")
+                PersistenceHealth.note(.syncFailure, context: "DataMigration.graphEdges(offset \(offset))", detail: String(describing: error))
             }
 
             offset += edges.count
@@ -207,6 +219,7 @@ final class DataMigrationService {
                 try await client.batchUpsert(table: "canvas_blocks", records: payloads, onConflict: "uuid")
             } catch {
                 print("❌ Canvas migration batch failed at offset \(offset): \(error)")
+                PersistenceHealth.note(.syncFailure, context: "DataMigration.canvasBlocks(offset \(offset))", detail: String(describing: error))
             }
 
             offset += blocks.count
@@ -216,14 +229,33 @@ final class DataMigrationService {
 
     // MARK: - Mark All Synced
 
-    private func markAllSynced() async throws {
+    /// Stamp atoms as synced — except the ones whose upload failed, which stay
+    /// pending so the sync engine never mistakes their local edits for pushed.
+    private func markAllSynced(excluding failedUuids: [String]) async throws {
+        if failedUuids.isEmpty {
+            try await database.asyncWrite { db in
+                try db.execute(sql: """
+                    UPDATE atoms SET
+                        _server_version = _local_version,
+                        _local_pending = 0
+                    WHERE is_deleted = 0
+                """)
+            }
+            return
+        }
+
+        print("⚠️ Migration: excluding \(failedUuids.count) failed atom(s) from markAllSynced")
+        let placeholders = failedUuids.map { _ in "?" }.joined(separator: ", ")
         try await database.asyncWrite { db in
-            try db.execute(sql: """
-                UPDATE atoms SET
-                    _server_version = _local_version,
-                    _local_pending = 0
-                WHERE is_deleted = 0
-            """)
+            try db.execute(
+                sql: """
+                    UPDATE atoms SET
+                        _server_version = _local_version,
+                        _local_pending = 0
+                    WHERE is_deleted = 0 AND uuid NOT IN (\(placeholders))
+                """,
+                arguments: StatementArguments(failedUuids)
+            )
         }
     }
 
@@ -329,8 +361,13 @@ final class DataMigrationService {
     // MARK: - Progress Tracking
 
     private func saveProgress(_ progress: MigrationProgress) {
-        if let data = try? JSONEncoder().encode(progress) {
+        do {
+            let data = try JSONEncoder().encode(progress)
             UserDefaults.standard.set(data, forKey: migrationProgressKey)
+        } catch {
+            // Progress now carries failedAtomUuids — losing it would let a
+            // resumed migration stamp failed uploads as synced.
+            PersistenceHealth.note(.writeFailure, context: "DataMigration.saveProgress", detail: String(describing: error))
         }
     }
 
@@ -347,6 +384,9 @@ struct MigrationProgress: Codable {
     var atomsComplete: Bool = false
     var edgesComplete: Bool = false
     var canvasComplete: Bool = false
+    /// Atoms whose upload failed — excluded from markAllSynced. Optional so
+    /// progress blobs saved before this field existed still decode.
+    var failedAtomUuids: [String]? = nil
 }
 
 enum DataMigrationError: LocalizedError {

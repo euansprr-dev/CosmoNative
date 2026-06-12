@@ -99,7 +99,17 @@ class PaneManager: ObservableObject {
     // MARK: - Published State
 
     /// Ordered list of open panes (right column deck, in opening order)
-    @Published var panes: [PaneContent] = []
+    @Published var panes: [PaneContent] = [] {
+        didSet {
+            // From the first pane until the deck's slide-out completes (its
+            // onDisappear in SplitPaneContainer), canvas screenshot capture is
+            // suppressed — the deck would otherwise be composited into a
+            // thinkspace's stored thumbnail.
+            if !panes.isEmpty {
+                PaneDeckPresentationState.shared.setOnScreen(true)
+            }
+        }
+    }
 
     /// The pane expanded to full reading width. Every other pane collapses to a spine.
     @Published var focusedPaneId: String? = nil

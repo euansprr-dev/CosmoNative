@@ -67,7 +67,32 @@ enum FocusModeTextClipboardTarget {
 
     static func activate(_ textView: NSTextView) {
         guard textView.isEditable || textView.isSelectable else { return }
+        if let previous = activeTextView.value,
+           previous !== textView,
+           previous.window === textView.window {
+            collapseSelection(in: previous)
+        }
         activeTextView.value = textView
+    }
+
+    @discardableResult
+    static func collapseActiveSelection(in window: NSWindow?, deactivate: Bool = false) -> Bool {
+        guard let textView = currentTextView(in: window) ?? activeTextView(in: window) else {
+            if deactivate {
+                activeTextView.value = nil
+            }
+            return false
+        }
+
+        let didCollapse = collapseSelection(in: textView)
+        if deactivate {
+            activeTextView.value = nil
+        }
+        return didCollapse
+    }
+
+    static func deactivate() {
+        activeTextView.value = nil
     }
 
     static func performKeyEquivalent(_ event: NSEvent, fallback textView: NSTextView) -> Bool {
@@ -144,6 +169,14 @@ enum FocusModeTextClipboardTarget {
         case .selectAll:
             textView.selectAll(nil)
         }
+    }
+
+    @discardableResult
+    private static func collapseSelection(in textView: NSTextView) -> Bool {
+        let selectedRange = textView.selectedRange()
+        guard selectedRange.length > 0 else { return false }
+        textView.setSelectedRange(NSRange(location: selectedRange.location, length: 0))
+        return true
     }
 }
 

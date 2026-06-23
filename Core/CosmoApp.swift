@@ -683,6 +683,10 @@ struct CosmoCommands: Commands {
         // Otherwise, Paste posts a notification so the canvas can handle image/URL paste.
         CommandGroup(replacing: .pasteboard) {
             Button("Cut") {
+                if BlockSelectionClipboardTarget.send(.cut) {
+                    return
+                }
+
                 if !FocusModeTextClipboardTarget.send(.cut, in: NSApp.keyWindow) {
                     NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
                 }
@@ -690,6 +694,10 @@ struct CosmoCommands: Commands {
             .keyboardShortcut("x", modifiers: [.command])
 
             Button("Copy") {
+                if BlockSelectionClipboardTarget.send(.copy) {
+                    return
+                }
+
                 if !FocusModeTextClipboardTarget.send(.copy, in: NSApp.keyWindow) {
                     NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
                 }
@@ -712,6 +720,10 @@ struct CosmoCommands: Commands {
             .keyboardShortcut("v", modifiers: [.command])
 
             Button("Select All") {
+                if BlockSelectionClipboardTarget.send(.selectAll) {
+                    return
+                }
+
                 if !FocusModeTextClipboardTarget.send(.selectAll, in: NSApp.keyWindow) {
                     NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
                 }

@@ -158,6 +158,48 @@ final class FocusModeEditorBlurTests: XCTestCase {
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "outline")
     }
 
+    func testActivatingAnotherTextViewCollapsesPreviousSelection() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let firstTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 160, height: 100))
+        let secondTextView = NSTextView(frame: NSRect(x: 180, y: 0, width: 160, height: 100))
+        contentView.addSubview(firstTextView)
+        contentView.addSubview(secondTextView)
+        window.contentView = contentView
+
+        firstTextView.string = "first selected text"
+        firstTextView.setSelectedRange(NSRange(location: 0, length: 5))
+
+        FocusModeTextClipboardTarget.activate(firstTextView)
+        FocusModeTextClipboardTarget.activate(secondTextView)
+
+        XCTAssertEqual(firstTextView.selectedRange(), NSRange(location: 0, length: 0))
+    }
+
+    func testCollapsingActiveSelectionClearsStaleClipboardTarget() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 220, height: 100))
+        window.contentView = textView
+        textView.string = "selected body"
+        textView.setSelectedRange(NSRange(location: 0, length: 8))
+
+        FocusModeTextClipboardTarget.activate(textView)
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.collapseActiveSelection(in: window, deactivate: true))
+        XCTAssertEqual(textView.selectedRange(), NSRange(location: 0, length: 0))
+        XCTAssertFalse(FocusModeTextClipboardTarget.send(.copy, in: window))
+    }
+
     func testFocusModeClipboardPrefersFocusedEditableTextViewOverStaleActiveTarget() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),

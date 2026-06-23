@@ -272,6 +272,7 @@ struct BlockListView: View {
                         resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
                     } else {
                         resolvedSelectionCoordinator.clear()
+                        BlockSelectionClipboardTarget.deactivate()
                         selectionKeyboardFocused = false
                         resolvedFocusCoordinator.focus(block.id)
                     }
@@ -301,6 +302,7 @@ struct BlockListView: View {
         case .clearSelection:
             if selection.isActive {
                 selection.clear()
+                BlockSelectionClipboardTarget.deactivate()
             }
             return true
         }
@@ -358,7 +360,14 @@ struct BlockListView: View {
     /// and shortcuts land on the block list while blocks are selected.
     private func activateSelectionKeyboard() {
         DispatchQueue.main.async {
-            NSApp.keyWindow?.makeFirstResponder(nil)
+            let window = NSApp.keyWindow
+            FocusModeTextClipboardTarget.collapseActiveSelection(in: window, deactivate: true)
+            NotificationCenter.default.post(name: .cosmoDismissEditorOverlays, object: nil)
+            window?.makeFirstResponder(nil)
+            BlockSelectionClipboardTarget.activate(
+                isActive: { resolvedSelectionCoordinator.isActive },
+                perform: handleBlockSelectionClipboardAction
+            )
             selectionKeyboardFocused = true
         }
     }
@@ -366,6 +375,7 @@ struct BlockListView: View {
     private func clearSelectionAndResumeEditing() {
         let anchor = resolvedSelectionCoordinator.anchorBlockID
         resolvedSelectionCoordinator.clear()
+        BlockSelectionClipboardTarget.deactivate()
         selectionKeyboardFocused = false
         if let anchor {
             resolvedFocusCoordinator.focus(anchor)
@@ -375,20 +385,43 @@ struct BlockListView: View {
     private func beginEditingSelection() {
         let target = resolvedSelectionCoordinator.leadBlockID ?? resolvedSelectionCoordinator.anchorBlockID
         resolvedSelectionCoordinator.clear()
+        BlockSelectionClipboardTarget.deactivate()
         selectionKeyboardFocused = false
         if let target {
             resolvedFocusCoordinator.focus(target)
         }
     }
 
-    private func copySelectionToPasteboard() {
+    @discardableResult
+    private func copySelectionToPasteboard() -> Bool {
         let text = BlockOperations.plainText(
             ofBlocksWithIDs: resolvedSelectionCoordinator.selectedBlockIDs,
             in: document
         )
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else { return false }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        return true
+    }
+
+    private func handleBlockSelectionClipboardAction(_ action: BlockSelectionClipboardAction) -> Bool {
+        guard resolvedSelectionCoordinator.isActive else {
+            BlockSelectionClipboardTarget.deactivate()
+            return false
+        }
+
+        switch action {
+        case .copy:
+            return copySelectionToPasteboard()
+        case .cut:
+            let didCopy = copySelectionToPasteboard()
+            deleteSelectedBlocks(resolvedSelectionCoordinator.selectedBlockIDs)
+            return didCopy
+        case .selectAll:
+            resolvedSelectionCoordinator.selectAll(in: document)
+            activateSelectionKeyboard()
+            return true
+        }
     }
 
     // MARK: - Handle Menu
@@ -432,6 +465,7 @@ struct BlockListView: View {
     private func deleteSelectedBlocks(_ ids: Set<UUID>) {
         guard let result = BlockOperations.deleteBlocks(withIDs: ids, in: document) else { return }
         resolvedSelectionCoordinator.clear()
+        BlockSelectionClipboardTarget.deactivate()
         selectionKeyboardFocused = false
         commit(result, undoActionName: "Delete Blocks")
     }

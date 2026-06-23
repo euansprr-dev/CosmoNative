@@ -560,7 +560,7 @@ struct RichTextEditor: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoDismissEditorOverlays)) { _ in
-            dismissAllOverlays(includeSelection: false)
+            dismissAllOverlays()
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showSlashMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showMentionMenu)

@@ -133,6 +133,34 @@ final class BlockSelectionTests: XCTestCase {
         XCTAssertEqual(text, "Alpha\nDelta")
     }
 
+    func testClipboardTargetRoutesCopyToActiveBlockSelection() {
+        var receivedAction: BlockSelectionClipboardAction?
+
+        BlockSelectionClipboardTarget.activate(
+            isActive: { true },
+            perform: { action in
+                receivedAction = action
+                return true
+            }
+        )
+
+        XCTAssertTrue(BlockSelectionClipboardTarget.send(.copy))
+        XCTAssertEqual(receivedAction, .copy)
+        BlockSelectionClipboardTarget.deactivate()
+    }
+
+    func testClipboardTargetIgnoresInactiveSelection() {
+        BlockSelectionClipboardTarget.activate(
+            isActive: { false },
+            perform: { _ in
+                XCTFail("Inactive selections should not handle pasteboard commands")
+                return true
+            }
+        )
+
+        XCTAssertFalse(BlockSelectionClipboardTarget.send(.copy))
+    }
+
     func testWithRegeneratedIDsCreatesFreshIdentitiesRecursively() {
         var block = RichBlock(kind: .paragraph, inlines: [.text("Parent")])
         block.children = [RichBlock(kind: .paragraph, inlines: [.text("Child")])]

@@ -99,6 +99,15 @@ enum BlockInteractionPolicy {
             dropIndicatorHeight: isDropTarget ? 2 : 0
         )
     }
+
+    static func revealsHandleChrome(
+        isHovered: Bool,
+        isSelected: Bool,
+        isMenuPresented: Bool,
+        isDropTarget: Bool
+    ) -> Bool {
+        isHovered || isMenuPresented || isDropTarget
+    }
 }
 
 enum BlockMotionPolicy {

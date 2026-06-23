@@ -145,3 +145,47 @@ final class BlockSelectionCoordinator {
         }
     }
 }
+
+enum BlockSelectionClipboardAction: Equatable {
+    case cut
+    case copy
+    case selectAll
+}
+
+@MainActor
+enum BlockSelectionClipboardTarget {
+    private final class Target {
+        let isActive: () -> Bool
+        let perform: (BlockSelectionClipboardAction) -> Bool
+
+        init(
+            isActive: @escaping () -> Bool,
+            perform: @escaping (BlockSelectionClipboardAction) -> Bool
+        ) {
+            self.isActive = isActive
+            self.perform = perform
+        }
+    }
+
+    private static var activeTarget: Target?
+
+    static func activate(
+        isActive: @escaping () -> Bool,
+        perform: @escaping (BlockSelectionClipboardAction) -> Bool
+    ) {
+        activeTarget = Target(isActive: isActive, perform: perform)
+    }
+
+    static func deactivate() {
+        activeTarget = nil
+    }
+
+    static func send(_ action: BlockSelectionClipboardAction) -> Bool {
+        guard let target = activeTarget else { return false }
+        guard target.isActive() else {
+            activeTarget = nil
+            return false
+        }
+        return target.perform(action)
+    }
+}

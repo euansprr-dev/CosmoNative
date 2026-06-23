@@ -599,11 +599,48 @@ struct NoteFocusModeView: View {
 
     // MARK: - Top Bar (V2)
 
+    @ViewBuilder
     private var topBar: some View {
+        if let atomChrome {
+            atomWindowTopBar(atomChrome)
+        } else {
+            nativeFocusTopBar
+        }
+    }
+
+    private func atomWindowTopBar(_ atomChrome: AtomWindowChromePayload) -> some View {
         HStack(spacing: DS.space12) {
-            if let atomChrome {
-                AtomWindowChromeLeadingControls(context: atomChrome)
-            } else if !isPaneContext {
+            AtomWindowChromeLeadingControls(context: atomChrome)
+
+            if saveState != .idle {
+                noteSaveBadge
+                    .transition(.opacity)
+            }
+
+            Spacer(minLength: DS.space8)
+
+            topBarChromeButtons
+
+            AtomWindowChromeTrailingControls(context: atomChrome)
+        }
+        .padding(.horizontal, DS.space12)
+        .frame(height: AtomWindowMetrics.focusToolbarHeight)
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
+        .padding(.horizontal, DS.space16)
+        .padding(.top, DS.space12)
+        .padding(.bottom, DS.space8)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
+        .opacity(isActivelyTyping ? 0.25 : 1)
+        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: isActivelyTyping)
+        .onHover { hovering in
+            if hovering { wakeChrome() }
+        }
+    }
+
+    private var nativeFocusTopBar: some View {
+        HStack(spacing: DS.space12) {
+            if !isPaneContext {
                 backButton
             }
 
@@ -617,10 +654,6 @@ struct NoteFocusModeView: View {
             Spacer()
 
             topBarChromeButtons
-
-            if let atomChrome {
-                AtomWindowChromeTrailingControls(context: atomChrome)
-            }
         }
         .padding(.horizontal, DS.space12)
         .padding(.vertical, DS.space6)

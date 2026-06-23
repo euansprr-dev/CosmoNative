@@ -153,6 +153,16 @@ final class FocusModeAppearanceTests: XCTestCase {
         }
     }
 
+    func testNoteAtomWindowToolbarUsesFiniteAtomChromeLayout() throws {
+        let noteSource = try source("UI/FocusMode/Notes/NoteFocusModeView.swift")
+        let metricsSource = try source("UI/AtomWindow/AtomWindowMetrics.swift")
+
+        XCTAssertTrue(noteSource.contains("private func atomWindowTopBar(_ atomChrome: AtomWindowChromePayload)"))
+        XCTAssertTrue(noteSource.contains(".frame(height: AtomWindowMetrics.focusToolbarHeight)"))
+        XCTAssertTrue(noteSource.contains("private var nativeFocusTopBar"))
+        XCTAssertTrue(metricsSource.contains("static let focusToolbarHeight: CGFloat = 44"))
+    }
+
     func testIdeaFocusModeRemovesUnusedCosmoMarginaliaComposer() throws {
         let ideaFocusSource = try source("UI/FocusMode/Ideas/IdeaFocusModeView.swift")
 

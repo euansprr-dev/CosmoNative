@@ -15,6 +15,7 @@ enum AtomWindowMetrics {
     // Chrome
     static let panelCornerRadius: CGFloat = 20
     static let headerHeight: CGFloat = 48
+    static let focusToolbarHeight: CGFloat = 44
     static let contentPadding: CGFloat = 16
 
     // Search overlay

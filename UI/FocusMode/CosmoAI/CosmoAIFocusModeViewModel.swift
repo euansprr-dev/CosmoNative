@@ -40,6 +40,10 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
         loadConnectedContext()
     }
 
+    nonisolated static func defaultModelTier(userOverride: AgentModelTier?) -> AgentModelTier {
+        userOverride ?? .geminiFlashLatest
+    }
+
     // MARK: - Send Message
     func sendMessage() async {
         let query = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -77,7 +81,7 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
             enrichedText,
             conversationId: conversationId,
             source: .inApp,
-            tierOverride: modelOverride,
+            tierOverride: Self.defaultModelTier(userOverride: modelOverride),
             onToolActivity: { [weak self] event in
                 Task { @MainActor in
                     self?.handleToolActivity(event)

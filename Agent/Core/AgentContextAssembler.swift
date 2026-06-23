@@ -877,13 +877,6 @@ class AgentContextAssembler {
             lines.append("Previous summary: \(summary)")
         }
 
-        // If the conversation is long, summarize instead of passing all messages
-        if conv.messages.count > summarizationThreshold {
-            let summary = summarizeConversation(conv)
-            lines.append("Conversation summary:")
-            lines.append(summary)
-        }
-
         if !conv.linkedAtomUUIDs.isEmpty {
             lines.append("Referenced atoms: \(conv.linkedAtomUUIDs.prefix(10).joined(separator: ", "))")
             if conv.linkedAtomUUIDs.count > 10 {

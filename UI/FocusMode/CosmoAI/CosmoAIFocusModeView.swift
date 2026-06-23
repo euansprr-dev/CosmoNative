@@ -372,7 +372,7 @@ struct CosmoAIFocusModeView: View {
     // MARK: - Model Selector
     private var modelSelector: some View {
         Menu {
-            Button("Auto") { viewModel.modelOverride = nil }
+            Button("Gemini 3 Flash") { viewModel.modelOverride = nil }
             Divider()
             Button("Haiku") { viewModel.modelOverride = .sensor }
             Button("Sonnet") { viewModel.modelOverride = .strategist }
@@ -392,8 +392,8 @@ struct CosmoAIFocusModeView: View {
         case .sensor: return "Haiku"
         case .strategist: return "Sonnet"
         case .writer: return "Opus"
-        case nil: return "Auto"
-        default: return "Auto"
+        case nil: return "Gemini 3 Flash"
+        default: return "Gemini 3 Flash"
         }
     }
 

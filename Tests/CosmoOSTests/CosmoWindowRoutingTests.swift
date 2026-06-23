@@ -67,12 +67,56 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(AgentModelTier.geminiFlashLatest.maxTokens, 8192)
     }
 
-    func testDefaultModelTierKeepsCheapRoutesCheap() {
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .capture), .sensor)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .geminiFlashLatest)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .brainstorm), .geminiFlashLatest)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .draft), .geminiFlashLatest)
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .analyze), .strategist)
+    func testAutoModeAlwaysDefaultsToGeminiFlashLatest() {
+        let intents: [AgentIntent] = [
+            .capture, .brainstorm, .plan, .query, .execute, .debrief,
+            .reflect, .correct, .meta, .strategy, .draft, .analyze
+        ]
+
+        for intent in intents {
+            XCTAssertEqual(
+                CosmoAgentService.defaultModelTier(for: intent),
+                .geminiFlashLatest,
+                "Auto mode must not switch models for intent \(intent.rawValue)"
+            )
+        }
+    }
+
+    func testGeminiFlashChainDoesNotFailOverToAnotherModelWhenLocked() {
+        let chain = ModelFailoverChain.chain(for: .geminiFlashLatest, allowCrossModelFailover: false)
+
+        XCTAssertEqual(chain.models.map(\.modelId), [AgentModelTier.geminiFlashLatest.modelId])
+    }
+
+    func testConversationModelLockPersistsManualSelection() {
+        var conversation = AgentConversation(id: "conversation-1", source: .inApp)
+        conversation.modelLock = .opus47
+
+        XCTAssertEqual(conversation.effectiveModelTier(userOverride: nil), .opus47)
+        XCTAssertEqual(conversation.effectiveModelTier(userOverride: .geminiFlashLatest), .geminiFlashLatest)
+    }
+
+    func testHistoryBuilderKeepsAllMessagesWhenUnderModelWindow() {
+        var messages: [AgentMessage] = []
+        for index in 1...40 {
+            messages.append(.user("User decision \(index): keep slide \(index) direction."))
+            messages.append(.assistant("Acknowledged decision \(index)."))
+        }
+
+        let window = CosmoAgentService.buildContextWindowForTests(
+            messages,
+            modelTier: .geminiFlashLatest,
+            reservedOutputTokens: 8_192,
+            reservedSystemTokens: 12_000
+        )
+
+        XCTAssertEqual(window.count, messages.count)
+        XCTAssertTrue(window.first?.content.contains("User decision 1") == true)
+    }
+
+    func testFocusModeUsesGeminiFlashWhenNoManualOverrideExists() {
+        XCTAssertEqual(CosmoAIFocusModeViewModel.defaultModelTier(userOverride: nil), .geminiFlashLatest)
+        XCTAssertEqual(CosmoAIFocusModeViewModel.defaultModelTier(userOverride: .opus47), .opus47)
     }
 
     func testCosmoModelPickerLabelsPinnedGeminiThreeFlashAsEverydayDefault() {

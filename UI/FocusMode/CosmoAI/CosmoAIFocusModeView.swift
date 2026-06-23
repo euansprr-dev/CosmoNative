@@ -17,6 +17,7 @@ struct CosmoAIFocusModeView: View {
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
+    @Environment(\.atomWindowChromeContext) private var atomChrome
     @Environment(\.isPaneActive) private var isPaneActive
 
     init(atom: Atom, onClose: @escaping () -> Void) {
@@ -91,7 +92,9 @@ struct CosmoAIFocusModeView: View {
     private var header: some View {
         HStack(spacing: 12) {
             // Main sidebar toggle
-            if !isPaneContext {
+            if let atomChrome {
+                AtomWindowChromeLeadingControls(context: atomChrome)
+            } else if !isPaneContext {
                 Button {
                     withAnimation(ProMotionSprings.sidebar) {
                         isSidebarHidden.toggle()
@@ -107,24 +110,28 @@ struct CosmoAIFocusModeView: View {
                 .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
             }
 
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-                    .frame(width: 32, height: 32)
-                    .background(Circle().fill(DS.border))
+            if atomChrome == nil {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(DS.border))
+                }
+                .buttonStyle(.plain)
+                .opacity(isPeekContext ? 0 : 1)
+                .allowsHitTesting(!isPeekContext)
             }
-            .buttonStyle(.plain)
-            .opacity(isPeekContext ? 0 : 1)
-            .allowsHitTesting(!isPeekContext)
 
-            HStack(spacing: 6) {
-                Image(systemName: "brain")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.accent)
-                Text("Cosmo AI")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(DS.text)
+            if atomChrome == nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(DS.accent)
+                    Text("Cosmo AI")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(DS.text)
+                }
             }
 
             Spacer()
@@ -166,6 +173,10 @@ struct CosmoAIFocusModeView: View {
                 Text("\(tokenCount) tokens")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundColor(DS.textMuted)
+            }
+
+            if let atomChrome {
+                AtomWindowChromeTrailingControls(context: atomChrome)
             }
         }
         .padding(.horizontal, 20)

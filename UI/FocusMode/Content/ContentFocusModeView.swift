@@ -249,6 +249,7 @@ struct ContentFocusModeView: View {
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
+    @Environment(\.atomWindowChromeContext) private var atomChrome
 
     // Responsive layout
     @State private var layoutMode: ContentLayoutMode = .full
@@ -946,7 +947,9 @@ struct ContentFocusModeView: View {
 
     private var scriptoriumToolbar: some View {
         HStack(spacing: DS.space12) {
-            if !isPaneContext {
+            if let atomChrome {
+                AtomWindowChromeLeadingControls(context: atomChrome)
+            } else if !isPaneContext {
                 Button(action: onClose) {
                     HStack(spacing: DS.space6) {
                         Image(systemName: "chevron.left")
@@ -966,7 +969,9 @@ struct ContentFocusModeView: View {
             Spacer(minLength: DS.space8)
             writingSurfaceControls
             ZenOrnament(isOn: $zenMode)
-            if isPaneContext, !isPeekContext {
+            if let atomChrome {
+                AtomWindowChromeTrailingControls(context: atomChrome)
+            } else if isPaneContext, !isPeekContext {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(DS.caption)

@@ -11,17 +11,11 @@ struct AtomSearchOverlay: View {
         VStack(spacing: 0) {
             searchField
             filterChips
-            Divider().foregroundStyle(DS.border)
+            Divider().foregroundStyle(DS.glassBorder.opacity(0.68))
             resultsList
         }
-        .background(DS.surface)
-        .clipShape(.rect(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(DS.border, lineWidth: 0.5)
-        )
-        .dsFloatingShadow()
-        .padding(DS.space16)
+        .cosmoGlassPanel(role: .globalSidebar, cornerRadius: 28)
+        .padding(DS.space20)
         .frame(maxHeight: AtomWindowMetrics.searchOverlayMaxHeight)
         .onAppear { isSearchFocused = true }
         .onKeyPress(.escape) {
@@ -73,9 +67,9 @@ struct AtomSearchOverlay: View {
         }
         .padding(.horizontal, DS.space12)
         .frame(height: AtomWindowMetrics.searchFieldHeight)
-        .dsGlassInput(isFocused: isSearchFocused, cornerRadius: DS.radiusSmall)
-        .padding(.horizontal, DS.space12)
-        .padding(.top, DS.space12)
+        .dsGlassInput(isFocused: isSearchFocused, cornerRadius: 16)
+        .padding(.horizontal, DS.space16)
+        .padding(.top, DS.space16)
         .padding(.bottom, DS.space8)
     }
 
@@ -112,9 +106,9 @@ struct AtomSearchOverlay: View {
             }
             .padding(.horizontal, DS.space8)
             .padding(.vertical, 4)
-            .background(isActive ? DS.accentSoft : DS.surfaceElevated, in: Capsule())
+            .background(isActive ? DS.accentSoft.opacity(0.86) : DS.glassCardFill.opacity(0.52), in: Capsule())
             .foregroundStyle(isActive ? DS.accent : DS.textSecondary)
-            .overlay(Capsule().stroke(isActive ? DS.accent.opacity(0.3) : DS.borderSubtle, lineWidth: 0.5))
+            .overlay(Capsule().stroke(isActive ? DS.accent.opacity(0.3) : DS.glassBorder.opacity(0.72), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }
@@ -211,7 +205,7 @@ struct AtomSearchOverlay: View {
             }
             .padding(.horizontal, DS.space12)
             .frame(height: AtomWindowMetrics.searchResultRowHeight)
-            .background(isSelected ? DS.accentSoft.opacity(0.5) : Color.clear)
+            .background(isSelected ? DS.glassInputFillFocused.opacity(0.72) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

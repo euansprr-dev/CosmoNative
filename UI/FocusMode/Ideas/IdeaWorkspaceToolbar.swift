@@ -13,6 +13,8 @@ struct IdeaWorkspaceToolbar: View {
     let isPromoting: Bool
     let actions: IdeaWorkspaceActions
 
+    @Environment(\.atomWindowChromeContext) private var atomChrome
+
     private var isBodyEmpty: Bool {
         viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -23,7 +25,9 @@ struct IdeaWorkspaceToolbar: View {
             Spacer(minLength: DS.space8)
             beginWritingButton
             inspectorToggle
-            if isPaneContext {
+            if let atomChrome {
+                AtomWindowChromeTrailingControls(context: atomChrome)
+            } else if isPaneContext {
                 closeButton
             }
         }
@@ -36,7 +40,9 @@ struct IdeaWorkspaceToolbar: View {
 
     @ViewBuilder
     private var leadingControls: some View {
-        if !isPaneContext {
+        if let atomChrome {
+            AtomWindowChromeLeadingControls(context: atomChrome)
+        } else if !isPaneContext {
             toolbarButton(icon: "chevron.left", help: "Back (Esc)", action: actions.onClose)
         }
         statusMenu

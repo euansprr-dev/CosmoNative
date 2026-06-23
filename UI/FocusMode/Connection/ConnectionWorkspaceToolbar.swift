@@ -12,6 +12,7 @@ struct ConnectionWorkspaceToolbar: View {
     let isPaneContext: Bool
     let actions: ConnectionWorkspaceActions
 
+    @Environment(\.atomWindowChromeContext) private var atomChrome
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -35,7 +36,9 @@ struct ConnectionWorkspaceToolbar: View {
 
     @ViewBuilder
     private var leadingControls: some View {
-        if !isPaneContext {
+        if let atomChrome {
+            AtomWindowChromeLeadingControls(context: atomChrome)
+        } else if !isPaneContext {
             toolbarButton(
                 icon: "chevron.left",
                 help: "Back (Esc)",
@@ -178,6 +181,9 @@ struct ConnectionWorkspaceToolbar: View {
             withAnimation(ProMotionSprings.focusTransition) {
                 workspace.toggleInspector()
             }
+        }
+        if let atomChrome {
+            AtomWindowChromeTrailingControls(context: atomChrome)
         }
     }
 

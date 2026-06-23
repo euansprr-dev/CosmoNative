@@ -248,6 +248,7 @@
 		4155173AE5ED17A1B4DBD95D /* CosmoDocumentEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 845884C0E33871260B8D0D1C /* CosmoDocumentEditor.swift */; };
 		4164B1E75B907ACE29F18DDE /* SearchReRanker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306303DCFEE5FC5F68EB20BE /* SearchReRanker.swift */; };
 		41D184B87F55FBA10DDFCD5B /* AtomWindowStandaloneCreationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07337815F2F380341D96946F /* AtomWindowStandaloneCreationTests.swift */; };
+		A7A7A7A70000000000000002 /* AtomWindowChromeContextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7A7A7A70000000000000001 /* AtomWindowChromeContextTests.swift */; };
 		428FF0B0ACD4B9F7C6068C1B /* HybridSearchEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7A79239EDF6A7F60CF99DD /* HybridSearchEngine.swift */; };
 		42ADF4456FD8A651D1EE6B4B /* TaskDetailPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56BD78D2AE97570945E21E37 /* TaskDetailPanel.swift */; };
 		42BEEF57017E825AA82DA8C4 /* GlassMaterial.swift in Sources */ = {isa = PBXBuildFile; fileRef = B32C55DE13B666DEB0B398B7 /* GlassMaterial.swift */; };
@@ -594,6 +595,7 @@
 		A6604BA75769733962D19DC7 /* ConnectionCoDevEngine+LiveInsights.swift in Sources */ = {isa = PBXBuildFile; fileRef = 325348C45A3821A0F6CE5F30 /* ConnectionCoDevEngine+LiveInsights.swift */; };
 		A72A958A8C91A45D56B7847B /* DaemonInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96F44D8CD25BB380B1ADD967 /* DaemonInstaller.swift */; };
 		A798E8D41E61958F9EFA19C9 /* AtomWindowRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D32AEF159390081601401E5D /* AtomWindowRootView.swift */; };
+		A7A7A7A70000000000000004 /* AtomWindowChromeContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7A7A7A70000000000000003 /* AtomWindowChromeContext.swift */; };
 		A7B8C9D0E1F2031425364758 /* CaptureLanesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F708192A3B4C /* CaptureLanesView.swift */; };
 		A7C64F003AA2CAB5E6E82FEC /* PhysicsSlideQuarksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1763C055B00FDECE7F26149D /* PhysicsSlideQuarksView.swift */; };
 		A7EF76E9F56B5CA015FCD2A4 /* DailyQuestEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE7FC6A9504C0B2AA307B0C /* DailyQuestEngine.swift */; };
@@ -1066,6 +1068,7 @@
 		0621FB96A611D5CE3DEC42DA /* DeepWorkVoiceCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepWorkVoiceCommands.swift; sourceTree = "<group>"; };
 		06DE3C17B82342219B7C1ADB /* CanvasRenderSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasRenderSnapshot.swift; sourceTree = "<group>"; };
 		07337815F2F380341D96946F /* AtomWindowStandaloneCreationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AtomWindowStandaloneCreationTests.swift; sourceTree = "<group>"; };
+		A7A7A7A70000000000000001 /* AtomWindowChromeContextTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AtomWindowChromeContextTests.swift; sourceTree = "<group>"; };
 		07366553F5D96AC885800478 /* StructureMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructureMapView.swift; sourceTree = "<group>"; };
 		078263DA1CD2E018ADBBDB2A /* CosmoChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoChatView.swift; sourceTree = "<group>"; };
 		07BA8FC5B0B949DE1C2DADE0 /* GraphQueryEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphQueryEngine.swift; sourceTree = "<group>"; };
@@ -1160,6 +1163,7 @@
 		25EBAF625905B5EBE5DCAF70 /* InstagramReelLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstagramReelLayout.swift; sourceTree = "<group>"; };
 		25F4622EC2847DC181230EC6 /* CosmoMemoryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoMemoryService.swift; sourceTree = "<group>"; };
 		260110AC3D0BCD032B8DC4DB /* AtomSearchOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomSearchOverlay.swift; sourceTree = "<group>"; };
+		A7A7A7A70000000000000003 /* AtomWindowChromeContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomWindowChromeContext.swift; sourceTree = "<group>"; };
 		2611490AC9ABA6AEF3C4B35C /* StickyNoteBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickyNoteBlockView.swift; sourceTree = "<group>"; };
 		26B17B57DEE177D85A55AB32 /* IdeaResearchAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaResearchAgent.swift; sourceTree = "<group>"; };
 		2728ACC867CEA968A477BB04 /* CosmoInlineAssistantApplicatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoInlineAssistantApplicatorTests.swift; sourceTree = "<group>"; };
@@ -2929,6 +2933,7 @@
 			isa = PBXGroup;
 			children = (
 				260110AC3D0BCD032B8DC4DB /* AtomSearchOverlay.swift */,
+				A7A7A7A70000000000000003 /* AtomWindowChromeContext.swift */,
 				0FF7020B1D8736D27C18D3BB /* AtomWindowMetrics.swift */,
 				6ACCE6DA8AE2A5880F0379F7 /* AtomWindowPanelController.swift */,
 				D32AEF159390081601401E5D /* AtomWindowRootView.swift */,
@@ -3645,6 +3650,7 @@
 			children = (
 				B49724148F7448FCFD3BA71B /* SwipeBoardStoreTests.swift */,
 				24723A7EFFDA43AA45B076A1 /* ApifyInstagramProviderTests.swift */,
+				A7A7A7A70000000000000001 /* AtomWindowChromeContextTests.swift */,
 				07337815F2F380341D96946F /* AtomWindowStandaloneCreationTests.swift */,
 				B10C0DEC0000000000000042 /* BlockCommandCatalogTests.swift */,
 				B10C0DEC0000000000000043 /* BlockDragDropTests.swift */,
@@ -4049,6 +4055,7 @@
 			files = (
 				EB1994680B5CAF36AD53AE8B /* CraftEngineTests.swift in Sources */,
 				B2B6A6109E037534CB15DA5B /* ApifyInstagramProviderTests.swift in Sources */,
+				A7A7A7A70000000000000002 /* AtomWindowChromeContextTests.swift in Sources */,
 				41D184B87F55FBA10DDFCD5B /* AtomWindowStandaloneCreationTests.swift in Sources */,
 				B10C0DEC0000000000000032 /* BlockCommandCatalogTests.swift in Sources */,
 				B10C0DEC0000000000000033 /* BlockDragDropTests.swift in Sources */,
@@ -4218,6 +4225,7 @@
 				8101A0138A377B51BE8B9639 /* AtomRepository.swift in Sources */,
 				8ED7674725618F969A5E4867 /* AtomSearchEngine.swift in Sources */,
 				F7BA2C288999AA1F3F90B9BD /* AtomSearchOverlay.swift in Sources */,
+				A7A7A7A70000000000000004 /* AtomWindowChromeContext.swift in Sources */,
 				B2919E264AC2FE5BE3FCC823 /* AtomWindowMetrics.swift in Sources */,
 				0FD0B850F828D41DDDC51EBD /* AtomWindowPanelController.swift in Sources */,
 				A798E8D41E61958F9EFA19C9 /* AtomWindowRootView.swift in Sources */,

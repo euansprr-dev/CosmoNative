@@ -124,6 +124,35 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertTrue(swipeFocusSource.contains("FocusModeInspectorSection"))
     }
 
+    func testAtomWindowChromeIsInjectedByAtomWindowRootOnlyWhenHostingAtoms() throws {
+        let atomRootSource = try source("UI/AtomWindow/AtomWindowRootView.swift")
+
+        XCTAssertTrue(atomRootSource.contains(#".environment(\.atomWindowChromeContext, chromePayload(for: atom))"#))
+        XCTAssertTrue(atomRootSource.contains("private func chromePayload(for atom: Atom) -> AtomWindowChromePayload"))
+        XCTAssertFalse(atomRootSource.contains("AtomWindowHeaderBar(viewModel: viewModel)"))
+    }
+
+    func testAtomWindowChromeIsOptionalInFocusModeToolbars() throws {
+        let focusToolbarFiles = [
+            "UI/FocusMode/Notes/NoteFocusModeView.swift",
+            "UI/FocusMode/Content/ContentFocusModeView.swift",
+            "UI/FocusMode/Ideas/IdeaWorkspaceToolbar.swift",
+            "UI/FocusMode/Connection/ConnectionWorkspaceToolbar.swift",
+            "UI/FocusMode/Research/ResearchFocusModeView.swift",
+            "UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift",
+            "UI/FocusMode/CosmoAI/CosmoAIFocusModeView.swift",
+        ]
+
+        for file in focusToolbarFiles {
+            let source = try source(file)
+
+            XCTAssertTrue(source.contains(#"@Environment(\.atomWindowChromeContext)"#), "\(file) should read Atom chrome as optional environment")
+            XCTAssertTrue(source.contains("if let atomChrome"), "\(file) should gate Atom chrome behind optional lookup")
+            XCTAssertTrue(source.contains("AtomWindowChromeLeadingControls"), "\(file) should merge Atom leading controls into its toolbar")
+            XCTAssertTrue(source.contains("AtomWindowChromeTrailingControls"), "\(file) should merge Atom trailing controls into its toolbar")
+        }
+    }
+
     func testIdeaFocusModeRemovesUnusedCosmoMarginaliaComposer() throws {
         let ideaFocusSource = try source("UI/FocusMode/Ideas/IdeaFocusModeView.swift")
 

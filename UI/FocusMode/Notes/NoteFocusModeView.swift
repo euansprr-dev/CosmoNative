@@ -329,6 +329,7 @@ struct NoteFocusModeView: View {
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
+    @Environment(\.atomWindowChromeContext) private var atomChrome
 
     enum SaveState: Equatable {
         case idle
@@ -600,7 +601,9 @@ struct NoteFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: DS.space12) {
-            if !isPaneContext {
+            if let atomChrome {
+                AtomWindowChromeLeadingControls(context: atomChrome)
+            } else if !isPaneContext {
                 backButton
             }
 
@@ -614,6 +617,10 @@ struct NoteFocusModeView: View {
             Spacer()
 
             topBarChromeButtons
+
+            if let atomChrome {
+                AtomWindowChromeTrailingControls(context: atomChrome)
+            }
         }
         .padding(.horizontal, DS.space12)
         .padding(.vertical, DS.space6)
@@ -687,7 +694,7 @@ struct NoteFocusModeView: View {
                 accessibilityLabel: "Toggle graph view",
                 action: { toggleGraphOverlay() }
             )
-            if isPaneContext, !isPeekContext {
+            if isPaneContext, !isPeekContext, atomChrome == nil {
                 chromeIconButton(
                     systemName: "xmark",
                     isActive: false,

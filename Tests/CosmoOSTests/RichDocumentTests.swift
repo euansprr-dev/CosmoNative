@@ -928,4 +928,98 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertEqual(parsed.blocks.first?.plainInlineText, "only block")
         XCTAssertEqual(parsed.blocks.last?.plainInlineText, "")
     }
+
+    // MARK: - Checked To-Do Styling (typing-feel pass)
+
+    func testCheckedChecklistRendersStrikethroughButNeverBakesItIntoMarks() {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .checklist, inlines: [.text("Ship the polish pass")], checked: true)
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document, fontSize: 17)
+
+        // The rendered string visually strikes the content through…
+        let contentLocation = (attributed.string as NSString).range(of: "Ship").location
+        XCTAssertNotNil(attributed.attribute(.strikethroughStyle, at: contentLocation, effectiveRange: nil))
+
+        // …but parsing back never turns that rendering into a content mark.
+        let parsed = RichDocumentSerializer.document(from: attributed)
+        XCTAssertEqual(parsed.blocks.first?.kind, .checklist)
+        XCTAssertEqual(parsed.blocks.first?.checked, true)
+        XCTAssertEqual(parsed.blocks.first?.plainInlineText, "Ship the polish pass")
+        let hasStrikeMark = parsed.blocks.first?.inlines.contains { $0.marks.contains(.strikethrough) } ?? false
+        XCTAssertFalse(hasStrikeMark)
+    }
+
+    func testUncheckedChecklistPreservesGenuineStrikethroughMark() {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .checklist, inlines: [.text("Keep my strike", marks: [.strikethrough])], checked: false)
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document, fontSize: 17)
+        let parsed = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(parsed.blocks.first?.checked, false)
+        let hasStrikeMark = parsed.blocks.first?.inlines.contains { $0.marks.contains(.strikethrough) } ?? false
+        XCTAssertTrue(hasStrikeMark)
+    }
+
+    // MARK: - Line-Spacing Rhythm (Aa menu Compact/Standard/Airy)
+
+    func testEditorRhythmPolicyAdjustsBodyLeadingButNotHeadings() {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("Body text")]),
+            RichBlock(kind: .heading1, inlines: [.text("Heading text")])
+        ])
+        let attributed = RichDocumentSerializer.attributedString(from: document, fontSize: 17)
+
+        let airy = EditorRhythmPolicy.applyingLineSpacing(4, to: attributed)
+
+        let nsString = airy.string as NSString
+        let bodyStyle = airy.attribute(
+            .paragraphStyle,
+            at: nsString.range(of: "Body").location,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+        let headingStyle = airy.attribute(
+            .paragraphStyle,
+            at: nsString.range(of: "Heading").location,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+
+        XCTAssertEqual(bodyStyle?.lineSpacing, 10)  // 6 base + 4 airy
+        XCTAssertEqual(headingStyle?.lineSpacing, 4)  // headings keep their own rhythm
+    }
+
+    func testEditorRhythmPolicyZeroDeltaIsIdentity() {
+        let attributed = RichDocumentSerializer.attributedString(
+            from: RichDocument(blocks: [RichBlock(kind: .paragraph, inlines: [.text("Body")])]),
+            fontSize: 17
+        )
+        XCTAssertTrue(EditorRhythmPolicy.applyingLineSpacing(0, to: attributed).isEqual(to: attributed))
+    }
+
+    // MARK: - Block Row Rhythm (heading air, list huddle)
+
+    func testBlockRhythmGivesHeadingsAirAboveAndKeepsThemTightBelow() {
+        let baseGap: CGFloat = 6  // the standard preset's block gap
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .heading1, following: nil, baseGap: baseGap), 0)
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .heading1, following: .paragraph, baseGap: baseGap), 26)
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .heading2, following: .paragraph, baseGap: baseGap), 21)
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .heading3, following: .paragraph, baseGap: baseGap), 16)
+        // Consecutive headings stack closer.
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .heading2, following: .heading1, baseGap: baseGap), 12)
+        // The paragraph under a heading hugs it — base gap only.
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .paragraph, following: .heading1, baseGap: baseGap), baseGap)
+    }
+
+    func testBlockRhythmHuddlesSameKindListItems() {
+        let baseGap: CGFloat = 6
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .bulletList, following: .bulletList, baseGap: baseGap), 4)
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .checklist, following: .checklist, baseGap: baseGap), 4)
+        // A list opening after prose keeps the normal gap.
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .bulletList, following: .paragraph, baseGap: baseGap), baseGap)
+        // Tight presets never collapse below a readable floor.
+        XCTAssertEqual(BlockRhythmPolicy.topSpacing(for: .bulletList, following: .bulletList, baseGap: 4), 4)
+    }
 }

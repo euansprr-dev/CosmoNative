@@ -118,19 +118,11 @@ struct InboxView: View {
     /// so a mistaken dismiss is always recoverable.
     private var historyMenu: some View {
         Menu {
-            if viewModel.recentHistory.isEmpty {
+            if viewModel.recentHistoryEntries.isEmpty {
                 Text("Nothing triaged recently")
             } else {
-                ForEach(viewModel.recentHistory) { item in
-                    if item.status == .dismissed {
-                        Button {
-                            Task { await viewModel.restoreFromHistory(item) }
-                        } label: {
-                            Label("Restore “\(item.title ?? String(item.rawText.prefix(40)))”", systemImage: "arrow.uturn.backward")
-                        }
-                    } else {
-                        Text("Placed: \(item.title ?? String(item.rawText.prefix(40)))")
-                    }
+                ForEach(viewModel.recentHistoryEntries) { entry in
+                    historyMenuRow(entry)
                 }
             }
         } label: {
@@ -146,7 +138,30 @@ struct InboxView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Recently placed and dismissed captures — restore a dismissed one")
+        .help("Recently placed captures, dismissed captures, and deleted lanes")
+    }
+
+    @ViewBuilder
+    private func historyMenuRow(_ entry: InboxHistoryEntry) -> some View {
+        switch entry.kind {
+        case .capture(let item):
+            if item.status == .dismissed {
+                Button {
+                    Task { await viewModel.restoreFromHistory(item) }
+                } label: {
+                    Label("Restore “\(entry.title)”", systemImage: "arrow.uturn.backward")
+                }
+            } else {
+                Text("Placed: \(entry.title)")
+            }
+        case .deletedLane(let lane):
+            Button {
+                Task { await viewModel.restoreDeletedLane(lane) }
+            } label: {
+                Label("Restore Lane “\(entry.title)”", systemImage: "arrow.uturn.backward")
+            }
+            Text(entry.subtitle)
+        }
     }
 
     private var lanesButton: some View {

@@ -3869,6 +3869,9 @@ class AgentToolExecutor {
 
     private func parseModelTier(_ value: Any?) -> AgentModelTier? {
         guard let raw = trimmedString(value) else { return nil }
+        if let tier = AgentModelTier(rawValue: raw) {
+            return tier
+        }
         let normalized = Self.normalizedEnumToken(raw)
         if let tier = AgentModelTier(rawValue: normalized) {
             return tier
@@ -3878,6 +3881,18 @@ class AgentToolExecutor {
             return .sensor
         case "sonnet", "balanced":
             return .strategist
+        case "opus", "opus46", "claudeopus46", "writer":
+            return .writer
+        case "gpt55thinking", "gpt5.5thinking":
+            return .gpt55Thinking
+        case "opus47", "claudeopus47":
+            return .opus47
+        case "gptchatlatest":
+            return .gptChatLatest
+        case "gemini3flash", "geminiflashlatest":
+            return .geminiFlashLatest
+        case "gemini35flash", "gemini3.5flash":
+            return .gemini35Flash
         default:
             return nil
         }

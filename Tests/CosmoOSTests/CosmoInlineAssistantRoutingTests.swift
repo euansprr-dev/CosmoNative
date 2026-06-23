@@ -52,6 +52,44 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertFalse(store.isPaneRequested)
     }
 
+    func testOutlineBodyFillWithBestPerformersKeepsOutlineAsSourceOfTruth() {
+        let prompt = "Put the entire outline into it's respective slides in my body, filling any placeholders with the format & data from Josh's best performing threads about the properties or information mentioned. For slide 6, just put what you do when setting up a property."
+        let snapshot = CosmoEditableSourceSnapshot(
+            surfaceID: "content:josh-post",
+            targetID: "content:josh-post:draft",
+            kind: .text,
+            title: "Josh property carousel",
+            text: """
+            OUTLINE
+            1. Story setup
+            2. First property context
+            3. Deal math
+
+            BODY
+            SLIDE 1
+            [outline beat goes here]
+
+            SLIDE 2
+            [property details]
+            """,
+            sourceHash: "hash",
+            anchors: [.init(id: "draft", label: "Draft", utf16Start: 0, utf16Length: 120)]
+        )
+        let plan = CosmoInlineAssistantSkillRuntime.plan(for: prompt, surfaceKind: .text)
+
+        let instructions = CosmoInlineAssistantInstructionPrompt.make(
+            route: plan.route,
+            snapshot: snapshot,
+            skillPlan: plan
+        )
+
+        XCTAssertEqual(plan.route, .action)
+        XCTAssertTrue(plan.requiredContext.contains(.bestPerformingContent))
+        XCTAssertTrue(instructions.contains("The outline is the source of truth"))
+        XCTAssertTrue(instructions.contains("Do not copy, transplant, or re-template a best-performing post"))
+        XCTAssertTrue(instructions.contains("For slide-specific instructions, follow the user literally"))
+    }
+
     func testFollowUpPromptCanReusePreviousActionRoute() {
         XCTAssertEqual(
             CosmoInlineAssistantPromptClassifier.route(
@@ -258,6 +296,14 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(plan.preferredModelTier, .strategist)
     }
 
+    func testCraftSkillsDisplayOpusModelLabel() {
+        let registry = CosmoInlineSkillRegistry(store: .inMemory())
+
+        XCTAssertEqual(registry.skill(id: "contentReview")?.displayedModelLabel, "Opus 4.8")
+        XCTAssertEqual(registry.skill(id: "voiceVariations")?.displayedModelLabel, "Opus 4.8")
+        XCTAssertEqual(registry.skill(id: "inlineEdit")?.displayedModelLabel, "Haiku")
+    }
+
     func testStoreSubmitUsesSlashSelectedSkillRoute() async {
         let bridge = CosmoInlineAssistantAgentBridge { prompt, route, store in
             XCTAssertEqual(prompt, "replace the placeholders in slide 1")
@@ -268,6 +314,50 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         store.composerText = "/Voice Variations replace the placeholders in slide 1"
 
         await store.submit()
+    }
+
+    func testStoreSubmitUsesAutoRoutedSkillSuggestionForOneRunOnly() async {
+        let bridge = CosmoInlineAssistantAgentBridge { prompt, route, store in
+            XCTAssertEqual(prompt, "make this sharper")
+            XCTAssertEqual(route, .answer)
+            XCTAssertEqual(store.activeSubmissionSkillID, "contentReview")
+        }
+        let store = CosmoInlineAssistantStore(agentBridge: bridge)
+        store.composerText = "make this sharper"
+        store.skillSuggestion = .init(
+            skillID: "contentReview",
+            skillName: "Content Review",
+            icon: "text.badge.checkmark",
+            score: 0.82
+        )
+
+        await store.submit()
+
+        XCTAssertNil(store.selectedSkillID)
+        XCTAssertEqual(store.paneMessages.first?.skillID, "contentReview")
+    }
+
+    func testAutoRoutedSkillDoesNotHijackLaterDifferentRequest() async {
+        var sentSkillIDs: [String?] = []
+        let bridge = CosmoInlineAssistantAgentBridge { _, _, store in
+            sentSkillIDs.append(store.activeSubmissionSkillID)
+        }
+        let store = CosmoInlineAssistantStore(agentBridge: bridge)
+        store.composerText = "give me 5 variations of this hook that basically say the same thing in a different way"
+        store.skillSuggestion = .init(
+            skillID: "voiceVariations",
+            skillName: "Voice Variations",
+            icon: "quote.bubble",
+            score: 0.91
+        )
+
+        await store.submit()
+
+        store.composerText = "In a thread format, give me a breakdown of a theoretical DSCR deal with multiple slides and the full process."
+        await store.submit()
+
+        XCTAssertEqual(sentSkillIDs, ["voiceVariations", nil])
+        XCTAssertNil(store.selectedSkillID)
     }
 
     func testPreparedInlineRequestUsesSkillModelBeforeSensorDefault() async {
@@ -281,6 +371,51 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         )
 
         XCTAssertEqual(request.tierOverride, .strategist)
+    }
+
+    func testPreparedInlineRequestUsesSonnetDailyDriverWithoutSkillOverride() async {
+        let viewModel = CosmoWindowViewModel.shared
+        viewModel.modelOverride = nil
+        viewModel.selectedAgentProfileID = nil
+
+        let request = await viewModel.prepareInlineAssistantAgentRequest(
+            prompt: "is this accurate for wholesaling?",
+            route: .answer,
+            snapshot: nil,
+            inlineContextAtoms: [],
+            selectedSkillID: nil
+        )
+
+        XCTAssertEqual(request.tierOverride, .strategist)
+    }
+
+    func testDailyDriverModelResolvesToDirectAnthropicSonnet46() {
+        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .strategist)
+        XCTAssertEqual(AgentModelTier.strategist.modelId, "anthropic/claude-sonnet-4.6")
+        XCTAssertEqual(AgentProvider.anthropic.defaultModel, "claude-sonnet-4-6")
+        XCTAssertEqual(
+            AnthropicProvider.nativeModelID(AgentModelTier.strategist.modelId),
+            "claude-sonnet-4-6"
+        )
+    }
+
+    func testGeneratedCodexCorpusContextIsIgnoredUnlessPromptNamesIt() {
+        let codex = Atom.new(
+            type: .research,
+            title: "Content Physics Exemplar Codex",
+            body: "Very large generated corpus.",
+            metadata: #"{"isCodexSynthesis":true}"#
+        )
+        let normal = Atom.new(type: .research, title: "Wholesaling source")
+
+        XCTAssertEqual(
+            ContextSourcePolicy.filteredAtoms([codex, normal], query: "is this accurate for wholesaling?").map(\.uuid),
+            [normal.uuid]
+        )
+        XCTAssertEqual(
+            ContextSourcePolicy.filteredAtoms([codex, normal], query: "use the Content Physics Exemplar Codex").map(\.uuid),
+            [codex.uuid, normal.uuid]
+        )
     }
 
     func testActiveSlashSkillMentionOnlyTriggersAtCommandBoundary() {
@@ -421,6 +556,57 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(restoredStore.proposals.first?.summary, "Filled slide 1.")
     }
 
+    func testRestoreRepairsLegacyRawCraftReviewAnswer() {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let rawReview = """
+        Here is the structured review payload:
+
+        ```json
+        {
+          "formatRead": "24-slide reel for Ben",
+          "performanceRead": {
+            "tier": "around_median",
+            "reasoning": "The hook has the right mechanism but leaves the number blank.",
+            "evidence": [
+              {"comparable": "Sober living reel", "numbers": "480K views", "insight": "Same mechanism with a hard dollar figure."}
+            ]
+          },
+          "slideNotes": [
+            {"slide": 1, "failedTest": "Hook Craft", "issue": "Slide 1 says '$X' instead of the real figure.", "fix": "Replace the placeholder before review ships.", "comparableQuote": "THE GOVERNMENT PAYS YOU $600-$1,000/MONTH"}
+          ],
+          "topMoves": [{"move": "Lead with the real number", "why": "The comparable proves the dollar figure is the scroll-stopper."}],
+          "weakestBeat": {"location": "Slide 1 hook", "originalText": "Every month my county pays me $X...", "microVariations": ["Every month my county pays me $1,200 per bed..."]},
+          "verdict": "One number away from making the mechanism believable."
+        }
+        ```
+
+        _≈$0.12 · 10.0K in (90% cached) · 0.8K out_
+        """
+        persistence.save(CosmoInlineAssistantPersistedSession(
+            surfaceID: "content:legacy-review",
+            paneMessages: [
+                .init(role: .user, content: "Begin.", skillID: "contentReview"),
+                .init(role: .assistant, content: rawReview)
+            ],
+            proposals: [],
+            selectedContextAtoms: [],
+            selectedSkillID: "contentReview",
+            lastSubmissionRoute: .answer
+        ))
+
+        let restoredStore = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+        restoredStore.activateSession(surfaceID: "content:legacy-review")
+
+        let repairedAnswer = restoredStore.paneMessages.last?.content ?? ""
+        XCTAssertTrue(repairedAnswer.contains("### Around your median"))
+        XCTAssertTrue(repairedAnswer.contains("**Slide 1** · Hook Craft"))
+        XCTAssertTrue(repairedAnswer.contains("≈$0.12 · 10.0K in (90% cached) · 0.8K out"))
+        XCTAssertFalse(repairedAnswer.contains("\"slideNotes\""))
+        XCTAssertFalse(
+            persistence.load(surfaceID: "content:legacy-review")?.paneMessages.last?.content.contains("\"slideNotes\"") ?? true
+        )
+    }
+
     func testInlineSessionsAreIsolatedBySurface() {
         let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
         let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
@@ -439,25 +625,27 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(store.paneMessages.map(\.content), ["Second answer"])
     }
 
-    func testSubmitKeepsOngoingConversationWhenAnotherSurfaceIsRegistered() async {
+    func testSubmitSwitchesIdleConversationToActiveSurfaceBeforeMessage() async {
         let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
         let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
 
         store.activateSession(surfaceID: "note:original")
         store.receivePaneAnswer(title: nil, answer: "Earlier answer", route: .answer)
 
-        // The user peeks at a source — its view registers as the active surface.
-        let peeked = RegisteringTestSurface(surfaceID: "note:peeked")
-        CosmoEditableSurfaceRegistry.shared.register(peeked)
-        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:peeked") }
+        // The user opens a different atom. The next message must start from that
+        // atom's own thread, not leak the previous atom's history.
+        let activeAtom = RegisteringTestSurface(surfaceID: "note:active-atom")
+        CosmoEditableSurfaceRegistry.shared.register(activeAtom)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:active-atom") }
 
-        store.composerText = "And the follow-up?"
+        store.composerText = "Give me five voice variations."
         await store.submit()
 
-        // The ongoing conversation stays visible and the sent message lands in it —
-        // never swapped out because some other surface happens to be registered.
-        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:original")
-        XCTAssertEqual(store.paneMessages.map(\.content), ["Earlier answer", "And the follow-up?"])
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:active-atom")
+        XCTAssertEqual(store.paneMessages.map(\.content), ["Give me five voice variations."])
+
+        store.activateSession(surfaceID: "note:original")
+        XCTAssertEqual(store.paneMessages.map(\.content), ["Earlier answer"])
     }
 
     func testSubmitBindsFreshConversationToActiveSurfaceAtomicallyWithMessage() async {
@@ -478,7 +666,35 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(store.paneMessages.map(\.content), ["Hello there"])
     }
 
-    func testNavigationActivationNeverReplacesOngoingConversation() {
+    func testActiveEditableSnapshotPrefersScopedSessionSurfaceOverLatestRegisteredSurface() {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        let ideaSurface = RegisteringTestSurface(
+            surfaceID: "idea:josh-dscr",
+            title: "Josh DSCR idea",
+            text: "It's called the DSCR loan."
+        )
+        let latestSurface = RegisteringTestSurface(
+            surfaceID: "note:latest-empty",
+            title: "Latest empty note",
+            text: ""
+        )
+
+        CosmoEditableSurfaceRegistry.shared.register(ideaSurface)
+        store.activateSession(surfaceID: "idea:josh-dscr")
+        CosmoEditableSurfaceRegistry.shared.register(latestSurface)
+        defer {
+            CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "idea:josh-dscr")
+            CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:latest-empty")
+        }
+
+        XCTAssertEqual(CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID, "note:latest-empty")
+        XCTAssertEqual(store.activeEditableSnapshot()?.surfaceID, "idea:josh-dscr")
+        XCTAssertEqual(store.activeEditableSnapshot()?.title, "Josh DSCR idea")
+    }
+
+    func testNavigationActivationSwitchesIdleConversationToNewSurfaceSession() {
         let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
         let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
 
@@ -486,9 +702,27 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         store.activateSessionIfIdle(surfaceID: "note:first")
         XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:first")
 
-        // With a conversation in progress, a view appearing must not retarget.
+        // Once no run is in flight, opening another atom should restore that
+        // atom's isolated thread instead of carrying the first atom's history.
         store.receivePaneAnswer(title: nil, answer: "Working answer", route: .answer)
         store.activateSessionIfIdle(surfaceID: "note:second")
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:second")
+        XCTAssertTrue(store.paneMessages.isEmpty)
+
+        store.activateSession(surfaceID: "note:first")
+        XCTAssertEqual(store.paneMessages.map(\.content), ["Working answer"])
+    }
+
+    func testNavigationActivationDoesNotReplaceInFlightConversation() {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        store.activateSession(surfaceID: "note:first")
+        store.receivePaneAnswer(title: nil, answer: "Working answer", route: .answer)
+
+        store.isProcessing = true
+        store.activateSessionIfIdle(surfaceID: "note:second")
+
         XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:first")
         XCTAssertEqual(store.paneMessages.map(\.content), ["Working answer"])
     }
@@ -549,6 +783,10 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
     func testBottomBarPresentationCollapsesAtRestAndExpandsForInteraction() {
         XCTAssertFalse(CosmoInlineAssistantBarVisibilityPolicy.shouldShow(isInlinePaneOpen: true))
         XCTAssertTrue(CosmoInlineAssistantBarVisibilityPolicy.shouldShow(isInlinePaneOpen: false))
+        XCTAssertFalse(CosmoInlineAssistantBarVisibilityPolicy.shouldShow(
+            isInlinePaneOpen: false,
+            isBlockingOverlayPresented: true
+        ))
 
         XCTAssertFalse(CosmoInlineAssistantBarPresentationPolicy.isExpanded(
             isHovering: false,
@@ -1196,10 +1434,14 @@ final class ComposerMentionSerializerTests: XCTestCase {
 private final class RegisteringTestSurface: CosmoEditableSurfaceProvider {
     let surfaceID: String
     let targetID: String
+    let title: String
+    let text: String
 
-    init(surfaceID: String) {
+    init(surfaceID: String, title: String = "Test Surface", text: String = "Body") {
         self.surfaceID = surfaceID
         self.targetID = "\(surfaceID):body"
+        self.title = title
+        self.text = text
     }
 
     func editableSnapshot() -> CosmoEditableSourceSnapshot {
@@ -1207,9 +1449,9 @@ private final class RegisteringTestSurface: CosmoEditableSurfaceProvider {
             surfaceID: surfaceID,
             targetID: targetID,
             kind: .text,
-            title: "Test Surface",
-            text: "Body",
-            sourceHash: CosmoEditableSurfaceHasher.hash("Body"),
+            title: title,
+            text: text,
+            sourceHash: CosmoEditableSurfaceHasher.hash(text),
             anchors: []
         )
     }

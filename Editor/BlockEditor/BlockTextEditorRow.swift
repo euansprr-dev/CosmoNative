@@ -11,6 +11,7 @@ struct BlockTextEditorRow: View {
     let focusCoordinator: BlockFocusCoordinator
     var fontSize: CGFloat
     var fontDesign: NSFontDescriptor.SystemDesign = .default
+    var lineSpacingAdjustment: CGFloat = 0
     var placeholder: String
     var darkMode: Bool
     var overrideTextColor: NSColor?
@@ -35,6 +36,7 @@ struct BlockTextEditorRow: View {
             document: blockDocumentBinding,
             fontSize: fontSize,
             fontDesign: fontDesign,
+            lineSpacingAdjustment: lineSpacingAdjustment,
             placeholder: placeholder,
             darkMode: darkMode,
             overrideTextColor: overrideTextColor,

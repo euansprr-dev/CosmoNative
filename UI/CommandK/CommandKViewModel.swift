@@ -647,7 +647,7 @@ enum UnifiedSearchSource: String, CaseIterable {
         case .swipes: return "Swipe File"
         case .ideas: return "Ideas"
         case .readwise: return "Library"
-        case .browser: return "Browser Pins"
+        case .browser: return "Browser Favorites"
         }
     }
 
@@ -657,7 +657,7 @@ enum UnifiedSearchSource: String, CaseIterable {
         case .swipes: return "bolt.fill"
         case .ideas: return "lightbulb.fill"
         case .readwise: return "books.vertical.fill"
-        case .browser: return "pin.fill"
+        case .browser: return "star.fill"
         }
     }
 
@@ -961,10 +961,10 @@ enum CommandKUnifiedSearchComposer {
                 id: "browser-pin-\(pin.id.uuidString)",
                 source: .browser,
                 resultKind: .browserPin,
-                title: "Open this page in browser",
-                subtitle: "\(pin.displayName) · \(pin.host)",
+                title: pin.displayName,
+                subtitle: "\(pin.host) · Browser Favorite",
                 snippet: pin.url.absoluteString,
-                icon: "safari",
+                icon: "star.fill",
                 accentColor: DS.entityResearch,
                 relevance: browserPinRelevance(for: pin, normalizedQuery: normalizedQuery),
                 atomUUID: nil,
@@ -1804,6 +1804,10 @@ public final class CommandKViewModel {
     /// the same query keeps the visible results and swaps them in place.
     private var lastSearchedQuery: String?
 
+    /// Monotonic token for live text edits. It lets in-flight searches notice
+    /// that the field changed before a debounced replacement search starts.
+    private var liveQueryGeneration = 0
+
     // MARK: - Initialization
 
     public convenience init() {
@@ -1855,24 +1859,87 @@ public final class CommandKViewModel {
     public func updateQuery(_ newQuery: String) {
         guard query != newQuery else { return }
         query = newQuery
+        liveQueryGeneration &+= 1
+        let queryGeneration = liveQueryGeneration
 
         queryDebounceTask?.cancel()
+        cancelActiveSearchWork()
+
+        if newQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            clearVisibleSearchStateForEmptyQuery()
+            queryDebounceTask = Task { @MainActor [weak self] in
+                await Task.yield()
+                guard let self,
+                      !Task.isCancelled,
+                      self.isSurfaceActive,
+                      self.isCurrentLiveQueryGeneration(queryGeneration) else {
+                    return
+                }
+                await self.performSearch(query: newQuery, queryGeneration: queryGeneration)
+            }
+            return
+        }
+
         let debounce = UInt64(searchDebounce * 1_000_000_000)
         queryDebounceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: debounce)
-            guard let self, !Task.isCancelled, self.isSurfaceActive else { return }
-            await self.performSearch(query: newQuery)
+            guard let self,
+                  !Task.isCancelled,
+                  self.isSurfaceActive,
+                  self.isCurrentLiveQueryGeneration(queryGeneration) else {
+                return
+            }
+            await self.performSearch(query: newQuery, queryGeneration: queryGeneration)
         }
     }
 
     private func setQueryProgrammatically(_ newQuery: String) {
         queryDebounceTask?.cancel()
+        liveQueryGeneration &+= 1
+        cancelActiveSearchWork()
         guard query != newQuery else {
             querySyncToken &+= 1
             return
         }
         query = newQuery
         querySyncToken &+= 1
+    }
+
+    private func cancelActiveSearchWork() {
+        searchTask?.cancel()
+        searchTask = nil
+        instantIndexSearchTask?.cancel()
+        instantIndexSearchTask = nil
+        instantIndexSearchGeneration &+= 1
+        unifiedSearchEnrichmentTask?.cancel()
+        unifiedSearchEnrichmentTask = nil
+    }
+
+    private func isCurrentLiveQueryGeneration(_ generation: Int?) -> Bool {
+        guard let generation else { return true }
+        return generation == liveQueryGeneration
+    }
+
+    private func clearVisibleSearchStateForEmptyQuery() {
+        lastSearchedQuery = nil
+        setSearchFeedback(.none)
+        setPrimaryAction(nil)
+        setActionStatusMessage(nil)
+        setUserCommandRows([])
+        results = []
+        unfilteredResults = []
+        groupedResults = []
+        flatNavigableResults = []
+        filterCounts = [:]
+        activeTypePrefix = nil
+        selectedTypeFilters.removeAll()
+        setUnifiedSearchResults(active: false, grouped: [], flat: [], cards: [])
+        selectedReadwiseBookId = nil
+        isShowingRecents = false
+        isAIRanked = false
+        selectedNodeId = nil
+        selectedResultIndex = -1
+        setCurrentPhase(.idle)
     }
 
     private func prewarmSearchIndexIfNeeded(force: Bool = false, ignoringSurface: Bool = false) {
@@ -1949,14 +2016,19 @@ public final class CommandKViewModel {
     ///   changed (sync pull, agent write) rather than a user keystroke. A
     ///   same-query refresh keeps the visible results and selection on screen
     ///   and swaps them in place once fresh results arrive.
-    public func performSearch(query: String, isBackgroundRefresh: Bool = false) async {
+    public func performSearch(
+        query: String,
+        isBackgroundRefresh: Bool = false,
+        queryGeneration: Int? = nil
+    ) async {
+        guard isSurfaceActive, isCurrentLiveQueryGeneration(queryGeneration) else { return }
         // Cancel previous search
         searchTask?.cancel()
         instantIndexSearchTask?.cancel()
         instantIndexSearchGeneration &+= 1
-        guard isSurfaceActive else { return }
         let preserveVisibleResults = isBackgroundRefresh && query == lastSearchedQuery
         let requestID = await searchPipeline.nextRequestID()
+        guard isSurfaceActive, isCurrentLiveQueryGeneration(queryGeneration) else { return }
         let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("perform-search")
         defer {
             CommandKPerformanceInstrumentation.signposter.endInterval("perform-search", signpost)
@@ -1998,12 +2070,16 @@ public final class CommandKViewModel {
                 cortexMode = .compact
                 await loadRecentsForCompact()
             }
-            guard await searchPipeline.isCurrent(requestID), isSurfaceActive else { return }
+            guard await searchPipeline.isCurrent(requestID),
+                  isSurfaceActive,
+                  isCurrentLiveQueryGeneration(queryGeneration) else {
+                return
+            }
             if case .expandedDomain = cortexMode {
                 setCurrentPhase(.idle)
                 return
             }
-            await showRecents(searchRequestID: requestID)
+            await showRecents(searchRequestID: requestID, queryGeneration: queryGeneration)
             return
         }
 
@@ -2030,7 +2106,10 @@ public final class CommandKViewModel {
         let matchedUserCommandRows = prefixType == nil
             ? await loadUserCommandRows(for: searchQuery)
             : []
-        guard await searchPipeline.isCurrent(requestID) else { return }
+        guard await searchPipeline.isCurrent(requestID),
+              isCurrentLiveQueryGeneration(queryGeneration) else {
+            return
+        }
         setUserCommandRows(matchedUserCommandRows)
         if !preserveVisibleResults {
             updateActiveSearchSelection()
@@ -2088,7 +2167,11 @@ public final class CommandKViewModel {
         if instantIndexSearchGeneration == instantSearchGeneration {
             instantIndexSearchTask = nil
         }
-        guard await searchPipeline.isCurrent(requestID), isSurfaceActive else { return }
+        guard await searchPipeline.isCurrent(requestID),
+              isSurfaceActive,
+              isCurrentLiveQueryGeneration(queryGeneration) else {
+            return
+        }
         if !instantIndexedResults.isEmpty {
             // On a background refresh, merge into the visible set so the list
             // is not truncated to the instant subset while hybrid re-runs.
@@ -2100,7 +2183,8 @@ public final class CommandKViewModel {
             await performInstantUnifiedSearch(
                 query: queryForSearch,
                 preserveSelection: preserveVisibleResults,
-                searchRequestID: requestID
+                searchRequestID: requestID,
+                queryGeneration: queryGeneration
             )
             setCurrentPhase(.instant)
         } else {
@@ -2108,7 +2192,8 @@ public final class CommandKViewModel {
                 query: queryForSearch,
                 preserveVisibleResultsWhenEmpty: true,
                 preserveSelection: preserveVisibleResults,
-                searchRequestID: requestID
+                searchRequestID: requestID,
+                queryGeneration: queryGeneration
             )
         }
 
@@ -2121,7 +2206,11 @@ public final class CommandKViewModel {
         )
 
         if let cached = await QueryResultCache.shared.get(for: cacheKey) {
-            guard await searchPipeline.isCurrent(requestID), isSurfaceActive else { return }
+            guard await searchPipeline.isCurrent(requestID),
+                  isSurfaceActive,
+                  isCurrentLiveQueryGeneration(queryGeneration) else {
+                return
+            }
             // Merge fresh instant-index matches so atoms created or edited
             // after the cache entry was written still appear.
             unfilteredResults = Self.mergeRankedResults(primary: cached, additional: instantIndexedResults)
@@ -2130,12 +2219,14 @@ public final class CommandKViewModel {
             await performInstantUnifiedSearch(
                 query: queryForSearch,
                 preserveSelection: preserveVisibleResults,
-                searchRequestID: requestID
+                searchRequestID: requestID,
+                queryGeneration: queryGeneration
             )
             scheduleUnifiedSearchEnrichment(
                 for: queryForSearch,
                 preserveSelection: preserveVisibleResults,
-                searchRequestID: requestID
+                searchRequestID: requestID,
+                queryGeneration: queryGeneration
             )
             setCurrentPhase(.instant)
             return
@@ -2148,6 +2239,7 @@ public final class CommandKViewModel {
                 try await Task.sleep(nanoseconds: semanticDelay)
                 try Task.checkCancellation()
                 guard isSurfaceActive,
+                      isCurrentLiveQueryGeneration(queryGeneration),
                       await searchPipeline.isCurrent(requestID) else {
                     return
                 }
@@ -2203,6 +2295,7 @@ public final class CommandKViewModel {
                 // Update state
                 if !Task.isCancelled,
                    isSurfaceActive,
+                   isCurrentLiveQueryGeneration(queryGeneration),
                    await searchPipeline.isCurrent(requestID) {
                     isAIRanked = false
                     unfilteredResults = rankedResults
@@ -2211,12 +2304,14 @@ public final class CommandKViewModel {
                     await performInstantUnifiedSearch(
                         query: queryForSearch,
                         preserveSelection: preserveVisibleResults,
-                        searchRequestID: requestID
+                        searchRequestID: requestID,
+                        queryGeneration: queryGeneration
                     )
                     scheduleUnifiedSearchEnrichment(
                         for: queryForSearch,
                         preserveSelection: preserveVisibleResults,
-                        searchRequestID: requestID
+                        searchRequestID: requestID,
+                        queryGeneration: queryGeneration
                     )
                     setCurrentPhase(.complete)
 
@@ -2237,6 +2332,7 @@ public final class CommandKViewModel {
                     Task { @MainActor in
                         guard !Task.isCancelled,
                               isSurfaceActive,
+                              isCurrentLiveQueryGeneration(queryGeneration),
                               await searchPipeline.isCurrent(requestID) else {
                             return
                         }
@@ -2245,6 +2341,7 @@ public final class CommandKViewModel {
                             query: queryForReRank,
                             results: reRankInputs
                         ), isSurfaceActive,
+                           isCurrentLiveQueryGeneration(queryGeneration),
                            await searchPipeline.isCurrent(requestID) {
                             // Rebuild results with AI-boosted semantic weights
                             let aiScoreMap = Dictionary(uniqueKeysWithValues: reRanked.map { ($0.uuid, $0.blendedScore) })
@@ -2270,12 +2367,14 @@ public final class CommandKViewModel {
                             await performInstantUnifiedSearch(
                                 query: queryForReRank,
                                 preserveSelection: preserveVisibleResults,
-                                searchRequestID: requestID
+                                searchRequestID: requestID,
+                                queryGeneration: queryGeneration
                             )
                             scheduleUnifiedSearchEnrichment(
                                 for: queryForReRank,
                                 preserveSelection: preserveVisibleResults,
-                                searchRequestID: requestID
+                                searchRequestID: requestID,
+                                queryGeneration: queryGeneration
                             )
                             isAIRanked = true
                         }
@@ -2287,9 +2386,14 @@ public final class CommandKViewModel {
             } catch {
                 if !Task.isCancelled,
                    isSurfaceActive,
+                   isCurrentLiveQueryGeneration(queryGeneration),
                    await searchPipeline.isCurrent(requestID) {
                     // Fallback to graph-based search if hybrid fails
-                    await fallbackToGraphSearch(query: query, searchRequestID: requestID)
+                    await fallbackToGraphSearch(
+                        query: query,
+                        searchRequestID: requestID,
+                        queryGeneration: queryGeneration
+                    )
                 }
             }
         }
@@ -2325,11 +2429,19 @@ public final class CommandKViewModel {
     }
 
     /// Fallback to direct atom search if HybridSearchEngine fails
-    private func fallbackToGraphSearch(query: String, searchRequestID: CommandKSearchRequestID? = nil) async {
+    private func fallbackToGraphSearch(
+        query: String,
+        searchRequestID: CommandKSearchRequestID? = nil,
+        queryGeneration: Int? = nil
+    ) async {
         do {
             // Search atoms directly by title/body containing query
             let atoms = try await AtomRepository.shared.search(query: query, limit: maxResults * 2)
-            guard await isCurrentSearchRequest(searchRequestID), isSurfaceActive else { return }
+            guard await isCurrentSearchRequest(searchRequestID),
+                  isSurfaceActive,
+                  isCurrentLiveQueryGeneration(queryGeneration) else {
+                return
+            }
 
             var rankedResults: [RankedResult] = []
             for atom in atoms {
@@ -2354,7 +2466,11 @@ public final class CommandKViewModel {
             setCurrentPhase(.complete)
 
         } catch {
-            guard await isCurrentSearchRequest(searchRequestID), isSurfaceActive else { return }
+            guard await isCurrentSearchRequest(searchRequestID),
+                  isSurfaceActive,
+                  isCurrentLiveQueryGeneration(queryGeneration) else {
+                return
+            }
             errorMessage = "Search failed: \(error.localizedDescription)"
             setCurrentPhase(.idle)
         }
@@ -2411,13 +2527,20 @@ public final class CommandKViewModel {
 
 
     /// Show recent atoms when query is empty
-    private func showRecents(searchRequestID: CommandKSearchRequestID? = nil) async {
+    private func showRecents(
+        searchRequestID: CommandKSearchRequestID? = nil,
+        queryGeneration: Int? = nil
+    ) async {
         setCurrentPhase(.searching)
         isShowingRecents = true
 
         do {
             let openedAtoms = try await AtomRepository.shared.fetchRecentlyOpened(limit: 24)
-            guard await isCurrentSearchRequest(searchRequestID), isSurfaceActive else { return }
+            guard await isCurrentSearchRequest(searchRequestID),
+                  isSurfaceActive,
+                  isCurrentLiveQueryGeneration(queryGeneration) else {
+                return
+            }
             let opened = openedAtoms.map {
                 CommandKRecentComposer.OpenedAtom(
                     atom: $0.atom,
@@ -2437,7 +2560,11 @@ public final class CommandKViewModel {
             setCurrentPhase(.complete)
 
         } catch {
-            guard await isCurrentSearchRequest(searchRequestID), isSurfaceActive else { return }
+            guard await isCurrentSearchRequest(searchRequestID),
+                  isSurfaceActive,
+                  isCurrentLiveQueryGeneration(queryGeneration) else {
+                return
+            }
             errorMessage = "Failed to load recents: \(error.localizedDescription)"
             setCurrentPhase(.idle)
         }
@@ -2987,7 +3114,7 @@ public final class CommandKViewModel {
             setPrimaryAction(nil)
             actionStatusMessage = nil
             setQueryProgrammatically(savedQuery)
-            await performSearch(query: savedQuery)
+            await performSearch(query: savedQuery, queryGeneration: liveQueryGeneration)
 
         case .openApp:
             guard let appName = action.payload.title else { return }
@@ -3777,7 +3904,11 @@ public final class CommandKViewModel {
                     await self.loadRecentsForCompact()
                 }
             } else {
-                await self.performSearch(query: self.query, isBackgroundRefresh: true)
+                await self.performSearch(
+                    query: self.query,
+                    isBackgroundRefresh: true,
+                    queryGeneration: self.liveQueryGeneration
+                )
             }
         }
     }
@@ -4126,7 +4257,8 @@ public final class CommandKViewModel {
         query: String,
         preserveVisibleResultsWhenEmpty: Bool = false,
         preserveSelection: Bool = false,
-        searchRequestID: CommandKSearchRequestID? = nil
+        searchRequestID: CommandKSearchRequestID? = nil,
+        queryGeneration: Int? = nil
     ) async {
         await updateUnifiedSearch(
             query: query,
@@ -4134,7 +4266,8 @@ public final class CommandKViewModel {
             includeThinkspaces: false,
             preserveVisibleResultsWhenEmpty: preserveVisibleResultsWhenEmpty,
             preserveSelection: preserveSelection,
-            searchRequestID: searchRequestID
+            searchRequestID: searchRequestID,
+            queryGeneration: queryGeneration
         )
     }
 
@@ -4152,7 +4285,8 @@ public final class CommandKViewModel {
     private func scheduleUnifiedSearchEnrichment(
         for query: String,
         preserveSelection: Bool = false,
-        searchRequestID: CommandKSearchRequestID? = nil
+        searchRequestID: CommandKSearchRequestID? = nil,
+        queryGeneration: Int? = nil
     ) {
         unifiedSearchEnrichmentTask?.cancel()
         let expectedQuery = query.trimmingCharacters(in: .whitespaces)
@@ -4163,6 +4297,7 @@ public final class CommandKViewModel {
             guard let self,
                   !Task.isCancelled,
                   self.isSurfaceActive,
+                  self.isCurrentLiveQueryGeneration(queryGeneration),
                   await self.isCurrentSearchRequest(searchRequestID),
                   self.query.trimmingCharacters(in: .whitespaces) == expectedQuery else {
                 return
@@ -4173,7 +4308,8 @@ public final class CommandKViewModel {
                 preloadSupportData: true,
                 includeThinkspaces: true,
                 preserveSelection: preserveSelection,
-                searchRequestID: searchRequestID
+                searchRequestID: searchRequestID,
+                queryGeneration: queryGeneration
             )
         }
     }
@@ -4184,9 +4320,14 @@ public final class CommandKViewModel {
         includeThinkspaces: Bool,
         preserveVisibleResultsWhenEmpty: Bool = false,
         preserveSelection: Bool = false,
-        searchRequestID: CommandKSearchRequestID? = nil
+        searchRequestID: CommandKSearchRequestID? = nil,
+        queryGeneration: Int? = nil
     ) async {
-        guard isSurfaceActive, await isCurrentSearchRequest(searchRequestID) else { return }
+        guard isSurfaceActive,
+              isCurrentLiveQueryGeneration(queryGeneration),
+              await isCurrentSearchRequest(searchRequestID) else {
+            return
+        }
         let signpost = CommandKPerformanceInstrumentation.signposter.beginInterval("unified-search")
         defer {
             CommandKPerformanceInstrumentation.signposter.endInterval("unified-search", signpost)
@@ -4215,15 +4356,20 @@ public final class CommandKViewModel {
         if preloadSupportData {
             await preloadUnifiedSearchSupportData()
         }
-        guard await isCurrentSearchRequest(searchRequestID) else { return }
+        guard isCurrentLiveQueryGeneration(queryGeneration),
+              await isCurrentSearchRequest(searchRequestID) else {
+            return
+        }
         if includeThinkspaces, ThinkspaceManager.shared.thinkspaces.isEmpty {
             await ThinkspaceManager.shared.loadThinkspaces()
         }
         guard isCurrentUnifiedSearchRequest(requestID),
+              isCurrentLiveQueryGeneration(queryGeneration),
               await isCurrentSearchRequest(searchRequestID) else { return }
 
         let browserPins = await CosmoBrowserStore.shared.allPins()
         guard isCurrentUnifiedSearchRequest(requestID),
+              isCurrentLiveQueryGeneration(queryGeneration),
               await isCurrentSearchRequest(searchRequestID) else { return }
 
         let output = CommandKUnifiedSearchComposer.buildOutput(
@@ -4235,6 +4381,7 @@ public final class CommandKViewModel {
             browserPins: browserPins
         )
         guard isCurrentUnifiedSearchRequest(requestID),
+              isCurrentLiveQueryGeneration(queryGeneration),
               await isCurrentSearchRequest(searchRequestID) else { return }
 
         let projectsByUUID: [String: Atom] = [:]
@@ -4278,6 +4425,7 @@ public final class CommandKViewModel {
             thinkspacesByID: thinkspacesByID
         )
         guard isCurrentUnifiedSearchRequest(requestID),
+              isCurrentLiveQueryGeneration(queryGeneration),
               await isCurrentSearchRequest(searchRequestID) else { return }
         for item in thinkspaceLibraryItems {
             libraryItemsByID[item.uuid] = item
@@ -4288,6 +4436,7 @@ public final class CommandKViewModel {
         }
         let regrouped = CommandKUnifiedSearchComposer.regroup(enrichedResults)
         guard isCurrentUnifiedSearchRequest(requestID),
+              isCurrentLiveQueryGeneration(queryGeneration),
               await isCurrentSearchRequest(searchRequestID) else { return }
 
         if preserveVisibleResultsWhenEmpty,

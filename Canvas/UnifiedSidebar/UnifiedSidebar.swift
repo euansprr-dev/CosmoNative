@@ -783,9 +783,9 @@ private struct SidebarCommandCenterContext: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 SidebarContextLabel(title: "Planning")
-                planningRow("Habits", icon: "repeat", isActive: false)
-                planningRow("Reports", icon: "chart.bar", isActive: viewModel.showReports)
-                planningRow("Objectives", icon: "scope", isActive: false)
+                ForEach(DashboardViewMode.planningLists, id: \.self) { mode in
+                    planningRow(mode)
+                }
             }
 
         }
@@ -820,23 +820,22 @@ private struct SidebarCommandCenterContext: View {
         }
     }
 
-    private func planningRow(_ title: String, icon: String, isActive: Bool) -> some View {
-        SidebarContextRow(title: title, icon: icon, isActive: currentDestination == .commandCenter && isActive) {
+    private func planningRow(_ mode: DashboardViewMode) -> some View {
+        SidebarContextRow(
+            title: mode.label,
+            icon: mode.icon,
+            isActive: currentDestination == .commandCenter &&
+                viewModel.viewMode == mode &&
+                viewModel.selectedProjectUUID == nil &&
+                viewModel.selectedAreaUUID == nil,
+            activeTint: mode.activeTint
+        ) {
             openCommandCenter()
             withAnimation(ProMotionSprings.snappy) {
                 viewModel.selectedProjectUUID = nil
                 viewModel.selectedAreaUUID = nil
-                switch title {
-                case "Reports":
-                    viewModel.showReports = true
-                case "Habits":
-                    viewModel.showReports = false
-                case "Objectives":
-                    viewModel.showReports = false
-                    viewModel.viewMode = .today
-                default:
-                    break
-                }
+                viewModel.showReports = false
+                viewModel.viewMode = mode
             }
         }
     }
@@ -901,6 +900,7 @@ private struct SidebarCommandCenterContext: View {
         case .anytime: count = viewModel.anytimeTasks.count
         case .someday: count = viewModel.somedayTasks.count
         case .logbook: count = viewModel.completedTodayTasks.count
+        case .habits, .reports, .objectives: count = 0
         case .project, .area: count = 0
         }
         return count > 0 ? count : nil
@@ -927,6 +927,7 @@ private struct SidebarInboxContext: View {
     @ObservedObject private var destinationRepository = CaptureDestinationRepository.shared
     @State private var isCreatingLane = false
     @State private var newLaneName = ""
+    @State private var pendingDeleteLane: CaptureDestination?
     @FocusState private var isLaneNameFocused: Bool
 
     var body: some View {
@@ -1027,6 +1028,21 @@ private struct SidebarInboxContext: View {
                 isLaneNameFocused = true
             }
         }
+        .confirmationDialog(
+            "Delete \(pendingDeleteLane?.name ?? "lane")?",
+            isPresented: deleteLaneDialogBinding,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let pendingDeleteLane else { return }
+                deleteLane(pendingDeleteLane)
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteLane = nil
+            }
+        } message: {
+            Text("The lane leaves the sidebar, stays visible in History, and can be restored from there.")
+        }
     }
 
     private var laneCount: Int? {
@@ -1081,6 +1097,19 @@ private struct SidebarInboxContext: View {
         ) {
             open(.captureLane(id: destination.uuid))
         }
+        .contextMenu {
+            Button {
+                open(.captureLane(id: destination.uuid))
+            } label: {
+                Label("Open Lane", systemImage: "arrow.right.circle")
+            }
+            Divider()
+            Button(role: .destructive) {
+                pendingDeleteLane = destination
+            } label: {
+                Label("Delete Lane", systemImage: "trash")
+            }
+        }
     }
 
     private var emptyLaneState: some View {
@@ -1102,6 +1131,36 @@ private struct SidebarInboxContext: View {
                     isCreatingLane = false
                     open(.captureLane(id: lane.uuid))
                 }
+            }
+        }
+    }
+
+    private var deleteLaneDialogBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteLane != nil },
+            set: { isPresented in
+                if !isPresented {
+                    pendingDeleteLane = nil
+                }
+            }
+        )
+    }
+
+    private func deleteLane(_ destination: CaptureDestination) {
+        Task {
+            do {
+                try await destinationRepository.archive(uuid: destination.uuid)
+                await MainActor.run {
+                    withAnimation(ProMotionSprings.gentle) {
+                        if currentDestination == .inbox && inboxRoute == .captureLane(id: destination.uuid) {
+                            inboxRoute = .captureLanes
+                        }
+                        pendingDeleteLane = nil
+                    }
+                }
+            } catch {
+                print("SidebarInboxContext.deleteLane failed: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "SidebarInboxContext.deleteLane", detail: error.localizedDescription)
             }
         }
     }

@@ -14,6 +14,7 @@ public enum LogSubsystem: String, Sendable {
     case voice = "VOICE"
     case search = "SEARCH"
     case database = "DATABASE"
+    case sync = "SYNC"
     case daemon = "DAEMON"
     case context = "CONTEXT"
     case session = "SESSION"

@@ -762,7 +762,15 @@ enum RichDocumentSerializer {
         let (kind, contentStart, checked) = blockDescriptor(for: text)
         let contentRange = NSRange(location: min(contentStart, line.length), length: max(0, line.length - min(contentStart, line.length)))
         let content = line.attributedSubstring(from: contentRange)
-        return RichBlock(kind: kind, inlines: inlineNodes(from: content), checked: checked)
+        var inlines = inlineNodes(from: content)
+        if kind == .checklist, checked == true {
+            // The serializer draws checked items struck through; strip it here
+            // so the strikethrough never becomes a persistent content mark.
+            for index in inlines.indices where inlines[index].kind == .text {
+                inlines[index].marks.remove(.strikethrough)
+            }
+        }
+        return RichBlock(kind: kind, inlines: inlines, checked: checked)
     }
 
     private static func blockDescriptor(for text: String) -> (RichBlockKind, Int, Bool?) {
@@ -1111,6 +1119,18 @@ enum RichDocumentSerializer {
                 .font: NSFont.systemFont(ofSize: fontSize, weight: .light),
                 .foregroundColor: color.withAlphaComponent(0.7)
             ]
+        case .checklist:
+            var attributes = baseAttributes(
+                fontSize: fontSize,
+                darkMode: darkMode,
+                singleLine: singleLine,
+                baseFontWeight: baseFontWeight,
+                titleMode: titleMode
+            )
+            if block.checked == true {
+                attributes[.foregroundColor] = NSColor(CosmoColors.cosmoAI).withAlphaComponent(darkMode ? 0.92 : 0.85)
+            }
+            return attributes
         default:
             return baseAttributes(
                 fontSize: fontSize,
@@ -1185,6 +1205,14 @@ enum RichDocumentSerializer {
 
         if block.kind == .quote {
             attributes[.foregroundColor] = (attributes[.foregroundColor] as? NSColor)?.withAlphaComponent(0.9)
+        }
+
+        // Completed to-dos read as done: muted ink plus a strikethrough drawn
+        // at render time. The parser strips this strikethrough on checked
+        // lines so toggling never bakes a persistent mark into the content.
+        if block.kind == .checklist, block.checked == true {
+            attributes[.foregroundColor] = (attributes[.foregroundColor] as? NSColor)?.withAlphaComponent(0.45)
+            attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
 
         // Headings: embed level attribute + paragraph spacing for round-trip detection

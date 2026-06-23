@@ -62,6 +62,24 @@ final class PaneDeckPresentationState {
     func setOnScreen(_ onScreen: Bool) { isOnScreen = onScreen }
 }
 
+/// Live progress of the pinch-out-into-Constellation gesture, 0…1.
+///
+/// The Constellation pre-mounts (hit-testing off) the moment progress rises
+/// above zero and its opacity IS this value — the reveal scrubs with the
+/// user's fingers and is fully reversible mid-gesture, Mission Control style.
+/// Committing (deep pull, or release past the halfway point) hands off to the
+/// normal `showConstellation` presentation; cancelling animates progress back
+/// to zero and unmounts.
+///
+/// Observed only by `ConstellationOverlayHost` — a deliberately tiny view —
+/// so 120Hz writes during the gesture never re-evaluate MainView's body.
+@MainActor
+@Observable
+final class ConstellationZoomScrubState {
+    static let shared = ConstellationZoomScrubState()
+    var progress: CGFloat = 0
+}
+
 /// CGImage is immutable and thread-safe; this carries one across actor hops.
 private struct PixelPayload: @unchecked Sendable {
     let image: CGImage
@@ -111,6 +129,10 @@ final class ThinkspaceThumbnailService {
         diskProbedIds.insert(thinkspaceId)
 
         guard let cgImage = rep.cgImage else { return }
+        // Captures may arrive at any backing scale (1x idle captures, 2x
+        // legacy) — derive pixels-per-point so the downscaled swap keeps the
+        // image's point size honest.
+        let pixelsPerPoint = rep.size.width > 0 ? CGFloat(rep.pixelsWide) / rep.size.width : 2
         screenshotGeneration += 1
         let generation = screenshotGeneration
         screenshotGenerationById[thinkspaceId] = generation
@@ -129,7 +151,10 @@ final class ThinkspaceThumbnailService {
             let scaledPayload = PixelPayload(image: scaled)
             await MainActor.run {
                 ThinkspaceThumbnailService.shared.finishScreenshotStore(
-                    scaledPayload, for: thinkspaceId, generation: generation
+                    scaledPayload,
+                    for: thinkspaceId,
+                    generation: generation,
+                    pixelsPerPoint: pixelsPerPoint
                 )
             }
         }
@@ -140,12 +165,14 @@ final class ThinkspaceThumbnailService {
     private func finishScreenshotStore(
         _ payload: PixelPayload,
         for thinkspaceId: String,
-        generation: Int
+        generation: Int,
+        pixelsPerPoint: CGFloat
     ) {
         guard screenshotGenerationById[thinkspaceId] == generation else { return }
+        let scale = max(pixelsPerPoint, 1)
         let pointSize = NSSize(
-            width: CGFloat(payload.image.width) / 2,
-            height: CGFloat(payload.image.height) / 2
+            width: CGFloat(payload.image.width) / scale,
+            height: CGFloat(payload.image.height) / scale
         )
         screenshotCache[thinkspaceId] = NSImage(cgImage: payload.image, size: pointSize)
     }
@@ -156,6 +183,16 @@ final class ThinkspaceThumbnailService {
     func hasFreshScreenshot(for thinkspaceId: String, within interval: TimeInterval) -> Bool {
         guard let capturedAt = screenshotCapturedAt[thinkspaceId] else { return false }
         return Date().timeIntervalSince(capturedAt) < interval
+    }
+
+    /// Whether ANY screenshot exists for this thinkspace — in memory or on
+    /// disk. Presentation prefers a stale screenshot over a synchronous
+    /// capture (stale-while-revalidate); only a space with no screenshot at
+    /// all warrants a cold capture before presenting.
+    func hasAnyScreenshot(for thinkspaceId: String) -> Bool {
+        if screenshotCache[thinkspaceId] != nil { return true }
+        let url = Self.screenshotDirectory.appendingPathComponent("\(thinkspaceId).png")
+        return FileManager.default.fileExists(atPath: url.path)
     }
 
     /// The real screenshot for a thinkspace, if one was ever captured.

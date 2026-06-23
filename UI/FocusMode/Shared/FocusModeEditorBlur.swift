@@ -80,6 +80,11 @@ enum FocusModeTextClipboardTarget {
     }
 
     static func send(_ action: FocusModeTextClipboardAction, in window: NSWindow?) -> Bool {
+        if let textView = currentTextView(in: window) {
+            perform(action, on: textView)
+            return true
+        }
+
         guard let textView = activeTextView(in: window) else {
             return false
         }
@@ -90,6 +95,14 @@ enum FocusModeTextClipboardTarget {
     private static func activeTextView(in window: NSWindow?) -> NSTextView? {
         guard let textView = activeTextView.value,
               textView.window === window,
+              textView.isEditable || textView.isSelectable else {
+            return nil
+        }
+        return textView
+    }
+
+    private static func currentTextView(in window: NSWindow?) -> NSTextView? {
+        guard let textView = window?.firstResponder as? NSTextView,
               textView.isEditable || textView.isSelectable else {
             return nil
         }

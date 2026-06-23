@@ -206,4 +206,32 @@ final class BlockSelectionTests: XCTestCase {
         XCTAssertEqual(NoteDocumentStyle.load(fromMetadata: "not json"), .default)
         XCTAssertEqual(NoteDocumentStyle.load(fromMetadata: "{}"), .default)
     }
+
+    func testNoteDocumentStyleDecodesLegacyMetadataWithoutLineSpacing() {
+        // Styles persisted before the lineSpacing field existed must keep
+        // their voice — never reset to defaults because a key is missing.
+        let legacyMetadata = """
+        {"note_document_style":{"fontFamily":"serif","textSize":"large","pageWidth":"wide"}}
+        """
+
+        let loaded = NoteDocumentStyle.load(fromMetadata: legacyMetadata)
+
+        XCTAssertEqual(loaded.fontFamily, .serif)
+        XCTAssertEqual(loaded.textSize, .large)
+        XCTAssertEqual(loaded.pageWidth, .wide)
+        XCTAssertEqual(loaded.lineSpacing, .standard)
+    }
+
+    func testNoteDocumentStyleLineSpacingRoundTripsThroughMetadata() {
+        var style = NoteDocumentStyle()
+        style.fontFamily = .mono
+        style.lineSpacing = .airy
+
+        let metadata = style.write(intoMetadata: nil)
+        let loaded = NoteDocumentStyle.load(fromMetadata: metadata)
+
+        XCTAssertEqual(loaded, style)
+        XCTAssertEqual(loaded.lineSpacing.lineSpacingDelta, 4)
+        XCTAssertEqual(loaded.lineSpacing.blockGap, 9)
+    }
 }

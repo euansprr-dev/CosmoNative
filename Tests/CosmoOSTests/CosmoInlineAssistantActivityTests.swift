@@ -67,6 +67,36 @@ final class CosmoInlineAssistantActivityTests: XCTestCase {
         XCTAssertTrue(store.currentRunSteps.isEmpty)
     }
 
+    func testPaneAnswerClearsLiveStatusAfterVisibleOutputLands() {
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.receiveToolActivity(searchStarted())
+        store.receiveToolActivity(.completed(name: "search_swipes", displayLabel: "Searching swipes", resultPreview: nil))
+        XCTAssertEqual(store.statusText, "Cosmo is writing…")
+
+        store.receivePaneAnswer(title: nil, answer: "Here's the take.", route: .answer)
+
+        XCTAssertNil(store.statusText)
+    }
+
+    func testLivePaneAnswerRepairsRawCraftRiffJSON() async {
+        let rawRiff = """
+        {"bet":"x","beatLabel":"Slide 3 — example/proof beat","targetOriginalText":"Breakdown DSCR loan example","variations":[{"text":"Here's one I actually own. Bought it with a DSCR loan, 15% down. After setup: $15k/mo in rent, $5k/mo clean.","numbers":"$15k/mo revenue; $5k/mo cash flow","borrowedFrom":"Comparable 3, Slide 2","mechanism":"before/after proof"}]}
+        """
+        let bridge = CosmoInlineAssistantAgentBridge { _, _, store in
+            store.receivePaneAnswer(title: nil, answer: rawRiff, route: .answer)
+        }
+        let store = CosmoInlineAssistantStore(agentBridge: bridge)
+        store.composerText = "/Voice Variations give me options for slide 3"
+
+        await store.submit()
+
+        let answer = store.paneMessages.last?.content ?? ""
+        XCTAssertTrue(answer.contains("### Slide 3 — example/proof beat — 1 direction"))
+        XCTAssertTrue(answer.contains("**1. before/after proof** · from Comparable 3, Slide 2"))
+        XCTAssertFalse(answer.contains("\"beatLabel\""))
+        XCTAssertFalse(answer.contains("**My bet:** x"))
+    }
+
     func testStreamedAnswerFinalizesWithSteps() {
         let store = CosmoInlineAssistantStore(agentBridge: .mock)
         store.receiveToolActivity(searchStarted())
@@ -158,6 +188,36 @@ final class CosmoInlineAssistantActivityFormattingTests: XCTestCase {
         )
     }
 
+    func testCurrentCircleOnlySpinsForRunningStepsWhenMotionIsAllowed() {
+        let quarterTurnDate = Date(timeIntervalSinceReferenceDate: 0.275)
+
+        XCTAssertEqual(
+            CosmoInlineAssistantActivityTimelineMotion.circleRotationDegrees(
+                for: .running,
+                reduceMotion: false,
+                date: quarterTurnDate
+            ),
+            90,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CosmoInlineAssistantActivityTimelineMotion.circleRotationDegrees(
+                for: .done,
+                reduceMotion: false,
+                date: quarterTurnDate
+            ),
+            0
+        )
+        XCTAssertEqual(
+            CosmoInlineAssistantActivityTimelineMotion.circleRotationDegrees(
+                for: .running,
+                reduceMotion: true,
+                date: quarterTurnDate
+            ),
+            0
+        )
+    }
+
     func testReceiptSummaryCountsSearchesAndSources() {
         let steps = [
             step(tool: "search_swipes"),
@@ -214,6 +274,38 @@ final class CosmoInlineAssistantActivityFormattingTests: XCTestCase {
         )
         XCTAssertNil(CosmoInlineAssistantStatusGrammar.subject(args: ["query": "   "]))
         XCTAssertNil(CosmoInlineAssistantStatusGrammar.subject(args: [:]))
+    }
+}
+
+final class CosmoInlineAssistantPaneProgressPolicyTests: XCTestCase {
+    func testProgressShowsBeforeAnswerIsVisible() {
+        XCTAssertTrue(CosmoInlineAssistantPaneProgressPolicy.shouldShow(
+            isProcessing: true,
+            statusText: "Reading current context",
+            hasStreamingAnswer: false,
+            hasLiveSteps: false
+        ))
+        XCTAssertTrue(CosmoInlineAssistantPaneProgressPolicy.shouldShow(
+            isProcessing: true,
+            statusText: nil,
+            hasStreamingAnswer: false,
+            hasLiveSteps: true
+        ))
+    }
+
+    func testProgressHidesOnceAnswerIsVisibleOrSettled() {
+        XCTAssertFalse(CosmoInlineAssistantPaneProgressPolicy.shouldShow(
+            isProcessing: true,
+            statusText: "Cosmo is writing...",
+            hasStreamingAnswer: true,
+            hasLiveSteps: true
+        ))
+        XCTAssertFalse(CosmoInlineAssistantPaneProgressPolicy.shouldShow(
+            isProcessing: true,
+            statusText: nil,
+            hasStreamingAnswer: false,
+            hasLiveSteps: false
+        ))
     }
 }
 
@@ -274,7 +366,7 @@ final class CosmoInlineAssistantCancellationTests: XCTestCase {
         XCTAssertEqual(store.paneMessages.last?.content, "Stopped")
     }
 
-    func testRealErrorsStillSurfaceAsErrors() async {
+    func testRealErrorsSurfaceAsPaneReplyAndError() async {
         struct FakeError: LocalizedError {
             var errorDescription: String? { "boom" }
         }
@@ -287,5 +379,8 @@ final class CosmoInlineAssistantCancellationTests: XCTestCase {
         await store.submit()
 
         XCTAssertEqual(store.errorText, "boom")
+        let answer = store.paneMessages.last { $0.role == .assistant }
+        XCTAssertEqual(answer?.content, "I hit an error before I could finish: boom")
+        XCTAssertTrue(store.isPaneRequested)
     }
 }

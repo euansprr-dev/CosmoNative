@@ -256,9 +256,9 @@ struct CommandKVisualIdentity: Equatable {
         case .browserPin:
             return CommandKVisualIdentity(
                 style: .browser,
-                symbolName: "safari",
+                symbolName: result.icon,
                 title: "Browser",
-                subtitle: result.browserTitle ?? result.subtitle ?? "Pinned page",
+                subtitle: result.browserTitle ?? result.subtitle ?? "Browser Favorite",
                 badge: "WEB"
             )
         case .thinkspace:

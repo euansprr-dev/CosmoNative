@@ -106,6 +106,23 @@ final class BlockOperationsTests: XCTestCase {
         XCTAssertEqual(result.focusPath, .root(index: 1))
     }
 
+    func testSplitParagraphAtStartCreatesEmptyBlockBeforeOriginalText() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("This is a test")])
+        ])
+
+        let result = try BlockOperations.splitTextBlock(
+            in: document,
+            at: .root(index: 0),
+            utf16Offset: 0
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.plainInlineText), ["", "This is a test"])
+        XCTAssertEqual(result.document.blocks.map(\.kind), [.paragraph, .paragraph])
+        XCTAssertEqual(result.focusPath, .root(index: 1))
+        XCTAssertEqual(result.caretUTF16Offset, 0)
+    }
+
     func testEditorImmediateResizeAllowsEmptySplitBlockToReleaseStaleHeight() {
         let shouldResize = EditorImmediateResizePolicy.shouldApplyImmediateResize(
             newHeight: 24,

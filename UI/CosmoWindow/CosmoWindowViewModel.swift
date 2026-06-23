@@ -355,7 +355,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
         // Track linked atom UUID for conversation persistence
         linkedAtomUUIDs.insert(atom.uuid)
-        pinContextSource(for: atom)
+        pinContextSource(for: atom, allowGeneratedCodexCorpus: true)
     }
 
     /// Removes a previously @-mentioned atom.
@@ -368,7 +368,8 @@ final class CosmoWindowViewModel: ObservableObject {
         mentionedAtoms.removeAll()
     }
 
-    private func pinContextSource(for atom: Atom) {
+    private func pinContextSource(for atom: Atom, allowGeneratedCodexCorpus: Bool = false) {
+        guard allowGeneratedCodexCorpus || !atom.isGeneratedCodexCorpus else { return }
         let source = Self.contextSource(for: atom)
         if !pinnedContextSourceIDs.contains(source.id) {
             pinnedContextSourceIDs.append(source.id)
@@ -907,6 +908,7 @@ final class CosmoWindowViewModel: ObservableObject {
         }
         for uuid in linkedAtomUUIDs {
             guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid) else { continue }
+            guard !atom.isGeneratedCodexCorpus else { continue }
             let source = Self.contextSource(for: atom)
             if !pinnedContextSourceIDs.contains(source.id) {
                 pinnedContextSourceIDs.append(source.id)
@@ -928,11 +930,13 @@ final class CosmoWindowViewModel: ObservableObject {
         if let activeUUID = activeContext.data.currentAtomUUID,
            !activeUUID.isEmpty,
            let atom = try? await AtomRepository.shared.fetch(uuid: activeUUID) {
-            let source = Self.contextSource(for: atom)
-            if !pinnedContextSourceIDs.contains(source.id) {
-                pinnedContextSourceIDs.append(source.id)
+            if !atom.isGeneratedCodexCorpus {
+                let source = Self.contextSource(for: atom)
+                if !pinnedContextSourceIDs.contains(source.id) {
+                    pinnedContextSourceIDs.append(source.id)
+                }
+                _ = try? await ContextIndexStore.shared.upsert(atom: atom, pinState: .active)
             }
-            _ = try? await ContextIndexStore.shared.upsert(atom: atom, pinState: .active)
         }
 
         if let activeClientUUID = activeContext.data.activeClientUUID,
@@ -1340,7 +1344,10 @@ final class CosmoWindowViewModel: ObservableObject {
         inlineContextAtoms: [Atom] = [],
         selectedSkillID: String? = nil
     ) async -> CosmoInlineAssistantPreparedAgentRequest {
-        let inlineRequestContextAtoms = Self.uniqueAtoms(mentionedAtoms + inlineContextAtoms)
+        let inlineRequestContextAtoms = ContextSourcePolicy.filteredAtoms(
+            Self.uniqueAtoms(mentionedAtoms + inlineContextAtoms),
+            query: prompt
+        )
         let hasMentionedAtoms = !mentionedAtoms.isEmpty
         let hasInlineContextAtoms = !inlineRequestContextAtoms.isEmpty
         let activeProfile = selectedAgentProfile
@@ -1492,9 +1499,9 @@ final class CosmoWindowViewModel: ObservableObject {
             // Dedicated, surface-scoped conversation so the inline assistant doesn't drag
             // in (or grow) the large shared Cosmo-window chat history on every edit.
             conversationID: CosmoInlineAssistantSessionScope.conversationID(for: snapshot?.surfaceID),
-            // Surgical edits run on the fast sensor tier (Haiku) by default — the heavy
-            // global model is overkill for in-place edits and is far slower on cold calls.
-            tierOverride: modelOverride ?? skillPlan.preferredModelTier ?? activeProfile?.preferredModelTier ?? .sensor,
+            // Normal inline requests use the daily driver; explicit skill/model
+            // overrides still win for specialized work.
+            tierOverride: modelOverride ?? skillPlan.preferredModelTier ?? activeProfile?.preferredModelTier ?? .strategist,
             intentOverride: CosmoInlineAssistantRequestShape.pinnedIntent(for: route),
             systemPromptOverride: staticInstructionOverride,
             volatileContextOverride: volatileContextOverride.isEmpty ? nil : volatileContextOverride,
@@ -2161,7 +2168,7 @@ struct CosmoModelOption: Identifiable {
             id: "auto",
             tier: nil,
             title: "Auto",
-            detail: "Gemini 3 Flash by default",
+            detail: "Sonnet 4.6 by default",
             icon: "wand.and.stars"
         ),
         CosmoModelOption(
@@ -2209,8 +2216,8 @@ struct CosmoModelOption: Identifiable {
         CosmoModelOption(
             id: "sonnet",
             tier: .strategist,
-            title: "Sonnet",
-            detail: "Balanced planning and analysis",
+            title: "Sonnet 4.6",
+            detail: "Daily driver via Claude API",
             icon: "point.3.connected.trianglepath.dotted"
         ),
         CosmoModelOption(

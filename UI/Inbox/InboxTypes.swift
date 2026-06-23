@@ -14,6 +14,91 @@ struct InboxSection: Identifiable {
     let items: [InboxItem]
 }
 
+// MARK: - History
+
+struct InboxHistoryEntry: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case capture(InboxItem)
+        case deletedLane(CaptureDestination)
+    }
+
+    let kind: Kind
+
+    var id: String {
+        switch kind {
+        case .capture(let item): return "capture-\(item.uuid)"
+        case .deletedLane(let lane): return "lane-\(lane.uuid)"
+        }
+    }
+
+    var title: String {
+        switch kind {
+        case .capture(let item):
+            return item.title ?? String(item.rawText.prefix(40))
+        case .deletedLane(let lane):
+            return lane.name
+        }
+    }
+
+    var subtitle: String {
+        switch kind {
+        case .capture(let item):
+            if item.status == .actioned, let destination = item.destinationPath ?? item.placeThinkspaceName {
+                return "Placed · \(destination)"
+            }
+            if item.status == .dismissed {
+                return "Dismissed capture"
+            }
+            return item.status.rawValue.capitalized
+        case .deletedLane(let lane):
+            var parts = ["Deleted lane", captureCountLine(for: lane.itemCount)]
+            if let alias = lane.aliases.first, !alias.isEmpty {
+                parts.append("\(alias):")
+            }
+            return parts.joined(separator: " · ")
+        }
+    }
+
+    var actionDate: Date {
+        let raw: String?
+        switch kind {
+        case .capture(let item):
+            raw = item.actionedAt ?? item.createdAt
+        case .deletedLane(let lane):
+            raw = lane.updatedAt
+        }
+        return raw.flatMap(ISO8601.date(from:)) ?? .distantPast
+    }
+
+    var isRestorable: Bool {
+        switch kind {
+        case .capture(let item):
+            return item.status == .dismissed
+        case .deletedLane:
+            return true
+        }
+    }
+
+    static func merged(
+        captures: [InboxItem],
+        deletedLanes: [CaptureDestination],
+        limit: Int
+    ) -> [InboxHistoryEntry] {
+        let entries = captures.map { InboxHistoryEntry(kind: .capture($0)) }
+            + deletedLanes.map { InboxHistoryEntry(kind: .deletedLane($0)) }
+        return Array(entries.sorted { lhs, rhs in
+            if lhs.actionDate == rhs.actionDate {
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+            return lhs.actionDate > rhs.actionDate
+        }.prefix(limit))
+    }
+}
+
+private func captureCountLine(for count: Int) -> String {
+    count == 1 ? "1 capture" : "\(count) captures"
+}
+
 // MARK: - Display Helpers
 
 extension InboxItem {

@@ -60,6 +60,34 @@ enum EditorFontPolicy {
     }
 }
 
+/// Applies the per-document line-spacing preset (the Aa menu's Compact /
+/// Standard / Airy) to a serialized document as a post-pass, the same way
+/// EditorFontPolicy applies the font design. Body paragraphs breathe; titles,
+/// single-line surfaces (lineSpacing 0), and headings keep their own rhythm.
+enum EditorRhythmPolicy {
+    static func applyingLineSpacing(
+        _ delta: CGFloat,
+        to attributed: NSAttributedString
+    ) -> NSAttributedString {
+        guard delta != 0, attributed.length > 0 else { return attributed }
+        let result = NSMutableAttributedString(attributedString: attributed)
+        let fullRange = NSRange(location: 0, length: result.length)
+        result.beginEditing()
+        result.enumerateAttribute(.paragraphStyle, in: fullRange, options: []) { value, range, _ in
+            guard let style = value as? NSParagraphStyle,
+                  style.lineSpacing > 0,
+                  result.attribute(RichDocumentAttributeKeys.headingLevel, at: range.location, effectiveRange: nil) == nil,
+                  let updated = style.mutableCopy() as? NSMutableParagraphStyle else {
+                return
+            }
+            updated.lineSpacing = max(0, style.lineSpacing + delta)
+            result.addAttribute(.paragraphStyle, value: updated, range: range)
+        }
+        result.endEditing()
+        return result
+    }
+}
+
 enum EditorBoundaryCommand: Equatable {
     case moveToPreviousBlock
     case moveToNextBlock
@@ -100,6 +128,8 @@ struct CosmoDocumentEditor: View {
     var fontSize: CGFloat = 16
     var fontDesign: NSFontDescriptor.SystemDesign = .default
     var compact: Bool = false
+    /// Per-document line-spacing delta from the Aa menu (Compact/Standard/Airy).
+    var lineSpacingAdjustment: CGFloat = 0
     var placeholder: String = "Start typing..."
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
@@ -156,6 +186,7 @@ struct CosmoDocumentEditor: View {
             fontSize: fontSize,
             fontDesign: fontDesign,
             compact: compact,
+            lineSpacingAdjustment: lineSpacingAdjustment,
             placeholder: placeholder,
             darkMode: darkMode,
             overrideTextColor: overrideTextColor,
@@ -209,10 +240,13 @@ struct CosmoDocumentEditor: View {
             syncEditorFromDocument()
         }
         .onChange(of: fontSize) { _, _ in
-            syncEditorFromDocument()
+            syncEditorForPresentationChange()
         }
         .onChange(of: fontDesign) { _, _ in
-            syncEditorFromDocument()
+            syncEditorForPresentationChange()
+        }
+        .onChange(of: lineSpacingAdjustment) { _, _ in
+            syncEditorForPresentationChange()
         }
         .onChange(of: plainTextMirror) { _, newValue in
             handlePlainTextMirrorChange(newValue)
@@ -225,18 +259,21 @@ struct CosmoDocumentEditor: View {
         }
     }
 
-    private func syncEditorFromDocument() {
+    private func syncEditorFromDocument(preferLivePlainText: Bool = false) {
         isApplyingExternalUpdate = true
-        let resolved = resolvedDocumentForEditor()
-        attributedText = EditorFontPolicy.applyingDesign(
-            fontDesign,
-            to: RichDocumentSerializer.attributedString(
-                from: resolved,
-                fontSize: fontSize,
-                darkMode: darkMode,
-                singleLine: singleLine,
-                baseFontWeight: baseFontWeight,
-                titleMode: titleConfiguration != nil
+        let resolved = resolvedDocumentForEditor(preferLivePlainText: preferLivePlainText)
+        attributedText = EditorRhythmPolicy.applyingLineSpacing(
+            lineSpacingAdjustment,
+            to: EditorFontPolicy.applyingDesign(
+                fontDesign,
+                to: RichDocumentSerializer.attributedString(
+                    from: resolved,
+                    fontSize: fontSize,
+                    darkMode: darkMode,
+                    singleLine: singleLine,
+                    baseFontWeight: baseFontWeight,
+                    titleMode: titleConfiguration != nil
+                )
             )
         )
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: resolved)
@@ -246,6 +283,10 @@ struct CosmoDocumentEditor: View {
         DispatchQueue.main.async {
             isApplyingExternalUpdate = false
         }
+    }
+
+    private func syncEditorForPresentationChange() {
+        syncEditorFromDocument(preferLivePlainText: true)
     }
 
     private func handlePlainTextMirrorChange(_ plainText: String) {
@@ -326,8 +367,18 @@ struct CosmoDocumentEditor: View {
             document = updated
             onStructuredDocumentChange?(updated, updated.plainText)
             onDocumentChange?(updated, updated.plainText)
+            // Self-heal for block rows: a row should only ever hold ONE
+            // block. If a hard newline slipped into the text view (multi-line
+            // paste, dictation), the content parses into several blocks and
+            // the host splits them into separate rows — but this view would
+            // keep showing every line, reading as duplicated text. Rebuild
+            // from the row's (single-block) document once the split lands.
+            let needsRowRebuild = splitsOnReturn && updated.blocks.count > 1
             DispatchQueue.main.async {
                 isSyncingFromEditor = false
+                if needsRowRebuild {
+                    syncEditorFromDocument()
+                }
             }
         }
         if immediateDocumentSync {
@@ -418,13 +469,37 @@ struct CosmoDocumentEditor: View {
         isSyncingFromEditor = false
     }
 
-    private func resolvedDocumentForEditor() -> RichDocument {
-        let resolved = document.isEmpty && !plainTextMirror.isEmpty
-            ? RichDocument.migrateLegacy(plainTextMirror)
-            : document
+    private func resolvedDocumentForEditor(preferLivePlainText: Bool = false) -> RichDocument {
+        let documentPlainText = resolvedPlainTextForCallbacks(from: document)
+        let resolved: RichDocument
+
+        if preferLivePlainText {
+            let liveDocument = liveDocumentForPresentationChange()
+            let livePlainText = resolvedPlainTextForCallbacks(from: liveDocument)
+
+            if livePlainText == plainTextMirror, !(liveDocument.isEmpty && !document.isEmpty) {
+                resolved = liveDocument
+            } else if documentPlainText != plainTextMirror {
+                resolved = RichDocument.migrateLegacy(plainTextMirror)
+            } else {
+                resolved = document
+            }
+        } else if document.isEmpty && !plainTextMirror.isEmpty {
+            resolved = RichDocument.migrateLegacy(plainTextMirror)
+        } else {
+            resolved = document
+        }
+
         return titleConfiguration == nil
             ? resolved
             : RichDocumentPersistence.normalizedTitleDocument(resolved)
+    }
+
+    private func liveDocumentForPresentationChange() -> RichDocument {
+        if titleConfiguration != nil {
+            return TitleDocumentChangePayloadFactory.payload(from: attributedText).document
+        }
+        return RichDocumentSerializer.document(from: attributedText)
     }
 
     private func resolvedPlainTextForCallbacks(from document: RichDocument) -> String {

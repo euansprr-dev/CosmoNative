@@ -2,6 +2,37 @@ import XCTest
 @testable import CosmoOS
 
 final class CosmoInlineAssistantModelsTests: XCTestCase {
+    func testMarkdownParserSplitsCraftAnswerIntoReadableBlocks() {
+        let markdown = """
+        ### Hook — 2 directions
+        Current: "It's called the DSCR loan."
+
+        **1. mechanism-first** · from Seller financing explainer (612K views)
+        > It's called a DSCR loan — and it lets you buy the house off the income, not your W-2.
+
+        **My bet:** Variation 1 — the mechanism does the work.
+
+        Reply `apply N` to stage one as a reviewed diff.
+
+        _≈$0.28 · 13.3K in (0% cached) · 7.1K out_
+        """
+
+        let blocks = CosmoInlineAssistantMarkdownParser.parse(markdown)
+
+        XCTAssertEqual(
+            blocks,
+            [
+                .heading(level: 3, text: "Hook — 2 directions"),
+                .paragraph("Current: \"It's called the DSCR loan.\""),
+                .paragraph("**1. mechanism-first** · from Seller financing explainer (612K views)"),
+                .quote("It's called a DSCR loan — and it lets you buy the house off the income, not your W-2."),
+                .paragraph("**My bet:** Variation 1 — the mechanism does the work."),
+                .paragraph("Reply `apply N` to stage one as a reviewed diff."),
+                .receipt("≈$0.28 · 13.3K in (0% cached) · 7.1K out")
+            ]
+        )
+    }
+
     func testOperationAcceptabilityRequiresPendingStatusAndLocatableOriginalText() {
         let source = CosmoEditableSourceSnapshot(
             surfaceID: "note:abc",

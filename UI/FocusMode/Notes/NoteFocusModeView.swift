@@ -288,6 +288,8 @@ struct NoteFocusModeView: View {
     // Writing mode
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @AppStorage("typewriterMode") private var typewriterMode = false
+    /// Paragraph focus — everything but the caret's block fades back (iA model).
+    @AppStorage("noteParagraphFocus") private var paragraphFocus = false
 
     // V2 "Scholar's Carrel" rail state
     @AppStorage("noteFocusV2.leftRail") private var leftRailVisible: Bool = true
@@ -710,7 +712,11 @@ struct NoteFocusModeView: View {
             action: { styleMenuPresented.toggle() }
         )
         .popover(isPresented: $styleMenuPresented, arrowEdge: .bottom) {
-            NoteStyleMenuView(style: $noteStyle, typewriterMode: $typewriterMode)
+            NoteStyleMenuView(
+                style: $noteStyle,
+                typewriterMode: $typewriterMode,
+                paragraphFocus: $paragraphFocus
+            )
         }
     }
 
@@ -789,13 +795,16 @@ struct NoteFocusModeView: View {
                         .padding(.leading, BlockInteractionPolicy.gutterWidth)
                         .frame(maxWidth: bodyColumnWidth, alignment: .leading)
                         .padding(.top, DS.space36)
+                        .opacity(headerFocusOpacity)
                     dateTagsRow
                         .padding(.leading, BlockInteractionPolicy.gutterWidth)
                         .frame(maxWidth: bodyColumnWidth, alignment: .leading)
                         .padding(.top, DS.space12)
                         .padding(.bottom, DS.space24)
+                        .opacity(headerFocusOpacity)
                     if NoteFocusHeaderLayoutPolicy.showsMetadataDivider(for: titleChromeMode) {
                         giltDivider
+                            .opacity(headerFocusOpacity)
                     }
                 }
 
@@ -818,7 +827,10 @@ struct NoteFocusModeView: View {
                             document: $bodyDocument,
                             fontSize: noteStyle.textSize.pointSize,
                             fontDesign: noteStyle.fontFamily.design,
-                            placeholder: "Start writing…",
+                            lineSpacingAdjustment: noteStyle.lineSpacing.lineSpacingDelta,
+                            blockGap: noteStyle.lineSpacing.blockGap,
+                            dimsInactiveBlocks: paragraphFocus,
+                            placeholder: "Write, or press / for blocks…",
                             darkMode: DS.usesImmersiveFocusAppearance,
                             overrideTextColor: NSColor(focusText),
                             allowSlashCommands: true,
@@ -844,12 +856,15 @@ struct NoteFocusModeView: View {
                         alignment: .topLeading
                     )
                     .padding(.top, isEmptyNote ? DS.space32 : DS.space24)
-                    .padding(.bottom, DS.space48)
+                    // Scroll past end — the last line can always sit at eye
+                    // level instead of being pinned to the screen's bottom edge.
+                    .padding(.bottom, max(DS.space48, scrollViewportHeight * 0.35))
                 }
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, DS.space40)
             .background(FocusModeEditorBlurTapLayer())
+            .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: headerFocusOpacity)
         }
         .background(FocusModeEditorBlurTapLayer())
         .onGeometryChange(for: CGFloat.self) { proxy in
@@ -859,6 +874,15 @@ struct NoteFocusModeView: View {
                 scrollViewportHeight = newValue
             }
         }
+    }
+
+    /// While paragraph focus is on and the caret lives in the body, the
+    /// title block fades back with the rest of the page.
+    private var headerFocusOpacity: Double {
+        guard paragraphFocus,
+              !isEditingTitle,
+              bodyFocusCoordinator.focusedBlockID != nil else { return 1 }
+        return 0.4
     }
 
     private var giltDivider: some View {

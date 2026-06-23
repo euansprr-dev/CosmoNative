@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		16096370C7424E658BD5EA79 /* CommandCenterPlanningPageScaffold.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D74C45107FC4A1699E6C903 /* CommandCenterPlanningPageScaffold.swift */; };
+		25C02647EEE84EA98FEA3229 /* HabitsSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA6D4B7BCB244A27B5AA3A07 /* HabitsSectionView.swift */; };
+		EA7D25FF52484F07AE05B58A /* ReportsSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB76E5AA1DFE44F4A70822D4 /* ReportsSectionView.swift */; };
+		07F89776F5D14A05A6AA121A /* ObjectivesSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABF78AFAC4594298858E5FC0 /* ObjectivesSectionView.swift */; };
+		D74DA15DF3414DBB82E960B9 /* CommandCenterPlanningNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FF81F18039A491DB6BFD158 /* CommandCenterPlanningNavigationTests.swift */; };
 		ED9D1210BA702213DA73B37B /* SwipeBoardsHubPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11BAF1345F8E9DFC48CBBDC4 /* SwipeBoardsHubPage.swift */; };
 		896C2E276420D809B24BCF73 /* CraftTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 411E7B3CE11B40782E845EBC /* CraftTypes.swift */; };
 		544E46E8F4A17671EA5AAF8B /* CraftComparableSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E66D06D6B8934161A01568A /* CraftComparableSelector.swift */; };
@@ -1001,6 +1006,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		1D74C45107FC4A1699E6C903 /* CommandCenterPlanningPageScaffold.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterPlanningPageScaffold.swift; sourceTree = "<group>"; };
+		BA6D4B7BCB244A27B5AA3A07 /* HabitsSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitsSectionView.swift; sourceTree = "<group>"; };
+		AB76E5AA1DFE44F4A70822D4 /* ReportsSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsSectionView.swift; sourceTree = "<group>"; };
+		ABF78AFAC4594298858E5FC0 /* ObjectivesSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectivesSectionView.swift; sourceTree = "<group>"; };
+		7FF81F18039A491DB6BFD158 /* CommandCenterPlanningNavigationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CommandCenterPlanningNavigationTests.swift; sourceTree = "<group>"; };
 		11BAF1345F8E9DFC48CBBDC4 /* SwipeBoardsHubPage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwipeBoardsHubPage.swift; path = UI/SwipeFile/Boards/SwipeBoardsHubPage.swift; sourceTree = SOURCE_ROOT; };
 		411E7B3CE11B40782E845EBC /* CraftTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftTypes.swift; sourceTree = "<group>"; };
 		9E66D06D6B8934161A01568A /* CraftComparableSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftComparableSelector.swift; sourceTree = "<group>"; };
@@ -2317,6 +2327,7 @@
 				36F8B8DB6BF98446CAEA5F1D /* CommandCenterHabitEditor.swift */,
 				759FB3D9330E3F6B6524FCFD /* CommandCenterHabitEngine.swift */,
 				A1943C2AE5DCB2FE181A0073 /* CommandCenterMasthead.swift */,
+				1D74C45107FC4A1699E6C903 /* CommandCenterPlanningPageScaffold.swift */,
 				AFFD4E616EC1DC94AE306CDF /* CommandCenterSidebar.swift */,
 				94F34728DF5446AE929A00FA /* CommandCenterSurfaceChrome.swift */,
 				E31816A8994B6F3E31F00139 /* CommandCenterTaskMenus.swift */,
@@ -2331,8 +2342,11 @@
 				E9A534DF5BCF7054B468E171 /* DashboardTaskList.swift */,
 				F2D1BA3CBB0F0A857689E71E /* DashboardTimeTracker.swift */,
 				1C4A9C4BAD56AF4656F56537 /* DashboardViewModeBar.swift */,
+				BA6D4B7BCB244A27B5AA3A07 /* HabitsSectionView.swift */,
+				ABF78AFAC4594298858E5FC0 /* ObjectivesSectionView.swift */,
 				70B7456B6CD5699FDC3C232A /* ProjectDetailView.swift */,
 				0026BBD3C76F26E7404D03D3 /* ProjectSidebarRow.swift */,
+				AB76E5AA1DFE44F4A70822D4 /* ReportsSectionView.swift */,
 				8CB9E72F578E166F8D5D85A8 /* SavedTimerPreset.swift */,
 				58944BCEB8D92CF0C0D87885 /* SessionTimelineEntry.swift */,
 				C7E0BA4F5200201B967E8E6D /* SmartTaskCaptureRow.swift */,
@@ -3643,6 +3657,7 @@
 				F1B14422AA767E707AA79259 /* CodexOutlineEditingTests.swift */,
 				DBB31A5B1E1D7764CE1FB374 /* CommandCenterCalendarLayoutTests.swift */,
 				C985AC462D0C2430560C27AF /* CommandCenterComposerTests.swift */,
+				7FF81F18039A491DB6BFD158 /* CommandCenterPlanningNavigationTests.swift */,
 				4F7D92B47DD14BAFBE4CCD98 /* CommandKActionRegistryTests.swift */,
 				CC59E7956B5CCA6844CBD498 /* CommandKIdeaLifecycleTests.swift */,
 				6C396454BCEE8AD556C078EC /* CommandKSearchPipelineTests.swift */,
@@ -4046,6 +4061,7 @@
 				3BBC26C29219B90EDA80ECA4 /* CodexOutlineEditingTests.swift in Sources */,
 				7232DF6EFA58AA73A016230A /* CommandCenterCalendarLayoutTests.swift in Sources */,
 				87A633AEB79A6E808701A0A6 /* CommandCenterComposerTests.swift in Sources */,
+				D74DA15DF3414DBB82E960B9 /* CommandCenterPlanningNavigationTests.swift in Sources */,
 				73059742890E4774BF32FC49 /* CommandKActionRegistryTests.swift in Sources */,
 				68602E3ABD8B1CDC1817EA53 /* CommandKIdeaLifecycleTests.swift in Sources */,
 				ED7171EEFFE86FF903CB19B2 /* CommandKSearchPipelineTests.swift in Sources */,
@@ -4305,6 +4321,7 @@
 				53B9FE7A9C65A1590356AC5D /* CommandCenterHabitEditor.swift in Sources */,
 				257E1D0853CA208AB057EB37 /* CommandCenterHabitEngine.swift in Sources */,
 				880B414CD02570C482185ABF /* CommandCenterMasthead.swift in Sources */,
+				16096370C7424E658BD5EA79 /* CommandCenterPlanningPageScaffold.swift in Sources */,
 				599DF28B9230FDA3DA5CEB2E /* CommandCenterSidebar.swift in Sources */,
 				B54C83F74D7C4F05A758E205 /* CommandCenterSurfaceChrome.swift in Sources */,
 				65A844AB902904122139A2E8 /* CommandCenterTaskMenus.swift in Sources */,
@@ -4461,6 +4478,9 @@
 				3F488FF5971C49BA446F7B66 /* DashboardTaskList.swift in Sources */,
 				B1F1EFEE69AF055B55B8B4A3 /* DashboardTimeTracker.swift in Sources */,
 				441FD45BB44E351E3A0BF54C /* DashboardViewModeBar.swift in Sources */,
+				25C02647EEE84EA98FEA3229 /* HabitsSectionView.swift in Sources */,
+				07F89776F5D14A05A6AA121A /* ObjectivesSectionView.swift in Sources */,
+				EA7D25FF52484F07AE05B58A /* ReportsSectionView.swift in Sources */,
 				88BC59F3923E6B29F585859A /* DataMigrationService.swift in Sources */,
 				721F78CF4DB4DADBA8D34538 /* DatabaseActorCore.swift in Sources */,
 				A8F3A4DD478054A5D112AB68 /* DateFormatters.swift in Sources */,
@@ -5122,6 +5142,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = YPM3NM55GM;
+				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = Daemon/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -5147,6 +5168,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = YPM3NM55GM;
+				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = Daemon/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

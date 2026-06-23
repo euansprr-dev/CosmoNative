@@ -29,6 +29,8 @@ struct CosmoInlineAssistantAgentBridge {
     ) async throws -> Void
 
     static let live = CosmoInlineAssistantAgentBridge { prompt, route, store in
+        let snapshot = store.activeEditableSnapshot()
+
         // Craft skills (/review, /riff) bypass the agent tool loop entirely:
         // comparables and stats are computed in Swift, then ONE structured
         // engine call delivers the result — evidence-grounded and ~10x cheaper
@@ -37,9 +39,14 @@ struct CosmoInlineAssistantAgentBridge {
            let craftSkillID = CosmoCraftSkillRunner.resolveCraftSkillID(
                selectedSkillID: store.activeSubmissionSkillID,
                prompt: prompt,
-               surfaceKind: CosmoEditableSurfaceRegistry.shared.activeSurface?.editableSnapshot().kind
+               surfaceKind: snapshot?.kind
            ) {
-            try await CosmoCraftSkillRunner.shared.run(prompt: prompt, skillID: craftSkillID, store: store)
+            try await CosmoCraftSkillRunner.shared.run(
+                prompt: prompt,
+                skillID: craftSkillID,
+                store: store,
+                snapshot: snapshot
+            )
             return
         }
 
@@ -75,9 +82,6 @@ struct CosmoInlineAssistantAgentBridge {
         // message — retargeting it here (after the message was appended) is what
         // used to make sent messages vanish from the pane. The snapshot is for
         // edit targeting and context only.
-        let activeSurface = CosmoEditableSurfaceRegistry.shared.activeSurface
-        let snapshot = activeSurface?.editableSnapshot()
-
         // Chips show what was actually read: tool-read refs plus the prefetched
         // ambient pack (which the model is told to use without re-searching).
         let surfaceIDForRefs = snapshot?.surfaceID
@@ -87,7 +91,8 @@ struct CosmoInlineAssistantAgentBridge {
             where !refs.contains(where: { $0.uuid == ambient.uuid }) {
                 refs.append(ambient)
             }
-            return refs
+            guard !ContextSourcePolicy.allowsGeneratedCodexCorpus(query: prompt) else { return refs }
+            return refs.filter { !ContextSourcePolicy.isGeneratedCodexCorpusTitle($0.title) }
         }
         let contextStatus = snapshot.map { "Reading \($0.title)" } ?? "Reading current context"
         store.receiveToolActivity(.started(

@@ -10,6 +10,9 @@ import AppKit
 // MARK: - Content Focus Mode View
 
 enum ContentFocusLayoutPolicy {
+    static let manuscriptScrollbarGutter: CGFloat = 32
+    private static let minimumManuscriptTextWidth: CGFloat = 280
+
     static func showsMarginaliaRails(
         isPaneContext: Bool,
         zenMode: Bool,
@@ -38,6 +41,30 @@ enum ContentFocusLayoutPolicy {
         let sideAllowance: CGFloat = zenMode ? DS.space48 : 580
         let available = max(360, availableWidth - sideAllowance)
         return min(preferredWritingWidth, available)
+    }
+
+    static func manuscriptTextWidth(for totalWidth: CGFloat) -> CGFloat {
+        let reservedGutter = min(
+            manuscriptScrollbarGutter,
+            max(0, totalWidth - minimumManuscriptTextWidth)
+        )
+        return max(0, totalWidth - reservedGutter)
+    }
+}
+
+enum ContentOutlineMarginaliaExpansionPolicy {
+    static func toggled(_ id: UUID, in expandedIDs: Set<UUID>) -> Set<UUID> {
+        var updatedIDs = expandedIDs
+        if updatedIDs.contains(id) {
+            updatedIDs.remove(id)
+        } else {
+            updatedIDs.insert(id)
+        }
+        return updatedIDs
+    }
+
+    static func lineLimit(for id: UUID, expandedIDs: Set<UUID>) -> Int? {
+        expandedIDs.contains(id) ? nil : 2
     }
 }
 
@@ -154,6 +181,8 @@ struct ContentFocusModeView: View {
     @State private var isContinuation: Bool = false
     @Namespace private var ledgerNamespace
     @FocusState private var focusedOutlineItemID: UUID?
+    @State private var expandedOutlineItemIDs: Set<UUID> = []
+    @State private var hoveredOutlineItemID: UUID?
     @State private var brandExpanded = false
 
     // Inherited context for the right marginalia (source / swipes / framework / brand / hooks)
@@ -775,7 +804,11 @@ struct ContentFocusModeView: View {
     }
 
     private func scriptoriumManuscript(height: CGFloat, availableWidth: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
+        let totalWidth = manuscriptWidth(availableWidth: availableWidth)
+        let textWidth = ContentFocusLayoutPolicy.manuscriptTextWidth(for: totalWidth)
+        let scrollbarGutter = totalWidth - textWidth
+
+        return VStack(alignment: .leading, spacing: DS.space12) {
             if !zenMode {
                 manuscriptTitleEditor
                     .transition(.opacity.combined(with: .offset(y: -16)))
@@ -882,7 +915,9 @@ struct ContentFocusModeView: View {
                 .padding(.top, DS.space24)
                 .atelierStaggerIn(delay: continuationStagger(0.52), appeared: hasAppeared)
         }
-        .frame(width: manuscriptWidth(availableWidth: availableWidth), alignment: .leading)
+        .frame(width: textWidth, alignment: .leading)
+        .padding(.trailing, scrollbarGutter)
+        .frame(width: totalWidth, alignment: .leading)
     }
 
     // MARK: - Scriptorium header (quiet nav + zen ornament)
@@ -1064,7 +1099,6 @@ struct ContentFocusModeView: View {
             .textFieldStyle(.plain)
             .font(DS.displaySerif)
             .foregroundStyle(focusText)
-            .tracking(-0.5)
             .lineLimit(1...3)
             .onChange(of: editableTitle) { _, newTitle in
                 viewModel.updateTitle(newTitle)
@@ -1214,25 +1248,50 @@ struct ContentFocusModeView: View {
                     .foregroundStyle(focusTextMuted.opacity(0.6))
             } else {
                 ForEach(Array(viewModel.state.outline.enumerated()), id: \.element.id) { idx, item in
+                    let isExpanded = expandedOutlineItemIDs.contains(item.id)
+                    let isHovered = hoveredOutlineItemID == item.id
                     HStack(alignment: .top, spacing: DS.space8) {
-                        Text(romanNumeral(for: idx + 1))
-                            .font(DS.footnote.monospaced())
-                            .foregroundStyle(DS.giltMuted)
-                            .frame(width: 24, alignment: .leading)
-                            .padding(.top, 2)
+                        Button {
+                            toggleOutlineItemExpansion(item.id)
+                        } label: {
+                            Text(romanNumeral(for: idx + 1))
+                                .font(DS.footnote.monospaced())
+                                .padding(.top, 2)
+                                .frame(width: 24, height: 24, alignment: .topLeading)
+                                .foregroundStyle(isHovered || isExpanded ? DS.gilt : DS.giltMuted)
+                                .background(
+                                    DS.gilt.opacity(isHovered ? 0.10 : 0),
+                                    in: RoundedRectangle(cornerRadius: DS.radiusSmall / 2, style: .continuous)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            withAnimation(ProMotionSprings.hover) {
+                                hoveredOutlineItemID = hovering ? item.id : nil
+                            }
+                        }
+                        .help(isExpanded ? "Collapse slide \(idx + 1)" : "Expand slide \(idx + 1)")
+                        .accessibilityLabel(isExpanded ? "Collapse slide \(idx + 1)" : "Expand slide \(idx + 1)")
                         TextField("Outline item", text: marginaliaOutlineTitleBinding(for: item.id), axis: .vertical)
                             .textFieldStyle(.plain)
                             .font(DS.callout)
                             .foregroundStyle(focusText)
                             .lineSpacing(2)
-                            // Quiet glance by default; the full text opens while editing.
-                            .lineLimit(focusedOutlineItemID == item.id ? nil : 2)
+                            .lineLimit(ContentOutlineMarginaliaExpansionPolicy.lineLimit(for: item.id, expandedIDs: expandedOutlineItemIDs))
                             .focused($focusedOutlineItemID, equals: item.id)
                             .animation(ProMotionSprings.gentle, value: focusedOutlineItemID)
+                            .animation(ProMotionSprings.gentle, value: expandedOutlineItemIDs)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
+        }
+    }
+
+    private func toggleOutlineItemExpansion(_ id: UUID) {
+        withAnimation(ProMotionSprings.snappy) {
+            expandedOutlineItemIDs = ContentOutlineMarginaliaExpansionPolicy.toggled(id, in: expandedOutlineItemIDs)
         }
     }
 
@@ -1765,8 +1824,8 @@ struct ContentFocusModeView: View {
                     .transition(.opacity)
             }
         }
-        // Centered under the manuscript (iA-style) — clear of both margins.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        .padding(.leading, DS.space40)
         .padding(.bottom, DS.space20)
         .opacity(localDraftContent.isEmpty ? 0 : 1)
         .allowsHitTesting(false)

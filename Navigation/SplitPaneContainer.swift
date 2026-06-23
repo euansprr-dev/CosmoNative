@@ -71,7 +71,29 @@ struct SplitPaneContainer<MainContent: View>: View {
 
 /// Width of a collapsed pane spine. Shared by the deck layout and the slot so
 /// the spine never stretches to fill a slot that is mid-collapse.
-private let paneSpineWidth: CGFloat = 44
+enum PaneSlotPresentationPolicy {
+    static let spineWidth: CGFloat = 44
+    static let minimumContentWidth: CGFloat = 420
+    static let collapsedContentClearance: CGFloat = 60
+    static let hoverDwellMilliseconds = 150
+    static let defaultInterSlotSpacing: CGFloat = 6
+
+    static func interSlotSpacing(leftIsExpanded: Bool, rightIsExpanded: Bool) -> CGFloat {
+        if !leftIsExpanded && rightIsExpanded { return 0 }
+        return defaultInterSlotSpacing
+    }
+
+    static func contentWidth(for expandedWidth: CGFloat) -> CGFloat {
+        max(expandedWidth, minimumContentWidth)
+    }
+
+    static func contentOffset(isExpanded: Bool, expandedWidth: CGFloat) -> CGFloat {
+        guard !isExpanded else { return 0 }
+        return -(contentWidth(for: expandedWidth) + spineWidth + collapsedContentClearance)
+    }
+}
+
+private let paneSpineWidth: CGFloat = PaneSlotPresentationPolicy.spineWidth
 
 /// The focus + spine deck. Spines keep their opening-order position so they
 /// don't shuffle when focus moves; only widths animate.
@@ -81,13 +103,12 @@ struct PaneDeckView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let spineWidth: CGFloat = paneSpineWidth
-    private let slotSpacing: CGFloat = 6
 
     var body: some View {
         GeometryReader { geo in
             let layout = deckLayout(columnWidth: geo.size.width)
 
-            HStack(spacing: slotSpacing) {
+            HStack(spacing: 0) {
                 ForEach(Array(paneManager.panes.enumerated()), id: \.element.id) { index, pane in
                     let slotWidth = layout.widths[pane.id] ?? spineWidth
                     PaneSlotView(
@@ -97,6 +118,7 @@ struct PaneDeckView: View {
                         isActive: paneManager.activePaneId == pane.id,
                         isContextOwner: paneManager.contextOwnerPaneId == pane.id,
                         expandedWidth: layout.contentWidths[pane.id] ?? slotWidth,
+                        slotWidth: slotWidth,
                         position: index + 1,
                         onFocus: {
                             withAnimation(deckSpring) {
@@ -110,6 +132,12 @@ struct PaneDeckView: View {
                         }
                     )
                     .frame(width: slotWidth)
+
+                    if index < paneManager.panes.count - 1 {
+                        Color.clear
+                            .frame(width: layout.spacingAfter[pane.id] ?? 0)
+                            .allowsHitTesting(false)
+                    }
                 }
             }
             .animation(deckSpring, value: deckSignature)
@@ -138,12 +166,13 @@ struct PaneDeckView: View {
         /// width (what they'd get when focused) so expansion never reflows;
         /// a pinned pane lays out at its 40% slot, not the focused pane's 60%.
         var contentWidths: [String: CGFloat]
+        var spacingAfter: [String: CGFloat]
     }
 
     private func deckLayout(columnWidth: CGFloat) -> DeckLayout {
         let panes = paneManager.panes
         guard !panes.isEmpty else {
-            return DeckLayout(widths: [:], expandedIds: [], contentWidths: [:])
+            return DeckLayout(widths: [:], expandedIds: [], contentWidths: [:], spacingAfter: [:])
         }
 
         // There is always exactly one focused pane when panes exist.
@@ -156,7 +185,8 @@ struct PaneDeckView: View {
         }
 
         let spineCount = panes.count - expanded.count
-        let totalSpacing = slotSpacing * CGFloat(max(panes.count - 1, 0))
+        let spacingAfter = interSlotSpacing(for: panes, expandedIds: expanded)
+        let totalSpacing = spacingAfter.values.reduce(0, +)
         let available = max(columnWidth - CGFloat(spineCount) * spineWidth - totalSpacing, 0)
 
         var widths: [String: CGFloat] = [:]
@@ -186,7 +216,27 @@ struct PaneDeckView: View {
                 : focusedWidth
         }
 
-        return DeckLayout(widths: widths, expandedIds: expanded, contentWidths: contentWidths)
+        return DeckLayout(
+            widths: widths,
+            expandedIds: expanded,
+            contentWidths: contentWidths,
+            spacingAfter: spacingAfter
+        )
+    }
+
+    private func interSlotSpacing(for panes: [PaneContent], expandedIds: Set<String>) -> [String: CGFloat] {
+        guard panes.count > 1 else { return [:] }
+
+        var spacing: [String: CGFloat] = [:]
+        for index in panes.indices.dropLast() {
+            let leftPane = panes[index]
+            let rightPane = panes[index + 1]
+            spacing[leftPane.id] = PaneSlotPresentationPolicy.interSlotSpacing(
+                leftIsExpanded: expandedIds.contains(leftPane.id),
+                rightIsExpanded: expandedIds.contains(rightPane.id)
+            )
+        }
+        return spacing
     }
 }
 
@@ -202,11 +252,14 @@ private struct PaneSlotView: View {
     let isActive: Bool
     let isContextOwner: Bool
     let expandedWidth: CGFloat
+    let slotWidth: CGFloat
     let position: Int
     let onFocus: () -> Void
     let onClose: () -> Void
 
     var body: some View {
+        let contentWidth = PaneSlotPresentationPolicy.contentWidth(for: expandedWidth)
+
         ZStack(alignment: .leading) {
             PaneContentView(
                 content: pane,
@@ -214,8 +267,15 @@ private struct PaneSlotView: View {
                 isContextOwner: isContextOwner,
                 onClose: onClose
             )
-            .frame(width: max(expandedWidth, 420))
+            .frame(width: contentWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            // NSView-backed editors and scroll views can keep painting through
+            // opacity/clipping. Move collapsed content out of the spine slot
+            // while keeping it mounted at its expanded layout width.
+            .offset(x: PaneSlotPresentationPolicy.contentOffset(
+                isExpanded: isExpanded,
+                expandedWidth: expandedWidth
+            ))
             // The content's layout must NEVER animate — only the slot clip
             // slides. Animating text-view widths relayouts every frame and
             // tanks the deck to single-digit FPS with long notes.
@@ -223,6 +283,7 @@ private struct PaneSlotView: View {
             .opacity(isExpanded ? 1 : 0)
             .allowsHitTesting(isExpanded)
             .accessibilityHidden(!isExpanded)
+            .zIndex(isExpanded ? 1 : 0)
             // Collapsing content must outlive the width spring (~0.3s) — a fast
             // fade leaves the still-wide slot as a blank veil mid-slide.
             .animation(.easeOut(duration: isExpanded ? 0.12 : 0.3), value: isExpanded)
@@ -240,8 +301,11 @@ private struct PaneSlotView: View {
             .frame(width: paneSpineWidth)
             .opacity(isExpanded ? 0 : 1)
             .allowsHitTesting(!isExpanded)
+            .zIndex(isExpanded ? 0 : 1)
             .animation(.easeOut(duration: 0.15).delay(isExpanded ? 0 : 0.15), value: isExpanded)
         }
+        .frame(width: slotWidth, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .leading)
         .overlay(alignment: .topLeading) {
             if isPinned && isExpanded {
                 pinnedBadge
@@ -397,7 +461,7 @@ private struct PaneSpineView: View {
             return
         }
         dwellTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: .milliseconds(PaneSlotPresentationPolicy.hoverDwellMilliseconds))
             guard !Task.isCancelled else { return }
             onFocus()
         }

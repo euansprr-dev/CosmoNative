@@ -116,9 +116,47 @@ struct CosmoBrowserPinnedSite: Identifiable, Codable, Equatable, Hashable {
         displayName = newName.nilIfBlank ?? title
     }
 
+    var pageKey: String {
+        Self.pageKey(for: url)
+    }
+
     static func normalizedHost(for url: URL) -> String {
         let host = url.host(percentEncoded: false)?.lowercased() ?? url.host?.lowercased() ?? url.absoluteString.lowercased()
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    static func pageKey(for url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            var key = url.absoluteString
+            while key.hasSuffix("/") {
+                key.removeLast()
+            }
+            return key
+        }
+
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+        components.fragment = nil
+        if let queryItems = components.queryItems {
+            let filteredItems = queryItems
+                .filter { item in
+                    let name = item.name.lowercased()
+                    return !name.hasPrefix("utm_") && name != "fbclid" && name != "gclid"
+                }
+                .sorted {
+                    if $0.name == $1.name {
+                        return ($0.value ?? "") < ($1.value ?? "")
+                    }
+                    return $0.name < $1.name
+                }
+            components.queryItems = filteredItems.isEmpty ? nil : filteredItems
+        }
+
+        var key = components.url?.absoluteString ?? url.absoluteString
+        while key.hasSuffix("/") {
+            key.removeLast()
+        }
+        return key
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -208,15 +246,15 @@ struct CosmoBrowserSession: Identifiable, Codable, Equatable {
     mutating func pinCurrentSite(at date: Date = Date()) -> CosmoBrowserPinnedSite? {
         guard let tab = activeTab else { return nil }
         let pin = CosmoBrowserPinnedSite(url: tab.currentURL, title: tab.title, pinnedAt: date)
-        pinnedSites.removeAll { $0.host == pin.host }
+        pinnedSites.removeAll { $0.pageKey == pin.pageKey }
         pinnedSites.append(pin)
         pinnedSites.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         updatedAt = date
         return pin
     }
 
-    mutating func unpin(host: String, at date: Date = Date()) {
-        pinnedSites.removeAll { $0.host == host }
+    mutating func unpin(id: UUID, at date: Date = Date()) {
+        pinnedSites.removeAll { $0.id == id }
         updatedAt = date
     }
 }
@@ -353,7 +391,7 @@ actor CosmoBrowserStore {
 
     func upsertPin(_ pin: CosmoBrowserPinnedSite, for profileID: String) throws -> [CosmoBrowserPinnedSite] {
         var pins = snapshot.pinnedSitesByProfile[profileID] ?? []
-        pins.removeAll { $0.host == pin.host }
+        pins.removeAll { $0.pageKey == pin.pageKey }
         pins.append(pin)
         pins.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         snapshot.pinnedSitesByProfile[profileID] = pins
@@ -361,9 +399,9 @@ actor CosmoBrowserStore {
         return pins
     }
 
-    func removePin(host: String, for profileID: String) throws -> [CosmoBrowserPinnedSite] {
+    func removePin(id: UUID, for profileID: String) throws -> [CosmoBrowserPinnedSite] {
         var pins = snapshot.pinnedSitesByProfile[profileID] ?? []
-        pins.removeAll { $0.host == host }
+        pins.removeAll { $0.id == id }
         snapshot.pinnedSitesByProfile[profileID] = pins
         try persist()
         return pins
@@ -482,12 +520,24 @@ struct CosmoWebBrowserPane: View {
     var body: some View {
         VStack(spacing: 0) {
             browserToolbar
-            pinnedSitesBar
+            favoritesBar
 
             ZStack(alignment: .top) {
-                CosmoBrowserWebView(state: browserState)
-                    .id(browserState.webViewIdentity)
+                if browserState.showsStartPage {
+                    CosmoBrowserStartPage(
+                        favorites: browserState.pins,
+                        recentHistory: browserState.recentHistory,
+                        onOpen: { url, _ in
+                            browserState.load(url)
+                        }
+                    )
+                    .transition(.opacity)
                     .background(DS.bg)
+                } else {
+                    CosmoBrowserWebView(state: browserState)
+                        .id(browserState.webViewIdentity)
+                        .background(DS.bg)
+                }
 
                 if browserState.isLoading {
                     ProgressView(value: browserState.estimatedProgress)
@@ -514,6 +564,7 @@ struct CosmoWebBrowserPane: View {
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
+            .animation(ProMotionSprings.focusTransition, value: browserState.showsStartPage)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
@@ -615,9 +666,9 @@ struct CosmoWebBrowserPane: View {
             )
 
             CosmoBrowserToolbarButton(
-                systemName: browserState.isCurrentSitePinned ? "pin.fill" : "pin",
-                help: "Pin site",
-                action: browserState.pinCurrentSite
+                systemName: browserState.isCurrentSitePinned ? "star.fill" : "star",
+                help: browserState.isCurrentSitePinned ? "Remove Favorite" : "Add Favorite",
+                action: browserState.toggleCurrentFavorite
             )
 
             CosmoBrowserToolbarButton(systemName: "safari", help: "Open in external browser") {
@@ -682,55 +733,59 @@ struct CosmoWebBrowserPane: View {
     }
 
     @ViewBuilder
-    private var pinnedSitesBar: some View {
+    private var favoritesBar: some View {
         if !browserState.pins.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(browserState.pins) { pin in
-                        Button {
-                            browserState.load(pin.url)
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "pin.fill")
-                                    .font(.system(size: 9, weight: .semibold))
-                                Text(pin.displayName)
-                                    .font(DS.caption2)
-                                    .lineLimit(1)
+            HStack(spacing: DS.space6) {
+                ForEach(visibleFavorites) { favorite in
+                    CosmoBrowserFavoriteButton(
+                        favorite: favorite,
+                        onOpen: {
+                            browserState.load(favorite.url)
+                        },
+                        onRename: {
+                            renamingPin = favorite
+                        },
+                        onRemove: {
+                            browserState.unpin(favorite)
+                        }
+                    )
+                }
+
+                if !overflowFavorites.isEmpty {
+                    Menu {
+                        ForEach(overflowFavorites) { favorite in
+                            Button {
+                                browserState.load(favorite.url)
+                            } label: {
+                                Label(favorite.displayName, systemImage: "star.fill")
                             }
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(DS.textSecondary)
+                            .frame(width: 28, height: 28)
                             .background(DS.surfaceElevated, in: Capsule())
                             .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .help(pin.url.absoluteString)
-                        .contextMenu {
-                            Button {
-                                browserState.load(pin.url)
-                            } label: {
-                                Label("Open", systemImage: "arrow.up.forward.app")
-                            }
-
-                            Button {
-                                renamingPin = pin
-                            } label: {
-                                Label("Rename Pin", systemImage: "pencil")
-                            }
-
-                            Divider()
-
-                            Button(role: .destructive) {
-                                browserState.unpin(pin)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
                     }
+                    .menuStyle(.borderlessButton)
+                    .help("More Favorites")
                 }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
             }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
+            .animation(ProMotionSprings.focusTransition, value: browserState.pins)
         }
+    }
+
+    private var favoriteLimitForBar: Int { 8 }
+
+    private var visibleFavorites: [CosmoBrowserPinnedSite] {
+        Array(browserState.pins.prefix(favoriteLimitForBar))
+    }
+
+    private var overflowFavorites: [CosmoBrowserPinnedSite] {
+        Array(browserState.pins.dropFirst(favoriteLimitForBar))
     }
 
     private var browserCaptureBar: some View {
@@ -900,6 +955,173 @@ struct CosmoWebBrowserPane: View {
     }
 }
 
+private struct CosmoBrowserFavoriteButton: View {
+    let favorite: CosmoBrowserPinnedSite
+    let onOpen: () -> Void
+    let onRename: () -> Void
+    let onRemove: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DS.entityResearch)
+                Text(favorite.displayName)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(isHovered ? DS.surfaceHover : DS.surfaceElevated, in: Capsule())
+            .overlay(Capsule().stroke(isHovered ? DS.borderActive : DS.borderSubtle, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(favorite.url.absoluteString)
+        .accessibilityLabel("Open Favorite \(favorite.displayName)")
+        .contextMenu {
+            Button(action: onOpen) {
+                Label("Open Favorite", systemImage: "arrow.up.forward.app")
+            }
+
+            Button(action: onRename) {
+                Label("Rename Favorite", systemImage: "pencil")
+            }
+
+            Divider()
+
+            Button(role: .destructive, action: onRemove) {
+                Label("Remove Favorite", systemImage: "trash")
+            }
+        }
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .animation(ProMotionSprings.focusTransition, value: isHovered)
+    }
+}
+
+private struct CosmoBrowserStartPage: View {
+    let favorites: [CosmoBrowserPinnedSite]
+    let recentHistory: [CosmoBrowserHistoryItem]
+    let onOpen: (URL, String?) -> Void
+
+    private var favoriteColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 150), spacing: DS.space10)]
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.space16) {
+                favoritesSection
+                if !recentHistory.isEmpty {
+                    recentSection
+                }
+            }
+            .padding(DS.space20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(DS.bg)
+    }
+
+    private var favoritesSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            Text("Favorites")
+                .font(DS.pageTitle)
+                .foregroundStyle(DS.text)
+
+            LazyVGrid(columns: favoriteColumns, alignment: .leading, spacing: DS.space10) {
+                ForEach(favorites) { favorite in
+                    Button {
+                        onOpen(favorite.url, favorite.displayName)
+                    } label: {
+                        favoriteTile(favorite)
+                    }
+                    .buttonStyle(.plain)
+                    .help(favorite.url.absoluteString)
+                }
+            }
+        }
+    }
+
+    private var recentSection: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            Text("Recent")
+                .font(DS.title2)
+                .foregroundStyle(DS.text)
+
+            VStack(spacing: DS.space8) {
+                ForEach(recentHistory.prefix(8)) { item in
+                    Button {
+                        onOpen(item.url, item.title)
+                    } label: {
+                        recentRow(item)
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.url.absoluteString)
+                }
+            }
+        }
+    }
+
+    private func favoriteTile(_ favorite: CosmoBrowserPinnedSite) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Image(systemName: "star.fill")
+                .font(DS.callout.weight(.semibold))
+                .foregroundStyle(DS.entityResearch)
+            Text(favorite.displayName)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+            Text(favorite.host)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+        .padding(DS.space12)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DS.borderSubtle, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private func recentRow(_ item: CosmoBrowserHistoryItem) -> some View {
+        HStack(spacing: DS.space10) {
+            Image(systemName: "clock")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.textMuted)
+                .frame(width: 20, height: 20)
+
+            VStack(alignment: .leading, spacing: DS.space2) {
+                Text(item.title)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                Text(CosmoBrowserURLResolver.displayURLString(for: item.url))
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DS.borderSubtle, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
 private struct CosmoBrowserCaptureButton: View {
     let title: String
     let systemName: String
@@ -946,12 +1168,12 @@ private struct CosmoBrowserRenamePinSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Image(systemName: "pin.fill")
+                Image(systemName: "star.fill")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.entitySwipe)
+                    .foregroundStyle(DS.entityResearch)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Rename Pin")
+                    Text("Rename Favorite")
                         .font(DS.callout)
                         .foregroundStyle(DS.text)
                     Text(pin.host)
@@ -961,7 +1183,7 @@ private struct CosmoBrowserRenamePinSheet: View {
                 }
             }
 
-            TextField("Pin name", text: $draftName)
+            TextField("Favorite name", text: $draftName)
                 .textFieldStyle(.roundedBorder)
                 .focused($isNameFocused)
                 .onSubmit(save)
@@ -1036,6 +1258,7 @@ final class CosmoWebBrowserState: ObservableObject {
     @Published var estimatedProgress: Double = 0
     @Published var canGoBack = false
     @Published var canGoForward = false
+    @Published var showsStartPage: Bool
     @Published var errorMessage: String?
     @Published var selectedText: String = ""
     @Published var pins: [CosmoBrowserPinnedSite] = []
@@ -1065,6 +1288,7 @@ final class CosmoWebBrowserState: ObservableObject {
         self.displayTitle = title?.nilIfBlank ?? CosmoBrowserURLResolver.displayTitle(for: initialURL)
         self.displayURL = CosmoBrowserURLResolver.displayURLString(for: initialURL)
         self.addressText = initialURL.absoluteString
+        self.showsStartPage = initialURL == CosmoBrowserURLResolver.defaultHomeURL
         self.navigationRequest = CosmoBrowserNavigationRequest(url: initialURL)
     }
 
@@ -1074,8 +1298,8 @@ final class CosmoWebBrowserState: ObservableObject {
 
     var isCurrentSitePinned: Bool {
         guard let currentURL else { return false }
-        let host = CosmoBrowserPinnedSite.normalizedHost(for: currentURL)
-        return pins.contains { $0.host == host }
+        let pageKey = CosmoBrowserPinnedSite.pageKey(for: currentURL)
+        return pins.contains { $0.pageKey == pageKey }
     }
 
     func attach(_ webView: WKWebView) {
@@ -1161,6 +1385,7 @@ final class CosmoWebBrowserState: ObservableObject {
 
     func load(_ url: URL) {
         clearError()
+        hideStartPage()
         assignIfChanged(currentURL, url) { currentURL = $0 }
         assignIfChanged(displayURL, CosmoBrowserURLResolver.displayURLString(for: url)) { displayURL = $0 }
         assignIfChanged(addressText, url.absoluteString) { addressText = $0 }
@@ -1173,6 +1398,7 @@ final class CosmoWebBrowserState: ObservableObject {
 
     func commitAddressText() {
         guard let url = CosmoBrowserURLResolver.resolve(addressText) else { return }
+        hideStartPage()
         load(url)
     }
 
@@ -1200,7 +1426,7 @@ final class CosmoWebBrowserState: ObservableObject {
 
         session.recordVisit(url: currentURL, title: displayTitle)
         guard let pin = session.pinCurrentSite() else { return }
-        pins.removeAll { $0.host == pin.host }
+        pins.removeAll { $0.pageKey == pin.pageKey }
         pins.append(pin)
         pins.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
 
@@ -1209,6 +1435,16 @@ final class CosmoWebBrowserState: ObservableObject {
             guard profile.id == profileID else { return }
             pins = savedPins
             session.pinnedSites = savedPins
+        }
+    }
+
+    func toggleCurrentFavorite() {
+        guard let currentURL else { return }
+        let pageKey = CosmoBrowserPinnedSite.pageKey(for: currentURL)
+        if let existingPin = pins.first(where: { $0.pageKey == pageKey }) {
+            unpin(existingPin)
+        } else {
+            pinCurrentSite()
         }
     }
 
@@ -1228,13 +1464,13 @@ final class CosmoWebBrowserState: ObservableObject {
     }
 
     func unpin(_ pin: CosmoBrowserPinnedSite) {
-        session.unpin(host: pin.host)
+        session.unpin(id: pin.id)
         pins.removeAll { $0.id == pin.id }
         session.pinnedSites = pins
 
         let profileID = profile.id
         Task {
-            guard let savedPins = try? await store.removePin(host: pin.host, for: profileID) else { return }
+            guard let savedPins = try? await store.removePin(id: pin.id, for: profileID) else { return }
             guard profile.id == profileID else { return }
             pins = savedPins
             session.pinnedSites = savedPins
@@ -1274,6 +1510,11 @@ final class CosmoWebBrowserState: ObservableObject {
     private func assignIfChanged<Value: Equatable>(_ currentValue: Value, _ newValue: Value, assign: (Value) -> Void) {
         guard currentValue != newValue else { return }
         assign(newValue)
+    }
+
+    private func hideStartPage() {
+        guard showsStartPage else { return }
+        showsStartPage = false
     }
 
     private func recordVisit(url: URL, title: String?) {
@@ -1318,6 +1559,7 @@ private struct CosmoBrowserWebView: NSViewRepresentable {
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         context.coordinator.webView = webView
         context.coordinator.installDeleteKeyMonitor(for: webView)
+        context.coordinator.installWebViewObservers(for: webView)
         state.attach(webView)
         context.coordinator.lastNavigationRequestID = state.navigationRequest.id
         webView.load(URLRequest(url: state.navigationRequest.url))
@@ -1336,6 +1578,7 @@ private struct CosmoBrowserWebView: NSViewRepresentable {
         let userContentController: WKUserContentController
         var lastNavigationRequestID: UUID?
         private var deleteKeyMonitor: Any?
+        private var webViewObservations: [NSKeyValueObservation] = []
 
         init(state: CosmoWebBrowserState) {
             self.state = state
@@ -1348,6 +1591,7 @@ private struct CosmoBrowserWebView: NSViewRepresentable {
             if let deleteKeyMonitor {
                 NSEvent.removeMonitor(deleteKeyMonitor)
             }
+            webViewObservations.forEach { $0.invalidate() }
             userContentController.removeScriptMessageHandler(forName: "cosmoSelection")
         }
 
@@ -1401,6 +1645,15 @@ private struct CosmoBrowserWebView: NSViewRepresentable {
                 event.window?.firstResponder?.keyDown(with: event)
                 return nil
             }
+        }
+
+        func installWebViewObservers(for webView: WKWebView) {
+            webViewObservations.forEach { $0.invalidate() }
+            webViewObservations = [
+                webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
+                    self?.updateState(from: webView)
+                }
+            ]
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

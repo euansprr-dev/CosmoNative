@@ -2,7 +2,15 @@ import AppKit
 import SwiftUI
 
 enum CosmoInlineAssistantBarVisibilityPolicy {
-    static func shouldShow(isInlinePaneOpen: Bool, focusedEntityType: EntityType? = nil) -> Bool {
+    static func shouldShow(
+        isInlinePaneOpen: Bool,
+        focusedEntityType: EntityType? = nil,
+        isBlockingOverlayPresented: Bool = false
+    ) -> Bool {
+        if isBlockingOverlayPresented {
+            return false
+        }
+
         // The Deep Dive / Inquiry surfaces have their own permanent capture
         // dock — the global assistant orb would duplicate it there.
         if focusedEntityType == .deepDive || focusedEntityType == .inquirySession {
@@ -212,8 +220,9 @@ struct CosmoInlineAssistantBar: View {
     // stretching, never parts assembling.
     private var morphingBar: some View {
         barContent
-            .frame(width: expandedWidth, height: barHeight, alignment: .leading)
-            .frame(width: barWidth, height: barHeight, alignment: .leading)
+            .frame(width: expandedWidth, alignment: .leading)
+            .frame(minHeight: expandedMinHeight)
+            .frame(width: barWidth, height: isExpanded ? nil : collapsedHeight, alignment: .leading)
             .clipShape(barShape)
             .background {
                 barShape
@@ -237,13 +246,13 @@ struct CosmoInlineAssistantBar: View {
     // physically attached to the surface; collapse drops it instantly so the
     // pill is already clean while the surface is still shrinking.
     private var barContent: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             iconView
             trailingControls
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 5)
-        .padding(.vertical, 5)
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
         .disabled(!isExpanded)
         .opacity(isExpanded ? 1 : 0)
         .animation(contentFade, value: isExpanded)
@@ -256,9 +265,9 @@ struct CosmoInlineAssistantBar: View {
     /// progress reads as character, not a generic spinner.
     private var iconView: some View {
         Image(systemName: phaseSymbolName)
-            .font(DS.callout.weight(.semibold))
+            .font(DS.title2)
             .foregroundStyle(phaseIconColor)
-            .frame(width: compactControlSize, height: compactControlSize)
+            .frame(width: 28, height: 28)
             .symbolEffect(.pulse, options: .repeating, isActive: store.phase.isWorking)
             .symbolEffect(.bounce, options: .nonRepeating, value: reduceMotion ? false : isExpanded)
             .contentTransition(.symbolEffect(.replace))
@@ -280,7 +289,7 @@ struct CosmoInlineAssistantBar: View {
     }
 
     private var controlsRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             activeSkillChip
             skillSuggestionChip
             if store.isProcessing {
@@ -322,8 +331,8 @@ struct CosmoInlineAssistantBar: View {
 
             Button(action: onOpenPane) {
                 Image(systemName: "sidebar.right")
-                    .font(DS.footnote.weight(.semibold))
-                    .frame(width: compactControlSize, height: compactControlSize)
+                    .font(DS.callout.weight(.medium))
+                    .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
             .cosmoClickCursor()
@@ -333,8 +342,8 @@ struct CosmoInlineAssistantBar: View {
 
             Button(action: submitOrStop) {
                 Image(systemName: store.isProcessing ? "stop.fill" : "arrow.up")
-                    .font(DS.footnote.weight(.bold))
-                    .frame(width: compactControlSize, height: compactControlSize)
+                    .font(DS.callout.weight(.bold))
+                    .frame(width: 34, height: 34)
                     .background(sendFill, in: Circle())
                     .foregroundStyle(sendText)
             }
@@ -418,7 +427,7 @@ struct CosmoInlineAssistantBar: View {
             )
             .frame(width: min(max(expandedWidth * 0.62, 360), 460))
             .background(contextMenuFrameReader)
-            .offset(x: 16, y: menuVerticalOffset)
+            .offset(x: 16, y: -64)
             .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
             .zIndex(10)
         }
@@ -451,7 +460,7 @@ struct CosmoInlineAssistantBar: View {
             )
             .frame(width: min(max(expandedWidth * 0.58, 340), 430))
             .background(contextMenuFrameReader)
-            .offset(x: 16, y: menuVerticalOffset)
+            .offset(x: 16, y: -64)
             .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
             .zIndex(11)
         }
@@ -502,10 +511,10 @@ struct CosmoInlineAssistantBar: View {
 
     // MARK: - Derived presentation
 
-    // Capsule in both states: height matches the canvas bottom controls, while
-    // width, shadow, and content fade keep the original Dynamic Island morph.
+    // Capsule in both states: radius tracks height (17 closed, 26 open) and
+    // interpolates through the morph so the corners never read as a jump.
     private var barShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: barHeight / 2, style: .continuous)
+        RoundedRectangle(cornerRadius: isExpanded ? 26 : collapsedHeight / 2, style: .continuous)
     }
 
     private var promptText: String {
@@ -532,11 +541,9 @@ struct CosmoInlineAssistantBar: View {
 
     private var collapsedWidth: CGFloat { 56 }
 
-    private var barHeight: CGFloat { 34 }
+    private var collapsedHeight: CGFloat { 34 }
 
-    private var compactControlSize: CGFloat { 24 }
-
-    private var menuVerticalOffset: CGFloat { -(barHeight + 12) }
+    private var expandedMinHeight: CGFloat { 52 }
 
     private var expandedWidth: CGFloat {
         guard availableWidth > 120 else { return 600 }
@@ -1067,7 +1074,7 @@ private struct CosmoInlineAssistantSkillMenu: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(DS.text)
                             .lineLimit(1)
-                        Text(skill.preferredModelTier?.displayLabel ?? "Auto")
+                        Text(skill.displayedModelLabel)
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(DS.textMuted)
                             .padding(.horizontal, 6)

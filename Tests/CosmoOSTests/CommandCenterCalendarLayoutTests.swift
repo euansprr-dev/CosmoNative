@@ -419,3 +419,81 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         )
     }
 }
+
+final class CommandCenterHabitEnginePersistenceTests: XCTestCase {
+    func testHabitCompletionRecordIgnoresAgentConversationSystemEvent() {
+        let atom = Atom.new(
+            type: .systemEvent,
+            title: "Agent Conversation: telegram",
+            structured: #"{"createdAt":"2026-06-13T00:00:00Z","summary":"hello","topics":["ops"]}"#,
+            metadata: #"{"subtype":"agent_conversation","conversationId":"conv-1"}"#
+        )
+
+        XCTAssertNil(CommandCenterHabitPersistence.habitCompletionRecord(from: atom))
+    }
+
+    func testHabitCompletionRecordDecodesHabitCompletionSystemEvent() throws {
+        let record = HabitCompletionRecord(
+            id: "record-1",
+            habitUUID: "habit-1",
+            date: "2026-06-13T00:00:00Z",
+            source: .manual,
+            taskUUID: nil,
+            countDelta: 1,
+            trackedMinutesSnapshot: 30
+        )
+        let atom = Atom.new(
+            type: .systemEvent,
+            title: "Habit completion"
+        ).withStructured(record)
+
+        XCTAssertEqual(CommandCenterHabitPersistence.habitCompletionRecord(from: atom), record)
+    }
+
+    func testDeepWorkSessionDecodesCurrentMetadata() throws {
+        let started = try XCTUnwrap(ISO8601.date(from: "2026-06-13T08:00:00Z"))
+        let metadata = DeepWorkSessionMetadata(
+            taskUUID: "task-1",
+            startedAt: ISO8601.string(from: started),
+            endedAt: nil,
+            plannedMinutes: 60,
+            actualMinutes: 50,
+            focusScore: 82,
+            distractionCount: nil,
+            intent: "deepWork",
+            intentUUID: nil,
+            intentTitleSnapshot: nil,
+            habitUUID: "habit-1",
+            habitTitleSnapshot: nil,
+            outputAtomUUIDs: nil,
+            xpEarned: nil,
+            notes: nil
+        )
+        let metadataJSON = try XCTUnwrap(String(data: JSONEncoder().encode(metadata), encoding: .utf8))
+        let atom = Atom.new(type: .deepWorkBlock, title: "Current session", metadata: metadataJSON)
+
+        let session = try XCTUnwrap(CommandCenterHabitPersistence.deepWorkSession(from: atom))
+        XCTAssertEqual(session.startedAt, started)
+        XCTAssertEqual(session.plannedMinutes, 60)
+        XCTAssertEqual(session.actualMinutes, 50)
+        XCTAssertEqual(session.focusScore, 82)
+        XCTAssertEqual(session.habitUUID, "habit-1")
+    }
+
+    func testDeepWorkSessionNormalizesLegacyTimerMetadata() throws {
+        let started = try XCTUnwrap(ISO8601.date(from: "2026-06-13T09:00:00Z"))
+        var atom = Atom.new(
+            type: .deepWorkBlock,
+            title: "Legacy timer session",
+            metadata: #"{"sessionType":"deepWork","targetMinutes":45,"durationMinutes":30,"xpAwarded":20,"taskId":"task-1"}"#
+        )
+        atom.createdAt = ISO8601.string(from: started)
+
+        let session = try XCTUnwrap(CommandCenterHabitPersistence.deepWorkSession(from: atom))
+        XCTAssertEqual(session.startedAt, started)
+        XCTAssertEqual(session.plannedMinutes, 45)
+        XCTAssertEqual(session.actualMinutes, 30)
+        XCTAssertNil(session.focusScore)
+        XCTAssertNil(session.habitUUID)
+    }
+}

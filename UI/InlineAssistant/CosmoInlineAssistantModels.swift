@@ -194,6 +194,14 @@ struct CosmoInlineSkillDefinition: Identifiable, Codable, Equatable, Sendable {
     /// (e.g. "every slide keeps its SLIDE N header", "no invented metrics").
     var verification: String?
 
+    var displayedModelLabel: String {
+        if isBuiltin,
+           baseSkillID == .contentReview || baseSkillID == .voiceVariations {
+            return "Opus 4.8"
+        }
+        return preferredModelTier?.displayLabel ?? "Auto"
+    }
+
     static func custom(
         id: String = UUID().uuidString,
         name: String,
@@ -1322,6 +1330,8 @@ enum CosmoInlineAssistantSkillRuntime {
             "newsletter from", "chapter from", "essay from my"
         ]) {
             skill = builtInSkill(.synthesize)
+        } else if isProfileBackedOutlineBodyFillLike(lower) {
+            skill = profileBackedSlideExpansionSkill()
         } else if isFactFillLike(lower) {
             skill = builtInSkill(.factFill)
         } else if isProfileBackedSlideExpansionEditLike(lower) {
@@ -1381,6 +1391,15 @@ enum CosmoInlineAssistantSkillRuntime {
         ])
         skill.instructions.append(
             "When the user asks to use a profile, best-performing posts, reels, swipes, or exact voice/structure while also asking to add/fill slides or a draft, this is still an edit task. Read the existing slide content as the lead-in, inspect the available profile/swipe context, then stage the new or changed slide content as reviewed diffs instead of asking which angle to take."
+        )
+        skill.instructions.append(
+            "The outline is the source of truth when the user asks to put an outline into the body/slides. Preserve the outline's order, intent, and storytelling/explanation shape; use profile, swipe, and best-performing examples only to fill placeholders, facts, format cues, and light wording gaps."
+        )
+        skill.instructions.append(
+            "Do not copy, transplant, or re-template a best-performing post unless the user explicitly asks for a 1:1 copy or structure match. Best-performing posts are reference material, not the replacement draft."
+        )
+        skill.instructions.append(
+            "For slide-specific instructions, follow the user literally even if a best-performing example uses a different structure."
         )
         skill.instructions.append(
             "If multiple source angles are available, choose the one that best continues the current draft and mention that source in the rationale; do not ask a clarification question unless there is no editable target or no relevant context can be found."
@@ -1706,6 +1725,15 @@ enum CosmoInlineAssistantSkillRuntime {
         return containsAny(lower, [
             "add", "fill", "populate", "build", "draft", "write",
             "make", "extend", "complete", "put the full", "put full"
+        ])
+    }
+
+    private static func isProfileBackedOutlineBodyFillLike(_ lower: String) -> Bool {
+        isOutlineToBodyEditLike(lower) &&
+        containsAny(lower, [
+            "best performing", "top performing", "best-performing",
+            "top-performing", "swipe", "swipes", "thread", "threads",
+            "profile", "client profile", "format & data", "format and data"
         ])
     }
 

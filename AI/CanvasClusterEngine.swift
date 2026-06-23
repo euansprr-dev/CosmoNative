@@ -391,7 +391,7 @@ class CanvasClusterEngine: ObservableObject {
         withAnimation(ProMotionSprings.gentle) {
             switch userClusters[index].viewMode {
             case .canvas:
-                userClusters[index].expandBoundsToContainMembers(blocks: blocks)
+                break
             case .grid:
                 break
             case .list, .board:
@@ -457,15 +457,8 @@ class CanvasClusterEngine: ObservableObject {
 
     /// Update bounding rects for all user clusters (call after block positions change)
     func updateUserClusterBounds(blocks: [CanvasBlock]) {
-        for index in userClusters.indices {
-            // List/board clusters don't auto-resize from block positions
-            guard userClusters[index].viewMode == .canvas else { continue }
-            // Zones with no blocks keep their manually-set boundingRect
-            let hasMembers = blocks.contains { userClusters[index].blockUUIDs.contains($0.entityUuid) }
-            if hasMembers {
-                userClusters[index].expandBoundsToContainMembers(blocks: blocks)
-            }
-        }
+        // User-created cluster geometry is authoritative after creation or manual resize.
+        // Membership and block moves should not stretch folders/clusters unexpectedly.
     }
 
     /// Persist clusters after a move (public wrapper for persistUserClusters)
@@ -686,9 +679,6 @@ class CanvasClusterEngine: ObservableObject {
             if !userClusters[targetIndex].blockUUIDs.contains(event.blockUUID) {
                 userClusters[targetIndex].blockUUIDs.append(event.blockUUID)
             }
-            if userClusters[targetIndex].viewMode == .canvas {
-                userClusters[targetIndex].expandBoundsToContainMembers(blocks: blocks)
-            }
         }
 
         // Immediate in-memory update for visible board/list rows.
@@ -824,6 +814,22 @@ class CanvasClusterEngine: ObservableObject {
         )
     }
 
+    /// Clamp a block position into a target cluster without changing that cluster's size.
+    /// Used by non-canvas filing paths before membership changes, so a block never
+    /// stretches the target toward its old canvas position.
+    func containedDropPosition(
+        preferredPoint: CGPoint? = nil,
+        blockSize: CGSize,
+        inCluster clusterId: UUID
+    ) -> CGPoint? {
+        guard let cluster = userClusters.first(where: { $0.id == clusterId }) else { return nil }
+        return clampedPreviewPosition(
+            for: preferredPoint ?? rectCenter(cluster.boundingRect),
+            blockSize: blockSize,
+            in: cluster
+        )
+    }
+
     /// Update canvas transfer preview/highlight during a drag and return the resolved target.
     func updateCanvasDropTarget(
         blockUUID: String,
@@ -952,6 +958,16 @@ class CanvasClusterEngine: ObservableObject {
     }
 
     /// Load user clusters from ThinkspaceMetadata
+    /// Read-only cluster snapshot for prefetching a thinkspace the user is
+    /// about to enter — same source as `loadUserClusters` but touches no
+    /// engine state and skips the fit pass (the authoritative load right
+    /// after a real switch corrects degenerate grid/list/board rects).
+    static func clustersSnapshot(thinkspaceId: String, blocks: [CanvasBlock]) async -> [CanvasCluster] {
+        guard let atom = try? await AtomRepository.shared.fetch(uuid: thinkspaceId),
+              let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { return [] }
+        return metadata.clusters.map { $0.toCanvasCluster(blocks: blocks, thinkspaceId: thinkspaceId) }
+    }
+
     func loadUserClusters(thinkspaceId: String?, blocks: [CanvasBlock]) async {
         guard let tsId = thinkspaceId else {
             userClusters = []

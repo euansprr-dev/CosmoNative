@@ -66,6 +66,13 @@ enum CosmoNotification {
         static let moveCanvasBlocks = Notification.Name("com.cosmo.canvas.moveBlocks")
         static let captureCurrentThinkspaceScreenshot = Notification.Name("com.cosmo.canvas.captureCurrentThinkspaceScreenshot")
         static let skipNextThinkspaceSwitchScreenshot = Notification.Name("com.cosmo.canvas.skipNextThinkspaceSwitchScreenshot")
+        /// Posted the moment a thinkspace switch starts animating its new
+        /// content in — the dive cover holds the screen until this arrives.
+        static let thinkspaceSwitchDidPresent = Notification.Name("com.cosmo.canvas.thinkspaceSwitchDidPresent")
+        /// Ask the canvas to warm the snapshot cache for a thinkspace the
+        /// user is likely to enter next (hovered Constellation card, recent
+        /// spaces). userInfo: ["thinkspaceId": String].
+        static let prewarmThinkspace = Notification.Name("com.cosmo.canvas.prewarmThinkspace")
 
         // Block creation
         static let createNoteBlock = Notification.Name("com.cosmo.canvas.createNoteBlock")
@@ -116,6 +123,7 @@ enum CosmoNotification {
         static let focusDatabaseItem = Notification.Name("com.cosmo.inbox.focusDatabaseItem")
         /// ⌥⌘N — navigate to the inbox and put the cursor in the capture field.
         static let focusCaptureField = Notification.Name("com.cosmo.inbox.focusCaptureField")
+        static let captureLaneChanged = Notification.Name("com.cosmo.inbox.captureLaneChanged")
         /// Navigate to the inbox queue (Command Center chip, deep links).
         static let open = Notification.Name("com.cosmo.inbox.open")
     }

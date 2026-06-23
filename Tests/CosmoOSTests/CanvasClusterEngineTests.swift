@@ -334,7 +334,7 @@ final class CanvasClusterEngineTests: XCTestCase {
         assertEqualCGFloat(rect?.height, 360, accuracy: 0.001)
     }
 
-    func testUpdateUserClusterBoundsExpandsOnlyNeededEdgeWhenMemberLeavesCluster() {
+    func testUpdateUserClusterBoundsKeepsCanvasRectWhenMemberLeavesCluster() {
         let clusterId = UUID()
         let block = makeBlock(
             uuid: "b-1",
@@ -358,7 +358,7 @@ final class CanvasClusterEngineTests: XCTestCase {
         let rect = engine.userClusters.first(where: { $0.id == clusterId })?.boundingRect
         assertEqualCGFloat(rect?.origin.x, 0, accuracy: 0.001)
         assertEqualCGFloat(rect?.origin.y, 0, accuracy: 0.001)
-        assertEqualCGFloat(rect?.width, 430, accuracy: 0.001)
+        assertEqualCGFloat(rect?.width, 280, accuracy: 0.001)
         assertEqualCGFloat(rect?.height, 360, accuracy: 0.001)
     }
 
@@ -458,6 +458,60 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(cluster?.manualSizeOverride, manual)
     }
 
+    func testAddBlockToCanvasClusterAppendsWithoutResizingContainer() {
+        let clusterId = UUID()
+        let firstBlock = makeBlock(uuid: "b-1", type: .note, position: CGPoint(x: 100, y: 100), size: CGSize(width: 180, height: 120))
+        let newBlock = makeBlock(uuid: "b-2", type: .note, position: CGPoint(x: 900, y: 100), size: CGSize(width: 180, height: 120))
+        let rect = CGRect(x: 20, y: 40, width: 420, height: 280)
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: clusterId,
+                blockUUIDs: [firstBlock.entityUuid],
+                rect: rect,
+                viewMode: .canvas
+            )
+        ]
+
+        engine.addBlockToCluster(
+            blockUUID: newBlock.entityUuid,
+            clusterId: clusterId,
+            blocks: [firstBlock, newBlock]
+        )
+
+        let cluster = engine.userClusters.first(where: { $0.id == clusterId })
+        XCTAssertEqual(cluster?.blockUUIDs, [firstBlock.entityUuid, newBlock.entityUuid])
+        XCTAssertEqual(cluster?.boundingRect, rect)
+    }
+
+    func testUpdateMembershipIntoCanvasClusterDoesNotResizeContainer() {
+        let clusterId = UUID()
+        let firstBlock = makeBlock(uuid: "b-1", type: .note, position: CGPoint(x: 100, y: 100), size: CGSize(width: 180, height: 120))
+        let newBlock = makeBlock(uuid: "b-2", type: .note, position: CGPoint(x: 900, y: 100), size: CGSize(width: 180, height: 120))
+        let rect = CGRect(x: 20, y: 40, width: 420, height: 280)
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: clusterId,
+                blockUUIDs: [firstBlock.entityUuid],
+                rect: rect,
+                viewMode: .canvas
+            )
+        ]
+
+        engine.updateMembership(
+            blockUUID: newBlock.entityUuid,
+            targetClusterId: clusterId,
+            blockPosition: newBlock.position,
+            ejectInset: -40,
+            blocks: [firstBlock, newBlock]
+        )
+
+        let cluster = engine.userClusters.first(where: { $0.id == clusterId })
+        XCTAssertEqual(cluster?.blockUUIDs, [firstBlock.entityUuid, newBlock.entityUuid])
+        XCTAssertEqual(cluster?.boundingRect, rect)
+    }
+
     func testTransferBlockBetweenGridClustersAppendsWithoutResizingEitherContainer() {
         let sourceId = UUID()
         let targetId = UUID()
@@ -501,6 +555,45 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(target?.blockUUIDs, [targetBlock.entityUuid, movingBlock.entityUuid])
         XCTAssertEqual(target?.boundingRect, targetRect)
         XCTAssertEqual(target?.manualSizeOverride, targetManual)
+    }
+
+    func testTransferBlockBetweenCanvasClustersDoesNotResizeEitherContainer() {
+        let sourceId = UUID()
+        let targetId = UUID()
+        let remainingBlock = makeBlock(uuid: "source-remaining", type: .note, position: CGPoint(x: 100, y: 100), size: CGSize(width: 180, height: 120))
+        let movingBlock = makeBlock(uuid: "moving", type: .note, position: CGPoint(x: 320, y: 100), size: CGSize(width: 180, height: 120))
+        let targetBlock = makeBlock(uuid: "target-existing", type: .task, position: CGPoint(x: 940, y: 100), size: CGSize(width: 180, height: 120))
+        let sourceRect = CGRect(x: 20, y: 40, width: 460, height: 280)
+        let targetRect = CGRect(x: 800, y: 40, width: 420, height: 280)
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: sourceId,
+                blockUUIDs: [remainingBlock.entityUuid, movingBlock.entityUuid],
+                rect: sourceRect,
+                viewMode: .canvas
+            ),
+            makeCluster(
+                id: targetId,
+                blockUUIDs: [targetBlock.entityUuid],
+                rect: targetRect,
+                viewMode: .canvas
+            )
+        ]
+
+        engine.transferBlock(
+            blockUUID: movingBlock.entityUuid,
+            from: sourceId,
+            to: targetId,
+            blocks: [targetBlock, movingBlock, remainingBlock]
+        )
+
+        let source = engine.userClusters.first(where: { $0.id == sourceId })
+        let target = engine.userClusters.first(where: { $0.id == targetId })
+        XCTAssertEqual(source?.blockUUIDs, [remainingBlock.entityUuid])
+        XCTAssertEqual(source?.boundingRect, sourceRect)
+        XCTAssertEqual(target?.blockUUIDs, [targetBlock.entityUuid, movingBlock.entityUuid])
+        XCTAssertEqual(target?.boundingRect, targetRect)
     }
 
     func testGridContentOrdersMembersByClusterMembershipOrder() {
@@ -572,7 +665,7 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(cluster.boundingRect.height, 360, accuracy: 0.001)
     }
 
-    func testPersistedCanvasClusterRectExpandsWhenMemberFallsOutside() {
+    func testPersistedCanvasClusterRectRemainsAuthoritativeWhenMemberFallsOutside() {
         let block = makeBlock(
             uuid: "b-1",
             type: .note,
@@ -595,8 +688,30 @@ final class CanvasClusterEngineTests: XCTestCase {
 
         XCTAssertEqual(cluster.boundingRect.origin.x, 0, accuracy: 0.001)
         XCTAssertEqual(cluster.boundingRect.origin.y, 0, accuracy: 0.001)
-        XCTAssertEqual(cluster.boundingRect.width, 450, accuracy: 0.001)
+        XCTAssertEqual(cluster.boundingRect.width, 300, accuracy: 0.001)
         XCTAssertEqual(cluster.boundingRect.height, 280, accuracy: 0.001)
+    }
+
+    func testContainedDropPositionClampsIntoClusterInterior() {
+        let clusterId = UUID()
+        let engine = CanvasClusterEngine()
+        engine.userClusters = [
+            makeCluster(
+                id: clusterId,
+                blockUUIDs: [],
+                rect: CGRect(x: 0, y: 0, width: 420, height: 300),
+                viewMode: .canvas
+            )
+        ]
+
+        let position = engine.containedDropPosition(
+            preferredPoint: CGPoint(x: -1_000, y: -1_000),
+            blockSize: CGSize(width: 180, height: 120),
+            inCluster: clusterId
+        )
+
+        assertEqualCGFloat(position?.x, 110, accuracy: 0.001)
+        assertEqualCGFloat(position?.y, 128, accuracy: 0.001)
     }
 
     func testPersistedGridClusterRectRemainsAuthoritativeRegardlessOfMemberPositions() {
@@ -628,7 +743,7 @@ final class CanvasClusterEngineTests: XCTestCase {
         XCTAssertEqual(cluster.manualSizeOverride, manual)
     }
 
-    func testCanvasClusterResizeMapperScalesHorizontalEdgeFromOppositeAnchor() {
+    func testCanvasClusterResizeMapperKeepsMembersUnchangedForHorizontalResize() {
         let preview = CanvasClusterResizeMapper.previewGeometries(
             from: CGRect(x: 0, y: 0, width: 400, height: 300),
             to: CGRect(x: 0, y: 0, width: 600, height: 300),
@@ -641,13 +756,13 @@ final class CanvasClusterEngineTests: XCTestCase {
             ]
         )
 
-        assertEqualCGFloat(preview["block-1"]?.position.x, 150, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.x, 100, accuracy: 0.001)
         assertEqualCGFloat(preview["block-1"]?.position.y, 120, accuracy: 0.001)
-        assertEqualCGFloat(preview["block-1"]?.size.width, 270, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.width, 180, accuracy: 0.001)
         assertEqualCGFloat(preview["block-1"]?.size.height, 120, accuracy: 0.001)
     }
 
-    func testCanvasClusterResizeMapperScalesVerticalEdgeFromOppositeAnchor() {
+    func testCanvasClusterResizeMapperKeepsMembersUnchangedForVerticalResize() {
         let preview = CanvasClusterResizeMapper.previewGeometries(
             from: CGRect(x: 0, y: 0, width: 400, height: 300),
             to: CGRect(x: 0, y: -150, width: 400, height: 450),
@@ -661,12 +776,12 @@ final class CanvasClusterEngineTests: XCTestCase {
         )
 
         assertEqualCGFloat(preview["block-1"]?.position.x, 100, accuracy: 0.001)
-        assertEqualCGFloat(preview["block-1"]?.position.y, 30, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.y, 120, accuracy: 0.001)
         assertEqualCGFloat(preview["block-1"]?.size.width, 180, accuracy: 0.001)
-        assertEqualCGFloat(preview["block-1"]?.size.height, 180, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.height, 120, accuracy: 0.001)
     }
 
-    func testCanvasClusterResizeMapperScalesCornerFromOppositeAnchor() {
+    func testCanvasClusterResizeMapperKeepsMembersUnchangedForCornerResize() {
         let preview = CanvasClusterResizeMapper.previewGeometries(
             from: CGRect(x: 0, y: 0, width: 400, height: 300),
             to: CGRect(x: -200, y: -150, width: 600, height: 450),
@@ -679,10 +794,10 @@ final class CanvasClusterEngineTests: XCTestCase {
             ]
         )
 
-        assertEqualCGFloat(preview["block-1"]?.position.x, -50, accuracy: 0.001)
-        assertEqualCGFloat(preview["block-1"]?.position.y, 30, accuracy: 0.001)
-        assertEqualCGFloat(preview["block-1"]?.size.width, 270, accuracy: 0.001)
-        assertEqualCGFloat(preview["block-1"]?.size.height, 180, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.x, 100, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.position.y, 120, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.width, 180, accuracy: 0.001)
+        assertEqualCGFloat(preview["block-1"]?.size.height, 120, accuracy: 0.001)
     }
 
     func testThinkspaceLibrarySnapshotGroupsClusteredAndInventoryItems() {
@@ -725,6 +840,34 @@ final class CanvasClusterEngineTests: XCTestCase {
 
     func testCommandKPrimaryTabsExcludeInquiry() {
         XCTAssertFalse(CommandKTab.allCases.contains(.inquiry))
+    }
+
+    func testCanvasViewBlockTapClearsClusterSelectionAndDropHighlight() throws {
+        let source = try canvasViewSource()
+        let body = try sourceSlice(
+            in: source,
+            from: "private func handleTap(blockId: String)",
+            to: "private func updateInlineEditableSurface"
+        )
+
+        XCTAssertTrue(body.contains("clearCanvasClusterDropPreview()"))
+        XCTAssertTrue(body.contains("clusterEngine.selectCluster(nil)"))
+
+        let clearRange = try XCTUnwrap(body.range(of: "clusterEngine.selectCluster(nil)"))
+        let selectRange = try XCTUnwrap(body.range(of: "selectedBlockId = blockId"))
+        XCTAssertLessThan(clearRange.lowerBound, selectRange.lowerBound)
+    }
+
+    func testCanvasViewClusterSelectionClearsSelectedBlockState() throws {
+        let source = try canvasViewSource()
+        let body = try sourceSlice(
+            in: source,
+            from: "onSelectCluster: { id in",
+            to: "onDragCluster: { id, translation in"
+        )
+
+        XCTAssertTrue(body.contains("clearSelectedBlock()"))
+        XCTAssertFalse(body.contains("selectedBlockId = nil"))
     }
 
     // MARK: - ThinkspaceLibrarySnapshot (Library mode)
@@ -840,5 +983,25 @@ private extension CanvasClusterEngineTests {
             title: "Block",
             metadata: [:]
         )
+    }
+
+    func canvasViewSource() throws -> String {
+        try String(
+            contentsOf: repositoryRoot().appendingPathComponent("Canvas/CanvasView.swift"),
+            encoding: .utf8
+        )
+    }
+
+    func sourceSlice(in source: String, from startMarker: String, to endMarker: String) throws -> String {
+        let start = try XCTUnwrap(source.range(of: startMarker))
+        let end = try XCTUnwrap(source.range(of: endMarker, range: start.upperBound..<source.endIndex))
+        return String(source[start.lowerBound..<end.lowerBound])
+    }
+
+    func repositoryRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 }

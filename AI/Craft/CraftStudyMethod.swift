@@ -102,7 +102,7 @@ enum CraftStudyMethod {
         case .reel:
             return """
             ## Format Rules — Reel
-            One sentence per slide. One breath. If a slide needs a second sentence, it is two slides or it is overwritten — flag it either way. Hooks must land in under ~3 seconds of speech (roughly 12 words). The transcript IS the content: every word gets spoken or shown full-screen, so filler words read as dead air. Typical structure runs 6–12 beats; a beat that doesn't move the chain gets cut, not trimmed. CTA is one action, spoken like a friend's aside, never a paragraph.
+            One or two sentences per slide. One breath or two fast beats. If a slide needs a third sentence, it is a carousel slide or it needs splitting — flag it either way. Hooks must land in under ~3 seconds of speech (roughly 12 words). The transcript IS the content: every word gets spoken or shown full-screen, so filler words read as dead air. Typical structure runs 6–12 beats; a beat that doesn't move the chain gets cut, not trimmed. CTA is one action, spoken like a friend's aside, never a paragraph.
             """
         case .carousel:
             return """

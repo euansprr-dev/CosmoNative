@@ -238,6 +238,33 @@ final class NotePersistenceRegressionTests: XCTestCase {
         XCTAssertFalse(classSource.contains("override func setFrameSize"))
     }
 
+    func testBlockReturnSuppressesStaleFlushBeforeRunningSplitCommand() throws {
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Editor/TextKitCoordinator.swift"),
+            encoding: .utf8
+        )
+        let returnCommandRange = try XCTUnwrap(
+            source.range(of: "if commandSelector == #selector(NSResponder.insertNewline(_:))")
+        )
+        let splitBranchRange = try XCTUnwrap(
+            source.range(
+                of: "if parent.splitsOnReturn {",
+                range: returnCommandRange.lowerBound..<source.endIndex
+            )
+        )
+        let branchEndRange = try XCTUnwrap(
+            source.range(
+                of: "if let collapsedHeadingRange",
+                range: splitBranchRange.lowerBound..<source.endIndex
+            )
+        )
+        let splitBranch = String(source[splitBranchRange.lowerBound..<branchEndRange.lowerBound])
+        let guardRange = try XCTUnwrap(splitBranch.range(of: "beginAwaitingExternalContent()"))
+        let commandRange = try XCTUnwrap(splitBranch.range(of: "parent.onBoundaryCommand?(.splitBlock"))
+
+        XCTAssertLessThan(guardRange.lowerBound, commandRange.lowerBound)
+    }
+
     func testNoteFocusTextAnalysisBuildsMetricsFromOneSnapshot() {
         let text = """
         # Opening

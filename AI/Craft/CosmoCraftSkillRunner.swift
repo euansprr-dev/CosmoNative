@@ -35,7 +35,7 @@ final class CosmoCraftSkillRunner {
         prompt: String,
         surfaceKind: CosmoEditableSurfaceKind?
     ) -> CosmoInlineAssistantSkillID? {
-        guard surfaceKind != .canvas else { return nil }
+        guard let surfaceKind, surfaceKind != .canvas else { return nil }
         let plan = CosmoInlineAssistantSkillRuntime.plan(
             for: prompt,
             surfaceKind: surfaceKind,
@@ -51,22 +51,24 @@ final class CosmoCraftSkillRunner {
     func run(
         prompt: String,
         skillID: CosmoInlineAssistantSkillID,
-        store: CosmoInlineAssistantStore
+        store: CosmoInlineAssistantStore,
+        snapshot preferredSnapshot: CosmoEditableSourceSnapshot? = nil
     ) async throws {
         // Session binding happens in submit(), atomically with the user's
         // message — never here, where it would swap the visible conversation.
-        let activeSurface = CosmoEditableSurfaceRegistry.shared.activeSurface
-        let snapshot = activeSurface?.editableSnapshot()
+        let snapshot = preferredSnapshot ?? store.activeEditableSnapshot()
 
         guard let snapshot,
-              !snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              CraftSurfaceContext.hasUsableDraft(snapshot) else {
             store.receivePaneAnswer(
                 title: nil,
-                answer: "Open a content piece first — I review and riff against the draft you're looking at.",
+                answer: "Open an idea, note, or draft first — I review and riff against the workspace you're looking at.",
                 route: .answer
             )
             return
         }
+        let draftText = CraftSurfaceContext.draftText(for: snapshot)
+        let craftSourceHash = CraftSurfaceContext.sourceHash(for: snapshot)
 
         let sessionKey = "\(snapshot.surfaceID)|\(skillID.rawValue)"
 
@@ -87,8 +89,8 @@ final class CosmoCraftSkillRunner {
 
         let atom = await resolveContentAtom(snapshot: snapshot)
         let clientAtom = await resolveClientAtom(prompt: prompt, contentAtom: atom)
-        let format = CraftFormatDetector.detect(atom: atom, draftText: snapshot.text)
-        let slides = CraftDraftParser.slides(in: snapshot.text)
+        let format = CraftFormatDetector.detect(atom: atom, draftText: draftText)
+        let slides = CraftDraftParser.slides(in: draftText)
 
         store.receiveToolActivity(.completed(
             name: "craft_context",
@@ -115,7 +117,7 @@ final class CosmoCraftSkillRunner {
             let query = CraftComparableQuery(
                 format: format,
                 draftTitle: snapshot.title,
-                draftText: snapshot.text,
+                draftText: draftText,
                 clientNiche: clientMeta?.niche
             )
             comparables = await CraftComparableSelector.select(
@@ -144,11 +146,13 @@ final class CosmoCraftSkillRunner {
             prompt: prompt,
             skillID: skillID,
             snapshot: snapshot,
+            draftText: draftText,
             format: format,
             slides: slides,
             comparables: comparables,
             stats: stats,
             isFollowUp: isFollowUp,
+            currentSourceHash: craftSourceHash,
             previousSourceHash: session.lastSourceHash
         )
         session.messages.append((role: "user", content: userMessage))
@@ -176,12 +180,10 @@ final class CosmoCraftSkillRunner {
         store.receiveToolActivity(.allDone(totalCalls: isFollowUp ? 2 : 3))
 
         session.messages.append((role: "assistant", content: completion.text))
-        session.lastSourceHash = snapshot.sourceHash
+        session.lastSourceHash = craftSourceHash
 
-        let decoder = JSONDecoder()
-        let data = Data(completion.text.utf8)
-
-        if skillID == .voiceVariations, let riff = try? decoder.decode(CraftRiffResult.self, from: data) {
+        if skillID == .voiceVariations,
+           let riff = try? CraftStructuredOutputParser.decodeRenderable(CraftRiffResult.self, from: completion.text) {
             session.lastRiff = riff
             sessions[sessionKey] = session
             store.receivePaneAnswer(
@@ -190,7 +192,7 @@ final class CosmoCraftSkillRunner {
                 route: .answer
             )
         } else if skillID == .contentReview, !isFollowUp,
-                  let review = try? decoder.decode(CraftReviewResult.self, from: data) {
+                  let review = try? CraftStructuredOutputParser.decodeRenderable(CraftReviewResult.self, from: completion.text) {
             sessions[sessionKey] = session
             store.receivePaneAnswer(
                 title: nil,
@@ -237,7 +239,7 @@ final class CosmoCraftSkillRunner {
         let operation = CosmoAssistantProposalOperation(
             kind: .textReplacement,
             targetID: snapshot.targetID,
-            anchorID: nil,
+            anchorID: CraftSurfaceContext.anchorID(forOriginalText: original, in: snapshot),
             originalText: original,
             proposedText: variation.text,
             sourceHash: snapshot.sourceHash,
@@ -343,17 +345,19 @@ final class CosmoCraftSkillRunner {
         prompt: String,
         skillID: CosmoInlineAssistantSkillID,
         snapshot: CosmoEditableSourceSnapshot,
+        draftText: String,
         format: CraftFormat,
         slides: [CraftDraftSlide],
         comparables: [CraftComparable],
         stats: CraftFormatStats,
         isFollowUp: Bool,
+        currentSourceHash: String,
         previousSourceHash: String?
     ) -> String {
         if isFollowUp {
             var message = prompt
-            if previousSourceHash != snapshot.sourceHash {
-                message += "\n\n(The draft changed since your last read. Current draft:)\n<draft>\n\(snapshot.text)\n</draft>"
+            if previousSourceHash != currentSourceHash {
+                message += "\n\n(The workspace changed since your last read. Current draft:)\n<draft>\n\(draftText)\n</draft>"
             }
             return message
         }
@@ -365,7 +369,7 @@ final class CosmoCraftSkillRunner {
         Detected format: \(format.displayName) (\(slides.count) slides)
 
         <draft>
-        \(snapshot.text)
+        \(draftText)
         </draft>
         """)
 
@@ -415,10 +419,294 @@ final class CosmoCraftSkillRunner {
     }
 }
 
+enum CraftSurfaceContext {
+    static func hasUsableDraft(_ snapshot: CosmoEditableSourceSnapshot) -> Bool {
+        !draftText(for: snapshot).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func draftText(for snapshot: CosmoEditableSourceSnapshot) -> String {
+        let body = snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = meaningfulTitle(snapshot.title)
+        let hooks = hookAnchors(in: snapshot).map { "- \($0.label)" }
+
+        var sections: [String] = []
+        if snapshot.surfaceID.hasPrefix("idea:"), let title {
+            sections.append("Idea title:\n\(title)")
+        }
+        if !body.isEmpty {
+            sections.append(body)
+        }
+        if snapshot.surfaceID.hasPrefix("idea:"), !hooks.isEmpty {
+            sections.append("Hooks:\n\(hooks.joined(separator: "\n"))")
+        }
+        if sections.isEmpty, let title {
+            sections.append(title)
+        }
+        return sections.joined(separator: "\n\n")
+    }
+
+    static func sourceHash(for snapshot: CosmoEditableSourceSnapshot) -> String {
+        CosmoEditableSurfaceHasher.hash(draftText(for: snapshot))
+    }
+
+    static func anchorID(
+        forOriginalText originalText: String,
+        in snapshot: CosmoEditableSourceSnapshot
+    ) -> String? {
+        let normalizedOriginal = normalize(originalText)
+        guard !normalizedOriginal.isEmpty else { return nil }
+        return hookAnchors(in: snapshot).first { normalize($0.label) == normalizedOriginal }?.id
+    }
+
+    private static func hookAnchors(
+        in snapshot: CosmoEditableSourceSnapshot
+    ) -> [CosmoEditableAnchor] {
+        snapshot.anchors.filter {
+            $0.id.hasPrefix("hook-")
+                && !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private static func meaningfulTitle(_ rawTitle: String) -> String? {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              title.lowercased() != "untitled",
+              title.lowercased() != "untitled idea" else {
+            return nil
+        }
+        return title
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
 // MARK: - Markdown rendering
+
+enum CraftStructuredOutputParser {
+    enum ParseError: LocalizedError {
+        case noJSONObject
+        case noRenderableJSONObject(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .noJSONObject:
+                "No JSON object found in structured Craft output."
+            case .noRenderableJSONObject(let issue):
+                "No renderable structured Craft output found: \(issue)"
+            }
+        }
+    }
+
+    static func decode<T: Decodable>(_ type: T.Type, from text: String) throws -> T {
+        let candidates = candidatePayloads(in: text, recursionDepth: 0)
+        let decoder = JSONDecoder()
+        var lastError: Error?
+
+        for candidate in candidates {
+            guard let data = candidate.data(using: .utf8) else { continue }
+            do {
+                return try decoder.decode(T.self, from: data)
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let lastError { throw lastError }
+        throw ParseError.noJSONObject
+    }
+
+    static func decodeRenderable<T: CraftRenderableStructuredOutput>(
+        _ type: T.Type,
+        from text: String
+    ) throws -> T {
+        let candidates = candidatePayloads(in: text, recursionDepth: 0)
+        let decoder = JSONDecoder()
+        var lastError: Error?
+        var lastValidationIssue = "output did not match the expected shape"
+
+        for candidate in candidates {
+            guard let data = candidate.data(using: .utf8) else { continue }
+            do {
+                let decoded = try decoder.decode(T.self, from: data)
+                if let issue = decoded.craftValidationIssue {
+                    lastValidationIssue = issue
+                    continue
+                }
+                return decoded
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let lastError { throw lastError }
+        throw ParseError.noRenderableJSONObject(lastValidationIssue)
+    }
+
+    private static func candidatePayloads(
+        in text: String,
+        recursionDepth: Int
+    ) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        var candidates = [trimmed]
+        if recursionDepth == 0,
+           let data = trimmed.data(using: .utf8),
+           let nested = try? JSONDecoder().decode(String.self, from: data),
+           nested != trimmed {
+            candidates.append(contentsOf: candidatePayloads(in: nested, recursionDepth: recursionDepth + 1))
+        }
+        candidates.append(contentsOf: jsonObjects(in: trimmed).filter { $0 != trimmed })
+
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0).inserted }
+    }
+
+    /// Models occasionally wrap schema output in prose or emit a false-start
+    /// object before the real answer; pull every complete root object without
+    /// being confused by braces inside strings.
+    private static func jsonObjects(in text: String) -> [String] {
+        var objects: [String] = []
+        var start: String.Index?
+        var depth = 0
+        var inString = false
+        var escaping = false
+
+        for index in text.indices {
+            let character = text[index]
+            guard start != nil else {
+                if character == "{" {
+                    start = index
+                    depth = 1
+                }
+                continue
+            }
+
+            if inString {
+                if escaping {
+                    escaping = false
+                } else if character == "\\" {
+                    escaping = true
+                } else if character == "\"" {
+                    inString = false
+                }
+                continue
+            }
+
+            if character == "\"" {
+                inString = true
+            } else if character == "{" {
+                depth += 1
+            } else if character == "}" {
+                depth -= 1
+                if depth == 0, let objectStart = start {
+                    objects.append(String(text[objectStart...index]))
+                    start = nil
+                }
+            }
+        }
+
+        return objects
+    }
+}
+
+enum CraftPaneAnswerRepair {
+    static func repairedAnswer(
+        forRawSkillID rawValue: String?,
+        content: String
+    ) -> String? {
+        guard let craftSkillID = craftSkillID(from: rawValue) else { return nil }
+        return repairedAnswer(for: craftSkillID, content: content)
+    }
+
+    static func repairedMessages(
+        _ messages: [CosmoInlineAssistantPaneMessage]
+    ) -> (messages: [CosmoInlineAssistantPaneMessage], repaired: Bool) {
+        var repairedMessages = messages
+        var didRepair = false
+        var pendingCraftSkillID: CosmoInlineAssistantSkillID?
+
+        for index in repairedMessages.indices {
+            switch repairedMessages[index].role {
+            case .user:
+                pendingCraftSkillID = craftSkillID(from: repairedMessages[index].skillID)
+            case .system:
+                continue
+            case .assistant:
+                guard let craftSkillID = pendingCraftSkillID else { continue }
+                let originalContent = repairedMessages[index].content
+                if let repairedContent = repairedAnswer(for: craftSkillID, content: originalContent),
+                   repairedContent != originalContent {
+                    repairedMessages[index].content = repairedContent
+                    didRepair = true
+                }
+                pendingCraftSkillID = nil
+            }
+        }
+
+        return (repairedMessages, didRepair)
+    }
+
+    private static func craftSkillID(from rawValue: String?) -> CosmoInlineAssistantSkillID? {
+        guard let rawValue,
+              let skillID = CosmoInlineAssistantSkillID(rawValue: rawValue),
+              skillID == .contentReview || skillID == .voiceVariations else {
+            return nil
+        }
+        return skillID
+    }
+
+    private static func repairedAnswer(
+        for skillID: CosmoInlineAssistantSkillID,
+        content: String
+    ) -> String? {
+        guard looksLikeRawCraftStructuredOutput(content) else { return nil }
+        let receiptLine = receiptLine(in: content) ?? "Parsed from previous Craft response"
+        switch skillID {
+        case .contentReview:
+            guard let review = try? CraftStructuredOutputParser.decodeRenderable(CraftReviewResult.self, from: content) else {
+                return nil
+            }
+            return CraftAnswerRenderer.markdown(for: review, receiptLine: receiptLine)
+        case .voiceVariations:
+            guard let riff = try? CraftStructuredOutputParser.decodeRenderable(CraftRiffResult.self, from: content) else {
+                return nil
+            }
+            return CraftAnswerRenderer.markdown(for: riff, receiptLine: receiptLine)
+        default:
+            return nil
+        }
+    }
+
+    private static func looksLikeRawCraftStructuredOutput(_ content: String) -> Bool {
+        content.contains("\"slideNotes\"")
+            || content.contains("\"performanceRead\"")
+            || content.contains("\"variations\"")
+            || content.contains("\"beatLabel\"")
+    }
+
+    private static func receiptLine(in content: String) -> String? {
+        for line in content.split(separator: "\n", omittingEmptySubsequences: false).reversed() {
+            let trimmed = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix("_"), trimmed.hasSuffix("_"), trimmed.count > 2 else { continue }
+            return String(trimmed.dropFirst().dropLast())
+        }
+        return nil
+    }
+}
 
 enum CraftAnswerRenderer {
     static func markdown(for review: CraftReviewResult, usage: CraftUsage) -> String {
+        markdown(for: review, receiptLine: usage.receiptLine)
+    }
+
+    static func markdown(for review: CraftReviewResult, receiptLine: String) -> String {
         var lines: [String] = []
         lines.append("**Reading this as:** \(review.formatRead)")
         lines.append("")
@@ -463,13 +751,18 @@ enum CraftAnswerRenderer {
 
         lines.append("**Verdict:** \(review.verdict)")
         lines.append("")
-        lines.append("_\(usage.receiptLine)_")
+        lines.append("_\(receiptLine)_")
         return lines.joined(separator: "\n")
     }
 
     static func markdown(for riff: CraftRiffResult, usage: CraftUsage) -> String {
+        markdown(for: riff, receiptLine: usage.receiptLine)
+    }
+
+    static func markdown(for riff: CraftRiffResult, receiptLine: String) -> String {
         var lines: [String] = []
-        lines.append("### \(riff.beatLabel) — \(riff.variations.count) directions")
+        let directionLabel = riff.variations.count == 1 ? "direction" : "directions"
+        lines.append("### \(riff.beatLabel) — \(riff.variations.count) \(directionLabel)")
         if !riff.targetOriginalText.isEmpty {
             lines.append("Current: \"\(riff.targetOriginalText)\"")
         }
@@ -484,11 +777,14 @@ enum CraftAnswerRenderer {
             lines.append("> \(variation.text)")
             lines.append("")
         }
-        lines.append("**My bet:** \(riff.bet)")
-        lines.append("")
+        let bet = riff.bet.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !bet.isEmpty, bet.lowercased() != "x" {
+            lines.append("**My bet:** \(bet)")
+            lines.append("")
+        }
         lines.append("Reply `apply N` to stage one as a reviewed diff.")
         lines.append("")
-        lines.append("_\(usage.receiptLine)_")
+        lines.append("_\(receiptLine)_")
         return lines.joined(separator: "\n")
     }
 }

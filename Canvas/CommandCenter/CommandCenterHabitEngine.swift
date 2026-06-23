@@ -336,6 +336,130 @@ final class CommandCenterIntentEngine: ObservableObject {
     ]
 }
 
+struct CommandCenterHabitDeepWorkSession: Equatable, Sendable {
+    var taskUUID: String?
+    var startedAt: Date
+    var endedAt: Date?
+    var plannedMinutes: Int
+    var actualMinutes: Int?
+    var focusScore: Double?
+    var intent: String?
+    var intentUUID: String?
+    var habitUUID: String?
+    var habitTitleSnapshot: String?
+
+    var minutes: Int {
+        actualMinutes ?? plannedMinutes
+    }
+}
+
+enum CommandCenterHabitPersistence {
+    private static let habitCompletionTitle = "Habit completion"
+
+    static func habitCompletionRecord(from atom: Atom) -> HabitCompletionRecord? {
+        guard isHabitCompletionCandidate(atom) else { return nil }
+        return atom.structuredData(as: HabitCompletionRecord.self)
+    }
+
+    static func deepWorkSession(from atom: Atom) -> CommandCenterHabitDeepWorkSession? {
+        guard atom.type == .deepWorkBlock else { return nil }
+
+        if case .value(let metadata) = atom.decodedMetadata(as: DeepWorkSessionMetadata.self),
+           let startedAt = ISO8601.date(from: metadata.startedAt) {
+            return CommandCenterHabitDeepWorkSession(
+                taskUUID: metadata.taskUUID,
+                startedAt: startedAt,
+                endedAt: metadata.endedAt.flatMap { ISO8601.date(from: $0) },
+                plannedMinutes: metadata.plannedMinutes,
+                actualMinutes: metadata.actualMinutes,
+                focusScore: metadata.focusScore,
+                intent: metadata.intent,
+                intentUUID: metadata.intentUUID,
+                habitUUID: metadata.habitUUID,
+                habitTitleSnapshot: metadata.habitTitleSnapshot
+            )
+        }
+
+        return legacyDeepWorkSession(from: atom)
+    }
+
+    private static func isHabitCompletionCandidate(_ atom: Atom) -> Bool {
+        guard atom.type == .systemEvent else { return false }
+        if atom.title == habitCompletionTitle { return true }
+
+        guard let structured = jsonObject(from: atom.structured) else { return false }
+        return structured["habitUUID"] != nil
+            || structured["countDelta"] != nil
+            || structured["trackedMinutesSnapshot"] != nil
+    }
+
+    private static func legacyDeepWorkSession(from atom: Atom) -> CommandCenterHabitDeepWorkSession? {
+        guard let metadata = jsonObject(from: atom.metadata),
+              metadata["sessionType"] != nil
+                || metadata["targetMinutes"] != nil
+                || metadata["durationMinutes"] != nil else {
+            return nil
+        }
+
+        let explicitStartedAt = stringValue(metadata["startedAt"]).flatMap { ISO8601.date(from: $0) }
+        guard let startedAt = explicitStartedAt ?? ISO8601.date(from: atom.createdAt) else { return nil }
+
+        let actualMinutes = intValue(metadata["durationMinutes"]) ?? intValue(metadata["actualMinutes"])
+        let plannedMinutes = intValue(metadata["targetMinutes"])
+            ?? intValue(metadata["plannedMinutes"])
+            ?? actualMinutes
+            ?? 0
+        guard plannedMinutes > 0 || actualMinutes != nil else { return nil }
+
+        return CommandCenterHabitDeepWorkSession(
+            taskUUID: stringValue(metadata["taskUUID"]) ?? stringValue(metadata["taskId"]),
+            startedAt: startedAt,
+            endedAt: stringValue(metadata["endedAt"]).flatMap { ISO8601.date(from: $0) },
+            plannedMinutes: plannedMinutes,
+            actualMinutes: actualMinutes,
+            focusScore: doubleValue(metadata["focusScore"]),
+            intent: stringValue(metadata["intent"]) ?? stringValue(metadata["sessionType"]),
+            intentUUID: stringValue(metadata["intentUUID"]),
+            habitUUID: stringValue(metadata["habitUUID"]),
+            habitTitleSnapshot: stringValue(metadata["habitTitleSnapshot"])
+        )
+    }
+
+    private static func jsonObject(from json: String?) -> [String: Any]? {
+        guard let json,
+              !json.isEmpty,
+              let data = json.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let number = value as? NSNumber {
+            return number.stringValue
+        }
+        return nil
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = stringValue(value) { return Int(string) }
+        return nil
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let double = value as? Double { return double }
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = stringValue(value) { return Double(string) }
+        return nil
+    }
+}
+
 @MainActor
 final class CommandCenterHabitEngine: ObservableObject {
     static let shared = CommandCenterHabitEngine()
@@ -597,21 +721,21 @@ final class CommandCenterHabitEngine: ObservableObject {
             let workoutSessions = try await atomRepository.fetchAll(type: .workoutSession)
             let systemEvents = try await atomRepository.fetchAll(type: .systemEvent)
 
-            let completionRecords = systemEvents.compactMap { $0.structuredData(as: HabitCompletionRecord.self) }
+            let completionRecords = systemEvents.compactMap {
+                CommandCenterHabitPersistence.habitCompletionRecord(from: $0)
+            }
 
             let trackedMinutesByHabitToday = sessionAtoms.reduce(into: [String: Int]()) { partial, atom in
-                guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                      let started = PlannerumFormatters.iso8601.date(from: metadata.startedAt),
-                      started >= todayStart,
-                      let habitUUID = metadata.habitUUID else { return }
-                partial[habitUUID, default: 0] += metadata.actualMinutes ?? metadata.plannedMinutes
+                guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
+                      session.startedAt >= todayStart,
+                      let habitUUID = session.habitUUID else { return }
+                partial[habitUUID, default: 0] += session.minutes
             }
 
             let totalTrackedMinutesToday = sessionAtoms.reduce(into: 0) { partial, atom in
-                guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                      let started = PlannerumFormatters.iso8601.date(from: metadata.startedAt),
-                      started >= todayStart else { return }
-                partial += metadata.actualMinutes ?? metadata.plannedMinutes
+                guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
+                      session.startedAt >= todayStart else { return }
+                partial += session.minutes
             }
 
             let customCountsByHabitAndDay = completionRecords.reduce(into: [String: [Date: Int]]()) { partial, record in
@@ -700,11 +824,9 @@ final class CommandCenterHabitEngine: ObservableObject {
         case "deepFocus":
             dayCounts = Dictionary(uniqueKeysWithValues: last7Days.map { day in
                 let count = sessionAtoms.filter { atom in
-                    guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                          let started = PlannerumFormatters.iso8601.date(from: metadata.startedAt),
-                          calendar.isDate(started, inSameDayAs: day) else { return false }
-                    let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
-                    return minutes >= 25 && (metadata.focusScore ?? 100) > 70
+                    guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
+                          calendar.isDate(session.startedAt, inSameDayAs: day) else { return false }
+                    return session.minutes >= 25 && (session.focusScore ?? 100) > 70
                 }.count
                 return (day, count)
             })
@@ -817,11 +939,10 @@ final class CommandCenterHabitEngine: ObservableObject {
             let atoms = try await atomRepository.fetchAll(type: .deepWorkBlock)
             let todayStart = Calendar.current.startOfDay(for: Date())
             return atoms.reduce(into: 0) { partial, atom in
-                guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                      let started = PlannerumFormatters.iso8601.date(from: metadata.startedAt),
-                      started >= todayStart,
-                      metadata.habitUUID == habitUUID else { return }
-                partial += metadata.actualMinutes ?? metadata.plannedMinutes
+                guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
+                      session.startedAt >= todayStart,
+                      session.habitUUID == habitUUID else { return }
+                partial += session.minutes
             }
         } catch {
             return 0
@@ -971,7 +1092,9 @@ final class CommandCenterHabitEngine: ObservableObject {
             let workoutSessions = try await atomRepository.fetchAll(type: .workoutSession)
             let systemEvents = try await atomRepository.fetchAll(type: .systemEvent)
 
-            let completionRecords = systemEvents.compactMap { $0.structuredData(as: HabitCompletionRecord.self) }
+            let completionRecords = systemEvents.compactMap {
+                CommandCenterHabitPersistence.habitCompletionRecord(from: $0)
+            }
 
             return activeDefinitions.map { definition in
                 let createdDate = habitCreationDate(for: definition)
@@ -1059,11 +1182,9 @@ final class CommandCenterHabitEngine: ObservableObject {
             switch definition.id {
             case "deepFocus":
                 count = sessionAtoms.filter { atom in
-                    guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                          let started = PlannerumFormatters.iso8601.date(from: metadata.startedAt),
-                          calendar.isDate(started, inSameDayAs: day) else { return false }
-                    let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
-                    return minutes >= 25 && (metadata.focusScore ?? 100) > 70
+                    guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
+                          calendar.isDate(session.startedAt, inSameDayAs: day) else { return false }
+                    return session.minutes >= 25 && (session.focusScore ?? 100) > 70
                 }.count
 
             case "dailyReflection":

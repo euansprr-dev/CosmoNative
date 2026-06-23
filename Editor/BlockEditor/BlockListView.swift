@@ -1,13 +1,49 @@
 import AppKit
 import SwiftUI
 
+/// Vertical rhythm between block rows. Headings carry extra air above and
+/// stay tight to the content they introduce (space above > space below is
+/// the single biggest "premium typography" signal in a block editor), and
+/// list items of the same kind huddle. This lives at the row level because
+/// each block is its own text view — TextKit ignores paragraphSpacingBefore
+/// for the first paragraph in a container, so the serializer's heading
+/// spacing never survives the per-block split.
+enum BlockRhythmPolicy {
+    static func topSpacing(
+        for kind: RichBlockKind,
+        following previousKind: RichBlockKind?,
+        baseGap: CGFloat
+    ) -> CGFloat {
+        guard let previousKind else { return 0 }
+        let previousIsHeading = previousKind.headingLevelInt != nil
+        switch kind {
+        case .heading1: return baseGap + (previousIsHeading ? 8 : 20)
+        case .heading2: return baseGap + (previousIsHeading ? 6 : 15)
+        case .heading3: return baseGap + (previousIsHeading ? 4 : 10)
+        case .divider: return baseGap + 6
+        case .bulletList, .numberedList, .checklist:
+            return previousKind == kind ? max(4, baseGap - 2) : baseGap
+        default:
+            return previousKind == .divider ? baseGap + 6 : baseGap
+        }
+    }
+}
+
 struct BlockListView: View {
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @Binding var document: RichDocument
 
     var fontSize: CGFloat = 17
     var fontDesign: NSFontDescriptor.SystemDesign = .default
+    /// Per-document line-spacing delta from the Aa menu.
+    var lineSpacingAdjustment: CGFloat = 0
+    /// Base gap between block rows — scales with the line-spacing preset.
+    var blockGap: CGFloat = DS.space6
+    /// Paragraph focus: blocks outside the caret's block fade back but stay
+    /// legible (the iA/Ulysses dimming model).
+    var dimsInactiveBlocks: Bool = false
     var placeholder: String = "Start writing..."
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
@@ -33,11 +69,21 @@ struct BlockListView: View {
     @FocusState private var selectionKeyboardFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
                 rowView(for: block, at: .root(index: index))
+                    .padding(.top, BlockRhythmPolicy.topSpacing(
+                        for: block.kind,
+                        following: index > 0 ? document.blocks[index - 1].kind : nil,
+                        baseGap: blockGap
+                    ))
+                    .opacity(rowOpacity(for: block))
             }
         }
+        .animation(
+            reduceMotion ? nil : ProMotionSprings.gentle,
+            value: dimsInactiveBlocks ? resolvedFocusCoordinator.focusedBlockID : nil
+        )
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .focusable(resolvedSelectionCoordinator.isActive)
         .focusEffectDisabled()
@@ -127,6 +173,7 @@ struct BlockListView: View {
             focusCoordinator: resolvedFocusCoordinator,
             fontSize: fontSize,
             fontDesign: fontDesign,
+            lineSpacingAdjustment: lineSpacingAdjustment,
             placeholder: BlockPlaceholderPolicy.shouldShowBodyPlaceholder(
                 for: block,
                 at: path,
@@ -186,6 +233,19 @@ struct BlockListView: View {
         }
         .foregroundStyle(darkMode ? Color.white.opacity(0.58) : DS.documentTextMuted)
         .padding(.leading, 2)
+    }
+
+    /// Paragraph-focus dimming: 1.0 for the caret's block, faded-but-legible
+    /// for the rest. Suspended while block selection is active so selected
+    /// rows never fight their selection wash.
+    private func rowOpacity(for block: RichBlock) -> Double {
+        guard dimsInactiveBlocks,
+              !resolvedSelectionCoordinator.isActive,
+              let focusedID = resolvedFocusCoordinator.focusedBlockID,
+              focusedID != block.id else {
+            return 1
+        }
+        return 0.4
     }
 
     private var resolvedFocusCoordinator: BlockFocusCoordinator {

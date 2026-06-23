@@ -1,8 +1,16 @@
 import SwiftUI
 
 enum CosmoInlineAssistantPaneProgressPolicy {
-    static func shouldShow(isProcessing: Bool, statusText: String?) -> Bool {
-        isProcessing
+    static func shouldShow(
+        isProcessing: Bool,
+        statusText: String?,
+        hasStreamingAnswer: Bool = false,
+        hasLiveSteps: Bool = false
+    ) -> Bool {
+        guard isProcessing, !hasStreamingAnswer else { return false }
+        if hasLiveSteps { return true }
+        let trimmed = statusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !trimmed.isEmpty
     }
 
     static func statusLabel(isProcessing: Bool, statusText: String?) -> String {
@@ -153,10 +161,7 @@ private struct CosmoInlineAssistantPaneMessages: View {
     @ViewBuilder
     private var content: some View {
         if store.paneMessages.isEmpty,
-           !CosmoInlineAssistantPaneProgressPolicy.shouldShow(
-                isProcessing: store.isProcessing,
-                statusText: store.statusText
-           ) {
+           !shouldShowProgress {
             CosmoInlineAssistantPaneEmptyState(store: store)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .padding(DS.space16)
@@ -172,10 +177,7 @@ private struct CosmoInlineAssistantPaneMessages: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
-            if CosmoInlineAssistantPaneProgressPolicy.shouldShow(
-                isProcessing: store.isProcessing,
-                statusText: store.statusText
-            ) {
+            if shouldShowProgress {
                 CosmoInlineAssistantActivityTimelineView(
                     steps: store.currentRunSteps,
                     phase: store.phase
@@ -186,6 +188,15 @@ private struct CosmoInlineAssistantPaneMessages: View {
         .padding(DS.space16)
         .animation(ProMotionSprings.gentle, value: store.paneMessages.count)
         .animation(ProMotionSprings.gentle, value: store.isProcessing)
+    }
+
+    private var shouldShowProgress: Bool {
+        CosmoInlineAssistantPaneProgressPolicy.shouldShow(
+            isProcessing: store.isProcessing,
+            statusText: store.statusText,
+            hasStreamingAnswer: store.streamingPaneMessageID != nil,
+            hasLiveSteps: !store.currentRunSteps.isEmpty
+        )
     }
 
     @ViewBuilder
@@ -338,19 +349,297 @@ private struct CosmoInlineAssistantFinalizedAnswerBody: View {
     }
 
     var body: some View {
-        let result = parsed
         VStack(alignment: .leading, spacing: DS.space8) {
-            CosmoAssistantProseTextView(segments: result.segments)
-                .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
+            if CosmoInlineAssistantMarkdownParser.shouldRenderAsMarkdown(message.content) {
+                CosmoInlineAssistantMarkdownAnswerView(content: message.content)
 
-            let remainder = (message.sourceRefs ?? []).filter { !result.linkedRefUUIDs.contains($0.uuid) }
-            if !remainder.isEmpty {
-                CosmoInlineAssistantSourceChips(
-                    refs: remainder,
-                    label: result.linkedRefUUIDs.isEmpty ? "Sources" : "Also read"
-                )
+                if let refs = message.sourceRefs, !refs.isEmpty {
+                    CosmoInlineAssistantSourceChips(refs: refs, label: "Sources")
+                }
+            } else {
+                let result = parsed
+                CosmoAssistantProseTextView(segments: result.segments)
+                    .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
+
+                let remainder = (message.sourceRefs ?? []).filter { !result.linkedRefUUIDs.contains($0.uuid) }
+                if !remainder.isEmpty {
+                    CosmoInlineAssistantSourceChips(
+                        refs: remainder,
+                        label: result.linkedRefUUIDs.isEmpty ? "Sources" : "Also read"
+                    )
+                }
             }
         }
+    }
+}
+
+enum CosmoInlineAssistantMarkdownBlock: Equatable {
+    case heading(level: Int, text: String)
+    case paragraph(String)
+    case bullet([String])
+    case ordered([String])
+    case quote(String)
+    case code(String)
+    case receipt(String)
+}
+
+enum CosmoInlineAssistantMarkdownParser {
+    static func shouldRenderAsMarkdown(_ content: String) -> Bool {
+        parse(content).contains { block in
+            switch block {
+            case .heading, .bullet, .ordered, .quote, .code, .receipt:
+                return true
+            case .paragraph:
+                return false
+            }
+        }
+    }
+
+    static func parse(_ content: String) -> [CosmoInlineAssistantMarkdownBlock] {
+        let lines = content.components(separatedBy: .newlines)
+        var blocks: [CosmoInlineAssistantMarkdownBlock] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.isEmpty {
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix("```") {
+                index += 1
+                var codeLines: [String] = []
+                while index < lines.count && !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    codeLines.append(lines[index])
+                    index += 1
+                }
+                if index < lines.count { index += 1 }
+                blocks.append(.code(codeLines.joined(separator: "\n")))
+                continue
+            }
+
+            if let receipt = receipt(from: trimmed) {
+                blocks.append(.receipt(receipt))
+                index += 1
+                continue
+            }
+
+            if let heading = heading(from: trimmed) {
+                blocks.append(.heading(level: heading.level, text: heading.text))
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix(">") {
+                var quoteLines: [String] = []
+                while index < lines.count {
+                    let quoteLine = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard quoteLine.hasPrefix(">") else { break }
+                    quoteLines.append(String(quoteLine.dropFirst()).trimmingCharacters(in: .whitespaces))
+                    index += 1
+                }
+                blocks.append(.quote(quoteLines.joined(separator: "\n")))
+                continue
+            }
+
+            if let firstItem = bulletItem(from: trimmed) {
+                var items = [firstItem]
+                index += 1
+                while index < lines.count, let item = bulletItem(from: lines[index].trimmingCharacters(in: .whitespaces)) {
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.bullet(items))
+                continue
+            }
+
+            if let firstItem = orderedItem(from: trimmed) {
+                var items = [firstItem]
+                index += 1
+                while index < lines.count, let item = orderedItem(from: lines[index].trimmingCharacters(in: .whitespaces)) {
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.ordered(items))
+                continue
+            }
+
+            var paragraphLines = [line]
+            index += 1
+            while index < lines.count {
+                let nextTrimmed = lines[index].trimmingCharacters(in: .whitespaces)
+                if nextTrimmed.isEmpty || isSpecialLine(nextTrimmed) { break }
+                paragraphLines.append(lines[index])
+                index += 1
+            }
+            blocks.append(.paragraph(paragraphLines.joined(separator: "\n")))
+        }
+
+        return blocks
+    }
+
+    private static func heading(from line: String) -> (level: Int, text: String)? {
+        if line.hasPrefix("### ") { return (3, String(line.dropFirst(4))) }
+        if line.hasPrefix("## ") { return (2, String(line.dropFirst(3))) }
+        if line.hasPrefix("# ") { return (1, String(line.dropFirst(2))) }
+        return nil
+    }
+
+    private static func receipt(from line: String) -> String? {
+        guard line.hasPrefix("_"), line.hasSuffix("_"), line.count > 2 else { return nil }
+        let value = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.contains(" out") || value.contains(" cached") ? value : nil
+    }
+
+    private static func bulletItem(from line: String) -> String? {
+        if line.hasPrefix("- ") || line.hasPrefix("* ") {
+            return String(line.dropFirst(2))
+        }
+        return nil
+    }
+
+    private static func orderedItem(from line: String) -> String? {
+        guard let dotIndex = line.firstIndex(of: ".") else { return nil }
+        let numberPart = line[..<dotIndex]
+        guard !numberPart.isEmpty, numberPart.allSatisfy(\.isNumber) else { return nil }
+        let remainder = line[line.index(after: dotIndex)...]
+        guard remainder.first == " " else { return nil }
+        return String(remainder.dropFirst())
+    }
+
+    private static func isSpecialLine(_ line: String) -> Bool {
+        line.hasPrefix("```")
+            || receipt(from: line) != nil
+            || heading(from: line) != nil
+            || line.hasPrefix(">")
+            || bulletItem(from: line) != nil
+            || orderedItem(from: line) != nil
+    }
+}
+
+private struct CosmoInlineAssistantMarkdownAnswerView: View {
+    let content: String
+
+    private var blocks: [CosmoInlineAssistantMarkdownBlock] {
+        CosmoInlineAssistantMarkdownParser.parse(content)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                CosmoInlineAssistantMarkdownBlockView(block: block)
+            }
+        }
+        .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
+        .textSelection(.enabled)
+    }
+}
+
+private struct CosmoInlineAssistantMarkdownBlockView: View {
+    let block: CosmoInlineAssistantMarkdownBlock
+
+    var body: some View {
+        switch block {
+        case .heading(let level, let text):
+            Text(.init(text))
+                .font(headingFont(level: level))
+                .foregroundStyle(DS.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, level == 3 ? DS.space2 : DS.space4)
+        case .paragraph(let text):
+            Text(.init(text))
+                .font(DS.body)
+                .foregroundStyle(paragraphStyle(for: text))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+        case .bullet(let items):
+            VStack(alignment: .leading, spacing: DS.space6) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                        Circle()
+                            .fill(DS.accent)
+                            .frame(width: 5, height: 5)
+                        Text(.init(item))
+                            .font(DS.body)
+                            .foregroundStyle(DS.text)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        case .ordered(let items):
+            VStack(alignment: .leading, spacing: DS.space6) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    HStack(alignment: .top, spacing: DS.space8) {
+                        Text("\(index + 1).")
+                            .font(DS.caption.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(DS.accent)
+                            .frame(width: 22, alignment: .trailing)
+                        Text(.init(item))
+                            .font(DS.body)
+                            .foregroundStyle(DS.text)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        case .quote(let text):
+            HStack(alignment: .top, spacing: DS.space10) {
+                Capsule()
+                    .fill(DS.accent.opacity(0.45))
+                    .frame(width: 3)
+                Text(.init(text))
+                    .font(DS.callout)
+                    .foregroundStyle(DS.text)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space10)
+            .background(DS.glassSectionFill, in: .rect(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(DS.glassBorder.opacity(0.7), lineWidth: 1)
+            }
+        case .code(let code):
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code.isEmpty ? " " : code)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(DS.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(DS.space12)
+            }
+            .background(DS.glassSectionFill, in: .rect(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(DS.glassBorder.opacity(0.7), lineWidth: 1)
+            }
+        case .receipt(let text):
+            Text(text)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .monospacedDigit()
+                .padding(.top, DS.space2)
+        }
+    }
+
+    private func headingFont(level: Int) -> Font {
+        switch level {
+        case 1:
+            DS.title2
+        case 2:
+            DS.title3.weight(.semibold)
+        default:
+            DS.headline
+        }
+    }
+
+    private func paragraphStyle(for text: String) -> Color {
+        text.hasPrefix("Current:") ? DS.textSecondary : DS.text
     }
 }
 

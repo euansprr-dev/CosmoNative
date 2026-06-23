@@ -765,7 +765,8 @@ private struct ThinkspaceLibraryFolderTile: View {
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .gesture(tapGestures)
         .dropDestination(for: String.self) { items, _ in
-            guard let uuid = items.first else { return false }
+            guard let uuid = items.first,
+                  !folder.items.contains(where: { $0.entityUuid == uuid }) else { return false }
             onFileItem(uuid)
             return true
         } isTargeted: { targeting in

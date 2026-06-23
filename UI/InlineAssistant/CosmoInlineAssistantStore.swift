@@ -47,6 +47,9 @@ struct CosmoInlineAssistantPersistedSession: Codable, Equatable {
     var proposals: [CosmoAssistantProposal]
     var selectedContextAtoms: [Atom]
     var selectedSkillID: String?
+    /// True only when the user explicitly chose a skill via slash, menu, or
+    /// accepting the suggestion chip. Passive auto-routing stays one-shot.
+    var selectedSkillIsExplicit: Bool? = nil
     var lastSubmissionRoute: CosmoInlineAssistantRoute?
     /// Optional so blobs persisted before inquiry cards decode unchanged.
     var inquiryQuestionProposals: [CosmoAssistantInquiryQuestionProposal]? = nil
@@ -492,7 +495,11 @@ final class CosmoInlineAssistantStore: ObservableObject {
     @Published var inquiryQuestionProposals: [CosmoAssistantInquiryQuestionProposal] = []
     @Published var paneMessages: [CosmoInlineAssistantPaneMessage] = []
     @Published var selectedContextAtoms: [Atom] = []
-    @Published var selectedSkillID: String?
+    @Published var selectedSkillID: String? {
+        didSet {
+            selectedSkillIsExplicit = selectedSkillID != nil
+        }
+    }
     @Published var isPaneRequested = false
     @Published var errorText: String?
     /// Embedding-routed skill suggestion shown as a ghost chip (Tab to confirm).
@@ -514,6 +521,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     private let sessionPersistence: CosmoInlineAssistantSessionPersistence
     private var activeSessionSurfaceID = CosmoInlineAssistantSessionScope.globalSurfaceID
     private(set) var activeSubmissionSkillID: String?
+    private var selectedSkillIsExplicit = false
     private var activeSubmissionRoute: CosmoInlineAssistantRoute?
     private var lastSubmissionRoute: CosmoInlineAssistantRoute?
     private var activeSubmissionShouldOpenPaneForAnswer = false
@@ -548,31 +556,19 @@ final class CosmoInlineAssistantStore: ObservableObject {
             return
         }
 
-        // A fresh conversation binds to the surface the user is sending from —
-        // resolved HERE, before the message is appended, so the message and its
-        // answer always land in the same session. An ongoing conversation stays
-        // put: nothing downstream of submit may retarget a chat with content
-        // (that exact mid-run retarget used to make sent messages vanish).
-        if paneMessages.isEmpty, proposals.isEmpty,
-           let liveSurfaceID = CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID {
-            let previousSessionID = activeSessionSurfaceID
-            let pickedSkillID = selectedSkillID
-            let pickedContexts = selectedContextAtoms
-            activateSession(surfaceID: liveSurfaceID)
-            if activeSessionSurfaceID != previousSessionID {
-                // Explicit composer picks (skill chip, @mentions) belong to the
-                // message being sent — they survive the session bind.
-                if pickedSkillID != nil { selectedSkillID = pickedSkillID }
-                if !pickedContexts.isEmpty { selectedContextAtoms = pickedContexts }
-            }
-        }
+        bindToLiveSurfaceBeforeSubmission()
 
         let skillRegistry = CosmoInlineSkillRegistry()
         let slashCommand = CosmoInlineSlashSkillParser.extractCommand(
             from: rawPrompt,
             registry: skillRegistry
         )
-        let effectiveSkillID = slashCommand?.skillID ?? selectedSkillID
+        let explicitSelectedSkillID = selectedSkillIsExplicit ? selectedSkillID : nil
+        let autoRoutedSkillID = (slashCommand == nil && explicitSelectedSkillID == nil)
+            ? skillSuggestion?.skillID
+            : nil
+        let effectiveSkillID = slashCommand?.skillID ?? explicitSelectedSkillID ?? autoRoutedSkillID
+        let shouldKeepSkillSelected = slashCommand?.skillID != nil || explicitSelectedSkillID != nil
         var prompt = slashCommand?.remainingPrompt ?? rawPrompt
         if prompt.isEmpty {
             // A bare slash command ("/concept ⏎") is a valid way to start a
@@ -580,6 +576,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
             guard effectiveSkillID != nil else { return }
             prompt = "Begin."
         }
+
+        selectedContextAtoms = ContextSourcePolicy.filteredAtoms(selectedContextAtoms, query: prompt)
 
         composerText = ""
         errorText = nil
@@ -617,10 +615,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
             activeSubmissionRoute = nil
             activeSubmissionShouldOpenPaneForAnswer = false
             // Skill sessions are sticky: once a skill is invoked (slash command
-            // or picker), every following turn stays in that skill — like
-            // talking to a dedicated agent — until /clear, the chip's ✕, or
-            // another slash command replaces it.
-            selectedSkillID = effectiveSkillID
+            // or picker), every following turn stays in that skill. Passive
+            // auto-routing is only for this run so it cannot hijack later asks.
+            selectedSkillID = shouldKeepSkillSelected ? effectiveSkillID : nil
             persistActiveSession()
         }
 
@@ -633,6 +630,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
         paneMessages.append(.init(role: .user, content: prompt, skillID: effectiveSkillID))
         persistActiveSession()
 
+        let assistantMessageCountBeforeRun = paneMessages.filter { $0.role == .assistant }.count
+        let proposalCountBeforeRun = proposals.count
+
         let runTask = Task { [agentBridge] in
             try await agentBridge.send(prompt, route, self)
         }
@@ -643,7 +643,18 @@ final class CosmoInlineAssistantStore: ObservableObject {
             if Self.isCancellation(error) {
                 finalizeCancelledRun()
             } else {
-                errorText = error.localizedDescription
+                let message = error.localizedDescription
+                errorText = message
+                if !didProduceVisibleRunOutput(
+                    assistantMessageCountBeforeRun: assistantMessageCountBeforeRun,
+                    proposalCountBeforeRun: proposalCountBeforeRun
+                ) {
+                    receivePaneAnswer(
+                        title: nil,
+                        answer: "I hit an error before I could finish: \(message)",
+                        route: .answer
+                    )
+                }
             }
         }
         activeRunTask = nil
@@ -698,6 +709,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             sourceRefs: currentSourceRefs,
             activitySteps: takeFinalizedRunSteps()
         ))
+        statusText = nil
         if !activeSubmissionShouldOpenPaneForAnswer {
             isPaneRequested = false
         }
@@ -715,6 +727,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             content: inquiryProposal.question,
             inquiryProposalID: inquiryProposal.id
         ))
+        statusText = nil
         isPaneRequested = true
         persistActiveSession()
     }
@@ -786,10 +799,15 @@ final class CosmoInlineAssistantStore: ObservableObject {
     ) {
         let effectiveRoute = route ?? activeSubmissionRoute
         let shouldOpenPane = effectiveRoute != .action || activeSubmissionShouldOpenPaneForAnswer
+        let finalAnswer = CraftPaneAnswerRepair.repairedAnswer(
+            forRawSkillID: activeSubmissionSkillID,
+            content: answer
+        ) ?? answer
 
         if shouldOpenPane {
             isPaneRequested = true
         }
+        statusText = nil
         CosmoInlineAssistantMetrics.shared.paneAnswerDelivered()
 
         // If this answer was streamed in, finalize the streaming message in place
@@ -798,11 +816,11 @@ final class CosmoInlineAssistantStore: ObservableObject {
            let index = paneMessages.firstIndex(where: { $0.id == streamingID }) {
             if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 paneMessages.insert(.init(role: .system, content: title), at: index)
-                paneMessages[index + 1].content = answer
+                paneMessages[index + 1].content = finalAnswer
                 paneMessages[index + 1].sourceRefs = currentSourceRefs
                 paneMessages[index + 1].activitySteps = takeFinalizedRunSteps()
             } else {
-                paneMessages[index].content = answer
+                paneMessages[index].content = finalAnswer
                 paneMessages[index].sourceRefs = currentSourceRefs
                 paneMessages[index].activitySteps = takeFinalizedRunSteps()
             }
@@ -816,7 +834,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
         paneMessages.append(.init(
             role: .assistant,
-            content: answer,
+            content: finalAnswer,
             sourceRefs: currentSourceRefs,
             activitySteps: takeFinalizedRunSteps()
         ))
@@ -1148,6 +1166,19 @@ final class CosmoInlineAssistantStore: ObservableObject {
         proposals.last { $0.hasReviewableOperations }
     }
 
+    func activeEditableSnapshot(
+        registry: CosmoEditableSurfaceRegistry = .shared
+    ) -> CosmoEditableSourceSnapshot? {
+        if activeSessionSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID,
+           let scopedSnapshot = registry
+            .provider(surfaceID: activeSessionSurfaceID)?
+            .editableSnapshot() {
+            return scopedSnapshot
+        }
+
+        return registry.activeSurface?.editableSnapshot()
+    }
+
     func dismissPaneRequest() {
         isPaneRequested = false
     }
@@ -1166,19 +1197,45 @@ final class CosmoInlineAssistantStore: ObservableObject {
     }
 
     /// Navigation binding: a view registering its surface may pull the assistant
-    /// to it ONLY while nothing is going on. A conversation in progress —
-    /// messages, staged proposals, or an in-flight run — is never swapped out
-    /// from under the user just because a view appeared (that hijack is what
-    /// made the chat "disappear" after peeking at a source).
+    /// to it whenever no run is in flight. Sessions are isolated by surface, so
+    /// a finished chat on atom A must not follow the user into atom B; the only
+    /// unsafe time to retarget is while a request is actively running.
     func activateSessionIfIdle(surfaceID rawSurfaceID: String?) {
-        guard paneMessages.isEmpty,
-              proposals.isEmpty,
-              inquiryQuestionProposals.isEmpty,
-              !isProcessing,
+        guard !isProcessing,
               activeRunTask == nil else {
             return
         }
         activateSession(surfaceID: rawSurfaceID)
+    }
+
+    private func bindToLiveSurfaceBeforeSubmission() {
+        guard let liveSurfaceID = CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID else { return }
+
+        let previousSessionID = activeSessionSurfaceID
+        let shouldCarryFreshGlobalComposerPicks = activeSessionSurfaceID == CosmoInlineAssistantSessionScope.globalSurfaceID
+            && paneMessages.isEmpty
+            && proposals.isEmpty
+            && inquiryQuestionProposals.isEmpty
+        let pickedSkillID = selectedSkillID
+        let pickedContexts = selectedContextAtoms
+
+        activateSession(surfaceID: liveSurfaceID)
+
+        if activeSessionSurfaceID != previousSessionID, shouldCarryFreshGlobalComposerPicks {
+            // Explicit composer picks made before the first surface bind belong
+            // to this message. Do not carry picks from one atom-scoped thread to
+            // another; that is context leakage.
+            if pickedSkillID != nil { selectedSkillID = pickedSkillID }
+            if !pickedContexts.isEmpty { selectedContextAtoms = pickedContexts }
+        }
+    }
+
+    private func didProduceVisibleRunOutput(
+        assistantMessageCountBeforeRun: Int,
+        proposalCountBeforeRun: Int
+    ) -> Bool {
+        let assistantMessageCount = paneMessages.filter { $0.role == .assistant }.count
+        return assistantMessageCount > assistantMessageCountBeforeRun || proposals.count > proposalCountBeforeRun
     }
 
     /// Names the surface the session is scoped to, so the pane header can say
@@ -1237,6 +1294,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             proposals: proposals,
             selectedContextAtoms: selectedContextAtoms,
             selectedSkillID: selectedSkillID,
+            selectedSkillIsExplicit: selectedSkillID == nil ? nil : selectedSkillIsExplicit,
             lastSubmissionRoute: lastSubmissionRoute,
             inquiryQuestionProposals: inquiryQuestionProposals
         ))
@@ -1248,11 +1306,12 @@ final class CosmoInlineAssistantStore: ObservableObject {
             return
         }
 
-        paneMessages = session.paneMessages
+        let repairedPaneMessages = CraftPaneAnswerRepair.repairedMessages(session.paneMessages)
+        paneMessages = repairedPaneMessages.messages
         proposals = session.proposals
         inquiryQuestionProposals = session.inquiryQuestionProposals ?? []
-        selectedContextAtoms = session.selectedContextAtoms
-        selectedSkillID = session.selectedSkillID
+        selectedContextAtoms = ContextSourcePolicy.filteredAtoms(session.selectedContextAtoms, query: "")
+        selectedSkillID = session.selectedSkillIsExplicit == true ? session.selectedSkillID : nil
         lastSubmissionRoute = session.lastSubmissionRoute
         composerText = ""
         errorText = nil
@@ -1261,6 +1320,10 @@ final class CosmoInlineAssistantStore: ObservableObject {
         streamingPaneMessageID = nil
         currentRunSteps = []
         isPaneRequested = false
+
+        if repairedPaneMessages.repaired {
+            persistActiveSession()
+        }
     }
 
     private func resetSessionState() {

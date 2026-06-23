@@ -22,6 +22,7 @@ struct PaneContentView: View {
                 paneCloseButton
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(backgroundFill)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .overlay(borderOverlay)

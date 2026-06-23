@@ -67,7 +67,32 @@ enum FocusModeTextClipboardTarget {
 
     static func activate(_ textView: NSTextView) {
         guard textView.isEditable || textView.isSelectable else { return }
+        if let previous = activeTextView.value,
+           previous !== textView,
+           previous.window === textView.window {
+            collapseSelection(in: previous)
+        }
         activeTextView.value = textView
+    }
+
+    @discardableResult
+    static func collapseActiveSelection(in window: NSWindow?, deactivate: Bool = false) -> Bool {
+        guard let textView = currentTextView(in: window) ?? activeTextView(in: window) else {
+            if deactivate {
+                activeTextView.value = nil
+            }
+            return false
+        }
+
+        let didCollapse = collapseSelection(in: textView)
+        if deactivate {
+            activeTextView.value = nil
+        }
+        return didCollapse
+    }
+
+    static func deactivate() {
+        activeTextView.value = nil
     }
 
     static func performKeyEquivalent(_ event: NSEvent, fallback textView: NSTextView) -> Bool {
@@ -80,6 +105,11 @@ enum FocusModeTextClipboardTarget {
     }
 
     static func send(_ action: FocusModeTextClipboardAction, in window: NSWindow?) -> Bool {
+        if let textView = currentTextView(in: window) {
+            perform(action, on: textView)
+            return true
+        }
+
         guard let textView = activeTextView(in: window) else {
             return false
         }
@@ -90,6 +120,14 @@ enum FocusModeTextClipboardTarget {
     private static func activeTextView(in window: NSWindow?) -> NSTextView? {
         guard let textView = activeTextView.value,
               textView.window === window,
+              textView.isEditable || textView.isSelectable else {
+            return nil
+        }
+        return textView
+    }
+
+    private static func currentTextView(in window: NSWindow?) -> NSTextView? {
+        guard let textView = window?.firstResponder as? NSTextView,
               textView.isEditable || textView.isSelectable else {
             return nil
         }
@@ -131,6 +169,14 @@ enum FocusModeTextClipboardTarget {
         case .selectAll:
             textView.selectAll(nil)
         }
+    }
+
+    @discardableResult
+    private static func collapseSelection(in textView: NSTextView) -> Bool {
+        let selectedRange = textView.selectedRange()
+        guard selectedRange.length > 0 else { return false }
+        textView.setSelectedRange(NSRange(location: selectedRange.location, length: 0))
+        return true
     }
 }
 

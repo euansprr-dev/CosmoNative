@@ -358,24 +358,77 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let result = output.flatResults.first
         XCTAssertEqual(result?.source, .browser)
         XCTAssertEqual(result?.resultKind, .browserPin)
-        XCTAssertEqual(result?.title, "Open this page in browser")
-        XCTAssertEqual(result?.subtitle, "Instagram Josh · instagram.com")
+        XCTAssertEqual(result?.title, "Instagram Josh")
+        XCTAssertEqual(result?.subtitle, "instagram.com · Browser Favorite")
         XCTAssertEqual(result?.browserURL, URL(string: "https://www.instagram.com/josh")!)
         XCTAssertEqual(result?.browserTitle, "Instagram Josh")
         XCTAssertGreaterThan(result?.relevance ?? 0, 1.0)
     }
 
+    func testUnifiedSearchReturnsMultipleBrowserFavoritesOnSameHost() {
+        let pins = [
+            CosmoBrowserPinnedSite(
+                url: URL(string: "https://www.instagram.com/josh/")!,
+                title: "Josh",
+                displayName: "Josh"
+            ),
+            CosmoBrowserPinnedSite(
+                url: URL(string: "https://www.instagram.com/euan/")!,
+                title: "Euan",
+                displayName: "Euan"
+            )
+        ]
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "instagram",
+            hybridResults: [],
+            swipeGalleryItems: [],
+            ideaGalleryItems: [],
+            readwiseBooks: [],
+            browserPins: pins
+        )
+
+        XCTAssertEqual(output.flatResults.filter { $0.source == .browser }.count, 2)
+        XCTAssertEqual(Set(output.flatResults.compactMap(\.browserURL)), Set(pins.map(\.url)))
+    }
+
+    func testUnifiedSearchFindsRenamedBrowserFavoriteAndPreservesExactURL() {
+        let url = URL(string: "https://www.instagram.com/joshvillareal/")!
+        let pin = CosmoBrowserPinnedSite(
+            url: url,
+            title: "Josh Villareal (@joshvillareal)",
+            displayName: "Josh Instagram"
+        )
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "Josh Instagram",
+            hybridResults: [],
+            swipeGalleryItems: [],
+            ideaGalleryItems: [],
+            readwiseBooks: [],
+            browserPins: [pin]
+        )
+
+        let result = output.flatResults.first
+        XCTAssertEqual(result?.source, .browser)
+        XCTAssertEqual(result?.resultKind, .browserPin)
+        XCTAssertEqual(result?.title, "Josh Instagram")
+        XCTAssertEqual(result?.browserURL, url)
+        XCTAssertEqual(result?.browserTitle, "Josh Instagram")
+        XCTAssertGreaterThan(result?.relevance ?? 0, 1.0)
+    }
+
     @MainActor
-    func testOpenSelectedBrowserPinOpensBrowserPane() async {
-        let url = URL(string: "https://www.instagram.com/josh")!
+    func testOpenSelectedRenamedBrowserFavoriteOpensExactBrowserURL() async {
+        let url = URL(string: "https://www.instagram.com/joshvillareal/")!
         let result = UnifiedSearchResult(
-            id: "browser-pin-test",
+            id: "browser-pin-josh-instagram",
             source: .browser,
             resultKind: .browserPin,
-            title: "Open this page in browser",
-            subtitle: "Instagram Josh · instagram.com",
+            title: "Josh Instagram",
+            subtitle: "instagram.com · Browser Favorite",
             snippet: url.absoluteString,
-            icon: "safari",
+            icon: "star.fill",
             accentColor: DS.entityResearch,
             relevance: 1.4,
             atomUUID: nil,
@@ -386,17 +439,17 @@ final class CommandKSearchPipelineTests: XCTestCase {
             thinkspaceNames: [],
             readwiseBookId: nil,
             browserURL: url,
-            browserTitle: "Instagram Josh"
+            browserTitle: "Josh Instagram"
         )
         let viewModel = CommandKViewModel()
-        let expectation = expectation(description: "browser pane notification")
+        let expectation = expectation(description: "renamed browser favorite notification")
         let token = NotificationCenter.default.addObserver(
             forName: CosmoNotification.Navigation.openWebBrowserPane,
             object: nil,
             queue: nil
         ) { notification in
             XCTAssertEqual(notification.userInfo?["url"] as? URL, url)
-            XCTAssertEqual(notification.userInfo?["title"] as? String, "Instagram Josh")
+            XCTAssertEqual(notification.userInfo?["title"] as? String, "Josh Instagram")
             expectation.fulfill()
         }
 
@@ -1600,6 +1653,30 @@ final class CommandKSearchPipelineTests: XCTestCase {
 
         XCTAssertEqual(viewModel.query, "ide")
         XCTAssertFalse(surfaceInvalidated)
+    }
+
+    @MainActor
+    func testClearingQueryDropsVisibleSearchStateImmediately() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        await viewModel.performSearch(query: "idea Euan: stable draft")
+        XCTAssertEqual(viewModel.primaryAction?.kind, .createIdea)
+
+        viewModel.updateQuery("")
+
+        XCTAssertEqual(viewModel.query, "")
+        XCTAssertNil(viewModel.primaryAction)
+        XCTAssertTrue(viewModel.userCommandRows.isEmpty)
+        XCTAssertTrue(viewModel.unifiedFlatResults.isEmpty)
+        XCTAssertEqual(viewModel.currentPhase, .idle)
     }
 
     func testCommandKPreviewPaneDoesNotForceRemountOnSelectionIdentity() throws {

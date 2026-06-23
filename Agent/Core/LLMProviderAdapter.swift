@@ -322,6 +322,10 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
     let providerType: AgentProvider = .anthropic
     private let apiKey: String
     private let baseURL = "https://api.anthropic.com/v1"
+    private static let promptCacheControl: [String: String] = [
+        "type": "ephemeral",
+        "ttl": "1h"
+    ]
 
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -441,7 +445,7 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
                     [
                         "type": "text",
                         "text": systemPrompt.cached,
-                        "cache_control": ["type": "ephemeral"]
+                        "cache_control": Self.promptCacheControl
                     ]
                 ]
                 if !systemPrompt.dynamic.isEmpty {
@@ -458,7 +462,7 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
             if useCacheControl, var lastTool = toolDicts.last {
                 // Tools render before system in the cache prefix — a breakpoint here
                 // lets the system block's breakpoint extend the same cache entry.
-                lastTool["cache_control"] = ["type": "ephemeral"]
+                lastTool["cache_control"] = Self.promptCacheControl
                 toolDicts[toolDicts.count - 1] = lastTool
             }
             body["tools"] = toolDicts

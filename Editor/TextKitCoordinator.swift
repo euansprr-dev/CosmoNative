@@ -172,6 +172,8 @@ final class CosmoTextView: NSTextView {
     var onResignFirstResponder: (() -> Void)?
     var onToggleElementCollapse: ((UUID) -> Void)?
     var onToggleHeadingCollapse: ((NSRange) -> Void)?
+    /// Click on a ☐/☑ glyph toggles the to-do — passes the line's start offset.
+    var onToggleChecklistItem: ((Int) -> Void)?
     var rendersElementChrome: Bool = true
     var elementBlockDarkMode: Bool = false
     var elementBlockBaseFontSize: CGFloat = 16
@@ -231,6 +233,11 @@ final class CosmoTextView: NSTextView {
         super.paste(sender)
     }
 
+    override func keyDown(with event: NSEvent) {
+        FocusModeTextClipboardTarget.activate(self)
+        super.keyDown(with: event)
+    }
+
     /// Trampoline for calling super.mouseDown from a closure (Swift doesn't allow super in closures).
     private func superMouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
@@ -251,6 +258,7 @@ final class CosmoTextView: NSTextView {
             }
             return
         }
+        FocusModeTextClipboardTarget.activate(self)
         let localPoint = convert(event.locationInWindow, from: nil)
         if rendersElementChrome,
            let hit = elementHitTest(at: localPoint),
@@ -262,7 +270,42 @@ final class CosmoTextView: NSTextView {
             onToggleHeadingCollapse?(hit.range)
             return
         }
+        if let lineStart = checklistGlyphHit(at: localPoint) {
+            onToggleChecklistItem?(lineStart)
+            return
+        }
         super.mouseDown(with: event)
+    }
+
+    /// Hit-tests the ☐/☑ glyph at the head of a checklist line. Returns the
+    /// line's character offset when the click lands on the checkbox itself
+    /// (with a little hit comfort), nil for clicks anywhere else.
+    fileprivate func checklistGlyphHit(at point: NSPoint) -> Int? {
+        guard isEditable, onToggleChecklistItem != nil,
+              let layoutManager, let textContainer else { return nil }
+        let nsText = string as NSString
+        guard nsText.length > 0 else { return nil }
+
+        let adjusted = NSPoint(
+            x: point.x - textContainerInset.width,
+            y: point.y - textContainerInset.height
+        )
+        let glyphIndex = layoutManager.glyphIndex(for: adjusted, in: textContainer)
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        guard charIndex < nsText.length else { return nil }
+
+        let lineRange = nsText.lineRange(for: NSRange(location: charIndex, length: 0))
+        guard lineRange.length >= 1 else { return nil }
+        let glyph = nsText.substring(with: NSRange(location: lineRange.location, length: 1))
+        guard glyph == "☐" || glyph == "☑" else { return nil }
+
+        let glyphCharRange = NSRange(location: lineRange.location, length: 1)
+        let glyphGlyphRange = layoutManager.glyphRange(forCharacterRange: glyphCharRange, actualCharacterRange: nil)
+        var glyphRect = layoutManager.boundingRect(forGlyphRange: glyphGlyphRange, in: textContainer)
+        glyphRect.origin.x += textContainerInset.width
+        glyphRect.origin.y += textContainerInset.height
+        guard glyphRect.insetBy(dx: -4, dy: -2).contains(point) else { return nil }
+        return lineRange.location
     }
 
     override func updateTrackingAreas() {
@@ -285,12 +328,20 @@ final class CosmoTextView: NSTextView {
         if updateDisclosureCursor(at: localPoint) {
             return
         }
+        if checklistGlyphHit(at: localPoint) != nil {
+            NSCursor.pointingHand.set()
+            return
+        }
         super.cursorUpdate(with: event)
     }
 
     override func mouseMoved(with event: NSEvent) {
         let localPoint = convert(event.locationInWindow, from: nil)
         if updateDisclosureCursor(at: localPoint) {
+            return
+        }
+        if checklistGlyphHit(at: localPoint) != nil {
+            NSCursor.pointingHand.set()
             return
         }
         super.mouseMoved(with: event)
@@ -314,6 +365,11 @@ final class CosmoTextView: NSTextView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        FocusModeTextClipboardTarget.activate(self)
+        if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
+            return true
+        }
+
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         guard flags == .command,
               let chars = event.charactersIgnoringModifiers?.lowercased() else {
@@ -338,6 +394,7 @@ final class CosmoTextView: NSTextView {
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
         if became {
+            FocusModeTextClipboardTarget.activate(self)
             onBecomeFirstResponder?()
         }
         return became
@@ -885,6 +942,30 @@ enum EditorLayoutMetrics {
 
 // MARK: - Representable
 
+/// The caret is the brand (iA Writer's blue caret, CosmoOS's forest green):
+/// every editor surface shares one accent insertion point and a warm accent
+/// selection wash instead of the system blue. macOS's native insertion
+/// indicator already soft-fades and rounds the caret — color is our voice.
+/// Deliberately pinned to the static Greenhouse green, NOT the palette-driven
+/// DS.accent: mono themes resolve DS.accent to near-ink, which reads as a
+/// stock black caret and a grey selection. The caret stays green everywhere.
+enum EditorCaretPalette {
+    static func insertionPoint(darkMode: Bool) -> NSColor {
+        let accent = NSColor(CosmoColors.cosmoAI)
+        guard darkMode else { return accent }
+        return accent.blended(withFraction: 0.38, of: .white) ?? accent
+    }
+
+    static func selectionBackground(darkMode: Bool) -> NSColor {
+        let accent = NSColor(CosmoColors.cosmoAI)
+        if darkMode {
+            let lifted = accent.blended(withFraction: 0.30, of: .white) ?? accent
+            return lifted.withAlphaComponent(0.34)
+        }
+        return accent.withAlphaComponent(0.18)
+    }
+}
+
 struct TextKitEditorRepresentable: NSViewRepresentable {
     @Binding var attributedText: NSAttributedString
     @Binding var plainText: String
@@ -894,6 +975,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var fontSize: CGFloat = 16
     var fontDesign: NSFontDescriptor.SystemDesign = .default
     var compact: Bool = false
+    /// Per-document line-spacing delta (the Aa menu's Compact/Standard/Airy)
+    /// applied on top of the base body leading. Headings and titles keep
+    /// their own fixed rhythm.
+    var lineSpacingAdjustment: CGFloat = 0
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
     var overrideFont: NSFont? = nil
@@ -1102,7 +1187,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         textView.backgroundColor = .clear
-        textView.insertionPointColor = resolvedEditorTextColor
+        textView.insertionPointColor = EditorCaretPalette.insertionPoint(darkMode: darkMode)
+        textView.selectedTextAttributes = [
+            .backgroundColor: EditorCaretPalette.selectionBackground(darkMode: darkMode)
+        ]
+        textView.onToggleChecklistItem = { [weak coordinator = context.coordinator] lineStart in
+            guard let coordinator, let textView = coordinator.textViewReference else { return }
+            coordinator.toggleChecklistItem(atLineStart: lineStart, in: textView)
+        }
         textView.textContainerInset = resolvedTextInsets()
         textView.textContainer?.lineFragmentPadding = 0
         let isTitleMode = titleConfiguration != nil
@@ -1143,10 +1235,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             style.lineSpacing = 0
             style.paragraphSpacing = 0
         } else if compact {
-            style.lineSpacing = 4
+            style.lineSpacing = max(0, 4 + lineSpacingAdjustment)
             style.paragraphSpacing = 8
         } else {
-            style.lineSpacing = 6
+            style.lineSpacing = max(0, 6 + lineSpacingAdjustment)
             style.paragraphSpacing = 12
         }
         return style
@@ -1521,6 +1613,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 }
             } else if parent.typewriterMode {
                 scheduleAncestorTypewriterScroll(for: textView)
+            } else {
+                scheduleAncestorComfortScroll(for: textView)
             }
         }
 
@@ -1607,6 +1701,71 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                ancestorScrollView.contentView.animator().setBoundsOrigin(
+                    NSPoint(x: visibleRect.minX, y: targetOriginY)
+                )
+            }
+            ancestorScrollView.reflectScrolledClipView(ancestorScrollView.contentView)
+        }
+
+        // MARK: - Comfort Band (soft scrolloff)
+
+        /// Typewriter mode's gentler sibling, always on while typing: keeps
+        /// the caret out of the bottom quarter of the viewport (Vim's
+        /// scrolloff model) so eyes never chase the screen edge. It only ever
+        /// shepherds the page when the caret drifts low — typing never yanks.
+        private func shouldUseAncestorComfortScroll(for textView: NSTextView) -> Bool {
+            guard !parent.typewriterMode,
+                  !parent.scrollsInternally,
+                  !parent.singleLine,
+                  parent.titleConfiguration == nil else {
+                return false
+            }
+            return textView.nearestAncestorScrollView(excluding: textView.enclosingScrollView) != nil
+        }
+
+        private func scheduleAncestorComfortScroll(for textView: NSTextView) {
+            guard shouldUseAncestorComfortScroll(for: textView) else { return }
+
+            let selectedRange = textView.selectedRange()
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.scrollCursorIntoAncestorComfortBand(textView, selectedRange: selectedRange)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.scrollCursorIntoAncestorComfortBand(textView, selectedRange: selectedRange)
+            }
+        }
+
+        private func scrollCursorIntoAncestorComfortBand(_ textView: NSTextView, selectedRange: NSRange) {
+            guard shouldUseAncestorComfortScroll(for: textView),
+                  let ancestorScrollView = textView.nearestAncestorScrollView(excluding: textView.enclosingScrollView),
+                  let documentView = ancestorScrollView.documentView,
+                  let cursorRect = cursorRectInAncestorDocument(
+                    for: textView,
+                    selectedRange: selectedRange,
+                    ancestorScrollView: ancestorScrollView
+                  ) else {
+                return
+            }
+
+            let visibleRect = ancestorScrollView.documentVisibleRect
+            let visibleHeight = max(visibleRect.height, 1)
+            // Nudge only once the caret enters the bottom 26% of the viewport.
+            let bottomThreshold = visibleRect.minY + visibleHeight * 0.74
+            guard cursorRect.maxY > bottomThreshold else { return }
+
+            let targetY = visibleRect.minY + visibleHeight * 0.68
+            let delta = cursorRect.maxY - targetY
+            let documentHeight = max(documentView.bounds.height, visibleHeight)
+            let maxY = max(0, documentHeight - visibleHeight)
+            let targetOriginY = min(max(0, visibleRect.minY + delta), maxY)
+            guard abs(targetOriginY - visibleRect.minY) > 0.5 else { return }
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 ancestorScrollView.contentView.animator().setBoundsOrigin(
                     NSPoint(x: visibleRect.minX, y: targetOriginY)
@@ -1799,10 +1958,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             if commandSelector == #selector(NSResponder.deleteBackward(_:)),
-               selectionIsAtDocumentStart(in: textView),
-               parent.onBoundaryCommand?(.deleteBackwardAtStart(livePlainText: textView.string)) == true {
+               selectionIsAtDocumentStart(in: textView) {
                 beginAwaitingExternalContent()
-                return true
+                if parent.onBoundaryCommand?(.deleteBackwardAtStart(livePlainText: textView.string)) == true {
+                    return true
+                }
+                cancelAwaitingExternalContent()
             }
 
             // Shift+Enter — always continue current block
@@ -1810,8 +1971,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 // Block rows: a soft break (U+2028) stays inside the block.
                 // The serializer only splits blocks on hard newlines, and
                 // paragraph spacing doesn't apply at a line separator, so the
-                // continuation renders with tight line spacing.
-                if parent.splitsOnReturn, parent.menusVisible?() != true {
+                // continuation renders with tight line spacing. Unconditional
+                // on menu flags — a stale flag must never route a block row
+                // into the legacy "\n + prefix" continuation below (raw \n
+                // in a single-block row reads back as duplicated text).
+                if parent.splitsOnReturn {
+                    if parent.menusVisible?() == true {
+                        dismissMenus()
+                    }
                     textView.insertText("\u{2028}", replacementRange: textView.selectedRange())
                     syncBindings(from: textView)
                     scheduleAncestorTypewriterScroll(for: textView)
@@ -1839,26 +2006,42 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
                 // Block rows: Return ALWAYS splits the block at the caret —
                 // the Notion model. Shift+Return (insertLineBreak above) is
-                // the only way to stay in the block. Menus keep Return for
-                // committing their selection. The caret offset is measured
-                // from the END of the text so list/quote prefixes rendered at
-                // the head don't shift it; the live string rides along since
-                // the document binding can lag the text view by ~50ms.
-                if parent.splitsOnReturn, parent.menusVisible?() != true {
+                // the only way to stay in the block. The caret offset is
+                // measured from the END of the text so list/quote prefixes
+                // rendered at the head don't shift it; the live string rides
+                // along since the document binding can lag the view by ~50ms.
+                //
+                // A raw \n must NEVER enter a block row's text view: the
+                // single-block document re-parses into two blocks while this
+                // view keeps showing both lines, so the text appears
+                // duplicated. A genuinely open menu owns the keyboard through
+                // its own focus and this command never fires while one is up;
+                // a menusVisible flag here is stale (e.g. a selection-menu
+                // flag surviving a collapse) — clear the ghosts and split.
+                if parent.splitsOnReturn {
+                    if parent.menusVisible?() == true {
+                        dismissMenus()
+                    }
                     let selection = textView.selectedRange()
                     if selection.length > 0 {
                         textView.insertText("", replacementRange: selection)
                     }
                     let textLength = (textView.string as NSString).length
                     let caretOffsetFromEnd = max(0, textLength - textView.selectedRange().location)
+                    beginAwaitingExternalContent()
                     if parent.onBoundaryCommand?(.splitBlock(
                         caretUTF16OffsetFromEnd: caretOffsetFromEnd,
                         livePlainText: textView.string
                     )) == true {
-                        beginAwaitingExternalContent()
                         dismissMenus()
                         return true
                     }
+                    cancelAwaitingExternalContent()
+                    // Degenerate split failure — a soft break preserves the
+                    // one-block-per-row invariant where a hard \n would not.
+                    textView.insertText("\u{2028}", replacementRange: textView.selectedRange())
+                    syncBindings(from: textView)
+                    return true
                 }
 
                 if let collapsedHeadingRange = collapsedHeadingLineRangeContainingSelection(in: textView) {
@@ -2158,6 +2341,88 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 textView.setSelectedRange(NSRange(location: location, length: 0))
                 textView.scrollRangeToVisible(NSRange(location: location, length: 0))
             }
+        }
+
+        // MARK: - Checklist Toggle
+
+        /// The one earned delight: clicking a ☐ checks it — the box turns
+        /// accent green and the line settles into muted, struck-through done.
+        /// The whole line is replaced as one attributed string through
+        /// shouldChangeText/didChangeText so a single undo restores glyph and
+        /// styling together, and the normal sync path persists the change.
+        func toggleChecklistItem(atLineStart lineStart: Int, in textView: CosmoTextView) {
+            guard let storage = textView.textStorage else { return }
+            let nsText = textView.string as NSString
+            guard lineStart < nsText.length else { return }
+
+            let lineRange = nsText.lineRange(for: NSRange(location: lineStart, length: 0))
+            var lineContentLength = lineRange.length
+            if lineContentLength > 0 {
+                let lastChar = nsText.substring(
+                    with: NSRange(location: lineRange.location + lineRange.length - 1, length: 1)
+                )
+                if lastChar == "\n" || lastChar == "\r" {
+                    lineContentLength -= 1
+                }
+            }
+            guard lineContentLength >= 1 else { return }
+
+            let lineContentRange = NSRange(location: lineRange.location, length: lineContentLength)
+            let glyph = nsText.substring(with: NSRange(location: lineRange.location, length: 1))
+            guard glyph == "☐" || glyph == "☑" else { return }
+            let nowChecked = glyph == "☐"
+
+            let updatedLine = NSMutableAttributedString(
+                attributedString: storage.attributedSubstring(from: lineContentRange)
+            )
+            updatedLine.replaceCharacters(
+                in: NSRange(location: 0, length: 1),
+                with: nowChecked ? "☑" : "☐"
+            )
+
+            let baseColor = parent.overrideTextColor
+                ?? (parent.darkMode ? NSColor.white : NSColor(DS.documentText))
+            let prefixColor = nowChecked
+                ? NSColor(CosmoColors.cosmoAI).withAlphaComponent(parent.darkMode ? 0.92 : 0.85)
+                : baseColor
+            updatedLine.addAttribute(
+                .foregroundColor,
+                value: prefixColor,
+                range: NSRange(location: 0, length: min(2, updatedLine.length))
+            )
+
+            if updatedLine.length > 2 {
+                let contentRange = NSRange(location: 2, length: updatedLine.length - 2)
+                if nowChecked {
+                    updatedLine.addAttribute(
+                        .strikethroughStyle,
+                        value: NSUnderlineStyle.single.rawValue,
+                        range: contentRange
+                    )
+                    updatedLine.enumerateAttribute(.foregroundColor, in: contentRange, options: []) { value, range, _ in
+                        guard let color = value as? NSColor else { return }
+                        updatedLine.addAttribute(
+                            .foregroundColor,
+                            value: color.withAlphaComponent(0.45),
+                            range: range
+                        )
+                    }
+                } else {
+                    updatedLine.removeAttribute(.strikethroughStyle, range: contentRange)
+                    updatedLine.enumerateAttribute(.foregroundColor, in: contentRange, options: []) { value, range, _ in
+                        guard let color = value as? NSColor else { return }
+                        updatedLine.addAttribute(
+                            .foregroundColor,
+                            value: color.withAlphaComponent(1.0),
+                            range: range
+                        )
+                    }
+                }
+            }
+
+            guard textView.shouldChangeText(in: lineContentRange, replacementString: updatedLine.string) else { return }
+            storage.replaceCharacters(in: lineContentRange, with: updatedLine)
+            textView.didChangeText()
         }
 
         // MARK: - Commands
@@ -2895,10 +3160,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 style.lineSpacing = 0
                 style.paragraphSpacing = 0
             } else if parent.compact {
-                style.lineSpacing = 4
+                style.lineSpacing = max(0, 4 + parent.lineSpacingAdjustment)
                 style.paragraphSpacing = 8
             } else {
-                style.lineSpacing = 6
+                style.lineSpacing = max(0, 6 + parent.lineSpacingAdjustment)
                 style.paragraphSpacing = 12
             }
             return style
@@ -3258,6 +3523,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             awaitingExternalContent = true
             deferredSyncWorkItem?.cancel()
             isUpdatingFromTextView = false
+        }
+
+        func cancelAwaitingExternalContent() {
+            awaitingExternalContent = false
         }
 
         private func syncBindings(from textView: NSTextView) {

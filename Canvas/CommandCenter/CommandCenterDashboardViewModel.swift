@@ -569,6 +569,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
             return anytimeTasks
         case .someday:
             return somedayTasks
+        case .habits, .reports, .objectives:
+            return []
         case .project:
             return projectTasks
         case .area:
@@ -633,6 +635,17 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         await self?.loadAnytimeTasks()
                     case .someday:
                         await self?.loadSomedayTasks()
+                    case .habits:
+                        await self?.loadHabits()
+                        await self?.loadHabitReport()
+                        await self?.loadTodayTimeData()
+                    case .reports:
+                        await self?.loadTodayTimeData()
+                        await self?.loadTodaySessions()
+                        await self?.loadWeeklyReport()
+                        await self?.loadHabitReport()
+                    case .objectives:
+                        self?.objectiveEngine.startTracking()
                     case .project:
                         if let uuid = self?.selectedProjectUUID {
                             await self?.loadProjectTasks(projectUUID: uuid)
@@ -746,6 +759,58 @@ class CommandCenterDashboardViewModel: ObservableObject {
         objectiveEngine.startTracking()
         xpProgress = plannerum.xpProgress
         currentStreak = plannerum.liveQuestEngine.streaks.values.max() ?? 0
+    }
+
+    // MARK: - Objectives
+
+    func createObjective(
+        title: String,
+        targetValue: Double,
+        unit: String,
+        dataSource: ObjectiveDataSource,
+        quarter: Int? = nil,
+        year: Int? = nil
+    ) async {
+        do {
+            try await objectiveEngine.createObjective(
+                title: title,
+                targetValue: targetValue,
+                unit: unit,
+                dataSource: dataSource,
+                quarter: quarter,
+                year: year
+            )
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.createObjective", detail: error.localizedDescription)
+        }
+    }
+
+    func updateObjective(
+        id: String,
+        title: String,
+        targetValue: Double,
+        unit: String,
+        dataSource: ObjectiveDataSource
+    ) async {
+        do {
+            try await objectiveEngine.updateObjective(
+                id: id,
+                title: title,
+                targetValue: targetValue,
+                unit: unit,
+                dataSource: dataSource
+            )
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.updateObjective(\(id.prefix(8)))", detail: error.localizedDescription)
+        }
+    }
+
+    func deleteObjective(id: String) async {
+        do {
+            try await objectiveEngine.deleteObjective(id: id)
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.deleteObjective(\(id.prefix(8)))", detail: error.localizedDescription)
+        }
     }
 
     private func scheduleRefresh(_ domain: DashboardRefreshDomain, delayNanoseconds: UInt64 = 0) {
@@ -1249,6 +1314,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
             await loadCompletedTasks()
         case .someday:
             await loadSomedayTasks()
+            await loadCompletedTasks()
+        case .habits, .reports, .objectives:
             await loadCompletedTasks()
         case .project:
             if let uuid = selectedProjectUUID {
@@ -2846,15 +2913,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
             var intentMinutes: [String: IntentSummary] = [:]
 
             for atom in atoms {
-                guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                      let startedStr = Optional(metadata.startedAt),
-                      let startedDate = PlannerumFormatters.iso8601.date(from: startedStr),
-                      startedDate >= todayStart else { continue }
+                guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
+                      session.startedAt >= todayStart else { continue }
 
-                let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
+                let minutes = session.minutes
                 totalMinutes += minutes
 
-                let summary = attributionSummary(habitUUID: metadata.habitUUID, intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent, minutes: 0)
+                let summary = attributionSummary(habitUUID: session.habitUUID, intentUUID: session.intentUUID, legacyIntentRaw: session.intent, minutes: 0)
                 var updated = intentMinutes[summary.id] ?? summary
                 updated.minutes += minutes
                 intentMinutes[summary.id] = updated
@@ -2873,25 +2938,24 @@ class CommandCenterDashboardViewModel: ObservableObject {
             let todayStart = Calendar.current.startOfDay(for: Date())
 
             let nextSessions = atoms.compactMap { atom -> SessionTimelineEntry? in
-                guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                      let startedDate = PlannerumFormatters.iso8601.date(from: metadata.startedAt),
-                      startedDate >= todayStart else { return nil }
+                guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
+                      session.startedAt >= todayStart else { return nil }
 
-                let actualMinutes = metadata.actualMinutes ?? metadata.plannedMinutes
-                let endDate = metadata.endedAt.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
-                    ?? startedDate.addingTimeInterval(TimeInterval(actualMinutes * 60))
+                let actualMinutes = session.minutes
+                let endDate = session.endedAt
+                    ?? session.startedAt.addingTimeInterval(TimeInterval(actualMinutes * 60))
 
-                let intent = resolvedIntentPresentation(intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
+                let intent = resolvedIntentPresentation(intentUUID: session.intentUUID, legacyIntentRaw: session.intent)
 
                 return SessionTimelineEntry(
                     id: atom.uuid,
                     title: atom.title ?? "Focus Session",
                     intent: intent,
-                    habitTitle: metadata.habitTitleSnapshot,
-                    startTime: startedDate,
+                    habitTitle: session.habitTitleSnapshot,
+                    startTime: session.startedAt,
                     endTime: endDate,
-                    focusScore: metadata.focusScore ?? 100,
-                    taskUUID: metadata.taskUUID
+                    focusScore: session.focusScore ?? 100,
+                    taskUUID: session.taskUUID
                 )
             }
             .sorted { $0.startTime < $1.startTime }
@@ -2929,26 +2993,25 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
             // Aggregate session data
             for atom in sessionAtoms {
-                guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                      let startedDate = PlannerumFormatters.iso8601.date(from: metadata.startedAt) else { continue }
+                guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom) else { continue }
 
-                let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
-                let dayStart = calendar.startOfDay(for: startedDate)
+                let minutes = session.minutes
+                let dayStart = calendar.startOfDay(for: session.startedAt)
 
-                if startedDate >= weekStart {
+                if session.startedAt >= weekStart {
                     thisWeekMinutes += minutes
 
                     if var bucket = dayBuckets[dayStart] {
                         bucket.minutes += minutes
-                        if let score = metadata.focusScore { bucket.focusScores.append(Double(score)) }
+                        if let score = session.focusScore { bucket.focusScores.append(Double(score)) }
                         bucket.sessions += 1
-                        let summary = attributionSummary(habitUUID: metadata.habitUUID, intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
+                        let summary = attributionSummary(habitUUID: session.habitUUID, intentUUID: session.intentUUID, legacyIntentRaw: session.intent)
                         var updated = bucket.intents[summary.id] ?? summary
                         updated.minutes += minutes
                         bucket.intents[summary.id] = updated
                         dayBuckets[dayStart] = bucket
                     }
-                } else if startedDate >= previousWeekStart {
+                } else if session.startedAt >= previousWeekStart {
                     previousWeekMinutes += minutes
                 }
             }
@@ -3056,25 +3119,24 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
 
             for atom in sessionAtoms {
-                guard let metadata = atom.metadataValue(as: DeepWorkSessionMetadata.self),
-                      let startedDate = PlannerumFormatters.iso8601.date(from: metadata.startedAt) else { continue }
+                guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom) else { continue }
 
-                let minutes = metadata.actualMinutes ?? metadata.plannedMinutes
-                let dayStart = calendar.startOfDay(for: startedDate)
+                let minutes = session.minutes
+                let dayStart = calendar.startOfDay(for: session.startedAt)
 
-                if startedDate >= monthStart && startedDate <= monthEnd.addingTimeInterval(86400) {
+                if session.startedAt >= monthStart && session.startedAt <= monthEnd.addingTimeInterval(86400) {
                     thisMonthMinutes += minutes
                     if var bucket = dayBuckets[dayStart] {
                         bucket.minutes += minutes
-                        if let score = metadata.focusScore { bucket.focusScores.append(Double(score)) }
+                        if let score = session.focusScore { bucket.focusScores.append(Double(score)) }
                         bucket.sessions += 1
-                        let summary = attributionSummary(habitUUID: metadata.habitUUID, intentUUID: metadata.intentUUID, legacyIntentRaw: metadata.intent)
+                        let summary = attributionSummary(habitUUID: session.habitUUID, intentUUID: session.intentUUID, legacyIntentRaw: session.intent)
                         var updated = bucket.intents[summary.id] ?? summary
                         updated.minutes += minutes
                         bucket.intents[summary.id] = updated
                         dayBuckets[dayStart] = bucket
                     }
-                } else if startedDate >= prevMonthStart && startedDate < monthStart {
+                } else if session.startedAt >= prevMonthStart && session.startedAt < monthStart {
                     prevMonthMinutes += minutes
                 }
             }
@@ -3244,6 +3306,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
             await loadAnytimeTasks()
         case .someday:
             await loadSomedayTasks()
+        case .habits, .reports, .objectives:
+            break
         case .project:
             if let uuid = selectedProjectUUID {
                 await loadProjectTasks(projectUUID: uuid)

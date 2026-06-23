@@ -48,7 +48,12 @@ struct BlockRowView<Content: View>: View {
 
     private var gutterOpacity: Double {
         let chrome = BlockInteractionPolicy.chrome(
-            isHovered: isHovered || isSelected || isMenuPresented,
+            isHovered: BlockInteractionPolicy.revealsHandleChrome(
+                isHovered: isHovered,
+                isSelected: isSelected,
+                isMenuPresented: isMenuPresented,
+                isDropTarget: highlightedDropPosition != nil
+            ),
             isDropTarget: highlightedDropPosition != nil,
             darkMode: darkMode
         )

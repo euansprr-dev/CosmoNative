@@ -57,6 +57,53 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(Set(ids).count, ids.count)
     }
 
+    func testAPIKeysSettingsExposeAgentLLMKeyUsedByCraftSkills() throws {
+        let settingsSource = try source("Settings/SanctuarySettingsView.swift")
+
+        XCTAssertTrue(settingsSource.contains("Anthropic Agent LLM Key"))
+        XCTAssertTrue(settingsSource.contains("keyIdentifier: \"agent_llm\""))
+        XCTAssertTrue(settingsSource.contains("case \"agent_llm\": return APIKeys.agentLLM"))
+    }
+
+    func testAPIKeyInputsCapturePasteInsideSettingsOverlay() throws {
+        let settingsSource = try source("Settings/SanctuarySettingsView.swift")
+
+        XCTAssertTrue(settingsSource.contains("PasteAwareAPIKeyField("))
+        XCTAssertTrue(settingsSource.contains("override func performKeyEquivalent(with event: NSEvent) -> Bool"))
+        XCTAssertTrue(settingsSource.contains("pasteStringFromPasteboard()"))
+        XCTAssertTrue(settingsSource.contains("NSPasteboard.general.string(forType: .string)"))
+        XCTAssertFalse(settingsSource.contains("SecureField(placeholder, text: $apiKey)"))
+    }
+
+    func testSettingsOverlayBlocksInlineAssistantPasteTarget() throws {
+        let mainViewSource = try source("Navigation/MainView.swift")
+
+        XCTAssertTrue(mainViewSource.contains("isBlockingOverlayPresented: showSettings"))
+        XCTAssertTrue(mainViewSource.contains("clearFirstResponder(in: NSApp.keyWindow)"))
+    }
+
+    func testMissingAgentLLMErrorNamesAPIKeysRoute() throws {
+        let craftSource = try source("AI/Craft/CosmoCraftEngine.swift")
+
+        XCTAssertTrue(craftSource.contains("Settings → API Keys"))
+        XCTAssertTrue(craftSource.contains("Anthropic Agent LLM Key"))
+    }
+
+    func testVoiceDaemonArchiveBuildsWithHardenedRuntime() throws {
+        let projectSource = try source("CosmoOS.xcodeproj/project.pbxproj")
+        let daemonConfigTails = projectSource
+            .components(separatedBy: "CODE_SIGN_ENTITLEMENTS = Daemon/CosmoVoiceDaemon.entitlements;")
+            .dropFirst()
+
+        XCTAssertEqual(daemonConfigTails.count, 2)
+        for configTail in daemonConfigTails {
+            XCTAssertTrue(
+                configTail.prefix(600).contains("ENABLE_HARDENED_RUNTIME = YES;"),
+                "CosmoVoiceDaemon Debug and Release configs must enable Hardened Runtime for Direct Distribution."
+            )
+        }
+    }
+
     func testGPT55ThinkingUsesOpenRouterReasoningParameter() {
         XCTAssertEqual(OpenAIProvider.reasoningEffort(for: AgentModelTier.gpt55Thinking.modelId), "high")
         XCTAssertNil(OpenAIProvider.reasoningEffort(for: AgentModelTier.gptChatLatest.modelId))
@@ -80,23 +127,26 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(AgentModelTier.gemini35Flash.maxTokens, 8192)
     }
 
-    func testAutoDefaultModelTierUsesGeminiForEveryIntent() {
+    func testAutoDefaultModelTierUsesDailyDriverSonnetForEveryIntent() {
         let autoIntents: [AgentIntent] = [
             .capture, .brainstorm, .plan, .query, .execute, .debrief,
             .reflect, .correct, .meta, .strategy, .draft, .analyze
         ]
 
         XCTAssertTrue(autoIntents.allSatisfy {
-            CosmoAgentService.defaultModelTier(for: $0) == .geminiFlashLatest
+            CosmoAgentService.defaultModelTier(for: $0) == .strategist
         })
     }
 
-    func testCosmoModelPickerLabelsPinnedGeminiThreeFlashAsEverydayDefault() {
+    func testCosmoModelPickerLabelsDailyDriverSonnetAsEverydayDefault() {
         let autoOption = CosmoModelOption.all.first { $0.id == "auto" }
+        let sonnetOption = CosmoModelOption.all.first { $0.id == "sonnet" }
         let geminiOption = CosmoModelOption.all.first { $0.id == "geminiFlashLatest" }
         let gemini35Option = CosmoModelOption.all.first { $0.id == "gemini35Flash" }
 
-        XCTAssertEqual(autoOption?.detail, "Gemini 3 Flash by default")
+        XCTAssertEqual(autoOption?.detail, "Sonnet 4.6 by default")
+        XCTAssertEqual(sonnetOption?.title, "Sonnet 4.6")
+        XCTAssertEqual(sonnetOption?.detail, "Daily driver via Claude API")
         XCTAssertEqual(geminiOption?.title, "Gemini 3 Flash")
         XCTAssertEqual(geminiOption?.detail, "Pinned everyday search and brainstorming")
         XCTAssertEqual(gemini35Option?.title, "Gemini 3.5 Flash")
@@ -112,7 +162,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertFalse(autoIntents.contains { CosmoAgentService.defaultModelTier(for: $0) == .writer })
     }
 
-    func testAutoDefaultFailoverChainsDoNotStartWithAnthropicModels() {
+    func testAutoDefaultFailoverChainsStartWithDailyDriverSonnet() {
         let autoIntents: [AgentIntent] = [
             .capture, .brainstorm, .plan, .query, .execute, .debrief,
             .reflect, .correct, .meta, .strategy, .draft, .analyze
@@ -122,7 +172,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
             ModelFailoverChain.chain(for: CosmoAgentService.defaultModelTier(for: $0)).models.first?.modelId
         }
 
-        XCTAssertFalse(startingModelIds.contains { $0.hasPrefix("anthropic/") })
+        XCTAssertTrue(startingModelIds.allSatisfy { $0 == "anthropic/claude-sonnet-4.6" })
     }
 
     func testExplicitPickerStillAllowsOpus() {
@@ -173,6 +223,17 @@ final class CosmoWindowRoutingTests: XCTestCase {
             ),
             ["profile-1", "content-1", "swipe-1"]
         )
+    }
+
+    private var packageRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private func source(_ relativePath: String) throws -> String {
+        try String(contentsOf: packageRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }
 }
 

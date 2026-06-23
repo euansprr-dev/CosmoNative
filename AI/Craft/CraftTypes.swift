@@ -10,8 +10,8 @@ import Foundation
 // MARK: - Format
 
 /// The three format families the craft engine reasons about, collapsed from
-/// WritingContentFormat's platform-specific cases. Reels are one breath per
-/// slide; carousels/threads carry multi-sentence slides.
+/// WritingContentFormat's platform-specific cases. Reels carry one or two short
+/// sentences per slide; carousels/threads carry three-plus sentence slides.
 enum CraftFormat: String, Codable, Sendable {
     case reel
     case carousel
@@ -110,33 +110,19 @@ enum CraftDraftParser {
 // MARK: - Format detection
 
 enum CraftFormatDetector {
-    /// Detect the format of the open piece. Atom metadata wins; the
-    /// sentence-density heuristic breaks ties when metadata only gives the
-    /// platform default (a reel is ~one sentence per slide, a carousel carries
-    /// multi-sentence slides).
+    /// Detect the format of the open piece. Slide density gets first say for
+    /// reel/carousel scripts so comparable swipe selection follows the actual
+    /// draft shape, even when older metadata says "carousel".
     static func detect(atom: Atom?, draftText: String) -> CraftFormat {
+        let densityCall = densityHeuristic(draftText)
         if let atom {
             let writingFormat = WritingContentFormat.detect(from: atom)
             if let mapped = CraftFormat.from(writingFormat) {
-                // Instagram defaults to carousel when contentFormat is unset —
-                // let the density heuristic correct an unmarked reel script.
-                if mapped == .carousel, isExplicitFormat(atom) == false,
-                   let densityCall = densityHeuristic(draftText) {
-                    return densityCall
-                }
+                if (mapped == .carousel || mapped == .reel), let densityCall { return densityCall }
                 return mapped
             }
         }
-        return densityHeuristic(draftText) ?? .longForm
-    }
-
-    private static func isExplicitFormat(_ atom: Atom) -> Bool {
-        if atom.metadataDict?["explicitFormat"] as? String != nil { return true }
-        if let meta = atom.metadataValue(as: ContentAtomMetadata.self),
-           let fmt = meta.contentFormat, !fmt.isEmpty {
-            return true
-        }
-        return false
+        return densityCall ?? .longForm
     }
 
     /// nil when the draft is too short to judge.
@@ -144,8 +130,7 @@ enum CraftFormatDetector {
         let slides = CraftDraftParser.slides(in: draftText)
         guard slides.count >= 3 else { return nil }
         let avgSentences = Double(slides.map(\.sentenceCount).reduce(0, +)) / Double(slides.count)
-        let avgWords = Double(slides.map(\.wordCount).reduce(0, +)) / Double(slides.count)
-        if avgSentences <= 1.4 && avgWords <= 16 { return .reel }
+        if avgSentences <= 2.2 { return .reel }
         return .carousel
     }
 }
@@ -256,6 +241,38 @@ struct CraftRiffResult: Codable, Equatable, Sendable {
     var targetOriginalText: String
     var variations: [CraftRiffVariation]
     var bet: String
+}
+
+protocol CraftRenderableStructuredOutput: Decodable {
+    var craftValidationIssue: String? { get }
+}
+
+extension CraftReviewResult: CraftRenderableStructuredOutput {
+    var craftValidationIssue: String? {
+        if formatRead.isBlankForCraft { return "missing format read" }
+        if performanceRead.reasoning.isBlankForCraft { return "missing performance reasoning" }
+        if verdict.isBlankForCraft { return "missing verdict" }
+        return nil
+    }
+}
+
+extension CraftRiffResult: CraftRenderableStructuredOutput {
+    var craftValidationIssue: String? {
+        if beatLabel.isBlankForCraft { return "missing beat label" }
+        if targetOriginalText.isBlankForCraft { return "missing target text" }
+        if variations.isEmpty { return "missing variations" }
+        if bet.isBlankForCraft { return "missing bet" }
+        if variations.contains(where: { $0.text.isBlankForCraft || $0.mechanism.isBlankForCraft }) {
+            return "missing variation text"
+        }
+        return nil
+    }
+}
+
+private extension String {
+    var isBlankForCraft: Bool {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 // MARK: - Riff apply parsing

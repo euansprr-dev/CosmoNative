@@ -204,58 +204,15 @@ struct CanvasBlockGeometry: Equatable {
 }
 
 enum CanvasClusterResizeMapper {
+    /// Cluster resizing changes the container only. Member cards keep their
+    /// own canvas geometry; resizing a card remains a separate direct action.
     static func previewGeometries(
         from startRect: CGRect,
         to currentRect: CGRect,
         edge: ClusterResizeEdge,
         members: [String: CanvasBlockGeometry]
     ) -> [String: CanvasBlockGeometry] {
-        guard startRect.width > 0, startRect.height > 0 else { return members }
-
-        let scaleX = edge.resizesWidth ? (currentRect.width / startRect.width) : 1
-        let scaleY = edge.resizesHeight ? (currentRect.height / startRect.height) : 1
-        let startAnchor = anchorPoint(for: startRect, edge: edge)
-        let currentAnchor = anchorPoint(for: currentRect, edge: edge)
-
-        return members.mapValues { geometry in
-            var next = geometry
-
-            if edge.resizesWidth {
-                next.position.x = currentAnchor.x + ((geometry.position.x - startAnchor.x) * scaleX)
-                next.size.width = geometry.size.width * scaleX
-            }
-
-            if edge.resizesHeight {
-                next.position.y = currentAnchor.y + ((geometry.position.y - startAnchor.y) * scaleY)
-                next.size.height = geometry.size.height * scaleY
-            }
-
-            return next
-        }
-    }
-
-    private static func anchorPoint(for rect: CGRect, edge: ClusterResizeEdge) -> CGPoint {
-        let x: CGFloat
-        switch edge {
-        case .left, .topLeft, .bottomLeft:
-            x = rect.maxX
-        case .right, .topRight, .bottomRight:
-            x = rect.minX
-        case .top, .bottom:
-            x = rect.midX
-        }
-
-        let y: CGFloat
-        switch edge {
-        case .top, .topLeft, .topRight:
-            y = rect.maxY
-        case .bottom, .bottomLeft, .bottomRight:
-            y = rect.minY
-        case .left, .right:
-            y = rect.midY
-        }
-
-        return CGPoint(x: x, y: y)
+        members
     }
 }
 
@@ -400,10 +357,10 @@ struct CodableCluster: Codable, Sendable {
         let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }
         if !memberBlocks.isEmpty {
             if cluster.viewMode == .canvas {
-                // Canvas mode: size from block positions
-                if persistedRect.width > 0, persistedRect.height > 0 {
-                    cluster.expandBoundsToContainMembers(blocks: blocks)
-                } else {
+                // Persisted user cluster rects are authoritative. A member whose
+                // saved canvas position falls outside the rect should not stretch
+                // the folder/cluster on load.
+                if persistedRect.width <= 0 || persistedRect.height <= 0 {
                     cluster.updateBoundingRect(blocks: blocks, growOnly: false)
                 }
             }

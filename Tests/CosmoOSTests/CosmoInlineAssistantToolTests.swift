@@ -57,6 +57,37 @@ final class CosmoInlineAssistantToolTests: XCTestCase {
         XCTAssertTrue(skill.requiresReviewedDiff)
     }
 
+    func testCreateInlineSkillToolPersistsExpandedModelTier() async throws {
+        let executor = AgentToolExecutor.shared
+        let store = CosmoInlineSkillStore.inMemory()
+        executor.inlineSkillStore = store
+        defer { executor.inlineSkillStore = .userDefaults() }
+
+        let result = try await executor.execute(
+            toolName: "create_inline_skill",
+            arguments: [
+                "id": "deepSkillDesigner",
+                "name": "Deep Skill Designer",
+                "summary": "Designs complex skill-agent contracts from messy requirements.",
+                "route": "answer",
+                "preferredModelTier": "gpt55Thinking",
+                "instructions": [
+                    "Turn the request into a skill contract.",
+                    "Include examples, context requirements, and a verification rule."
+                ],
+                "outputContract": "pane_skill_contract",
+                "requiresReviewedDiff": false,
+                "panePolicy": "openForAnswer"
+            ]
+        )
+
+        XCTAssertTrue(result.contains("\"success\":true"))
+
+        let registry = CosmoInlineSkillRegistry(store: store)
+        let skill = try XCTUnwrap(registry.skill(id: "deepSkillDesigner"))
+        XCTAssertEqual(skill.preferredModelTier, .gpt55Thinking)
+    }
+
     func testInlineAssistantResponseModeKeepsWritingToolsAvailableForPaneAnswers() {
         let tools = AgentToolRegistry.shared.toolsForIntent(
             .draft,

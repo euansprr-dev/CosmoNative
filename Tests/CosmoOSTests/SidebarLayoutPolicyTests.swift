@@ -232,9 +232,10 @@ final class SidebarLayoutPolicyTests: XCTestCase {
 
     func testContentFocusDoesNotReintroduceLegacyTruncationPatterns() throws {
         // The legacy collapsible sidebar (ContentOutlineSidebarContent) was removed
-        // in the Scriptorium V2 pass — marginalia clamp visually but expose full
-        // text on focus/disclosure, which is the sanctioned pattern. These guards
-        // keep the old hard-truncation idioms from coming back.
+        // in the Scriptorium V2 pass. Content outline marginalia may clamp, but
+        // expansion must be an explicit slide-number disclosure rather than a
+        // hidden focus side effect. These guards keep old truncation idioms from
+        // coming back.
         let contentFocusView = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
             encoding: .utf8
@@ -245,7 +246,40 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         )
         XCTAssertFalse(contentFocusView.contains("ForEach(supportingSwipeAtoms.prefix(3)"))
         XCTAssertFalse(contentFocusView.contains(".lineLimit(coreIdeaExpanded ? nil : 4)"))
+        XCTAssertFalse(contentFocusView.contains(".lineLimit(focusedOutlineItemID == item.id ? nil : 2)"))
         XCTAssertFalse(contentFocusView.contains("ContentOutlineSidebarContent"))
+    }
+
+    func testContentFocusOutlineUsesSlideNumberDisclosureForExpansion() throws {
+        let contentFocusView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(contentFocusView.contains("@State private var expandedOutlineItemIDs: Set<UUID> = []"))
+        XCTAssertTrue(contentFocusView.contains("@State private var hoveredOutlineItemID: UUID?"))
+        XCTAssertTrue(contentFocusView.contains("toggleOutlineItemExpansion(item.id)"))
+        XCTAssertTrue(contentFocusView.contains("ContentOutlineMarginaliaExpansionPolicy.lineLimit"))
+        XCTAssertTrue(contentFocusView.contains("private func toggleOutlineItemExpansion(_ id: UUID)"))
+        XCTAssertTrue(contentFocusView.contains("hoveredOutlineItemID = hovering ? item.id : nil"))
+        XCTAssertTrue(contentFocusView.contains(".frame(width: 24, height: 24, alignment: .topLeading)"))
+    }
+
+    func testContentOutlineMarginaliaExpansionPolicyTogglesOneSlideAtATime() {
+        let firstID = UUID()
+        let secondID = UUID()
+
+        var expanded = ContentOutlineMarginaliaExpansionPolicy.toggled(firstID, in: [])
+
+        XCTAssertTrue(expanded.contains(firstID))
+        XCTAssertFalse(expanded.contains(secondID))
+        XCTAssertNil(ContentOutlineMarginaliaExpansionPolicy.lineLimit(for: firstID, expandedIDs: expanded))
+        XCTAssertEqual(ContentOutlineMarginaliaExpansionPolicy.lineLimit(for: secondID, expandedIDs: expanded), 2)
+
+        expanded = ContentOutlineMarginaliaExpansionPolicy.toggled(firstID, in: expanded)
+
+        XCTAssertFalse(expanded.contains(firstID))
+        XCTAssertEqual(ContentOutlineMarginaliaExpansionPolicy.lineLimit(for: firstID, expandedIDs: expanded), 2)
     }
 
     func testInboxQueueStaysFreeOfDashboardChrome() throws {
@@ -287,6 +321,70 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         // Idea v2: blueprint opening moved into the inspector, routed
         // through IdeaWorkspaceActions back to the host's openAtomInPane.
         XCTAssertTrue(ideaInspectorView.contains("onOpenAtomInPane(blueprint.uuid)"))
+    }
+
+    func testBrowserPaneOpenDismissesCommandK() throws {
+        let mainView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
+            encoding: .utf8
+        )
+        guard let observerRange = mainView.range(of: "CosmoNotification.Navigation.openWebBrowserPane") else {
+            XCTFail("MainView must observe browser pane requests")
+            return
+        }
+        guard let nextObserverRange = mainView[observerRange.upperBound...].range(of: ".onReceive") else {
+            XCTFail("Browser pane observer should be followed by another notification observer")
+            return
+        }
+
+        let observerBody = mainView[observerRange.lowerBound..<nextObserverRange.lowerBound]
+
+        XCTAssertTrue(observerBody.contains("showCommandK || commandKBehindFocusMode"))
+        XCTAssertTrue(observerBody.contains("closeCommandK()"))
+        XCTAssertFalse(
+            observerBody.contains("if didOpenOrActivateBrowserPane, showCommandK || commandKBehindFocusMode"),
+            "Browser pane requests from Command-K must always dismiss Command-K; missed pane activation should not leave an invisible overlay/focus trap."
+        )
+    }
+
+    func testCloseCommandKClearsFocusedCommandKResponderBeforeDismissal() throws {
+        let mainView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
+            encoding: .utf8
+        )
+        guard let closeRange = mainView.range(of: "private func closeCommandK(clearViewModel: Bool = true)") else {
+            XCTFail("MainView should centralize Command-K dismissal in closeCommandK")
+            return
+        }
+        guard let nextFunctionRange = mainView[closeRange.upperBound...].range(of: "private func preserveCommandKBehindFocusMode") else {
+            XCTFail("closeCommandK should be followed by preserveCommandKBehindFocusMode")
+            return
+        }
+
+        let closeBody = mainView[closeRange.lowerBound..<nextFunctionRange.lowerBound]
+
+        XCTAssertTrue(closeBody.contains("if showCommandK"))
+        XCTAssertTrue(closeBody.contains("FocusModeEditorBlur.clearFirstResponder(in: NSApp.keyWindow)"))
+        XCTAssertLessThan(
+            try XCTUnwrap(closeBody.range(of: "FocusModeEditorBlur.clearFirstResponder(in: NSApp.keyWindow)")?.lowerBound),
+            try XCTUnwrap(closeBody.range(of: "applyCommandKPresentation(.close")?.lowerBound)
+        )
+    }
+
+    func testHiddenCommandKDoesNotKeepFullScreenHostMountedAbovePanes() throws {
+        let mainView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            mainView.contains("if showCommandK {\n                CommandKView("),
+            "Only the visible Command-K presentation should mount the full-window CommandKView host."
+        )
+        XCTAssertFalse(
+            mainView.contains("if showCommandK || commandKBehindFocusMode {\n                CommandKView("),
+            "Preserving Command-K behind focus mode must not preserve a full-screen invisible host above browser panes."
+        )
     }
 
     func testAsyncNavigationFetchesCancelAndIgnoreStaleResults() throws {

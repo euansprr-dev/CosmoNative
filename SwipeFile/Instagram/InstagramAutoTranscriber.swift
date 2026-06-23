@@ -100,7 +100,10 @@ private struct ReelModalityEvidence: Sendable {
     let longVisualSlideRatio: Double
     let distinctVisualRatio: Double
     let subtitleOverlapRatio: Double
+    let globalSubtitleOverlapRatio: Double
+    let captionMirroredSlideRatio: Double
     let speechCoverageRatio: Double
+    let visualSlidesPerSecond: Double
     let speechWordsPerSecond: Double
     let avgSpeechWordsPerSegment: Double
     let speechUniqueWordRatio: Double
@@ -109,9 +112,46 @@ private struct ReelModalityEvidence: Sendable {
     let voiceoverScore: Int
     let textScore: Int
 
+    var captionsGloballyMirrorSpeech: Bool {
+        speechWordCount >= 18 &&
+            visualWordCount >= 12 &&
+            globalSubtitleOverlapRatio >= 0.72 &&
+            captionMirroredSlideRatio >= 0.6
+    }
+
+    var isLikelyOversegmentedVisualTranscript: Bool {
+        guard speechWordCount >= 24,
+              visualWordCount >= 40,
+              visualSlideCount >= 24,
+              lyricRisk < 4 else {
+            return false
+        }
+
+        let denseByRate = visualSlidesPerSecond >= 1.25
+        let denseByAbsoluteCount = visualSlideCount >= 48 && visualSlidesPerSecond >= 0.75
+        let speechIsPrimary = speechCoverageRatio >= 0.35 || speechWordsPerSecond >= 1.2
+
+        return speechIsPrimary && (denseByRate || denseByAbsoluteCount)
+    }
+
     var shouldPreferVoiceover: Bool {
         if speechWordCount == 0 { return false }
         if visualWordCount == 0 { return true }
+
+        // Burned-in captions often arrive with imperfect or missing timestamps.
+        // If the slide text globally mirrors the speech, treat the visual text as
+        // captions instead of author-authored slide structure.
+        if captionsGloballyMirrorSpeech {
+            return lyricRisk < 4 || voiceoverScore > textScore
+        }
+
+        // Talking-head/voiceover reels with burned captions or screen OCR can
+        // produce dozens of tiny visual "slides". That density is frame OCR,
+        // not authored slide structure, even when unrelated UI text dilutes
+        // the direct caption-to-speech overlap score.
+        if isLikelyOversegmentedVisualTranscript {
+            return true
+        }
 
         // On-screen text mirrors the speech (burned captions or subtitles).
         if subtitleOverlapRatio >= 0.58 && speechCoverageRatio >= 0.25 {
@@ -133,6 +173,8 @@ private struct ReelModalityEvidence: Sendable {
     var shouldTreatAsTextOnly: Bool {
         if visualWordCount == 0 { return false }
         if speechWordCount == 0 { return true }
+        if captionsGloballyMirrorSpeech && lyricRisk < 4 { return false }
+        if isLikelyOversegmentedVisualTranscript { return false }
         // Short speech that merely mirrors the on-screen text (lyric or music
         // overlay) adds nothing — the slides already carry all of the content.
         if subtitleOverlapRatio >= 0.7 && speechWordCount < 18 { return true }
@@ -157,6 +199,14 @@ final class InstagramAutoTranscriber: Sendable {
     private let maxGeminiFrames: Int = 240         // Accuracy-first cap for short reels with fast cuts
     private let geminiBatchSize: Int = 20          // Frames per API call
     private let geminiBatchOverlap: Int = 2        // Overlap frames between batches
+
+    private static let lowSignalSubtitleTokens: Set<String> = [
+        "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "for",
+        "from", "had", "has", "have", "how", "i", "if", "in", "is", "it",
+        "its", "just", "like", "of", "on", "or", "so", "that", "the", "their",
+        "them", "then", "there", "they", "this", "to", "was", "we", "were",
+        "what", "when", "with", "you", "your"
+    ]
 
     private init() {}
 
@@ -692,6 +742,11 @@ final class InstagramAutoTranscriber: Sendable {
                         lastSlide.endTimestamp = newEnd
                     }
                     merged[merged.count - 1] = lastSlide
+                    continue
+                }
+
+                if let duplicateIndex = duplicateSlideIndex(for: slide, in: merged) {
+                    merged[duplicateIndex] = mergedDuplicateSlide(existing: merged[duplicateIndex], candidate: slide)
                     continue
                 }
 
@@ -1383,6 +1438,8 @@ final class InstagramAutoTranscriber: Sendable {
             : 0
 
         let subtitleOverlapRatio = subtitleOverlapRatio(visualSlides: visualSlides, speech: speech)
+        let globalSubtitleOverlapRatio = globalSubtitleOverlapRatio(visualSlides: visualSlides, speech: speech)
+        let captionMirroredSlideRatio = captionMirroredSlideRatio(visualSlides: visualSlides, speech: speech)
 
         let totalSpeechDuration = speech.reduce(0.0) { partial, segment in
             partial + max(segment.duration, 0)
@@ -1390,6 +1447,9 @@ final class InstagramAutoTranscriber: Sendable {
         let speechCoverageRatio = duration > 0
             ? min(totalSpeechDuration / duration, 1.0)
             : 0
+        let visualSlidesPerSecond = duration > 0
+            ? Double(visualSlideCount) / duration
+            : Double(visualSlideCount)
         let speechWordsPerSecond = duration > 0
             ? Double(speechWordCount) / duration
             : Double(speechWordCount)
@@ -1426,7 +1486,14 @@ final class InstagramAutoTranscriber: Sendable {
         if speechWordsPerSecond >= 1.4 { voiceoverScore += 1 }
         if subtitleOverlapRatio >= 0.58 { voiceoverScore += 2 }
         else if subtitleOverlapRatio >= 0.4 { voiceoverScore += 1 }
+        if globalSubtitleOverlapRatio >= 0.72 { voiceoverScore += 2 }
+        if captionMirroredSlideRatio >= 0.6 { voiceoverScore += 1 }
         if shortVisualSlideRatio >= 0.6 && visualSlideCount >= 5 { voiceoverScore += 1 }
+        if speechWordCount >= 24 && visualSlideCount >= 24 && visualSlidesPerSecond >= 1.25 {
+            voiceoverScore += 3
+        } else if speechWordCount >= 24 && visualSlideCount >= 48 && visualSlidesPerSecond >= 0.75 {
+            voiceoverScore += 2
+        }
         if speechWordCount >= max(visualWordCount, 20) { voiceoverScore += 1 }
 
         var textScore = 0
@@ -1445,7 +1512,10 @@ final class InstagramAutoTranscriber: Sendable {
             longVisualSlideRatio: longVisualSlideRatio,
             distinctVisualRatio: distinctVisualRatio,
             subtitleOverlapRatio: subtitleOverlapRatio,
+            globalSubtitleOverlapRatio: globalSubtitleOverlapRatio,
+            captionMirroredSlideRatio: captionMirroredSlideRatio,
             speechCoverageRatio: speechCoverageRatio,
+            visualSlidesPerSecond: visualSlidesPerSecond,
             speechWordsPerSecond: speechWordsPerSecond,
             avgSpeechWordsPerSegment: avgSpeechWordsPerSegment,
             speechUniqueWordRatio: speechUniqueWordRatio,
@@ -1576,54 +1646,34 @@ final class InstagramAutoTranscriber: Sendable {
         return slides
     }
 
-    /// Convert speech segments into slides, grouping sentences to stay under the
-    /// per-slide character limit. Short voiceovers become 1 slide; longer ones split
-    /// at natural sentence boundaries.
+    /// Convert speech segments into one transcript slide. Voiceover-only reels should
+    /// read as a single transcript, not as artificial swipe slides split by length.
     private func speechToSlides(speech: [SpeechSegment]) -> [TranscriptSlide] {
         guard !speech.isEmpty else { return [] }
 
-        let charLimit = TranscriptSlide.characterLimit // 450
-
-        var slides: [TranscriptSlide] = []
-        var currentText = ""
         var slideStart: TimeInterval = speech[0].timestamp
         var slideEnd: TimeInterval = speech[0].timestamp + speech[0].duration
-        var slideNumber = 1
 
-        for segment in speech {
-            let candidate = currentText.isEmpty ? segment.text : currentText + " " + segment.text
+        let text = speech
+            .map(\.text)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return [] }
 
-            if candidate.count > charLimit && !currentText.isEmpty {
-                // Flush current slide
-                slides.append(TranscriptSlide(
-                    text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    slideNumber: slideNumber,
-                    timestamp: slideStart,
-                    endTimestamp: slideEnd,
-                    source: .speechAudio
-                ))
-                slideNumber += 1
-                currentText = segment.text
-                slideStart = segment.timestamp
-            } else {
-                currentText = candidate
-            }
-            slideEnd = segment.timestamp + segment.duration
+        for segment in speech.dropFirst() {
+            slideStart = min(slideStart, segment.timestamp)
+            slideEnd = max(slideEnd, segment.timestamp + segment.duration)
         }
 
-        // Flush remaining
-        let trimmed = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            slides.append(TranscriptSlide(
-                text: trimmed,
-                slideNumber: slideNumber,
+        return [
+            TranscriptSlide(
+                text: text,
+                slideNumber: 1,
                 timestamp: slideStart,
                 endTimestamp: slideEnd,
                 source: .speechAudio
-            ))
-        }
-
-        return slides
+            )
+        ]
     }
 
     /// Merge voiceover + text: visual slides are primary, speech appended as [Voiceover:] annotations.
@@ -1747,6 +1797,64 @@ final class InstagramAutoTranscriber: Sendable {
         let overlap = jaccardSimilarity(lhsTokens, rhsTokens)
 
         return overlap >= 0.92 && geminiSlidesOverlapInTime(lhs, rhs)
+    }
+
+    private func duplicateSlideIndex(for candidate: TranscriptSlide, in slides: [TranscriptSlide]) -> Int? {
+        slides.firstIndex { existing in
+            areDuplicateSlideTexts(existing.text, candidate.text)
+        }
+    }
+
+    private func areDuplicateSlideTexts(
+        _ lhs: String,
+        _ rhs: String,
+        similarityThreshold: Double = 0.92,
+        containmentThreshold: Double = 0.90
+    ) -> Bool {
+        let lhsNorm = normalizedLineKey(lhs)
+        let rhsNorm = normalizedLineKey(rhs)
+        guard !lhsNorm.isEmpty, !rhsNorm.isEmpty else { return false }
+        if lhsNorm == rhsNorm { return true }
+
+        let lhsWords = Set(lhsNorm.split(separator: " ").map(String.init))
+        let rhsWords = Set(rhsNorm.split(separator: " ").map(String.init))
+        guard lhsWords.count >= 2, rhsWords.count >= 2 else { return false }
+
+        if jaccardSimilarity(lhsWords, rhsWords) >= similarityThreshold {
+            return true
+        }
+
+        let intersection = lhsWords.intersection(rhsWords).count
+        let containment = Double(intersection) / Double(min(lhsWords.count, rhsWords.count))
+        return containment >= containmentThreshold
+    }
+
+    private func mergedDuplicateSlide(existing: TranscriptSlide, candidate: TranscriptSlide) -> TranscriptSlide {
+        var merged = existing
+        let existingWords = wordCount(in: existing.text)
+        let candidateWords = wordCount(in: candidate.text)
+
+        if candidateWords > existingWords ||
+            (candidateWords == existingWords && candidate.text.count > existing.text.count) {
+            merged.text = candidate.text
+            merged.source = candidate.source ?? existing.source
+        }
+
+        if let existingStart = existing.timestamp, let candidateStart = candidate.timestamp {
+            merged.timestamp = min(existingStart, candidateStart)
+        } else {
+            merged.timestamp = existing.timestamp ?? candidate.timestamp
+        }
+
+        let existingEnd = existing.endTimestamp ?? existing.timestamp
+        let candidateEnd = candidate.endTimestamp ?? candidate.timestamp
+        if let existingEnd, let candidateEnd {
+            merged.endTimestamp = max(existingEnd, candidateEnd)
+        } else {
+            merged.endTimestamp = existingEnd ?? candidateEnd
+        }
+
+        return merged
     }
 
     private func geminiSlidesOverlapInTime(_ lhs: TranscriptSlide, _ rhs: TranscriptSlide) -> Bool {
@@ -1980,8 +2088,7 @@ final class InstagramAutoTranscriber: Sendable {
 
         for i in 1..<slides.count {
             let currNorm = normalizedLineKey(slides[i].text)
-            let currWords = Set(currNorm.split(separator: " ").map(String.init))
-            guard currWords.count >= 2 else {
+            guard !currNorm.isEmpty else {
                 result.append(slides[i])
                 continue
             }
@@ -1989,20 +2096,10 @@ final class InstagramAutoTranscriber: Sendable {
             var isDuplicate = false
             for j in result.indices {
                 let existNorm = normalizedLineKey(result[j].text)
-                let existWords = Set(existNorm.split(separator: " ").map(String.init))
-                guard existWords.count >= 2 else { continue }
+                guard !existNorm.isEmpty else { continue }
 
-                if jaccardSimilarity(existWords, currWords) >= 0.92 {
-                    isDuplicate = true
-                    break
-                }
-
-                let intersection = existWords.intersection(currWords).count
-                let containment = Double(intersection) / Double(min(existWords.count, currWords.count))
-                if containment >= 0.90 {
-                    if currWords.count > existWords.count {
-                        result[j] = slides[i]
-                    }
+                if areDuplicateSlideTexts(result[j].text, slides[i].text) {
+                    result[j] = mergedDuplicateSlide(existing: result[j], candidate: slides[i])
                     isDuplicate = true
                     break
                 }
@@ -2421,6 +2518,46 @@ final class InstagramAutoTranscriber: Sendable {
         return overlapScores.reduce(0, +) / Double(overlapScores.count)
     }
 
+    private func globalSubtitleOverlapRatio(visualSlides: [TranscriptSlide], speech: [SpeechSegment]) -> Double {
+        let visualText = visualSlides.map(\.text).joined(separator: " ")
+        let speechText = speech.map(\.text).joined(separator: " ")
+        return tokenContainmentScore(needle: visualText, haystack: speechText)
+    }
+
+    private func captionMirroredSlideRatio(visualSlides: [TranscriptSlide], speech: [SpeechSegment]) -> Double {
+        let speechText = speech.map(\.text).joined(separator: " ")
+        guard !speechText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return 0 }
+
+        let eligibleSlides = visualSlides.filter { wordCount(in: $0.text) >= 5 }
+        guard !eligibleSlides.isEmpty else { return 0 }
+
+        let mirroredCount = eligibleSlides.filter { slide in
+            tokenContainmentScore(needle: slide.text, haystack: speechText) >= 0.72
+        }.count
+
+        return Double(mirroredCount) / Double(eligibleSlides.count)
+    }
+
+    private func tokenContainmentScore(needle: String, haystack: String) -> Double {
+        let needleTokens = significantSubtitleTokens(from: needle)
+        let haystackTokens = Set(significantSubtitleTokens(from: haystack))
+        guard !needleTokens.isEmpty, !haystackTokens.isEmpty else { return 0 }
+
+        let matchedCount = needleTokens.filter { haystackTokens.contains($0) }.count
+        return Double(matchedCount) / Double(needleTokens.count)
+    }
+
+    private func significantSubtitleTokens(from text: String) -> [String] {
+        normalizedLineKey(text)
+            .split(separator: " ")
+            .map(String.init)
+            .filter { token in
+                if Self.lowSignalSubtitleTokens.contains(token) { return false }
+                let hasDigit = token.unicodeScalars.contains { CharacterSet.decimalDigits.contains($0) }
+                return token.count > 2 || hasDigit
+            }
+    }
+
     private func jaccardSimilarity(_ lhs: Set<String>, _ rhs: Set<String>) -> Double {
         let intersection = lhs.intersection(rhs).count
         let union = lhs.union(rhs).count
@@ -2439,7 +2576,7 @@ final class InstagramAutoTranscriber: Sendable {
         shortcode: String? = nil,
         progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
     ) async -> TranscriptionResult {
-        let imageItems = items.filter { $0.mediaType == .image }
+        let imageItems = deduplicatedCarouselItems(items.filter { $0.mediaType == .image })
         guard !imageItems.isEmpty else {
             return transcriptionResult(rawSlides: [], contentType: .empty, averageOCRConfidence: 0)
         }
@@ -2549,6 +2686,30 @@ final class InstagramAutoTranscriber: Sendable {
     }
 
     // MARK: - Carousel Helpers
+
+    private func deduplicatedCarouselItems(_ items: [CarouselItem]) -> [CarouselItem] {
+        var seen = Set<String>()
+        var unique: [CarouselItem] = []
+
+        for item in items {
+            let fingerprint = carouselItemFingerprint(item)
+            guard seen.insert(fingerprint).inserted else { continue }
+            unique.append(item)
+        }
+
+        return unique
+    }
+
+    private func carouselItemFingerprint(_ item: CarouselItem) -> String {
+        let url = item.mediaType == .video
+            ? (item.thumbnailURL ?? item.mediaURL)
+            : item.mediaURL
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.query = nil
+        components?.fragment = nil
+        let stableURL = components?.string ?? url.absoluteString
+        return "\(item.mediaType.rawValue):\(stableURL)"
+    }
 
     /// Download an image from a URL
     private func downloadImage(url: URL, stableKey: String) async -> Data? {

@@ -133,6 +133,34 @@ final class BlockSelectionTests: XCTestCase {
         XCTAssertEqual(text, "Alpha\nDelta")
     }
 
+    func testClipboardTargetRoutesCopyToActiveBlockSelection() {
+        var receivedAction: BlockSelectionClipboardAction?
+
+        BlockSelectionClipboardTarget.activate(
+            isActive: { true },
+            perform: { action in
+                receivedAction = action
+                return true
+            }
+        )
+
+        XCTAssertTrue(BlockSelectionClipboardTarget.send(.copy))
+        XCTAssertEqual(receivedAction, .copy)
+        BlockSelectionClipboardTarget.deactivate()
+    }
+
+    func testClipboardTargetIgnoresInactiveSelection() {
+        BlockSelectionClipboardTarget.activate(
+            isActive: { false },
+            perform: { _ in
+                XCTFail("Inactive selections should not handle pasteboard commands")
+                return true
+            }
+        )
+
+        XCTAssertFalse(BlockSelectionClipboardTarget.send(.copy))
+    }
+
     func testWithRegeneratedIDsCreatesFreshIdentitiesRecursively() {
         var block = RichBlock(kind: .paragraph, inlines: [.text("Parent")])
         block.children = [RichBlock(kind: .paragraph, inlines: [.text("Child")])]
@@ -205,5 +233,33 @@ final class BlockSelectionTests: XCTestCase {
         XCTAssertEqual(NoteDocumentStyle.load(fromMetadata: nil), .default)
         XCTAssertEqual(NoteDocumentStyle.load(fromMetadata: "not json"), .default)
         XCTAssertEqual(NoteDocumentStyle.load(fromMetadata: "{}"), .default)
+    }
+
+    func testNoteDocumentStyleDecodesLegacyMetadataWithoutLineSpacing() {
+        // Styles persisted before the lineSpacing field existed must keep
+        // their voice — never reset to defaults because a key is missing.
+        let legacyMetadata = """
+        {"note_document_style":{"fontFamily":"serif","textSize":"large","pageWidth":"wide"}}
+        """
+
+        let loaded = NoteDocumentStyle.load(fromMetadata: legacyMetadata)
+
+        XCTAssertEqual(loaded.fontFamily, .serif)
+        XCTAssertEqual(loaded.textSize, .large)
+        XCTAssertEqual(loaded.pageWidth, .wide)
+        XCTAssertEqual(loaded.lineSpacing, .standard)
+    }
+
+    func testNoteDocumentStyleLineSpacingRoundTripsThroughMetadata() {
+        var style = NoteDocumentStyle()
+        style.fontFamily = .mono
+        style.lineSpacing = .airy
+
+        let metadata = style.write(intoMetadata: nil)
+        let loaded = NoteDocumentStyle.load(fromMetadata: metadata)
+
+        XCTAssertEqual(loaded, style)
+        XCTAssertEqual(loaded.lineSpacing.lineSpacingDelta, 4)
+        XCTAssertEqual(loaded.lineSpacing.blockGap, 9)
     }
 }

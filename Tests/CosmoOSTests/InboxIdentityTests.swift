@@ -75,6 +75,25 @@ final class InboxIdentityTests: XCTestCase {
         XCTAssertEqual(InboxRouteKind.placeInExistingCluster.legacyClassification, .place)
     }
 
+    func testHistoryEntriesIncludeDeletedCaptureLanesBeforeOlderCaptures() {
+        var capture = makeItem(title: "Placed capture")
+        capture.status = .actioned
+        capture.actionedAt = "2026-06-15T01:00:00Z"
+
+        var lane = CaptureDestination.make(name: "Client ideas", aliases: ["client"])
+        lane.isArchived = true
+        lane.isEnabled = false
+        lane.itemCount = 12
+        lane.updatedAt = "2026-06-15T02:00:00Z"
+
+        let entries = InboxHistoryEntry.merged(captures: [capture], deletedLanes: [lane], limit: 5)
+
+        XCTAssertEqual(entries.map(\.id), ["lane-\(lane.uuid)", "capture-\(capture.uuid)"])
+        XCTAssertEqual(entries.first?.title, "Client ideas")
+        XCTAssertEqual(entries.first?.subtitle, "Deleted lane · 12 captures · client:")
+        XCTAssertTrue(entries.first?.isRestorable == true)
+    }
+
     func testRecommendationBundleDecodesWithoutRelatedAtoms() throws {
         // Pre-June-2026 rows have no relatedAtomUUIDs key — decode must succeed.
         let legacyJSON = """

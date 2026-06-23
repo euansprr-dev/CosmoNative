@@ -59,7 +59,7 @@ enum CraftEngineError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noAPIKey:
-            return "No Anthropic API key configured — set the agent LLM key in settings."
+            return "No Anthropic API key configured — set Settings → API Keys → Anthropic Agent LLM Key."
         case .apiError(let detail):
             return "Craft engine call failed: \(detail)"
         case .emptyResponse:
@@ -71,7 +71,11 @@ enum CraftEngineError: LocalizedError {
 // MARK: - Engine
 
 enum CosmoCraftEngine {
+    typealias RequestPerformer = (URLRequest) async throws -> (Data, URLResponse)
+
     static let model = "claude-opus-4-8"
+    static let effort = "xhigh"
+    static let defaultMaxTokens = 65_536
 
     /// One Messages API call. System blocks carry their own cache_control so
     /// the study method + client pack prefix is written once an hour and read
@@ -80,12 +84,34 @@ enum CosmoCraftEngine {
         systemBlocks: [CraftSystemBlock],
         messages: [[String: Any]],
         jsonSchema: [String: Any]?,
-        maxTokens: Int = 8_192
+        maxTokens: Int = defaultMaxTokens
     ) async throws -> CraftCompletion {
         guard let apiKey = APIKeys.agentLLM, !apiKey.isEmpty else {
             throw CraftEngineError.noAPIKey
         }
 
+        return try await complete(
+            systemBlocks: systemBlocks,
+            messages: messages,
+            jsonSchema: jsonSchema,
+            maxTokens: maxTokens,
+            apiKey: apiKey,
+            requestPerformer: { request in
+                try await URLSession.shared.data(for: request)
+            }
+        )
+    }
+
+    static func complete(
+        systemBlocks: [CraftSystemBlock],
+        messages: [[String: Any]],
+        jsonSchema: [String: Any]?,
+        maxTokens: Int = defaultMaxTokens,
+        apiKey: String,
+        maxAttempts: Int = 3,
+        retryBaseBackoff: Double = 2.0,
+        requestPerformer: RequestPerformer
+    ) async throws -> CraftCompletion {
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 300
@@ -101,23 +127,30 @@ enum CosmoCraftEngine {
             return entry
         }
 
-        var body: [String: Any] = [
-            "model": model,
-            "max_tokens": maxTokens,
-            "thinking": ["type": "adaptive"],
-            "system": system,
-            "messages": messages
-        ]
-        if let jsonSchema {
-            body["output_config"] = ["format": ["type": "json_schema", "schema": jsonSchema]]
-        }
+        let body = requestBody(
+            system: system,
+            messages: messages,
+            jsonSchema: jsonSchema,
+            maxTokens: maxTokens
+        )
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw CraftEngineError.apiError("invalid response")
+        let data: Data
+        let httpResponse: HTTPURLResponse
+        do {
+            (data, httpResponse) = try await withNetworkRetry(
+                maxAttempts: maxAttempts,
+                baseBackoff: retryBaseBackoff,
+                label: "CraftEngine",
+                operation: {
+                    try await requestPerformer(request)
+                }
+            )
+        } catch let error as NetworkRetryError {
+            throw CraftEngineError.apiError(error.localizedDescription)
         }
+
         guard httpResponse.statusCode == 200 else {
             let detail = String(data: data, encoding: .utf8) ?? "unknown error"
             throw CraftEngineError.apiError("HTTP \(httpResponse.statusCode): \(detail.prefix(600))")
@@ -148,6 +181,27 @@ enum CosmoCraftEngine {
         await CraftCostLog.shared.record(usage)
 
         return CraftCompletion(text: text, usage: usage)
+    }
+
+    static func requestBody(
+        system: [[String: Any]],
+        messages: [[String: Any]],
+        jsonSchema: [String: Any]?,
+        maxTokens: Int = defaultMaxTokens
+    ) -> [String: Any] {
+        var outputConfig: [String: Any] = ["effort": effort]
+        if let jsonSchema {
+            outputConfig["format"] = ["type": "json_schema", "schema": jsonSchema]
+        }
+
+        return [
+            "model": model,
+            "max_tokens": maxTokens,
+            "thinking": ["type": "adaptive"],
+            "output_config": outputConfig,
+            "system": system,
+            "messages": messages
+        ]
     }
 
     // MARK: - Structured output schemas
@@ -182,9 +236,9 @@ enum CosmoCraftEngine {
                 "why": string("Expected impact, with evidence.")
             ])),
             "weakestBeat": object([
-                "location": string("Where, e.g. 'Slide 1 hook'; empty when the draft has no weak beat worth riffing."),
-                "originalText": string("The draft's current text at that beat, verbatim."),
-                "microVariations": array(string("A worded variation in the client's voice."))
+                "location": string("Where, e.g. 'Slide 1 hook'; empty when the draft has no weak beat worth riffing.", minLength: 0),
+                "originalText": string("The draft's current text at that beat, verbatim.", minLength: 0),
+                "microVariations": array(string("A worded variation in the client's voice."), minItems: 0)
             ]),
             "verdict": string("One closing paragraph, dinner-table voice: what this piece is one fix away from.")
         ])
@@ -198,8 +252,8 @@ enum CosmoCraftEngine {
                 "text": string("The variation, format-correct density, client's voice."),
                 "mechanism": string("The mechanism in ≤6 words, e.g. 'curiosity gap via absence'."),
                 "borrowedFrom": string("Which comparable's pattern this borrows; 'none' if original."),
-                "numbers": string("That comparable's real numbers; empty if none.")
-            ])),
+                "numbers": string("That comparable's real numbers; empty if none.", minLength: 0)
+            ]), minItems: 1),
             "bet": string("Which variation you'd bet on and why, one or two sentences.")
         ])
     }
@@ -213,12 +267,20 @@ enum CosmoCraftEngine {
         ]
     }
 
-    private static func string(_ description: String) -> [String: Any] {
-        ["type": "string", "description": description]
+    private static func string(_ description: String, minLength: Int = 1) -> [String: Any] {
+        var schema: [String: Any] = ["type": "string", "description": description]
+        if minLength > 0 {
+            schema["minLength"] = minLength
+        }
+        return schema
     }
 
-    private static func array(_ items: [String: Any]) -> [String: Any] {
-        ["type": "array", "items": items]
+    private static func array(_ items: [String: Any], minItems: Int = 0) -> [String: Any] {
+        var schema: [String: Any] = ["type": "array", "items": items]
+        if minItems > 0 {
+            schema["minItems"] = minItems
+        }
+        return schema
     }
 }
 

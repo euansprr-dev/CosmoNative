@@ -110,9 +110,14 @@ final class CaptureLanesViewModel {
     func deleteLane(_ destination: CaptureDestination) async {
         do {
             try await destinationRepo.archive(uuid: destination.uuid)
-            destinations = try await destinationRepo.fetchActive()
-            if selectedDestinationId == destination.uuid {
-                clearSelection()
+            let activeDestinations = try await destinationRepo.fetchActive()
+            withAnimation(ProMotionSprings.gentle) {
+                destinations = activeDestinations
+                if selectedDestinationId == destination.uuid {
+                    selectedDestinationId = nil
+                    selectedItems = []
+                    attachmentsByItemId = [:]
+                }
             }
             await loadItems()
         } catch {
@@ -170,7 +175,11 @@ struct CaptureLanesView: View {
             guard changedDestinationId == nil || changedDestinationId == viewModel.selectedDestinationId else { return }
             Task { await viewModel.refresh() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.captureLaneChanged)) { _ in
+            Task { await viewModel.refresh() }
+        }
         .animation(ProMotionSprings.gentle, value: viewModel.selectedDestinationId)
+        .animation(ProMotionSprings.gentle, value: viewModel.destinations.map(\.uuid))
     }
 
     // MARK: - Destinations grid (Finder grammar)

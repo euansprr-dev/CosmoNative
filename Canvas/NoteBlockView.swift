@@ -46,6 +46,10 @@ struct NoteBlockView: View {
     private let accentColor = CosmoColors.blockNote
     private let titleStyle = SharedTitleSurfaceStyle.noteCanvas
 
+    /// The note's per-document voice (Aa menu) travels with it — the canvas
+    /// card renders in the same font family and leading as the focus mode.
+    @State private var noteDocumentStyle: NoteDocumentStyle = .default
+
     private var titleFontSize: CGFloat { 40 }
     private var bodyFontSize: CGFloat { 20 }
     private var documentTitleFont: Font {
@@ -234,6 +238,8 @@ struct NoteBlockView: View {
                 CosmoDocumentEditor(
                     document: $noteBodyDocument,
                     fontSize: bodyFontSize,
+                    fontDesign: noteDocumentStyle.fontFamily.design,
+                    lineSpacingAdjustment: noteDocumentStyle.lineSpacing.lineSpacingDelta,
                     placeholder: "Press / for commands...",
                     allowSlashCommands: true,
                     allowMentions: true,
@@ -265,6 +271,7 @@ struct NoteBlockView: View {
                             blockCount: noteBodyDocument.blocks.count
                         )
                     )
+                    .fontDesign(noteDocumentStyle.fontFamily.swiftUIDesign)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             }
@@ -283,6 +290,7 @@ struct NoteBlockView: View {
             Spacer()
             Text("\(noteWordCount) words  ·  \(noteText.count) chars")
                 .font(.system(size: 15, weight: .medium))
+                .monospacedDigit()
                 .foregroundStyle(DS.documentTextMuted)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -405,6 +413,8 @@ struct NoteBlockView: View {
                             // Entity linkage is always safe to refresh.
                             trackedEntityId = atom.id ?? trackedEntityId
                             trackedEntityUuid = atom.uuid
+                            // Style refresh never clobbers text — safe mid-edit.
+                            noteDocumentStyle = NoteDocumentStyle.load(fromMetadata: atom.metadata)
                             // Don't clobber text the user typed (or is typing) while
                             // the fetch was in flight — mirror the GRDB observation.
                             guard !isEditingBody, !isEditingTitle, !hasLocalEdits else { return }
@@ -459,6 +469,9 @@ struct NoteBlockView: View {
                 receiveCompletion: { _ in },
                 receiveValue: { fetchedAtom in
                     guard let atom = fetchedAtom else { return }
+                    // Style changes (made in focus mode) apply immediately —
+                    // they never touch the text, so no stale-write guard needed.
+                    noteDocumentStyle = NoteDocumentStyle.load(fromMetadata: atom.metadata)
                     let newTitleDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .title,
                         metadata: atom.metadata,

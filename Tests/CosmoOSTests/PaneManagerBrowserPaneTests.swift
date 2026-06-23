@@ -68,6 +68,93 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         XCTAssertFalse(source.contains(".animation(ProMotionSprings.snappy, value: paneManager.mainSplitRatio)"))
     }
 
+    func testCollapsedPaneContentMovesAwayFromSpineHitZone() {
+        XCTAssertEqual(
+            PaneSlotPresentationPolicy.contentOffset(isExpanded: true, expandedWidth: 520),
+            0
+        )
+        XCTAssertLessThan(
+            PaneSlotPresentationPolicy.contentOffset(isExpanded: false, expandedWidth: 520),
+            -520
+        )
+    }
+
+    func testCollapsedPaneHoverDwellMatchesFastSpineReveal() {
+        XCTAssertEqual(PaneSlotPresentationPolicy.hoverDwellMilliseconds, 150)
+    }
+
+    func testLeftCollapsedSpineTouchesFollowingExpandedPane() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/SplitPaneContainer.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            source.contains("static func interSlotSpacing(leftIsExpanded: Bool, rightIsExpanded: Bool) -> CGFloat"),
+            "Pane slot spacing must be directional so a left-side collapsed spine can touch the following expanded pane."
+        )
+        XCTAssertTrue(
+            source.contains("if !leftIsExpanded && rightIsExpanded { return 0 }"),
+            "Only the collapsed-left / expanded-right edge should close its visual gap."
+        )
+        XCTAssertTrue(
+            source.contains("HStack(spacing: 0)"),
+            "The deck must render explicit per-edge spacers instead of one fixed HStack spacing."
+        )
+        XCTAssertTrue(
+            source.contains("layout.spacingAfter[pane.id]"),
+            "The rendered deck must use the layout's directional spacing for each pane edge."
+        )
+    }
+
+    func testCollapsedPaneSlotAnchorsVisibleFrameToSpineWidth() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/SplitPaneContainer.swift"),
+            encoding: .utf8
+        )
+        let callStart = try XCTUnwrap(source.range(of: "PaneSlotView(")?.lowerBound)
+        let callEnd = try XCTUnwrap(source[callStart...].range(of: "onFocus:")?.lowerBound)
+        let slotCall = String(source[callStart..<callEnd])
+
+        XCTAssertTrue(
+            slotCall.contains("slotWidth: slotWidth"),
+            "PaneSlotView must receive the deck slot width so collapsed slots paint from the 44pt spine bounds."
+        )
+
+        let viewStart = try XCTUnwrap(source.range(of: "private struct PaneSlotView")?.lowerBound)
+        let badgeStart = try XCTUnwrap(source.range(of: "private var pinnedBadge")?.lowerBound)
+        let slotView = String(source[viewStart..<badgeStart])
+
+        XCTAssertTrue(slotView.contains("let slotWidth: CGFloat"))
+        XCTAssertTrue(
+            slotView.contains(".frame(width: slotWidth, alignment: .leading)"),
+            "The slot root must be fixed to the visible slot width with leading alignment before clipping."
+        )
+        XCTAssertLessThan(
+            try XCTUnwrap(slotView.range(of: ".frame(width: slotWidth, alignment: .leading)")?.lowerBound),
+            try XCTUnwrap(slotView.range(of: ".clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))")?.lowerBound)
+        )
+    }
+
+    func testPaneContentChromeFillsAssignedSlotBeforePaintingBackground() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/PaneContentView.swift"),
+            encoding: .utf8
+        )
+        let bodyStart = try XCTUnwrap(source.range(of: "var body: some View {")?.lowerBound)
+        let taskStart = try XCTUnwrap(source.range(of: ".task(id: content.entitySelection)")?.lowerBound)
+        let bodyChrome = String(source[bodyStart..<taskStart])
+
+        XCTAssertTrue(
+            bodyChrome.contains(".frame(maxWidth: .infinity, maxHeight: .infinity)"),
+            "Pane chrome must expand to the deck slot before drawing its background and border."
+        )
+        XCTAssertLessThan(
+            try XCTUnwrap(bodyChrome.range(of: ".frame(maxWidth: .infinity, maxHeight: .infinity)")?.lowerBound),
+            try XCTUnwrap(bodyChrome.range(of: ".background(backgroundFill)")?.lowerBound)
+        )
+    }
+
     func testBrowserStateDoesNotRepublishIdenticalSnapshots() {
         let url = URL(string: "https://www.instagram.com/reel/example/")!
         let state = CosmoWebBrowserState(initialURL: url, title: "Instagram")
@@ -88,6 +175,51 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
 
         XCTAssertEqual(publishCount, 0)
         withExtendedLifetime(cancellable) {}
+    }
+
+    func testBrowserWebViewObservesURLChangesOutsideNavigationDelegateCallbacks() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CosmoWebBrowserPane.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            source.contains("installWebViewObservers(for: webView)"),
+            "The browser bridge must observe WKWebView state directly so client-side route changes update the address field."
+        )
+        XCTAssertTrue(
+            source.contains("webView.observe(\\.url"),
+            "WKWebView.url is KVO-compliant and should drive address updates for same-document SPA navigation."
+        )
+    }
+
+    func testBrowserChromeUsesFavoriteLanguageAndAdaptiveOverflow() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CosmoWebBrowserPane.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("private var favoriteLimitForBar: Int"))
+        XCTAssertTrue(source.contains("private var visibleFavorites: [CosmoBrowserPinnedSite]"))
+        XCTAssertTrue(source.contains("private var overflowFavorites: [CosmoBrowserPinnedSite]"))
+        XCTAssertTrue(source.contains("Label(\"Open Favorite\", systemImage: \"arrow.up.forward.app\")"))
+        XCTAssertTrue(source.contains("Label(\"Rename Favorite\", systemImage: \"pencil\")"))
+        XCTAssertTrue(source.contains("Label(\"Remove Favorite\", systemImage: \"trash\")"))
+        XCTAssertTrue(source.contains("Image(systemName: \"ellipsis.circle\")"))
+    }
+
+    func testBrowserStartPageQuickAccessIsWiredToHomeURL() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CosmoWebBrowserPane.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("@Published var showsStartPage: Bool"))
+        XCTAssertTrue(source.contains("self.showsStartPage = initialURL == CosmoBrowserURLResolver.defaultHomeURL"))
+        XCTAssertTrue(source.contains("CosmoBrowserStartPage("))
+        XCTAssertTrue(source.contains("favorites: browserState.pins"))
+        XCTAssertTrue(source.contains("recentHistory: browserState.recentHistory"))
+        XCTAssertTrue(source.contains("showsStartPage = false"))
     }
 
     func testBrowserURLResolverAcceptsBareDomainsAndSearchQueries() {
@@ -135,6 +267,80 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         let savedPins = await store.pins(for: CosmoBrowserProfile.standard.id)
         XCTAssertEqual(savedPins.first?.displayName, "Josh Research")
         XCTAssertTrue(savedPins.first?.searchableText.localizedCaseInsensitiveContains("Josh Research") == true)
+
+        try? FileManager.default.removeItem(at: stateURL)
+    }
+
+    func testBrowserStoreKeepsMultipleFavoritesOnSameHost() async throws {
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CosmoBrowserStore(fileURL: stateURL)
+        let first = CosmoBrowserPinnedSite(
+            url: URL(string: "https://www.instagram.com/josh/")!,
+            title: "Josh",
+            displayName: "Josh"
+        )
+        let second = CosmoBrowserPinnedSite(
+            url: URL(string: "https://www.instagram.com/euan/")!,
+            title: "Euan",
+            displayName: "Euan"
+        )
+
+        _ = try await store.upsertPin(first, for: CosmoBrowserProfile.standard.id)
+        let pins = try await store.upsertPin(second, for: CosmoBrowserProfile.standard.id)
+
+        XCTAssertEqual(pins.map(\.url), [second.url, first.url])
+        XCTAssertEqual(Set(pins.map(\.displayName)), ["Josh", "Euan"])
+
+        try? FileManager.default.removeItem(at: stateURL)
+    }
+
+    func testBrowserStateMarksOnlyExactCurrentPageAsFavorited() {
+        let first = URL(string: "https://www.instagram.com/josh/")!
+        let second = URL(string: "https://www.instagram.com/euan/")!
+        let state = CosmoWebBrowserState(initialURL: first, title: "Josh")
+
+        state.pins = [
+            CosmoBrowserPinnedSite(url: first, title: "Josh", displayName: "Josh")
+        ]
+        XCTAssertTrue(state.isCurrentSitePinned)
+
+        state.applySnapshot(
+            url: second,
+            title: "Euan",
+            isLoading: false,
+            estimatedProgress: 1,
+            canGoBack: true,
+            canGoForward: false
+        )
+        XCTAssertFalse(state.isCurrentSitePinned)
+    }
+
+    func testBrowserStateRemovingOneSameHostFavoriteKeepsTheOther() async throws {
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let store = CosmoBrowserStore(fileURL: stateURL)
+        let first = CosmoBrowserPinnedSite(
+            url: URL(string: "https://www.instagram.com/josh/")!,
+            title: "Josh",
+            displayName: "Josh"
+        )
+        let second = CosmoBrowserPinnedSite(
+            url: URL(string: "https://www.instagram.com/euan/")!,
+            title: "Euan",
+            displayName: "Euan"
+        )
+        try await store.savePins([first, second], for: CosmoBrowserProfile.standard.id)
+        let state = CosmoWebBrowserState(initialURL: first.url, title: "Josh", store: store)
+
+        await state.loadPersistedPins()
+        state.unpin(first)
+        let pins = try await waitForPins(in: store, profileID: CosmoBrowserProfile.standard.id, count: 1)
+
+        XCTAssertEqual(pins.map(\.url), [second.url])
+        XCTAssertEqual(state.pins.map(\.url), [second.url])
 
         try? FileManager.default.removeItem(at: stateURL)
     }

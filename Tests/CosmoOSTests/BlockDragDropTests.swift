@@ -50,6 +50,21 @@ final class BlockDragDropTests: XCTestCase {
         XCTAssertGreaterThan(dropping.dropIndicatorOpacity, hovered.dropIndicatorOpacity)
     }
 
+    func testSelectedBlockDoesNotRevealHandleChromeWithoutHover() {
+        XCTAssertFalse(BlockInteractionPolicy.revealsHandleChrome(
+            isHovered: false,
+            isSelected: true,
+            isMenuPresented: false,
+            isDropTarget: false
+        ))
+        XCTAssertTrue(BlockInteractionPolicy.revealsHandleChrome(
+            isHovered: true,
+            isSelected: true,
+            isMenuPresented: false,
+            isDropTarget: false
+        ))
+    }
+
     func testMotionPolicyUsesFastSettlingChromeAndDropFeedback() {
         XCTAssertLessThanOrEqual(BlockMotionPolicy.chromeResponse, 0.20)
         XCTAssertGreaterThan(BlockMotionPolicy.chromeDampingFraction, 0.80)

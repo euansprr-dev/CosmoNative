@@ -151,6 +151,61 @@ enum CanvasZoomPolicy {
     }
 }
 
+struct CanvasSessionViewportState: Equatable {
+    var zoomLevel: CGFloat
+    var panOffset: CGSize
+
+    static let defaultOpening = CanvasSessionViewportState()
+
+    init(
+        zoomLevel: CGFloat = 1.0,
+        panOffset: CGSize = .zero
+    ) {
+        self.zoomLevel = zoomLevel
+        self.panOffset = panOffset
+    }
+}
+
+enum CanvasSessionViewportPolicy {
+    static func openingViewport(
+        remembered: CanvasSessionViewportState?,
+        persisted: CanvasSessionViewportState?
+    ) -> CanvasSessionViewportState {
+        remembered ?? .defaultOpening
+    }
+}
+
+@MainActor
+final class CanvasSessionViewportStore {
+    static let shared = CanvasSessionViewportStore()
+
+    private var viewports: [String: CanvasSessionViewportState] = [:]
+
+    private init() {}
+
+    func remember(_ viewport: CanvasSessionViewportState, for thinkspaceId: String?) {
+        viewports[key(for: thinkspaceId)] = viewport
+    }
+
+    func rememberedViewport(for thinkspaceId: String?) -> CanvasSessionViewportState? {
+        viewports[key(for: thinkspaceId)]
+    }
+
+    func openingViewport(
+        for thinkspaceId: String?,
+        persisted: CanvasSessionViewportState? = nil
+    ) -> CanvasSessionViewportState {
+        CanvasSessionViewportPolicy.openingViewport(
+            remembered: rememberedViewport(for: thinkspaceId),
+            persisted: persisted
+        )
+    }
+
+    private func key(for thinkspaceId: String?) -> String {
+        thinkspaceId ?? "__default__"
+    }
+}
+
 /// Compositor-facing transform for the SwiftUI canvas world layer.
 /// Blocks and clusters remain positioned in raw canvas coordinates; the
 /// enclosing layer receives this offset and scale so pan/zoom can move the

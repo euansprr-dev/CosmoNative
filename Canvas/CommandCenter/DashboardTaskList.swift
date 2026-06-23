@@ -40,6 +40,8 @@ struct DashboardTaskList: View {
                             anytimeView
                         case .someday:
                             somedayView
+                        case .habits, .reports, .objectives:
+                            EmptyView()
                         case .project:
                             projectView
                         case .area:

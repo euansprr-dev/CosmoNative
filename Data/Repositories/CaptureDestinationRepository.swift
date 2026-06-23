@@ -83,6 +83,30 @@ final class CaptureDestinationRepository: ObservableObject {
                 arguments: [now, uuid]
             )
         }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Inbox.captureLaneChanged,
+            object: nil,
+            userInfo: ["uuid": uuid]
+        )
+    }
+
+    func restore(uuid: String) async throws {
+        try await database.asyncWrite { db in
+            let now = ISO8601.string(from: Date())
+            try db.execute(
+                sql: """
+                    UPDATE capture_destinations
+                    SET isArchived = 0, isEnabled = 1, updatedAt = ?
+                    WHERE uuid = ?
+                    """,
+                arguments: [now, uuid]
+            )
+        }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Inbox.captureLaneChanged,
+            object: nil,
+            userInfo: ["uuid": uuid]
+        )
     }
 
     func markUsed(uuid: String) async {
@@ -114,6 +138,18 @@ final class CaptureDestinationRepository: ObservableObject {
                 .filter(Column("isEnabled") == true)
                 .order(Column("lastUsedAt").desc, Column("createdAt").desc)
                 .fetchAll(db)
+        }
+    }
+
+    func fetchArchived(limit: Int? = nil) async throws -> [CaptureDestination] {
+        try await database.asyncRead { db in
+            var request = CaptureDestination
+                .filter(Column("isArchived") == true)
+                .order(Column("updatedAt").desc)
+            if let limit {
+                request = request.limit(limit)
+            }
+            return try request.fetchAll(db)
         }
     }
 

@@ -76,6 +76,44 @@ struct ContextSource: Codable, Identifiable, Sendable, Equatable {
     func needsReindex(currentBodyHash: String, currentMetadataHash: String) -> Bool {
         bodyHash != currentBodyHash || metadataHash != currentMetadataHash
     }
+
+    var isGeneratedCodexCorpus: Bool {
+        ContextSourcePolicy.isGeneratedCodexCorpusTitle(title)
+    }
+}
+
+enum ContextSourcePolicy {
+    static func isGeneratedCodexCorpusTitle(_ title: String) -> Bool {
+        let normalized = title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        return normalized == "content physics exemplar codex"
+            || normalized == "content physics codex"
+            || (normalized.contains("content physics") && normalized.contains("exemplar codex"))
+            || (normalized.contains("content physics") && normalized.contains("codex synthesis"))
+    }
+
+    static func allowsGeneratedCodexCorpus(query: String) -> Bool {
+        let normalized = query.lowercased()
+        return normalized.contains("content physics exemplar codex")
+            || normalized.contains("content physics codex")
+            || normalized.contains("exemplar codex")
+    }
+
+    static func allows(source: ContextSource, query: String) -> Bool {
+        !source.isGeneratedCodexCorpus || allowsGeneratedCodexCorpus(query: query)
+    }
+
+    static func filteredSources(_ sources: [ContextSource], query: String) -> [ContextSource] {
+        guard !allowsGeneratedCodexCorpus(query: query) else { return sources }
+        return sources.filter { !$0.isGeneratedCodexCorpus }
+    }
+
+    static func filteredAtoms(_ atoms: [Atom], query: String) -> [Atom] {
+        guard !allowsGeneratedCodexCorpus(query: query) else { return atoms }
+        return atoms.filter { !$0.isGeneratedCodexCorpus }
+    }
 }
 
 struct ContextSession: Codable, Identifiable, Sendable, Equatable {

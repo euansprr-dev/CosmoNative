@@ -148,6 +148,7 @@ struct MentionComposerTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            FocusModeTextClipboardTarget.activate(textView)
             if parent.usesPillMentions, let storage = textView.textStorage {
                 parent.selection = ComposerMentionSerializer.plainRange(forAttributedRange: textView.selectedRange(), in: storage)
                 parent.text = ComposerMentionSerializer.plainString(from: storage)
@@ -174,6 +175,9 @@ struct MentionComposerTextView: NSViewRepresentable {
         }
 
         func textDidBeginEditing(_ notification: Notification) {
+            if let textView = notification.object as? NSTextView {
+                FocusModeTextClipboardTarget.activate(textView)
+            }
             parent.isFocused.wrappedValue = true
         }
 
@@ -508,7 +512,17 @@ final class ComposerNSTextView: NSTextView {
     var isMentionOverlayVisible = false
     var placeholderString: String = ""
 
+    override func becomeFirstResponder() -> Bool {
+        let didBecome = super.becomeFirstResponder()
+        if didBecome {
+            FocusModeTextClipboardTarget.activate(self)
+        }
+        return didBecome
+    }
+
     override func keyDown(with event: NSEvent) {
+        FocusModeTextClipboardTarget.activate(self)
+
         if event.keyCode == 48, // Tab key
            !event.modifierFlags.contains(.shift),
            onTab?() == true {
@@ -531,6 +545,21 @@ final class ComposerNSTextView: NSTextView {
         } else {
             super.keyDown(with: event)
         }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        FocusModeTextClipboardTarget.activate(self)
+        if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        FocusModeTextClipboardTarget.activate(self)
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 
     override func draw(_ dirtyRect: NSRect) {

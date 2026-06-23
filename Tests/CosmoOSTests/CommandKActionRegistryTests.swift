@@ -243,6 +243,19 @@ final class CommandKActionRegistryTests: XCTestCase {
         XCTAssertTrue(state.isVisibleToApp)
     }
 
+    func testCommandKPresentationPreservedBehindFocusModeIsNotVisibleToApp() {
+        var state = CommandKPresentationState(
+            isVisible: true,
+            isPreservedBehindFocusMode: false
+        )
+
+        state.apply(.preserveBehindFocusMode)
+
+        XCTAssertFalse(state.isVisible)
+        XCTAssertTrue(state.isPreservedBehindFocusMode)
+        XCTAssertFalse(state.isVisibleToApp)
+    }
+
     func testCommandKPresentationCanReopenAfterClose() {
         var state = CommandKPresentationState(
             isVisible: true,

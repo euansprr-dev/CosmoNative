@@ -98,6 +98,57 @@ final class CosmoRetrievalServiceTests: XCTestCase {
         XCTAssertEqual(results.first?.matchType, "keyword")
     }
 
+    func testRetrievalSkipsGeneratedCodexCorpusUnlessPromptNamesIt() async throws {
+        let store = ContextIndexStore.inMemoryForTests()
+        let codex = ContextSource(
+            id: "source-codex",
+            kind: .atom,
+            title: "Content Physics Exemplar Codex",
+            atomUUID: "codex-1",
+            bodyHash: "hash",
+            metadataHash: "meta",
+            pinState: .pinned
+        )
+        let chunks = ContextChunker.chunk(
+            sourceID: codex.id,
+            title: codex.title,
+            body: "Equity pressure and wholesaling proof mechanics.",
+            bodyHash: "hash"
+        )
+        try await store.upsert(source: codex, chunks: chunks)
+
+        let service = CosmoRetrievalService(indexStore: store)
+        let ordinaryRequest = ContextRetrievalRequest(
+            query: "is 30 percent equity accurate for wholesaling?",
+            conversationID: "conversation-1",
+            surface: .cosmoWindow,
+            purpose: .factLookup,
+            pinnedSourceIDs: ["source-codex"],
+            activeAtomUUID: nil,
+            activeClientUUID: nil,
+            maxChunks: 4,
+            tokenBudget: 1_200
+        )
+
+        let ordinaryResults = try await service.retrieve(ordinaryRequest)
+        XCTAssertTrue(ordinaryResults.isEmpty)
+
+        let explicitRequest = ContextRetrievalRequest(
+            query: "use the Content Physics Exemplar Codex for equity pressure",
+            conversationID: "conversation-1",
+            surface: .cosmoWindow,
+            purpose: .factLookup,
+            pinnedSourceIDs: ["source-codex"],
+            activeAtomUUID: nil,
+            activeClientUUID: nil,
+            maxChunks: 4,
+            tokenBudget: 1_200
+        )
+
+        let explicitResults = try await service.retrieve(explicitRequest)
+        XCTAssertEqual(explicitResults.first?.source.title, "Content Physics Exemplar Codex")
+    }
+
     func testAgentRegistryIncludesSharedRetrievalTool() {
         let names = AgentToolRegistry.shared.allTools.map(\.name)
         XCTAssertTrue(names.contains("retrieve_context"))

@@ -95,6 +95,60 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     // Per-client hook adaptations (auto-generated on swipe capture)
     public var clientAdaptations: [SwipeClientAdaptation]?
 
+    private enum CodingKeys: String, CodingKey {
+        case hookText
+        case hookType
+        case hookScore
+        case hookWordCount
+        case frameworkType
+        case sections
+        case structureComplexity
+        case dominantEmotion
+        case emotionalArc
+        case sentimentScore
+        case persuasionTechniques
+        case persuasionStack
+        case keyInsight
+        case fingerprint
+        case hookScoreReason
+        case analysisVersion
+        case analyzedAt
+        case isFullyAnalyzed
+        case primaryNarrative
+        case secondaryNarrative
+        case swipeContentFormat
+        case niche
+        case creatorUUID
+        case clientUUID
+        case classifiedAt
+        case classificationSource
+        case classificationConfidence
+        case studiedAt
+        case practiceAttempts
+        case userHookScore
+        case hookMechanism
+        case structuralRecipe
+        case voiceMarkers
+        case normalizedBeats
+        case beatFingerprint
+        case transcriptComments
+        case transcriptSlides
+        case rawTranscriptSlides
+        case transcriptSpeechSegments
+        case transcriptionQuality
+        case transcriptionWarnings
+        case transcriptEditedByUser
+        case extractionRetryCount
+        case likesCount
+        case viewsCount
+        case commentsCount
+        case sharesCount
+        case engagementRate
+        case publishedAt
+        case postShortcode
+        case clientAdaptations
+    }
+
     public init(
         hookText: String? = nil,
         hookType: SwipeHookType? = nil,
@@ -193,6 +247,62 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         self.engagementRate = engagementRate
         self.publishedAt = publishedAt
         self.postShortcode = postShortcode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        hookText = try container.decodeIfPresent(String.self, forKey: .hookText)
+        hookType = try container.decodeIfPresent(SwipeHookType.self, forKey: .hookType)
+        hookScore = try container.decodeIfPresent(Double.self, forKey: .hookScore)
+        hookWordCount = try container.decodeIfPresent(Int.self, forKey: .hookWordCount)
+        frameworkType = try container.decodeIfPresent(SwipeFrameworkType.self, forKey: .frameworkType)
+        sections = try container.decodeIfPresent([SwipeSection].self, forKey: .sections)
+        structureComplexity = try container.decodeIfPresent(Double.self, forKey: .structureComplexity)
+        dominantEmotion = try container.decodeIfPresent(SwipeEmotion.self, forKey: .dominantEmotion)
+        emotionalArc = try container.decodeIfPresent([EmotionDataPoint].self, forKey: .emotionalArc)
+        sentimentScore = try container.decodeIfPresent(Double.self, forKey: .sentimentScore)
+        persuasionTechniques = try container.decodeIfPresent([PersuasionTechnique].self, forKey: .persuasionTechniques)
+        persuasionStack = try container.decodeIfPresent([String: Double].self, forKey: .persuasionStack)
+        keyInsight = try container.decodeIfPresent(String.self, forKey: .keyInsight)
+        fingerprint = try container.decodeIfPresent(StructuralFingerprint.self, forKey: .fingerprint)
+        hookScoreReason = try container.decodeIfPresent(String.self, forKey: .hookScoreReason)
+        analysisVersion = try container.decodeIfPresent(Int.self, forKey: .analysisVersion) ?? 1
+        analyzedAt = try container.decodeIfPresent(String.self, forKey: .analyzedAt)
+        isFullyAnalyzed = try container.decodeIfPresent(Bool.self, forKey: .isFullyAnalyzed) ?? false
+        primaryNarrative = try container.decodeIfPresent(NarrativeStyle.self, forKey: .primaryNarrative)
+        secondaryNarrative = try container.decodeIfPresent(NarrativeStyle.self, forKey: .secondaryNarrative)
+        swipeContentFormat = try container.decodeIfPresent(ContentFormat.self, forKey: .swipeContentFormat)
+        niche = try container.decodeIfPresent(String.self, forKey: .niche)
+        creatorUUID = try container.decodeIfPresent(String.self, forKey: .creatorUUID)
+        clientUUID = try container.decodeIfPresent(String.self, forKey: .clientUUID)
+        classifiedAt = try container.decodeIfPresent(Date.self, forKey: .classifiedAt)
+        classificationSource = try container.decodeIfPresent(ClassificationSource.self, forKey: .classificationSource)
+        classificationConfidence = try container.decodeIfPresent(Double.self, forKey: .classificationConfidence)
+        studiedAt = try container.decodeIfPresent(String.self, forKey: .studiedAt)
+        practiceAttempts = try container.decodeIfPresent(Int.self, forKey: .practiceAttempts)
+        userHookScore = try container.decodeIfPresent(Double.self, forKey: .userHookScore)
+        hookMechanism = try container.decodeIfPresent(String.self, forKey: .hookMechanism)
+        structuralRecipe = try container.decodeIfPresent(String.self, forKey: .structuralRecipe)
+        voiceMarkers = try container.decodeIfPresent([String].self, forKey: .voiceMarkers)
+        normalizedBeats = try container.decodeIfPresent([String].self, forKey: .normalizedBeats)
+        beatFingerprint = try container.decodeIfPresent(String.self, forKey: .beatFingerprint)
+        transcriptComments = try container.decodeIfPresent([TranscriptComment].self, forKey: .transcriptComments)
+        transcriptSlides = try container.decodeIfPresent([TranscriptSlide].self, forKey: .transcriptSlides)
+        rawTranscriptSlides = try container.decodeIfPresent([TranscriptSlide].self, forKey: .rawTranscriptSlides)
+        transcriptSpeechSegments = try container.decodeIfPresent([TranscriptSegment].self, forKey: .transcriptSpeechSegments)
+        transcriptionQuality = try container.decodeIfPresent(TranscriptionQuality.self, forKey: .transcriptionQuality)
+        transcriptionWarnings = try container.decodeIfPresent([String].self, forKey: .transcriptionWarnings)
+        transcriptEditedByUser = try container.decodeIfPresent(Bool.self, forKey: .transcriptEditedByUser)
+        extractionRetryCount = try container.decodeIfPresent(Int.self, forKey: .extractionRetryCount)
+        likesCount = try container.decodeIfPresent(Int.self, forKey: .likesCount)
+        viewsCount = try container.decodeIfPresent(Int.self, forKey: .viewsCount)
+        commentsCount = try container.decodeIfPresent(Int.self, forKey: .commentsCount)
+        sharesCount = try container.decodeIfPresent(Int.self, forKey: .sharesCount)
+        engagementRate = try container.decodeIfPresent(Double.self, forKey: .engagementRate)
+        publishedAt = try container.decodeIfPresent(Date.self, forKey: .publishedAt)
+        postShortcode = try container.decodeIfPresent(String.self, forKey: .postShortcode)
+        clientAdaptations = try container.decodeIfPresent([SwipeClientAdaptation].self, forKey: .clientAdaptations)
     }
 
     /// Mark as studied now

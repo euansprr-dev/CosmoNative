@@ -156,6 +156,53 @@ final class ContentFocusPersistenceRegressionTests: XCTestCase {
         XCTAssertEqual(restored?.plainText, "")
     }
 
+    func testPresentationStyleChangesPreserveLivePlainTextWhenRichDocumentLags() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let packageRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let editorURL = packageRoot.appendingPathComponent("Editor/CosmoDocumentEditor.swift")
+        let source = try String(contentsOf: editorURL, encoding: .utf8)
+
+        let presentationHandlers = try XCTUnwrap(
+            slice(
+                source,
+                from: ".onChange(of: fontSize)",
+                to: ".onChange(of: plainTextMirror)"
+            )
+        )
+
+        XCTAssertEqual(presentationHandlers.components(separatedBy: "syncEditorForPresentationChange()").count - 1, 3)
+        XCTAssertFalse(
+            presentationHandlers.contains("syncEditorFromDocument()"),
+            "Aa/style changes must not repaint the focused editor from a stale RichDocument while the plain-text lane has newer edits."
+        )
+
+        let presentationHelper = try XCTUnwrap(
+            slice(
+                source,
+                from: "private func syncEditorForPresentationChange()",
+                to: "private func handlePlainTextMirrorChange"
+            )
+        )
+        XCTAssertTrue(presentationHelper.contains("preferLivePlainText: true"))
+
+        let presentationResolver = try XCTUnwrap(
+            slice(
+                source,
+                from: "private func resolvedDocumentForEditor(preferLivePlainText: Bool = false)",
+                to: "private func liveDocumentForPresentationChange()"
+            )
+        )
+        XCTAssertTrue(presentationResolver.contains("liveDocumentForPresentationChange()"))
+        XCTAssertTrue(presentationResolver.contains("livePlainText == plainTextMirror"))
+        XCTAssertTrue(
+            source.contains("RichDocumentSerializer.document(from: attributedText)"),
+            "Aa/style changes should preserve the live rich editor buffer when it is already synchronized with the latest plain text."
+        )
+    }
+
     private func slice(_ source: String, from startMarker: String, to endMarker: String) -> String? {
         guard let start = source.range(of: startMarker),
               let end = source.range(of: endMarker, range: start.upperBound..<source.endIndex) else {

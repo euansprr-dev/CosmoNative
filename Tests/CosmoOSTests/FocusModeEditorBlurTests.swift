@@ -103,6 +103,194 @@ final class FocusModeEditorBlurTests: XCTestCase {
         XCTAssertEqual(activeTextView.string, "menu paste")
     }
 
+    func testContentBodyTextViewHandlesPasteboardKeyEquivalentsDirectly() {
+        let textView = CosmoTextView(frame: NSRect(x: 0, y: 0, width: 240, height: 120))
+        textView.isEditable = true
+
+        textView.string = "body copy"
+        textView.setSelectedRange(NSRange(location: 0, length: 4))
+        NSPasteboard.general.clearContents()
+
+        XCTAssertTrue(textView.performKeyEquivalent(with: commandKeyEvent("c")))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "body")
+
+        textView.string = ""
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("body paste", forType: .string)
+
+        XCTAssertTrue(textView.performKeyEquivalent(with: commandKeyEvent("v")))
+        XCTAssertEqual(textView.string, "body paste")
+    }
+
+    func testFocusModeClipboardPrefersCurrentFieldEditorOverStaleActiveTarget() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let staleTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 160, height: 100))
+        let fieldEditor = NSTextView(frame: NSRect(x: 180, y: 0, width: 160, height: 100))
+        fieldEditor.isFieldEditor = true
+        contentView.addSubview(staleTextView)
+        contentView.addSubview(fieldEditor)
+        window.contentView = contentView
+
+        staleTextView.string = ""
+        fieldEditor.string = ""
+        fieldEditor.setSelectedRange(NSRange(location: 0, length: 0))
+        FocusModeTextClipboardTarget.activate(staleTextView)
+        XCTAssertTrue(window.makeFirstResponder(fieldEditor))
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("outline paste", forType: .string)
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.send(.paste, in: window))
+        XCTAssertEqual(staleTextView.string, "")
+        XCTAssertEqual(fieldEditor.string, "outline paste")
+
+        fieldEditor.setSelectedRange(NSRange(location: 0, length: 7))
+        NSPasteboard.general.clearContents()
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.send(.copy, in: window))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "outline")
+    }
+
+    func testActivatingAnotherTextViewCollapsesPreviousSelection() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let firstTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 160, height: 100))
+        let secondTextView = NSTextView(frame: NSRect(x: 180, y: 0, width: 160, height: 100))
+        contentView.addSubview(firstTextView)
+        contentView.addSubview(secondTextView)
+        window.contentView = contentView
+
+        firstTextView.string = "first selected text"
+        firstTextView.setSelectedRange(NSRange(location: 0, length: 5))
+
+        FocusModeTextClipboardTarget.activate(firstTextView)
+        FocusModeTextClipboardTarget.activate(secondTextView)
+
+        XCTAssertEqual(firstTextView.selectedRange(), NSRange(location: 0, length: 0))
+    }
+
+    func testCollapsingActiveSelectionClearsStaleClipboardTarget() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 220, height: 100))
+        window.contentView = textView
+        textView.string = "selected body"
+        textView.setSelectedRange(NSRange(location: 0, length: 8))
+
+        FocusModeTextClipboardTarget.activate(textView)
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.collapseActiveSelection(in: window, deactivate: true))
+        XCTAssertEqual(textView.selectedRange(), NSRange(location: 0, length: 0))
+        XCTAssertFalse(FocusModeTextClipboardTarget.send(.copy, in: window))
+    }
+
+    func testFocusModeClipboardPrefersFocusedEditableTextViewOverStaleActiveTarget() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let staleTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 160, height: 100))
+        let focusedTextView = NSTextView(frame: NSRect(x: 180, y: 0, width: 160, height: 100))
+        contentView.addSubview(staleTextView)
+        contentView.addSubview(focusedTextView)
+        window.contentView = contentView
+
+        staleTextView.string = ""
+        focusedTextView.string = ""
+        focusedTextView.setSelectedRange(NSRange(location: 0, length: 0))
+        FocusModeTextClipboardTarget.activate(staleTextView)
+        XCTAssertTrue(window.makeFirstResponder(focusedTextView))
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("assistant paste", forType: .string)
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.send(.paste, in: window))
+        XCTAssertEqual(staleTextView.string, "")
+        XCTAssertEqual(focusedTextView.string, "assistant paste")
+
+        focusedTextView.setSelectedRange(NSRange(location: 0, length: 9))
+        NSPasteboard.general.clearContents()
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.send(.copy, in: window))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "assistant")
+    }
+
+    func testAssistantComposerClaimsClipboardTargetWhenFocused() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let documentTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 160, height: 100))
+        let composer = ComposerNSTextView(frame: NSRect(x: 180, y: 0, width: 160, height: 100))
+        contentView.addSubview(documentTextView)
+        contentView.addSubview(composer)
+        window.contentView = contentView
+
+        documentTextView.string = ""
+        composer.string = ""
+        composer.setSelectedRange(NSRange(location: 0, length: 0))
+        FocusModeTextClipboardTarget.activate(documentTextView)
+
+        XCTAssertTrue(window.makeFirstResponder(composer))
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("assistant paste", forType: .string)
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.send(.paste, in: window))
+        XCTAssertEqual(documentTextView.string, "")
+        XCTAssertEqual(composer.string, "assistant paste")
+    }
+
+    func testAssistantComposerCopiesFromComposerSelectionAfterFocus() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        let documentTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 160, height: 100))
+        let composer = ComposerNSTextView(frame: NSRect(x: 180, y: 0, width: 160, height: 100))
+        contentView.addSubview(documentTextView)
+        contentView.addSubview(composer)
+        window.contentView = contentView
+
+        documentTextView.string = "document copy"
+        documentTextView.setSelectedRange(NSRange(location: 0, length: 8))
+        composer.string = "composer copy"
+        composer.setSelectedRange(NSRange(location: 0, length: 8))
+        FocusModeTextClipboardTarget.activate(documentTextView)
+
+        XCTAssertTrue(window.makeFirstResponder(composer))
+
+        NSPasteboard.general.clearContents()
+
+        XCTAssertTrue(FocusModeTextClipboardTarget.send(.copy, in: window))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "composer")
+    }
+
     private func commandKeyEvent(_ character: String) -> NSEvent {
         NSEvent.keyEvent(
             with: .keyDown,

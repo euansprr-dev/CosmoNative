@@ -172,7 +172,7 @@ class CosmoAgentService: ObservableObject {
     nonisolated static let recentToolResultsToKeepUncompressed = 8
 
     nonisolated static func defaultModelTier(for _: AgentIntent) -> AgentModelTier {
-        .geminiFlashLatest
+        .strategist
     }
 
     /// Returns the max tool iterations for a given intent. Creative/analytical
@@ -209,11 +209,18 @@ class CosmoAgentService: ObservableObject {
            let provider = AgentProvider(rawValue: saved) {
             activeProvider = provider
         }
+        if activeProvider == .openRouter, APIKeys.hasAgentLLM {
+            activeProvider = .anthropic
+            UserDefaults.standard.set(activeProvider.rawValue, forKey: "agent_provider")
+        }
         if let model = UserDefaults.standard.string(forKey: "agent_model") {
             selectedModel = Self.migrateModelId(model)
             if selectedModel != model {
                 UserDefaults.standard.set(selectedModel, forKey: "agent_model")
             }
+        } else {
+            selectedModel = activeProvider.defaultModel
+            UserDefaults.standard.set(selectedModel, forKey: "agent_model")
         }
         refreshProvider()
     }
@@ -233,10 +240,12 @@ class CosmoAgentService: ObservableObject {
         UserDefaults.standard.set(model, forKey: "agent_model")
     }
 
-    /// Migrate old model IDs to current OpenRouter format
+    /// Migrate old model IDs to the current daily-driver model.
     private static func migrateModelId(_ model: String) -> String {
         let migrations: [String: String] = [
-            "anthropic/claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4.5",
+            "anthropic/claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4.6",
+            "claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
+            "anthropic/claude-sonnet-4.5": "anthropic/claude-sonnet-4.6",
             "anthropic/claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5",
         ]
         return migrations[model] ?? model
@@ -306,7 +315,7 @@ class CosmoAgentService: ObservableObject {
     /// Tracks the last time the inline assistant's cached prefix was written
     /// (by a real request or a prewarm) so we don't re-warm a hot cache.
     private var lastInlinePrefixWarm: Date?
-    private let prefixWarmInterval: TimeInterval = 240 // Anthropic's 5-min TTL minus safety margin
+    private let prefixWarmInterval: TimeInterval = 55 * 60 // Anthropic 1-hour TTL minus safety margin
 
     /// Write the cached prompt prefix (tools + identity + static instructions) into
     /// the provider's prompt cache ahead of the first real request. Fired on surface

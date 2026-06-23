@@ -74,4 +74,19 @@ final class ContentFocusPaneLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(source.contains("manuscriptEditorHeightOffset"))
         XCTAssertTrue(source.contains("if !zenMode {\n                manuscriptTitleEditor"))
     }
+
+    func testManuscriptTextColumnReservesCustomScrollbarGutter() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let packageRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let focusViewURL = packageRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift")
+        let source = try String(contentsOf: focusViewURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("manuscriptScrollbarGutter"))
+        XCTAssertTrue(source.contains("let textWidth = ContentFocusLayoutPolicy.manuscriptTextWidth"))
+        XCTAssertTrue(source.contains(".frame(width: textWidth, alignment: .leading)"))
+        XCTAssertTrue(source.contains(".padding(.trailing, scrollbarGutter)"))
+    }
 }

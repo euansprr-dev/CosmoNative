@@ -13,11 +13,13 @@ actor CosmoRetrievalService {
         let trimmed = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         guard !request.pinnedSourceIDs.isEmpty else { return [] }
+        let pinnedSourceIDs = try await eligiblePinnedSourceIDs(for: request)
+        guard !pinnedSourceIDs.isEmpty else { return [] }
 
-        var merged = try await keywordResults(for: request)
+        var merged = try await keywordResults(for: request, sourceIDs: pinnedSourceIDs)
 
         if merged.count < request.maxChunks {
-            let lexical = try await lexicalFallbackResults(for: request)
+            let lexical = try await lexicalFallbackResults(for: request, sourceIDs: pinnedSourceIDs)
             merged.append(contentsOf: lexical)
         }
 
@@ -36,6 +38,13 @@ actor CosmoRetrievalService {
         }
 
         return Array(dedupe(reranked).prefix(max(1, request.maxChunks)))
+    }
+
+    private func eligiblePinnedSourceIDs(for request: ContextRetrievalRequest) async throws -> [String] {
+        let sources = try await indexStore.sources(ids: request.pinnedSourceIDs)
+        let eligible = ContextSourcePolicy.filteredSources(sources, query: request.query)
+        let eligibleIDs = Set(eligible.map(\.id))
+        return request.pinnedSourceIDs.filter { eligibleIDs.contains($0) }
     }
 
     nonisolated static func rerankScore(
@@ -65,10 +74,10 @@ actor CosmoRetrievalService {
         return score
     }
 
-    private func keywordResults(for request: ContextRetrievalRequest) async throws -> [ContextRetrievalResult] {
+    private func keywordResults(for request: ContextRetrievalRequest, sourceIDs: [String]) async throws -> [ContextRetrievalResult] {
         let keywordResults = try await indexStore.keywordSearch(
             query: keywordQuery(for: request.query, purpose: request.purpose),
-            sourceIDs: request.pinnedSourceIDs,
+            sourceIDs: sourceIDs,
             limit: max(request.maxChunks * 2, request.maxChunks)
         )
 
@@ -82,9 +91,9 @@ actor CosmoRetrievalService {
         }
     }
 
-    private func lexicalFallbackResults(for request: ContextRetrievalRequest) async throws -> [ContextRetrievalResult] {
-        let chunks = try await indexStore.chunks(sourceIDs: request.pinnedSourceIDs)
-        let sources = try await indexStore.sources(ids: request.pinnedSourceIDs)
+    private func lexicalFallbackResults(for request: ContextRetrievalRequest, sourceIDs: [String]) async throws -> [ContextRetrievalResult] {
+        let chunks = try await indexStore.chunks(sourceIDs: sourceIDs)
+        let sources = try await indexStore.sources(ids: sourceIDs)
         let sourceByID = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
         let queryTerms = Set(ContextIndexStoreSearchTerms.terms(in: request.query))
         guard !queryTerms.isEmpty else { return [] }

@@ -377,6 +377,15 @@ struct SanctuarySettingsView: View {
                 .foregroundStyle(DS.textMuted)
 
             APIKeyCard(
+                title: "Anthropic Agent LLM Key",
+                subtitle: "Required for Voice Variations and native craft skills",
+                placeholder: "sk-ant-...",
+                keyIdentifier: "agent_llm",
+                isRequired: true,
+                instructions: "1. Visit https://console.anthropic.com\n2. Open API Keys\n3. Create a new API key\n4. Paste it here for inline assistants and craft skills"
+            )
+
+            APIKeyCard(
                 title: "OpenRouter API Key",
                 subtitle: "Required for AI features",
                 placeholder: "sk-or-v1-...",
@@ -1068,16 +1077,13 @@ private struct APIKeyCard: View {
 
     private var apiKeyInputField: some View {
         HStack(spacing: 8) {
-            Group {
-                if isSecure {
-                    SecureField(placeholder, text: $apiKey)
-                } else {
-                    TextField(placeholder, text: $apiKey)
-                }
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 13, design: .monospaced))
-            .foregroundStyle(DS.text)
+            PasteAwareAPIKeyField(
+                placeholder: placeholder,
+                text: $apiKey,
+                isSecure: isSecure
+            )
+            .id(isSecure ? "secure" : "plain")
+            .frame(height: 18)
 
             Button(action: { isSecure.toggle() }) {
                 Image(systemName: isSecure ? "eye.slash" : "eye")
@@ -1143,6 +1149,7 @@ private struct APIKeyCard: View {
 
     private var storedKey: String? {
         switch keyIdentifier {
+        case "agent_llm": return APIKeys.agentLLM
         case "openrouter": return APIKeys.openRouter
         case "youtube": return APIKeys.youtube
         case "perplexity": return APIKeys.perplexity
@@ -1164,6 +1171,165 @@ private struct APIKeyCard: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation(ProMotionSprings.snappy) { showSuccess = false }
         }
+    }
+}
+
+private struct PasteAwareAPIKeyField: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    let isSecure: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field: NSTextField = isSecure
+            ? PasteCapturingAPIKeySecureTextField()
+            : PasteCapturingAPIKeyTextField()
+        configure(field, context: context)
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.text = $text
+        configure(nsView, context: context)
+
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+    }
+
+    private func configure(_ field: NSTextField, context: Context) {
+        field.delegate = context.coordinator
+        field.placeholderString = placeholder
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.usesSingleLineMode = true
+        field.lineBreakMode = .byTruncatingMiddle
+        field.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        field.textColor = .labelColor
+        field.placeholderAttributedString = NSAttributedString(
+            string: placeholder,
+            attributes: [
+                .foregroundColor: NSColor.placeholderTextColor,
+                .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+            ]
+        )
+
+        let coordinator = context.coordinator
+        (field as? PasteCapturingAPIKeyFieldBehavior)?.onPasteTextChanged = { [weak coordinator, weak field] in
+            guard let field else { return }
+            coordinator?.text.wrappedValue = field.stringValue
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            text.wrappedValue = field.stringValue
+        }
+    }
+}
+
+private protocol PasteCapturingAPIKeyFieldBehavior: AnyObject {
+    var onPasteTextChanged: (() -> Void)? { get set }
+    func pasteStringFromPasteboard() -> Bool
+}
+
+private enum APIKeyPasteCommand {
+    static func isPasteKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown,
+              let chars = event.charactersIgnoringModifiers?.lowercased() else {
+            return false
+        }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return chars == "v" && flags == .command
+    }
+
+    static func pasteStringFromPasteboard(
+        into field: NSTextField,
+        onTextChanged: (() -> Void)?
+    ) -> Bool {
+        guard let pasted = NSPasteboard.general.string(forType: .string) else {
+            return true
+        }
+
+        if let editor = field.currentEditor() as? NSTextView {
+            editor.paste(nil)
+            DispatchQueue.main.async {
+                onTextChanged?()
+            }
+            return true
+        }
+
+        field.window?.makeFirstResponder(field)
+        if let editor = field.currentEditor() as? NSTextView {
+            editor.paste(nil)
+            DispatchQueue.main.async {
+                onTextChanged?()
+            }
+        } else {
+            field.stringValue = pasted
+            onTextChanged?()
+        }
+        return true
+    }
+}
+
+private final class PasteCapturingAPIKeyTextField: NSTextField, PasteCapturingAPIKeyFieldBehavior {
+    var onPasteTextChanged: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if APIKeyPasteCommand.isPasteKeyEquivalent(event) {
+            return pasteStringFromPasteboard()
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+
+    func pasteStringFromPasteboard() -> Bool {
+        APIKeyPasteCommand.pasteStringFromPasteboard(
+            into: self,
+            onTextChanged: onPasteTextChanged
+        )
+    }
+}
+
+private final class PasteCapturingAPIKeySecureTextField: NSSecureTextField, PasteCapturingAPIKeyFieldBehavior {
+    var onPasteTextChanged: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if APIKeyPasteCommand.isPasteKeyEquivalent(event) {
+            return pasteStringFromPasteboard()
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+
+    func pasteStringFromPasteboard() -> Bool {
+        APIKeyPasteCommand.pasteStringFromPasteboard(
+            into: self,
+            onTextChanged: onPasteTextChanged
+        )
     }
 }
 

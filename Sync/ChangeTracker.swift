@@ -23,7 +23,7 @@ class ChangeTracker: ObservableObject {
             print("[SYNC] ⚠️ Cannot track entity without UUID")
             return
         }
-        print("[SYNC] trackInsert — table=\(table) uuid=\(uuid)")
+        ConsoleLog.verbose("trackInsert table=\(table) uuid=\(uuid)", subsystem: .sync)
 
         // Mark as pending locally
         await markAsPending(table: table, uuid: uuid)
@@ -53,7 +53,7 @@ class ChangeTracker: ObservableObject {
         skipVersionIncrement: Bool = false
     ) async {
         guard let uuid = entity.getUUID() else { return }
-        print("[SYNC] trackUpdate — table=\(table) uuid=\(uuid) changedFields=\(changedFields ?? ["all"]) skipVersionIncrement=\(skipVersionIncrement)")
+        ConsoleLog.verbose("trackUpdate table=\(table) uuid=\(uuid) changedFields=\(changedFields ?? ["all"]) skipVersionIncrement=\(skipVersionIncrement)", subsystem: .sync)
 
         // Increment local version (skip if caller already did it via raw SQL)
         if !skipVersionIncrement {
@@ -119,10 +119,10 @@ class ChangeTracker: ObservableObject {
         entity: T,
         operation: String
     ) async {
-        print("[SYNC] immediatePush — table=\(table) uuid=\(uuid) op=\(operation)")
+        ConsoleLog.verbose("immediatePush table=\(table) uuid=\(uuid) op=\(operation)", subsystem: .sync)
         Task.detached { @MainActor in
             guard let client = SupabaseClient.shared, client.isAuthenticated else {
-                print("[SYNC] immediatePush SKIPPED — no client or not authenticated uuid=\(uuid)")
+                ConsoleLog.verbose("immediatePush skipped no client or not authenticated uuid=\(uuid)", subsystem: .sync)
                 return
             }
             guard let userId = client.currentUserId else { return }
@@ -204,7 +204,7 @@ class ChangeTracker: ObservableObject {
                 } catch {
                     PersistenceHealth.note(.syncFailure, context: "ChangeTracker.immediatePush(\(uuid.prefix(8)))", detail: "post-push bookkeeping failed: \(error)")
                 }
-                print("[SYNC] immediatePush SUCCESS — table=\(table) uuid=\(uuid) op=\(operation) pushedVersion=\(pushedLocalVersion)")
+                ConsoleLog.verbose("immediatePush success table=\(table) uuid=\(uuid) op=\(operation) pushedVersion=\(pushedLocalVersion)", subsystem: .sync)
             } catch {
                 print("[SYNC] ⚠️ immediatePush FAILED — table=\(table) uuid=\(uuid) op=\(operation) error=\(error)")
                 // sync_queue entry remains for batch retry by SyncEngine
@@ -271,7 +271,7 @@ class ChangeTracker: ObservableObject {
 
     // MARK: - Mark as Pending
     private func markAsPending(table: String, uuid: String) async {
-        print("[SYNC] markAsPending — table=\(table) uuid=\(uuid)")
+        ConsoleLog.verbose("markAsPending table=\(table) uuid=\(uuid)", subsystem: .sync)
         do {
             try await database.asyncWrite { db in
                 try db.execute(
@@ -288,7 +288,7 @@ class ChangeTracker: ObservableObject {
 
     // MARK: - Increment Local Version
     private func incrementLocalVersion(table: String, uuid: String) async {
-        print("[SYNC] incrementLocalVersion — table=\(table) uuid=\(uuid)")
+        ConsoleLog.verbose("incrementLocalVersion table=\(table) uuid=\(uuid)", subsystem: .sync)
         try? await database.asyncWrite { db in
             try db.execute(
                 sql: "UPDATE \(table) SET _local_version = _local_version + 1 WHERE uuid = ?",

@@ -74,6 +74,7 @@ final class InboxViewModel {
     // MARK: - Empty State
 
     var recentHistory: [InboxItem] = []
+    var recentHistoryEntries: [InboxHistoryEntry] = []
     var triagedThisWeek: Int = 0
 
     // MARK: - Undo Toast
@@ -86,6 +87,7 @@ final class InboxViewModel {
     // MARK: - Private
 
     private let inboxRepo = InboxRepository.shared
+    private let destinationRepo = CaptureDestinationRepository.shared
     private let executor = InboxActionExecutor.shared
     private let atomRepo = AtomRepository.shared
     private var cancellables = Set<AnyCancellable>()
@@ -126,6 +128,15 @@ final class InboxViewModel {
                 self.items = newItems
                 self.regroupItems()
                 self.reconcileFocus()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: CosmoNotification.Inbox.captureLaneChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.loadEmptyStateData()
+                }
             }
             .store(in: &cancellables)
     }
@@ -632,7 +643,14 @@ final class InboxViewModel {
     private func loadEmptyStateData() {
         Task {
             do {
-                recentHistory = try await inboxRepo.fetchRecentHistory(limit: 3)
+                let captures = try await inboxRepo.fetchRecentHistory(limit: 6)
+                let deletedLanes = try await destinationRepo.fetchArchived(limit: 6)
+                recentHistory = Array(captures.prefix(3))
+                recentHistoryEntries = InboxHistoryEntry.merged(
+                    captures: captures,
+                    deletedLanes: deletedLanes,
+                    limit: 6
+                )
                 triagedThisWeek = try await inboxRepo.countTriagedThisWeek()
             } catch {
                 print("⚠️ [InboxVM] Empty state data failed: \(error)")
@@ -733,6 +751,17 @@ final class InboxViewModel {
             print("⚠️ [InboxVM] Restore failed: \(error)")
             PersistenceHealth.note(.writeFailure, context: "InboxVM.restoreFromHistory", detail: error.localizedDescription)
             presentErrorToast("Couldn't restore that capture.")
+        }
+    }
+
+    func restoreDeletedLane(_ lane: CaptureDestination) async {
+        do {
+            try await destinationRepo.restore(uuid: lane.uuid)
+            loadEmptyStateData()
+        } catch {
+            print("⚠️ [InboxVM] Restore lane failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.restoreDeletedLane", detail: error.localizedDescription)
+            presentErrorToast("Couldn't restore that lane.")
         }
     }
 }

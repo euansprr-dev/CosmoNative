@@ -356,7 +356,7 @@ class AtomRepository: ObservableObject {
     /// Create a new atom
     @discardableResult
     func create(_ atom: Atom) async throws -> Atom {
-        print("[PERSIST] create() called — uuid=\(atom.uuid) type=\(atom.type.rawValue) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0)")
+        ConsoleLog.verbose("create() called uuid=\(atom.uuid) type=\(atom.type.rawValue) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0)", subsystem: .database)
         var preparedAtom = atom
         preparedAtom.createdAt = ISO8601.string(from: Date())
         preparedAtom.updatedAt = preparedAtom.createdAt
@@ -369,7 +369,7 @@ class AtomRepository: ObservableObject {
             insertingAtom.id = db.lastInsertedRowID
             return insertingAtom
         }
-        print("[PERSIST] create() DONE — uuid=\(savedAtom.uuid) id=\(savedAtom.id ?? -1) version=\(savedAtom.localVersion)")
+        ConsoleLog.verbose("create() done uuid=\(savedAtom.uuid) id=\(savedAtom.id ?? -1) version=\(savedAtom.localVersion)", subsystem: .database)
 
         // Track for sync
         await changeTracker.trackInsert(table: Atom.databaseTableName, entity: savedAtom)
@@ -412,7 +412,7 @@ class AtomRepository: ObservableObject {
     /// since the caller's copy was fetched.
     @discardableResult
     func update(_ atom: Atom) async throws -> Atom {
-        print("[PERSIST] update() called — uuid=\(atom.uuid) expectedVersion=\(atom.localVersion) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"")
+        ConsoleLog.verbose("update() called uuid=\(atom.uuid) expectedVersion=\(atom.localVersion) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"", subsystem: .database)
         var updatedAtom = atom
         updatedAtom.updatedAt = ISO8601.string(from: Date())
         updatedAtom.localVersion += 1
@@ -448,7 +448,7 @@ class AtomRepository: ObservableObject {
             return db.changesCount
         }
 
-        print("[PERSIST] update() rows=\(rowsAffected) uuid=\(atom.uuid) newVersion=\(updatedAtom.localVersion)")
+        ConsoleLog.verbose("update() rows=\(rowsAffected) uuid=\(atom.uuid) newVersion=\(updatedAtom.localVersion)", subsystem: .database)
         if rowsAffected == 0 {
             // Version conflict — another writer bumped _local_version (e.g., cloud agent, Supabase realtime).
             // Auto-retry: re-fetch the fresh atom, apply our changes on top, and update again.
@@ -549,7 +549,7 @@ class AtomRepository: ObservableObject {
     /// quit-time edit still reaches the cloud on next launch.
     @discardableResult
     func updateSync(_ atom: Atom) throws -> Atom {
-        print("[PERSIST] updateSync() called — uuid=\(atom.uuid) version=\(atom.localVersion) bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"")
+        ConsoleLog.verbose("updateSync() called uuid=\(atom.uuid) version=\(atom.localVersion) bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"", subsystem: .database)
         var candidate = atom
         candidate.updatedAt = ISO8601.string(from: Date())
         candidate.localVersion += 1
@@ -630,7 +630,7 @@ class AtomRepository: ObservableObject {
         if conflicted {
             PersistenceHealth.note(.conflict, context: "AtomRepository.updateSync(\(atom.uuid.prefix(8)))", detail: "version conflict auto-merged at close-save")
         }
-        print("[PERSIST] updateSync() DONE — uuid=\(atom.uuid) newVersion=\(saved.localVersion)")
+        ConsoleLog.verbose("updateSync() done uuid=\(atom.uuid) newVersion=\(saved.localVersion)", subsystem: .database)
 
         return saved
     }
@@ -652,7 +652,7 @@ class AtomRepository: ObservableObject {
         uuid: String,
         columns: [String: (any DatabaseValueConvertible)?]
     ) async throws -> Atom {
-        print("[PERSIST] updateFields() called — uuid=\(uuid) columns=\(Array(columns.keys))")
+        ConsoleLog.verbose("updateFields() called uuid=\(uuid) columns=\(Array(columns.keys))", subsystem: .database)
         guard !columns.isEmpty else {
             guard let atom = try await fetch(uuid: uuid) else {
                 throw AtomRepositoryError.notFound(uuid)
@@ -777,7 +777,7 @@ class AtomRepository: ObservableObject {
 
     /// Acquire an editing lock. Call when opening a focus mode view.
     func acquireEditingLock(uuid: String) {
-        print("[PERSIST] 🔒 acquireEditingLock — uuid=\(uuid)")
+        ConsoleLog.verbose("acquireEditingLock uuid=\(uuid)", subsystem: .database)
         editingLocks[uuid] = Date()
     }
 
@@ -789,7 +789,7 @@ class AtomRepository: ObservableObject {
 
     /// Release the editing lock. Call when closing a focus mode view.
     func releaseEditingLock(uuid: String) {
-        print("[PERSIST] 🔓 releaseEditingLock — uuid=\(uuid)")
+        ConsoleLog.verbose("releaseEditingLock uuid=\(uuid)", subsystem: .database)
         editingLocks.removeValue(forKey: uuid)
     }
 
@@ -797,7 +797,7 @@ class AtomRepository: ObservableObject {
     func isBeingEdited(_ uuid: String) -> Bool {
         guard let lockTime = editingLocks[uuid] else { return false }
         if Date().timeIntervalSince(lockTime) > editingLockExpiry {
-            print("[PERSIST] 🔓 editingLock EXPIRED — uuid=\(uuid) age=\(Date().timeIntervalSince(lockTime))s")
+            ConsoleLog.verbose("editingLock expired uuid=\(uuid) age=\(Date().timeIntervalSince(lockTime))s", subsystem: .database)
             editingLocks.removeValue(forKey: uuid)
             return false
         }

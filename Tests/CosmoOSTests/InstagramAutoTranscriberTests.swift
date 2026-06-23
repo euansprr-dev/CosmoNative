@@ -208,6 +208,56 @@ final class InstagramAutoTranscriberTests: XCTestCase {
         XCTAssertEqual(contentType, .voiceoverOnly)
     }
 
+    func testDetectTranscriptionContentTypePrefersVoiceoverForOversegmentedCaptionBurst() {
+        let transcriber = InstagramAutoTranscriber.shared
+        let captionFragments = [
+            "YEAH, FOR SUREL",
+            "RENT BUY AT ALL FIVE? 00",
+            "SO IF YOU HAVE $12,000 N",
+            "$12.000 SO F YOU HAVE $12,000 IN $12",
+            "$1200 YOUR BANK"
+        ]
+        let visualSlides = (0..<72).map { index in
+            let text: String
+            if index % 6 == 0 {
+                text = captionFragments[(index / 6) % captionFragments.count]
+            } else {
+                text = """
+                Investor portal dashboard \(index) View Hitory Dockmarks Probles Wadow Menu \
+                parcel id \(90000 + index) lot sqft \(1200 + index) zoning map liens taxes escrow \
+                underwriting tab seller phone browser chrome address valuation rehab photos
+                """
+            }
+            return TranscriptSlide(
+                text: text,
+                slideNumber: index + 1,
+                timestamp: Double(index) * 0.55,
+                endTimestamp: Double(index) * 0.55 + 0.35,
+                source: .geminiVision
+            )
+        }
+        let speech = [
+            SpeechSegment(
+                text: """
+                How many properties could I buy if I have twelve thousand dollars in my bank account right now? Yeah, for sure. \
+                I can get you this turnkey Section 8 rental in Memphis Tennessee for sixty five thousand dollars. \
+                We are going to end up doing a DSCR loan with fifteen percent down, which is going to be ninety seven fifty out of your pocket. \
+                Then the bank covers the rest of the purchase and the Section 8 rent creates the cash flow.
+                """,
+                timestamp: 0.2,
+                duration: 27.0
+            )
+        ]
+
+        let contentType = transcriber.detectTranscriptionContentType(
+            visualSlides: visualSlides,
+            speech: speech,
+            duration: 40.0
+        )
+
+        XCTAssertEqual(contentType, .voiceoverOnly)
+    }
+
     func testDetectTranscriptionContentTypePreservesTrueTextReel() {
         let transcriber = InstagramAutoTranscriber.shared
         let visualSlides = [
@@ -342,5 +392,119 @@ final class InstagramAutoTranscriberTests: XCTestCase {
         )
 
         XCTAssertEqual(contentType, .textOnly)
+    }
+
+    func testDetectTranscriptionContentTypePrefersVoiceoverWhenLongCaptionsMirrorSpeechDespiteTimingDrift() {
+        let transcriber = InstagramAutoTranscriber.shared
+        let captions = [
+            "The fastest way to improve your offer is to remove every confusing promise",
+            "Then show one concrete outcome your buyer can picture before they click",
+            "That keeps the reel moving without turning every caption into a separate idea",
+            "End with the next tiny action instead of explaining the whole strategy"
+        ]
+        let visualSlides = captions.enumerated().map { index, text in
+            TranscriptSlide(
+                text: text,
+                slideNumber: index + 1,
+                timestamp: Double(index) * 2.0,
+                endTimestamp: Double(index + 1) * 2.0,
+                source: .geminiVision
+            )
+        }
+        let speech = captions.enumerated().map { index, text in
+            SpeechSegment(
+                text: text,
+                timestamp: Double(index) * 2.0 + 2.7,
+                duration: 0.4
+            )
+        }
+
+        let contentType = transcriber.detectTranscriptionContentType(
+            visualSlides: visualSlides,
+            speech: speech,
+            duration: 10.0
+        )
+
+        XCTAssertEqual(contentType, .voiceoverOnly)
+    }
+
+    func testMergeGeminiBatchResultsDropsDuplicateSlidesEvenWhenTimestampsDoNotOverlap() {
+        let transcriber = InstagramAutoTranscriber.shared
+        let hook = TranscriptSlide(
+            text: "Stop making every reel caption become a separate swipe slide",
+            slideNumber: 1,
+            timestamp: 0.0,
+            endTimestamp: 1.0,
+            source: .geminiVision
+        )
+        let body = TranscriptSlide(
+            text: "Keep the authored slide text once and put the voiceover transcript in one place",
+            slideNumber: 2,
+            timestamp: 1.2,
+            endTimestamp: 2.4,
+            source: .geminiVision
+        )
+        let duplicatedBody = TranscriptSlide(
+            text: "Keep the authored slide text once and put the voiceover transcript in one place",
+            slideNumber: 1,
+            timestamp: 8.0,
+            endTimestamp: 9.0,
+            source: .geminiVision
+        )
+
+        let merged = transcriber.mergeGeminiBatchResults(
+            batches: [[hook, body], [duplicatedBody]]
+        )
+
+        XCTAssertEqual(merged.map(\.text), [hook.text, body.text])
+        XCTAssertEqual(merged.map(\.slideNumber), [1, 2])
+    }
+
+    func testMergeVisualSlidesWithSpeechKeepsUnalignedVoiceoverAsSingleTranscriptSlide() {
+        let transcriber = InstagramAutoTranscriber.shared
+        let speech = (0..<8).map { index in
+            SpeechSegment(
+                text: "This is sentence \(index) of a longer voiceover that should stay in one transcript card instead of being split into artificial swipe slides.",
+                timestamp: Double(index) * 2.0,
+                duration: 1.5
+            )
+        }
+
+        let merged = transcriber.mergeVisualSlidesWithSpeech(
+            visualSlides: [],
+            speech: speech,
+            allowSpeechAlignment: false
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged[0].text, speech.map(\.text).joined(separator: " "))
+        XCTAssertEqual(merged[0].source, .speechAudio)
+    }
+
+    func testTranscribeCarouselIgnoresDuplicateMediaItems() async throws {
+        let transcriber = InstagramAutoTranscriber.shared
+        let key = "ig-carousel-duplicate-\(UUID().uuidString)"
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(key).png")
+        let imageData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")!
+        try imageData.write(to: sourceURL)
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            if let firstCachedURL = InstagramCarouselImageCache.cachedFileURL(for: "ig-carousel-\(key)-0") {
+                try? FileManager.default.removeItem(at: firstCachedURL)
+            }
+            if let secondCachedURL = InstagramCarouselImageCache.cachedFileURL(for: "ig-carousel-\(key)-1") {
+                try? FileManager.default.removeItem(at: secondCachedURL)
+            }
+        }
+
+        let items = [
+            CarouselItem(index: 0, mediaType: .image, mediaURL: sourceURL),
+            CarouselItem(index: 1, mediaType: .image, mediaURL: sourceURL)
+        ]
+
+        let result = await transcriber.transcribeCarousel(items: items, shortcode: key) { _ in }
+
+        XCTAssertEqual(result.rawSlides.count, 1)
     }
 }

@@ -32,7 +32,9 @@ struct CommandCenterDashboard: View {
                     leftColumn
                 }
                 centerColumn
-                rightColumn
+                if !viewModel.viewMode.isFullPlanningPage {
+                    rightColumn
+                }
             }
             .padding(DS.space24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -44,6 +46,11 @@ struct CommandCenterDashboard: View {
             }
             .onAppear(perform: publishCommandCenterContext)
             .onChange(of: isPaneContextOwner) { _, _ in publishCommandCenterContext() }
+            .onChange(of: viewModel.viewMode) { _, mode in
+                guard mode.isFullPlanningPage else { return }
+                selectedTaskForDetail = nil
+                composer.dismiss()
+            }
             .onReceive(viewModel.objectWillChange) { _ in
                 DispatchQueue.main.async {
                     publishCommandCenterContext()
@@ -72,40 +79,14 @@ struct CommandCenterDashboard: View {
     private var centerColumn: some View {
         VStack(alignment: .leading, spacing: DS.space16) {
             Group {
-                // Content switches between smart list task view and project detail view
-                if viewModel.viewMode == .project, let projectUUID = viewModel.selectedProjectUUID,
-                   let project = viewModel.projects.first(where: { $0.uuid == projectUUID }) {
-                    ProjectDetailView(project: project, viewModel: viewModel)
-                } else {
-                    if viewModel.viewMode == .upcoming {
-                        CommandCenterMasthead(viewModel: viewModel)
-
-                        UpcomingBoardView(viewModel: viewModel, composer: composer)
-                            .frame(maxHeight: .infinity)
-                    } else {
-                        CommandCenterMasthead(viewModel: viewModel)
-
-                        DashboardTimeTracker(viewModel: viewModel)
-
-                        gradientDivider
-
-                        // Task list (scrollable)
-                        DashboardTaskList(viewModel: viewModel, composer: composer) { task in
-                            withAnimation(ProMotionSprings.snappy) {
-                                selectedTaskForDetail = task
-                                viewModel.showReports = false
-                            }
-                        }
-                    }
-                }
+                centerContent
             }
             .id(centerContentTransitionID)
             .transition(.opacity)
 
             Spacer(minLength: 0)
 
-            // Objectives bar (pinned at bottom)
-            if viewModel.viewMode != .today && viewModel.viewMode != .upcoming {
+            if shouldShowObjectivesFooter {
                 DashboardObjectivesBar(viewModel: viewModel)
             }
         }
@@ -113,7 +94,48 @@ struct CommandCenterDashboard: View {
         .padding(.horizontal, DS.space16)
         .animation(ProMotionSprings.gentle, value: centerContentTransitionID)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("com.cosmo.commandCenter.keyboardAction"))) { notification in
+            guard viewModel.viewMode.showsTaskList else { return }
             handleKeyboardAction(notification)
+        }
+    }
+
+    @ViewBuilder
+    private var centerContent: some View {
+        switch viewModel.viewMode {
+        case .habits:
+            HabitsSectionView(viewModel: viewModel, composer: composer)
+        case .reports:
+            ReportsSectionView(viewModel: viewModel)
+        case .objectives:
+            ObjectivesSectionView(viewModel: viewModel)
+        case .today, .upcoming, .anytime, .someday, .logbook, .project, .area:
+            existingTaskOrProjectContent
+        }
+    }
+
+    @ViewBuilder
+    private var existingTaskOrProjectContent: some View {
+        if viewModel.viewMode == .project, let projectUUID = viewModel.selectedProjectUUID,
+           let project = viewModel.projects.first(where: { $0.uuid == projectUUID }) {
+            ProjectDetailView(project: project, viewModel: viewModel)
+        } else if viewModel.viewMode == .upcoming {
+            CommandCenterMasthead(viewModel: viewModel)
+
+            UpcomingBoardView(viewModel: viewModel, composer: composer)
+                .frame(maxHeight: .infinity)
+        } else {
+            CommandCenterMasthead(viewModel: viewModel)
+
+            DashboardTimeTracker(viewModel: viewModel)
+
+            gradientDivider
+
+            DashboardTaskList(viewModel: viewModel, composer: composer) { task in
+                withAnimation(ProMotionSprings.snappy) {
+                    selectedTaskForDetail = task
+                    viewModel.showReports = false
+                }
+            }
         }
     }
 
@@ -122,8 +144,14 @@ struct CommandCenterDashboard: View {
             viewModel.viewMode.rawValue,
             viewModel.selectedProjectUUID ?? "no-project",
             viewModel.selectedAreaUUID ?? "no-area",
-            viewModel.showReports ? "reports" : "main"
+            viewModel.showReports ? "rail-reports" : "rail-main"
         ].joined(separator: ":")
+    }
+
+    private var shouldShowObjectivesFooter: Bool {
+        viewModel.viewMode != .today &&
+        viewModel.viewMode != .upcoming &&
+        !viewModel.viewMode.isFullPlanningPage
     }
 
     // MARK: - Keyboard Handling

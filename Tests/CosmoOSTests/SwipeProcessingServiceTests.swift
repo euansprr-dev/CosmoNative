@@ -174,4 +174,21 @@ final class SwipeProcessingServiceTests: XCTestCase {
 
         XCTAssertFalse(shouldSkip)
     }
+
+    func testSwipeAnalysisDecodesLegacyMinimalPayloadWithDefaultVersionState() throws {
+        let legacyJSON = """
+        {
+          "hookText": null,
+          "frameworkType": null,
+          "hookType": null,
+          "swipeContentFormat": "carousel"
+        }
+        """
+
+        let analysis = try JSONDecoder().decode(SwipeAnalysis.self, from: Data(legacyJSON.utf8))
+
+        XCTAssertEqual(analysis.swipeContentFormat, .carousel)
+        XCTAssertEqual(analysis.analysisVersion, 1)
+        XCTAssertFalse(analysis.isFullyAnalyzed)
+    }
 }

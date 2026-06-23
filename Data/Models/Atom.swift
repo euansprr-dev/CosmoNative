@@ -1639,6 +1639,20 @@ extension Atom {
         return dict
     }
 
+    var isGeneratedCodexCorpus: Bool {
+        let metadataFlags = [
+            "isCodexSynthesis",
+            "isExemplarCodex",
+            "isCodex"
+        ]
+        if let metadataDict,
+           metadataFlags.contains(where: { metadataDict[$0] as? Bool == true }) {
+            return true
+        }
+
+        return ContextSourcePolicy.isGeneratedCodexCorpusTitle(title ?? "")
+    }
+
     /// Merge an encodable value's keys over an existing JSON-object string.
     /// Returns nil (refuse to write) when the existing column is non-empty but
     /// unparseable, or when encoding fails — never destroys data it can't read.

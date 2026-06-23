@@ -159,6 +159,7 @@ struct RichTextEditor: View {
     var fontSize: CGFloat = 16
     var fontDesign: NSFontDescriptor.SystemDesign = .default
     var compact: Bool = false  // Compact mode for notes
+    var lineSpacingAdjustment: CGFloat = 0  // Aa menu Compact/Standard/Airy delta
     var darkMode: Bool = false  // Dark mode for Thinkspace blocks
     var overrideTextColor: NSColor? = nil
     var overrideFont: NSFont? = nil
@@ -230,6 +231,7 @@ struct RichTextEditor: View {
         fontSize: CGFloat = 16,
         fontDesign: NSFontDescriptor.SystemDesign = .default,
         compact: Bool = false,
+        lineSpacingAdjustment: CGFloat = 0,
         placeholder: String = "Start typing...",
         darkMode: Bool = false,
         overrideTextColor: NSColor? = nil,
@@ -275,6 +277,7 @@ struct RichTextEditor: View {
         self.fontSize = fontSize
         self.fontDesign = fontDesign
         self.compact = compact
+        self.lineSpacingAdjustment = lineSpacingAdjustment
         self.placeholder = placeholder
         self.darkMode = darkMode
         self.overrideTextColor = overrideTextColor
@@ -327,6 +330,7 @@ struct RichTextEditor: View {
                 fontSize: fontSize,
                 fontDesign: fontDesign,
                 compact: compact,
+                lineSpacingAdjustment: lineSpacingAdjustment,
                 darkMode: darkMode,
                 overrideTextColor: overrideTextColor,
                 overrideFont: overrideFont,
@@ -556,7 +560,7 @@ struct RichTextEditor: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoDismissEditorOverlays)) { _ in
-            dismissAllOverlays(includeSelection: false)
+            dismissAllOverlays()
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showSlashMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showMentionMenu)

@@ -68,6 +68,21 @@ enum CosmoInlineAssistantTimelineMetrics {
     static let railInset: CGFloat = 0
 }
 
+enum CosmoInlineAssistantActivityTimelineMotion {
+    private static let spinCycleDuration: TimeInterval = 1.1
+
+    static func circleRotationDegrees(
+        for state: CosmoInlineAssistantActivityStep.State,
+        reduceMotion: Bool,
+        date: Date
+    ) -> Double {
+        guard state == .running, !reduceMotion else { return 0 }
+        let progress = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: spinCycleDuration) / spinCycleDuration
+        return progress * 360
+    }
+}
+
 /// One step on the rail: category icon in a small tinted well, narration label,
 /// and a checkmark once done. The running step's label shimmers.
 private struct CosmoInlineAssistantActivityStepRow: View {
@@ -104,16 +119,30 @@ private struct CosmoInlineAssistantActivityStepRow: View {
 
     private var railColumn: some View {
         VStack(spacing: 2) {
-            Image(systemName: CosmoInlineAssistantToolTaxonomy.icon(forToolName: step.toolName))
-                .font(DS.caption2.weight(.semibold))
-                .foregroundStyle(step.state == .done ? DS.textSecondary : DS.accent)
-                .frame(width: CosmoInlineAssistantTimelineMetrics.dotColumn,
-                       height: CosmoInlineAssistantTimelineMetrics.dotColumn)
-                .background(
-                    (step.state == .done ? DS.surfaceHover : DS.accentSoft),
-                    in: Circle()
-                )
-                .accessibilityHidden(true)
+            TimelineView(.animation(
+                minimumInterval: 1.0 / 60.0,
+                paused: step.state != .running || reduceMotion
+            )) { context in
+                Image(systemName: CosmoInlineAssistantToolTaxonomy.icon(forToolName: step.toolName))
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(step.state == .done ? DS.textSecondary : DS.accent)
+                    .frame(width: CosmoInlineAssistantTimelineMetrics.dotColumn,
+                           height: CosmoInlineAssistantTimelineMetrics.dotColumn)
+                    .background(
+                        (step.state == .done ? DS.surfaceHover : DS.accentSoft),
+                        in: Circle()
+                    )
+                    .rotationEffect(.degrees(
+                        CosmoInlineAssistantActivityTimelineMotion.circleRotationDegrees(
+                            for: step.state,
+                            reduceMotion: reduceMotion,
+                            date: context.date
+                        )
+                    ))
+                    .accessibilityHidden(true)
+            }
+            .frame(width: CosmoInlineAssistantTimelineMetrics.dotColumn,
+                   height: CosmoInlineAssistantTimelineMetrics.dotColumn)
 
             if !isLast {
                 RoundedRectangle(cornerRadius: CosmoInlineAssistantTimelineMetrics.railWidth / 2)

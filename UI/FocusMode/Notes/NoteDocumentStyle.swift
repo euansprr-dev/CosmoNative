@@ -86,11 +86,65 @@ struct NoteDocumentStyle: Codable, Equatable {
         }
     }
 
+    enum LineSpacing: String, Codable, CaseIterable, Identifiable {
+        case compact
+        case standard
+        case airy
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .compact: return "Compact"
+            case .standard: return "Standard"
+            case .airy: return "Airy"
+            }
+        }
+
+        /// Delta applied to the editor's base body leading. Standard keeps
+        /// today's rhythm (~140% at 17pt); Airy reaches Dropbox Paper's
+        /// celebrated 1.625 ratio; Compact tightens for dense notes.
+        var lineSpacingDelta: CGFloat {
+            switch self {
+            case .compact: return -3
+            case .standard: return 0
+            case .airy: return 4
+            }
+        }
+
+        /// The gap between block rows scales with the leading so the page
+        /// keeps one vertical rhythm.
+        var blockGap: CGFloat {
+            switch self {
+            case .compact: return 4
+            case .standard: return 6
+            case .airy: return 9
+            }
+        }
+    }
+
     var fontFamily: FontFamily = .sans
     var textSize: TextSize = .standard
     var pageWidth: PageWidth = .standard
+    var lineSpacing: LineSpacing = .standard
 
     static let `default` = NoteDocumentStyle()
+
+    init() {}
+
+    // Decoding stays lenient: styles persisted before a field existed (or
+    // after one is renamed) must never reset a note's voice to defaults.
+    private enum CodingKeys: String, CodingKey {
+        case fontFamily, textSize, pageWidth, lineSpacing
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        fontFamily = (try? container.decodeIfPresent(FontFamily.self, forKey: .fontFamily)) ?? .sans
+        textSize = (try? container.decodeIfPresent(TextSize.self, forKey: .textSize)) ?? .standard
+        pageWidth = (try? container.decodeIfPresent(PageWidth.self, forKey: .pageWidth)) ?? .standard
+        lineSpacing = (try? container.decodeIfPresent(LineSpacing.self, forKey: .lineSpacing)) ?? .standard
+    }
 
     // MARK: - Metadata Persistence
 
@@ -136,6 +190,7 @@ struct NoteDocumentStyle: Codable, Equatable {
 struct NoteStyleMenuView: View {
     @Binding var style: NoteDocumentStyle
     @Binding var typewriterMode: Bool
+    @Binding var paragraphFocus: Bool
 
     var body: some View {
         DocumentStyleMenuView(
@@ -144,7 +199,9 @@ struct NoteStyleMenuView: View {
             widthOptions: NoteDocumentStyle.PageWidth.allCases,
             widthSelection: $style.pageWidth,
             widthLabel: { $0.label },
-            typewriterMode: $typewriterMode
+            typewriterMode: $typewriterMode,
+            lineSpacing: $style.lineSpacing,
+            paragraphFocus: $paragraphFocus
         )
     }
 }
@@ -161,6 +218,11 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
     @Binding var widthSelection: WidthOption
     let widthLabel: (WidthOption) -> String
     @Binding var typewriterMode: Bool
+    /// Surfaces that support per-document leading pass a binding; others
+    /// leave it nil and the section stays hidden.
+    var lineSpacing: Binding<NoteDocumentStyle.LineSpacing>? = nil
+    /// Paragraph focus (dim everything but the caret's block) — Notes only.
+    var paragraphFocus: Binding<Bool>? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
@@ -168,11 +230,19 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
             section("TEXT SIZE") {
                 segmentedRow(NoteDocumentStyle.TextSize.allCases, selection: $textSize) { $0.label }
             }
+            if let lineSpacing {
+                section("LINE SPACING") {
+                    segmentedRow(NoteDocumentStyle.LineSpacing.allCases, selection: lineSpacing) { $0.label }
+                }
+            }
             section("PAGE WIDTH") {
                 segmentedRow(widthOptions, selection: $widthSelection, label: widthLabel)
             }
             Divider()
             typewriterRow
+            if let paragraphFocus {
+                focusRow(paragraphFocus)
+            }
         }
         .padding(DS.space16)
         .frame(width: 296)
@@ -279,5 +349,24 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
                 .labelsHidden()
                 .accessibilityLabel("Typewriter mode")
         }
+    }
+
+    private func focusRow(_ binding: Binding<Bool>) -> some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "paragraphsign")
+                .font(DS.caption)
+                .foregroundStyle(DS.textSecondary)
+                .accessibilityHidden(true)
+            Text("Paragraph focus")
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+            Spacer(minLength: DS.space12)
+            Toggle("", isOn: binding)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .accessibilityLabel("Paragraph focus")
+        }
+        .help("Fade everything but the paragraph you're writing")
     }
 }

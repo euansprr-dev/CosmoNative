@@ -16,12 +16,20 @@ struct ConstellationCardFramesKey: PreferenceKey {
 struct ConstellationView: View {
     let thinkspaces: [Thinkspace]
     var originThinkspaceId: String? = nil
+    /// True when the pinch scrub mounted this view: the gesture drives the
+    /// reveal externally (opacity in the host), so the internal fade, the
+    /// entrance dissolve, and the search-focus grab are all skipped — the
+    /// live canvas shrinking beneath provides the continuity instead.
+    var interactiveReveal: Bool = false
+    /// False while the scrub is still reversible; flips true on commit.
+    var isCommitted: Bool = true
     let onSelect: (String) -> Void
     let onDismiss: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var query = ""
     @State private var appeared = false
+    @State private var suppressEntranceDissolve = false
     @State private var cardFrames: [String: CGRect] = [:]
     /// The zoom dissolve: a thumbnail flying between full-window and its card.
     @State private var zoomImage: NSImage?
@@ -45,10 +53,19 @@ struct ConstellationView: View {
         }
         .opacity(appeared ? 1 : 0)
         .onAppear {
-            searchFocused = true
-            withAnimation(reduceMotion ? .linear(duration: 0.01) : ProMotionSprings.modal) {
+            suppressEntranceDissolve = interactiveReveal
+            if interactiveReveal {
                 appeared = true
+            } else {
+                searchFocused = true
+                withAnimation(reduceMotion ? .linear(duration: 0.01) : ProMotionSprings.modal) {
+                    appeared = true
+                }
             }
+            prewarmLikelyDestinations()
+        }
+        .onChange(of: isCommitted) { _, committed in
+            if committed { searchFocused = true }
         }
         .onExitCommand(perform: onDismiss)
     }
@@ -61,6 +78,7 @@ struct ConstellationView: View {
     /// hover, and replaying would read as zoom spam.
     private func beginEntranceDissolveIfReady(in size: CGSize) {
         guard !reduceMotion,
+              !suppressEntranceDissolve,
               !hasPlayedEntrance,
               zoomCardId == nil,
               let origin = originThinkspaceId,
@@ -80,8 +98,11 @@ struct ConstellationView: View {
         }
     }
 
-    /// On dive: the chosen card's thumbnail grows to fill the window, then
-    /// the real canvas takes over underneath.
+    /// On dive: the chosen card's thumbnail grows to fill the window while
+    /// the real canvas swaps thinkspaces UNDERNEATH — the switch starts at
+    /// click, so the zoom animation doubles as the loading window. For a
+    /// prewarmed space the canvas is live before the expansion lands; the
+    /// dive cover (under the fading Constellation) holds for slower loads.
     private func dive(into thinkspaceId: String) {
         guard !reduceMotion,
               cardFrames[thinkspaceId] != nil,
@@ -92,11 +113,10 @@ struct ConstellationView: View {
         zoomImage = image
         zoomCardId = thinkspaceId
         zoomExpanded = false
+        onSelect(thinkspaceId)
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(30))
             withAnimation(ProMotionSprings.modal) { zoomExpanded = true }
-            try? await Task.sleep(for: .milliseconds(380))
-            onSelect(thinkspaceId)
         }
     }
 
@@ -127,22 +147,48 @@ struct ConstellationView: View {
     }
 
     private var content: some View {
-        VStack(spacing: 18) {
-            searchField
-                .padding(.top, 28)
+        let library = library
+        return VStack(spacing: 0) {
+            header
+                .padding(.horizontal, contentMargin)
+                .padding(.top, DS.space36)
+                .padding(.bottom, DS.space24)
 
             ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: 28) {
-                    ForEach(lanes) { lane in
-                        laneSection(lane)
+                LazyVStack(alignment: .leading, spacing: DS.space40) {
+                    if !library.featured.isEmpty {
+                        continueShelf(library.featured)
+                    }
+                    ForEach(library.lanes) { lane in
+                        laneSection(lane, cascadeOffset: library.featured.count)
                     }
                 }
-                .padding(.horizontal, 48)
-                .padding(.bottom, 48)
+                .padding(.horizontal, contentMargin)
+                .padding(.bottom, DS.space48)
             }
             .scrollIndicators(.hidden)
         }
         .scaleEffect(appeared ? 1 : 1.05)
+    }
+
+    private var contentMargin: CGFloat { DS.space48 }
+
+    // MARK: Header
+
+    /// The screen's voice: one hero title, the count demoted beside it, the
+    /// search field quiet at the trailing edge.
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space16) {
+            Text("Thinkspaces")
+                .font(DS.pageTitle)
+                .foregroundStyle(DS.text)
+            Text("\(thinkspaces.count)")
+                .font(DS.title3)
+                .foregroundStyle(DS.textMuted)
+                .monospacedDigit()
+            Spacer(minLength: DS.space16)
+            searchField
+        }
     }
 
     // MARK: Search
@@ -151,7 +197,7 @@ struct ConstellationView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(DS.subheadline)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
             TextField("Find a thinkspace", text: $query)
                 .textFieldStyle(.plain)
                 .font(DS.callout)
@@ -161,7 +207,7 @@ struct ConstellationView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .frame(width: 360)
+        .frame(width: 300)
         .dsGlassInput(isFocused: searchFocused, cornerRadius: 12)
         .accessibilityLabel("Find a thinkspace")
     }
@@ -173,19 +219,39 @@ struct ConstellationView: View {
         }
     }
 
-    // MARK: Lanes
+    /// The most recent spaces are where dives usually go — warm their
+    /// snapshots the moment the Constellation opens so entry is instant
+    /// even without hover dwell. (Hovering any card prewarms it too.)
+    private func prewarmLikelyDestinations() {
+        let recent = thinkspaces.sorted { $0.lastOpened > $1.lastOpened }.prefix(3)
+        for space in recent {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.prewarmThinkspace,
+                object: nil,
+                userInfo: ["thinkspaceId": space.id]
+            )
+        }
+    }
+
+    // MARK: Library structure
 
     private struct Lane: Identifiable {
         let id: String
         let title: String
-        let accent: Color
         let spaces: [Thinkspace]
     }
 
-    private var lanes: [Lane] {
-        var projectLanes: [Lane] = []
-        var unassigned: [Thinkspace] = []
+    private struct Library {
+        var featured: [Thinkspace]
+        var lanes: [Lane]
+    }
 
+    /// Featured tier + lanes. The three most recent unassigned spaces are
+    /// promoted into the Continue shelf (and removed from their lane — every
+    /// space appears exactly once, so the zoom dissolve always has one
+    /// unambiguous card to land on). Project lanes are never broken up.
+    private var library: Library {
+        var projectLanes: [Lane] = []
         let roots = thinkspaces.filter { $0.isRootThinkspace }
         var claimed: Set<String> = []
 
@@ -195,47 +261,82 @@ struct ConstellationView: View {
             members.sort { $0.lastOpened > $1.lastOpened }
             let spaces = [root] + members
             claimed.formUnion(spaces.map(\.id))
-            projectLanes.append(Lane(id: projectUuid, title: root.name, accent: root.accentColor, spaces: spaces))
+            projectLanes.append(Lane(id: projectUuid, title: root.name, spaces: spaces))
         }
 
-        unassigned = thinkspaces
+        var unassigned = thinkspaces
             .filter { !claimed.contains($0.id) }
             .sorted { $0.lastOpened > $1.lastOpened }
 
         projectLanes.sort { ($0.spaces.first?.lastOpened ?? .distantPast) > ($1.spaces.first?.lastOpened ?? .distantPast) }
 
-        var result = projectLanes
-        if !unassigned.isEmpty {
-            result.append(Lane(id: "open-ground", title: "Open ground", accent: DS.accent, spaces: unassigned))
+        var featured: [Thinkspace] = []
+        if unassigned.count >= 6 {
+            featured = Array(unassigned.prefix(3))
+            unassigned = Array(unassigned.dropFirst(3))
         }
-        return result
+
+        var lanes = projectLanes
+        if !unassigned.isEmpty {
+            lanes.append(Lane(id: "open-ground", title: "Open ground", spaces: unassigned))
+        }
+        return Library(featured: featured, lanes: lanes)
+    }
+
+    // MARK: Sections
+
+    /// The recency tier: the spaces you were just in, one size up — the
+    /// screen's focal point and the usual exit ramp.
+    @ViewBuilder
+    private func continueShelf(_ spaces: [Thinkspace]) -> some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            Text("Continue")
+                .font(DS.title3.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+
+            HStack(alignment: .top, spacing: DS.space20) {
+                ForEach(Array(spaces.enumerated()), id: \.element.id) { index, space in
+                    ConstellationCard(
+                        thinkspace: space,
+                        isFeatured: true,
+                        appearIndex: index,
+                        dimmed: !trimmedQuery.isEmpty && !matches(space),
+                        onSelect: { dive(into: space.id) }
+                    )
+                    .frame(maxWidth: 360)
+                }
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     @ViewBuilder
-    private func laneSection(_ lane: Lane) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(lane.accent)
-                    .frame(width: 3, height: 16)
+    private func laneSection(_ lane: Lane, cascadeOffset: Int) -> some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            HStack(spacing: DS.space8) {
                 Text(lane.title)
-                    .font(DS.title2)
-                    .foregroundStyle(DS.text)
+                    .font(DS.title3.weight(.semibold))
+                    .foregroundStyle(DS.textSecondary)
                 Text("\(lane.spaces.count)")
-                    .font(DS.caption.monospacedDigit())
+                    .font(DS.caption.weight(.semibold))
                     .foregroundStyle(DS.textMuted)
+                    .monospacedDigit()
+                    .padding(.horizontal, DS.space8)
+                    .padding(.vertical, 3)
+                    .background(DS.glassInputFill, in: Capsule())
+                    .overlay(Capsule().stroke(DS.glassBorder, lineWidth: 0.5))
             }
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 16)],
+                columns: [GridItem(.adaptive(minimum: 224, maximum: 264), spacing: DS.space20)],
                 alignment: .leading,
-                spacing: 16
+                spacing: DS.space24
             ) {
                 ForEach(Array(lane.spaces.enumerated()), id: \.element.id) { index, space in
                     ConstellationCard(
                         thinkspace: space,
-                        isRoot: space.isRootThinkspace,
-                        appearIndex: index,
+                        isFeatured: false,
+                        appearIndex: index + cascadeOffset,
                         dimmed: !trimmedQuery.isEmpty && !matches(space),
                         onSelect: { dive(into: space.id) }
                     )
@@ -256,11 +357,105 @@ struct ConstellationView: View {
     }
 }
 
+// MARK: - Overlay host
+
+/// Owns the Constellation's presence in MainView's ZStack. Deliberately tiny:
+/// it is the only view that reads `ConstellationZoomScrubState.progress`, so
+/// the pinch gesture's 120Hz writes re-evaluate just this body — never
+/// MainView's. Mounts the Constellation the moment a scrub begins (opacity
+/// tied 1:1 to pull depth, hit-testing off until committed), handles the
+/// recede animation when a shallow pull is released, and the classic fade
+/// when a committed Constellation is dismissed.
+struct ConstellationOverlayHost: View {
+    let thinkspaces: [Thinkspace]
+    let originThinkspaceId: String?
+    /// MainView's `showConstellation` — true once presentation has committed.
+    let isCommitted: Bool
+    let onSelect: (String) -> Void
+    let onDismiss: () -> Void
+    /// Fired when the overlay has fully left the screen (cancel fade done or
+    /// dismissal transition finished) — MainView decides whether captures are
+    /// safe again (a dive cover may still be holding the screen).
+    let onFullyDismissed: () -> Void
+
+    /// Once committed, the reveal opacity stays pinned at 1 — including
+    /// during the dismissal transition, when `isCommitted` is already false
+    /// again. Without this the view would snap invisible the moment a
+    /// dismissal starts instead of fading.
+    @State private var hasBeenCommitted = false
+    /// Drives the recede animation after a shallow pull is released: the
+    /// model `progress` is already 0, so a local animatable value carries
+    /// the fade and the view unmounts when it lands.
+    @State private var isCancelFading = false
+    @State private var cancelFadeOpacity: CGFloat = 0
+
+    var body: some View {
+        let progress = ConstellationZoomScrubState.shared.progress
+        if isCommitted || progress > 0 || isCancelFading {
+            ConstellationView(
+                thinkspaces: thinkspaces,
+                originThinkspaceId: originThinkspaceId,
+                interactiveReveal: !isCommitted,
+                isCommitted: isCommitted,
+                onSelect: onSelect,
+                onDismiss: onDismiss
+            )
+            .opacity(revealOpacity(progress: progress))
+            .allowsHitTesting(isCommitted)
+            .transition(.opacity)
+            .onAppear {
+                // A keyboard present mounts already-committed; onChange below
+                // never fires in that case, so pin the opacity here too.
+                if isCommitted { hasBeenCommitted = true }
+            }
+            .onChange(of: isCommitted) { _, committed in
+                if committed {
+                    hasBeenCommitted = true
+                    isCancelFading = false
+                }
+            }
+            .onChange(of: progress) { old, new in
+                guard !isCommitted, !hasBeenCommitted else { return }
+                if new > 0 {
+                    isCancelFading = false
+                } else if old > 0 {
+                    beginCancelFade(from: old)
+                }
+            }
+            .onDisappear {
+                hasBeenCommitted = false
+                isCancelFading = false
+                onFullyDismissed()
+            }
+        }
+    }
+
+    private func revealOpacity(progress: CGFloat) -> CGFloat {
+        if isCommitted || hasBeenCommitted { return 1 }
+        if isCancelFading { return cancelFadeOpacity }
+        return progress
+    }
+
+    private func beginCancelFade(from value: CGFloat) {
+        isCancelFading = true
+        cancelFadeOpacity = value
+        withAnimation(.easeOut(duration: 0.16)) {
+            cancelFadeOpacity = 0
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(220))
+            guard isCancelFading,
+                  ConstellationZoomScrubState.shared.progress <= 0 else { return }
+            isCancelFading = false
+        }
+    }
+}
+
 // MARK: - Card
 
 private struct ConstellationCard: View {
     let thinkspace: Thinkspace
-    let isRoot: Bool
+    let isFeatured: Bool
     let appearIndex: Int
     let dimmed: Bool
     let onSelect: () -> Void
@@ -269,14 +464,11 @@ private struct ConstellationCard: View {
     @State private var thumbnail: NSImage?
     @State private var hasAppeared = false
     @State private var isHovered = false
-
-    private var isRecentlyActive: Bool {
-        Date().timeIntervalSince(thinkspace.lastOpened) < 24 * 3600
-    }
+    @State private var prewarmTask: Task<Void, Never>?
 
     var body: some View {
         Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DS.space8) {
                 thumbnailView
                 meta
             }
@@ -287,8 +479,10 @@ private struct ConstellationCard: View {
         .animation(ProMotionSprings.gentle, value: dimmed)
         .onHover { hovering in
             withAnimation(reduceMotion ? nil : ProMotionSprings.hover) { isHovered = hovering }
+            schedulePrewarm(hovering)
         }
         .onAppear(perform: animateIn)
+        .onDisappear { prewarmTask?.cancel() }
         .task(id: thinkspace.id) {
             thumbnail = ThinkspaceThumbnailService.shared.cachedThumbnail(for: thinkspace.id)
             thumbnail = await ThinkspaceThumbnailService.shared.thumbnail(
@@ -311,14 +505,36 @@ private struct ConstellationCard: View {
         }
     }
 
+    /// Hover intent → prewarm: a brief dwell predicts a dive, so the
+    /// thinkspace's blocks load into the snapshot cache before the click.
+    /// Debounced so sweeping the pointer across the grid stays free.
+    private func schedulePrewarm(_ hovering: Bool) {
+        prewarmTask?.cancel()
+        guard hovering else { return }
+        let targetId = thinkspace.id
+        prewarmTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.prewarmThinkspace,
+                object: nil,
+                userInfo: ["thinkspaceId": targetId]
+            )
+        }
+    }
+
     // MARK: Thumbnail
 
+    /// One neutral material for every card: surface fill, hairline, soft
+    /// black shadow. No accent bars, no tinted halos — the thumbnail's own
+    /// content is the only color, so spaces with work in them naturally draw
+    /// the eye and empty ones recede into quiet parchment wells.
     private var thumbnailView: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(DS.surfaceElevated)
 
-            if let thumbnail {
+            if let thumbnail, thinkspace.blockCount > 0 {
                 // Color.clear drives layout; the fill image only paints —
                 // a bare .fill image would force the card wider than its
                 // grid cell and make neighbors overlap.
@@ -330,12 +546,14 @@ private struct ConstellationCard: View {
                     )
                     .clipped()
             } else {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(DS.glassSectionFill)
                 Image(systemName: "rectangle.3.group")
-                    .font(DS.title2)
-                    .foregroundStyle(DS.textMuted.opacity(0.4))
+                    .font(isFeatured ? DS.title2 : DS.title3)
+                    .foregroundStyle(DS.textMuted.opacity(0.35))
             }
         }
-        .frame(height: 150)
+        .frame(height: isFeatured ? 184 : 141)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .background(
             GeometryReader { proxy in
@@ -345,29 +563,15 @@ private struct ConstellationCard: View {
                 )
             }
         )
-        .overlay(alignment: .top) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(thinkspace.accentColor)
-                .frame(height: 3)
-                .padding(.horizontal, 14)
-                .padding(.top, 0)
-        }
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(DS.glassBorder, lineWidth: 0.5)
         )
         .shadow(
-            color: haloColor,
-            radius: isRecentlyActive ? 12 : (isHovered ? 16 : 8),
+            color: .black.opacity(isHovered ? 0.08 : 0.05),
+            radius: isHovered ? 14 : 8,
             y: isHovered ? 4 : 2
         )
-    }
-
-    private var haloColor: Color {
-        if isRecentlyActive {
-            return thinkspace.accentColor.opacity(0.18)
-        }
-        return .black.opacity(isHovered ? 0.08 : 0.05)
     }
 
     // MARK: Meta
@@ -375,15 +579,17 @@ private struct ConstellationCard: View {
     private var meta: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(thinkspace.name)
-                .font(isRoot ? DS.headline.weight(.semibold) : DS.headline)
+                .font(isFeatured ? DS.headline : DS.callout.weight(.semibold))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
 
-            HStack(spacing: 4) {
-                Text("\(thinkspace.blockCount)")
-                    .monospacedDigit()
-                Text("blocks ·")
-                Text(thinkspace.lastOpened, format: .relative(presentation: .named))
+            Group {
+                if thinkspace.blockCount == 0 {
+                    Text("Empty · \(thinkspace.lastOpened, format: .relative(presentation: .named))")
+                } else {
+                    Text("\(thinkspace.blockCount) blocks · \(thinkspace.lastOpened, format: .relative(presentation: .named))")
+                        .monospacedDigit()
+                }
             }
             .font(DS.caption)
             .foregroundStyle(DS.textMuted)

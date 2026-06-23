@@ -38,6 +38,27 @@ struct CosmoMessageBubble: View {
             EmptyView()
         case .actionButtons(let buttons):
             actionButtonsBubble(buttons: buttons)
+        case .atomCard(let data):
+            AtomCardView(data: data)
+                .padding(.horizontal, 16)
+        case .atomList(let data):
+            AtomListView(data: data)
+                .padding(.horizontal, 16)
+        case .graphView(let data):
+            GraphNodeView(data: data)
+                .padding(.horizontal, 16)
+        case .automationPreview(let data):
+            AutomationPreviewCard(data: data)
+                .padding(.horizontal, 16)
+        case .workflowPlan(let data):
+            WorkflowPlanCard(data: data)
+                .padding(.horizontal, 16)
+        case .timelineView(let data):
+            TimelineCardView(data: data)
+                .padding(.horizontal, 16)
+        case .synthesisCard(let data):
+            SynthesisCardView(data: data)
+                .padding(.horizontal, 16)
         }
     }
 

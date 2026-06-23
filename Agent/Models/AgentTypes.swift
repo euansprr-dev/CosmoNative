@@ -57,17 +57,17 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
         ("openai/gpt-chat-latest", "GPT Chat Latest"),
         ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
         ("google/gemini-3-flash-preview", "Gemini 3 Flash"),
+        ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite"),
         ("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6"),
         ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
-        ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
         ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
+        ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
+        ("openai/gpt-4o", "GPT-4o"),
+        ("openai/gpt-4o-mini", "GPT-4o Mini"),
         ("google/gemini-2.0-flash-001", "Gemini 2.0 Flash"),
         ("google/gemini-2.5-pro-preview", "Gemini 2.5 Pro"),
         ("deepseek/deepseek-chat", "DeepSeek V3"),
         ("deepseek/deepseek-r1", "DeepSeek R1"),
-        ("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B"),
-        ("mistralai/mistral-large-latest", "Mistral Large"),
-        ("qwen/qwen-2.5-72b-instruct", "Qwen 2.5 72B"),
     ]
 }
 
@@ -79,14 +79,17 @@ enum AgentIntent: String, Codable, Sendable {
     case brainstorm   // Creative ideation session
     case plan         // Schedule tasks, time blocks
     case query        // Ask about existing data
-    case execute      // Take action (advance pipeline, complete task)
+    case execute      // Take action (organize workspace, complete task)
     case debrief      // End-of-day or session review
     case reflect      // Journal-style reflection
     case correct      // Fix something (rename, update, delete)
     case meta         // Settings, preferences, help
     case strategy     // Content strategy and planning
     case draft        // Draft creation or refinement
-    case analyze      // Deep analysis (persuasion, performance, audience)
+    case research     // Research companion — synthesize from knowledge base
+    case synthesize   // Learning synthesis — patterns across atoms
+    case analyze      // Deep analysis (patterns, connections, audience)
+    case organize     // Workspace organization — thinkspaces, blocks, templates
 }
 
 // MARK: - Agent Response Mode
@@ -445,6 +448,22 @@ enum AgentModelTier: String, Codable, Sendable {
         case .gemini35Flash: return 1_048_576
         }
     }
+
+    var displayName: String {
+        displayLabel
+    }
+
+    /// Gemini 3 Flash thinking level per intent — nil means no thinking config needed
+    static func thinkingLevel(for intent: AgentIntent) -> String? {
+        switch intent {
+        case .capture, .correct, .meta:
+            return "minimal"
+        case .query, .plan, .brainstorm, .debrief, .reflect:
+            return "medium"
+        case .draft, .analyze, .execute, .strategy, .research, .synthesize, .organize:
+            return "high"
+        }
+    }
 }
 
 // MARK: - System Prompt (Cacheable)
@@ -644,7 +663,7 @@ struct AgentConfiguration: Codable, Sendable {
     }
 
     static let `default` = AgentConfiguration(
-        provider: .anthropic,
+        provider: .openRouter,
         model: nil,
         baseURL: nil,
         personality: .default,
@@ -709,45 +728,18 @@ struct AgentContextTrace: Sendable {
             .filter { !$0.isEmpty && $0 != "0 results" }
     }
 
-    /// Swipe titles surfaced from writing engine tools (generate_outline, generate_draft, etc.)
-    var writingEngineSwipes: [String] {
+    /// Tools used for knowledge queries and synthesis
+    var knowledgeToolsUsed: [String] {
         toolCalls
-            .filter { $0.name.hasPrefix("generate_") || $0.name == "revise_draft" }
-            .compactMap(\.resultSummary)
-            .flatMap { summary -> [String] in
-                // Extract swipe titles from "... | Swipes(N): title1, title2" or "... | Swipes: title1, title2"
-                guard let pipeRange = summary.range(of: "| Swipes") else { return [] }
-                let afterPipe = summary[pipeRange.upperBound...]
-                guard let colonRange = afterPipe.range(of: ": ") else { return [] }
-                return String(afterPipe[colonRange.upperBound...]).components(separatedBy: ", ")
-            }
-    }
-
-    /// Total swipe count loaded by the inner writing engine (parsed from "Swipes(N):" in summary)
-    var writingEngineSwipeCount: Int {
-        for call in toolCalls where call.name.hasPrefix("generate_") || call.name == "revise_draft" {
-            guard let summary = call.resultSummary,
-                  let openParen = summary.range(of: "Swipes("),
-                  let closeParen = summary[openParen.upperBound...].range(of: ")") else { continue }
-            if let count = Int(summary[openParen.upperBound..<closeParen.lowerBound]) {
-                return count
-            }
-        }
-        return 0
-    }
-
-    /// Beat pattern names used
-    var beatPatternsUsed: [String] {
-        toolCalls
-            .filter { $0.name.contains("beat_pattern") || $0.name.contains("beat") }
-            .compactMap(\.resultSummary)
-    }
-
-    /// Writing engine tools used (generate_*, score_draft, etc.)
-    var writingToolsUsed: [String] {
-        toolCalls
-            .filter { $0.name.hasPrefix("generate_") || $0.name.contains("draft") || $0.name.contains("score") || $0.name.contains("write") }
+            .filter { $0.name.contains("query") || $0.name.contains("search") || $0.name.contains("synthesize") || $0.name.contains("graph") }
             .map(\.name)
+    }
+
+    /// Atoms referenced in tool results
+    var atomsReferenced: [String] {
+        toolCalls
+            .compactMap(\.resultSummary)
+            .filter { !$0.isEmpty && $0 != "0 results" }
     }
 
     /// Number of learned skills injected into the system prompt

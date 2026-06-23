@@ -442,7 +442,7 @@ final class IdeaInsightEngine: ObservableObject {
 
         do {
             // Use Haiku tier — hook generation is structured JSON extraction, doesn't need Sonnet
-            let response = try await ResearchService.shared.analyze(prompt: prompt, tier: .sensor)
+            let response = try await ResearchService.shared.analyze(prompt: prompt, tier: .router)
             let cleaned = stripCodeFences(from: response)
 
             guard let data = cleaned.data(using: .utf8) else {

@@ -178,11 +178,11 @@ final class ResearchService {
     // MARK: - Tier-Aware Analysis
 
     /// Analyze content using a specific model tier for cost/quality optimization.
-    /// Defaults to `.strategist` (Sonnet 4.5) when no tier is specified.
+    /// Defaults to `.agent` (Gemini 3 Flash) when no tier is specified.
     func analyze(
         prompt: String,
         systemPrompt: String? = nil,
-        tier: AgentModelTier = .strategist,
+        tier: AgentModelTier = .agent,
         maxTokens: Int? = nil
     ) async throws -> String {
         guard let apiKey = apiKey, !apiKey.isEmpty else {

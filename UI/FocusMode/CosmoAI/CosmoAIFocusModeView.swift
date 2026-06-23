@@ -54,6 +54,10 @@ struct CosmoAIFocusModeView: View {
                         contextChips
                     }
 
+                    if viewModel.messages.isEmpty {
+                        quickActionPills
+                    }
+
                     CosmoAIConversationPanel(viewModel: viewModel)
 
                     inputArea
@@ -127,8 +131,9 @@ struct CosmoAIFocusModeView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "brain")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(DS.accent)
-                    Text("Cosmo AI")
+                        .foregroundStyle(DS.accent)
+                        .accessibilityLabel("Cosmo Intelligence")
+                    Text("Cosmo Intelligence")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(DS.text)
                 }
@@ -242,6 +247,47 @@ struct CosmoAIFocusModeView: View {
         }
     }
 
+    // MARK: - Quick Action Pills
+
+    private var quickActionPills: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                quickActionButton("What's due today?", icon: "calendar")
+                quickActionButton("Show my connections", icon: "point.3.connected.trianglepath.dotted")
+                quickActionButton("Organize this space", icon: "square.grid.3x3")
+                quickActionButton("Research something", icon: "magnifyingglass")
+                quickActionButton("What have I learned?", icon: "lightbulb")
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+    }
+
+    private func quickActionButton(_ label: String, icon: String) -> some View {
+        Button {
+            inputText = label
+            sendCurrentMessage()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .accessibilityLabel(label)
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(DS.surfaceElevated)
+            .clipShape(.rect(cornerRadius: 20))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Input Area
     private var inputArea: some View {
         VStack(spacing: 0) {
@@ -306,7 +352,7 @@ struct CosmoAIFocusModeView: View {
                     // Text input
                     ZStack(alignment: .leading) {
                         if inputText.isEmpty {
-                            Text("Ask Cosmo anything...")
+                            Text("Search, research, organize...")
                                 .font(.system(size: 14))
                                 .foregroundColor(DS.textMuted)
                         }
@@ -389,13 +435,13 @@ struct CosmoAIFocusModeView: View {
         Menu {
             Button("Auto") { viewModel.modelOverride = nil }
             Divider()
-            Button("Haiku") { viewModel.modelOverride = .sensor }
-            Button("Sonnet") { viewModel.modelOverride = .strategist }
-            Button("Opus") { viewModel.modelOverride = .writer }
+            ForEach(AgentModelTier.skillSelectableCases, id: \.self) { tier in
+                Button(tier.displayLabel) { viewModel.modelOverride = tier }
+            }
         } label: {
             Text(modelLabel)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Capsule().fill(DS.borderSubtle))
@@ -403,13 +449,7 @@ struct CosmoAIFocusModeView: View {
     }
 
     private var modelLabel: String {
-        switch viewModel.modelOverride {
-        case .sensor: return "Haiku"
-        case .strategist: return "Sonnet"
-        case .writer: return "Opus"
-        case nil: return "Auto"
-        default: return "Auto"
-        }
+        viewModel.modelOverride?.displayLabel ?? "Auto"
     }
 
     // MARK: - Send

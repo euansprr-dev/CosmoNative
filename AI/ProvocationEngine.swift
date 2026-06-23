@@ -137,7 +137,7 @@ class ProvocationEngine: ObservableObject {
             let response = try await ResearchService.shared.analyze(
                 prompt: prompt,
                 systemPrompt: "You are an intellectual devil's advocate. Your job is to find genuine tensions, contradictions, and unexamined assumptions in knowledge blocks. Be precise — false positives are worse than false negatives. Only flag real intellectual tensions.",
-                tier: .strategist,
+                tier: .agent,
                 maxTokens: 4096
             )
 

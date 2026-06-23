@@ -163,7 +163,7 @@ class AgentContextAssembler {
             }
 
             // Layer 3: Taste profile (high priority for draft/strategy/brainstorm intents)
-            let tasteIntents: Set<AgentIntent> = [.draft, .strategy, .brainstorm, .analyze]
+            let tasteIntents: Set<AgentIntent> = [.research, .strategy, .brainstorm, .analyze, .synthesize]
             if let intent = intent, tasteIntents.contains(intent) {
                 let taste = await tasteProfileContext()
                 if !taste.isEmpty {
@@ -178,7 +178,7 @@ class AgentContextAssembler {
             }
 
             // Layer 5.5: Auto-load saved analyses for creative intents (WP6)
-            let analysisIntents: Set<AgentIntent> = [.draft, .strategy, .analyze, .brainstorm]
+            let analysisIntents: Set<AgentIntent> = [.research, .strategy, .analyze, .brainstorm, .synthesize]
             if let intent = intent, analysisIntents.contains(intent) {
                 // Reuse already-resolved activeClientUUID to scope analyses
                 var activeClientName: String? = nil
@@ -319,9 +319,17 @@ class AgentContextAssembler {
             // Calendar + objectives + quest progress
             return await buildPlanContext()
 
-        case .draft:
-            // Current draft content + source idea + matched swipes
-            return await buildDraftContext(linkedAtomUUIDs: linkedAtomUUIDs)
+        case .research:
+            // Knowledge base context + swipe stats + client profiles
+            return await buildBrainstormContext(linkedAtomUUIDs: linkedAtomUUIDs)
+
+        case .synthesize:
+            // Cross-atom patterns + analytics
+            return await buildAnalyticsContext()
+
+        case .organize:
+            // Workspace context — default is sufficient
+            return await buildDefaultContext()
 
         case .analyze, .debrief:
             // Full analytics: dimensions, streaks, content performance
@@ -378,97 +386,86 @@ class AgentContextAssembler {
             parts.append(contentsOf: ideaSummaries)
         }
 
+        // Active projects
+        do {
+            let projects = try await atomRepo.fetchAll(type: .project)
+            if !projects.isEmpty {
+                parts.append("Active projects (\(projects.count)):")
+                for project in projects.prefix(5) {
+                    parts.append("  - \(project.title ?? "Untitled")")
+                }
+            }
+        } catch {}
+
         let clientNames = await fetchClientProfileNames()
         if !clientNames.isEmpty {
             parts.append("Client profiles: \(clientNames.joined(separator: ", "))")
         }
 
-        // Surface in-progress content so the agent doesn't create duplicates
-        let activeContent = await fetchActiveContentSummary()
-        if !activeContent.isEmpty {
-            parts.append(activeContent)
+        // Recent activity
+        let activitySummary = await fetchRecentActivitySummary()
+        if !activitySummary.isEmpty {
+            parts.append(activitySummary)
         }
 
         return parts.joined(separator: "\n")
     }
 
     private func buildStrategyContext() async -> String {
-        var parts: [String] = ["[USER CONTEXT - Content Strategy]"]
+        var parts: [String] = ["[USER CONTEXT - Knowledge Graph Overview]"]
 
-        // Pipeline status
-        let pipelineCounts = await fetchPipelinePhaseCounts()
-        if !pipelineCounts.isEmpty {
-            let pipelineStr = pipelineCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
-            parts.append("Content pipeline: \(pipelineStr)")
+        // Atom counts by type for high-level awareness
+        let typeCounts = await fetchAtomCountsByType()
+        if !typeCounts.isEmpty {
+            let countStr = typeCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+            parts.append("Knowledge base: \(countStr)")
         }
 
-        // Recent drafts (last 5 content atoms)
+        // Active projects
         do {
-            let content = try await atomRepo.fetchAll(type: .content)
-            let recentDrafts = content.prefix(5)
-            if !recentDrafts.isEmpty {
-                parts.append("Recent content:")
-                for draft in recentDrafts {
-                    let meta = draft.metadataValue(as: ContentAtomMetadata.self)
-                    let phase = meta?.phase.displayName ?? "Ideation"
-                    let platform = meta?.platform?.rawValue ?? "unset"
-                    parts.append("  - \(draft.title ?? "Untitled") [\(phase)] (\(platform))")
+            let projects = try await atomRepo.fetchAll(type: .project)
+            if !projects.isEmpty {
+                parts.append("Active projects (\(projects.count)):")
+                for project in projects.prefix(5) {
+                    parts.append("  - \(project.title ?? "Untitled")")
                 }
             }
         } catch {}
 
-        // Swipe library stats
+        // Recent research (last 5 research atoms)
         do {
             let research = try await atomRepo.fetchAll(type: .research)
+            let nonSwipe = research.filter { !$0.isSwipeFileAtom }
+            if !nonSwipe.isEmpty {
+                parts.append("Recent research (\(nonSwipe.count) total):")
+                for item in nonSwipe.prefix(5) {
+                    parts.append("  - \(item.title ?? "Untitled")")
+                }
+            }
             let swipes = research.filter { $0.isSwipeFileAtom }
-            parts.append("Swipe library: \(swipes.count) total")
-
-            // Hook distribution (top 5) — read from swipeAnalysis, not metadata
-            var hookCounts: [String: Int] = [:]
-            var fwCounts: [String: Int] = [:]
-            for atom in swipes {
-                if let analysis = atom.swipeAnalysis {
-                    if let hookType = analysis.hookType {
-                        hookCounts[hookType.rawValue, default: 0] += 1
-                    }
-                    if let framework = analysis.frameworkType {
-                        fwCounts[framework.rawValue, default: 0] += 1
-                    }
-                } else if let meta = atom.metadataDict {
-                    // Fallback to metadata
-                    if let hook = meta["hookType"] as? String {
-                        hookCounts[hook, default: 0] += 1
-                    }
-                    if let fw = meta["framework"] as? String {
-                        fwCounts[fw, default: 0] += 1
-                    }
-                }
-            }
-            let topHooks = hookCounts.sorted { $0.value > $1.value }.prefix(5)
-            if !topHooks.isEmpty {
-                parts.append("Top hooks: \(topHooks.map { "\($0.key)(\($0.value))" }.joined(separator: ", "))")
-            }
-
-            let topFW = fwCounts.sorted { $0.value > $1.value }.prefix(5)
-            if !topFW.isEmpty {
-                parts.append("Top frameworks: \(topFW.map { "\($0.key)(\($0.value))" }.joined(separator: ", "))")
-            }
-
-            // Recent 5 swipe titles (helps LLM reason about "what swipes do I have")
-            let recentSwipes = swipes.prefix(5)
-            if !recentSwipes.isEmpty {
-                parts.append("Recent swipes:")
-                for swipe in recentSwipes {
-                    let hookLabel = swipe.swipeAnalysis?.hookType?.rawValue ?? ""
-                    let hookSuffix = hookLabel.isEmpty ? "" : " [\(hookLabel)]"
-                    parts.append("  - \(swipe.title ?? "Untitled")\(hookSuffix)")
-                }
+            if !swipes.isEmpty {
+                parts.append("Swipe library: \(swipes.count) files")
             }
         } catch {}
+
+        // Recent ideas
+        let recentIdeas = await fetchRecentIdeas()
+        if !recentIdeas.isEmpty {
+            parts.append("Recent ideas:")
+            for idea in recentIdeas.prefix(5) {
+                parts.append("  - \(idea.title ?? "Untitled")")
+            }
+        }
 
         let clientNames = await fetchClientProfileNames()
         if !clientNames.isEmpty {
             parts.append("Client profiles: \(clientNames.joined(separator: ", "))")
+        }
+
+        // Recent activity (last 24h)
+        let activitySummary = await fetchRecentActivitySummary()
+        if !activitySummary.isEmpty {
+            parts.append(activitySummary)
         }
 
         return parts.joined(separator: "\n")
@@ -511,105 +508,20 @@ class AgentContextAssembler {
         return parts.joined(separator: "\n")
     }
 
-    private func buildDraftContext(linkedAtomUUIDs: [String] = []) async -> String {
-        var parts: [String] = ["[USER CONTEXT - Drafting]"]
-
-        // Prioritize the content atom being worked on in this conversation
-        var activeContentAtom: Atom?
-        var activeContentUUID: String?
-
-        // Check linked atoms first — the most recently linked content atom is the active one
-        for uuid in linkedAtomUUIDs.reversed() {
-            if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content {
-                activeContentAtom = atom
-                activeContentUUID = uuid
-                break
-            }
-        }
-
-        // Surface the active content atom prominently with full context
-        if let active = activeContentAtom, let uuid = activeContentUUID {
-            let meta = active.metadataValue(as: ContentAtomMetadata.self)
-            let title = active.title ?? "Untitled"
-            let phase = meta?.phase.displayName ?? "Ideation"
-            let words = meta?.wordCount ?? 0
-            let draftPreview = String((active.body ?? "").prefix(500))
-
-            parts.append("ACTIVE CONTENT (use this UUID for writing tools):")
-            parts.append("  Title: \(title)")
-            parts.append("  UUID: \(uuid)")
-            parts.append("  Phase: \(phase) | \(words) words")
-            if !draftPreview.isEmpty {
-                parts.append("  Draft preview: \(draftPreview)")
-            }
-
-            // Include source idea if linked
-            let links = active.linksList
-            let ideaLink = links.first { $0.type == "ideaToContent" || $0.type == "contentToIdea" }
-            if let ideaUUID = ideaLink?.uuid,
-               let ideaAtom = try? await atomRepo.fetch(uuid: ideaUUID) {
-                parts.append("  Source idea: \(ideaAtom.title ?? "Untitled")")
-                if let body = ideaAtom.body, !body.isEmpty {
-                    parts.append("  Core idea: \(String(body.prefix(200)))")
-                }
-            }
-
-            // Include matched swipes for active content
-            let swipeLinks = links.filter { $0.type == "ideaToSwipe" || $0.type == "swipeToIdea" }
-            if !swipeLinks.isEmpty {
-                parts.append("  Matched swipes:")
-                for link in swipeLinks.prefix(5) {
-                    if let swipeAtom = try? await atomRepo.fetch(uuid: link.uuid) {
-                        let hook = swipeAtom.metadataDict?["hookType"] as? String ?? "unknown"
-                        parts.append("    - \(swipeAtom.title ?? "Untitled") [hook: \(hook)]")
-                    }
-                }
-            }
-
-            // Client profile for this content
-            if let clientUUID = meta?.clientProfileUUID,
-               let clientAtom = try? await atomRepo.fetch(uuid: clientUUID) {
-                parts.append("  Client: \(clientAtom.title ?? "Unknown")")
-            }
-        }
-
-        // Also show other active drafts (excluding the active one)
-        do {
-            let content = try await atomRepo.fetchAll(type: .content)
-            let otherDrafts = content.filter { atom in
-                let meta = atom.metadataValue(as: ContentAtomMetadata.self)
-                let phase = meta?.phase.rawValue ?? ""
-                return ["ideation", "brainstorm", "outline", "draft"].contains(phase) && atom.uuid != activeContentUUID
-            }.prefix(3)
-
-            if !otherDrafts.isEmpty {
-                parts.append("")
-                parts.append("Other active drafts:")
-                for draft in otherDrafts {
-                    let meta = draft.metadataValue(as: ContentAtomMetadata.self)
-                    let title = draft.title ?? "Untitled"
-                    let phase = meta?.phase.displayName ?? "Ideation"
-                    parts.append("  - \(title) [\(phase)] (UUID: \(draft.uuid))")
-                }
-            }
-        } catch {}
-
-        let clientNames = await fetchClientProfileNames()
-        if !clientNames.isEmpty {
-            parts.append("Client profiles: \(clientNames.joined(separator: ", "))")
-        }
-
-        return parts.joined(separator: "\n")
-    }
-
     private func buildAnalyticsContext() async -> String {
-        var parts: [String] = ["[USER CONTEXT - Analytics & Performance]"]
+        var parts: [String] = ["[USER CONTEXT - Analytics & Patterns]"]
 
-        // Content pipeline performance
-        let pipelineCounts = await fetchPipelinePhaseCounts()
-        if !pipelineCounts.isEmpty {
-            let pipelineStr = pipelineCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
-            parts.append("Pipeline distribution: \(pipelineStr)")
+        // Atom counts by type
+        let typeCounts = await fetchAtomCountsByType()
+        if !typeCounts.isEmpty {
+            let countStr = typeCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+            parts.append("Knowledge base distribution: \(countStr)")
+        }
+
+        // Recent activity
+        let activitySummary = await fetchRecentActivitySummary()
+        if !activitySummary.isEmpty {
+            parts.append(activitySummary)
         }
 
         return parts.joined(separator: "\n")
@@ -636,13 +548,7 @@ class AgentContextAssembler {
     }
 
     private func buildBrainstormContext(linkedAtomUUIDs: [String] = []) async -> String {
-        var parts: [String] = ["[USER CONTEXT - Brainstorm]"]
-
-        // Surface in-progress content so the agent doesn't create duplicates
-        let activeContent = await fetchActiveContentSummary()
-        if !activeContent.isEmpty {
-            parts.append(activeContent)
-        }
+        var parts: [String] = ["[USER CONTEXT - Research & Brainstorm]"]
 
         // Recent ideas
         let recentIdeas = await fetchRecentIdeas()
@@ -654,25 +560,23 @@ class AgentContextAssembler {
             }
         }
 
-        // Swipe stats for inspiration
+        // Research and swipe counts for awareness
         do {
             let research = try await atomRepo.fetchAll(type: .research)
+            let nonSwipe = research.filter { !$0.isSwipeFileAtom }
             let swipes = research.filter { $0.isSwipeFileAtom }
-            parts.append("Swipe library: \(swipes.count) files")
+            parts.append("Research library: \(nonSwipe.count) notes, \(swipes.count) swipe files")
 
-            var hookCounts: [String: Int] = [:]
-            for atom in swipes {
-                if let hook = atom.metadataDict?["hookType"] as? String {
-                    hookCounts[hook, default: 0] += 1
+            // Recent research titles
+            if !nonSwipe.isEmpty {
+                parts.append("Recent research:")
+                for item in nonSwipe.prefix(5) {
+                    parts.append("  - \(item.title ?? "Untitled")")
                 }
-            }
-            let topHooks = hookCounts.sorted { $0.value > $1.value }.prefix(3)
-            if !topHooks.isEmpty {
-                parts.append("Popular hooks: \(topHooks.map { "\($0.key)(\($0.value))" }.joined(separator: ", "))")
             }
         } catch {}
 
-        // Resolve active client from linked atoms (scoped brainstorming)
+        // Resolve active client from linked atoms (scoped context)
         var activeClient: Atom? = nil
         for uuid in linkedAtomUUIDs.reversed() {
             if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content,
@@ -701,11 +605,10 @@ class AgentContextAssembler {
                 parts.append("Other clients (names only): \(otherNames.joined(separator: ", "))")
             }
         } else {
-            // No active client: inject names only, instruct LLM to ask
+            // No active client: inject names only
             let names = await fetchClientProfileNames()
             if !names.isEmpty {
                 parts.append("Available clients: \(names.joined(separator: ", "))")
-                parts.append("NOTE: No specific client is active. If brainstorming for a client, ask the user which client before proceeding. Do NOT mix data from different clients.")
             }
         }
 
@@ -726,6 +629,12 @@ class AgentContextAssembler {
             for block in completed {
                 parts.append("  - \(block.title ?? "Untitled")")
             }
+        }
+
+        // Recent activity for reflection
+        let activitySummary = await fetchRecentActivitySummary()
+        if !activitySummary.isEmpty {
+            parts.append(activitySummary)
         }
 
         return parts.joined(separator: "\n")
@@ -995,37 +904,13 @@ class AgentContextAssembler {
         return summary.joined(separator: "\n")
     }
 
-    // MARK: - Writing Methodology Context
-
-    /// Condensed writing methodology injected for writing-related intents.
-    /// Gives Sonnet enough context to brainstorm competently without burning Opus tokens.
-    private func writingMethodologyContext() -> String {
-        return """
-        [WRITING METHODOLOGY — Condensed]
-
-        7 VIRALITY DRIVERS: Relatability, Novelty, Emotional Intensity, Practical Value, Identity Signaling, Controversy/Tension, Shareability.
-
-        HOOK CHECKLIST: Specific (not vague), Pattern Interrupt, Curiosity Gap, Emotional Trigger, Benefit-Forward, Under 2 Sentences, Platform-Native.
-
-        COPY CHECKLIST: One Idea Per Section, Conversational Tone, Sensory/Concrete Language, Transitions Between Beats, Proof Points (data/stories/examples), Reads Aloud Naturally, No Filler Sentences, Progressive Disclosure (reveal value in layers).
-
-        CTA CHECKLIST: Single Clear Action, Low Friction, Benefit-Restated, Urgency or Scarcity.
-
-        EMOTIONAL SEQUENCE: Tension > Relatability > Insight > CTA. Open with tension or curiosity, build relatability, deliver the insight, close with action.
-
-        FUNNEL RATIO: 40-50% TOF (awareness/entertainment), 30-40% MOF (education/trust), 10-20% BOF (conversion/sales).
-
-        Write drafts DIRECTLY in your reply — you have the client profile, swipe data, and methodology in your context. Do not defer to external tools for writing.
-        """
-    }
-
     // MARK: - Lightweight Identity (WP7)
 
     /// Minimal identity prompt (~500 tokens) for simple intents: capture, correct, meta.
-    /// Strips writing quality rules, brainstorming guide, and methodology to save ~1.5K tokens.
+    /// Strips synthesis/exploration rules to save tokens.
     private static let lightweightIdentityPrompt: String = """
-        You are Cosmo, the user's personal creative strategist. You help them capture ideas, \
-        swipe files, and manage their creative workflow.
+        You are Cosmo, the intelligence layer of CosmoOS. You help the user capture ideas, \
+        research, and manage their knowledge workspace.
 
         CRITICAL — URL HANDLING:
         - When the user sends ANY URL (Instagram, YouTube, X/Twitter, Threads, TikTok, or any website), \
@@ -1033,18 +918,15 @@ class AgentContextAssembler {
         - Do NOT say you "can't access" URLs. You don't need to access them — capture_swipe handles \
         downloading, metadata extraction, and transcript fetching internally.
         - Do NOT explain what the tool does. Just call it.
-        - If the user also mentions a client name or idea alongside the URL, use capture_swipe_with_idea instead.
 
         CORE RULES:
         - Use tools to ground responses in real data — never make up information.
-        - NEVER fabricate stats, numbers, or facts about a client. If you don't have the data, say so.
+        - NEVER fabricate stats, numbers, or facts. If you don't have the data, say so.
         - NEVER confuse clients — each name is a separate person. Verify with get_client_profile.
         - Reference items by their ACTUAL TITLES so the user can find them.
         - For destructive actions (delete, remove), explain what you're about to do.
-        - When the user asks about items "for [client name]", use search_by_client first.
         - When the user gives feedback about behavior, use store_preference to remember it.
-        - When the user gives an explicit writing rule, lesson, or creative principle to remember, use save_lessons.
-        - Use store_preference only for runtime behavior and operational preferences, not writing craft lessons.
+        - When the user gives an explicit rule, lesson, or principle to remember, use save_lessons.
         - NEVER expose raw JSON, UUIDs, or system internals. Refer to items by title/name.
         - NEVER mention internal tool names. The user doesn't know or care about these.
         - Be direct and concise. Match the user's energy.
@@ -1167,17 +1049,23 @@ class AgentContextAssembler {
     // MARK: - Tool Guidelines
 
     private func toolGuidelines(_ tools: [LLMToolDefinition]) -> String {
-        var lines = ["[TOOL GUIDELINES]"]
-        lines.append("You have \(tools.count) tools available. Key rules:")
+        var lines = ["[TOOL USAGE]"]
+        lines.append("You have \(tools.count) tools available.")
+        lines.append("")
+        lines.append("Tool selection guide:")
+        lines.append("- For simple lookups (\"show me X\"): use query_atoms or get_atom_detail")
+        lines.append("- For relationship exploration: use graph_traverse or explore_graph")
+        lines.append("- For knowledge questions (\"what do I know about X\"): use synthesize_knowledge — it searches atoms and returns source content")
+        lines.append("- For pattern analysis (\"what patterns in my swipes\"): use synthesize_learning")
+        lines.append("- For analytical questions (\"how many X per week\"): use execute_sql for precise counts and grouping")
+        lines.append("- For workspace changes: use manage_thinkspace, move_blocks, bulk_update, organize_space")
+        lines.append("- For multi-step operations: use run_workflow to plan and execute with user confirmation")
+        lines.append("- ALWAYS cite source atoms by title when synthesizing knowledge")
+        lines.append("")
+        lines.append("General rules:")
         lines.append("- Always use search tools before answering questions about the user's data")
         lines.append("- For destructive actions (delete_block), a confirmation will be requested automatically")
-        lines.append("- When creating items, always return the UUID in your response for reference")
         lines.append("- If a tool returns an error, explain the issue to the user and suggest alternatives")
-        lines.append("- Prefer specific tools over general queries (e.g. search_ideas over get_idea when exploring)")
-        lines.append("")
-        lines.append("Search retry strategy:")
-        lines.append("- If search_swipes returns 0 results, try list_all_swipes to browse the full library")
-        lines.append("- If searching for a specific type (hook type, framework), use filter_swipes_by_taxonomy")
         lines.append("- Always try at least 2 search strategies before telling the user you couldn't find something")
         lines.append("- For standing instructions queries, use list_standing_instructions")
         return lines.joined(separator: "\n")
@@ -1260,19 +1148,60 @@ class AgentContextAssembler {
         }
     }
 
-    private func fetchPipelinePhaseCounts() async -> [String: Int] {
-        do {
-            let content = try await atomRepo.fetchAll(type: .content)
-            var counts: [String: Int] = [:]
-            for atom in content {
-                let meta = atom.metadataValue(as: ContentAtomMetadata.self)
-                let phase = meta?.phase.displayName ?? "Ideation"
-                counts[phase, default: 0] += 1
-            }
-            return counts
-        } catch {
-            return [:]
+    /// Fetch atom counts grouped by type for knowledge base overview.
+    private func fetchAtomCountsByType() async -> [String: Int] {
+        let types: [AtomType] = [.idea, .research, .task, .content, .connection, .note, .project]
+        var counts: [String: Int] = [:]
+        for type in types {
+            do {
+                let atoms = try await atomRepo.fetchAll(type: type)
+                if !atoms.isEmpty {
+                    counts[type.rawValue] = atoms.count
+                }
+            } catch {}
         }
+        return counts
+    }
+
+    /// Fetch a summary of recent activity (last 24 hours) by atom type.
+    private func fetchRecentActivitySummary() async -> String {
+        let calendar = Calendar.current
+        let oneDayAgo = calendar.date(byAdding: .hour, value: -24, to: Date()) ?? Date()
+        let isoFormatter = ISO8601DateFormatter()
+
+        let types: [AtomType] = [.idea, .research, .task, .content, .note]
+        var created: [String: Int] = [:]
+        var updated: [String: Int] = [:]
+
+        for type in types {
+            do {
+                let atoms = try await atomRepo.fetchAll(type: type)
+                for atom in atoms {
+                    if let date = isoFormatter.date(from: atom.createdAt),
+                       date > oneDayAgo {
+                        created[type.rawValue, default: 0] += 1
+                    }
+                    if let updatedAt = atom.updatedAt,
+                       let date = isoFormatter.date(from: updatedAt),
+                       date > oneDayAgo {
+                        updated[type.rawValue, default: 0] += 1
+                    }
+                }
+            } catch {}
+        }
+
+        guard !created.isEmpty || !updated.isEmpty else { return "" }
+
+        var lines = ["Recent activity (last 24h):"]
+        if !created.isEmpty {
+            let createdStr = created.map { "\($0.value) \($0.key)(s)" }.joined(separator: ", ")
+            lines.append("  Created: \(createdStr)")
+        }
+        if !updated.isEmpty {
+            let updatedStr = updated.map { "\($0.value) \($0.key)(s)" }.joined(separator: ", ")
+            lines.append("  Updated: \(updatedStr)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func fetchClientProfileNames() async -> [String] {

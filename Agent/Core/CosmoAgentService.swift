@@ -175,18 +175,10 @@ class CosmoAgentService: ObservableObject {
         .strategist
     }
 
-    /// Returns the max tool iterations for a given intent. Creative/analytical
-    /// intents that chain many tools (profile → swipes → beats → draft → score)
-    /// get a higher ceiling to avoid "ran out of processing steps" on complex requests.
+    /// Returns the max tool iterations for a given intent.
+    /// All intents get the same ceiling; model quality is controlled separately.
     private func maxToolIterations(for intent: AgentIntent) -> Int {
-        switch intent {
-        case .draft, .strategy, .brainstorm:
-            return 16
-        case .analyze, .execute, .debrief:
-            return 12
-        case .capture, .query, .plan, .correct, .reflect, .meta:
-            return baseMaxToolIterations
-        }
+        return baseMaxToolIterations  // 12 for all intents
     }
 
     /// Per-conversation token tracking for cost guard
@@ -1073,6 +1065,7 @@ class CosmoAgentService: ObservableObject {
         llmMessages.append(contentsOf: historyWindow)
 
         let modelTier = Self.defaultModelTier(for: effectiveIntent)
+        let modelTier = Self.defaultModelTier(for: effectiveIntent)
 
         // For draft intent with active content, inject a system message forcing tool use
         if effectiveIntent == .draft || effectiveIntent == .brainstorm {
@@ -1617,38 +1610,29 @@ class CosmoAgentService: ObservableObject {
             return .meta
         }
 
-        // Draft — checked BEFORE capture because long writing messages may contain
-        // incidental capture keywords (e.g. "save $40K" in deal context).
-        // Writing intent takes precedence when explicit writing verbs are present.
-        let draftKeywords = ["draft", "write a thread", "write a reel", "write about",
-                             "write this", "write for ", "writing this", "writing a ",
-                             "writing for ", "start writing", "want to write",
-                             "reel for ", "thread for ", "carousel for ",
-                             "create this reel", "create a reel",
-                             "create this thread", "create a thread",
-                             "create this carousel", "create a carousel",
-                             "make it punchier", "more punchy", "shorter", "longer",
-                             "condense", "expand", "rephrase", "rewrite",
-                             "generate an outline", "give me an outline", "write the draft",
-                             "generate hooks", "hook variants", "let's write",
-                             "make this a content piece", "let's draft this", "write this up",
-                             "let's make this", "i want to write",
-                             "feedback on slide", "feedback on hook", "feedback on this",
-                             "feedback on section", "feedback on the", "what do you think of this",
-                             "what do you think about this", "thoughts on this hook",
-                             "thoughts on this slide", "does this hook work",
-                             "make it more ", "make this more ", "make this sound",
-                             "make it sound", "too formal", "too casual", "too salesy",
-                             "what structure", "what framework", "what's a good structure",
-                             "what's a good hook", "what's a good opening", "what angle",
-                             "hook ideas", "hook options", "opening ideas",
-                             "punch up", "tighten this", "clean this up",
-                             "check the flow", "does this flow", "how does this read",
-                             "make the hook", "using this as the swipe", "using the swipe", "using that as",
-                             "let's use the blueprint", "use the blueprint", "using the blueprint",
-                             "use a hook like", "using a hook like"]
-        if containsAny(lower, draftKeywords) {
-            return .draft
+        // Research — checked BEFORE capture because research queries may contain
+        // incidental capture keywords (e.g. "research this topic").
+        let researchKeywords = ["research", "investigate", "what do i know", "explain",
+                                "teach me", "look into", "deep dive", "tell me about",
+                                "what does my research say", "find out about"]
+        if containsAny(lower, researchKeywords) {
+            return .research
+        }
+
+        // Synthesize — learning synthesis and cross-atom patterns
+        let synthesizeKeywords = ["summarize", "patterns", "synthesize", "what have i learned",
+                                  "themes across", "knowledge about", "connect the dots",
+                                  "what are the common", "recurring themes", "pull together"]
+        if containsAny(lower, synthesizeKeywords) {
+            return .synthesize
+        }
+
+        // Organize — workspace management, thinkspaces, block arrangement
+        let organizeKeywords = ["organize", "create thinkspace", "move blocks", "clean up",
+                                "layout", "template", "arrange", "tidy up", "group these",
+                                "sort my", "restructure", "workspace"]
+        if containsAny(lower, organizeKeywords) {
+            return .organize
         }
 
         // Check for capture patterns (after draft, so writing intent wins)
@@ -1744,12 +1728,10 @@ class CosmoAgentService: ObservableObject {
     private func detectComplexity(_ lower: String, intent: AgentIntent) -> RequestComplexity {
         // Multi-step patterns
         let compoundPatterns = [
-            "draft a thread", "write a thread about", "create content about",
-            "build a post", "full pipeline", "voice to content",
             "activate my idea about", "activate idea",
             "plan my week", "weekly content plan",
-            "draft.*using.*swipes", "research.*then.*draft",
-            "find.*swipes.*and.*write"
+            "research.*then.*organize", "research.*and.*synthesize",
+            "find.*and.*organize", "create thinkspace.*with"
         ]
 
         for pattern in compoundPatterns {
@@ -1789,49 +1771,48 @@ class CosmoAgentService: ObservableObject {
     // MARK: - Conversation-Aware Intent Escalation
 
     /// Escalate intent based on conversation history. When a conversation has been
-    /// about creative work (draft/brainstorm) and the current message is generic (query),
-    /// maintain the creative intent to keep the right tools and context active.
+    /// about creative or research work and the current message is generic (query),
+    /// maintain the richer intent to keep the right tools and context active.
     /// Model cost is controlled separately by `defaultModelTier(for:)`.
     private func escalateIntentFromConversation(_ intent: AgentIntent, conversation: AgentConversation) -> AgentIntent {
         // Only escalate from generic .query intent
         guard intent == .query else { return intent }
         guard !conversation.messages.isEmpty else { return intent }
 
-        // Check recent user messages for creative/drafting signals
+        // Check recent user messages for research/brainstorm signals
         let recentUserMessages = conversation.messages
             .filter { $0.role == .user }
             .suffix(5)
 
-        let creativeSignals = ["write", "writing", "draft", "reel", "thread", "carousel",
-                               "hook", "outline", "slide", "content piece", "angle",
-                               "brainstorm", "let's make", "punchier", "rewrite",
-                               "make it", "too formal", "too long", "too short"]
+        let analyticalSignals = ["research", "investigate", "synthesize", "patterns",
+                                 "brainstorm", "let's think", "explore", "deep dive",
+                                 "what do i know", "themes across", "knowledge about",
+                                 "organize", "thinkspace", "template"]
 
-        let hasCreativeHistory = recentUserMessages.contains { msg in
+        let hasAnalyticalHistory = recentUserMessages.contains { msg in
             let lower = msg.content.lowercased()
-            return creativeSignals.contains { lower.contains($0) }
+            return analyticalSignals.contains { lower.contains($0) }
         }
 
-        if hasCreativeHistory {
-            return .draft
+        if hasAnalyticalHistory {
+            return .research
         }
 
-        // Check recent tool usage for creative tools
+        // Check recent tool usage for research/knowledge tools
         let recentAssistantMessages = conversation.messages
             .filter { $0.role == .assistant }
             .suffix(5)
 
-        let creativeTools: Set<String> = ["get_client_profile", "generate_outline",
-                                           "generate_draft", "generate_hooks", "create_content",
-                                           "get_beat_patterns", "revise_draft", "search_swipes",
-                                           "find_similar_swipes", "filter_swipes_by_taxonomy"]
+        let knowledgeTools: Set<String> = ["search_swipes", "find_similar_swipes",
+                                            "filter_swipes_by_taxonomy", "search_ideas",
+                                            "get_swipe_analysis", "web_search"]
 
-        let hasCreativeToolHistory = recentAssistantMessages.contains { msg in
-            msg.toolCalls?.contains { creativeTools.contains($0.name) } == true
+        let hasKnowledgeToolHistory = recentAssistantMessages.contains { msg in
+            msg.toolCalls?.contains { knowledgeTools.contains($0.name) } == true
         }
 
-        if hasCreativeToolHistory {
-            return .draft
+        if hasKnowledgeToolHistory {
+            return .research
         }
 
         return intent
@@ -1902,9 +1883,9 @@ class CosmoAgentService: ObservableObject {
     // MARK: - Session Boundary Detection (WP8)
 
     /// Detect when a Telegram conversation should start a fresh session.
-    /// Triggers when the user starts a new content piece in an existing long conversation.
+    /// Triggers when the user starts a new topic in an existing long conversation.
     private func detectSessionBoundary(text: String, intent: AgentIntent, conversation: AgentConversation) -> Bool {
-        // Only rotate for draft intent with "new" signals and long conversations
+        // Only rotate for long conversations with "new topic" signals
         guard conversation.messages.count > 10 else { return false }
 
         let lower = text.lowercased()
@@ -1912,15 +1893,10 @@ class CosmoAgentService: ObservableObject {
         // Explicit reset command
         if lower.hasPrefix("/new") { return true }
 
-        // New content signals with draft intent
-        if intent == .draft {
-            let newContentSignals = ["new post", "new thread", "new draft", "new reel",
-                                     "let's start", "next piece", "fresh draft",
-                                     "new carousel", "new content"]
-            return newContentSignals.contains { lower.contains($0) }
-        }
-
-        return false
+        // New topic signals
+        let newTopicSignals = ["let's start", "new topic", "fresh start",
+                               "change of subject", "something else", "new question"]
+        return newTopicSignals.contains { lower.contains($0) }
     }
 
     /// Compress the current conversation into a summary and start fresh.
@@ -1933,13 +1909,13 @@ class CosmoAgentService: ObservableObject {
         var summary = conversation.summary ?? ""
 
         if !messageText.isEmpty {
-            // Preserve creative decisions, client context, and content atoms — not just topics.
+            // Preserve key context — research findings, decisions, client context.
             let prompt = """
-                Summarize this creative writing conversation for a ghostwriter AI. Be concise but preserve:
-                - Client name and platform (if mentioned)
-                - What content atoms/drafts were created (titles, UUIDs if present)
-                - Key creative decisions made (formats chosen, hooks agreed on, frameworks used)
-                - Feedback given and acted on (e.g., "hook was too salesy, shortened to 1 line")
+                Summarize this conversation for an AI assistant. Be concise but preserve:
+                - Client name and topic (if mentioned)
+                - What atoms were created or referenced (titles, UUIDs if present)
+                - Key decisions made or conclusions reached
+                - Research findings or patterns discovered
                 - What was NOT working (so it's not repeated next session)
 
                 Conversation:
@@ -1949,7 +1925,7 @@ class CosmoAgentService: ObservableObject {
                 """
             do {
                 let messages = [
-                    AgentMessage(role: .system, content: "You are a creative writing assistant summarizer. Preserve writing decisions, rejected approaches, and client voice details. Respond with only the summary."),
+                    AgentMessage(role: .system, content: "You are a conversation summarizer. Preserve key decisions, research findings, and context. Respond with only the summary."),
                     AgentMessage.user(prompt)
                 ]
                 if let newSummary = try await summarize(messages: messages, tier: .sensor) {
